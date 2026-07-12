@@ -1,0 +1,25 @@
+# PlatformIO
+.pio/
+.vscode/
+
+# Build and OS files
+.DS_Store
+Thumbs.db
+*.bin
+*.elf
+*.map
+
+# Trash and temporary directories
+scrap/
+tmp/
+*.log
+
+# Python virtual environments
+scripts/venv/
+scripts/__pycache__/
+
+# MUGEN / Sprites
+fighters_32/
+fighters_64/
+release/sdCard/fighters_32/
+release/sdCard/fighters_64/

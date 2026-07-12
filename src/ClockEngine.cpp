@@ -1,0 +1,45 @@
+#include "ClockEngine.h"
+#include "ArcadeClock.h"
+#include "CyberpunkClock.h"
+#include "FlipClock.h"
+
+ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr), currentTheme(THEME_NONE) {
+    currentTime = {10, 42, 00};
+}
+
+ClockEngine::~ClockEngine() {
+    if (activeFace) delete activeFace;
+}
+
+void ClockEngine::setTheme(PublisherTheme theme) {
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+    }
+    
+    currentTheme = theme;
+    
+    if (theme == THEME_CYBERPUNK) {
+        activeFace = new CyberpunkClock(matrix);
+    } else if (theme == THEME_FLIP) {
+        activeFace = new FlipClock(matrix);
+    } else {
+        // Theme 0-17 (Publisher + Characters) are handled by ArcadeClock
+        ArcadeClock* arcade = new ArcadeClock(matrix);
+        arcade->setTheme(theme);
+        activeFace = arcade;
+    }
+}
+
+void ClockEngine::updateTime(const TimeData& t) {
+    currentTime = t;
+    if (activeFace) {
+        activeFace->draw(t);
+    }
+}
+
+void ClockEngine::loop() {
+    if (activeFace) {
+        activeFace->update();
+    }
+}

@@ -1,0 +1,103 @@
+#include "CyberpunkClock.h"
+#include "ConfigLoader.h"
+#include <stdlib.h>
+
+#define NUM_DROPS 8
+
+struct Drop {
+    int x;
+    int y;
+    int speed;
+    int length;
+};
+
+static Drop drops[NUM_DROPS];
+static bool dropsInit = false;
+
+CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lineY(0), lastFrameTime(0) {}
+
+void CyberpunkClock::draw(const TimeData& t) {
+    storedTime = t;
+}
+
+extern ConfigLoader config;
+
+void CyberpunkClock::drawTime() {
+    matrix->setFont(NULL);
+    char timeStr[12];
+    sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
+    
+    matrix->setTextSize(1);
+    int16_t bx, by;
+    uint16_t bw, bh;
+    matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
+    if (bw == 0 || bh == 0) { bw = 48; bh = 7; } // Fallback
+    
+    int maxScaleW = matrix->width() / bw;
+    int maxScaleH = matrix->height() / bh;
+    int sMax = min(maxScaleW, maxScaleH);
+    if (sMax < 1) sMax = 1;
+    
+    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int gfxSize = 1;
+    if (logicalSize == 3) gfxSize = sMax;
+    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 3);
+    else gfxSize = max(1, sMax / 3);
+    
+    matrix->setTextSize(gfxSize);
+    matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
+    
+    int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
+    int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    
+    // Matrix Green Time
+    matrix->setTextColor(matrix->color565(200, 255, 200)); // Bright core
+    matrix->setCursor(x, y);
+    matrix->print(timeStr);
+}
+
+void CyberpunkClock::update() {
+    if (!dropsInit) {
+        for (int i=0; i<NUM_DROPS; i++) {
+            drops[i].x = rand() % matrix->width();
+            drops[i].y = (rand() % matrix->height()) - matrix->height();
+            drops[i].speed = (rand() % 3) + 1;
+            drops[i].length = (rand() % 10) + 5;
+        }
+        dropsInit = true;
+    }
+
+    if (millis() - lastFrameTime > 100) {
+        lastFrameTime = millis();
+        // Update physics
+        for (int i=0; i<NUM_DROPS; i++) {
+            drops[i].y += drops[i].speed;
+            if (drops[i].y - drops[i].length > matrix->height()) {
+                drops[i].x = rand() % matrix->width();
+                drops[i].y = (rand() % 10) * -1;
+                drops[i].speed = (rand() % 3) + 1;
+                drops[i].length = (rand() % 10) + 5;
+            }
+        }
+    }
+
+    // Draw drops
+    for (int i=0; i<NUM_DROPS; i++) {
+        for (int j=0; j<drops[i].length; j++) {
+            int py = drops[i].y - j;
+            if (py >= 0 && py < matrix->height()) {
+                uint16_t color;
+                if (j == 0) {
+                    color = matrix->color565(255, 255, 255); // White head
+                } else {
+                    int green = 255 - (j * (255 / drops[i].length));
+                    if (green < 0) green = 0;
+                    color = matrix->color565(0, green, 0); // Fading tail
+                }
+                matrix->drawPixel(drops[i].x, py, color);
+            }
+        }
+    }
+
+    drawTime();
+}
