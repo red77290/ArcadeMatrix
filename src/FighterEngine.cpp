@@ -64,20 +64,27 @@ void FighterEngine::loadRoster() {
     Serial.printf("FighterEngine: Loaded %d fighters (Fast Offset mode: %d bytes RAM)\n", numAvailableFighters, numAvailableFighters * 4);
 }
 
-String FighterEngine::getRandomFighterName() {
-    if (numAvailableFighters == 0 || !fighterOffsets) return "";
+bool FighterEngine::getRandomFighter(String& outName, int& outHeight) {
+    if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
     File f = SD.open(indexPath);
-    if (!f) return "";
+    if (!f) return false;
     
     int targetLine = random(0, numAvailableFighters);
     f.seek(fighterOffsets[targetLine]);
     String result = f.readStringUntil('\n');
     result.trim();
-    
     f.close();
-    return result;
+    
+    int commaIdx = result.indexOf(',');
+    if (commaIdx > 0) {
+        outName = result.substring(0, commaIdx);
+        outHeight = result.substring(commaIdx + 1).toInt();
+        return true;
+    }
+    
+    return false;
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
@@ -156,10 +163,26 @@ void FighterEngine::startFight() {
     freeFighter(p1);
     freeFighter(p2);
     
-    p1.name = getRandomFighterName();
-    do {
-        p2.name = getRandomFighterName();
-    } while (p1.name == p2.name && numAvailableFighters > 1);
+    if (!getRandomFighter(p1.name, p1.height)) return;
+    
+    bool found = false;
+    for (int i = 0; i < 20; i++) {
+        if (getRandomFighter(p2.name, p2.height)) {
+            if (p2.name != p1.name && p2.height >= p1.height * 0.8 && p2.height <= p1.height * 1.2) {
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    if (!found) {
+        // Fallback
+        int attempts = 0;
+        do {
+            getRandomFighter(p2.name, p2.height);
+            attempts++;
+        } while (p1.name == p2.name && attempts < 10);
+    }
     
     loadDir = getFightersDir();
     currentLoadState = LOAD_INIT;
@@ -203,10 +226,12 @@ void FighterEngine::processLoadState() {
             if (!loadFighterAnim(p2.animWin, (loadDir + "/" + p2.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
             else {
                 // Done! Finish setup
-                p1.direction = 1; p1.x = -10; p1.y = 0;
-                p2.direction = -1; p2.x = matrix->width() - p2.animWalk.width + 10;
-                if (p2.x > matrix->width()) p2.x = matrix->width();
-                p2.y = 0;
+                int maxHeight = max(p1.height, p2.height);
+                p1.direction = 1; p1.x = -p1.animWalk.width; p1.y = maxHeight - p1.height;
+                
+                p2.direction = -1; p2.x = matrix->width();
+                p2.y = maxHeight - p2.height;
+                
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
                 p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
@@ -372,33 +397,22 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     uint8_t* ptr = p.currentFrameBuffer;
     if (!ptr) return;
     
-    int scale = 1;
-    if (matrix->height() >= 64 && anim->height <= 32) {
-        scale = 2; // Scale up 2x if we had to fallback to 32px fighters on 64px screen
-    }
-    
     for (int y = 0; y < anim->height; y++) {
         for (int x = 0; x < anim->width; x++) {
             uint16_t color = ptr[0] | (ptr[1] << 8);
             ptr += 2;
             
             if (color != anim->transparentColor) {
-                int drawX = p.x + (x * scale);
+                int drawX = p.x + x;
                 // Flip horizontally if facing left
                 if (p.direction == -1) {
-                    drawX = p.x + ((anim->width - 1 - x) * scale);
+                    drawX = p.x + (anim->width - 1 - x);
                 }
                 
-                int drawY = p.y + (y * scale);
+                int drawY = p.y + y;
                 
-                for (int sy = 0; sy < scale; sy++) {
-                    for (int sx = 0; sx < scale; sx++) {
-                        int finalX = drawX + sx;
-                        int finalY = drawY + sy;
-                        if (finalX >= 0 && finalX < matrix->width() && finalY >= 0 && finalY < matrix->height()) {
-                            matrix->drawPixel(finalX, finalY, color);
-                        }
-                    }
+                if (drawX >= 0 && drawX < matrix->width() && drawY >= 0 && drawY < matrix->height()) {
+                    matrix->drawPixel(drawX, drawY, color);
                 }
             }
         }
