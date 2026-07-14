@@ -103,6 +103,8 @@ void WebServerAPI::setupRoutes() {
         doc["clock_theme"] = config.time.clock_theme;
         doc["clock_offset_x"] = config.time.clock_offset_x;
         doc["clock_offset_y"] = config.time.clock_offset_y;
+        doc["clock_color_1"] = config.time.clock_color_1;
+        doc["clock_color_2"] = config.time.clock_color_2;
 
         // Date
         doc["date_font"] = config.dateSettings.date_font;
@@ -112,6 +114,8 @@ void WebServerAPI::setupRoutes() {
         doc["date_offset_y"] = config.dateSettings.date_offset_y;
         doc["date_format"] = config.dateSettings.format;
         doc["date_sprite"] = config.dateSettings.background_sprite;
+        doc["date_color_1"] = config.dateSettings.date_color_1;
+        doc["date_color_2"] = config.dateSettings.date_color_2;
 
         // Weather
         doc["weather_api_key"] = config.weather.api_key;
@@ -177,6 +181,8 @@ void WebServerAPI::setupRoutes() {
         if (!doc["clock_size"].isNull()) config.time.clock_size = doc["clock_size"].as<int>();
         if (!doc["clock_offset_x"].isNull()) config.time.clock_offset_x = doc["clock_offset_x"].as<int>();
         if (!doc["clock_offset_y"].isNull()) config.time.clock_offset_y = doc["clock_offset_y"].as<int>();
+        if (!doc["clock_color_1"].isNull()) config.time.clock_color_1 = doc["clock_color_1"].as<String>();
+        if (!doc["clock_color_2"].isNull()) config.time.clock_color_2 = doc["clock_color_2"].as<String>();
         if (!doc["clock_theme"].isNull()) {
             config.time.clock_theme = doc["clock_theme"].as<int>();
             extern ClockEngine* clockEngine;
@@ -190,6 +196,8 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_offset_y"].isNull()) config.dateSettings.date_offset_y = doc["date_offset_y"].as<int>();
         if (!doc["date_format"].isNull()) config.dateSettings.format = doc["date_format"].as<String>();
         if (!doc["date_sprite"].isNull()) config.dateSettings.background_sprite = doc["date_sprite"].as<String>();
+        if (!doc["date_color_1"].isNull()) config.dateSettings.date_color_1 = doc["date_color_1"].as<String>();
+        if (!doc["date_color_2"].isNull()) config.dateSettings.date_color_2 = doc["date_color_2"].as<String>();
         if (!doc["date_theme"].isNull()) {
             config.dateSettings.theme = doc["date_theme"].as<int>();
             extern DateEngine* dateEngine;

@@ -25,50 +25,66 @@ void TetrisClock::draw(const TimeData& t) {
     storedTime = t;
 }
 
-void TetrisClock::buildTargets(const char* timeStr) {
-    GFXcanvas1 canvas(matrix->width(), matrix->height());
-    canvas.fillScreen(0);
-    canvas.setTextSize(1);
-    canvas.setFont(NULL);
+void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targetIndices) {
+    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int gfxSize = 1;
+    
+    // Setup temporary canvas to get bounds
+    GFXcanvas1 tempCanvas(matrix->width(), matrix->height());
+    tempCanvas.setTextSize(1);
+    tempCanvas.setFont(NULL);
     
     int16_t bx, by;
     uint16_t bw, bh;
-    canvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+    tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
     if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
     
-    int maxScaleW = matrix->width() / bw;
-    int maxScaleH = matrix->height() / bh;
-    int sMax = min(maxScaleW, maxScaleH);
+    int sMax = min((int)(matrix->width() / bw), (int)(matrix->height() / bh));
     if (sMax < 1) sMax = 1;
     
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
-    int gfxSize = 1;
     if (logicalSize == 3) gfxSize = sMax;
     else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 3);
     else gfxSize = max(1, sMax / 3);
     
-    canvas.setTextSize(gfxSize);
-    canvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+    tempCanvas.setTextSize(gfxSize);
+    tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
     
     int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
     int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
     
-    canvas.setCursor(x, y);
-    canvas.setTextColor(1);
-    canvas.print(timeStr);
+    GFXcanvas1 fullCanvas(matrix->width(), matrix->height());
+    fullCanvas.fillScreen(0);
+    fullCanvas.setTextSize(gfxSize);
+    fullCanvas.setCursor(x, y);
+    fullCanvas.setTextColor(1);
+    fullCanvas.print(timeStr);
     
-    for (int py = 0; py < matrix->height(); py += blockSize) {
-        for (int px = 0; px < matrix->width(); px += blockSize) {
-            if (canvas.getPixel(px, py)) {
-                TetrisBlock b;
-                b.tx = px;
-                b.ty = py;
-                b.x = px;
-                b.y = py - matrix->height() - (rand() % 40);
-                b.dy = ((float)rand() / RAND_MAX) * 2.0f + 1.0f; // 1.0 to 3.0
-                b.color = tetrisColors[rand() % 7];
-                b.state = 0; // IN
-                blocks.push_back(b);
+    for (int charIdx : targetIndices) {
+        char maskStr[12];
+        strcpy(maskStr, timeStr);
+        maskStr[charIdx] = ' '; // Hide this character
+        
+        GFXcanvas1 maskCanvas(matrix->width(), matrix->height());
+        maskCanvas.fillScreen(0);
+        maskCanvas.setTextSize(gfxSize);
+        maskCanvas.setCursor(x, y);
+        maskCanvas.setTextColor(1);
+        maskCanvas.print(maskStr);
+        
+        for (int py = 0; py < matrix->height(); py += blockSize) {
+            for (int px = 0; px < matrix->width(); px += blockSize) {
+                if (fullCanvas.getPixel(px, py) && !maskCanvas.getPixel(px, py)) {
+                    TetrisBlock b;
+                    b.charIndex = charIdx;
+                    b.tx = px;
+                    b.ty = py;
+                    b.x = px;
+                    b.y = py - matrix->height() - (rand() % 40);
+                    b.dy = ((float)rand() / RAND_MAX) * 2.0f + 1.0f; // 1.0 to 3.0
+                    b.color = tetrisColors[rand() % 7];
+                    b.state = 0; // IN
+                    blocks.push_back(b);
+                }
             }
         }
     }
@@ -79,14 +95,36 @@ void TetrisClock::update() {
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     
     if (strcmp(timeStr, lastTimeStr) != 0) {
-        // Drop out old blocks
-        for (auto& b : blocks) {
-            b.state = 2; // OUT
-            b.dy = ((float)rand() / RAND_MAX) * 1.5f + 0.5f;
+        if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
+            for (auto& b : blocks) {
+                b.state = 2; // OUT
+                b.dy = ((float)rand() / RAND_MAX) * 1.5f + 0.5f;
+            }
+            std::vector<int> allIndices;
+            for(int i=0; i<strlen(timeStr); i++) allIndices.push_back(i);
+            buildTargets(timeStr, allIndices);
+        } else {
+            std::vector<int> changedIndices;
+            for(int i=0; i<strlen(timeStr); i++) {
+                if(timeStr[i] != lastTimeStr[i]) {
+                    changedIndices.push_back(i);
+                }
+            }
+            if (!changedIndices.empty()) {
+                for (auto& b : blocks) {
+                    if (b.state != 2) {
+                        for(int idx : changedIndices) {
+                            if(b.charIndex == idx) {
+                                b.state = 2; // OUT
+                                b.dy = ((float)rand() / RAND_MAX) * 1.5f + 0.5f;
+                                break;
+                            }
+                        }
+                    }
+                }
+                buildTargets(timeStr, changedIndices);
+            }
         }
-        
-        // Build new
-        buildTargets(timeStr);
         strcpy(lastTimeStr, timeStr);
     }
     

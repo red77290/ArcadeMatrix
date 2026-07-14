@@ -37,6 +37,8 @@ void ConfigLoader::setDefaults() {
     time.clock_theme = 0;
     time.clock_offset_x = 0;
     time.clock_offset_y = 0;
+    time.clock_color_1 = "#ffffff";
+    time.clock_color_2 = "#ffffff";
 
     idle.rotation = "clock,date,weather,gifs";
     idle.clock_duration_sec = 60;
@@ -64,6 +66,8 @@ void ConfigLoader::setDefaults() {
     dateSettings.date_size = 1;
     dateSettings.date_offset_x = 0;
     dateSettings.date_offset_y = 0;
+    dateSettings.date_color_1 = "#ffffff";
+    dateSettings.date_color_2 = "#ffffff";
 }
 
 String ConfigLoader::extractValue(String line) {
@@ -129,6 +133,8 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "CLOCK_THEME") time.clock_theme = value.toInt();
         else if (key == "CLOCK_OFFSET_X") time.clock_offset_x = value.toInt();
         else if (key == "CLOCK_OFFSET_Y") time.clock_offset_y = value.toInt();
+        else if (key == "CLOCK_COLOR_1") time.clock_color_1 = value;
+        else if (key == "CLOCK_COLOR_2") time.clock_color_2 = value;
     }
     else if (currentSection == "IDLE") {
         if (key == "ROTATION") idle.rotation = value;
@@ -160,6 +166,8 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "DATE_OFFSET_X") dateSettings.date_offset_x = value.toInt();
         else if (key == "DATE_OFFSET_Y") dateSettings.date_offset_y = value.toInt();
         else if (key == "BACKGROUND_SPRITE") dateSettings.background_sprite = value;
+        else if (key == "DATE_COLOR_1") dateSettings.date_color_1 = value;
+        else if (key == "DATE_COLOR_2") dateSettings.date_color_2 = value;
     }
 }
 
@@ -253,6 +261,8 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("clock_offset_y=" + String(time.clock_offset_y));
     file.println("# Theme/Character: 0=Nintendo, 1=Capcom, 2=Taito, 3=Sega, 4=Cave, 5=Konami, 6=SNK, 7=Technos, 8=IGS, 9=Hudson, 10=Banpresto, 11=Namco, 12=Ryu, 13=Mario, 14=Marco, 15=Megaman, 16=Bub, 17=SpaceInvader, 18=Cyberpunk, 19=FlipClock");
     file.println("clock_theme=" + String(time.clock_theme));
+    file.println("clock_color_1=" + time.clock_color_1);
+    file.println("clock_color_2=" + time.clock_color_2);
     file.println();
 
     file.println("[matrix]");
@@ -307,6 +317,8 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("date_size=" + String(dateSettings.date_size));
     file.println("date_offset_x=" + String(dateSettings.date_offset_x));
     file.println("date_offset_y=" + String(dateSettings.date_offset_y));
+    file.println("date_color_1=" + dateSettings.date_color_1);
+    file.println("date_color_2=" + dateSettings.date_color_2);
     file.println();
     
     file.close();

@@ -6,6 +6,9 @@
 #include "TetrisClock.h"
 #include "WordClock.h"
 #include "BinaryClock.h"
+#include "PacmanClock.h"
+#include "VersusClock.h"
+#include "SlotMachineClock.h"
 
 ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
@@ -31,10 +34,16 @@ void ClockEngine::setTheme(PublisherTheme theme) {
         activeFace = new PongClock(matrix);
     } else if (theme == 23) {
         activeFace = new TetrisClock(matrix);
-    } else if (theme == 25) {
+    } else if (theme == 24) {
         activeFace = new WordClock(matrix);
-    } else if (theme == 26) {
+    } else if (theme == 25) {
         activeFace = new BinaryClock(matrix);
+    } else if (theme == 26) {
+        activeFace = new PacmanClock(matrix);
+    } else if (theme == 27) {
+        activeFace = new VersusClock(matrix);
+    } else if (theme == 28) {
+        activeFace = new SlotMachineClock(matrix);
     } else {
         // Theme 0-17 (Publisher + Characters) are handled by ArcadeClock
         ArcadeClock* arcade = new ArcadeClock(matrix);

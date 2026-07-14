@@ -62,6 +62,8 @@ struct TimeConfig {
     int clock_theme;        ///< PublisherTheme ID (Nintendo, Capcom, etc.)
     int clock_offset_x;     ///< Manual X axis pixel offset
     int clock_offset_y;     ///< Manual Y axis pixel offset
+    String clock_color_1;   ///< Hex color string for gradient start
+    String clock_color_2;   ///< Hex color string for gradient end
 };
 
 /**
@@ -114,6 +116,8 @@ struct DateConfig {
     int date_size;              ///< Scale multiplier
     int date_offset_x;          ///< Manual X axis pixel offset
     int date_offset_y;          ///< Manual Y axis pixel offset
+    String date_color_1;        ///< Hex color string for gradient start
+    String date_color_2;        ///< Hex color string for gradient end
 };
 
 /**

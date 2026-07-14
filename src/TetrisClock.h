@@ -5,6 +5,7 @@
 #include <vector>
 
 struct TetrisBlock {
+    int charIndex;
     float x, y;
     float tx, ty;
     float dy;
@@ -25,7 +26,7 @@ private:
     uint32_t lastFrameTime;
     int blockSize;
     
-    void buildTargets(const char* timeStr);
+    void buildTargets(const char* timeStr, const std::vector<int>& targetIndices);
 };
 
 #endif

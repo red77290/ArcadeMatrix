@@ -52,6 +52,9 @@ struct FgtAnimation {
 struct FighterPlayer {
     String name;                ///< Name of the character directory
     int height;                 ///< Native height of the character
+    int ground_y;               ///< Y position of the ground (origin)
+    int origin_x;               ///< X position of the origin
+    int width_px;               ///< Native width of the character
     FgtAnimation animWalk;      ///< Walking animation data
     FgtAnimation animAttack;    ///< Attack animation data
     FgtAnimation animHit;       ///< Hit animation data
@@ -137,7 +140,7 @@ private:
     uint32_t lastMoveTime = 0;      ///< Timer for horizontal movement pacing
     
     String getFightersDir();
-    bool getRandomFighter(String& outName, int& outHeight);
+    bool getRandomFighter(FighterPlayer& p);
     
     void loadRoster();
     bool loadFighterAnim(FgtAnimation& anim, const char* filepath);

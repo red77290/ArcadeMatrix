@@ -64,7 +64,7 @@ void FighterEngine::loadRoster() {
     Serial.printf("FighterEngine: Loaded %d fighters (Fast Offset mode: %d bytes RAM)\n", numAvailableFighters, numAvailableFighters * 4);
 }
 
-bool FighterEngine::getRandomFighter(String& outName, int& outHeight) {
+bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
@@ -77,10 +77,18 @@ bool FighterEngine::getRandomFighter(String& outName, int& outHeight) {
     result.trim();
     f.close();
     
-    int commaIdx = result.indexOf(',');
-    if (commaIdx > 0) {
-        outName = result.substring(0, commaIdx);
-        outHeight = result.substring(commaIdx + 1).toInt();
+    // Format: name,height,ground_y,origin_x,width
+    int comma1 = result.indexOf(',');
+    int comma2 = result.indexOf(',', comma1 + 1);
+    int comma3 = result.indexOf(',', comma2 + 1);
+    int comma4 = result.indexOf(',', comma3 + 1);
+
+    if (comma1 > 0) {
+        p.name = result.substring(0, comma1);
+        p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
+        p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
+        p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
+        p.width_px = comma4 > 0 ? result.substring(comma4 + 1).toInt() : 32;
         return true;
     }
     
@@ -166,11 +174,11 @@ void FighterEngine::startFight() {
     freeFighter(p1);
     freeFighter(p2);
     
-    if (!getRandomFighter(p1.name, p1.height)) return;
+    if (!getRandomFighter(p1)) return;
     
     bool found = false;
     for (int i = 0; i < 20; i++) {
-        if (getRandomFighter(p2.name, p2.height)) {
+        if (getRandomFighter(p2)) {
             if (p2.name != p1.name && p2.height >= p1.height * 0.8 && p2.height <= p1.height * 1.2) {
                 found = true;
                 break;
@@ -182,7 +190,7 @@ void FighterEngine::startFight() {
         // Fallback
         int attempts = 0;
         do {
-            getRandomFighter(p2.name, p2.height);
+            getRandomFighter(p2);
             attempts++;
         } while (p1.name == p2.name && attempts < 10);
     }
@@ -254,11 +262,11 @@ void FighterEngine::processLoadState() {
             
             // Done! Finish setup
             {
-                int maxHeight = max(p1.height, p2.height);
-                p1.direction = 1; p1.x = -p1.animWalk.width; p1.y = maxHeight - p1.height;
+                int matrixGround = matrix->height() - 1;
+                p1.direction = 1; p1.x = -p1.width_px; p1.y = matrixGround - p1.ground_y;
                 
                 p2.direction = -1; p2.x = matrix->width();
-                p2.y = maxHeight - p2.height;
+                p2.y = matrixGround - p2.ground_y;
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
@@ -389,9 +397,13 @@ void FighterEngine::loop() {
             lastMoveTime += pixelsToMove * 35;
         }
         
-        // Collision detection (simple distance)
-        int dist = p2.x - (p1.x + p1.animWalk.width);
-        if (dist <= 0) {
+        // Collision detection (simple distance using origins)
+        int p1_world_origin = p1.x + p1.origin_x;
+        int p2_world_origin = p2.x + (p2.width_px - p2.origin_x);
+        int dist = p2_world_origin - p1_world_origin;
+        int engage_dist = (int)(matrix->width() * 0.4f);
+        
+        if (dist <= engage_dist) {
             // Fight! Random winner
             FighterPlayer* attacker = (random(2) == 0) ? &p1 : &p2;
             FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
