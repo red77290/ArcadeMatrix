@@ -154,6 +154,9 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
     freeAnim(p.animAttack);
     freeAnim(p.animHit);
     freeAnim(p.animWin);
+    freeAnim(p.animSpecial);
+    freeAnim(p.animSuper);
+    freeAnim(p.animFall);
 }
 
 void FighterEngine::startFight() {
@@ -208,7 +211,19 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P1_WIN:
             if (!loadFighterAnim(p1.animWin, (loadDir + "/" + p1.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P2_WALK;
+            else currentLoadState = LOAD_P1_SPECIAL;
+            break;
+        case LOAD_P1_SPECIAL:
+            loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(random(1, 4)) + ".fgt").c_str());
+            currentLoadState = LOAD_P1_SUPER;
+            break;
+        case LOAD_P1_SUPER:
+            loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(random(1, 4)) + ".fgt").c_str());
+            currentLoadState = LOAD_P1_FALL;
+            break;
+        case LOAD_P1_FALL:
+            loadFighterAnim(p1.animFall, (loadDir + "/" + p1.name + "/fall.fgt").c_str());
+            currentLoadState = LOAD_P2_WALK;
             break;
         case LOAD_P2_WALK:
             if (!loadFighterAnim(p2.animWalk, (loadDir + "/" + p2.name + "/walk.fgt").c_str())) currentLoadState = LOAD_FINISH;
@@ -224,8 +239,21 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P2_WIN:
             if (!loadFighterAnim(p2.animWin, (loadDir + "/" + p2.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else {
-                // Done! Finish setup
+            else currentLoadState = LOAD_P2_SPECIAL;
+            break;
+        case LOAD_P2_SPECIAL:
+            loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(random(1, 4)) + ".fgt").c_str());
+            currentLoadState = LOAD_P2_SUPER;
+            break;
+        case LOAD_P2_SUPER:
+            loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(random(1, 4)) + ".fgt").c_str());
+            currentLoadState = LOAD_P2_FALL;
+            break;
+        case LOAD_P2_FALL:
+            loadFighterAnim(p2.animFall, (loadDir + "/" + p2.name + "/fall.fgt").c_str());
+            
+            // Done! Finish setup
+            {
                 int maxHeight = max(p1.height, p2.height);
                 p1.direction = 1; p1.x = -p1.animWalk.width; p1.y = maxHeight - p1.height;
                 
@@ -267,6 +295,9 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_ATTACK) anim = &p.animAttack;
     else if (newState == FIGHTER_HIT) anim = &p.animHit;
     else if (newState == FIGHTER_WIN) anim = &p.animWin;
+    else if (newState == FIGHTER_SPECIAL) anim = &p.animSpecial;
+    else if (newState == FIGHTER_SUPER) anim = &p.animSuper;
+    else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
     if (p.activeFile) p.activeFile.close();
     if (anim && anim->loaded) {
@@ -281,6 +312,9 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             p.animAttack.cachedFrameIndex = -1;
             p.animHit.cachedFrameIndex = -1;
             p.animWin.cachedFrameIndex = -1;
+            p.animSpecial.cachedFrameIndex = -1;
+            p.animSuper.cachedFrameIndex = -1;
+            p.animFall.cachedFrameIndex = -1;
         }
         p.activeFile = SD.open(anim->filepath, FILE_READ);
     }
@@ -293,6 +327,8 @@ void FighterEngine::loop() {
         processLoadState();
         return;
     }
+    
+    if (millis() < hitStopUntilMillis) return;
     
     if (!active) {
         startFight();
@@ -307,14 +343,17 @@ void FighterEngine::loop() {
     else if (p1.state == FIGHTER_ATTACK) anim1 = &p1.animAttack;
     else if (p1.state == FIGHTER_HIT) anim1 = &p1.animHit;
     else if (p1.state == FIGHTER_WIN) anim1 = &p1.animWin;
+    else if (p1.state == FIGHTER_SPECIAL) anim1 = &p1.animSpecial;
+    else if (p1.state == FIGHTER_SUPER) anim1 = &p1.animSuper;
+    else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
     if (anim1 && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
         p1.currentFrame++;
         p1.lastFrameTime = now;
         if (p1.currentFrame >= anim1->numFrames) {
             if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
-            else if (p1.state == FIGHTER_ATTACK) setPlayerState(p1, FIGHTER_WIN);
-            else if (p1.state == FIGHTER_HIT) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
+            else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
+            else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
             else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
         }
     }
@@ -324,14 +363,17 @@ void FighterEngine::loop() {
     else if (p2.state == FIGHTER_ATTACK) anim2 = &p2.animAttack;
     else if (p2.state == FIGHTER_HIT) anim2 = &p2.animHit;
     else if (p2.state == FIGHTER_WIN) anim2 = &p2.animWin;
+    else if (p2.state == FIGHTER_SPECIAL) anim2 = &p2.animSpecial;
+    else if (p2.state == FIGHTER_SUPER) anim2 = &p2.animSuper;
+    else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
     if (anim2 && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
         p2.currentFrame++;
         p2.lastFrameTime = now;
         if (p2.currentFrame >= anim2->numFrames) {
             if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
-            else if (p2.state == FIGHTER_ATTACK) setPlayerState(p2, FIGHTER_WIN);
-            else if (p2.state == FIGHTER_HIT) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
+            else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
+            else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
             else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; }
         }
     }
@@ -351,15 +393,39 @@ void FighterEngine::loop() {
         int dist = p2.x - (p1.x + p1.animWalk.width);
         if (dist <= 0) {
             // Fight! Random winner
-            if (random(2) == 0) {
-                setPlayerState(p1, FIGHTER_ATTACK);
-                setPlayerState(p2, FIGHTER_HIT);
-            } else {
-                setPlayerState(p2, FIGHTER_ATTACK);
-                setPlayerState(p1, FIGHTER_HIT);
+            FighterPlayer* attacker = (random(2) == 0) ? &p1 : &p2;
+            FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
+            
+            FighterState atkState = FIGHTER_ATTACK;
+            FighterState tgtState = FIGHTER_HIT;
+            bool isHeavy = false;
+            
+            int rnd = random(100);
+            if (attacker->animSuper.loaded && rnd < 20) {
+                atkState = FIGHTER_SUPER;
+                tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
+                isHeavy = true;
+            } else if (attacker->animSpecial.loaded && rnd < 50) {
+                atkState = FIGHTER_SPECIAL;
+                tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
+                isHeavy = true;
+            }
+            
+            setPlayerState(*attacker, atkState);
+            setPlayerState(*target, tgtState);
+            
+            if (isHeavy) {
+                hitStopUntilMillis = millis() + 150;
+                shakeRemainingFrames = 10;
             }
         }
     }
+    
+    // Dynamic Movement during special/super/fall
+    if (p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) p1.x += p1.direction * 2;
+    if (p1.state == FIGHTER_FALL) p1.x -= p1.direction * 2;
+    if (p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) p2.x += p2.direction * 2;
+    if (p2.state == FIGHTER_FALL) p2.x -= p2.direction * 2;
     
     // End sequence
     if (fightEndTime == 0 && (p1.isDead || p2.isDead)) {
@@ -377,6 +443,9 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     else if (p.state == FIGHTER_ATTACK) anim = &p.animAttack;
     else if (p.state == FIGHTER_HIT) anim = &p.animHit;
     else if (p.state == FIGHTER_WIN) anim = &p.animWin;
+    else if (p.state == FIGHTER_SPECIAL) anim = &p.animSpecial;
+    else if (p.state == FIGHTER_SUPER) anim = &p.animSuper;
+    else if (p.state == FIGHTER_FALL) anim = &p.animFall;
     
     if (!anim || !anim->loaded) return;
     
@@ -397,19 +466,26 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     uint8_t* ptr = p.currentFrameBuffer;
     if (!ptr) return;
     
+    bool invert = (p.state == FIGHTER_SUPER && p.currentFrame < 2);
+    
+    int offsetY = 0;
+    if (shakeRemainingFrames > 0) offsetY = random(-2, 3);
+    
     for (int y = 0; y < anim->height; y++) {
         for (int x = 0; x < anim->width; x++) {
             uint16_t color = ptr[0] | (ptr[1] << 8);
             ptr += 2;
             
             if (color != anim->transparentColor) {
+                if (invert) color = ~color;
+                
                 int drawX = p.x + x;
                 // Flip horizontally if facing left
                 if (p.direction == -1) {
                     drawX = p.x + (anim->width - 1 - x);
                 }
                 
-                int drawY = p.y + y;
+                int drawY = p.y + y + offsetY;
                 
                 if (drawX >= 0 && drawX < matrix->width() && drawY >= 0 && drawY < matrix->height()) {
                     matrix->drawPixel(drawX, drawY, color);
@@ -421,8 +497,11 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
 
 void FighterEngine::draw() {
     if (!active) return;
+    
+    if (shakeRemainingFrames > 0) shakeRemainingFrames--;
+    
     // Draw the dead player first (background), then the winner (foreground)
-    if (p1.state == FIGHTER_HIT || p1.isDead) {
+    if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL || p1.isDead) {
         drawPlayer(p1);
         drawPlayer(p2);
     } else {

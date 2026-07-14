@@ -2,6 +2,10 @@
 #include "ArcadeClock.h"
 #include "CyberpunkClock.h"
 #include "FlipClock.h"
+#include "PongClock.h"
+#include "TetrisClock.h"
+#include "WordClock.h"
+#include "BinaryClock.h"
 
 ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
@@ -23,6 +27,14 @@ void ClockEngine::setTheme(PublisherTheme theme) {
         activeFace = new CyberpunkClock(matrix);
     } else if (theme == THEME_FLIP) {
         activeFace = new FlipClock(matrix);
+    } else if (theme == 22) {
+        activeFace = new PongClock(matrix);
+    } else if (theme == 23) {
+        activeFace = new TetrisClock(matrix);
+    } else if (theme == 25) {
+        activeFace = new WordClock(matrix);
+    } else if (theme == 26) {
+        activeFace = new BinaryClock(matrix);
     } else {
         // Theme 0-17 (Publisher + Characters) are handled by ArcadeClock
         ArcadeClock* arcade = new ArcadeClock(matrix);

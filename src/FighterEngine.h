@@ -22,7 +22,10 @@ enum FighterState {
     FIGHTER_WALK,   ///< Walking towards the center or opponent
     FIGHTER_ATTACK, ///< Performing an attack animation
     FIGHTER_HIT,    ///< Taking damage from an attack
-    FIGHTER_WIN     ///< Celebration animation upon victory
+    FIGHTER_WIN,    ///< Celebration animation upon victory
+    FIGHTER_SPECIAL,///< Performing a special attack
+    FIGHTER_SUPER,  ///< Performing a super attack
+    FIGHTER_FALL    ///< Hard knockdown reaction
 };
 
 /**
@@ -53,6 +56,9 @@ struct FighterPlayer {
     FgtAnimation animAttack;    ///< Attack animation data
     FgtAnimation animHit;       ///< Hit animation data
     FgtAnimation animWin;       ///< Win animation data
+    FgtAnimation animSpecial;   ///< Special attack animation data
+    FgtAnimation animSuper;     ///< Super attack animation data
+    FgtAnimation animFall;      ///< Fall animation data
     FighterState state;         ///< Current state in the state machine
     
     File activeFile;            ///< File handle currently open for streaming pixels
@@ -144,6 +150,9 @@ private:
     uint32_t fightStartTime;        ///< Timestamp when the fight began
     uint32_t fightEndTime = 0;      ///< Timestamp when the fight concludes
     
+    uint32_t hitStopUntilMillis = 0; ///< Hit-stop pause end time
+    int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake
+    
     /**
      * @brief State machine for asynchronous loading from SD to avoid blocking.
      */
@@ -151,7 +160,9 @@ private:
         LOAD_IDLE,
         LOAD_INIT,
         LOAD_P1_WALK, LOAD_P1_ATTACK, LOAD_P1_HIT, LOAD_P1_WIN,
+        LOAD_P1_SPECIAL, LOAD_P1_SUPER, LOAD_P1_FALL,
         LOAD_P2_WALK, LOAD_P2_ATTACK, LOAD_P2_HIT, LOAD_P2_WIN,
+        LOAD_P2_SPECIAL, LOAD_P2_SUPER, LOAD_P2_FALL,
         LOAD_FINISH
     };
     LoadState currentLoadState = LOAD_IDLE;
