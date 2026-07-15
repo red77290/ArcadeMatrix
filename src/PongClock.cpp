@@ -6,9 +6,9 @@ extern ConfigLoader config;
 
 PongClock::PongClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastMinute(-1), forceMiss(false), lastFrameTime(0) {
     storedTime = {0, 0, 0};
-    ball_size = 2;
-    pad_w = 2;
-    pad_h = 12;
+    ball_size = max(2, (int)(matrix->height() / 16));
+    pad_w = max(2, (int)(matrix->width() / 32));
+    pad_h = max(12, (int)(matrix->height() / 3));
     
     p1_y = (matrix->height() - pad_h) / 2;
     p2_y = p1_y;
@@ -17,14 +17,15 @@ PongClock::PongClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastMin
 
 void PongClock::resetBall(bool leftServed) {
     ball_y = matrix->height() / 2;
-    ball_dy = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // -1.0 to 1.0
+    ball_dy = (((float)rand() / RAND_MAX) * 2.0f - 1.0f) * (matrix->height() / 32.0f);
     
+    float base_dx = 1.5f * (matrix->width() / 64.0f);
     if (leftServed) {
         ball_x = pad_w + 1;
-        ball_dx = 1.5f;
+        ball_dx = base_dx;
     } else {
         ball_x = matrix->width() - pad_w - 3;
-        ball_dx = -1.5f;
+        ball_dx = -base_dx;
     }
 }
 
@@ -81,11 +82,12 @@ void PongClock::update() {
             ball_dy *= -1;
         }
         
+        float ai_speed = 1.0f * (matrix->height() / 32.0f);
         // P1 AI (Left)
         float target_p1 = ball_y - (pad_h / 2);
         if (ball_dx < 0) {
-            if (p1_y < target_p1) p1_y += 1.0f;
-            if (p1_y > target_p1) p1_y -= 1.0f;
+            if (p1_y < target_p1) p1_y += ai_speed;
+            if (p1_y > target_p1) p1_y -= ai_speed;
         }
         
         // P2 AI (Right)
@@ -95,8 +97,8 @@ void PongClock::update() {
                 if (ball_y > matrix->height() / 2) target_p2 = 0;
                 else target_p2 = matrix->height() - pad_h;
             }
-            if (p2_y < target_p2) p2_y += 1.0f;
-            if (p2_y > target_p2) p2_y -= 1.0f;
+            if (p2_y < target_p2) p2_y += ai_speed;
+            if (p2_y > target_p2) p2_y -= ai_speed;
         }
         
         // Clamp
@@ -121,10 +123,12 @@ void PongClock::update() {
         }
         
         // Speed cap
-        if (ball_dx > 3.0f) ball_dx = 3.0f;
-        if (ball_dx < -3.0f) ball_dx = -3.0f;
-        if (ball_dy > 2.5f) ball_dy = 2.5f;
-        if (ball_dy < -2.5f) ball_dy = -2.5f;
+        float max_dx = 3.0f * (matrix->width() / 64.0f);
+        float max_dy = 2.5f * (matrix->height() / 32.0f);
+        if (ball_dx > max_dx) ball_dx = max_dx;
+        if (ball_dx < -max_dx) ball_dx = -max_dx;
+        if (ball_dy > max_dy) ball_dy = max_dy;
+        if (ball_dy < -max_dy) ball_dy = -max_dy;
         
         // Scoring
         if (ball_x < -10) {

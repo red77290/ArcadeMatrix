@@ -177,18 +177,19 @@ void WebServerAPI::setupRoutes() {
         if (!doc["sprite_count"].isNull()) config.idle.sprite_count = doc["sprite_count"].as<int>();
         
         // Clock
-        if (!doc["clock_font"].isNull()) config.time.clock_font = doc["clock_font"].as<int>();
-        if (!doc["clock_size"].isNull()) config.time.clock_size = doc["clock_size"].as<int>();
-        if (!doc["clock_offset_x"].isNull()) config.time.clock_offset_x = doc["clock_offset_x"].as<int>();
-        if (!doc["clock_offset_y"].isNull()) config.time.clock_offset_y = doc["clock_offset_y"].as<int>();
-        if (!doc["clock_color_1"].isNull()) config.time.clock_color_1 = doc["clock_color_1"].as<String>();
-        if (!doc["clock_color_2"].isNull()) config.time.clock_color_2 = doc["clock_color_2"].as<String>();
-        if (!doc["clock_theme"].isNull()) {
-            config.time.clock_theme = doc["clock_theme"].as<int>();
+        bool clockChanged = false;
+        if (!doc["clock_font"].isNull()) { config.time.clock_font = doc["clock_font"].as<int>(); clockChanged = true; }
+        if (!doc["clock_size"].isNull()) { config.time.clock_size = doc["clock_size"].as<int>(); clockChanged = true; }
+        if (!doc["clock_offset_x"].isNull()) { config.time.clock_offset_x = doc["clock_offset_x"].as<int>(); clockChanged = true; }
+        if (!doc["clock_offset_y"].isNull()) { config.time.clock_offset_y = doc["clock_offset_y"].as<int>(); clockChanged = true; }
+        if (!doc["clock_color_1"].isNull()) { config.time.clock_color_1 = doc["clock_color_1"].as<String>(); clockChanged = true; }
+        if (!doc["clock_color_2"].isNull()) { config.time.clock_color_2 = doc["clock_color_2"].as<String>(); clockChanged = true; }
+        if (!doc["clock_theme"].isNull()) { config.time.clock_theme = doc["clock_theme"].as<int>(); clockChanged = true; }
+        
+        if (clockChanged) {
             extern ClockEngine* clockEngine;
             if (clockEngine) clockEngine->setTheme((PublisherTheme)config.time.clock_theme);
         }
-
         // Date
         if (!doc["date_font"].isNull()) config.dateSettings.date_font = doc["date_font"].as<int>();
         if (!doc["date_size"].isNull()) config.dateSettings.date_size = doc["date_size"].as<int>();

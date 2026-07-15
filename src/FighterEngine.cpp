@@ -179,7 +179,9 @@ void FighterEngine::startFight() {
     bool found = false;
     for (int i = 0; i < 20; i++) {
         if (getRandomFighter(p2)) {
-            if (p2.name != p1.name && p2.height >= p1.height * 0.8 && p2.height <= p1.height * 1.2) {
+            // User constraint: Opponent must be max 20% smaller, and NEVER taller than P1.
+            // Original height is stored in p.ground_y.
+            if (p2.name != p1.name && p2.ground_y >= p1.ground_y * 0.8 && p2.ground_y <= p1.ground_y) {
                 found = true;
                 break;
             }
@@ -262,11 +264,11 @@ void FighterEngine::processLoadState() {
             
             // Done! Finish setup
             {
-                int matrixGround = matrix->height() - 1;
-                p1.direction = 1; p1.x = -p1.width_px; p1.y = matrixGround - p1.ground_y;
+                int fight_max_h = (p1.ground_y > p2.ground_y) ? p1.ground_y : p2.ground_y;
+                p1.direction = 1; p1.x = -p1.width_px; p1.y = fight_max_h - p1.ground_y;
                 
                 p2.direction = -1; p2.x = matrix->width();
-                p2.y = matrixGround - p2.ground_y;
+                p2.y = fight_max_h - p2.ground_y;
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);

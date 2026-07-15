@@ -15,10 +15,17 @@ const uint16_t tetrisColors[7] = {
     0xF81F  // Magenta
 };
 
-TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastFrameTime(0) {
+const uint16_t gameboyColors[4] = {
+    0x0AD1, // Darkest green
+    0x3306,
+    0x8D61,
+    0x9DE1  // Lightest green
+};
+
+TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode) : ClockFace(display), isGameboy(gameboyMode), lastFrameTime(0) {
     storedTime = {0, 0, 0};
     strcpy(lastTimeStr, "");
-    blockSize = 2;
+    blockSize = max(1, (int)(matrix->height() / 16));
 }
 
 void TetrisClock::draw(const TimeData& t) {
@@ -80,8 +87,12 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
                     b.ty = py;
                     b.x = px;
                     b.y = py - matrix->height() - (rand() % 40);
-                    b.dy = ((float)rand() / RAND_MAX) * 2.0f + 1.0f; // 1.0 to 3.0
-                    b.color = tetrisColors[rand() % 7];
+                    b.dy = (((float)rand() / RAND_MAX) * 2.0f + 1.0f) * (matrix->height() / 32.0f); // 1.0 to 3.0 scaled
+                    if (isGameboy) {
+                        b.color = gameboyColors[rand() % 4];
+                    } else {
+                        b.color = tetrisColors[rand() % 7];
+                    }
                     b.state = 0; // IN
                     blocks.push_back(b);
                 }
@@ -98,7 +109,7 @@ void TetrisClock::update() {
         if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
             for (auto& b : blocks) {
                 b.state = 2; // OUT
-                b.dy = ((float)rand() / RAND_MAX) * 1.5f + 0.5f;
+                b.dy = (((float)rand() / RAND_MAX) * 1.5f + 0.5f) * (matrix->height() / 32.0f);
             }
             std::vector<int> allIndices;
             for(int i=0; i<strlen(timeStr); i++) allIndices.push_back(i);
@@ -116,7 +127,7 @@ void TetrisClock::update() {
                         for(int idx : changedIndices) {
                             if(b.charIndex == idx) {
                                 b.state = 2; // OUT
-                                b.dy = ((float)rand() / RAND_MAX) * 1.5f + 0.5f;
+                                b.dy = (((float)rand() / RAND_MAX) * 1.5f + 0.5f) * (matrix->height() / 32.0f);
                                 break;
                             }
                         }
@@ -141,7 +152,7 @@ void TetrisClock::update() {
                 ++it;
             } else if (it->state == 2) { // OUT
                 it->y += it->dy;
-                it->dy += 0.2f; // Gravity
+                it->dy += 0.2f * (matrix->height() / 32.0f); // Gravity
                 if (it->y > matrix->height()) {
                     it = blocks.erase(it);
                 } else {

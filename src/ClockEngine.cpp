@@ -33,7 +33,9 @@ void ClockEngine::setTheme(PublisherTheme theme) {
     } else if (theme == 22) {
         activeFace = new PongClock(matrix);
     } else if (theme == 23) {
-        activeFace = new TetrisClock(matrix);
+        activeFace = new TetrisClock(matrix, false); // Normal Tetris
+    } else if (theme == 29) {
+        activeFace = new TetrisClock(matrix, true); // Gameboy Tetris
     } else if (theme == 24) {
         activeFace = new WordClock(matrix);
     } else if (theme == 25) {

@@ -23,7 +23,8 @@ enum PublisherTheme {
     THEME_SPACE = 16,
     THEME_BUB = 17,
     THEME_CYBERPUNK = 18,
-    THEME_FLIP = 19
+    THEME_FLIP = 19,
+    THEME_TETRIS_GB = 29
 };
 
 class DateEngine {

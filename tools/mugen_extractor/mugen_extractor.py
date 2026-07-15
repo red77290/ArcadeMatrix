@@ -109,11 +109,9 @@ def process_character(char_dir, out_dir):
     air_files = glob.glob(os.path.join(char_dir, "*.air"))
     if not sff_files or not air_files: return False
 
-    act_file = get_def_palette(char_dir)
+    # We explicitly ignore .act files to fix the BGR vs RGB palette inversion issue.
+    # The script will rely entirely on the main palette embedded within the .sff file.
     master_palette = None
-    if act_file:
-        with open(act_file, 'rb') as f:
-            master_palette = f.read(768)
 
     sff = SFFv1Parser(sff_files[0])
     air = AirParser(air_files[0])
@@ -223,12 +221,15 @@ def process_character(char_dir, out_dir):
     
     if orig_w <= 0 or orig_h <= 0: return False
     
+    # Force 1:1 Scale
     scale = 1.0
-    if walk_h > TARGET_HEIGHT:
-        scale = TARGET_HEIGHT / walk_h
         
     canvas_w = max(1, int(orig_w * scale))
-    canvas_h = max(1, int(orig_h * scale))
+    canvas_h = TARGET_HEIGHT
+    
+    # In Mugen, Y is negative (up). global_min_y is the head.
+    # To place the head at Y=0 in the canvas, we need the origin to be at -global_min_y.
+    # So ground_y (the virtual feet position) is exactly the character's full height.
     ground_y = int(-global_min_y * scale)
     origin_x = int(-global_min_x * scale)
 
@@ -287,11 +288,11 @@ def process_character(char_dir, out_dir):
                                         b = master_palette[idx*3 + 2]
                                         rgba_pixels[cx, cy] = (r, g, b, 255)
                                         
-                if scale < 1.0:
-                    rgba_canvas = rgba_canvas.resize((canvas_w, canvas_h), Image.Resampling.BILINEAR)
+                if orig_w != canvas_w or orig_h != canvas_h:
+                    rgba_canvas = rgba_canvas.crop((0, 0, canvas_w, canvas_h))
                 
-                resized_data = rgba_canvas.getdata()
-                for r, g, b, a in resized_data:
+                cropped_data = rgba_canvas.getdata()
+                for r, g, b, a in cropped_data:
                     if a < 128:
                         f.write(struct.pack('<H', TRANSPARENT_COLOR_565))
                     else:

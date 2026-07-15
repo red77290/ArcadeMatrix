@@ -15,11 +15,12 @@ struct TetrisBlock {
 
 class TetrisClock : public ClockFace {
 public:
-    TetrisClock(MatrixPanel_I2S_DMA* display);
+    TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode = false);
     void draw(const TimeData& t) override;
     void update() override;
 
 private:
+    bool isGameboy;
     TimeData storedTime;
     std::vector<TetrisBlock> blocks;
     char lastTimeStr[12];

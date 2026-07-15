@@ -126,11 +126,17 @@ void PacmanClock::update() {
                 matrix->drawPixel((int)px, (int)py, dotColor);
             }
         } else {
-            pacX += 1.5f;
+            float pacSpeed = 1.5f * (matrix->width() / 64.0f);
+            pacX += pacSpeed;
             
             int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
             
-            if (pacX < matrix->width() + 60) {
+            int pacRadius = max(4, (int)(matrix->height() / 5.3f));
+            int ghostRadius = max(3, (int)(matrix->height() / 6.4f));
+            int ghostSpacing = ghostRadius * 2.5f;
+            int tailLength = ghostSpacing * 4;
+            
+            if (pacX < matrix->width() + tailLength + 20) {
                 // To achieve clipping, we draw the text and then cover it with black rectangles
                 // Draw old time
                 matrix->setCursor(tx, ty);
@@ -146,19 +152,19 @@ void PacmanClock::update() {
                 matrix->print(newTimeStr);
                 
                 // Cover uneaten part (right of pacman trailing tail)
-                int revealX = (int)pacX - 50;
+                int revealX = (int)pacX - tailLength;
                 if (revealX < matrix->width()) {
                     matrix->fillRect(revealX > 0 ? revealX : 0, 0, matrix->width(), matrix->height(), 0);
                 }
                 
                 // Draw Pacman
-                drawPacman((int)pacX, matrix->height() / 2, 6, mouthAngle, true);
+                drawPacman((int)pacX, matrix->height() / 2, pacRadius, mouthAngle, true);
                 
                 // Draw Ghosts
                 for (int i = 0; i < 4; i++) {
-                    float gx = pacX - 15 - (i * 12);
+                    float gx = pacX - (pacRadius * 2.5f) - (i * ghostSpacing);
                     float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * 2;
-                    drawGhost((int)gx, (int)gy, 5, ghostColors[i], animFrame);
+                    drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
                 }
             } else {
                 transitioning = false;
