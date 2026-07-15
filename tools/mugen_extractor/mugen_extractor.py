@@ -335,8 +335,8 @@ if __name__ == "__main__":
 
     src_dir = args.src
     out_dirs = [
-        ("/Users/red1l/Documents/work/git/perso/RetroPixelLED/ArcadeMatrix/scrap/fighters_32", 32),
-        ("/Users/red1l/Documents/work/git/perso/RetroPixelLED/ArcadeMatrix/scrap/fighters_64", 64)
+        ("fighters_32", 32),
+        ("fighters_64", 64)
     ]
     
     start_time = time.time()
