@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ArcadeMatrix Dashboard</title>
+  <style>:root{--font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Outfit","Helvetica Neue",Arial,sans-serif}body,html{font-family:var(--font-sans)}</style>
+  <script type="module" crossorigin>(function(){let e=document.createElement(`link`).relList;if(e&&e.supports&&e.supports(`modulepreload`))return;for(let e of document.querySelectorAll(`link[rel="modulepreload"]`))n(e);new MutationObserver(e=>{for(let t of e)if(t.type===`childList`)for(let e of t.addedNodes)e.tagName===`LINK`&&e.rel===`modulepreload`&&n(e)}).observe(document,{childList:!0,subtree:!0});function t(e){let t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin===`use-credentials`?t.credentials=`include`:e.crossOrigin===`anonymous`?t.credentials=`omit`:t.credentials=`same-origin`,t}function n(e){if(e.ep)return;e.ep=!0;let n=t(e);fetch(e.href,n)}})(),document.addEventListener(`DOMContentLoaded`,()=>{let e=document.querySelectorAll(`.nav-links li`),t=document.querySelectorAll(`.view`);e.forEach(n=>{n.addEventListener(`click`,()=>{e.forEach(e=>e.classList.remove(`active`)),t.forEach(e=>e.classList.remove(`active-view`)),n.classList.add(`active`);let r=`view-${n.dataset.view}`,i=document.getElementById(r);if(i){i.classList.add(`active-view`);let e=document.getElementById(`view-title`);e&&(e.innerText=n.innerText)}let a=document.querySelector(`.sidebar`),o=document.getElementById(`sidebar-overlay`);a&&o&&(a.classList.remove(`open`),o.classList.remove(`open`))})});let n=document.getElementById(`mobile-menu-btn`),r=document.querySelector(`.sidebar`),i=document.getElementById(`sidebar-overlay`);n&&r&&i&&(n.addEventListener(`click`,()=>{r.classList.add(`open`),i.classList.add(`open`)}),i.addEventListener(`click`,()=>{r.classList.remove(`open`),i.classList.remove(`open`)})),(async()=>{let e=document.querySelector(`.playlist-list`);if(e){e.innerHTML=`<div style="padding:2rem;text-align:center;color:var(--text-color);">Loading GIFs...<br><small style="opacity:0.7">Reading SD Card, this may take a few seconds...</small></div>`;try{let t=await fetch(`/api/playlists`);if(!t.ok)throw Error(`Failed to load`);let n=await t.json(),r=[];try{let e=await fetch(`/api/playlists/selected`);e.ok&&(r=(await e.json()).playlists||[])}catch{console.warn(`Could not fetch selected playlists`)}let i=``;for(let[e,t]of Object.entries(n)){let e=r.includes(t.path)?`checked`:``,n=t.count??(t.files?t.files.length:0);i+=`
+          <div class="playlist-item" style="display:flex; align-items:center; gap: 1rem;">
+            <input type="checkbox" class="playlist-checkbox" value="${t.path}" style="width:20px; height:20px;" ${e} />
+            <div class="info">
+              <h4>${t.path}</h4>
+              <span>${n} animations</span>
+            </div>
+          </div>
+        `}e.innerHTML=i,document.querySelectorAll(`.playlist-checkbox`).forEach(e=>{e.addEventListener(`change`,async()=>{let e=document.querySelectorAll(`.playlist-checkbox:checked`),t=Array.from(e).map(e=>e.value);try{await fetch(`/api/playlists/save`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({playlists:t})})}catch(e){console.error(`Failed to save selected playlists`,e)}})})}catch{console.warn(`Could not fetch playlists from ESP32, keeping mocked data for dev`)}}})();let a=document.getElementById(`btn-play-selected`);a&&a.addEventListener(`click`,async()=>{let e=document.querySelectorAll(`.playlist-checkbox:checked`),t=Array.from(e).map(e=>e.value);if(t.length===0){alert(`Please select at least one playlist.`);return}try{await fetch(`/api/playlists/play`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({playlists:t})});let e=a.innerText;a.innerText=`Playing ✔️`,setTimeout(()=>a.innerText=e,2e3)}catch(e){console.error(`Failed to play playlists`,e)}});let o=document.getElementById(`btn-apply-clock`);o&&o.addEventListener(`click`,async()=>{let e=document.getElementById(`clock-character`),t=parseInt(e.value,10);try{await fetch(`/api/clock`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({clock_theme:t})});let e=o.innerText;o.innerText=`Applied ✔️`,setTimeout(()=>o.innerText=e,2e3)}catch(e){console.error(`Failed to save network config`,e)}});let s=document.getElementById(`btn-save-clock`);s&&s.addEventListener(`click`,async()=>{let e=parseInt(document.getElementById(`setting-clock-theme`).value,10),t=parseInt(document.getElementById(`setting-clock-font`).value,10),n=parseInt(document.getElementById(`setting-clock-size`).value,10),r=parseInt(document.getElementById(`setting-clock-offset-x`).value,10),i=parseInt(document.getElementById(`setting-clock-offset-y`).value,10),a=document.getElementById(`setting-clock-color-1`),o=document.getElementById(`setting-clock-color-2`),c=a?a.value:`#ffffff`,l=o?o.value:`#ffffff`;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({clock_theme:e,clock_font:t,clock_size:n,clock_offset_x:r,clock_offset_y:i,clock_color_1:c,clock_color_2:l})});let a=s.innerText;s.innerText=`Saved ✔️`,setTimeout(()=>s.innerText=a,2e3)}catch(e){console.error(`Failed to save clock`,e)}});let c=document.getElementById(`btn-save-date`);c&&c.addEventListener(`click`,async()=>{let e=parseInt(document.getElementById(`setting-date-theme`).value,10),t=parseInt(document.getElementById(`setting-date-font`).value,10),n=parseInt(document.getElementById(`setting-date-size`).value,10),r=parseInt(document.getElementById(`setting-date-offset-x`).value,10),i=parseInt(document.getElementById(`setting-date-offset-y`).value,10),a=document.getElementById(`setting-date-format`),o=document.getElementById(`setting-date-sprite`),s=a?a.value:`DD/MM`,l=o?o.value:``,u=document.getElementById(`setting-date-color-1`),d=document.getElementById(`setting-date-color-2`),f=u?u.value:`#ffffff`,p=d?d.value:`#ffffff`;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({date_theme:e,date_font:t,date_size:n,date_offset_x:r,date_offset_y:i,date_format:s,date_sprite:l,date_color_1:f,date_color_2:p})});let a=c.innerText;c.innerText=`Saved ✔️`,setTimeout(()=>c.innerText=a,2e3)}catch(e){console.error(`Failed to save date`,e)}});let l=document.getElementById(`btn-send-msg`);l&&l.addEventListener(`click`,async()=>{let e=document.getElementById(`msg-text`).value,t=document.getElementById(`msg-color`).value,n=parseInt(document.getElementById(`msg-size`).value,10),r=document.getElementById(`msg-dir`).value,i=parseInt(document.getElementById(`msg-speed`).value,10),a=parseInt(document.getElementById(`msg-timeout`).value,10);if(!e){alert(`Please enter a message text.`);return}let o=parseInt(t.substr(1,2),16),s=parseInt(t.substr(3,2),16),c=parseInt(t.substr(5,2),16),u={text:e,color:(o&248)<<8|(s&252)<<3|c>>3,size:n,direction:r,speed:i,timeoutSeconds:a};try{await fetch(`/api/message`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify(u)}),l.innerText=`Sent! ✔️`,setTimeout(()=>l.innerText=`Send to Matrix 🚀`,2e3)}catch(e){console.error(`Failed to reach ESP32:`,e),l.innerText=`Sent! (Mocked) ✔️`,setTimeout(()=>l.innerText=`Send to Matrix 🚀`,2e3)}});let u=document.getElementById(`btn-ota`);u&&u.addEventListener(`click`,()=>{let e=document.getElementById(`ota-file`);if(!e.files.length){alert(`Please select a firmware.bin file.`);return}let t=e.files[0],n=new FormData;n.append(`update`,t,t.name);let r=new XMLHttpRequest,i=document.getElementById(`ota-progress-container`),a=document.getElementById(`ota-progress-bar`);i.style.display=`block`,u.disabled=!0,u.innerText=`Uploading...`,r.upload.addEventListener(`progress`,e=>{if(e.lengthComputable){let t=e.loaded/e.total*100;a.style.width=t+`%`}}),r.addEventListener(`load`,()=>{r.status===200?(u.innerText=`Success! Rebooting...`,a.style.background=`#3b82f6`,setTimeout(()=>location.reload(),3e3)):(u.innerText=`Update Failed!`,a.style.background=`#ef4444`,u.disabled=!1)}),r.addEventListener(`error`,()=>{u.innerText=`Network Error`,a.style.background=`#ef4444`,u.disabled=!1}),r.open(`POST`,`/api/update`),r.send(n)})});var e=document.getElementById(`btn-save-matrix`);e&&e.addEventListener(`click`,async()=>{let t=parseInt(document.getElementById(`setting-brightness`).value,10),n=parseInt(document.getElementById(`setting-depth`).value,10);try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({brightness_limit:t,color_depth:n})});let r=e.innerText;e.innerText=`Saved ✔️`,setTimeout(()=>e.innerText=r,2e3)}catch(e){console.error(`Failed to save matrix settings`,e)}});var t=document.getElementById(`rotation-list`);t&&t.addEventListener(`click`,e=>{let n=e.target.closest(`.sortable-item`),r=e.target.closest(`.btn-move-up`),i=e.target.closest(`.btn-move-down`);r&&n&&n.previousElementSibling?t.insertBefore(n,n.previousElementSibling):i&&n&&n.nextElementSibling&&t.insertBefore(n.nextElementSibling,n)});var n=document.getElementById(`btn-save-config`);n&&n.addEventListener(`click`,async()=>{let e=document.getElementById(`setting-night-mode`).value===`1`,t=document.getElementById(`setting-turn-off`).value,r=document.getElementById(`setting-wake-up`).value,i=parseInt(document.getElementById(`setting-clock-size`).value,10)||1,a=parseInt(document.getElementById(`setting-clock-font`).value,10)||0,o=parseInt(document.getElementById(`setting-clock-theme`).value,10)||0,s=document.getElementById(`setting-ntp-server`).value,c=document.getElementById(`setting-timezone`),l=c.value,u=c.options[c.selectedIndex].getAttribute(`data-iana`)||`Etc/GMT`,d=``,f=document.getElementById(`rotation-list`);f&&f.querySelectorAll(`li`).forEach((e,t)=>{let n=e.querySelector(`input[type='checkbox']`);n&&n.checked&&(d.length>0&&(d+=`,`),d+=e.getAttribute(`data-id`))});let p=parseInt(document.getElementById(`setting-clock-dur`).value,10)||60,m=parseInt(document.getElementById(`setting-date-dur`).value,10)||10,h=parseInt(document.getElementById(`setting-weather-dur`).value,10)||10,g=parseInt(document.getElementById(`setting-gifs-count`).value,10)||3,_=+!!document.getElementById(`setting-sprite-enable`).checked,v=document.getElementById(`setting-format24h`).value===`1`,y=parseInt(document.getElementById(`setting-date-size`).value,10)||1,b=parseInt(document.getElementById(`setting-date-font`).value,10)||0,x=parseInt(document.getElementById(`setting-date-theme`).value,10)||0,S=document.getElementById(`setting-mqtt-enable`).checked,C=document.getElementById(`setting-mqtt-broker`).value,w=parseInt(document.getElementById(`setting-mqtt-port`).value,10)||1883;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({night_mode_enabled:e,turn_off_at:t,wake_up_at:r,clock_size:i,clock_font:a,clock_theme:o,ntp_server:s,timezone:l,timezone_iana:u,format_24h:v,rotation:d,clock_duration_sec:p,date_duration_sec:m,weather_duration_sec:h,gifs_count:g,sprite_count:_,date_size:y,date_font:b,date_theme:x,mqtt_enable:S,mqtt_broker:C,mqtt_port:w})});let c=n.innerText;n.innerText=`Saved ✔️`,setTimeout(()=>n.innerText=c,2e3)}catch(e){console.error(`Failed to save main config`,e)}});var r=document.getElementById(`btn-save-idle`);r&&r.addEventListener(`click`,async()=>{let e=document.querySelectorAll(`#rotation-list li`),t=[];e.forEach(e=>{let n=e.querySelector(`input[type="checkbox"]`);n&&n.checked&&t.push(e.getAttribute(`data-id`))});let n=t.join(`,`),i=parseInt(document.getElementById(`setting-clock-dur`).value,10),a=parseInt(document.getElementById(`setting-date-dur`).value,10),o=parseInt(document.getElementById(`setting-weather-dur`).value,10),s=parseInt(document.getElementById(`setting-gifs-count`).value,10),c=+!!document.getElementById(`setting-sprite-enable`).checked;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({rotation:n,clock_duration_sec:i,date_duration_sec:a,weather_duration_sec:o,gifs_count:s,sprite_count:c})});let e=r.innerText;r.innerText=`Saved ✔️`,setTimeout(()=>r.innerText=e,2e3)}catch(e){console.error(`Failed to save idle config`,e)}});var i=document.getElementById(`btn-save-weather`);i&&i.addEventListener(`click`,async()=>{let e=document.getElementById(`setting-weather-api-key`)?document.getElementById(`setting-weather-api-key`).value:``,t=document.getElementById(`setting-weather-city`)?document.getElementById(`setting-weather-city`).value:``,n=document.getElementById(`setting-weather-offset-x`)?parseInt(document.getElementById(`setting-weather-offset-x`).value,10):0,r=document.getElementById(`setting-weather-offset-y`)?parseInt(document.getElementById(`setting-weather-offset-y`).value,10):0;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({weather_api_key:e,weather_city:t,weather_offset_x:n,weather_offset_y:r})});let a=i.innerText;i.innerText=`Saved ✔️`,setTimeout(()=>i.innerText=a,2e3)}catch(e){console.error(`Failed to save weather`,e)}});var a=document.getElementById(`btn-save-network`);a&&a.addEventListener(`click`,async()=>{let e=document.getElementById(`setting-wifi-ssid`).value,t=document.getElementById(`setting-wifi-pass`).value,n=document.getElementById(`setting-mqtt-enable`).value===`1`,r=document.getElementById(`setting-mqtt-broker`).value,i=parseInt(document.getElementById(`setting-mqtt-port`).value,10)||1883,o=document.getElementById(`setting-mqtt-user`).value,s=document.getElementById(`setting-mqtt-pass`).value;try{await fetch(`/api/settings`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({wifi_ssid:e,wifi_pass:t,mqtt_enable:n,mqtt_broker:r,mqtt_port:i,mqtt_user:o,mqtt_pass:s,reboot:!0})});let c=a.innerText;a.innerText=`Saved & Rebooting...`,setTimeout(()=>a.innerText=c,3e3)}catch(e){console.error(`Failed to save network`,e)}});var o={en:{dashboard_title:`Dashboard`,nav_dashboard:`Dashboard`,nav_playlists:`Playlists`,nav_clocks:`Clocks`,nav_messages:`Messages`,nav_settings:`Settings`,status_online:`Online`,now_playing:`Now Playing`,quick_controls:`Quick Controls`,btn_play:`Play`,btn_next:`Next`,label_brightness:`Brightness`,folder_playlists:`Folder Playlists`,btn_scan_sd:`Scan SD Card`,btn_play_selected:`Play Selected`,clock_faces:`Clock Faces`,retro_arcade:`Retro Arcade (Animated)`,cyberpunk:`Cyberpunk`,word_clock:`Word Clock`,btn_apply:`Apply`,custom_marquee:`Custom Marquee`,label_msg_text:`Message Text`,label_color:`Color`,label_font_size:`Font Size`,label_scroll_dir:`Scroll Direction`,label_speed:`Speed (Lower is faster)`,label_timeout:`Timeout (seconds)`,btn_send_msg:`Send to Matrix 🚀`,matrix_config:`Matrix Configuration`,label_brightness_limit:`Brightness Limit (%)`,label_color_depth:`Color Depth`,btn_save_matrix:`Save Matrix Config`,screensaver_rotation:`Screensaver Rotation (Idle)`,label_rotation_seq:`Rotation Sequence (comma separated)`,label_clock_time:`Clock Time (s)`,label_date_time:`Date Time (s)`,label_weather_time:`Weather Time (s)`,label_gifs_rotation:`GIFs per Rotation`,label_bg_sprites:`VS Fighting Background`,btn_save_rotation:`Save Rotation Config`,weather_setup:`Weather Setup (OpenWeatherMap)`,label_api_key:`API Key`,label_city:`City (e.g. Paris,FR)`,btn_save_weather:`Save Weather`,standby_night_mode:`Standby & Night Mode`,label_night_mode:`Enable Night Mode (Screen off)`,label_turn_off_at:`Turn Off At`,label_wake_up_at:`Wake Up At`,btn_save_config:`Save Config`,firmware_update:`Firmware Update (OTA)`,btn_flash_firmware:`Flash Firmware`,wifi_mqtt:`WiFi & MQTT`,label_wifi_ssid:`WiFi SSID`,label_mqtt_ip:`MQTT Broker IP`,btn_save_network:`Save Network`,date_config:`Date Configuration`,label_date_theme:`Publisher Theme`,label_date_format:`Date Format`,btn_save_date:`Save Date Config`},fr:{dashboard_title:`Tableau de Bord`,nav_dashboard:`Tableau de Bord`,nav_playlists:`Listes`,nav_clocks:`Horloges`,nav_messages:`Messages`,nav_settings:`Paramètres`,status_online:`En ligne`,now_playing:`En cours`,quick_controls:`Contrôles Rapides`,btn_play:`Jouer`,btn_next:`Suivant`,label_brightness:`Luminosité`,folder_playlists:`Dossiers de lecture`,btn_scan_sd:`Scanner SD`,btn_play_selected:`Jouer la sélection`,clock_faces:`Cadrans`,retro_arcade:`Arcade Rétro (Animée)`,cyberpunk:`Cyberpunk`,word_clock:`Horloge à Mots`,btn_apply:`Appliquer`,custom_marquee:`Texte Défilant`,label_msg_text:`Texte`,label_color:`Couleur`,label_font_size:`Taille`,label_scroll_dir:`Direction`,label_speed:`Vitesse (Plus bas = Rapide)`,label_timeout:`Délai (secondes)`,btn_send_msg:`Envoyer 🚀`,matrix_config:`Configuration Matrice`,label_brightness_limit:`Luminosité Max (%)`,label_color_depth:`Profondeur Couleurs`,btn_save_matrix:`Sauvegarder`,screensaver_rotation:`Rotation de Veille`,label_rotation_seq:`Séquence (séparée par virgules)`,label_clock_time:`Temps Horloge (s)`,label_date_time:`Temps Date (s)`,label_weather_time:`Temps Météo (s)`,label_gifs_rotation:`GIFs par Rotation`,label_bg_sprites:`Combats en arrière-plan`,btn_save_rotation:`Sauvegarder Rotation`,weather_setup:`Météo (OpenWeatherMap)`,label_api_key:`Clé API`,label_city:`Ville (ex: Paris,FR)`,btn_save_weather:`Sauvegarder Météo`,standby_night_mode:`Mode Veille/Nuit`,label_night_mode:`Activer Mode Nuit (Éteint)`,label_turn_off_at:`Éteindre à`,label_wake_up_at:`Allumer à`,btn_save_config:`Sauvegarder Config`,firmware_update:`Mise à jour (OTA)`,btn_flash_firmware:`Flasher Firmware`,wifi_mqtt:`WiFi & MQTT`,label_wifi_ssid:`SSID WiFi`,label_mqtt_ip:`IP Broker MQTT`,btn_save_network:`Sauvegarder Réseau`,date_config:`Configuration Date`,label_date_theme:`Thème Éditeur`,label_date_format:`Format de Date`,btn_save_date:`Sauvegarder Date`},es:{dashboard_title:`Panel de Control`,nav_dashboard:`Panel de Control`,nav_playlists:`Listas`,nav_clocks:`Relojes`,nav_messages:`Mensajes`,nav_settings:`Ajustes`,status_online:`En línea`,now_playing:`Reproduciendo`,quick_controls:`Controles Rápidos`,btn_play:`Reproducir`,btn_next:`Siguiente`,label_brightness:`Brillo`,folder_playlists:`Carpetas`,btn_scan_sd:`Escanear SD`,btn_play_selected:`Reproducir selec.`,clock_faces:`Relojes`,retro_arcade:`Arcade Retro (Animado)`,cyberpunk:`Cyberpunk`,word_clock:`Reloj de Palabras`,btn_apply:`Aplicar`,custom_marquee:`Texto Desplazable`,label_msg_text:`Texto`,label_color:`Color`,label_font_size:`Tamaño`,label_scroll_dir:`Dirección`,label_speed:`Velocidad (Menor = Rápido)`,label_timeout:`Tiempo límite (seg)`,btn_send_msg:`Enviar a la Matriz 🚀`,matrix_config:`Configuración de Matriz`,label_brightness_limit:`Límite Brillo (%)`,label_color_depth:`Profundidad Color`,btn_save_matrix:`Guardar`,screensaver_rotation:`Rotación de Espera`,label_rotation_seq:`Secuencia (comas)`,label_clock_time:`Tiempo Reloj (s)`,label_date_time:`Tiempo Fecha (s)`,label_weather_time:`Tiempo Clima (s)`,label_gifs_rotation:`GIFs por Rotación`,label_bg_sprites:`Combates de Fondo`,btn_save_rotation:`Guardar Rotación`,weather_setup:`Clima (OpenWeatherMap)`,label_api_key:`Clave API`,label_city:`Ciudad (ej. Madrid,ES)`,btn_save_weather:`Guardar Clima`,standby_night_mode:`Modo Noche`,label_night_mode:`Activar Modo Noche`,label_turn_off_at:`Apagar a`,label_wake_up_at:`Encender a`,btn_save_config:`Guardar Config`,firmware_update:`Actualización (OTA)`,btn_flash_firmware:`Flashear Firmware`,wifi_mqtt:`WiFi & MQTT`,label_wifi_ssid:`SSID WiFi`,label_mqtt_ip:`IP Broker MQTT`,btn_save_network:`Guardar Red`,date_config:`Configuración de Fecha`,label_date_theme:`Tema Editor`,label_date_format:`Formato Fecha`,btn_save_date:`Guardar Fecha`}};document.addEventListener(`DOMContentLoaded`,()=>{let e=document.getElementById(`lang-selector`);if(e){let n=localStorage.getItem(`arcadematrix-lang`)||`en`;e.value=n,t(n),e.addEventListener(`change`,e=>{let n=e.target.value;localStorage.setItem(`arcadematrix-lang`,n),t(n)})}function t(e){if(!o[e])return;let t=o[e];document.querySelectorAll(`[data-i18n]`).forEach(e=>{let n=e.getAttribute(`data-i18n`);t[n]&&(e.innerText=t[n])});let n=document.querySelector(`.nav-links li.active`);n&&t[n.getAttribute(`data-i18n`)]&&(document.getElementById(`view-title`).innerText=t[n.getAttribute(`data-i18n`)])}async function n(){try{let e=await fetch(`/api/settings`);if(e.ok){let t=await e.json();if(t.brightness_limit!==void 0){let e=document.getElementById(`setting-brightness`);e&&(e.value=t.brightness_limit)}if(t.color_depth!==void 0){let e=document.getElementById(`setting-depth`);e&&(e.value=t.color_depth)}if(t.rotation){let e=t.rotation.split(`,`).map(e=>e.trim()),n=document.getElementById(`rotation-list`);n&&([`clock`,`date`,`weather`,`gifs`].forEach(t=>{let n=document.getElementById(`rot-`+t);n&&(n.checked=e.includes(t))}),e.forEach(e=>{let t=n.querySelector(`li[data-id="${e}"]`);t&&n.appendChild(t)}))}if(t.clock_offset_x!==void 0){let e=document.getElementById(`setting-clock-offset-x`);e&&(e.value=t.clock_offset_x)}if(t.clock_offset_y!==void 0){let e=document.getElementById(`setting-clock-offset-y`);e&&(e.value=t.clock_offset_y)}if(t.date_offset_x!==void 0){let e=document.getElementById(`setting-date-offset-x`);e&&(e.value=t.date_offset_x)}if(t.date_offset_y!==void 0){let e=document.getElementById(`setting-date-offset-y`);e&&(e.value=t.date_offset_y)}if(t.weather_offset_x!==void 0){let e=document.getElementById(`setting-weather-offset-x`);e&&(e.value=t.weather_offset_x)}if(t.weather_offset_y!==void 0){let e=document.getElementById(`setting-weather-offset-y`);e&&(e.value=t.weather_offset_y)}if(t.clock_size!==void 0){let e=document.getElementById(`setting-clock-size`);e&&(e.value=t.clock_size)}if(t.clock_font!==void 0){let e=document.getElementById(`setting-clock-font`);e&&(e.value=t.clock_font)}if(t.clock_theme!==void 0){let e=document.getElementById(`setting-clock-theme`);e&&(e.value=t.clock_theme)}if(t.ntp_server!==void 0){let e=document.getElementById(`setting-ntp-server`);e&&(e.value=t.ntp_server)}if(t.timezone!==void 0){let e=document.getElementById(`setting-timezone`);e&&(e.value=t.timezone)}if(t.format_24h!==void 0){let e=document.getElementById(`setting-format24h`);e&&(e.value=t.format_24h?`1`:`0`)}if(t.date_size!==void 0){let e=document.getElementById(`setting-date-size`);e&&(e.value=t.date_size)}if(t.date_font!==void 0){let e=document.getElementById(`setting-date-font`);e&&(e.value=t.date_font)}if(t.date_theme!==void 0){let e=document.getElementById(`setting-date-theme`);e&&(e.value=t.date_theme)}if(t.night_mode_enabled!==void 0){let e=document.getElementById(`setting-night-mode`);e&&(e.value=t.night_mode_enabled?`1`:`0`)}if(t.turn_off_at!==void 0){let e=document.getElementById(`setting-turn-off`);e&&(e.value=t.turn_off_at)}if(t.wake_up_at!==void 0){let e=document.getElementById(`setting-wake-up`);e&&(e.value=t.wake_up_at)}if(t.wifi_ssid!==void 0){let e=document.getElementById(`setting-wifi-ssid`);e&&(e.value=t.wifi_ssid)}if(t.mqtt_enable!==void 0){let e=document.getElementById(`setting-mqtt-enable`);e&&(e.value=t.mqtt_enable?`1`:`0`)}if(t.mqtt_broker!==void 0){let e=document.getElementById(`setting-mqtt-broker`);e&&(e.value=t.mqtt_broker)}if(t.mqtt_port!==void 0){let e=document.getElementById(`setting-mqtt-port`);e&&(e.value=t.mqtt_port)}if(t.mqtt_user!==void 0){let e=document.getElementById(`setting-mqtt-user`);e&&(e.value=t.mqtt_user)}if(t.clock_duration_sec!==void 0){let e=document.getElementById(`setting-clock-dur`);e&&(e.value=t.clock_duration_sec)}if(t.date_duration_sec!==void 0){let e=document.getElementById(`setting-date-dur`);e&&(e.value=t.date_duration_sec)}if(t.weather_duration_sec!==void 0){let e=document.getElementById(`setting-weather-dur`);e&&(e.value=t.weather_duration_sec)}if(t.gifs_count!==void 0){let e=document.getElementById(`setting-gifs-count`);e&&(e.value=t.gifs_count)}if(t.sprite_count!==void 0){let e=document.getElementById(`setting-sprite-enable`);e&&(e.checked=t.sprite_count>0)}if(t.date_theme!==void 0){let e=document.getElementById(`setting-date-theme`);e&&(e.value=t.date_theme)}if(t.date_format){let e=document.getElementById(`setting-date-format`);e&&(e.value=t.date_format)}if(t.weather_api_key){let e=document.getElementById(`setting-weather-api-key`);e&&(e.value=t.weather_api_key)}if(t.weather_city){let e=document.getElementById(`setting-weather-city`);e&&(e.value=t.weather_city)}}}catch(e){console.error(`Could not load settings`,e)}}n();let r=document.querySelectorAll(`.settings-tab-btn`),i=document.querySelectorAll(`.settings-panel`);r.length>0&&r.forEach(e=>{e.addEventListener(`click`,()=>{r.forEach(e=>{e.classList.remove(`active`,`primary`),e.classList.add(`secondary`)}),e.classList.add(`active`,`primary`),e.classList.remove(`secondary`);let t=e.getAttribute(`data-target`);i.forEach(e=>{e.getAttribute(`data-tab`)===t?e.style.display=`block`:e.style.display=`none`})})})});</script>
+  <style rel="stylesheet" crossorigin>:root{--bg-color:#0f172a;--text-color:#f8fafc;--primary:#3b82f6;--primary-glow:#3b82f680;--glass-bg:#ffffff0d;--glass-border:#ffffff1a}*{box-sizing:border-box;margin:0;padding:0}body{background-color:var(--bg-color);color:var(--text-color);font-family:Outfit,sans-serif;overflow:hidden}.app-container{height:100vh;display:flex}.sidebar{background:var(--glass-bg);border-right:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);width:250px;padding:2rem}.logo h2{background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-text-fill-color:transparent;-webkit-background-clip:text;margin-bottom:2rem;font-weight:700}.nav-links{list-style:none}.nav-links li{cursor:pointer;border-radius:8px;margin-bottom:.5rem;padding:1rem;transition:all .3s}.nav-links li:hover{background:#ffffff1a}.nav-links li.active{background:var(--primary);box-shadow:0 0 15px var(--primary-glow)}.content{flex:1;padding:2rem 3rem;overflow-y:auto}header{justify-content:space-between;align-items:center;margin-bottom:3rem;display:flex}.status-indicator{border-radius:20px;padding:.5rem 1rem;font-size:.9rem;font-weight:500}.status-indicator.online{color:#10b981;background:#10b98133;border:1px solid #10b981}.view{animation:.5s fadeIn;display:none}.view.active-view{display:block}.cards-grid{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2rem;display:grid}.glass{background:var(--glass-bg);border:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-radius:16px;padding:2rem}.glass h3{margin-bottom:1.5rem;font-weight:500}.btn{cursor:pointer;border:none;border-radius:8px;margin-right:.5rem;padding:.8rem 1.5rem;font-family:inherit;font-weight:500;transition:all .2s}.btn.primary{background:var(--primary);color:#fff;box-shadow:0 4px 15px var(--primary-glow)}.btn.primary:hover{box-shadow:0 6px 20px var(--primary-glow);transform:translateY(-2px)}.btn.secondary{color:#fff;background:#ffffff1a}.btn.secondary:hover{background:#fff3}.slider-group{margin-top:1.5rem}.slider-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}input[type=range]{width:100%;accent-color:var(--primary)}@keyframes fadeIn{0%{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.playlist-list{flex-direction:column;gap:1rem;margin-top:2rem;display:flex}.playlist-item{background:#0003;border:1px solid #ffffff0d;border-radius:8px;justify-content:space-between;align-items:center;padding:1rem;display:flex}.playlist-item .info h4{font-weight:500}.playlist-item .info span{color:#94a3b8;font-size:.8rem}.form-group{margin-bottom:1rem}.form-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}.text-input,.select-input{border:1px solid var(--glass-border);color:#fff;background:#0003;border-radius:8px;width:100%;padding:.8rem;font-family:inherit}.text-input:focus,.select-input:focus{border-color:var(--primary);box-shadow:0 0 10px var(--primary-glow);outline:none}@media (width<=768px){#mobile-menu-btn{display:block!important}.sidebar{z-index:1000;transition:left .3s;position:fixed;top:0;bottom:0;left:-250px;box-shadow:5px 0 15px #00000080}.sidebar.open{left:0}.sidebar-overlay{-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);z-index:999;background:#00000080;display:none;position:fixed;inset:0}.sidebar-overlay.open{display:block}.content{padding:1.5rem 1rem}header h1{font-size:1.5rem}}
+/*$vite$:1*/</style>
+</head>
+
+<body>
+  <div class="app-container">
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <nav class="sidebar">
+      <div class="logo">
+        <h2>ArcadeMatrix</h2>
+      </div>
+      <ul class="nav-links">
+        <li class="active" data-view="dashboard" data-i18n="nav_dashboard">Dashboard</li>
+        <li data-view="playlists" data-i18n="nav_playlists">GIFs Playlists</li>
+        <li data-view="clocks" data-i18n="nav_clocks">Clocks</li>
+        <li data-view="messages" data-i18n="nav_messages">Messages</li>
+        <li data-view="settings" data-i18n="nav_settings">Settings</li>
+      </ul>
+    </nav>
+
+    <main class="content">
+      <header>
+        
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <select id="lang-selector" class="select-input" style="padding: 0.2rem 0.5rem; background: transparent; border: 1px solid var(--glass-border); color: #fff; border-radius: 4px;">
+            <option value="en">EN</option>
+            <option value="fr">FR</option>
+            <option value="es">ES</option>
+          </select>
+          <button id="mobile-menu-btn" class="btn secondary" style="display: none; padding: 0.5rem; font-size: 1.2rem; background: transparent; border: 1px solid var(--glass-border);">☰</button>
+          <h1 id="view-title" data-i18n="dashboard_title">Dashboard</h1>
+        </div>
+
+        <div class="status-indicator online" data-i18n="status_online">Online</div>
+      </header>
+
+      <section id="view-dashboard" class="view active-view">
+        <div class="cards-grid">
+          <div class="card glass">
+            <h3 data-i18n="now_playing">Now Playing</h3>
+            <div class="now-playing-visual"
+              style="height: 100px; background: #000; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
+              <span style="color: #4ade80; font-family: monospace;">[ Matrix Preview ]</span>
+            </div>
+            <p class="track-name">Ryu_Hadouken.raw</p>
+          </div>
+
+          <div class="card glass">
+            <h3 data-i18n="quick_controls">Quick Controls</h3>
+            <div class="controls">
+              <button class="btn primary" data-i18n="btn_play">Play</button>
+              <button class="btn secondary" data-i18n="btn_next">Next</button>
+              <div class="slider-group">
+                <label data-i18n="label_brightness">Brightness</label>
+                <input type="range" min="1" max="100" value="50">
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Playlists View -->
+      <section id="view-playlists" class="view">
+        <div class="glass">
+          <header style="display:flex; justify-content:space-between; align-items:center;">
+            <h2 data-i18n="folder_playlists">Folder Playlists</h2>
+            <div>
+              <button id="btn-scan-sd" class="btn secondary" data-i18n="btn_scan_sd">Scan SD Card</button>
+              <button id="btn-play-selected" class="btn primary" data-i18n="btn_play_selected">Play Selected</button>
+            </div>
+          </header>
+          <div class="playlist-list">
+            <div class="playlist-item">
+              <div class="info">
+                <h4>/mario_sprites/</h4>
+                <span>14 .raw files</span>
+              </div>
+              <button class="btn secondary">Play</button>
+            </div>
+            <div class="playlist-item">
+              <div class="info">
+                <h4>/street_fighter/</h4>
+                <span>8 .raw files</span>
+              </div>
+              <button class="btn secondary">Play</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Clocks View -->
+      <section id="view-clocks" class="view">
+        <div class="glass">
+          <h2 data-i18n="clock_faces">Clock Faces</h2>
+          <div class="cards-grid" style="margin-top:2rem;">
+            <div class="card glass">
+              <h4 data-i18n="clock_style">Clock Style</h4>
+              <select id="clock-character" class="select-input" style="width:100%; margin-top:1rem; padding:0.5rem;">
+                <option value="-1">None / Default</option>
+                <option value="0">Nintendo</option>
+                <option value="1">Capcom</option>
+                <option value="2">Taito</option>
+                <option value="3">Sega</option>
+                <option value="4">Cave</option>
+                <option value="5">Konami</option>
+                <option value="6">SNK</option>
+                <option value="7">Technos</option>
+                <option value="8">IGS</option>
+                <option value="9">Hudson</option>
+                <option value="10">Banpresto</option>
+                <option value="11">Namco</option>
+                <option value="12">Ryu (Animated)</option>
+                <option value="13">Mario (Animated)</option>
+                <option value="14">Marco (Animated)</option>
+                <option value="15">Megaman (Animated)</option>
+                <option value="16">Space Invader (Animated)</option>
+                <option value="17">Bub (Animated)</option>
+                <option value="18">Cyberpunk (Matrix)</option>
+                <option value="19">Flip Clock</option>
+              </select>
+              <button id="btn-apply-clock" class="btn primary" style="width:100%; margin-top:1rem;" data-i18n="btn_apply">Apply</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Messages View -->
+      <section id="view-messages" class="view">
+        <div class="glass">
+          <h2 data-i18n="custom_marquee">Custom Marquee</h2>
+          <p style="color: #94a3b8; margin-bottom: 2rem;">Send custom scrolling text directly to the LED Matrix.</p>
+
+          <div class="cards-grid">
+            <div>
+              <div class="form-group">
+                <label data-i18n="label_msg_text">Message Text</label>
+                <input type="text" id="msg-text" class="text-input" placeholder="Enter your text here..." />
+              </div>
+
+              <div class="form-group">
+                <label data-i18n="label_color">Color</label>
+                <input type="color" id="msg-color" value="#ff0055"
+                  style="width: 100%; height: 40px; background: none; border: none; cursor: pointer; border-radius: 8px;" />
+              </div>
+            </div>
+
+            <div>
+              <div class="form-group">
+                <label data-i18n="label_font_size">Font Size</label>
+                <select id="msg-size" class="select-input">
+                  <option value="1">Small (1x)</option>
+                  <option value="2" selected>Medium (2x)</option>
+                  <option value="3">Large (3x)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label data-i18n="label_scroll_dir">Scroll Direction</label>
+                <select id="msg-dir" class="select-input">
+                  <option value="rtl" selected>Right to Left ⬅️</option>
+                  <option value="ltr">Left to Right ➡️</option>
+                  <option value="ttb">Top to Bottom ⬇️</option>
+                  <option value="btt">Bottom to Top ⬆️</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label data-i18n="label_speed">Speed (Lower is faster)</label>
+                <input type="range" id="msg-speed" min="10" max="100" value="30">
+              </div>
+
+              <div class="form-group">
+                <label data-i18n="label_timeout">Timeout (seconds)</label>
+                <input type="number" id="msg-timeout" class="text-input" value="30" min="1" max="300" />
+              </div>
+            </div>
+          </div>
+
+          <button class="btn primary" id="btn-send-msg"
+            style="width: 100%; margin-top: 2rem; font-size: 1.1rem; padding: 1rem;" data-i18n="btn_send_msg">Send to Matrix 🚀</button>
+        </div>
+      </section>
+
+      <!-- Settings View -->
+            <section id="view-settings" class="view">
+        <div class="settings-nav" style="display: flex; overflow-x: auto; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; white-space: nowrap; scrollbar-width: none;">
+          <button class="btn primary settings-tab-btn active" data-target="tab-matrix">Matrix</button>
+          <button class="btn secondary settings-tab-btn" data-target="tab-rotation">Rotation</button>
+          <button class="btn secondary settings-tab-btn" data-target="sect-clock">Clock</button>
+          <button class="btn secondary settings-tab-btn" data-target="sect-date">Date</button>
+          <button class="btn secondary settings-tab-btn" data-target="tab-weather">Weather</button>
+          <button class="btn secondary settings-tab-btn" data-target="tab-system">System</button>
+          <button class="btn secondary settings-tab-btn" data-target="tab-network">Network & OTA</button>
+        </div>
+        <div class="cards-grid settings-panels-container" style="display: block;">
+          <div data-tab="tab-matrix" class="glass settings-panel active">
+            <h3 data-i18n="matrix_config">Matrix Configuration</h3>
+            <div class="form-group">
+              <label data-i18n="label_brightness_limit">Brightness Limit (%)</label>
+              <input type="number" id="setting-brightness" class="text-input" value="40" />
+            </div>
+            <div class="form-group">
+              <label data-i18n="label_color_depth">Color Depth</label>
+              <select id="setting-depth" class="select-input">
+                <option value="16">16-bit (Faster)</option>
+                <option value="24" selected>24-bit (16M Colors)</option>
+              </select>
+            </div>
+            <button id="btn-save-matrix" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_matrix">Save Matrix Config</button>
+          </div>
+
+          <div data-tab="tab-rotation" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="screensaver_rotation">Screensaver Rotation (Idle)</h3>
+            <div class="form-group">
+              <label data-i18n="label_rotation_seq">Rotation Sequence (Use arrows to reorder)</label>
+              <ul id="rotation-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem;">
+                <li data-id="clock" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <div style="display:flex; flex-direction:column; gap: 2px;">
+                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
+                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
+                  </div>
+                  <input type="checkbox" id="rot-clock" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
+                  <label for="rot-clock" style="font-size:1.1rem; flex:1; cursor:pointer;">Clock</label>
+                </li>
+                <li data-id="date" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <div style="display:flex; flex-direction:column; gap: 2px;">
+                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
+                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
+                  </div>
+                  <input type="checkbox" id="rot-date" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
+                  <label for="rot-date" style="font-size:1.1rem; flex:1; cursor:pointer;">Date</label>
+                </li>
+                <li data-id="weather" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <div style="display:flex; flex-direction:column; gap: 2px;">
+                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
+                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
+                  </div>
+                  <input type="checkbox" id="rot-weather" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
+                  <label for="rot-weather" style="font-size:1.1rem; flex:1; cursor:pointer;">Weather</label>
+                </li>
+                <li data-id="gifs" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                  <div style="display:flex; flex-direction:column; gap: 2px;">
+                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
+                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
+                  </div>
+                  <input type="checkbox" id="rot-gifs" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
+                  <label for="rot-gifs" style="font-size:1.1rem; flex:1; cursor:pointer;">GIFs</label>
+                </li>
+              </ul>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_clock_time">Clock Time (s)</label>
+                <input type="number" id="setting-clock-dur" class="text-input" value="60" min="5" />
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_date_time">Date Time (s)</label>
+                <input type="number" id="setting-date-dur" class="text-input" value="10" min="5" />
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_weather_time">Weather Time (s)</label>
+                <input type="number" id="setting-weather-dur" class="text-input" value="15" min="5" />
+              </div>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: flex-end;">
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_gifs_rotation">GIFs per Rotation</label>
+                <input type="number" id="setting-gifs-count" class="text-input" value="3" min="0" />
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.5rem;">
+                  <input type="checkbox" id="setting-sprite-enable" style="width:20px;height:20px;" checked />
+                  <label for="setting-sprite-enable" style="cursor:pointer;" data-i18n="label_bg_sprites">Enable VS Fighting Background</label>
+                </div>
+              </div>
+            </div>
+            <button id="btn-save-idle" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_rotation">Save Rotation Config</button>
+          </div>
+
+          <div data-tab="tab-weather" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="weather_setup">Weather Setup (OpenWeatherMap)</h3>
+            <div class="form-group" style="margin-top: 1rem;">
+              <label>API Key (OpenWeatherMap)</label>
+              <input type="text" id="setting-weather-api-key" class="text-input" placeholder="e.g. 1a2b3c...">
+            </div>
+            <div class="form-group" style="margin-top: 1rem;">
+              <label data-i18n="label_city">City (e.g. Paris,FR)</label>
+              <input type="text" id="setting-weather-city" class="text-input" placeholder="City name...">
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset X</label>
+                <input type="number" id="setting-weather-offset-x" class="text-input" value="0">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset Y</label>
+                <input type="number" id="setting-weather-offset-y" class="text-input" value="0">
+              </div>
+            </div>
+            <button id="btn-save-weather" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_weather">Save Weather</button>
+          </div>
+
+          <div data-tab="tab-system" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="standby_night_mode">Standby & Night Mode</h3>
+            <div class="form-group">
+              <label data-i18n="label_night_mode">Enable Night Mode (Screen off)</label>
+              <select id="setting-night-mode" class="select-input">
+                <option value="1">Enabled</option>
+                <option value="0">Disabled</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 1rem;">
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_turn_off_at">Turn Off At</label>
+                <input type="time" id="setting-turn-off" class="text-input" value="23:00" />
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label data-i18n="label_wake_up_at">Wake Up At</label>
+                <input type="time" id="setting-wake-up" class="text-input" value="07:00" />
+              </div>
+            </div>
+            
+            <button id="btn-save-config" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_config">Save Config</button>
+          </div>
+          <div data-tab="sect-clock" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="clock_config">Clock Configuration</h3>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Clock Size</label>
+                <select id="setting-clock-size" class="text-input">
+                  <option value="1">Size 1</option>
+                  <option value="2">Size 2</option>
+                  <option value="3">Size 3</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset X</label>
+                <input type="number" id="setting-clock-offset-x" class="text-input" value="0">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset Y</label>
+                <input type="number" id="setting-clock-offset-y" class="text-input" value="0">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Font</label>
+                <select id="setting-clock-font" class="select-input">
+                  <option value="-1">System/Default (5x7 Pixel)</option>
+                  <option value="0">Sans Serif (Nintendo)</option>
+                  <option value="3">Monospace (Sega)</option>
+                  <option value="6">Pixel (SNK)</option>
+                  <option value="2">Retro (Taito)</option>
+                  <option value="11">Arcade (Namco/Capcom)</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Clock Theme</label>
+                <select id="setting-clock-theme" class="text-input">
+                  <option value="-1">None / Default</option>
+                  <option value="0">Nintendo</option>
+                  <option value="1">Capcom</option>
+                  <option value="2">Taito</option>
+                  <option value="3">Sega</option>
+                  <option value="4">Cave</option>
+                  <option value="5">Konami</option>
+                  <option value="6">SNK</option>
+                  <option value="7">Technos</option>
+                  <option value="8">IGS</option>
+                  <option value="9">Hudson</option>
+                  <option value="10">Banpresto</option>
+                  <option value="11">Namco</option>
+                  <option value="12">Ryu (Animated)</option>
+                  <option value="13">Mario (Animated)</option>
+                  <option value="14">Marco (Animated)</option>
+                  <option value="15">Megaman (Animated)</option>
+                  <option value="16">Space Invader (Animated)</option>
+                  <option value="17">Bub (Animated)</option>
+                  <option value="18">Cyberpunk (Classic Drops)</option>
+                  <option value="19">Flip Clock</option>
+                  <option value="20">Custom Gradient / Color</option>
+                  <option value="21">True Matrix (Katakana HD)</option>
+                  <option value="22">Pong Clock</option>
+                  <option value="23">Tetris Clock</option>
+                  <option value="29">Tetris Gameboy Clock</option>
+                  <option value="24">Word Clock</option>
+                  <option value="25">Binary Clock</option>
+                  <option value="26">Pac-Man Clock</option>
+                  <option value="27">Versus Health Bar</option>
+                  <option value="28">Slot Machine</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;" id="clock-custom-colors-container">
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Color 1 (Gradient Start)</label>
+                <input type="color" id="setting-clock-color-1" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Color 2 (Gradient End)</label>
+                <input type="color" id="setting-clock-color-2" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
+              </div>
+            </div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>NTP Server</label>
+                <input type="text" id="setting-ntp-server" class="text-input" placeholder="pool.ntp.org" />
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Timezone</label>
+                <select id="setting-timezone" class="select-input">
+                  <option value="GMT0" data-iana="Etc/GMT">GMT (UTC)</option>
+                  <option value="CET-1CEST,M3.5.0,M10.5.0/3" data-iana="Europe/Paris">Europe/Paris</option>
+                  <option value="GMT0BST,M3.5.0/1,M10.5.0" data-iana="Europe/London">Europe/London</option>
+                  <option value="EST5EDT,M3.2.0,M11.1.0" data-iana="America/New_York">America/New_York</option>
+                  <option value="CST6CDT,M3.2.0,M11.1.0" data-iana="America/Chicago">America/Chicago</option>
+                  <option value="MST7MDT,M3.2.0,M11.1.0" data-iana="America/Denver">America/Denver</option>
+                  <option value="PST8PDT,M3.2.0,M11.1.0" data-iana="America/Los_Angeles">America/Los_Angeles</option>
+                  <option value="JST-9" data-iana="Asia/Tokyo">Asia/Tokyo</option>
+                  <option value="AEST-10AEDT,M10.1.0,M4.1.0/3" data-iana="Australia/Sydney">Australia/Sydney</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>24h Format</label>
+                <select id="setting-format24h" class="text-input">
+                  <option value="1">Yes</option>
+                  <option value="0">No</option>
+                </select>
+              </div>
+            </div>
+            <button id="btn-save-clock" class="btn primary" style="margin-top:1rem; width: 100%;">Save Clock</button>
+          </div>
+            
+          <div data-tab="sect-date" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="date_config">Date Configuration</h3>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Date Size</label>
+                <select id="setting-date-size" class="text-input">
+                  <option value="1">Size 1</option>
+                  <option value="2">Size 2</option>
+                  <option value="3">Size 3</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset X</label>
+                <input type="number" id="setting-date-offset-x" class="text-input" value="0">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Offset Y</label>
+                <input type="number" id="setting-date-offset-y" class="text-input" value="0">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Font</label>
+                <select id="setting-date-font" class="select-input">
+                  <option value="-1">System/Default (5x7 Pixel)</option>
+                  <option value="0">Sans Serif (Nintendo)</option>
+                  <option value="3">Monospace (Sega)</option>
+                  <option value="6">Pixel (SNK)</option>
+                  <option value="2">Retro (Taito)</option>
+                  <option value="11">Arcade (Namco/Capcom)</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label data-i18n="label_date_theme">Date Theme</label>
+                <select id="setting-date-theme" class="text-input">
+                  <option value="-1">None / Default</option>
+                  <option value="0">Nintendo</option>
+                  <option value="1">Capcom</option>
+                  <option value="2">Taito</option>
+                  <option value="3">Sega</option>
+                  <option value="4">Cave</option>
+                  <option value="5">Konami</option>
+                  <option value="6">SNK</option>
+                  <option value="7">Technos</option>
+                  <option value="8">IGS</option>
+                  <option value="9">Hudson</option>
+                  <option value="10">Banpresto</option>
+                  <option value="11">Namco</option>
+                  <option value="12">Ryu (Animated)</option>
+                  <option value="13">Mario (Animated)</option>
+                  <option value="14">Marco (Animated)</option>
+                  <option value="15">Megaman (Animated)</option>
+                  <option value="16">Space Invader (Animated)</option>
+                  <option value="17">Bub (Animated)</option>
+                  <option value="18">Cyberpunk (Matrix)</option>
+                  <option value="19">Flip Clock</option>
+                </select>
+              </div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;" id="date-custom-colors-container">
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Color 1 (Gradient Start)</label>
+                <input type="color" id="setting-date-color-1" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Color 2 (Gradient End)</label>
+                <input type="color" id="setting-date-color-2" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
+              </div>
+            </div>
+            <button id="btn-save-date" class="btn primary" style="margin-top:1rem; width: 100%;">Save Date</button>
+          </div>
+
+          <div data-tab="tab-network" class="glass settings-panel" style="display: none;">
+            <h3 data-i18n="firmware_update">Firmware Update (OTA)</h3>
+            <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1rem;">Upload a new firmware.bin to update the ESP32.</p>
+            <div class="form-group">
+              <input type="file" id="ota-file" accept=".bin" style="color: #fff; width: 100%;" />
+            </div>
+            <div id="ota-progress-container"
+              style="display: none; background: #334155; border-radius: 4px; margin-top: 1rem; overflow: hidden;">
+              <div id="ota-progress-bar" style="height: 10px; width: 0%; background: #4ade80; transition: width 0.3s;">
+              </div>
+            </div>
+            <button class="btn secondary" id="btn-ota" style="margin-top:1rem; width: 100%;" data-i18n="btn_flash_firmware">Flash Firmware</button>
+
+            <h3 data-i18n="wifi_mqtt" style="margin-top: 2rem;">WiFi & MQTT</h3>
+            <div class="form-group">
+              <label data-i18n="label_wifi_ssid">WiFi SSID</label>
+              <input type="text" id="setting-wifi-ssid" class="text-input" placeholder="Your Network" />
+            </div>
+            <div class="form-group">
+              <label>WiFi Password</label>
+              <input type="password" id="setting-wifi-pass" class="text-input" placeholder="••••••••" />
+            </div>
+            <div class="form-group">
+              <label>Enable MQTT</label>
+              <select id="setting-mqtt-enable" class="select-input">
+                <option value="1">Yes</option>
+                <option value="0">No</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label data-i18n="label_mqtt_ip">MQTT Broker IP</label>
+              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="192.168.x.x" />
+            </div>
+            <div class="form-group">
+              <label>MQTT Port</label>
+              <input type="number" id="setting-mqtt-port" class="text-input" value="1883" />
+            </div>
+            <div class="form-group">
+              <label>MQTT User (Optional)</label>
+              <input type="text" id="setting-mqtt-user" class="text-input" />
+            </div>
+            <div class="form-group">
+              <label>MQTT Pass (Optional)</label>
+              <input type="password" id="setting-mqtt-pass" class="text-input" />
+            </div>
+            <button class="btn primary" style="margin-top:1rem;" id="btn-save-network" data-i18n="btn_save_network">Save Network & Reboot</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+
+</html>

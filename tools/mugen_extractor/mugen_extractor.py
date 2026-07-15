@@ -221,15 +221,20 @@ def process_character(char_dir, out_dir):
     
     if orig_w <= 0 or orig_h <= 0: return False
     
-    # Force 1:1 Scale
-    scale = 1.0
-        
-    canvas_w = max(1, int(orig_w * scale))
-    canvas_h = TARGET_HEIGHT
+    EXTRACT_MODE = globals().get('EXTRACT_MODE', 'FULLSIZE')
     
-    # In Mugen, Y is negative (up). global_min_y is the head.
-    # To place the head at Y=0 in the canvas, we need the origin to be at -global_min_y.
-    # So ground_y (the virtual feet position) is exactly the character's full height.
+    if EXTRACT_MODE == 'SCALED':
+        scale = 1.0
+        if walk_h > TARGET_HEIGHT:
+            scale = TARGET_HEIGHT / walk_h
+        canvas_w = max(1, int(orig_w * scale))
+        canvas_h = TARGET_HEIGHT
+    else:
+        # FULLSIZE Mode
+        scale = 1.0
+        canvas_w = orig_w
+        canvas_h = orig_h
+        
     ground_y = int(-global_min_y * scale)
     origin_x = int(-global_min_x * scale)
 
@@ -289,7 +294,10 @@ def process_character(char_dir, out_dir):
                                         rgba_pixels[cx, cy] = (r, g, b, 255)
                                         
                 if orig_w != canvas_w or orig_h != canvas_h:
-                    rgba_canvas = rgba_canvas.crop((0, 0, canvas_w, canvas_h))
+                    if EXTRACT_MODE == 'SCALED':
+                        rgba_canvas = rgba_canvas.resize((canvas_w, canvas_h), Image.Resampling.NEAREST)
+                    else:
+                        rgba_canvas = rgba_canvas.crop((0, 0, canvas_w, canvas_h))
                 
                 cropped_data = rgba_canvas.getdata()
                 for r, g, b, a in cropped_data:
@@ -314,7 +322,18 @@ def process_character(char_dir, out_dir):
 TARGET_HEIGHT = 32
 
 if __name__ == "__main__":
-    src_dir = "/Users/red1l/Downloads/Mercury Mugen Roster 1.0  with over 1000+ Chars/chars"
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract Mugen Characters for ArcadeMatrix")
+    parser.add_argument("--src", type=str, default="/Users/red1l/Downloads/Mercury Mugen Roster 1.0  with over 1000+ Chars/chars", help="Source directory containing Mugen characters")
+    parser.add_argument("--mode", type=str, choices=['SCALED', 'FULLSIZE'], default='FULLSIZE', 
+                        help="SCALED: Resize character to perfectly fit screen height (for standard ESP32). FULLSIZE: Extract at 1:1 original scale (for RPi or ESP32-S3 with PSRAM).")
+    args = parser.parse_args()
+
+    # Set the global mode so process_character can see it
+    global EXTRACT_MODE
+    EXTRACT_MODE = args.mode
+
+    src_dir = args.src
     out_dirs = [
         ("/Users/red1l/Documents/work/git/perso/RetroPixelLED/ArcadeMatrix/scrap/fighters_32", 32),
         ("/Users/red1l/Documents/work/git/perso/RetroPixelLED/ArcadeMatrix/scrap/fighters_64", 64)
@@ -322,6 +341,8 @@ if __name__ == "__main__":
     
     start_time = time.time()
     chars = [os.path.join(src_dir, d) for d in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, d))]
+    
+    print(f"Starting extraction in mode: {EXTRACT_MODE}")
     
     for out_dir, target_h in out_dirs:
         TARGET_HEIGHT = target_h
