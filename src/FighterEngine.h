@@ -53,6 +53,7 @@ struct FighterPlayer {
     String name;                ///< Name of the character directory
     int height;                 ///< Native height of the character
     int ground_y;               ///< Y position of the ground (origin)
+    int head_y;                 ///< Y position of the head in the stand animation
     int origin_x;               ///< X position of the origin
     int width_px;               ///< Native width of the character
     FgtAnimation animWalk;      ///< Walking animation data

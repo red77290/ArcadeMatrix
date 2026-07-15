@@ -77,18 +77,20 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     result.trim();
     f.close();
     
-    // Format: name,height,ground_y,origin_x,width
+    // Format: name,height,ground_y,origin_x,width,head_y
     int comma1 = result.indexOf(',');
     int comma2 = result.indexOf(',', comma1 + 1);
     int comma3 = result.indexOf(',', comma2 + 1);
     int comma4 = result.indexOf(',', comma3 + 1);
+    int comma5 = result.indexOf(',', comma4 + 1);
 
     if (comma1 > 0) {
         p.name = result.substring(0, comma1);
         p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
         p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
         p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
-        p.width_px = comma4 > 0 ? result.substring(comma4 + 1).toInt() : 32;
+        p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
+        p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
         return true;
     }
     
@@ -264,7 +266,11 @@ void FighterEngine::processLoadState() {
             
             // Done! Finish setup
             {
-                int fight_max_h = (p1.ground_y > p2.ground_y) ? p1.ground_y : p2.ground_y;
+                // Align characters so their ACTUAL standing head touches the top of the screen (y=0)
+                int c1_ground_at_0 = p1.ground_y - p1.head_y;
+                int c2_ground_at_0 = p2.ground_y - p2.head_y;
+                int fight_max_h = (c1_ground_at_0 > c2_ground_at_0) ? c1_ground_at_0 : c2_ground_at_0;
+
                 p1.direction = 1; p1.x = -p1.width_px; p1.y = fight_max_h - p1.ground_y;
                 
                 p2.direction = -1; p2.x = matrix->width();
