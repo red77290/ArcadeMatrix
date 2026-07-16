@@ -96,6 +96,7 @@ void WebServerAPI::setupRoutes() {
         doc["weather_duration_sec"] = config.idle.weather_duration_sec;
         doc["gifs_count"] = config.idle.gifs_count;
         doc["sprite_count"] = config.idle.sprite_count;
+        doc["fighter_interval_sec"] = config.idle.fighter_interval_sec;
 
         // Clock
         doc["clock_font"] = config.time.clock_font;
@@ -175,6 +176,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["weather_duration_sec"].isNull()) config.idle.weather_duration_sec = doc["weather_duration_sec"].as<int>();
         if (!doc["gifs_count"].isNull()) config.idle.gifs_count = doc["gifs_count"].as<int>();
         if (!doc["sprite_count"].isNull()) config.idle.sprite_count = doc["sprite_count"].as<int>();
+        if (!doc["fighter_interval_sec"].isNull()) config.idle.fighter_interval_sec = doc["fighter_interval_sec"].as<int>();
         
         // Clock
         bool clockChanged = false;

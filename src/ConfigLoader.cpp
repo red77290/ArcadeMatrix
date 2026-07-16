@@ -46,6 +46,7 @@ void ConfigLoader::setDefaults() {
     idle.weather_duration_sec = 15;
     idle.gifs_count = 3;
     idle.sprite_count = 1;
+    idle.fighter_interval_sec = 10;
     
     idle.mode = "gifs_then_clock";
     idle.gifs_before_clock = 10;
@@ -143,6 +144,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "WEATHER_DURATION_SEC") idle.weather_duration_sec = value.toInt();
         else if (key == "GIFS_COUNT") idle.gifs_count = value.toInt();
         else if (key == "SPRITE_COUNT") idle.sprite_count = value.toInt();
+        else if (key == "FIGHTER_INTERVAL_SEC") idle.fighter_interval_sec = value.toInt();
         
         else if (key == "MODE") idle.mode = value; // Legacy
         else if (key == "GIFS_BEFORE_CLOCK") idle.gifs_before_clock = value.toInt(); // Legacy
@@ -290,6 +292,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("weather_duration_sec=" + String(idle.weather_duration_sec));
     file.println("gifs_count=" + String(idle.gifs_count));
     file.println("sprite_count=" + String(idle.sprite_count));
+    file.println("fighter_interval_sec=" + String(idle.fighter_interval_sec));
     file.println("mode=" + idle.mode);
     file.println("gifs_before_clock=" + String(idle.gifs_before_clock));
     file.println();

@@ -453,7 +453,9 @@ void FighterEngine::loop() {
     }
     
     if (fightEndTime > 0 && now - fightEndTime > 2000) {
+        extern ConfigLoader config;
         active = false;
+        retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
     }
 }
 

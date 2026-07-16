@@ -3,6 +3,7 @@ import glob
 import struct
 import io
 import time
+import logging
 import json
 from PIL import Image
 
@@ -165,6 +166,7 @@ def process_character(char_dir, out_dir):
     all_valid_frames = {}
     global_min_x, global_min_y, global_max_x, global_max_y = 9999, 9999, -9999, -9999
     walk_h = None
+    stand_head_y_local = 0
     
     for anim_id, anim_name in required_anims.items():
         if anim_id not in air.animations: continue
@@ -177,6 +179,12 @@ def process_character(char_dir, out_dir):
                 img_info = sff.images[(f['grp'], f['img'])]
                 try:
                     img_obj = Image.open(io.BytesIO(img_info['data']))
+                    
+                    # Detect broken palettes (solid silhouettes with <= 2 colors including transparency)
+                    colors = img_obj.convert('RGB').getcolors(256)
+                    if colors is not None and len(colors) <= 2:
+                        continue
+                        
                 except Exception as e:
                     continue
                 
@@ -205,8 +213,16 @@ def process_character(char_dir, out_dir):
                 l_min = min([fr['min_y'] for fr in valid_frames])
                 l_max = max([fr['max_y'] for fr in valid_frames])
                 walk_h = l_max - l_min
+                stand_head_y_local = l_min
 
     if not all_valid_frames: return False
+    
+    # Ensure all mandatory animations are present
+    for req in ['stand', 'walk', 'attack', 'hit', 'win']:
+        if req not in all_valid_frames:
+            logging.warning(f"Character {char_name} missing mandatory animation '{req}'. Skipping.")
+            return False
+
     if walk_h is None or walk_h <= 0: walk_h = global_max_y - global_min_y
     if walk_h <= 0: walk_h = TARGET_HEIGHT
     
@@ -237,14 +253,20 @@ def process_character(char_dir, out_dir):
         
     ground_y = int(-global_min_y * scale)
     origin_x = int(-global_min_x * scale)
+    head_y = int((-global_min_y + stand_head_y_local) * scale)
 
     # Pass 2: Render and save frames
     char_out_dir = os.path.join(out_dir, char_name)
     os.makedirs(char_out_dir, exist_ok=True)
     
     for anim_name, valid_frames in all_valid_frames.items():
-        out_file = os.path.join(char_out_dir, f"{anim_name}.fgt")
-        with open(out_file, 'wb') as f:
+        COMPRESS = globals().get('COMPRESS_FGT', False)
+        ext = ".fgt.gz" if COMPRESS else ".fgt"
+        out_file = os.path.join(char_out_dir, f"{anim_name}{ext}")
+        
+        import gzip
+        open_func = gzip.open if COMPRESS else open
+        with open_func(out_file, 'wb') as f:
             f.write(b'FGT')
             f.write(struct.pack('<B', 1))
             f.write(struct.pack('<H', canvas_w))
@@ -311,6 +333,7 @@ def process_character(char_dir, out_dir):
     return {
         'height': canvas_h,
         'ground_y': ground_y,
+        'head_y': head_y,
         'origin_x': origin_x,
         'width': canvas_w,
         'has_special': special_count > 0,
@@ -327,11 +350,14 @@ if __name__ == "__main__":
     parser.add_argument("--src", type=str, default="/Users/red1l/Downloads/Mercury Mugen Roster 1.0  with over 1000+ Chars/chars", help="Source directory containing Mugen characters")
     parser.add_argument("--mode", type=str, choices=['SCALED', 'FULLSIZE'], default='FULLSIZE', 
                         help="SCALED: Resize character to perfectly fit screen height (for standard ESP32). FULLSIZE: Extract at 1:1 original scale (for RPi or ESP32-S3 with PSRAM).")
+    parser.add_argument("--compress", action="store_true", help="Compress the output .fgt files using gzip (.fgt.gz). Ideal for RPi to save space.")
     args = parser.parse_args()
 
     # Set the global mode so process_character can see it
     global EXTRACT_MODE
     EXTRACT_MODE = args.mode
+    global COMPRESS_FGT
+    COMPRESS_FGT = args.compress
 
     src_dir = args.src
     out_dirs = [
@@ -365,6 +391,6 @@ if __name__ == "__main__":
             
         with open(os.path.join(out_dir, "index.txt"), "w") as f:
             for name, info in index_data.items():
-                f.write(f"{name},{info['height']},{info['ground_y']},{info['origin_x']},{info['width']}\n")
+                f.write(f"{name},{info['height']},{info['ground_y']},{info['origin_x']},{info['width']},{info['head_y']}\n")
                 
         print(f"Successfully exported {success_count} characters for H={TARGET_HEIGHT} in {time.time() - start_time:.1f}s.")

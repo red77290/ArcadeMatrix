@@ -77,6 +77,7 @@ struct IdleConfig {
     int weather_duration_sec;///< Seconds to display the Weather
     int gifs_count;         ///< Number of GIFs to play before rotating
     int sprite_count;       ///< Number of MUGEN fights to play before rotating
+    int fighter_interval_sec; ///< Seconds to wait between MUGEN fights
     
     // Legacy support for backwards compatibility
     String mode;
