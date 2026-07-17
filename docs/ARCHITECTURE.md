@@ -66,6 +66,16 @@ The ESP32 uses an **Asynchronous Web Server** (`ESPAsyncWebServer`).
 - **The Main Loop (`loop()` in `main.cpp`)**: This loop must run as fast as possible. It calls the currently active engine's `loop()` function to draw the next frame.
 - **The Web Server**: Because it is asynchronous, incoming HTTP requests (like saving settings or changing the clock theme) do not block the main rendering loop. The API parses the incoming JSON using `ArduinoJson`, updates the `ConfigLoader` struct in memory, and flags a reload if necessary.
 
+### Dual-Core Utilization (Multiprocessing)
+
+The ESP32 (and ESP32-S3) are dual-core microcontrollers, and this architecture implicitly leverages both cores via the underlying Arduino/ESP-IDF framework:
+
+- **Core 0 (PRO_CPU):** Handles the Wi-Fi stack, TCP/IP networking, and the `ESPAsyncWebServer`. This ensures that heavy network traffic or API requests do not stutter the display.
+- **Core 1 (APP_CPU):** Handles the main application `loop()`, running the `ClockEngine`, `FighterEngine`, and executing all mathematical logic for animations.
+- **DMA Controller (Hardware Co-processor):** While Core 1 calculates the *next* frame, the ESP32's DMA (Direct Memory Access) controller constantly blasts the *current* frame's pixel data to the LED Matrix over I2S. This costs 0% CPU.
+
+Because this separation of concerns is handled automatically by `ESPAsyncWebServer` and the DMA library, we do not need to manually spawn FreeRTOS tasks (`xTaskCreatePinnedToCore`) in our application code, keeping the codebase simpler while still achieving full multiprocessing performance.
+
 ---
 
 ## 4. Fonts and SD Card
