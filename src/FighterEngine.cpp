@@ -1,6 +1,7 @@
 #include <SD.h>
 #include "FighterEngine.h"
 #include "SDUtils.h"
+#include "ConfigLoader.h"
 
 #define MAX_FIGHTER_FRAME_SIZE 20480
 
