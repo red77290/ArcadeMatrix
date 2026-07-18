@@ -103,6 +103,8 @@ struct StandbyConfig {
     bool night_mode_enabled;///< Enable automatic matrix sleep
     String turn_off_at;     ///< Time string (HH:MM) to power down the LEDs
     String wake_up_at;      ///< Time string (HH:MM) to power up the LEDs
+    int night_brightness;   ///< Night time brightness
+    bool matrix_power;      ///< Runtime toggle for panel power
 };
 
 /**

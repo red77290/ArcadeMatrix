@@ -277,6 +277,32 @@
               </div>
             </div>
             <button id="btn-save-hardware" class="btn secondary" style="margin-top:1rem; width: 100%;">Save Hardware & Restart</button>
+
+            <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
+            <h3 data-i18n="night_mode">Night Mode</h3>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+              <div class="form-group" style="flex: 1; min-width:120px;">
+                <label>Enable Night Mode</label>
+                <select id="setting-night-mode-enabled" class="select-input">
+                  <option value="1">Yes</option>
+                  <option value="0" selected>No</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Night Brightness (%)</label>
+                <input type="number" id="setting-night-brightness" class="text-input" value="10" />
+                <small style="color: #94a3b8; font-size: 0.8rem;">Set to 0 to turn panel OFF</small>
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Turn Night ON At</label>
+                <input type="time" id="setting-turn-off-at" class="text-input" value="23:00" />
+              </div>
+              <div class="form-group" style="flex: 1; min-width:80px;">
+                <label>Turn Night OFF At</label>
+                <input type="time" id="setting-wake-up-at" class="text-input" value="07:00" />
+              </div>
+            </div>
+            <button id="btn-save-night-mode" class="btn secondary" style="margin-top:1rem; width: 100%;">Save Night Mode</button>
           </div>
 
           <div id="tab-rotation" class="glass tab-pane" style="display:none;">
@@ -575,10 +601,21 @@
             </div>
             <div class="form-group">
               <label data-i18n="label_mqtt_ip">MQTT Broker IP</label>
-              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="192.168.x.x" />
+              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="127.0.0.1" />
             </div>
-            <div class="form-group">
-              <label>MQTT Port</label>
+            
+            <div class="form-group" style="margin-top:1.5rem; padding-top:1.5rem; border-top:1px solid rgba(255,255,255,0.1);">
+              <label>Recalbox / Batocera Auto-Sync Installer</label>
+              <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:0.5rem;">Enter your console's IP address to automatically install the network sync script.</p>
+              <div style="display:flex; gap:0.5rem;">
+                <input type="text" id="install-recalbox-ip" class="text-input" placeholder="192.168.1.xxx" style="flex:1;" />
+                <button type="button" id="btn-install-recalbox" class="btn secondary">Install via SSH</button>
+              </div>
+              <div id="install-ssh-result" style="margin-top:0.5rem; font-size:0.8rem;"></div>
+            </div>
+
+            <div class="form-group" style="margin-top:1.5rem; padding-top:1.5rem; border-top:1px solid rgba(255,255,255,0.1);">
+              <label data-i18n="label_mqtt_port">MQTT Port</label>
               <input type="number" id="setting-mqtt-port" class="text-input" value="1883" />
             </div>
             <div class="form-group">
@@ -614,6 +651,9 @@
             </div>
             <p style="text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 1rem;">Auto-refreshing every 3 seconds</p>
             <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+              <button id="btn-toggle-panel" class="btn primary" style="flex: 1;">Turn Panel OFF</button>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
               <button id="btn-reboot" class="btn secondary" style="flex: 1; border-color: #f59e0b; color: #f59e0b;">Reboot System</button>
               <button id="btn-shutdown" class="btn secondary" style="flex: 1; border-color: #ef4444; color: #ef4444;">Shutdown</button>
             </div>
@@ -679,6 +719,18 @@
         if (t.matrix_pwm_bits !== undefined) document.getElementById('setting-matrix-pwm-bits').value = t.matrix_pwm_bits;
         if (t.matrix_pwm_lsb_nanoseconds !== undefined) document.getElementById('setting-matrix-pwm-lsb-nanoseconds').value = t.matrix_pwm_lsb_nanoseconds;
         
+        // Night Mode
+        if (t.night_mode_enabled !== undefined) document.getElementById('setting-night-mode-enabled').value = t.night_mode_enabled ? "1" : "0";
+        if (t.matrix_brightness_night !== undefined) document.getElementById('setting-night-brightness').value = t.matrix_brightness_night;
+        if (t.turn_off_at) document.getElementById('setting-turn-off-at').value = t.turn_off_at;
+        if (t.wake_up_at) document.getElementById('setting-wake-up-at').value = t.wake_up_at;
+        
+        const btnToggle = document.getElementById('btn-toggle-panel');
+        if (btnToggle && t.matrix_power !== undefined) {
+           btnToggle.textContent = t.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
+           btnToggle.dataset.state = t.matrix_power ? "1" : "0";
+        }
+        
         // MQTT / Network
         if (t.mqtt_enabled !== undefined) {
             const el = document.getElementById('setting-mqtt-enable');
@@ -715,15 +767,75 @@
           });
       }
       
-      const btnShutdown = document.getElementById('btn-shutdown');
-      if (btnShutdown) {
+        const btnShutdown = document.getElementById('btn-shutdown');
+        if (btnShutdown) {
           btnShutdown.addEventListener('click', () => {
-              if (confirm("Are you sure you want to shut down the Raspberry Pi?")) {
-                  fetch('/api/system/shutdown', { method: 'POST' });
-                  alert("Shutting down... You will need to unplug and replug the power to start it again.");
-              }
+            if (confirm("Shut down the system?")) {
+              fetch('/api/system/shutdown', { method: 'POST' });
+              setTimeout(() => { window.location.reload(); }, 5000);
+            }
           });
-      }
+        }
+        
+        const btnToggle = document.getElementById('btn-toggle-panel');
+        if (btnToggle) {
+          btnToggle.addEventListener('click', async () => {
+             const newState = btnToggle.dataset.state === "0"; // if 0, switch to 1 (true)
+             const res = await fetch('/api/system/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({state: newState}) });
+             const data = await res.json();
+             btnToggle.dataset.state = data.matrix_power ? "1" : "0";
+             btnToggle.textContent = data.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
+          });
+        }
+        
+        const btnSaveNightMode = document.getElementById('btn-save-night-mode');
+        if (btnSaveNightMode) {
+          btnSaveNightMode.addEventListener('click', async () => {
+             const payload = {
+                night_mode_enabled: document.getElementById('setting-night-mode-enabled').value === "1",
+                matrix_brightness_night: parseInt(document.getElementById('setting-night-brightness').value, 10),
+                turn_off_at: document.getElementById('setting-turn-off-at').value,
+                wake_up_at: document.getElementById('setting-wake-up-at').value
+             };
+             btnSaveNightMode.textContent = "Saving...";
+             await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+             setTimeout(() => { btnSaveNightMode.textContent = "Save Night Mode"; }, 1000);
+          });
+        }
+        
+        const btnInstallRecalbox = document.getElementById('btn-install-recalbox');
+        if (btnInstallRecalbox) {
+          btnInstallRecalbox.addEventListener('click', async () => {
+            const ip = document.getElementById('install-recalbox-ip').value.trim();
+            const resultDiv = document.getElementById('install-ssh-result');
+            if (!ip) {
+              resultDiv.innerHTML = '<span style="color:#ef4444;">Please enter an IP address.</span>';
+              return;
+            }
+            btnInstallRecalbox.disabled = true;
+            btnInstallRecalbox.textContent = "Installing...";
+            resultDiv.innerHTML = '<span style="color:#3b82f6;">Connecting via SSH... Please wait.</span>';
+            
+            try {
+              const res = await fetch('/api/mqtt/install', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ip: ip })
+              });
+              const data = await res.json();
+              if (res.ok) {
+                resultDiv.innerHTML = `<span style="color:#10b981;">${data.message}</span>`;
+              } else {
+                resultDiv.innerHTML = `<span style="color:#ef4444;">${data.message}</span>`;
+              }
+            } catch (e) {
+              resultDiv.innerHTML = `<span style="color:#ef4444;">Error: ${e.message}</span>`;
+            } finally {
+              btnInstallRecalbox.disabled = false;
+              btnInstallRecalbox.textContent = "Install via SSH";
+            }
+          });
+        }
 
       const saveHardwareBtn = document.getElementById('btn-save-hardware');
       if (saveHardwareBtn) {

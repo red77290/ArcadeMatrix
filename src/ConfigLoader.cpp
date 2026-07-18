@@ -59,6 +59,8 @@ void ConfigLoader::setDefaults() {
     standby.night_mode_enabled = false;
     standby.turn_off_at = "23:00";
     standby.wake_up_at = "07:00";
+    standby.night_brightness = 10;
+    standby.matrix_power = true;
 
     dateSettings.theme = 0;
     dateSettings.background_sprite = "";
@@ -159,6 +161,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         if (key == "NIGHT_MODE" || key == "NIGHT_MODE_ENABLED") standby.night_mode_enabled = (value == "true" || value == "1");
         else if (key == "TURN_OFF_AT") standby.turn_off_at = value;
         else if (key == "WAKE_UP_AT") standby.wake_up_at = value;
+        else if (key == "NIGHT_BRIGHTNESS") standby.night_brightness = value.toInt();
     }
     else if (currentSection == "DATE") {
         if (key == "THEME") dateSettings.theme = value.toInt();
@@ -308,6 +311,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("night_mode_enabled=" + String(standby.night_mode_enabled ? "1" : "0"));
     file.println("turn_off_at=" + standby.turn_off_at);
     file.println("wake_up_at=" + standby.wake_up_at);
+    file.println("night_brightness=" + String(standby.night_brightness));
     file.println();
 
     file.println("[date]");

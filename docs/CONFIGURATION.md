@@ -13,4 +13,4 @@ The exhaustive `conf.ini` parameter list is shipped in the `release/sdcard/` fol
 - `[IDLE]`: The sequence of modules to play when nothing is happening (Clock, Date, Weather, GIFs, Sprites).
 - `[DATE]`: Background sprites and formatting for the date module.
 - `[WEATHER]`: OpenWeatherMap API keys.
-- `[STANDBY]`: Night mode power-saving timers.
+- `[STANDBY]`: Night mode power-saving timers and `night_brightness` level (set to 0 to completely turn off the panel at night).

@@ -133,6 +133,8 @@ void WebServerAPI::setupRoutes() {
         doc["night_mode_enabled"] = config.standby.night_mode_enabled;
         doc["turn_off_at"] = config.standby.turn_off_at;
         doc["wake_up_at"] = config.standby.wake_up_at;
+        doc["matrix_brightness_night"] = config.standby.night_brightness;
+        doc["matrix_power"] = config.standby.matrix_power;
 
         // WiFi
         doc["wifi_ssid"] = config.wifi.ssid;
@@ -225,6 +227,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["night_mode_enabled"].isNull()) config.standby.night_mode_enabled = doc["night_mode_enabled"].as<bool>();
         if (!doc["turn_off_at"].isNull()) config.standby.turn_off_at = doc["turn_off_at"].as<String>();
         if (!doc["wake_up_at"].isNull()) config.standby.wake_up_at = doc["wake_up_at"].as<String>();
+        if (!doc["matrix_brightness_night"].isNull()) config.standby.night_brightness = doc["matrix_brightness_night"].as<int>();
 
         // WiFi
         if (!doc["wifi_ssid"].isNull()) config.wifi.ssid = doc["wifi_ssid"].as<String>();
@@ -343,6 +346,46 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"success\":true}");
     });
     server.addHandler(clockHandler);
+
+    // API: Toggle Panel Power
+    AsyncCallbackJsonWebHandler* powerHandler = new AsyncCallbackJsonWebHandler("/api/system/power", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject doc = json.as<JsonObject>();
+        extern ConfigLoader config;
+        
+        if (!doc["state"].isNull()) {
+            config.standby.matrix_power = doc["state"].as<bool>();
+            if (!config.standby.matrix_power) {
+                extern MatrixEngine matrixEngine;
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.getDisplay()->flipBuffer();
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.getDisplay()->flipBuffer();
+            }
+        }
+        DynamicJsonDocument resp(1024);
+        resp["status"] = "success";
+        resp["matrix_power"] = config.standby.matrix_power;
+        String response;
+        serializeJson(resp, response);
+        request->send(200, "application/json", response);
+    });
+    server.addHandler(powerHandler);
+    
+    // API: System commands (Reboot / Shutdown)
+    server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":true}");
+        delay(500);
+        ESP.restart(); // ESP cannot truly shutdown via software, it just restarts or deep sleeps. We map shutdown to restart here.
+    });
+    server.on("/api/system/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":true}");
+        delay(500);
+        ESP.restart();
+    });
     
     // API: OTA Firmware Update
     server.on("/api/update", HTTP_POST, [](AsyncWebServerRequest *request) {
