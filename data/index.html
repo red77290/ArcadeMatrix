@@ -681,6 +681,28 @@
         if (t.matrix_pwm_bits !== undefined) document.getElementById('setting-matrix-pwm-bits').value = t.matrix_pwm_bits;
         if (t.matrix_pwm_lsb_nanoseconds !== undefined) document.getElementById('setting-matrix-pwm-lsb-nanoseconds').value = t.matrix_pwm_lsb_nanoseconds;
         
+        // Rotation and Durations
+        if (t.clock_duration_sec !== undefined) document.getElementById('setting-clock-dur').value = t.clock_duration_sec;
+        if (t.date_duration_sec !== undefined) document.getElementById('setting-date-dur').value = t.date_duration_sec;
+        if (t.weather_duration_sec !== undefined) document.getElementById('setting-weather-dur').value = t.weather_duration_sec;
+        if (t.gifs_count !== undefined) document.getElementById('setting-gifs-count').value = t.gifs_count;
+        
+        if (t.rotation) {
+            const rotArr = t.rotation.split(',');
+            const ul = document.getElementById('rotation-list');
+            if (ul) {
+                ul.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+                rotArr.forEach(id => {
+                    const li = ul.querySelector(`li[data-id="${id.trim()}"]`);
+                    if (li) {
+                        ul.appendChild(li); // Move to bottom to match sequence order
+                        const cb = li.querySelector('input[type="checkbox"]');
+                        if (cb) cb.checked = true;
+                    }
+                });
+            }
+        }
+        
         // Night Mode
         if (t.night_mode_enabled !== undefined) document.getElementById('setting-night-mode-enabled').value = t.night_mode_enabled ? "1" : "0";
         if (t.matrix_brightness_night !== undefined) document.getElementById('setting-night-brightness').value = t.matrix_brightness_night;
