@@ -248,8 +248,11 @@ def process_character(char_dir, out_dir):
     else:
         # FULLSIZE Mode
         scale = 1.0
-        canvas_w = orig_w
-        canvas_h = orig_h
+        if TARGET_HEIGHT == 32:
+            scale = 0.5
+            
+        canvas_w = max(1, int(orig_w * scale))
+        canvas_h = max(1, int(orig_h * scale))
         
     ground_y = int(-global_min_y * scale)
     origin_x = int(-global_min_x * scale)
