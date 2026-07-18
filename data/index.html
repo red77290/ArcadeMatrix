@@ -18,11 +18,10 @@
         <h2>ArcadeMatrix</h2>
       </div>
       <ul class="nav-links">
-        <li class="active" data-view="dashboard" data-i18n="nav_dashboard">Dashboard</li>
+        <li class="active" data-view="settings" data-i18n="nav_settings">Settings</li>
         <li data-view="playlists" data-i18n="nav_playlists">GIFs Playlists</li>
         <li data-view="clocks" data-i18n="nav_clocks">Clocks</li>
         <li data-view="messages" data-i18n="nav_messages">Messages</li>
-        <li data-view="settings" data-i18n="nav_settings">Settings</li>
       </ul>
     </nav>
 
@@ -36,36 +35,10 @@
             <option value="es">ES</option>
           </select>
           <button id="mobile-menu-btn" class="btn secondary" style="display: none; padding: 0.5rem; font-size: 1.2rem; background: transparent; border: 1px solid var(--glass-border);">☰</button>
-          <h1 id="view-title" data-i18n="dashboard_title">Dashboard</h1>
-        </div>
-
         <div class="status-indicator online" data-i18n="status_online">Online</div>
       </header>
 
-      <section id="view-dashboard" class="view active-view">
-        <div class="cards-grid">
-          <div class="card glass">
-            <h3 data-i18n="now_playing">Now Playing</h3>
-            <div class="now-playing-visual"
-              style="height: 100px; background: #000; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
-              <span style="color: #4ade80; font-family: monospace;">[ Matrix Preview ]</span>
-            </div>
-            <p class="track-name">Ryu_Hadouken.raw</p>
-          </div>
 
-          <div class="card glass">
-            <h3 data-i18n="quick_controls">Quick Controls</h3>
-            <div class="controls">
-              <button class="btn primary" data-i18n="btn_play">Play</button>
-              <button class="btn secondary" data-i18n="btn_next">Next</button>
-              <div class="slider-group">
-                <label data-i18n="label_brightness">Brightness</label>
-                <input type="range" min="1" max="100" value="50">
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       <!-- Playlists View -->
       <section id="view-playlists" class="view">
@@ -200,7 +173,7 @@
       </section>
 
       <!-- Settings View -->
-      <section id="view-settings" class="view">
+      <section id="view-settings" class="view active-view">
         <div class="settings-tabs" style="display:flex; gap:1rem; margin-bottom:1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; overflow-x: auto;">
           <button class="btn tab-btn active" data-target="tab-hardware" style="background:transparent; border:none; color:#fff; font-weight:bold; cursor:pointer; white-space:nowrap;">Hardware</button>
           <button class="btn tab-btn" data-target="tab-rotation" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Screensaver</button>
@@ -601,21 +574,10 @@
             </div>
             <div class="form-group">
               <label data-i18n="label_mqtt_ip">MQTT Broker IP</label>
-              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="127.0.0.1" />
+              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="192.168.x.x" />
             </div>
-            
-            <div class="form-group" style="margin-top:1.5rem; padding-top:1.5rem; border-top:1px solid rgba(255,255,255,0.1);">
-              <label>Recalbox / Batocera Auto-Sync Installer</label>
-              <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:0.5rem;">Enter your console's IP address to automatically install the network sync script.</p>
-              <div style="display:flex; gap:0.5rem;">
-                <input type="text" id="install-recalbox-ip" class="text-input" placeholder="192.168.1.xxx" style="flex:1;" />
-                <button type="button" id="btn-install-recalbox" class="btn secondary">Install via SSH</button>
-              </div>
-              <div id="install-ssh-result" style="margin-top:0.5rem; font-size:0.8rem;"></div>
-            </div>
-
-            <div class="form-group" style="margin-top:1.5rem; padding-top:1.5rem; border-top:1px solid rgba(255,255,255,0.1);">
-              <label data-i18n="label_mqtt_port">MQTT Port</label>
+            <div class="form-group">
+              <label>MQTT Port</label>
               <input type="number" id="setting-mqtt-port" class="text-input" value="1883" />
             </div>
             <div class="form-group">
@@ -767,75 +729,41 @@
           });
       }
       
-        const btnShutdown = document.getElementById('btn-shutdown');
-        if (btnShutdown) {
+      const btnShutdown = document.getElementById('btn-shutdown');
+      if (btnShutdown) {
           btnShutdown.addEventListener('click', () => {
-            if (confirm("Shut down the system?")) {
-              fetch('/api/system/shutdown', { method: 'POST' });
-              setTimeout(() => { window.location.reload(); }, 5000);
-            }
-          });
-        }
-        
-        const btnToggle = document.getElementById('btn-toggle-panel');
-        if (btnToggle) {
-          btnToggle.addEventListener('click', async () => {
-             const newState = btnToggle.dataset.state === "0"; // if 0, switch to 1 (true)
-             const res = await fetch('/api/system/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({state: newState}) });
-             const data = await res.json();
-             btnToggle.dataset.state = data.matrix_power ? "1" : "0";
-             btnToggle.textContent = data.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
-          });
-        }
-        
-        const btnSaveNightMode = document.getElementById('btn-save-night-mode');
-        if (btnSaveNightMode) {
-          btnSaveNightMode.addEventListener('click', async () => {
-             const payload = {
-                night_mode_enabled: document.getElementById('setting-night-mode-enabled').value === "1",
-                matrix_brightness_night: parseInt(document.getElementById('setting-night-brightness').value, 10),
-                turn_off_at: document.getElementById('setting-turn-off-at').value,
-                wake_up_at: document.getElementById('setting-wake-up-at').value
-             };
-             btnSaveNightMode.textContent = "Saving...";
-             await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-             setTimeout(() => { btnSaveNightMode.textContent = "Save Night Mode"; }, 1000);
-          });
-        }
-        
-        const btnInstallRecalbox = document.getElementById('btn-install-recalbox');
-        if (btnInstallRecalbox) {
-          btnInstallRecalbox.addEventListener('click', async () => {
-            const ip = document.getElementById('install-recalbox-ip').value.trim();
-            const resultDiv = document.getElementById('install-ssh-result');
-            if (!ip) {
-              resultDiv.innerHTML = '<span style="color:#ef4444;">Please enter an IP address.</span>';
-              return;
-            }
-            btnInstallRecalbox.disabled = true;
-            btnInstallRecalbox.textContent = "Installing...";
-            resultDiv.innerHTML = '<span style="color:#3b82f6;">Connecting via SSH... Please wait.</span>';
-            
-            try {
-              const res = await fetch('/api/mqtt/install', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ ip: ip })
-              });
-              const data = await res.json();
-              if (res.ok) {
-                resultDiv.innerHTML = `<span style="color:#10b981;">${data.message}</span>`;
-              } else {
-                resultDiv.innerHTML = `<span style="color:#ef4444;">${data.message}</span>`;
+              if (confirm("Are you sure you want to shut down the Raspberry Pi?")) {
+                  fetch('/api/system/shutdown', { method: 'POST' });
+                  alert("Shutting down... You will need to unplug and replug the power to start it again.");
               }
-            } catch (e) {
-              resultDiv.innerHTML = `<span style="color:#ef4444;">Error: ${e.message}</span>`;
-            } finally {
-              btnInstallRecalbox.disabled = false;
-              btnInstallRecalbox.textContent = "Install via SSH";
-            }
           });
-        }
+      }
+
+      const btnToggle = document.getElementById('btn-toggle-panel');
+      if (btnToggle) {
+        btnToggle.addEventListener('click', async () => {
+           const newState = btnToggle.dataset.state === "0"; // if 0, switch to 1 (true)
+           const res = await fetch('/api/system/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({state: newState}) });
+           const data = await res.json();
+           btnToggle.dataset.state = data.matrix_power ? "1" : "0";
+           btnToggle.textContent = data.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
+        });
+      }
+      
+      const btnSaveNightMode = document.getElementById('btn-save-night-mode');
+      if (btnSaveNightMode) {
+        btnSaveNightMode.addEventListener('click', async () => {
+           const payload = {
+              night_mode_enabled: document.getElementById('setting-night-mode-enabled').value === "1",
+              matrix_brightness_night: parseInt(document.getElementById('setting-night-brightness').value, 10),
+              turn_off_at: document.getElementById('setting-turn-off-at').value,
+              wake_up_at: document.getElementById('setting-wake-up-at').value
+           };
+           btnSaveNightMode.textContent = "Saving...";
+           await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+           setTimeout(() => { btnSaveNightMode.textContent = "Save Night Mode"; }, 1000);
+        });
+      }
 
       const saveHardwareBtn = document.getElementById('btn-save-hardware');
       if (saveHardwareBtn) {
