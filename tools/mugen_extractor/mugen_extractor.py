@@ -319,10 +319,7 @@ def process_character(char_dir, out_dir):
                                         rgba_pixels[cx, cy] = (r, g, b, 255)
                                         
                 if orig_w != canvas_w or orig_h != canvas_h:
-                    if EXTRACT_MODE == 'SCALED':
-                        rgba_canvas = rgba_canvas.resize((canvas_w, canvas_h), Image.Resampling.NEAREST)
-                    else:
-                        rgba_canvas = rgba_canvas.crop((0, 0, canvas_w, canvas_h))
+                    rgba_canvas = rgba_canvas.resize((canvas_w, canvas_h), Image.Resampling.NEAREST)
                 
                 cropped_data = rgba_canvas.getdata()
                 for r, g, b, a in cropped_data:
@@ -364,8 +361,7 @@ if __name__ == "__main__":
 
     src_dir = args.src
     out_dirs = [
-        ("fighters_32", 32),
-        ("fighters_64", 64)
+        ("fighters_32", 32)
     ]
     
     start_time = time.time()
