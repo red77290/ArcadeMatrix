@@ -188,6 +188,7 @@ void setup() {
             configTzTime(config.time.timezone.c_str(), config.time.ntpServer.c_str());
             Serial.println("NTP Time Sync initiated.");
             
+            Serial.printf("Free Heap before Web Server start: %d bytes\n", ESP.getFreeHeap());
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
             webServer->setMarqueeEngine(marqueeEngine);
