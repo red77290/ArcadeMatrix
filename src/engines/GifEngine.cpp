@@ -4,7 +4,7 @@
 
 GifEngine* GifEngine::instance = nullptr;
 
-GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), rawLastFrameTime(0) {
+GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), rawLastFrameTime(0), pngShowStartTime(0) {
     instance = this;
 }
 
@@ -34,13 +34,24 @@ bool GifEngine::playGif(const char* filepath) {
             return false;
         }
         isRaw = true;
+        isPng = false;
         isPlaying = true;
         rawLastFrameTime = 0;
         return true;
+    } else if (path.endsWith(".png") || path.endsWith(".PNG")) {
+        if (decodePng(filepath)) {
+            isRaw = false;
+            isPng = true;
+            isPlaying = true;
+            pngShowStartTime = millis();
+            return true;
+        }
+        return false;
     } else {
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             Serial.println("GIF opened successfully!");
             isRaw = false;
+            isPng = false;
             isPlaying = true;
             return true;
         } else {
@@ -48,6 +59,24 @@ bool GifEngine::playGif(const char* filepath) {
         }
     }
     return false;
+}
+
+bool GifEngine::decodePng(const char* filepath) {
+    // PNGdec has no concept of animation: decode the whole image once, directly onto the
+    // matrix (via PNGDrawCallback -> matrix->drawPixel), then just leave it on screen. loop()
+    // only needs to track pngShowStartTime to know when to advance/loop - see loop()/GifEngine.h.
+    int rc = png.open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
+    if (rc != PNG_SUCCESS) {
+        Serial.printf("Error: png.open() failed for %s (rc=%d)\n", filepath, rc);
+        return false;
+    }
+    rc = png.decode(NULL, 0);
+    png.close();
+    if (rc != PNG_SUCCESS) {
+        Serial.printf("Error: png.decode() failed for %s (rc=%d)\n", filepath, rc);
+        return false;
+    }
+    return true;
 }
 
 void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
@@ -143,7 +172,8 @@ void GifEngine::loadNextFileInPlaylist() {
                 while (f) {
                     if (!f.isDirectory() && !isMacJunk(String(f.name())) &&
                         (String(f.name()).endsWith(".gif") || String(f.name()).endsWith(".GIF") ||
-                         String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW"))) {
+                         String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW") ||
+                         String(f.name()).endsWith(".png") || String(f.name()).endsWith(".PNG"))) {
                         String fname = String(f.name());
                         if (fname.indexOf("._") == -1) count++;
                     }
@@ -160,7 +190,8 @@ void GifEngine::loadNextFileInPlaylist() {
                     while (f) {
                         if (!f.isDirectory() && !isMacJunk(String(f.name())) &&
                             (String(f.name()).endsWith(".gif") || String(f.name()).endsWith(".GIF") ||
-                             String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW"))) {
+                             String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW") ||
+                             String(f.name()).endsWith(".png") || String(f.name()).endsWith(".PNG"))) {
                             String fname = String(f.name());
                             if (true) {
                                 if (current == target) {
@@ -197,7 +228,7 @@ void GifEngine::loadNextFileInPlaylist() {
 
 void GifEngine::stop() {
     if (isPlaying) {
-        if (!isRaw) gif.close();
+        if (!isRaw && !isPng) gif.close();
         if (currentFile) currentFile.close();
         isPlaying = false;
     }
@@ -221,6 +252,17 @@ void GifEngine::loop() {
 
     if (isRaw) {
         playRawFrame();
+    } else if (isPng) {
+        // Static image: already decoded directly onto the matrix by decodePng(). Nothing to
+        // redraw every tick - just wait out pngHoldDurationMs, then advance/loop like a
+        // single-frame raw sequence would.
+        if (millis() - pngShowStartTime >= pngHoldDurationMs) {
+            if (playlistMode) {
+                loadNextFileInPlaylist();
+            } else {
+                pngShowStartTime = millis(); // Loop: just keep showing the same static image
+            }
+        }
     } else {
         int result = gif.playFrame(true, nullptr);
         if (result <= 0) {
@@ -346,4 +388,60 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             instance->matrix->drawPixel(xOffset + x, y, usPalette[*s++]);
         }
     }
+}
+
+// --- PNGdec callbacks (static .png assets, mirrors GIF callbacks above) ---
+
+void* GifEngine::PNGOpenFile(const char *fname, int32_t *pSize) {
+    if (instance) {
+        instance->pngFile = SD.open(fname);
+        if (instance->pngFile) {
+            *pSize = instance->pngFile.size();
+            return (void*)&instance->pngFile;
+        }
+    }
+    return nullptr;
+}
+
+void GifEngine::PNGCloseFile(void *pHandle) {
+    File *f = static_cast<File *>(pHandle);
+    if (f && *f) f->close();
+}
+
+int32_t GifEngine::PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen) {
+    File *f = static_cast<File *>(pFile->fHandle);
+    if (!f || !*f) return 0;
+
+    int32_t iBytesRead = f->read(pBuf, iLen);
+    pFile->iPos = f->position();
+    return iBytesRead;
+}
+
+int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
+    File *f = static_cast<File *>(pFile->fHandle);
+    if (!f || !*f) return 0;
+
+    f->seek(iPosition);
+    pFile->iPos = f->position();
+    return pFile->iPos;
+}
+
+int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
+    if (!instance || !instance->matrix) return 0;
+
+    // 256px covers the widest supported panel (ESP32-S3 @ 256x64); getLineAsRGB565() writes
+    // exactly pDraw->iWidth pixels so this is a safe upper bound for either target.
+    static uint16_t lineBuffer[256];
+    int iWidth = pDraw->iWidth;
+    if (iWidth > 256) iWidth = 256;
+
+    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+
+    int y = pDraw->y;
+    if (y >= instance->matrix->height()) return 1;
+
+    for (int x = 0; x < iWidth && x < instance->matrix->width(); x++) {
+        instance->matrix->drawPixel(x, y, lineBuffer[x]);
+    }
+    return 1;
 }
