@@ -1,9 +1,9 @@
 #include "WebServerAPI.h"
 #include <SD.h>
 #include <Update.h>
-#include "MatrixEngine.h"
-#include "GifEngine.h"
-#include "RotationManager.h"
+#include "../core/MatrixEngine.h"
+#include "../engines/GifEngine.h"
+#include "../core/RotationManager.h"
 #include "WebUI.h"
 
 WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine) : server(port), msg(msgEngine), clock(clkEngine) {}

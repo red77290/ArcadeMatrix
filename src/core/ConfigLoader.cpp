@@ -1,7 +1,7 @@
 #include "ConfigLoader.h"
 #include <SD.h>
 #include <ArduinoJson.h>
-#include "GifEngine.h"
+#include "../engines/GifEngine.h"
 
 ConfigLoader::ConfigLoader() {
     setDefaults();

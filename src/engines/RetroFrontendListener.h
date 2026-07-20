@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include "ConfigLoader.h"
+#include "../core/ConfigLoader.h"
 #include "GifEngine.h"
 #include "ClockEngine.h"
 

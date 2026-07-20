@@ -1,7 +1,7 @@
 #ifndef BINARYCLOCK_H
 #define BINARYCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 class BinaryClock : public ClockFace {
 public:

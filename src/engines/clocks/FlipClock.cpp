@@ -1,5 +1,5 @@
 #include "FlipClock.h"
-#include "ConfigLoader.h"
+#include "../../core/ConfigLoader.h"
 
 extern ConfigLoader config;
 

@@ -24,6 +24,10 @@ enum PublisherTheme {
     THEME_BUB = 17,
     THEME_CYBERPUNK = 18,
     THEME_FLIP = 19,
+    // 20 is reserved for a "Custom gradient" theme handled by ArcadeClock (parity with the RPi's
+    // theme ID 20). 21 mirrors the RPi's TrueMatrixRenderer (character-based digital rain), unlike
+    // THEME_CYBERPUNK above which only animates falling pixel dots.
+    THEME_MATRIX_RAIN = 21,
     THEME_TETRIS_GB = 29
 };
 

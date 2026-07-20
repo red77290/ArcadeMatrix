@@ -3,18 +3,18 @@
 #include <SD.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
-#include "ConfigLoader.h"
-#include "MatrixEngine.h"
-#include "GifEngine.h"
-#include "ClockEngine.h"
-#include "ArcadeClock.h"
-#include "MessageEngine.h"
-#include "WebServerAPI.h"
-#include "RetroFrontendListener.h"
-#include "DateEngine.h"
-#include "WeatherEngine.h"
-#include "FighterEngine.h"
-#include "RotationManager.h"
+#include "core/ConfigLoader.h"
+#include "core/MatrixEngine.h"
+#include "engines/GifEngine.h"
+#include "engines/ClockEngine.h"
+#include "engines/clocks/ArcadeClock.h"
+#include "engines/MessageEngine.h"
+#include "api/WebServerAPI.h"
+#include "engines/RetroFrontendListener.h"
+#include "engines/DateEngine.h"
+#include "engines/WeatherEngine.h"
+#include "engines/FighterEngine.h"
+#include "core/RotationManager.h"
 
 // Hardware Pins for SD Card (VSPI)
 #define SD_CS_PIN 5
