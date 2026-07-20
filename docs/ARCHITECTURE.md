@@ -98,12 +98,17 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
   - **Resizing is intentionally NOT done on-device** for any of these formats — pre-scale images to
     the target panel resolution (128x32 or 256x64) offline before copying them to the SD card. Runtime
     resizing is CPU-expensive on both ESP32 and ESP32-S3 and is out of scope.
-- **Font Rendering:** The system relies on `Adafruit GFX` bitmap fonts compiled directly into the
-  firmware (`src/engines/fonts/`, currently 7 fonts across 3 arcade publisher styles). Unlike the Raspberry Pi
-  version, there is **no runtime loading of `.bdf`/`.ttf` fonts from the SD card** today — all fonts
-  must be compiled in. (An earlier draft of this document claimed BDF-from-SD loading existed; that
-  was aspirational and did not match the actual code — see the project plan for a proposed SD-loadable
-  bitmap font format.)
+- **Font Rendering:** Most themes/clocks use `Adafruit GFX` bitmap fonts compiled directly into the
+  firmware (`src/engines/fonts/`, currently 7 fonts across 3 arcade publisher styles) — this remains
+  the default and recommended path since it costs zero SD access at runtime. In addition,
+  `BitmapFontLoader` (`src/core/BitmapFontLoader.h`/`.cpp`) can load a **custom** bitmap font from
+  the SD card at boot into a heap-allocated `GFXfont`-compatible structure, currently wired into
+  `MessageEngine` (the `/api/message` scrolling banner) via `conf.ini`'s `[fonts] custom_font_path`.
+  Source fonts must first be converted from BDF (the same bitmap font format the Raspberry Pi
+  version already ships in `fonts/*.bdf`) to ArcadeMatrix's compact `.amf` binary format using
+  `tools/bdf_to_amfont/bdf_to_amfont.py` — see `docs/DEVELOPER.md` for the full workflow. There is
+  still no on-device `.ttf`/vector font rendering or BDF parsing (out of scope for a microcontroller
+  with no font-rasterization library); `.amf` is purely a pre-converted bitmap glyph table.
 
 ---
 

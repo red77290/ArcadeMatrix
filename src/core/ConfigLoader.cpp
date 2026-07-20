@@ -71,6 +71,8 @@ void ConfigLoader::setDefaults() {
     dateSettings.date_offset_y = 0;
     dateSettings.date_color_1 = "#ffffff";
     dateSettings.date_color_2 = "#ffffff";
+
+    fonts.custom_font_path = "";
 }
 
 String ConfigLoader::extractValue(String line) {
@@ -173,6 +175,9 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "BACKGROUND_SPRITE") dateSettings.background_sprite = value;
         else if (key == "DATE_COLOR_1") dateSettings.date_color_1 = value;
         else if (key == "DATE_COLOR_2") dateSettings.date_color_2 = value;
+    }
+    else if (currentSection == "FONTS") {
+        if (key == "CUSTOM_FONT_PATH") fonts.custom_font_path = value;
     }
 }
 
@@ -326,6 +331,12 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("date_offset_y=" + String(dateSettings.date_offset_y));
     file.println("date_color_1=" + dateSettings.date_color_1);
     file.println("date_color_2=" + dateSettings.date_color_2);
+    file.println();
+
+    file.println("[fonts]");
+    file.println("# Optional SD-loadable custom bitmap font (.amf format, see tools/bdf_to_amfont)");
+    file.println("# Leave empty to use the compiled-in fonts only.");
+    file.println("custom_font_path=" + fonts.custom_font_path);
     file.println();
     
     file.close();

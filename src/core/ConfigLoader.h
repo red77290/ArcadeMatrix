@@ -124,6 +124,14 @@ struct DateConfig {
 };
 
 /**
+ * @struct FontConfig
+ * @brief Optional SD-loadable custom bitmap font (see BitmapFontLoader/tools/bdf_to_amfont).
+ */
+struct FontConfig {
+    String custom_font_path;    ///< Path to a .amf file on SD (e.g. "/fonts/myfont.amf"), or "" to disable
+};
+
+/**
  * @class ConfigLoader
  * @brief Main engine configuration parser.
  */
@@ -166,6 +174,7 @@ public:
     WeatherConfig weather;
     StandbyConfig standby;
     DateConfig dateSettings;
+    FontConfig fonts;
 
 private:
     void parseLine(String line, String& currentSection);
