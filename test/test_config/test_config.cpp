@@ -35,9 +35,11 @@ void test_parse_valid_ini(void) {
         "[MATRIX]\n"
         "WIDTH=256\n"
         "HEIGHT=64\n"
+        "PANEL_TYPE=P4\n"
         "CHAIN=2\n"
         "BRIGHTNESS_LIMIT=40\n"
         "COLOR_DEPTH=16\n"
+        "FORCE_SINGLE_BUFFER=true\n"
         "\n"
         "[MQTT]\n"
         "ENABLED=true\n"
@@ -61,9 +63,11 @@ void test_parse_valid_ini(void) {
     // Assert Matrix
     TEST_ASSERT_EQUAL_UINT16(256, config.matrix.width);
     TEST_ASSERT_EQUAL_UINT16(64, config.matrix.height);
+    TEST_ASSERT_EQUAL_STRING("P4", config.matrix.panelType.c_str());
     TEST_ASSERT_EQUAL_UINT8(2, config.matrix.chainLength);
     TEST_ASSERT_EQUAL_UINT8(40, config.matrix.powerLimitPercent);
     TEST_ASSERT_EQUAL_UINT8(16, config.matrix.colorDepth);
+    TEST_ASSERT_TRUE(config.matrix.forceSingleBuffer);
 
     // Assert MQTT
     TEST_ASSERT_TRUE(config.mqtt.enabled);

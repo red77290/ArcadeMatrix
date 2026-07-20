@@ -75,6 +75,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download esp32dev release assets
         uses: actions/download-artifact@v4
         with:
@@ -92,12 +94,16 @@ jobs:
           cd release/esp32dev && zip -r ../../ArcadeMatrix-esp32dev.zip . && cd -
           cd release/esp32s3  && zip -r ../../ArcadeMatrix-esp32s3.zip  . && cd -
 
+      - name: Zip sample SD card bundle
+        run: cd release/sdCard && zip -r ../../ArcadeMatrix-sdcard.zip . -x '*.DS_Store' && cd -
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ArcadeMatrix-esp32dev.zip
             ArcadeMatrix-esp32s3.zip
+            ArcadeMatrix-sdcard.zip
           generate_release_notes: true
           draft: false
           prerelease: false

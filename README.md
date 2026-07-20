@@ -11,7 +11,9 @@ Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This p
 or `ArcadeMatrix-esp32s3.zip` depending on your board, then flash `firmware-*.bin`,
 `bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` with `esptool.py` - see
 [Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release) for exact offsets and
-command. The browser-based Web Installer above will be the easier option once the repo is public.)
+command. The browser-based Web Installer above will be the easier option once the repo is public.
+Also grab `ArcadeMatrix-sdcard.zip` from the same release - a ready-to-copy SD card starter kit
+with a sample `conf.ini`, GIFs/MUGEN folders, and the GIF playlist indexing scripts.)
 
 
 ## Features
@@ -42,7 +44,7 @@ SD:/
 
 ## Configuration (`conf.ini`)
 The `conf.ini` file located at the root of your SD card is exhaustive. It contains parameters for the Matrix size, color depth, clock themes, idle rotation order, and MUGEN sprite backgrounds.
-Open the `conf.ini` provided in the `release/sdcard/` folder to see all possible values.
+Open the `conf.ini` provided in the `release/sdCard/` folder to see all possible values.
 
 ## MUGEN Sprite Extraction (The `mugen_extractor.py` Script)
 To display fighters in the `SPRITES` module, the ESP32 expects `.fgt` raw files. Since the ESP32 is not powerful enough to decode complex MUGEN character formats natively, we provide a custom Python script to convert them and generate an `index.txt` manifest containing perfect bounding boxes and virtual ground values.
