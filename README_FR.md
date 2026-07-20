@@ -4,15 +4,6 @@
 
 Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED HUB75 ! Ce projet vous permet d'afficher des horloges Arcade, des GIF animés, la météo, et même des **sprites de jeux de combat MUGEN** simulés directement sur une vraie matrice LED.
 
-📚 **Liens de documentation :**
-- [Premiers pas (installation de PlatformIO, compilation, flash, logs)](docs/GETTING_STARTED_FR.md)
-- [Web Installer (flash depuis votre navigateur, sans CLI)](webinstaller/README_FR.md) - *sera mis en ligne une fois ce dépôt public (GitHub Pages nécessite un dépôt public avec l'offre gratuite) ; en attendant, utilisez le firmware précompilé ci-dessous.*
-- [Guide matériel](docs/HARDWARE_FR.md)
-- [Guide de câblage](docs/WIRING_FR.md)
-- [Guide de configuration](docs/CONFIGURATION_FR.md)
-- [Guide développeur](docs/DEVELOPER_FR.md)
-- [Architecture](docs/ARCHITECTURE_FR.md)
-
 ## 💾 Installation
 
 **[⬇️ Télécharger le dernier firmware précompilé](https://github.com/red77290/ArcadeMatrix/releases/latest)**
@@ -35,8 +26,8 @@ Formatez votre carte SD en **FAT32**. Votre carte SD doit ressembler à ceci :
 ```
 SD:/
   ├─ conf.ini
-  ├─ playlists.json
   ├─ gifs/
+  │   ├─ playlists.json
   │   └─ mario.gif
   └─ fighters_32/
       ├─ backgrounds/
@@ -75,6 +66,21 @@ Ensuite, associez cet arrière-plan dans votre `conf.ini` sous la section `[DATE
 BACKGROUND_SPRITE=stage1.raw
 ```
 
+## Indexation des playlists GIF (sélection de dossiers dans la Web UI)
+La Web UI vous permet de cocher/décocher quels sous-dossiers de `gifs/` sont joués pendant la rotation en mode repos, mais elle a besoin d'un manifeste `playlists.json` pour savoir ce qu'il y a sur la carte SD. La lecture des GIF fonctionne très bien sans lui (le moteur lit toujours les fichiers directement depuis la carte SD) - cette étape n'est nécessaire que si vous voulez utiliser ce sélecteur à cases à cocher.
+
+1. Organisez vos GIF en sous-dossiers sous `gifs/` sur votre carte SD, par ex. `gifs/mario/`, `gifs/sonic/` (chaque sous-dossier devient une playlist sélectionnable ; les fichiers `.gif` isolés directement sous `gifs/` sont toujours joués et n'ont pas besoin de cette étape).
+2. Lancez l'un des scripts natifs dans `tools/gif_indexation/` - aucun Python requis :
+   ```bash
+   ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - donnez la racine SD ou son dossier gifs/
+   ```
+   ```powershell
+   .\generate_index.ps1 -Path E:\           # Windows
+   ```
+3. Cela crée `gifs/playlists.json` sur la carte SD. Relancez-le à chaque ajout, suppression ou renommage d'un dossier dans `gifs/`.
+
+Pour tous les détails, consultez `tools/gif_indexation/README_FR.md`.
+
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
 - Pour 128x32 : un ESP32 WROOM standard suffit.
@@ -84,3 +90,12 @@ Exécutez la commande suivante pour compiler :
 ```bash
 pio run -e esp32dev
 ```
+
+## 📚 Documentation complémentaire
+- [Premiers pas (installation de PlatformIO, compilation, flash, logs)](docs/GETTING_STARTED_FR.md)
+- [Web Installer (flash depuis votre navigateur, sans CLI)](webinstaller/README_FR.md) - *sera mis en ligne une fois ce dépôt public (GitHub Pages nécessite un dépôt public avec l'offre gratuite) ; en attendant, utilisez le firmware précompilé ci-dessus.*
+- [Guide matériel](docs/HARDWARE_FR.md)
+- [Guide de câblage](docs/WIRING_FR.md)
+- [Guide de configuration](docs/CONFIGURATION_FR.md)
+- [Guide développeur](docs/DEVELOPER_FR.md)
+- [Architecture](docs/ARCHITECTURE_FR.md)

@@ -4,15 +4,6 @@
 
 Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This project allows you to display Arcade Clocks, Animated GIFs, Weather, and even simulated **MUGEN fighting game sprites** directly on a real LED matrix.
 
-📚 **Documentation Links:**
-- [Getting Started (PlatformIO setup, build, flash, logs)](docs/GETTING_STARTED.md)
-- [Web Installer (flash from your browser, no CLI needed)](webinstaller/README.md) - *goes live once this repo is public (GitHub Pages requires a public repo on the free plan); until then, use the pre-built firmware below.*
-- [Hardware Guide](docs/HARDWARE.md)
-- [Wiring Guide](docs/WIRING.md)
-- [Configuration Guide](docs/CONFIGURATION.md)
-- [Developer Guide](docs/DEVELOPER.md)
-- [Architecture](docs/ARCHITECTURE.md)
-
 ## 💾 Installation
 
 **[⬇️ Download the latest pre-built firmware](https://github.com/red77290/ArcadeMatrix/releases/latest)**
@@ -35,8 +26,8 @@ Format your SD card to **FAT32**. Your SD card should look like this:
 ```
 SD:/
   ├─ conf.ini
-  ├─ playlists.json
   ├─ gifs/
+  │   ├─ playlists.json
   │   └─ mario.gif
   └─ fighters_32/
       ├─ backgrounds/
@@ -75,6 +66,21 @@ Then, link this background in your `conf.ini` under the `[DATE]` section (backgr
 BACKGROUND_SPRITE=stage1.raw
 ```
 
+## GIF Playlist Indexing (Web UI folder selection)
+The Web UI lets you tick/untick which `gifs/` subfolders play during the idle rotation, but it needs a `playlists.json` manifest to know what's on the SD card. GIF playback itself works fine without it (the engine always reads files directly from the SD card) - this step is only needed if you want to use that checkbox selector.
+
+1. Organize your GIFs into subfolders under `gifs/` on your SD card, e.g. `gifs/mario/`, `gifs/sonic/` (each subfolder becomes one selectable playlist; loose `.gif` files directly under `gifs/` always play and don't need this step).
+2. Run one of the native scripts in `tools/gif_indexation/` - no Python required:
+   ```bash
+   ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - pass the SD root or its gifs/ folder
+   ```
+   ```powershell
+   .\generate_index.ps1 -Path E:\           # Windows
+   ```
+3. This creates `gifs/playlists.json` on the SD card. Re-run it whenever you add, remove, or rename a folder inside `gifs/`.
+
+For full details, see `tools/gif_indexation/README.md`.
+
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.
 - For 128x32: A standard ESP32 WROOM is sufficient.
@@ -84,3 +90,12 @@ Run the following command to build:
 ```bash
 pio run -e esp32dev
 ```
+
+## 📚 Further Documentation
+- [Getting Started (PlatformIO setup, build, flash, logs)](docs/GETTING_STARTED.md)
+- [Web Installer (flash from your browser, no CLI needed)](webinstaller/README.md) - *goes live once this repo is public (GitHub Pages requires a public repo on the free plan); until then, use the pre-built firmware above.*
+- [Hardware Guide](docs/HARDWARE.md)
+- [Wiring Guide](docs/WIRING.md)
+- [Configuration Guide](docs/CONFIGURATION.md)
+- [Developer Guide](docs/DEVELOPER.md)
+- [Architecture](docs/ARCHITECTURE.md)
