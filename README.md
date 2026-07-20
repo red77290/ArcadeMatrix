@@ -101,3 +101,8 @@ pio run -e esp32dev
 - [Configuration Guide](docs/CONFIGURATION.md)
 - [Developer Guide](docs/DEVELOPER.md)
 - [Architecture](docs/ARCHITECTURE.md)
+
+## 📜 License
+This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+
+**In short:** you're free to use, modify, and share this project for any noncommercial purpose (personal use, hobby builds, research, education, non-profit/public institutions) - see the full [LICENSE](LICENSE) file for the exact terms. **Any commercial use (selling assembled units, kits, or derived products/services) requires a separate license - contact [Red1L](https://github.com/red77290) to discuss commercial terms.**
