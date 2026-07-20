@@ -425,6 +425,48 @@ void WebServerAPI::setupRoutes() {
         }
     });
 
+    // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's
+    // /api/wifi). Unlike the generic /api/settings handler, this persists the new credentials to
+    // SD *and* tries to associate right away, reporting success/failure synchronously instead of
+    // requiring a full reboot to find out if the new SSID/password actually work.
+    AsyncCallbackJsonWebHandler* wifiHandler = new AsyncCallbackJsonWebHandler("/api/wifi", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject body = json.as<JsonObject>();
+        if (body["ssid"].isNull() || body["password"].isNull()) {
+            request->send(400, "application/json", "{\"success\":false,\"message\":\"Missing ssid or password\"}");
+            return;
+        }
+
+        extern ConfigLoader config;
+        String newSsid = body["ssid"].as<String>();
+        String newPass = body["password"].as<String>();
+
+        config.wifi.ssid = newSsid;
+        config.wifi.password = newPass;
+        config.saveToSD("/conf.ini");
+
+        WiFi.disconnect(true);
+        delay(100);
+        WiFi.begin(newSsid.c_str(), newPass.c_str());
+
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+            delay(500);
+            attempts++;
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            String msg = "Connected! IP: " + WiFi.localIP().toString();
+            request->send(200, "application/json", "{\"success\":true,\"message\":\"" + msg + "\"}");
+        } else {
+            request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to connect to the new network. Credentials were still saved to SD for the next reboot.\"}");
+        }
+    });
+    server.addHandler(wifiHandler);
+
     // Handle Preflight CORS
     server.onNotFound([](AsyncWebServerRequest *request) {
         if (request->method() == HTTP_OPTIONS) {
