@@ -103,7 +103,7 @@ errors/warnings over serial at `115200` baud (see `monitor_speed` in `platformio
 pio device monitor -e esp32dev -b 115200
 ```
 
-Press `Ctrl+C` to exit. Combine build+flash+monitor in one command for a fast dev loop:
+Press `Ctrl+C` to exit. To reboot the board and see the boot logs, press `Ctrl+T` followed by `Ctrl+R` in the monitor. Combine build+flash+monitor in one command for a fast dev loop:
 
 ```bash
 pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
@@ -153,3 +153,22 @@ and run it.
   ESP32 dev boards need this to enter the bootloader), or lower `upload_speed` in `platformio.ini`.
 - **Build fails with a missing library error**: delete `.pio/` and rebuild - a corrupted library
   cache is the most common cause (`rm -rf .pio && pio run -e esp32dev`).
+- **`sdWait Failed` / `sdSelectCard Failed` / `Check status failed` a few times right at boot,
+  followed by the firmware continuing normally (Wi-Fi connects, NTP time displays correctly)**:
+  this is benign - these are low-level retries inside the ESP32 SD driver's own init handshake
+  (common with some SD cards/brands at the default probe clock speed), not an actual mount
+  failure. If SD mounting genuinely failed, `setup()` would print `CRITICAL ERROR: SD Card Mount
+  Failed!` and halt forever (rebooting via watchdog every ~30s) - it would never reach the Wi-Fi
+  connection step at all. Only investigate wiring/power if you see that specific critical error,
+  or if SD file reads/writes keep failing well after boot (not just at the very start).
+  `does not exist, no permits for creation` errors right after are expected/harmless on first
+  boot (e.g. `playlists_selected.json`, `fighters_32/index.txt` simply don't exist yet until you
+  save a playlist / run `mugen_extractor`). See `docs/WIRING.md`'s "SD Card Wiring" table only if
+  you're wiring a fresh board from scratch.
+- **`AsyncTCP.cpp: begin(): failed to start task`** right after Wi-Fi connects: this is FreeRTOS
+  failing to allocate a task for the async TCP stack, almost always due to low free internal heap
+  (large HUB75 DMA buffers on a non-PSRAM ESP32 can consume most of it). Check
+  `ESP.getFreeHeap()` (printed after matrix init) - if it's only a few KB, reduce
+  `mxconfig.min_refresh_rate`/panel resolution, or switch to an ESP32-S3 with PSRAM for large
+  panels. The web server may still partially start despite this warning, but expect it to be
+  unreliable until free heap is addressed.

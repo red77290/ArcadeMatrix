@@ -24,7 +24,34 @@ This is the default wiring map for the DMA Engine.
 | OE        | 15         | Output Enable |
 | CLK       | 16         | Clock |
 
-*Note: Pin E is only required if your matrix is 64 pixels tall (e.g., 1/32 scan rate).*
+*Note: Pin E is only required if your matrix is 64 pixels tall (e.g., 1/32 scan rate). On 32px-tall
+panels (1/16 scan), the panel's `E` pin is typically left unconnected or tied to GND on the panel
+side itself, so GPIO18 stays exclusively dedicated to the SD card's SPI clock below - no conflict
+in that (very common) configuration.*
+
+## SD Card Wiring (both boards)
+
+The SD card uses a separate SPI bus (`SPI.begin()` in `src/main.cpp`), independent from the
+HUB75 matrix's dedicated I2S/DMA pins above.
+
+| SD Pin | ESP32 GPIO | Description |
+|--------|------------|-------------|
+| CS     | 5          | Chip Select |
+| SCK    | 18         | SPI Clock |
+| MISO   | 19         | Data from card |
+| MOSI   | 23         | Data to card |
+
+ℹ️ GPIO18 is shared on paper between this SD SCK line and the HUB75 `E` address pin defined
+above, but this is **not a conflict** in the common case: on 32px-tall panels (1/16 scan), `E`
+isn't used/wired to the ESP32 at all (often tied to GND on the panel itself), so GPIO18 is free
+for the SD card - this is the tested/working configuration. Only if you wire a genuine 64px-tall
+panel with `E` actually connected to GPIO18 would the two share the same physical pin; in that
+specific case, remap either the SD SCK line (`VSPI_SCK` in `src/main.cpp`) or the HUB75 `E` pin
+(`_pins` in `src/core/MatrixEngine.cpp`) to a free GPIO before wiring both. If your SD card fails
+to mount (`sdWait Failed` / `sdSelectCard Failed` in the serial log), the more likely causes are:
+the card isn't FAT32-formatted, isn't fully seated, or your power supply can't drive the matrix +
+SD + Wi-Fi simultaneously (a bare ESP32 board's onboard regulator is often insufficient for a
+fully wired panel - use a dedicated 5V/3A+ supply feeding both the panel and the ESP32).
 
 ## ESP32-S3 Wiring
 

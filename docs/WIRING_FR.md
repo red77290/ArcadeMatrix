@@ -24,7 +24,33 @@ Voici le mapping de câblage par défaut pour le moteur DMA.
 | OE        | 15         | Output Enable |
 | CLK       | 16         | Clock |
 
-*Remarque : la broche E n'est requise que si votre matrice fait 64 pixels de haut (par ex. taux de scan 1/32).* 
+*Remarque : la broche E n'est requise que si votre matrice fait 64 pixels de haut (par ex. taux de scan 1/32). Sur les panneaux de 32px de haut (scan 1/16), la broche `E` du panneau est en général non connectée ou reliée à la masse (GND) côté panneau, donc GPIO18 reste exclusivement dédié à l'horloge SPI de la carte SD ci-dessous - pas de conflit dans cette configuration (très courante).*
+
+## Câblage de la carte SD (les deux cartes)
+
+La carte SD utilise un bus SPI distinct (`SPI.begin()` dans `src/main.cpp`), indépendant des
+broches I2S/DMA dédiées de la matrice HUB75 ci-dessus.
+
+| Broche SD | GPIO ESP32 | Description |
+|-----------|------------|-------------|
+| CS        | 5          | Chip Select |
+| SCK       | 18         | Horloge SPI |
+| MISO      | 19         | Données depuis la carte |
+| MOSI      | 23         | Données vers la carte |
+
+ℹ️ GPIO18 est partagé sur le papier entre cette ligne SCK de la SD et la broche d'adresse HUB75
+`E` définie ci-dessus, mais ce n'est **pas un conflit** dans le cas courant : sur les panneaux de
+32px de haut (scan 1/16), `E` n'est pas utilisée/câblée vers l'ESP32 (souvent reliée à la masse
+directement sur le panneau), donc GPIO18 est libre pour la carte SD - c'est la configuration
+testée/fonctionnelle. Ce n'est que si vous câblez un véritable panneau de 64px de haut où `E` est
+réellement connectée à GPIO18 que les deux partageraient la même broche physique ; dans ce cas
+précis, remappez soit la ligne SCK de la SD (`VSPI_SCK` dans `src/main.cpp`) soit la broche `E`
+du HUB75 (`_pins` dans `src/core/MatrixEngine.cpp`) vers un GPIO libre avant de câbler les deux.
+Si votre carte SD ne se monte pas (`sdWait Failed` / `sdSelectCard Failed` dans le log série),
+les causes les plus probables sont : la carte n'est pas formatée en FAT32, elle n'est pas bien
+insérée, ou votre alimentation ne peut pas fournir matrice + SD + Wi-Fi simultanément (le
+régulateur intégré d'une carte ESP32 nue est souvent insuffisant pour un panneau entièrement
+câblé - utilisez une alimentation 5V/3A+ dédiée alimentant à la fois le panneau et l'ESP32).
 
 ## Câblage ESP32-S3
 
