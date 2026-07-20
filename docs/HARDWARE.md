@@ -13,6 +13,37 @@ The ArcadeMatrix firmware supports standard ESP32 boards, but requirements chang
 - **RAM:** PSRAM is **MANDATORY** for double-buffering at 24-bit color depth on massive panels.
 - **Why?** A 256x64 display requires ~98KB per frame. Double buffering requires ~200KB of contiguous DMA RAM, which the standard ESP32 cannot reliably provide while maintaining Wi-Fi and Web server operations. The ESP32-S3 seamlessly offloads this to PSRAM or has enough contiguous blocks to prevent OOM (Out Of Memory) crashes.
 
+### ESP32-S3 Octal PSRAM vs HUB75 Pinout (256x64, known conflict)
+The default HUB75 pin map hardcoded in `MatrixEngine::begin()` (A=GPIO33, B=GPIO32) overlaps with the
+GPIO33-37 range reserved internally by the ESP32-S3 when using **octal** ("opi") PSRAM — exactly the
+configuration this firmware requires for 256x64. A runtime warning is emitted for this case
+(`CONFIG_IDF_TARGET_ESP32S3` build), but the wiring itself has not yet been re-validated/re-mapped on
+real S3 hardware. See [WIRING.md](WIRING.md) for the current pin table and status.
+
+## Multiple Panels: Chaining vs. True 2D Grids/Walls (Runtime vs. Compile-Time)
+The RPi build (`ArcadeMatrix_RPi`) uses the `rpi-rgb-led-matrix` library, which exposes `--led-chain`,
+`--led-parallel` and `--led-rows` as **fully runtime-configurable** flags — a Raspberry Pi has 2-3
+independent HUB75 GPIO headers, so building a 2D wall of panels (e.g. 2 rows x 2 columns) is just a
+config change, no rebuild required.
+
+ESP32 boards only expose a **single** HUB75 output. This firmware already supports `CHAIN=N` in
+`conf.ini` (`ConfigLoader::matrix.chainLength`) for daisy-chaining panels **in a single row** at
+runtime (e.g. `CHAIN=4` for a 512x32 ribbon) — this works today and needs no firmware changes.
+
+**True 2D grids/walls (multiple rows of chained panels, e.g. a 2x2 wall) are NOT currently wired into
+this firmware.** The underlying `ESP32-HUB75-MatrixPanel-I2S-DMA` library does ship a
+`VirtualMatrixPanel_T` helper that remaps virtual (x,y) coordinates onto a serpentine/zig-zag chain of
+panels to build such a wall, but it is a **C++ template class** — its chain shape and scan-type are
+**compile-time** parameters, not something that can be read from `conf.ini` at boot like every other
+setting in this project. Wiring it in properly would require either:
+1. A dedicated PlatformIO build flag/environment per wall layout (recompile+reflash to change layout), or
+2. Refactoring every engine (~46 call sites) from the concrete `MatrixPanel_I2S_DMA*` type to a common
+   `Adafruit_GFX*`-based interface, so a `VirtualMatrixPanel_T` instance could be swapped in.
+
+Both are non-trivial and a genuine architecture gap vs. the RPi's fully runtime `--led-parallel`
+support — tracked as a known limitation rather than silently ignored. Single-row chaining via `CHAIN=`
+remains the supported way to build a larger display today.
+
 ## Matrix Hardware
 - **Type:** HUB75 / HUB75E RGB LED Matrix Panels (P2, P2.5, P3, P4, P5).
 - **Driver Chips:** Compatible with standard shift registers (FM6126A, ICN2038S, etc.).
