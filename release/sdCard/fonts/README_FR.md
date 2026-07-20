@@ -7,13 +7,18 @@ message défilant, à la place des ~6 polices compilées dans le firmware.
 
 ## Comment obtenir un fichier `.amf`
 
-1. Récupérez (ou créez) une police bitmap `.bdf` standard - par exemple l'une des polices que
+1. Récupérez (ou créez) des polices bitmap `.bdf` standard - par exemple les polices que
    `ArcadeMatrix_RPi` fournit déjà dans son propre dossier `fonts/*.bdf`.
-2. Convertissez-la avec `tools/bdf_to_amfont/bdf_to_amfont.py` :
+2. Copiez le(s) fichier(s) `.bdf` directement dans ce dossier `/fonts` de votre carte SD.
+3. Lancez `tools/font_conversion/generate_fonts.py` en le pointant sur votre carte SD (racine ou
+   ce dossier) - il convertit en lot tous les `.bdf` ici en `.amf`, sur place, et supprime les
+   `.bdf` d'origine :
    ```bash
-   python3 tools/bdf_to_amfont/bdf_to_amfont.py monfont.bdf monfont.amf
+   python3 tools/font_conversion/generate_fonts.py /chemin/vers/carte/sd
    ```
-3. Copiez le fichier `monfont.amf` résultant dans ce dossier.
+   (Convertir un seul fichier à la main reste possible via
+   `tools/bdf_to_amfont/bdf_to_amfont.py monfont.bdf monfont.amf`, mais l'outil en lot ci-dessus
+   est la méthode recommandée.)
 
 ## Comment l'utiliser
 

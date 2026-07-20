@@ -7,13 +7,18 @@ desplazante, en lugar de las ~6 fuentes compiladas en el firmware.
 
 ## Cómo obtener un archivo `.amf`
 
-1. Consigue (o crea) una fuente bitmap `.bdf` estándar - por ejemplo una de las mismas fuentes que
+1. Consigue (o crea) fuentes bitmap `.bdf` estándar - por ejemplo las fuentes que
    `ArcadeMatrix_RPi` ya incluye en su propia carpeta `fonts/*.bdf`.
-2. Conviértela con `tools/bdf_to_amfont/bdf_to_amfont.py`:
+2. Copia el/los archivo(s) `.bdf` directamente en esta carpeta `/fonts` de tu tarjeta SD.
+3. Ejecuta `tools/font_conversion/generate_fonts.py` apuntando a tu tarjeta SD (raíz o esta
+   carpeta) - convierte por lotes todos los `.bdf` aquí a `.amf` en el mismo lugar y elimina los
+   `.bdf` originales:
    ```bash
-   python3 tools/bdf_to_amfont/bdf_to_amfont.py mifuente.bdf mifuente.amf
+   python3 tools/font_conversion/generate_fonts.py /ruta/a/la/tarjeta/sd
    ```
-3. Copia el archivo `mifuente.amf` resultante en esta carpeta.
+   (Convertir un solo archivo a mano también es posible vía
+   `tools/bdf_to_amfont/bdf_to_amfont.py mifuente.bdf mifuente.amf`, pero la herramienta de lote
+   anterior es el flujo de trabajo recomendado.)
 
 ## Cómo usarlo
 

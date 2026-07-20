@@ -7,13 +7,17 @@ of the ~6 fonts compiled into the firmware.
 
 ## How to get a `.amf` file
 
-1. Grab (or write) a standard `.bdf` bitmap font - e.g. one of the same fonts
-   `ArcadeMatrix_RPi` ships in its own `fonts/*.bdf` folder.
-2. Convert it with `tools/bdf_to_amfont/bdf_to_amfont.py`:
+1. Grab (or write) standard `.bdf` bitmap fonts - e.g. the same fonts `ArcadeMatrix_RPi` ships in
+   its own `fonts/*.bdf` folder.
+2. Copy the `.bdf` file(s) directly into this `/fonts` folder on your SD card.
+3. Run `tools/font_conversion/generate_fonts.py` pointed at your SD card (root or this folder) -
+   it batch-converts every `.bdf` here to `.amf` in place and removes the `.bdf` originals:
    ```bash
-   python3 tools/bdf_to_amfont/bdf_to_amfont.py myfont.bdf myfont.amf
+   python3 tools/font_conversion/generate_fonts.py /path/to/sd/card
    ```
-3. Copy the resulting `myfont.amf` into this folder.
+   (Converting a single file by hand is also possible via
+   `tools/bdf_to_amfont/bdf_to_amfont.py myfont.bdf myfont.amf`, but the batch tool above is the
+   recommended workflow.)
 
 ## How to use it
 

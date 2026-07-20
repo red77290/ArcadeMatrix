@@ -83,6 +83,19 @@ The Web UI lets you tick/untick which `gifs/` subfolders play during the idle ro
 
 For full details, see `tools/gif_indexation/README.md`.
 
+## Custom Fonts (BDF → AMF conversion)
+The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from the SD card instead of the ~6 fonts compiled into the firmware, using the same `.bdf` fonts `ArcadeMatrix_RPi` already ships. The ESP32 has no on-device BDF parser though, so they must be converted to the compact `.amf` format first.
+
+1. Copy your `.bdf` font(s) into the `fonts/` folder on your SD card.
+2. Run the batch converter:
+   ```bash
+   python3 tools/font_conversion/generate_fonts.py /Volumes/SDCARD   # pass the SD root or its fonts/ folder
+   ```
+   (No external dependencies - pure Python standard library. `start_generate_fonts.sh`/`.bat` are also provided if you'd rather not use the command line directly.)
+3. This converts every `.bdf` into a same-named `.amf` in place, and removes the `.bdf` originals. The resulting fonts appear immediately in the Web UI's Settings page (Clock/Date "Font" dropdowns) - no reboot needed.
+
+For full details, see `tools/font_conversion/README.md`.
+
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.
 - For 128x32: A standard ESP32 WROOM is sufficient.

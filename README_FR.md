@@ -84,6 +84,19 @@ La Web UI vous permet de cocher/décocher quels sous-dossiers de `gifs/` sont jo
 
 Pour tous les détails, consultez `tools/gif_indexation/README_FR.md`.
 
+## Polices personnalisées (conversion BDF → AMF)
+L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap personnalisées chargées depuis la carte SD à la place des ~6 polices compilées dans le firmware, en utilisant les mêmes polices `.bdf` qu'`ArcadeMatrix_RPi` fournit déjà. L'ESP32 n'a cependant aucun parseur BDF embarqué, elles doivent donc d'abord être converties au format compact `.amf`.
+
+1. Copiez votre/vos police(s) `.bdf` dans le dossier `fonts/` de votre carte SD.
+2. Lancez le convertisseur en lot :
+   ```bash
+   python3 tools/font_conversion/generate_fonts.py /Volumes/SDCARD   # passez la racine SD ou son dossier fonts/
+   ```
+   (Aucune dépendance externe - Python standard uniquement. `start_generate_fonts.sh`/`.bat` sont aussi fournis si vous préférez ne pas utiliser la ligne de commande directement.)
+3. Cela convertit chaque `.bdf` en un `.amf` de même nom, sur place, et supprime les `.bdf` d'origine. Les polices résultantes apparaissent immédiatement dans la page Settings de l'interface Web (menus déroulants "Font" Horloge/Date) - sans redémarrage nécessaire.
+
+Pour tous les détails, consultez `tools/font_conversion/README_FR.md`.
+
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
 - Pour 128x32 : un ESP32 WROOM standard suffit.
