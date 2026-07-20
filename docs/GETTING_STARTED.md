@@ -70,6 +70,28 @@ pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0   # Linux/macOS example
 pio run -e esp32dev -t upload --upload-port COM5           # Windows example
 ```
 
+### Flashing a pre-built release
+
+If you don't want to build from source, download `ArcadeMatrix-esp32dev.zip` or
+`ArcadeMatrix-esp32s3.zip` from the [latest release](https://github.com/red77290/ArcadeMatrix/releases/latest)
+instead - each contains `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin`, and
+`boot_app0.bin`, built and test-gated by CI. Flash all four with `esptool.py` at the offsets used
+by the Arduino-ESP32 default partitioning (same offsets the browser-based Web Installer uses -
+see `webinstaller/README.md`):
+
+```bash
+pip install esptool
+esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash \
+  0x1000  bootloader-esp32dev.bin \
+  0x8000  partitions-esp32dev.bin \
+  0xE000  boot_app0.bin \
+  0x10000 firmware-esp32dev.bin
+```
+
+For `esp32s3`, use `--chip esp32s3` and offset `0x0` for the bootloader instead of `0x1000` (the
+S3's ROM bootloader header differs) - see the flash offset table in `webinstaller/README.md` for
+the full breakdown.
+
 ## 5. Read the serial logs
 
 The firmware logs boot progress, Wi-Fi status, SD card mount results, heap usage, and runtime

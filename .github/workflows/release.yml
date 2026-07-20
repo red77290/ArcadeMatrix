@@ -1,0 +1,103 @@
+name: Build and Release ArcadeMatrix Firmware
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    # Gate the release on the full build+test suite - a broken commit should never be tagged
+    # and published as a release firmware.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [esp32dev, esp32s3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware (${{ matrix.env }})
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Compile native-independent unit tests (${{ matrix.env }})
+        run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+
+  build-release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        env: [esp32dev, esp32s3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware (${{ matrix.env }})
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Package release assets (${{ matrix.env }})
+        run: |
+          mkdir -p release/${{ matrix.env }}
+          cp .pio/build/${{ matrix.env }}/firmware.bin     release/${{ matrix.env }}/firmware-${{ matrix.env }}.bin
+          cp .pio/build/${{ matrix.env }}/bootloader.bin   release/${{ matrix.env }}/bootloader-${{ matrix.env }}.bin
+          cp .pio/build/${{ matrix.env }}/partitions.bin   release/${{ matrix.env }}/partitions-${{ matrix.env }}.bin
+          cp webinstaller/bin/boot_app0.bin                release/${{ matrix.env }}/boot_app0.bin
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.env }}
+          path: release/${{ matrix.env }}
+          if-no-files-found: error
+
+  create-release:
+    needs: build-release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download esp32dev release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-esp32dev
+          path: release/esp32dev
+
+      - name: Download esp32s3 release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-esp32s3
+          path: release/esp32s3
+
+      - name: Zip per-board flashing bundles
+        run: |
+          cd release/esp32dev && zip -r ../../ArcadeMatrix-esp32dev.zip . && cd -
+          cd release/esp32s3  && zip -r ../../ArcadeMatrix-esp32s3.zip  . && cd -
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ArcadeMatrix-esp32dev.zip
+            ArcadeMatrix-esp32s3.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

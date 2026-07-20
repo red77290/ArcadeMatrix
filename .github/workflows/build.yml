@@ -50,8 +50,12 @@ jobs:
           if-no-files-found: error
 
   deploy-pages:
-    # Only publish the web flasher from main - PRs/branches just build+test above.
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Only publish the web flasher from main, and only once the repo is public - GitHub Pages
+    # for private repositories requires a paid plan (verified: POST /pages returns 422 "Your
+    # current plan does not support GitHub Pages for this repository" on a free-plan private
+    # repo). This condition self-activates the day the repo is switched to public - no further
+    # workflow changes needed, just flip repo visibility in Settings.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !github.event.repository.private
     needs: build
     runs-on: ubuntu-latest
     permissions:
