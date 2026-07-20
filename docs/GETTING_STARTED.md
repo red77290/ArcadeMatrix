@@ -1,5 +1,7 @@
 # Getting Started (ESP32 firmware, first-time PlatformIO setup)
 
+🇬🇧 English | 🇫🇷 [Français](GETTING_STARTED_FR.md) | 🇪🇸 [Español](GETTING_STARTED_ES.md)
+
 This guide is for developers who have never used [PlatformIO](https://platformio.org/) before and
 want to build, flash, and debug the ArcadeMatrix firmware locally. For hardware wiring, see
 `docs/HARDWARE.md`/`docs/WIRING.md`; for `conf.ini` options, see `docs/CONFIGURATION.md`; for the

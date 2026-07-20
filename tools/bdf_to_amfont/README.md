@@ -1,5 +1,7 @@
 # ArcadeMatrix BDF-to-AMFONT Converter
 
+🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
+
 This Python script (`bdf_to_amfont.py`) converts a standard **BDF** bitmap font into ArcadeMatrix's
 runtime-loadable `.amf` binary format, for use with the ESP32 firmware's `BitmapFontLoader`.
 

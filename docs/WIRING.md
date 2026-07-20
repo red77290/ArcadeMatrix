@@ -1,5 +1,7 @@
 # Wiring Guide
 
+🇬🇧 English | 🇫🇷 [Français](WIRING_FR.md) | 🇪🇸 [Español](WIRING_ES.md)
+
 Wiring a HUB75 LED matrix to an ESP32 requires precise connections. The matrix data pins map to the ESP32's GPIO pins.
 
 ## Standard ESP32 (WROOM) Pinout

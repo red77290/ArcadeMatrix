@@ -1,5 +1,7 @@
 # Configuration Guide (`conf.ini`)
 
+🇬🇧 English | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 [Español](CONFIGURATION_ES.md)
+
 The ArcadeMatrix is designed to be completely decoupled from its C++ code for end-users. All settings are managed either via the Web UI (at `http://arcadematrix.local`) or directly via the `conf.ini` file on the root of your SD card.
 
 ## Full Reference
