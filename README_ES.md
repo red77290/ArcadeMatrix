@@ -84,6 +84,19 @@ La Web UI te permite marcar/desmarcar qué subcarpetas de `gifs/` se reproducen 
 
 Para ver todos los detalles, consulta `tools/gif_indexation/README_ES.md`.
 
+## Fuentes personalizadas (conversión BDF → AMF)
+El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personalizadas cargadas desde la tarjeta SD en lugar de las ~6 fuentes compiladas en el firmware, usando las mismas fuentes `.bdf` que `ArcadeMatrix_RPi` ya incluye. Sin embargo, el ESP32 no tiene un analizador BDF a bordo, por lo que primero deben convertirse al formato compacto `.amf`.
+
+1. Copia tu(s) fuente(s) `.bdf` en la carpeta `fonts/` de tu tarjeta SD.
+2. Ejecuta el conversor por lotes:
+   ```bash
+   python3 tools/font_conversion/generate_fonts.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
+   ```
+   (Sin dependencias externas - solo Python estándar. También se proporcionan `start_generate_fonts.sh`/`.bat` si prefieres no usar la línea de comandos directamente.)
+3. Esto convierte cada `.bdf` en un `.amf` del mismo nombre, en el mismo lugar, y elimina los `.bdf` originales. Las fuentes resultantes aparecen inmediatamente en la página Settings de la interfaz web (menús desplegables "Font" de Reloj/Fecha) - sin necesidad de reiniciar.
+
+Para ver todos los detalles, consulta `tools/font_conversion/README_ES.md`.
+
 ## Compilación
 Para compilar el firmware por tu cuenta, debes usar **PlatformIO**.
 - Para 128x32: un ESP32 WROOM estándar es suficiente.
