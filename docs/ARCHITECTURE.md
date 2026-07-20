@@ -83,8 +83,33 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
 - **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.fgt`
   fighters) must be stored on an external SD card connected via SPI.
 - **Font Rendering:** The system relies on `Adafruit GFX` bitmap fonts compiled directly into the
-  firmware (`src/fonts/`, currently 7 fonts across 3 arcade publisher styles). Unlike the Raspberry Pi
+  firmware (`src/engines/fonts/`, currently 7 fonts across 3 arcade publisher styles). Unlike the Raspberry Pi
   version, there is **no runtime loading of `.bdf`/`.ttf` fonts from the SD card** today — all fonts
   must be compiled in. (An earlier draft of this document claimed BDF-from-SD loading existed; that
   was aspirational and did not match the actual code — see the project plan for a proposed SD-loadable
   bitmap font format.)
+
+---
+
+## 5. Reliability: Watchdog and OTA Updates
+
+- **Hardware Watchdog:** `main.cpp` initializes the ESP-IDF task watchdog (`esp_task_wdt_init`,
+  30s timeout) as the very first step of `setup()`, before touching the SD card or the matrix. If
+  `setup()` or `loop()` ever hangs longer than that (SD mount failure, matrix DMA init failure,
+  an unexpected infinite loop, WiFi driver lockup, ...) the ESP32 self-reboots instead of staying
+  bricked until someone finds and power-cycles it. The two existing `while (1) { delay(100); }`
+  critical-failure loops (SD mount failed / matrix init failed) are intentionally **not** fed, so
+  they still trigger a watchdog reboot (retry loop) rather than hanging forever silently.
+- **OTA Updates (`/api/ota` via `Update.h`):** writes the new firmware image to the *inactive* OTA
+  partition slot and reboots into it immediately once the upload completes without error.
+  **Important limitation:** this project uses the stock Arduino-ESP32 build (no custom `sdkconfig`),
+  which does **not** enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. This means there is currently
+  **no automatic rollback** if a bad OTA image boots into a crash loop — unlike ESP-IDF's native
+  app-rollback feature (which requires explicitly calling `esp_ota_mark_app_valid_cancel_rollback()`
+  after a successful boot, plus a bootloader built with rollback support). Recovery from a bad OTA
+  update today requires either a serial/USB reflash, or flashing a known-good image again over OTA
+  if the device is still reachable on Wi-Fi. Enabling true rollback would require moving off the
+  default Arduino-ESP32 build toward a custom `sdkconfig.defaults` (PlatformIO's `espidf` framework,
+  or `board_build.embed_txtfiles`-based sdkconfig overrides) — flagged as a future hardening task,
+  not implemented in this pass to avoid an unverified bootloader-level change.
+

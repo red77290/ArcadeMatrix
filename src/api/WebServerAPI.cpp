@@ -47,6 +47,15 @@ void WebServerAPI::setupRoutes() {
         doc["status"] = "online";
         doc["uptime"] = millis();
         doc["free_heap"] = ESP.getFreeHeap();
+        // Lowest free-heap value ever observed since boot: the single most useful number for
+        // spotting slow memory leaks/fragmentation over days of uptime (a single free_heap
+        // snapshot can look fine while still trending toward an OOM crash).
+        doc["min_free_heap"] = ESP.getMinFreeHeap();
+        doc["max_alloc_heap"] = ESP.getMaxAllocHeap();
+        doc["psram_found"] = psramFound();
+        if (psramFound()) {
+            doc["free_psram"] = ESP.getFreePsram();
+        }
         sendJsonResponse(request, doc);
     });
 
