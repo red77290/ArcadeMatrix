@@ -44,6 +44,15 @@ Both are non-trivial and a genuine architecture gap vs. the RPi's fully runtime 
 support — tracked as a known limitation rather than silently ignored. Single-row chaining via `CHAIN=`
 remains the supported way to build a larger display today.
 
+### Flash Usage
+The firmware never uses SPIFFS/LittleFS — all runtime assets (GIFs, fighter sprites, playlists,
+`conf.ini`) live on the external SD card. Because of this, `esp32dev`'s PlatformIO environment uses
+`board_build.partitions = min_spiffs.csv` instead of the Arduino-ESP32 default partition table: this
+keeps the same dual-bank OTA layout (two app slots, so `/api/update` keeps working) but grows each
+app slot from 1.25MB to ~1.875MB by reclaiming the otherwise-wasted ~900KB SPIFFS partition. As of
+this writing, `esp32dev` firmware uses ~66% of its app slot (vs. 98%+ before this change) — comfortable
+headroom for the PNG/weather-icon features planned next.
+
 ## Matrix Hardware
 - **Type:** HUB75 / HUB75E RGB LED Matrix Panels (P2, P2.5, P3, P4, P5).
 - **Driver Chips:** Compatible with standard shift registers (FM6126A, ICN2038S, etc.).
