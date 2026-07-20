@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <esp_task_wdt.h>
 #include "core/ConfigLoader.h"
 #include "core/MatrixEngine.h"
 #include "engines/GifEngine.h"
@@ -45,10 +46,19 @@ void setup() {
     randomSeed(esp_random());
     Serial.println("\n\n--- Starting ArcadeMatrix Firmware ---");
 
+    // Hardware watchdog: if setup()/loop() ever hangs (SD/matrix init failure, WiFi driver
+    // lockup, an unexpected infinite loop, ...) for more than WDT_TIMEOUT_S seconds without
+    // being reset, the ESP32 reboots itself instead of staying bricked until someone power
+    // cycles it. Intentionally NOT fed inside the two `while(1)` critical-failure loops below,
+    // so those still trigger a watchdog reboot (retry loop) rather than running forever silently.
+    constexpr uint32_t WDT_TIMEOUT_S = 30;
+    esp_task_wdt_init(WDT_TIMEOUT_S, true /* panic and reboot on timeout */);
+    esp_task_wdt_add(NULL);
+
     // 1. Initialize SD Card using VSPI
     SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
     if (!SD.begin(SD_CS_PIN, SPI)) {
-        Serial.println("CRITICAL ERROR: SD Card Mount Failed!");
+        Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
         while (1) { delay(100); }
     }
     Serial.println("SD Card mounted successfully.");
@@ -194,6 +204,8 @@ void setup() {
 }
 
 void loop() {
+    esp_task_wdt_reset();
+
     // 1. Manual Power Toggle
     if (!config.standby.matrix_power) {
         delay(100);
