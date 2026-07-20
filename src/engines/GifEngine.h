@@ -70,7 +70,16 @@ public:
 
 private:
     AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
-    PNG png;                         ///< The PNGdec decoder instance, for static .png assets
+    // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
+    // pixel buffer, file buffer) directly as class members - NOT heap-allocated. Embedding a
+    // `PNG png;` value member here would permanently reserve that ~38KB of static RAM for the
+    // entire firmware lifetime, even on setups that never show a static PNG image (most
+    // playlists are all-GIF). Allocated lazily on first actual PNG decode instead, so that RAM
+    // stays available for the matrix DMA buffers / Wi-Fi / AsyncTCP / other engines unless this
+    // specific feature is actually used. See docs/HARDWARE.md and the "AsyncTCP failed to start
+    // task" troubleshooting entry in docs/GETTING_STARTED.md for why this matters on a
+    // non-PSRAM classic ESP32 (only ~320KB total internal RAM).
+    PNG* png = nullptr;              ///< The PNGdec decoder instance, lazily allocated on first PNG decode
     MatrixPanel_I2S_DMA* matrix;     ///< Matrix hardware reference
     bool isPlaying;                  ///< State flag for active playback
     bool playlistMode;               ///< State flag for playlist rotation
@@ -99,6 +108,14 @@ private:
     void loadNextFileInPlaylist();
     void playRawFrame();
     bool decodePng(const char* filepath);
+
+    /**
+     * @brief Normalize a user/config-provided playlist path to a full SD path under /gifs or
+     * /sprites. Handles the exact-match case ("/gifs" or "/sprites" with no trailing content),
+     * which a naive startsWith("/gifs/") check would otherwise miss (and incorrectly prefix
+     * again into "/gifs/gifs").
+     */
+    static String sanitizePlaylistPath(String p);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;
