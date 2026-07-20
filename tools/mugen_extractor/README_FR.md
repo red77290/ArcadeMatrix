@@ -80,18 +80,21 @@ start_extractor.bat      # Windows
 
 ### Processus d'extraction
 
-Le script va créer (ou vider) les dossiers `fighters_32` et `fighters_64`. Pour chaque personnage, il va créer un sous-dossier (ex: `fighters_32/Ryu/`) contenant :
+Le script crée (ou vide) le dossier de sortie unique donné par `--dest`/`-o` (par défaut
+`./fighters_32`) - relancez-le deux fois avec des `--dest` différents si vous avez besoin d'un
+export 32px ET 64px (voir l'exemple « cibler les deux » ci-dessus). Pour chaque personnage, il
+crée un sous-dossier (ex: `fighters_32/Ryu/`) contenant :
 - `walk.fgt`
 - `attack.fgt`
 - `hit.fgt`
 - `win.fgt`
-- *(et optionnellement `special1.fgt`, `super1.fgt`, `fall.fgt` s'ils sont trouvés)*
+- *(et optionnellement `special1.fgt`/`special2.fgt`/`special3.fgt`, `super1.fgt`/`super2.fgt`/`super3.fgt`, et `fall.fgt` - jusqu'à 3 coups spéciaux et 3 super/ultra sont auto-détectés par personnage à partir de leurs IDs d'animation `.air` MUGEN ; ceux non trouvés sont simplement ignorés)*
 
-Il génère également deux fichiers d'index à la racine du dossier d'export :
-- `index.json`
-- `index.txt`
+Il génère également deux fichiers d'index à la racine du dossier d'export, lus par des moteurs différents :
+- `index.json` - métadonnées complètes incluant `has_special`/`has_super`/`special_count`/`super_count`. Lu par le moteur **Raspberry Pi** (`engines/fighter.py`), qui utilise ces indicateurs pour choisir parmi toutes les variantes spéciales/super chargées pendant le combat.
+- `index.txt` - un CSV plat plus simple (`name,height,ground_y,origin_x,width,head_y`) sans métadonnées spéciales/super. Lu par le moteur **ESP32** (`FighterEngine.cpp`), qui n'a pas besoin de ces indicateurs : il tente simplement de charger un fichier aléatoire `special1`-`special3`/`super1`-`super3` par combat et l'ignore proprement si ce fichier précis n'existe pas pour un personnage donné (économie mémoire - une seule variante spéciale/super reste chargée à la fois sur ESP32, contre les trois sur RPi).
 
-Ces fichiers d'index contiennent les métadonnées (Hauteur, `ground_y`, `origin_x`, etc.) nécessaires aux moteurs de rendu de l'ArcadeMatrix pour positionner correctement les combattants sur la matrice.
+Les deux fichiers d'index contiennent toujours les métadonnées de positionnement partagées (`height`, `ground_y`, `origin_x`, `width`, `head_y`) nécessaires aux deux moteurs pour aligner correctement les combattants sur la matrice.
 
 ## Pourquoi les personnages ignoraient la ligne de sol auparavant ?
 

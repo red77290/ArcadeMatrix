@@ -80,18 +80,21 @@ start_extractor.bat      # Windows
 
 ### Proceso de Extracción
 
-El script creará (o vaciará) las carpetas `fighters_32` y `fighters_64`. Por cada personaje, creará una subcarpeta (ej., `fighters_32/Ryu/`) que contendrá:
+El script crea (o vacía) la carpeta de salida única indicada por `--dest`/`-o` (por defecto
+`./fighters_32`) - ejecútalo dos veces con `--dest` diferentes si necesitas una exportación de
+32px Y 64px (ver el ejemplo "apuntar a ambos" más arriba). Por cada personaje, crea una subcarpeta
+(ej., `fighters_32/Ryu/`) que contiene:
 - `walk.fgt`
 - `attack.fgt`
 - `hit.fgt`
 - `win.fgt`
-- *(y opcionalmente `special1.fgt`, `super1.fgt`, `fall.fgt` si se encuentran)*
+- *(y opcionalmente `special1.fgt`/`special2.fgt`/`special3.fgt`, `super1.fgt`/`super2.fgt`/`super3.fgt`, y `fall.fgt` - hasta 3 movimientos especiales y 3 super/ultra se detectan automáticamente por personaje a partir de sus IDs de animación `.air` de MUGEN; los que no se encuentran simplemente se omiten)*
 
-También genera dos archivos de índice en la raíz de la carpeta de exportación:
-- `index.json`
-- `index.txt`
+También genera dos archivos de índice en la raíz de la carpeta de exportación, leídos por motores distintos:
+- `index.json` - metadatos completos incluyendo `has_special`/`has_super`/`special_count`/`super_count`. Lo lee el motor de **Raspberry Pi** (`engines/fighter.py`), que usa estos indicadores para elegir entre todas las variantes especiales/super cargadas durante el combate.
+- `index.txt` - un CSV plano más simple (`name,height,ground_y,origin_x,width,head_y`) sin metadatos de especiales/super. Lo lee el motor **ESP32** (`FighterEngine.cpp`), que no necesita esos indicadores: simplemente intenta cargar un archivo aleatorio `special1`-`special3`/`super1`-`super3` por combate y lo omite correctamente si ese archivo concreto no existe para un personaje dado (ahorro de memoria - solo se mantiene cargada una variante especial/super a la vez en ESP32, frente a las tres en RPi).
 
-Estos archivos de índice contienen los metadatos (Altura, `ground_y`, `origin_x`, etc.) que necesitan los motores de renderizado de ArcadeMatrix para posicionar correctamente a los luchadores en la matriz.
+Ambos archivos de índice siempre contienen los metadatos de posicionamiento compartidos (`height`, `ground_y`, `origin_x`, `width`, `head_y`) que necesitan ambos motores para alinear correctamente a los luchadores en la matriz.
 
 ## ¿Por qué los personajes ignoraban la línea del suelo antes?
 
