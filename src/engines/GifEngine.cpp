@@ -10,6 +10,7 @@ GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false),
 
 GifEngine::~GifEngine() {
     stop();
+    delete png;
 }
 
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
@@ -62,16 +63,20 @@ bool GifEngine::playGif(const char* filepath) {
 }
 
 bool GifEngine::decodePng(const char* filepath) {
+    // Lazily allocate the ~38KB PNGdec decoder only on first actual use - see the `png` member
+    // comment in GifEngine.h for why this isn't a permanent value member.
+    if (!png) png = new PNG();
+
     // PNGdec has no concept of animation: decode the whole image once, directly onto the
     // matrix (via PNGDrawCallback -> matrix->drawPixel), then just leave it on screen. loop()
     // only needs to track pngShowStartTime to know when to advance/loop - see loop()/GifEngine.h.
-    int rc = png.open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
+    int rc = png->open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
     if (rc != PNG_SUCCESS) {
         Serial.printf("Error: png.open() failed for %s (rc=%d)\n", filepath, rc);
         return false;
     }
-    rc = png.decode(NULL, 0);
-    png.close();
+    rc = png->decode(NULL, 0);
+    png->close();
     if (rc != PNG_SUCCESS) {
         Serial.printf("Error: png.decode() failed for %s (rc=%d)\n", filepath, rc);
         return false;
@@ -85,9 +90,7 @@ void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
     // Sanitize all paths immediately
     std::vector<String> sanitized;
     for (String p : playlistPaths) {
-        if (!p.startsWith("/")) p = "/" + p;
-        if (!p.startsWith("/gifs/") && !p.startsWith("/sprites/")) p = "/gifs" + p;
-        sanitized.push_back(p);
+        sanitized.push_back(sanitizePlaylistPath(p));
     }
     
     pendingPlaylists = sanitized;
@@ -98,11 +101,20 @@ void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
 void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
     std::vector<String> sanitized;
     for (String p : playlistPaths) {
-        if (!p.startsWith("/")) p = "/" + p;
-        if (!p.startsWith("/gifs/") && !p.startsWith("/sprites/")) p = "/gifs" + p;
-        sanitized.push_back(p);
+        sanitized.push_back(sanitizePlaylistPath(p));
     }
     defaultPlaylists = sanitized;
+}
+
+String GifEngine::sanitizePlaylistPath(String p) {
+    if (!p.startsWith("/")) p = "/" + p;
+    // Exact match ("/gifs" or "/sprites", no trailing slash) must NOT be re-prefixed - only
+    // startsWith("/gifs/")/("/sprites/") checks the sub-path case. Without this exact-match
+    // check, the common default playlist value "/gifs" would incorrectly become "/gifs/gifs"
+    // (a real bug seen in production: every open() on the resulting bad path silently fails).
+    if (p == "/gifs" || p == "/sprites") return p;
+    if (!p.startsWith("/gifs/") && !p.startsWith("/sprites/")) p = "/gifs" + p;
+    return p;
 }
 
 void GifEngine::playDefaultPlaylists(int numGifs) {
@@ -427,7 +439,7 @@ int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
 }
 
 int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
-    if (!instance || !instance->matrix) return 0;
+    if (!instance || !instance->matrix || !instance->png) return 0;
 
     // 256px covers the widest supported panel (ESP32-S3 @ 256x64); getLineAsRGB565() writes
     // exactly pDraw->iWidth pixels so this is a safe upper bound for either target.
@@ -435,7 +447,7 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     int iWidth = pDraw->iWidth;
     if (iWidth > 256) iWidth = 256;
 
-    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+    instance->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
 
     int y = pDraw->y;
     if (y >= instance->matrix->height()) return 1;
