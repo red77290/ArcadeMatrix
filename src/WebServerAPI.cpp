@@ -361,9 +361,9 @@ void WebServerAPI::setupRoutes() {
             if (!config.standby.matrix_power) {
                 extern MatrixEngine matrixEngine;
                 matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipBuffer();
+                matrixEngine.getDisplay()->flipDMABuffer();
                 matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipBuffer();
+                matrixEngine.getDisplay()->flipDMABuffer();
             }
         }
         DynamicJsonDocument resp(1024);

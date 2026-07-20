@@ -57,6 +57,16 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
             // We no longer force 3-bit color here, because the user explicitly wants 24-bit on ESP32-S3.
         } else {
             Serial.println("PSRAM found. 256x64 will use PSRAM for DMA buffering safely.");
+#if CONFIG_IDF_TARGET_ESP32S3
+            // KNOWN HARDWARE CONFLICT: on ESP32-S3 modules with octal PSRAM (N8R8/N16R8, the
+            // BOARD_HAS_PSRAM / qio_opi config used by the esp32s3 PlatformIO env), GPIO 33-37 are
+            // internally reserved for the PSRAM bus and are NOT available on the module's exposed
+            // pins. The pin map above uses GPIO 33 for HUB75 "A" and GPIO 32 for "B", which directly
+            // conflicts with this reserved range. This has NOT been re-validated against real S3
+            // hardware wiring - do not assume this default mapping works as-is on ESP32-S3 with
+            // 256x64 (i.e. exactly the case where PSRAM is required). See docs/HARDWARE.md.
+            Serial.println("WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM (GPIO33-37 reserved). Verify/adjust the pin map in MatrixEngine.cpp for your board before wiring a 256x64 panel.");
+#endif
         }
     }
 

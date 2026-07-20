@@ -80,5 +80,11 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
 
 ## 4. Fonts and SD Card
 
-- **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.bdf` fonts, `.fgt` fighters) must be stored on an external SD card connected via SPI.
-- **Font Rendering:** The system relies on `Adafruit GFX` for standard fonts. For complex scaling, it uses a custom implementation to read `.bdf` files from the SD card.
+- **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.fgt`
+  fighters) must be stored on an external SD card connected via SPI.
+- **Font Rendering:** The system relies on `Adafruit GFX` bitmap fonts compiled directly into the
+  firmware (`src/fonts/`, currently 7 fonts across 3 arcade publisher styles). Unlike the Raspberry Pi
+  version, there is **no runtime loading of `.bdf`/`.ttf` fonts from the SD card** today — all fonts
+  must be compiled in. (An earlier draft of this document claimed BDF-from-SD loading existed; that
+  was aspirational and did not match the actual code — see the project plan for a proposed SD-loadable
+  bitmap font format.)
