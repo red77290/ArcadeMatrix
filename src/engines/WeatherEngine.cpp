@@ -10,7 +10,9 @@ WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     lastFetchTime = 0;
     textColor = matrix->color565(255, 255, 255);
     shadowColor = matrix->color565(0, 0, 0);
-    currentData.temp = 0;
+    numForecasts = 0;
+    activeSlide = 0;
+    lastSlideChange = 0;
 }
 
 WeatherEngine::~WeatherEngine() {}
@@ -42,22 +44,57 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
     if (lastFetchTime > 0 && millis() - lastFetchTime < 900000) return;
 
     HTTPClient http;
-    String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "&units=metric&appid=" + apiKey;
+    // /forecast (3-hour steps, 5 days) instead of /weather (current only), to support the
+    // 3-day forecast slideshow below - mirrors ArcadeMatrix_RPi's engines/weather.py.
+    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey;
     
     http.begin(url);
     int httpCode = http.GET();
     
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        DynamicJsonDocument doc(4096);
+        DynamicJsonDocument doc(8192);
         DeserializationError error = deserializeJson(doc, payload);
         
-        if (!error) {
-            currentData.temp = doc["main"]["temp"];
-            currentData.description = doc["weather"][0]["main"].as<String>();
-            currentData.iconCode = doc["weather"][0]["icon"].as<String>();
-            validData = true;
-            lastFetchTime = millis();
+        if (!error && doc["list"].is<JsonArray>()) {
+            JsonArray list = doc["list"].as<JsonArray>();
+            static const char* dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+            struct tm timeinfo;
+            bool haveTime = getLocalTime(&timeinfo, 0);
+
+            const int sampleIndices[MAX_FORECAST_DAYS] = {0, 8, 16};
+            static const char* fixedLabels[MAX_FORECAST_DAYS] = {"TODAY", "TMRW", nullptr};
+
+            numForecasts = 0;
+            for (int i = 0; i < MAX_FORECAST_DAYS; i++) {
+                int idx = sampleIndices[i];
+                if (idx >= (int)list.size()) break;
+
+                JsonObject item = list[idx];
+                WeatherData& d = forecasts[numForecasts];
+                d.temp = item["main"]["temp"].as<float>();
+                d.description = item["weather"][0]["main"].as<String>();
+                d.iconCode = item["weather"][0]["icon"].as<String>();
+
+                if (fixedLabels[i] != nullptr) {
+                    d.label = fixedLabels[i];
+                } else if (haveTime) {
+                    // Day 3 (~+48h): show the actual weekday name, matching the RPi's behavior.
+                    int dayOfWeek = (timeinfo.tm_wday + 2) % 7;
+                    d.label = dayNames[dayOfWeek];
+                } else {
+                    d.label = "DAY3";
+                }
+                numForecasts++;
+            }
+
+            if (numForecasts > 0) {
+                validData = true;
+                lastFetchTime = millis();
+                activeSlide = 0;
+                lastSlideChange = millis();
+            }
         }
     }
     http.end();
@@ -111,10 +148,21 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
 }
 
 void WeatherEngine::loop() {
-    if (!validData) return;
-    
+    if (!validData || numForecasts == 0) return;
+
+    // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
+    // horizontal-scroll transition (see WeatherEngine.h for rationale).
+    if (numForecasts > 1 && millis() - lastSlideChange >= slideDurationMs) {
+        activeSlide = (activeSlide + 1) % numForecasts;
+        lastSlideChange = millis();
+    }
+
+    drawForecast(forecasts[activeSlide]);
+}
+
+void WeatherEngine::drawForecast(const WeatherData& data) {
     char tempStr[16];
-    sprintf(tempStr, "%.1fC", currentData.temp);
+    sprintf(tempStr, "%.0fC", data.temp);
     
     int textSize = 1;
     int charWidth = 6;
@@ -150,7 +198,16 @@ void WeatherEngine::loop() {
     }
     
     // Draw icon
-    drawIcon(currentData.iconCode, iconX, iconY);
+    drawIcon(data.iconCode, iconX, iconY);
+
+    // Draw day label (TODAY/TMRW/weekday) above the temperature, small size regardless of the
+    // main text size to leave room for it.
+    matrix->setTextSize(1);
+    matrix->setTextColor(matrix->color565(180, 180, 255));
+    matrix->setCursor(textX, iconY);
+    matrix->print(data.label);
+
+    matrix->setTextSize(textSize);
 
     // Draw shadow
     matrix->setTextColor(shadowColor);
