@@ -3,9 +3,12 @@
 Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This project allows you to display Arcade Clocks, Animated GIFs, Weather, and even simulated **MUGEN fighting game sprites** directly on a real LED matrix.
 
 📚 **Documentation Links:**
+- [Getting Started (PlatformIO setup, build, flash, logs)](docs/GETTING_STARTED.md)
 - [Hardware Guide](docs/HARDWARE.md)
 - [Wiring Guide](docs/WIRING.md)
 - [Configuration Guide](docs/CONFIGURATION.md)
+- [Developer Guide](docs/DEVELOPER.md)
+- [Architecture](docs/ARCHITECTURE.md)
 
 ## Features
 - **Massive Clock Selection:** Animated clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, and **Versus (Mugen)**!
