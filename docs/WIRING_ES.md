@@ -24,7 +24,33 @@ Este es el mapa de cableado predeterminado para el motor DMA.
 | OE        | 15         | Output Enable |
 | CLK       | 16         | Clock |
 
-*Nota: el pin E solo es necesario si tu matriz tiene 64 píxeles de alto (por ejemplo, tasa de escaneo 1/32).* 
+*Nota: el pin E solo es necesario si tu matriz tiene 64 píxeles de alto (por ejemplo, tasa de escaneo 1/32). En paneles de 32px de alto (escaneo 1/16), el pin `E` del panel normalmente no está conectado o está unido a GND en el propio panel, así que el GPIO18 queda dedicado exclusivamente al reloj SPI de la tarjeta SD de abajo - sin conflicto en esa configuración (muy habitual).*
+
+## Cableado de la tarjeta SD (ambas placas)
+
+La tarjeta SD usa un bus SPI independiente (`SPI.begin()` en `src/main.cpp`), separado de los
+pines I2S/DMA dedicados de la matriz HUB75 anteriores.
+
+| Pin SD | GPIO ESP32 | Descripción |
+|--------|------------|-------------|
+| CS     | 5          | Chip Select |
+| SCK    | 18         | Reloj SPI |
+| MISO   | 19         | Datos desde la tarjeta |
+| MOSI   | 23         | Datos hacia la tarjeta |
+
+ℹ️ El GPIO18 se comparte sobre el papel entre esta línea SCK de la SD y el pin de dirección
+HUB75 `E` definido arriba, pero esto **no es un conflicto** en el caso común: en paneles de
+32px de alto (escaneo 1/16), `E` no se usa/cablea hacia el ESP32 (a menudo unido a GND en el
+propio panel), así que el GPIO18 queda libre para la tarjeta SD - esta es la configuración
+probada/funcional. Solo si cableas un panel genuino de 64px de alto donde `E` esté realmente
+conectado al GPIO18 compartirían ambos el mismo pin físico; en ese caso concreto, remapea la
+línea SCK de la SD (`VSPI_SCK` en `src/main.cpp`) o el pin `E` del HUB75 (`_pins` en
+`src/core/MatrixEngine.cpp`) a un GPIO libre antes de cablear ambos. Si tu tarjeta SD falla al
+montarse (`sdWait Failed` / `sdSelectCard Failed` en el log serie), las causas más probables
+son: la tarjeta no está formateada en FAT32, no está bien insertada, o tu fuente de alimentación
+no puede alimentar la matriz + SD + Wi-Fi simultáneamente (el regulador integrado de una placa
+ESP32 desnuda suele ser insuficiente para un panel completamente cableado - usa una fuente
+dedicada de 5V/3A+ que alimente tanto el panel como el ESP32).
 
 ## Cableado ESP32-S3
 
