@@ -177,7 +177,7 @@ void setup() {
             MDNS.addService("http", "tcp", 80);
             
             if (config.mqtt.enabled) {
-                frontendListener = new RetroFrontendListener(config.mqtt, &gifEngine, clockEngine);
+                frontendListener = new RetroFrontendListener(config.mqtt, &gifEngine, clockEngine, messageEngine);
                 frontendListener->begin();
             }
         } else {
