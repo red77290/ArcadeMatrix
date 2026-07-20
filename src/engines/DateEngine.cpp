@@ -310,7 +310,11 @@ void DateEngine::loop() {
     }
     
 
-    // Draw shadow/outline (offset by 1 pixel in 4 directions for outline, or just bottom-right for shadow)
+    // Draw shadow/outline. Mirrors ArcadeMatrix_RPi's core/theme.py draw_styled_text() and
+    // ArcadeClock::drawTextWithShadow(): real-world publisher logos (Nintendo/Capcom/Sega) get a
+    // flat 4-direction outline, the more stylized/fictional themes (Cave..Bub) get the thicker
+    // "arcade 3D" shadow + black outline combo, and everything else falls back to a plain drop
+    // shadow (Flip Clock draws no shadow at all, handled separately above via THEME_FLIP's font).
     matrix->setTextColor(shadowColor);
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
         // Full outline for certain publishers
@@ -318,6 +322,18 @@ void DateEngine::loop() {
         matrix->setCursor(x - 1, y); matrix->print(currentDate);
         matrix->setCursor(x, y + 1); matrix->print(currentDate);
         matrix->setCursor(x, y - 1); matrix->print(currentDate);
+    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+        // Arcade 3D Outline Effect
+        matrix->setCursor(x + 2, y + 2); matrix->print(currentDate);
+        matrix->setCursor(x + 1, y + 2); matrix->print(currentDate);
+        matrix->setCursor(x + 2, y + 1); matrix->print(currentDate);
+
+        uint16_t outline = matrix->color565(0, 0, 0);
+        matrix->setTextColor(outline);
+        matrix->setCursor(x - 1, y); matrix->print(currentDate);
+        matrix->setCursor(x + 1, y); matrix->print(currentDate);
+        matrix->setCursor(x, y - 1); matrix->print(currentDate);
+        matrix->setCursor(x, y + 1); matrix->print(currentDate);
     } else {
         // Drop shadow
         matrix->setCursor(x + 1, y + 1); matrix->print(currentDate);
