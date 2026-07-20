@@ -82,6 +82,22 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
 
 - **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.fgt`
   fighters) must be stored on an external SD card connected via SPI.
+- **Image/Animation Formats (`GifEngine`):** Three file types are supported side-by-side in the same
+  playlist directories, distinguished purely by extension:
+  - **`.gif`** — animated GIFs, decoded frame-by-frame via `AnimatedGIF` (bitbank2), looping
+    indefinitely until the playlist advances.
+  - **`.raw`** — a project-specific raw RGB565 pixel sequence (little-endian, row-major, one full
+    frame after another, no header), the same convention used by `MarqueeEngine` and
+    `tools/mugen_extractor`. Played back at a fixed ~20 FPS. Useful for pre-rendered "stop motion"
+    style clips that don't compress well as GIF.
+  - **`.png`** — a **static** image, decoded once via `PNGdec` (bitbank2, same author/API shape as
+    `AnimatedGIF`) directly onto the matrix, then held on screen for ~5 seconds before the playlist
+    advances (or looped in place for single-file playback). PNG has no animation concept here —
+    for animated content use `.gif`. Any bit depth/color type PNG (palette, greyscale, RGBA, etc.) is
+    accepted: `PNGdec::getLineAsRGB565()` normalizes everything to RGB565 during decode.
+  - **Resizing is intentionally NOT done on-device** for any of these formats — pre-scale images to
+    the target panel resolution (128x32 or 256x64) offline before copying them to the SD card. Runtime
+    resizing is CPU-expensive on both ESP32 and ESP32-S3 and is out of scope.
 - **Font Rendering:** The system relies on `Adafruit GFX` bitmap fonts compiled directly into the
   firmware (`src/engines/fonts/`, currently 7 fonts across 3 arcade publisher styles). Unlike the Raspberry Pi
   version, there is **no runtime loading of `.bdf`/`.ttf` fonts from the SD card** today — all fonts

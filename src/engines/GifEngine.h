@@ -1,13 +1,15 @@
 /**
  * @file GifEngine.h
- * @brief Handles playback of Animated GIFs and raw pixel sequences.
+ * @brief Handles playback of Animated GIFs, raw pixel sequences, and static PNG images.
  * 
- * Uses the AnimatedGIF library to decode and render GIF files directly from the SD card 
- * onto the I2S DMA Matrix. Supports playlists and randomized playback.
+ * Uses the AnimatedGIF library to decode and render GIF files, and PNGdec (same author,
+ * bitbank2, near-identical open/read/seek/draw callback API) for static .png assets, directly
+ * from the SD card onto the I2S DMA Matrix. Supports playlists and randomized playback.
  */
 #pragma once
 #include <Arduino.h>
 #include <AnimatedGIF.h>
+#include <PNGdec.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <FS.h>
 #include <SD.h>
@@ -68,6 +70,7 @@ public:
 
 private:
     AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
+    PNG png;                         ///< The PNGdec decoder instance, for static .png assets
     MatrixPanel_I2S_DMA* matrix;     ///< Matrix hardware reference
     bool isPlaying;                  ///< State flag for active playback
     bool playlistMode;               ///< State flag for playlist rotation
@@ -81,14 +84,21 @@ private:
     std::vector<String> defaultPlaylists;
     std::vector<String> activeFiles;
     
-    File currentFile;                ///< Handle to the currently streaming file
+    File currentFile;                ///< Handle to the currently streaming file (GIF/raw)
+    File pngFile;                    ///< Separate handle for PNGdec's callbacks (synchronous decode)
     bool isRaw;                      ///< Flag indicating if file is .raw instead of .gif
+    bool isPng;                      ///< Flag indicating if file is a static .png image
     unsigned long rawLastFrameTime;
+    unsigned long pngShowStartTime;   ///< millis() when the current PNG was decoded/shown
+    // A static PNG has no natural "end of animation" signal like GIF/raw sequences do, so it's
+    // held on screen for this long before advancing the playlist (or looping, for a single play).
+    static const unsigned long pngHoldDurationMs = 5000;
     
     int remainingGifsToPlay;         ///< Counter for rotation limits
     
     void loadNextFileInPlaylist();
     void playRawFrame();
+    bool decodePng(const char* filepath);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;
@@ -99,4 +109,11 @@ private:
     static int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen);
     static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition);
     static void GIFDraw(GIFDRAW *pDraw);
+
+    // Callbacks for PNGdec to read from SD (separate File handle from GIF's, but same pattern)
+    static void* PNGOpenFile(const char *fname, int32_t *pSize);
+    static void PNGCloseFile(void *pHandle);
+    static int32_t PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen);
+    static int32_t PNGSeekFile(PNGFILE *pFile, int32_t iPosition);
+    static int PNGDrawCallback(PNGDRAW *pDraw);
 };
