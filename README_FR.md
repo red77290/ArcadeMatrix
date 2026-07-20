@@ -11,7 +11,10 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 ou `ArcadeMatrix-esp32s3.zip` selon votre carte, puis flashez `firmware-*.bin`,
 `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` avec `esptool.py` - voir
 [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release) pour les offsets exacts et la
-commande. Le Web Installer via navigateur ci-dessus sera l'option la plus simple une fois le dépôt public.)
+commande. Le Web Installer via navigateur ci-dessus sera l'option la plus simple une fois le dépôt public.
+Récupérez aussi `ArcadeMatrix-sdcard.zip` sur la même release - un kit de démarrage de carte SD
+prêt à copier avec un exemple de `conf.ini`, les dossiers GIFs/MUGEN, et les scripts d'indexation
+des playlists GIF.)
 
 
 ## Fonctionnalités
@@ -42,7 +45,7 @@ SD:/
 
 ## Configuration (`conf.ini`)
 Le fichier `conf.ini` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres liés à la taille de la matrice, à la profondeur de couleur, aux thèmes d'horloge, à l'ordre de rotation au repos et aux arrière-plans des sprites MUGEN.
-Ouvrez le `conf.ini` fourni dans le dossier `release/sdcard/` pour voir toutes les valeurs possibles.
+Ouvrez le `conf.ini` fourni dans le dossier `release/sdCard/` pour voir toutes les valeurs possibles.
 
 ## Extraction des sprites MUGEN (script `mugen_extractor.py`)
 Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichiers bruts `.fgt`. Comme l'ESP32 n'est pas assez puissant pour décoder nativement les formats complexes de personnages MUGEN, nous fournissons un script Python sur mesure pour les convertir et générer un manifeste `index.txt` contenant des boîtes englobantes parfaites et les valeurs de sol virtuel.

@@ -115,9 +115,11 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
     else if (currentSection == "MATRIX") {
         if (key == "WIDTH") matrix.width = value.toInt();
         else if (key == "HEIGHT") matrix.height = value.toInt();
+        else if (key == "PANEL_TYPE") matrix.panelType = value;
         else if (key == "CHAIN") matrix.chainLength = value.toInt();
         else if (key == "BRIGHTNESS_LIMIT") matrix.powerLimitPercent = value.toInt();
         else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
+        else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
     }
     else if (currentSection == "MQTT") {
         if (key == "ENABLED") mqtt.enabled = (value == "true" || value == "1");
@@ -278,9 +280,11 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("[matrix]");
     file.println("width=" + String(matrix.width));
     file.println("height=" + String(matrix.height));
+    file.println("panel_type=" + matrix.panelType);
     file.println("chain=" + String(matrix.chainLength));
     file.println("brightness_limit=" + String(matrix.powerLimitPercent));
     file.println("color_depth=" + String(matrix.colorDepth));
+    file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
     file.println();
 
     file.println("[mqtt]");
