@@ -105,6 +105,27 @@ If your new clock requires new user settings (e.g., `snake_speed`), you must mod
 | `/api/marquee` | POST | Raw RGB565 image body (little-endian, row-major, exactly `width*height*2` bytes matching the configured panel resolution - see `tools/mugen_extractor` for the same wire format convention). Displays it immediately for ~8s, interrupting the idle rotation, then resumes. There is no on-device image decoder, so any bridge/frontend integration must pre-convert artwork (PNG/JPEG/box-art) to this raw format before POSTing. |
 | `/api/update` | POST | OTA firmware upload (`Update.h`), writes to the inactive OTA partition slot. |
 
+### Pixelcade-style marquee/box-art integration (arcade cabinet frontends)
+
+`/api/marquee` (above) together with `RetroFrontendListener`'s MQTT event hooks (`STOP_GAME` /
+`START_GAME:<path>` topics, or native Batocera/Recalbox `/Recalbox/EmulationStation/Event` topic)
+is the intended way to replicate a "Pixelcade"-like marquee display, without requiring an on-device
+image decoder for arbitrary artwork formats:
+
+1. A small bridge script running on the frontend host (Batocera/Recalbox/RetroPie) listens for
+   "game launched" events (native EmulationStation MQTT events, or a custom hook script).
+2. On launch, the bridge script resolves the game's box-art/marquee image (PNG/JPEG from the
+   frontend's existing scraper cache), resizes/crops it to the panel's exact resolution
+   (128x32 or 256x64), converts it to raw RGB565 (see `tools/mugen_extractor` for the wire format),
+   and `POST`s the bytes to `http://<esp32-ip>/api/marquee`.
+3. On "stop game", the bridge script can either let the marquee's ~8s timer expire naturally, or
+   call `gif->stop()` indirectly by publishing an MQTT `STOP_GAME`/`stopgame` event (already wired
+   in `RetroFrontendListener::handleMessage()`), which resumes the idle GIF/clock rotation.
+
+This intentionally keeps all image decoding/resizing off the ESP32 (CPU/flash constrained) and in
+the bridge script (running on far more capable frontend hardware), matching the same "pre-convert
+offline" philosophy as `.raw` GifEngine assets and `tools/mugen_extractor`.
+
 ---
 
 ## 3. Important Rules for ESP32 Development
