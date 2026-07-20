@@ -140,9 +140,26 @@ void setup() {
         
         MessageConfig connMsg = {"Connecting to Wi-Fi...", 0xFFFF, 1, "rtl", 50, 10};
         messageEngine->displayMessage(connMsg);
-        
+
+        // Auto-reconnect on drop: without this, the ESP32 Wi-Fi driver's default modem-sleep
+        // power-save mode is known to cause exactly this symptom on some routers/APs - the
+        // device connects, briefly does one or two requests (e.g. NTP sync), then silently goes
+        // to sleep/drops off and is never seen again (router shows it gone, Web UI unreachable),
+        // even though nothing in our own code disconnected it.
+        WiFi.onEvent([](WiFiEvent_t event) {
+            if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+                Serial.println("Wi-Fi disconnected - attempting to reconnect...");
+                WiFi.reconnect();
+            }
+        });
+
+        WiFi.mode(WIFI_STA);
         WiFi.setHostname(config.wifi.hostname.c_str());
         WiFi.begin(config.wifi.ssid.c_str(), config.wifi.password.c_str());
+        // Disable Wi-Fi modem sleep: this is the actual root cause of the "connects just long
+        // enough to sync NTP time, then vanishes from the router / Web UI becomes unreachable"
+        // symptom on many routers/APs. Must be called after WiFi.begin() starts the driver.
+        WiFi.setSleep(false);
         
         int attempts = 0;
         while (WiFi.status() != WL_CONNECTED && attempts < 20) {
