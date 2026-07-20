@@ -1,5 +1,7 @@
 # ArcadeMatrix MUGEN Sprite Extractor
 
+🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
+
 Ce script Python (`mugen_extractor.py`) a été conçu sur mesure pour extraire, optimiser et convertir des personnages issus du moteur de jeu de combat **MUGEN**, afin de les rendre compatibles avec les moteurs `FighterEngine` d'ArcadeMatrix (versions ESP32 en C++ et Raspberry Pi en Python).
 
 ## À quoi ça sert ?
@@ -43,24 +45,37 @@ Exemple :
 
 ## Comment l'utiliser
 
-Dans le script `mugen_extractor.py`, descendez tout en bas dans la section `if __name__ == "__main__":` et modifiez les chemins d'accès selon votre configuration :
-
-```python
-if __name__ == "__main__":
-    # 1. Dossier contenant les personnages MUGEN
-    src_dir = "/Chemin/Vers/Vos/Personnages/Mugen/chars"
-    
-    # 2. Dossiers de destination et hauteurs cibles (TARGET_HEIGHT)
-    out_dirs = [
-        ("./fighters_32", 32), # Pour matrice P64x32
-        ("./fighters_64", 64)  # Pour matrice P128x64 ou P64x64
-    ]
-```
-
-Puis exécutez le script :
+Exécutez le script avec des arguments en ligne de commande - inutile de modifier le moindre code :
 
 ```bash
-python mugen_extractor.py
+python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_32
+```
+
+Options :
+| Option | Alias court | Défaut | Description |
+|---|---|---|---|
+| `--src` | `-i` | *(obligatoire)* | Dossier contenant vos sous-dossiers de personnages MUGEN. |
+| `--dest` | `-o` | `./fighters_32` | Dossier de sortie pour les fichiers `.fgt` générés + `index.json`/`index.txt`. |
+| `--mode` | | `FULLSIZE` | `SCALED` redimensionne les personnages pour occuper exactement la hauteur du panneau (ESP32 standard, sans PSRAM) ; `FULLSIZE` conserve l'échelle 1:1 (RPi ou ESP32-S3 avec PSRAM - voir `docs/HARDWARE_FR.md`). |
+| `--compress` | | désactivé | Compresse les fichiers `.fgt` en gzip (`.fgt.gz`) - utile sur RPi pour économiser de l'espace disque. |
+
+Pour cibler à la fois une matrice 32px et 64px, exécutez-le simplement deux fois avec des dossiers `--dest` différents :
+
+```bash
+python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_32
+python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_64
+```
+
+### Alternative : assistant interactif (aucune option en ligne de commande requise)
+
+Si vous préférez ne pas saisir d'options vous-même, `start_extractor.sh` (macOS/Linux) /
+`start_extractor.bat` (Windows) créent un environnement virtuel Python local, installent
+automatiquement `Pillow`, et vous demandent les dossiers d'entrée/sortie de manière interactive
+(ils appellent `mugen_extractor.py -i <entrée> -o <sortie>` pour vous) :
+
+```bash
+./start_extractor.sh     # macOS/Linux
+start_extractor.bat      # Windows
 ```
 
 ### Processus d'extraction

@@ -347,7 +347,10 @@ TARGET_HEIGHT = 32
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Extract Mugen Characters for ArcadeMatrix")
-    parser.add_argument("--src", type=str, default="/Users/red1l/Downloads/Mercury Mugen Roster 1.0  with over 1000+ Chars/chars", help="Source directory containing Mugen characters")
+    # -i/-o are short aliases for --src/--dest, kept for compatibility with the interactive
+    # start_extractor.sh/.bat wrappers (which prompt the user and pass -i/-o).
+    parser.add_argument("--src", "-i", dest="src", type=str, required=True, help="Source directory containing Mugen characters")
+    parser.add_argument("--dest", "-o", dest="dest", type=str, default="fighters_32", help="Output directory for the generated .fgt files and index (default: ./fighters_32)")
     parser.add_argument("--mode", type=str, choices=['SCALED', 'FULLSIZE'], default='FULLSIZE', 
                         help="SCALED: Resize character to perfectly fit screen height (for standard ESP32). FULLSIZE: Extract at 1:1 original scale (for RPi or ESP32-S3 with PSRAM).")
     parser.add_argument("--compress", action="store_true", help="Compress the output .fgt files using gzip (.fgt.gz). Ideal for RPi to save space.")
@@ -361,7 +364,7 @@ if __name__ == "__main__":
 
     src_dir = args.src
     out_dirs = [
-        ("fighters_32", 32)
+        (args.dest, TARGET_HEIGHT)
     ]
     
     start_time = time.time()

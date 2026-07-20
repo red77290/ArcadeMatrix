@@ -1,20 +1,36 @@
 # ArcadeMatrix
 
-Bienvenue sur le firmware open-source ESP32 conçu pour piloter des Matrices LED HUB75 ! Ce projet vous permet d'afficher des Horloges d'Arcade, des GIFs animés, la Météo, et même de simuler des **combats de sprites du jeu MUGEN** directement sur une vraie matrice LED.
+🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
+
+Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED HUB75 ! Ce projet vous permet d'afficher des horloges Arcade, des GIF animés, la météo, et même des **sprites de jeux de combat MUGEN** simulés directement sur une vraie matrice LED.
 
 📚 **Liens de documentation :**
-- [Guide Matériel](docs/HARDWARE.md)
-- [Guide de Câblage](docs/WIRING.md)
-- [Guide de Configuration](docs/CONFIGURATION.md)
+- [Premiers pas (installation de PlatformIO, compilation, flash, logs)](docs/GETTING_STARTED_FR.md)
+- [Web Installer (flash depuis votre navigateur, sans CLI)](webinstaller/README_FR.md) - *sera mis en ligne une fois ce dépôt public (GitHub Pages nécessite un dépôt public avec l'offre gratuite) ; en attendant, utilisez le firmware précompilé ci-dessous.*
+- [Guide matériel](docs/HARDWARE_FR.md)
+- [Guide de câblage](docs/WIRING_FR.md)
+- [Guide de configuration](docs/CONFIGURATION_FR.md)
+- [Guide développeur](docs/DEVELOPER_FR.md)
+- [Architecture](docs/ARCHITECTURE_FR.md)
+
+## 💾 Installation
+
+**[⬇️ Télécharger le dernier firmware précompilé](https://github.com/red77290/ArcadeMatrix/releases/latest)**
+(construit et testé automatiquement par la CI à chaque release taguée - choisissez `ArcadeMatrix-esp32dev.zip`
+ou `ArcadeMatrix-esp32s3.zip` selon votre carte, puis flashez `firmware-*.bin`,
+`bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` avec `esptool.py` - voir
+[Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release) pour les offsets exacts et la
+commande. Le Web Installer via navigateur ci-dessus sera l'option la plus simple une fois le dépôt public.)
+
 
 ## Fonctionnalités
-- **Sélection massive d'horloges :** Des horloges animées comprenant les classiques Arcade, Binaire, Cyberpunk, Flip, Mots, **Pac-Man**, **Tetris**, **SlotMachine**, et **Versus (Mugen)** !
-- **Interface Web Wi-Fi :** Accédez à `http://arcadematrix.local` pour uploader des GIFs et modifier les paramètres en direct !
-- **Moteur MUGEN Fighter :** Simule des jeux de combat 2D nativement sur la matrice en utilisant des sprites extraits, avec un alignement parfait au "sol virtuel" (virtual ground).
-- **Moteur GIF :** Lecture fluide de GIFs stockés sur la carte SD.
-- **Support MQTT :** S'intègre parfaitement avec Batocera et Recalbox pour afficher les "marques" (bannières) des jeux.
+- **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine** et **Versus (Mugen)** !
+- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
+- **Moteur de combat MUGEN :** simule nativement des jeux de combat 2D sur la matrice à l'aide de sprites extraits avec un alignement parfait sur le sol virtuel.
+- **Moteur GIF :** lecture fluide des GIF stockés sur la carte SD.
+- **Support MQTT :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees des jeux.
 
-## Structure de la Carte SD
+## Structure de la carte SD
 Formatez votre carte SD en **FAT32**. Votre carte SD doit ressembler à ceci :
 ```
 SD:/
@@ -29,43 +45,42 @@ SD:/
           ├─ idle.fgt
           └─ attack.fgt
   └─ fighters_64/
-      └─ (même structure pour les panneaux de 64px de hauteur)
+      └─ (même structure pour les panneaux de 64px de haut)
 ```
-*Note : Le dossier `www/` n'est plus requis sur la carte SD car l'interface Web est désormais directement intégrée au firmware de l'ESP32 !*
+*Remarque : le dossier `www/` n'est plus nécessaire sur la carte SD, car l'interface Web est désormais directement intégrée au firmware ESP32 !*
 
 ## Configuration (`conf.ini`)
-Le fichier `conf.ini` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres pour la taille de la Matrice, la profondeur des couleurs, les thèmes d'horloge, l'ordre de rotation au repos, et les arrière-plans des sprites MUGEN.
+Le fichier `conf.ini` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres liés à la taille de la matrice, à la profondeur de couleur, aux thèmes d'horloge, à l'ordre de rotation au repos et aux arrière-plans des sprites MUGEN.
 Ouvrez le `conf.ini` fourni dans le dossier `release/sdcard/` pour voir toutes les valeurs possibles.
 
-## Extraction des Sprites MUGEN (Le Script `mugen_extractor.py`)
-Pour afficher des combattants dans le module `SPRITES`, l'ESP32 a besoin de fichiers bruts `.fgt`. Étant donné que l'ESP32 n'est pas assez puissant pour décoder les formats complexes des personnages MUGEN nativement, nous fournissons un script Python sur mesure pour les convertir et générer un manifeste `index.txt` contenant les boîtes de collision (bounding boxes) parfaites et les valeurs de sol virtuel.
+## Extraction des sprites MUGEN (script `mugen_extractor.py`)
+Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichiers bruts `.fgt`. Comme l'ESP32 n'est pas assez puissant pour décoder nativement les formats complexes de personnages MUGEN, nous fournissons un script Python sur mesure pour les convertir et générer un manifeste `index.txt` contenant des boîtes englobantes parfaites et les valeurs de sol virtuel.
 
 ### Comment utiliser l'extracteur :
-1. Assurez-vous d'avoir installé Python 3 avec la bibliothèque `Pillow` (`pip install Pillow`).
-2. Allez dans le dossier `tools/mugen_extractor/` du dépôt.
-3. Éditez le fichier `mugen_extractor.py` pour configurer `src_dir` afin de pointer vers votre dossier `chars/` MUGEN.
-4. Lancez le script :
+1. Assurez-vous d'avoir Python 3 installé avec la bibliothèque `Pillow` (`pip install Pillow`), ou lancez simplement `tools/mugen_extractor/start_extractor.sh`/`.bat` qui s'en charge automatiquement pour vous.
+2. Rendez-vous dans le dossier `tools/mugen_extractor/` du dépôt.
+3. Lancez le script en pointant `--src` vers votre dossier MUGEN `chars/` :
    ```bash
-   python mugen_extractor.py
+   python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_32
    ```
-5. Le script génèrera automatiquement les fichiers `.fgt` ainsi que le manifeste `index.txt` pour tous les personnages, parfaitement mis à l'échelle pour les matrices 32px et 64px.
-6. Copiez le dossier résultant `fighters_32/` ou `fighters_64/` sur votre carte SD.
+4. Le script génère les fichiers `.fgt` ainsi qu'un manifeste `index.txt`/`index.json` dans le dossier `--dest`. Lancez-le deux fois (avec `--dest ./fighters_32` puis `--dest ./fighters_64`) si vous voulez des assets pour les deux tailles de matrice.
+5. Copiez le dossier `fighters_32/` ou `fighters_64/` obtenu sur votre carte SD.
 
-Pour plus de détails, veuillez lire la documentation dans `tools/mugen_extractor/README_FR.md`.
+Pour tous les détails, consultez la documentation dans `tools/mugen_extractor/README_FR.md`.
 
-### Arrière-plans des Sprites
-Les combattants ont besoin d'une arène ! Vous pouvez définir l'arrière-plan sur lequel ils se battent en plaçant un fichier image brut (ex: `stage1.raw`) dans `SD:/fighters_32/backgrounds/`.
-Ensuite, liez cet arrière-plan dans votre `conf.ini` sous la section `[DATE]` (les arrière-plans sont utilisés pour pimenter le module de la date !) :
+### Arrière-plans des sprites
+Les combattants ont besoin d'une arène ! Vous pouvez définir l'arrière-plan sur lequel ils se battent en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/`.
+Ensuite, associez cet arrière-plan dans votre `conf.ini` sous la section `[DATE]` (les arrière-plans servent à enrichir le module date !) :
 ```ini
 BACKGROUND_SPRITE=stage1.raw
 ```
 
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
-- Pour 128x32 : Un ESP32 WROOM standard est suffisant.
-- Pour 256x64 : Un **ESP32-S3 avec PSRAM** est fortement recommandé pour éviter les crashs de manque de mémoire (Out-Of-Memory) avec le double buffering.
+- Pour 128x32 : un ESP32 WROOM standard suffit.
+- Pour 256x64 : un **ESP32-S3 avec PSRAM** est fortement recommandé pour éviter les crashs par manque de mémoire avec le double buffering.
 
-Lancez la commande suivante pour compiler :
+Exécutez la commande suivante pour compiler :
 ```bash
 pio run -e esp32dev
 ```
