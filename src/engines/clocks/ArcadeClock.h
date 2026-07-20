@@ -2,6 +2,7 @@
 #include "../ClockEngine.h"
 #include <SD.h>
 #include "../DateEngine.h" // For PublisherTheme
+#include "../../core/BitmapFontLoader.h"
 
 class ArcadeClock : public ClockFace {
 public:
@@ -14,7 +15,8 @@ private:
     uint8_t lastMinute;
     TimeData storedTime;
     PublisherTheme currentTheme;
-    
+    BitmapFontLoader customFont; ///< Optional user-provided .amf font (config.time.clock_font_path)
+
     // Animation state
     bool isAnimating;
     int animationFrame;

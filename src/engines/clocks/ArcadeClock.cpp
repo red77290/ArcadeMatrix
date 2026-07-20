@@ -9,6 +9,11 @@ ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
     lastFrameTime = 0;
     extern ConfigLoader config;
     currentTheme = static_cast<PublisherTheme>(config.time.clock_theme);
+    if (config.time.clock_font_path.length() > 0) {
+        if (!customFont.loadFromSD(config.time.clock_font_path.c_str())) {
+            Serial.println("ArcadeClock: clock_font_path set but failed to load; using compiled-in font.");
+        }
+    }
 }
 
 void ArcadeClock::setTheme(PublisherTheme theme) {
@@ -67,6 +72,14 @@ void ArcadeClock::drawStaticTime() {
         case THEME_TAITO: case THEME_KONAMI: font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b; break;
         case THEME_CAPCOM: case THEME_IGS: case THEME_BANPRESTO: case THEME_NAMCO: case THEME_RYU: case THEME_MEGAMAN: case THEME_MARIO: case THEME_BUB: font9pt = &namco__9pt7b; font12pt = &namco__12pt7b; break;
         default: font9pt = nullptr; font12pt = nullptr; break;
+    }
+    
+    // A user-supplied SD font (config.time.clock_font_path, converted via tools/bdf_to_amfont)
+    // always takes priority over the compiled-in font families above.
+    GFXfont* loadedCustomFont = customFont.getFont();
+    if (loadedCustomFont) {
+        font9pt = loadedCustomFont;
+        font12pt = loadedCustomFont;
     }
     
     matrix->setTextSize(1);

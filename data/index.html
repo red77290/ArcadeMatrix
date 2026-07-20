@@ -6,8 +6,57 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ArcadeMatrix Dashboard</title>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/assets/index-Dbr8ZFrg.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DnBfTy0P.css">
+  <!-- The UI is served entirely from firmware flash (PROGMEM) with no SD/filesystem dependency,
+       so all CSS/JS must be inlined here rather than loaded from external /assets/*.js|css files
+       (those were never served by WebServerAPI and silently 404'd, breaking view switching,
+       Playlists, and the Clocks quick-theme-switcher). -->
+  <style>
+    :root{--bg-color:#0f172a;--text-color:#f8fafc;--primary:#3b82f6;--primary-glow:#3b82f680;--glass-bg:#ffffff0d;--glass-border:#ffffff1a}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background-color:var(--bg-color);color:var(--text-color);font-family:Outfit,sans-serif;overflow:hidden}
+    .app-container{height:100vh;display:flex}
+    .sidebar{background:var(--glass-bg);border-right:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);width:250px;padding:2rem}
+    .logo h2{background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-text-fill-color:transparent;-webkit-background-clip:text;margin-bottom:2rem;font-weight:700}
+    .nav-links{list-style:none}
+    .nav-links li{cursor:pointer;border-radius:8px;margin-bottom:.5rem;padding:1rem;transition:all .3s}
+    .nav-links li:hover{background:#ffffff1a}
+    .nav-links li.active{background:var(--primary);box-shadow:0 0 15px var(--primary-glow)}
+    .content{flex:1;padding:2rem 3rem;overflow-y:auto}
+    header{justify-content:space-between;align-items:center;margin-bottom:3rem;display:flex}
+    .status-indicator{border-radius:20px;padding:.5rem 1rem;font-size:.9rem;font-weight:500}
+    .status-indicator.online{color:#10b981;background:#10b98133;border:1px solid #10b981}
+    .view{animation:.5s fadeIn;display:none}
+    .view.active-view{display:block}
+    .cards-grid{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2rem;display:grid}
+    .glass{background:var(--glass-bg);border:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-radius:16px;padding:2rem}
+    .glass h3{margin-bottom:1.5rem;font-weight:500}
+    .btn{cursor:pointer;border:none;border-radius:8px;margin-right:.5rem;padding:.8rem 1.5rem;font-family:inherit;font-weight:500;transition:all .2s}
+    .btn.primary{background:var(--primary);color:#fff;box-shadow:0 4px 15px var(--primary-glow)}
+    .btn.primary:hover{box-shadow:0 6px 20px var(--primary-glow);transform:translateY(-2px)}
+    .btn.secondary{color:#fff;background:#ffffff1a}
+    .btn.secondary:hover{background:#fff3}
+    .slider-group{margin-top:1.5rem}
+    .slider-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}
+    input[type=range]{width:100%;accent-color:var(--primary)}
+    @keyframes fadeIn{0%{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .playlist-list{flex-direction:column;gap:1rem;margin-top:2rem;display:flex}
+    .playlist-item{background:#0003;border:1px solid #ffffff0d;border-radius:8px;justify-content:space-between;align-items:center;padding:1rem;display:flex}
+    .playlist-item .info h4{font-weight:500}
+    .playlist-item .info span{color:#94a3b8;font-size:.8rem}
+    .form-group{margin-bottom:1rem}
+    .form-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}
+    .text-input,.select-input{border:1px solid var(--glass-border);color:#fff;background:#0003;border-radius:8px;width:100%;padding:.8rem;font-family:inherit}
+    .text-input:focus,.select-input:focus{border-color:var(--primary);box-shadow:0 0 10px var(--primary-glow);outline:none}
+    @media (max-width:768px){
+      #mobile-menu-btn{display:block!important}
+      .sidebar{z-index:1000;transition:left .3s;position:fixed;top:0;bottom:0;left:-250px;box-shadow:5px 0 15px #00000080}
+      .sidebar.open{left:0}
+      .sidebar-overlay{-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);z-index:999;background:#00000080;display:none;position:fixed;inset:0}
+      .sidebar-overlay.open{display:block}
+      .content{padding:1.5rem 1rem}
+      header h1{font-size:1.5rem}
+    }
+  </style>
 </head>
 
 <body>
@@ -51,20 +100,7 @@
             </div>
           </header>
           <div class="playlist-list">
-            <div class="playlist-item">
-              <div class="info">
-                <h4>/mario_sprites/</h4>
-                <span>14 .raw files</span>
-              </div>
-              <button class="btn secondary">Play</button>
-            </div>
-            <div class="playlist-item">
-              <div class="info">
-                <h4>/street_fighter/</h4>
-                <span>8 .raw files</span>
-              </div>
-              <button class="btn secondary">Play</button>
-            </div>
+            <div style="padding:2rem;text-align:center;opacity:0.7;">Loading GIFs...</div>
           </div>
         </div>
       </section>
@@ -98,7 +134,6 @@
                 <option value="17">Bub (Animated)</option>
                 <option value="18">Cyberpunk (Matrix)</option>
                 <option value="19">Flip Clock</option>
-                <option value="20">Custom Gradient / Color</option>
                 <option value="21">True Matrix (Katakana HD)</option>
                 <option value="22">Pong Clock</option>
                 <option value="23">Tetris Clock</option>
@@ -368,7 +403,7 @@
               <div class="form-group" style="flex: 1; min-width:120px;">
                 <label>Font</label>
                 <select id="setting-clock-font" class="select-input">
-                  <option value="PressStart2P.ttf">Loading fonts...</option>
+                  <option value="">Loading fonts...</option>
                 </select>
               </div>
               <div class="form-group" style="flex: 1; min-width:120px;">
@@ -396,7 +431,6 @@
                   <option value="17">Bub (Animated)</option>
                   <option value="18">Cyberpunk (Classic Drops)</option>
                   <option value="19">Flip Clock</option>
-                  <option value="20">Custom Gradient / Color</option>
                   <option value="21">True Matrix (Katakana HD)</option>
                   <option value="22">Pong Clock</option>
                   <option value="23">Tetris Clock</option>
@@ -478,7 +512,7 @@
               <div class="form-group" style="flex: 1; min-width:120px;">
                 <label>Font</label>
                 <select id="setting-date-font" class="select-input">
-                  <option value="PressStart2P.ttf">Loading fonts...</option>
+                  <option value="">Loading fonts...</option>
                 </select>
               </div>
               <div class="form-group" style="flex: 1; min-width:120px;">
@@ -506,7 +540,6 @@
                   <option value="17">Bub (Animated)</option>
                   <option value="18">Cyberpunk (Classic Drops)</option>
                   <option value="19">Flip Clock</option>
-                  <option value="20">Custom Gradient / Color</option>
                   <option value="21">True Matrix (Katakana HD)</option>
                   <option value="22">Pong Date</option>
                   <option value="23">Tetris Date</option>
@@ -633,7 +666,7 @@
           const clockFontSelect = document.getElementById("setting-clock-font");
           const dateFontSelect = document.getElementById("setting-date-font");
           
-          let optionsHtml = '<option value="-1">System/Default</option>';
+          let optionsHtml = '<option value="">System/Default</option>';
           fonts.forEach(f => {
             optionsHtml += `<option value="${f}">${f}</option>`;
           });
@@ -651,8 +684,8 @@
         const clockFontSelect = document.getElementById("setting-clock-font");
         const dateFontSelect = document.getElementById("setting-date-font");
         
-        if (t.clock_font && clockFontSelect) clockFontSelect.value = t.clock_font;
-        if (t.date_font && dateFontSelect) dateFontSelect.value = t.date_font;
+        if (t.clock_font_path && clockFontSelect) clockFontSelect.value = t.clock_font_path;
+        if (t.date_font_path && dateFontSelect) dateFontSelect.value = t.date_font_path;
         
         // Populate matrix hardware
         if (t.matrix_rows) document.getElementById('setting-matrix-rows').value = t.matrix_rows;
@@ -884,7 +917,7 @@
             
             const payload = {
               clock_theme: safeInt('setting-clock-theme', 0),
-              clock_font: safeStr('setting-clock-font', 'PressStart2P.ttf'),
+              clock_font_path: safeStr('setting-clock-font', ''),
               clock_size: safeInt('setting-clock-size', 1),
               clock_offset_x: safeInt('setting-clock-offset-x', 0),
               clock_offset_y: safeInt('setting-clock-offset-y', 0),
@@ -920,7 +953,7 @@
             
             const payload = {
               date_theme: safeInt('setting-date-theme', 0),
-              date_font: safeStr('setting-date-font', 'PressStart2P.ttf'),
+              date_font_path: safeStr('setting-date-font', ''),
               date_size: safeInt('setting-date-size', 1),
               date_offset_x: safeInt('setting-date-offset-x', 0),
               date_offset_y: safeInt('setting-date-offset-y', 0),
@@ -1145,6 +1178,151 @@
           document.getElementById(e.currentTarget.getAttribute('data-target')).style.display = 'block';
         });
       });
+    });
+  </script>
+  <!-- Sidebar navigation, mobile menu, GIF Playlists scanning/wiring and the Clocks tab's
+       quick-theme-switcher used to live only in the external Vite bundle (assets/index-*.js),
+       which was never actually served by the firmware (no /assets/* route exists) - so none of
+       this ever ran on real hardware. Restored here inline so it ships with the rest of the UI. -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // --- Sidebar view switching ---
+      const navItems = document.querySelectorAll('.nav-links li');
+      const views = document.querySelectorAll('.view');
+      navItems.forEach(item => {
+        item.addEventListener('click', () => {
+          navItems.forEach(n => n.classList.remove('active'));
+          views.forEach(v => v.classList.remove('active-view'));
+          item.classList.add('active');
+          const target = document.getElementById(`view-${item.dataset.view}`);
+          if (target) target.classList.add('active-view');
+          const sidebar = document.querySelector('.sidebar');
+          const overlay = document.getElementById('sidebar-overlay');
+          if (sidebar && overlay) {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+          }
+        });
+      });
+
+      // --- Mobile menu ---
+      const mobileBtn = document.getElementById('mobile-menu-btn');
+      const sidebar = document.querySelector('.sidebar');
+      const overlay = document.getElementById('sidebar-overlay');
+      if (mobileBtn && sidebar && overlay) {
+        mobileBtn.addEventListener('click', () => {
+          sidebar.classList.add('open');
+          overlay.classList.add('open');
+        });
+        overlay.addEventListener('click', () => {
+          sidebar.classList.remove('open');
+          overlay.classList.remove('open');
+        });
+      }
+
+      // --- GIF Playlists (reads /gifs/playlists.json generated by tools/gif_indexation) ---
+      const playlistList = document.querySelector('.playlist-list');
+      async function loadPlaylists() {
+        if (!playlistList) return;
+        playlistList.innerHTML = '<div style="padding:2rem;text-align:center;">Loading GIFs...<br><small style="opacity:0.7">Reading SD Card, this may take a few seconds...</small></div>';
+        try {
+          const res = await fetch('/api/playlists');
+          if (!res.ok) throw new Error('Failed to load playlists');
+          const playlists = await res.json();
+
+          let selected = [];
+          try {
+            const selRes = await fetch('/api/playlists/selected');
+            if (selRes.ok) selected = (await selRes.json()).playlists || [];
+          } catch (e) {
+            console.warn('Could not fetch selected playlists', e);
+          }
+
+          const entries = Object.values(playlists);
+          if (entries.length === 0) {
+            playlistList.innerHTML = '<div style="padding:2rem;text-align:center;opacity:0.7;">No playlists found. Run tools/gif_indexation/generate_index.sh on your SD card\'s /gifs folder.</div>';
+            return;
+          }
+
+          let html = '';
+          for (const entry of entries) {
+            const isChecked = selected.includes(entry.path) ? 'checked' : '';
+            const count = entry.count ?? (entry.files ? entry.files.length : 0);
+            html += `
+              <div class="playlist-item">
+                <input type="checkbox" class="playlist-checkbox" value="${entry.path}" style="width:20px; height:20px;" ${isChecked} />
+                <div class="info">
+                  <h4>${entry.path}</h4>
+                  <span>${count} animations</span>
+                </div>
+              </div>
+            `;
+          }
+          playlistList.innerHTML = html;
+
+          playlistList.querySelectorAll('.playlist-checkbox').forEach(cb => {
+            cb.addEventListener('change', async () => {
+              const checked = Array.from(playlistList.querySelectorAll('.playlist-checkbox:checked')).map(c => c.value);
+              try {
+                await fetch('/api/playlists/save', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ playlists: checked })
+                });
+              } catch (e) {
+                console.error('Failed to save selected playlists', e);
+              }
+            });
+          });
+        } catch (e) {
+          console.error('Failed to load playlists', e);
+          playlistList.innerHTML = '<div style="padding:2rem;text-align:center;color:#f43f5e;">Failed to load playlists. Is the SD card inserted and formatted correctly?</div>';
+        }
+      }
+      loadPlaylists();
+
+      const btnScanSd = document.getElementById('btn-scan-sd');
+      if (btnScanSd) btnScanSd.addEventListener('click', loadPlaylists);
+
+      const btnPlaySelected = document.getElementById('btn-play-selected');
+      if (btnPlaySelected) {
+        btnPlaySelected.addEventListener('click', async () => {
+          const selected = Array.from(document.querySelectorAll('.playlist-checkbox:checked')).map(c => c.value);
+          try {
+            await fetch('/api/playlists/play', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ playlists: selected })
+            });
+            const oldText = btnPlaySelected.innerText;
+            btnPlaySelected.innerText = 'Playing ✔️';
+            setTimeout(() => btnPlaySelected.innerText = oldText, 2000);
+          } catch (e) {
+            console.error('Failed to play playlists', e);
+          }
+        });
+      }
+
+      // --- Clocks tab quick theme switcher ---
+      const btnApplyClock = document.getElementById('btn-apply-clock');
+      if (btnApplyClock) {
+        btnApplyClock.addEventListener('click', async () => {
+          const select = document.getElementById('clock-character');
+          const themeId = parseInt(select.value, 10);
+          try {
+            await fetch('/api/clock', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ clock_theme: themeId })
+            });
+            const oldText = btnApplyClock.innerText;
+            btnApplyClock.innerText = 'Applied ✔️';
+            setTimeout(() => btnApplyClock.innerText = oldText, 2000);
+          } catch (e) {
+            console.error('Failed to apply clock theme', e);
+          }
+        });
+      }
     });
   </script>
 </body>

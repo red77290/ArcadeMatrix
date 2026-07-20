@@ -63,6 +63,33 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
+    // API: List custom SD fonts (.amf files converted via tools/bdf_to_amfont, dropped in /fonts)
+    // for the Clock/Date "Font" dropdowns. Falls back to an empty list (dropdown just keeps its
+    // "System/Default" option) if /fonts doesn't exist yet - no error either way.
+    server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(2048);
+        JsonArray arr = doc.to<JsonArray>();
+        File dir = SD.open("/fonts");
+        if (dir && dir.isDirectory()) {
+            File entry = dir.openNextFile();
+            while (entry) {
+                if (!entry.isDirectory()) {
+                    String name = String(entry.name());
+                    if (name.endsWith(".amf") || name.endsWith(".AMF")) {
+                        // entry.name() may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
+                        arr.add(name.startsWith("/") ? name : ("/fonts/" + name));
+                    }
+                }
+                entry.close();
+                entry = dir.openNextFile();
+            }
+            dir.close();
+        }
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
     // API: List GIF Playlists (reads /gifs/playlists.json from SD)
     server.on("/api/playlists", HTTP_GET, [this](AsyncWebServerRequest *request){
         if (SD.exists("/gifs/playlists.json")) {
@@ -119,6 +146,7 @@ void WebServerAPI::setupRoutes() {
         doc["clock_offset_y"] = config.time.clock_offset_y;
         doc["clock_color_1"] = config.time.clock_color_1;
         doc["clock_color_2"] = config.time.clock_color_2;
+        doc["clock_font_path"] = config.time.clock_font_path;
 
         // Date
         doc["date_font"] = config.dateSettings.date_font;
@@ -130,6 +158,7 @@ void WebServerAPI::setupRoutes() {
         doc["date_sprite"] = config.dateSettings.background_sprite;
         doc["date_color_1"] = config.dateSettings.date_color_1;
         doc["date_color_2"] = config.dateSettings.date_color_2;
+        doc["date_font_path"] = config.dateSettings.date_font_path;
 
         // Weather
         doc["weather_api_key"] = config.weather.api_key;
@@ -201,6 +230,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["clock_offset_y"].isNull()) { config.time.clock_offset_y = doc["clock_offset_y"].as<int>(); clockChanged = true; }
         if (!doc["clock_color_1"].isNull()) { config.time.clock_color_1 = doc["clock_color_1"].as<String>(); clockChanged = true; }
         if (!doc["clock_color_2"].isNull()) { config.time.clock_color_2 = doc["clock_color_2"].as<String>(); clockChanged = true; }
+        if (!doc["clock_font_path"].isNull()) { config.time.clock_font_path = doc["clock_font_path"].as<String>(); clockChanged = true; }
         if (!doc["clock_theme"].isNull()) { config.time.clock_theme = doc["clock_theme"].as<int>(); clockChanged = true; }
         
         if (clockChanged) {
@@ -216,6 +246,11 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_sprite"].isNull()) config.dateSettings.background_sprite = doc["date_sprite"].as<String>();
         if (!doc["date_color_1"].isNull()) config.dateSettings.date_color_1 = doc["date_color_1"].as<String>();
         if (!doc["date_color_2"].isNull()) config.dateSettings.date_color_2 = doc["date_color_2"].as<String>();
+        if (!doc["date_font_path"].isNull()) {
+            config.dateSettings.date_font_path = doc["date_font_path"].as<String>();
+            extern DateEngine* dateEngine;
+            if (dateEngine) dateEngine->reloadCustomFont();
+        }
         if (!doc["date_theme"].isNull()) {
             config.dateSettings.theme = doc["date_theme"].as<int>();
             extern DateEngine* dateEngine;
