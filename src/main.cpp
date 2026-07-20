@@ -122,7 +122,7 @@ void setup() {
     fighterEngine->initialize();
     rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
-    marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+    // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
     // 4b. Optional SD-loadable custom bitmap font (see docs/DEVELOPER.md, tools/bdf_to_amfont)
     if (config.fonts.custom_font_path.length() > 0) {
@@ -191,6 +191,7 @@ void setup() {
             Serial.printf("Free Heap before Web Server start: %d bytes\n", ESP.getFreeHeap());
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
+            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
             webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
             
@@ -209,6 +210,7 @@ void setup() {
             
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
+            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
             webServer->setMarqueeEngine(marqueeEngine);
         }
     } else {
@@ -222,6 +224,7 @@ void setup() {
         
         webServer = new WebServerAPI(80, messageEngine, clockEngine);
         webServer->begin();
+        marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
         webServer->setMarqueeEngine(marqueeEngine);
     }
     

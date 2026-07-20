@@ -153,22 +153,5 @@ and run it.
   ESP32 dev boards need this to enter the bootloader), or lower `upload_speed` in `platformio.ini`.
 - **Build fails with a missing library error**: delete `.pio/` and rebuild - a corrupted library
   cache is the most common cause (`rm -rf .pio && pio run -e esp32dev`).
-- **`sdWait Failed` / `sdSelectCard Failed` / `Check status failed` a few times right at boot,
-  followed by the firmware continuing normally (Wi-Fi connects, NTP time displays correctly)**:
-  this is benign - these are low-level retries inside the ESP32 SD driver's own init handshake
-  (common with some SD cards/brands at the default probe clock speed), not an actual mount
-  failure. If SD mounting genuinely failed, `setup()` would print `CRITICAL ERROR: SD Card Mount
-  Failed!` and halt forever (rebooting via watchdog every ~30s) - it would never reach the Wi-Fi
-  connection step at all. Only investigate wiring/power if you see that specific critical error,
-  or if SD file reads/writes keep failing well after boot (not just at the very start).
-  `does not exist, no permits for creation` errors right after are expected/harmless on first
-  boot (e.g. `playlists_selected.json`, `fighters_32/index.txt` simply don't exist yet until you
-  save a playlist / run `mugen_extractor`). See `docs/WIRING.md`'s "SD Card Wiring" table only if
-  you're wiring a fresh board from scratch.
-- **`AsyncTCP.cpp: begin(): failed to start task`** right after Wi-Fi connects: this is FreeRTOS
-  failing to allocate a task for the async TCP stack, almost always due to low free internal heap
-  (large HUB75 DMA buffers on a non-PSRAM ESP32 can consume most of it). Check
-  `ESP.getFreeHeap()` (printed after matrix init) - if it's only a few KB, reduce
-  `mxconfig.min_refresh_rate`/panel resolution, or switch to an ESP32-S3 with PSRAM for large
-  panels. The web server may still partially start despite this warning, but expect it to be
-  unreliable until free heap is addressed.
+- **`sdWait Failed` / `sdSelectCard Failed` / `Check status failed` a few times right at boot, then the firmware continues normally (Wi-Fi connects, NTP time displays correctly)**: this is benign - these are just internal attempts by the ESP32 SD driver during its initialization handshake (common with some SD cards/brands at default polling speeds), not a real mount failure. If the SD actually failed, `setup()` would print `CRITICAL ERROR: SD Card Mount Failed!` and hang indefinitely (rebooting via watchdog every ~30s) - it would never reach the Wi-Fi connection step. Only investigate your wiring/power if you see that exact critical error, or if SD reads/writes continue to fail long after boot (not just at the very beginning). The `does not exist, no permits for creation` errors right after are normal/harmless on first boot (e.g., `playlists_selected.json`, `fighters_32/index.txt` simply don't exist until you save a playlist / run `mugen_extractor`). Consult the "SD Card Wiring" table in `docs/WIRING.md` only if you are wiring a brand new board from scratch.
+- **`AsyncTCP.cpp: begin(): failed to start task`** right after Wi-Fi connection: FreeRTOS cannot allocate a task for the asynchronous TCP stack, almost always due to low free internal heap (the large HUB75 DMA buffers on a non-PSRAM ESP32 can consume most of it). Check `ESP.getFreeHeap()` (printed after matrix init) - if only a few KB remain, reduce `mxconfig.min_refresh_rate`/panel resolution, or switch to an ESP32-S3 with PSRAM for large panels. The web server might partially start despite this warning, but expect it to be unstable until the free heap is resolved.
