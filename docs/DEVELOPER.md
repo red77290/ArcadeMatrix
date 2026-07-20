@@ -113,7 +113,8 @@ fetching images mid-game, and no unbounded disk cache to grow over time. The rec
 architecture instead pre-caches all artwork **on the SD card ahead of time**, so displaying it at
 runtime is just a fast local file lookup - no network involved at all when a game launches:
 
-1. **One-time setup**: run `tools/pixelcade_sync/pixelcade_sync.py` on your PC (not the ESP32) to
+1. **One-time setup**: run `tools/pixelcade_sync/pixelcade_sync.sh` (macOS/Linux) or
+   `pixelcade_sync.ps1` (Windows) on your PC (not the ESP32) to
    download Pixelcade's artwork repository and lay it out as `/pixelcade/<system>/<game>.png`.
    Copy the result to your SD card. See that tool's README for filtering to just the systems you
    use (the full repository is several hundred MB).

@@ -21,19 +21,43 @@ on a real PC), you copy it to the SD card, and the firmware just does a fast `SD
 
 ## Usage
 
+No Python, no third-party installs, nothing to download - just the script and tools your OS
+already has. Pick the one matching your platform:
+
+### macOS / Linux
+
 ```bash
 # Sync every system Pixelcade has artwork for (large - several hundred MB)
-python3 pixelcade_sync.py
+./pixelcade_sync.sh
 
 # Only sync the systems you actually use (recommended - much faster/smaller)
-python3 pixelcade_sync.py --systems mame,snes,nes,gba
+./pixelcade_sync.sh mame,snes,nes,gba
 
 # Custom output location
-python3 pixelcade_sync.py --systems mame --dest ./sdcard/pixelcade
+DEST=./sdcard/pixelcade ./pixelcade_sync.sh mame
 ```
 
-No third-party dependencies - stdlib only (`urllib` + `zipfile`), consistent with
-`tools/bdf_to_amfont/`.
+Requires only `curl` (or `wget`) and `unzip`, which are already installed on virtually every
+Mac/Linux machine. If either is missing, the script tells you exactly what to install and how
+(e.g. `brew install unzip curl` / `sudo apt install unzip curl`).
+
+### Windows
+
+```powershell
+# Sync every system Pixelcade has artwork for (large - several hundred MB)
+.\pixelcade_sync.ps1
+
+# Only sync the systems you actually use (recommended - much faster/smaller)
+.\pixelcade_sync.ps1 -Systems mame,snes,nes,gba
+
+# Custom output location
+.\pixelcade_sync.ps1 -Dest D:\sdcard\pixelcade -Systems mame
+```
+
+Requires only what ships built-in with Windows 10/11 (PowerShell 5+, `Invoke-WebRequest`,
+`Expand-Archive`) - no installs needed. If your PowerShell is too old or missing a piece, the
+script tells you exactly what's missing and how to fix it. If it's blocked by execution policy,
+run: `powershell -ExecutionPolicy Bypass -File .\pixelcade_sync.ps1`
 
 ## Applying to your SD card
 
