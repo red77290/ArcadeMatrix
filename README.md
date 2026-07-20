@@ -4,6 +4,7 @@ Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This p
 
 📚 **Documentation Links:**
 - [Getting Started (PlatformIO setup, build, flash, logs)](docs/GETTING_STARTED.md)
+- [Web Installer (flash from your browser, no CLI needed)](webinstaller/README.md)
 - [Hardware Guide](docs/HARDWARE.md)
 - [Wiring Guide](docs/WIRING.md)
 - [Configuration Guide](docs/CONFIGURATION.md)
