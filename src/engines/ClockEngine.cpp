@@ -1,14 +1,15 @@
 #include "ClockEngine.h"
-#include "ArcadeClock.h"
-#include "CyberpunkClock.h"
-#include "FlipClock.h"
-#include "PongClock.h"
-#include "TetrisClock.h"
-#include "WordClock.h"
-#include "BinaryClock.h"
-#include "PacmanClock.h"
-#include "VersusClock.h"
-#include "SlotMachineClock.h"
+#include "clocks/ArcadeClock.h"
+#include "clocks/CyberpunkClock.h"
+#include "clocks/FlipClock.h"
+#include "clocks/PongClock.h"
+#include "clocks/TetrisClock.h"
+#include "clocks/WordClock.h"
+#include "clocks/BinaryClock.h"
+#include "clocks/PacmanClock.h"
+#include "clocks/VersusClock.h"
+#include "clocks/SlotMachineClock.h"
+#include "clocks/MatrixRainClock.h"
 
 ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
@@ -44,6 +45,8 @@ void ClockEngine::setTheme(PublisherTheme theme) {
         activeFace = new PacmanClock(matrix);
     } else if (theme == 27) {
         activeFace = new VersusClock(matrix);
+    } else if (theme == THEME_MATRIX_RAIN) {
+        activeFace = new MatrixRainClock(matrix);
     } else if (theme == 28) {
         activeFace = new SlotMachineClock(matrix);
     } else {

@@ -1,7 +1,7 @@
 #ifndef TETRISCLOCK_H
 #define TETRISCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 #include <vector>
 
 struct TetrisBlock {

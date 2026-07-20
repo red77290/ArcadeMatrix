@@ -1,5 +1,5 @@
 #include "TetrisClock.h"
-#include "ConfigLoader.h"
+#include "../../core/ConfigLoader.h"
 #include <Adafruit_GFX.h>
 #include <stdlib.h>
 

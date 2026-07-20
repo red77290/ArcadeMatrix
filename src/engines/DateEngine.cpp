@@ -1,7 +1,7 @@
 #include "DateEngine.h"
 #include <string.h>
 #include "fonts/ArcadeFonts.h"
-#include "ConfigLoader.h"
+#include "../core/ConfigLoader.h"
 #include <stdlib.h>
 
 extern ConfigLoader config;

@@ -1,5 +1,5 @@
 #include "CyberpunkClock.h"
-#include "ConfigLoader.h"
+#include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
 #define NUM_DROPS 8

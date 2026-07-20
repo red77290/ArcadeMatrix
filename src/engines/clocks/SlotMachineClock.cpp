@@ -1,5 +1,5 @@
 #include "SlotMachineClock.h"
-#include "ConfigLoader.h"
+#include "../../core/ConfigLoader.h"
 
 extern ConfigLoader config;
 

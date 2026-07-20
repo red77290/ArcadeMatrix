@@ -1,5 +1,5 @@
 #include "VersusClock.h"
-#include "ConfigLoader.h"
+#include "../../core/ConfigLoader.h"
 #include <math.h>
 
 extern ConfigLoader config;

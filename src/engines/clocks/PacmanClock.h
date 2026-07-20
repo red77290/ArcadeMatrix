@@ -1,7 +1,7 @@
 #ifndef PACMANCLOCK_H
 #define PACMANCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 class PacmanClock : public ClockFace {
 public:

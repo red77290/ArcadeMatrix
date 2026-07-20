@@ -1,7 +1,7 @@
 #ifndef PONGCLOCK_H
 #define PONGCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 class PongClock : public ClockFace {
 public:

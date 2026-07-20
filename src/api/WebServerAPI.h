@@ -10,9 +10,9 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
-#include "ConfigLoader.h"
-#include "MessageEngine.h"
-#include "ClockEngine.h"
+#include "../core/ConfigLoader.h"
+#include "../engines/MessageEngine.h"
+#include "../engines/ClockEngine.h"
 
 /**
  * @class WebServerAPI

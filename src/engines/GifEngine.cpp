@@ -1,6 +1,6 @@
 #include "GifEngine.h"
 #include <ArduinoJson.h>
-#include "SDUtils.h"
+#include "../core/SDUtils.h"
 
 GifEngine* GifEngine::instance = nullptr;
 

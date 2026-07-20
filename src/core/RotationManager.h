@@ -2,11 +2,11 @@
 #include <Arduino.h>
 #include <vector>
 #include "ConfigLoader.h"
-#include "ClockEngine.h"
-#include "DateEngine.h"
-#include "WeatherEngine.h"
-#include "GifEngine.h"
-#include "FighterEngine.h"
+#include "../engines/ClockEngine.h"
+#include "../engines/DateEngine.h"
+#include "../engines/WeatherEngine.h"
+#include "../engines/GifEngine.h"
+#include "../engines/FighterEngine.h"
 
 enum RotationModule {
     MODULE_CLOCK,

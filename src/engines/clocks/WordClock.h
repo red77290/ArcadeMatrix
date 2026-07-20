@@ -1,7 +1,7 @@
 #ifndef WORDCLOCK_H
 #define WORDCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 class WordClock : public ClockFace {
 public:

@@ -1,6 +1,6 @@
 #include "ArcadeClock.h"
-#include "ConfigLoader.h"
-#include "fonts/ArcadeFonts.h"
+#include "../../core/ConfigLoader.h"
+#include "../fonts/ArcadeFonts.h"
 
 ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
     lastMinute = 255;

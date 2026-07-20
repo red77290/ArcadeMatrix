@@ -1,7 +1,7 @@
 #ifndef VERSUSCLOCK_H
 #define VERSUSCLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 class VersusClock : public ClockFace {
 public:

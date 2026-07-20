@@ -1,7 +1,7 @@
 #ifndef SLOTMACHINECLOCK_H
 #define SLOTMACHINECLOCK_H
 
-#include "ClockEngine.h"
+#include "../ClockEngine.h"
 
 struct SlotDigit {
     char targetChar;
