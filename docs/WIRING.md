@@ -35,3 +35,23 @@ prints a runtime warning about this (see `MatrixEngine::begin`), but the pin map
 updated/verified against physical ESP32-S3 wiring yet. If you are wiring a 256x64 panel on ESP32-S3,
 double-check your specific board's available GPIOs before trusting the default map, and consider
 remapping `A`/`B` (and re-testing) to GPIOs outside the 33-37 range.
+
+### ESP32-S3 GPIO Availability Reference
+
+This table summarizes which GPIOs are safe to use for HUB75 signals on an ESP32-S3 module, depending
+on the PSRAM mode. Always double-check against your specific board's datasheet, since some devkits
+also wire additional GPIOs to onboard peripherals (USB, buttons, RGB LED, etc.).
+
+| GPIO range | Status | Notes |
+|------------|--------|-------|
+| 0, 3, 45, 46 | **Reserved (strapping pins)** | Used at boot for mode selection; avoid driving these directly. |
+| 19, 20 | Reserved (USB) | Native USB D-/D+ on most S3 devkits. |
+| 26-32 | **Reserved (Quad Flash/PSRAM)** | Always reserved on ESP32-S3, regardless of PSRAM mode. |
+| 33-37 | **Reserved only in Octal ("opi") PSRAM mode** | Free to use if your module has no PSRAM or uses Quad ("qio") PSRAM instead. **Conflicts with the current firmware's pin A (33) and is adjacent to pin B (32) when using octal PSRAM** — see the warning above. |
+| 1-2, 4-18, 21, 38-48 | Generally free | Recommended pool to remap `A`/`B` (and any other conflicting signal) away from 33-37 when using octal PSRAM. |
+
+**Recommended action for 256x64 (octal PSRAM) builds on ESP32-S3:** remap pins `A` and `B` in
+`MatrixEngine.cpp`'s `_pins` struct to two GPIOs from the "generally free" pool above (e.g. 38/39),
+rewire accordingly, and remove/validate the runtime warning once confirmed working on real hardware.
+This has not been done yet in this codebase — treat the default S3 256x64 wiring as **unverified**.
+
