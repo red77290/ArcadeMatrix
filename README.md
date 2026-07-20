@@ -1,5 +1,7 @@
 # ArcadeMatrix
 
+🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
+
 Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This project allows you to display Arcade Clocks, Animated GIFs, Weather, and even simulated **MUGEN fighting game sprites** directly on a real LED matrix.
 
 📚 **Documentation Links:**
@@ -55,15 +57,14 @@ Open the `conf.ini` provided in the `release/sdcard/` folder to see all possible
 To display fighters in the `SPRITES` module, the ESP32 expects `.fgt` raw files. Since the ESP32 is not powerful enough to decode complex MUGEN character formats natively, we provide a custom Python script to convert them and generate an `index.txt` manifest containing perfect bounding boxes and virtual ground values.
 
 ### How to use the extractor:
-1. Make sure you have Python 3 installed with the `Pillow` library (`pip install Pillow`).
+1. Make sure you have Python 3 installed with the `Pillow` library (`pip install Pillow`), or just run `tools/mugen_extractor/start_extractor.sh`/`.bat` which sets this up for you automatically.
 2. Go to the `tools/mugen_extractor/` folder in the repository.
-3. Edit the `mugen_extractor.py` file to set your `src_dir` pointing to your MUGEN `chars/` folder.
-4. Run the script:
+3. Run the script, pointing `--src` at your MUGEN `chars/` folder:
    ```bash
-   python mugen_extractor.py
+   python mugen_extractor.py --src /Path/To/Your/Mugen/chars --dest ./fighters_32
    ```
-5. The script will automatically generate `.fgt` files along with an `index.txt` manifest for all characters, perfectly scaled for 32px and 64px matrices.
-6. Copy the resulting `fighters_32/` or `fighters_64/` folder to your SD card.
+4. The script generates `.fgt` files along with an `index.txt`/`index.json` manifest in the `--dest` folder. Run it twice (with `--dest ./fighters_32` and `--dest ./fighters_64`) if you want assets for both matrix sizes.
+5. Copy the resulting `fighters_32/` or `fighters_64/` folder to your SD card.
 
 For full details, please read the documentation inside `tools/mugen_extractor/README.md`.
 
