@@ -1,0 +1,47 @@
+name: Build & Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [esp32dev, esp32s3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ matrix.env }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware (${{ matrix.env }})
+        run: pio run -e ${{ matrix.env }}
+
+      # Unity tests require real hardware (Arduino/WiFi/SD APIs) - see docs/GETTING_STARTED.md.
+      # This only compiles the test target to catch build regressions; it does not execute it.
+      - name: Compile native-independent unit tests (${{ matrix.env }})
+        run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: .pio/build/${{ matrix.env }}/firmware.bin
+          if-no-files-found: error

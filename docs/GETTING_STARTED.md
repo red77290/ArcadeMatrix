@@ -113,10 +113,12 @@ physical board** to execute (PlatformIO flashes it, then reads pass/fail results
 There is currently no hardware-independent ("native"/host) test target for this firmware - see
 `docs/ARCHITECTURE.md` and `docs/DEVELOPER.md` for why (the codebase leans on ESP32-specific APIs
 like `SD.h`/`WiFi.h` throughout, which don't have drop-in desktop equivalents without a larger
-mocking effort). This is also why CI only performs a **build check** (`pio run`, no `pio test`)
-rather than executing the test suite - GitHub Actions runners don't have a physical ESP32 attached.
-If you have a board connected locally, `pio test -e esp32dev` is still the right command to
-actually run it.
+mocking effort). This is also why CI (`.github/workflows/build.yml`) only **compiles** the test
+target (`pio test -e <env> --without-uploading --without-testing`) rather than executing it -
+GitHub Actions runners don't have a physical ESP32 attached, but a compile-only pass still catches
+build regressions (stale includes, broken signatures, etc.) on every push/PR. If you have a board
+connected locally, plain `pio test -e esp32dev` (no flags) is the right command to actually flash
+and run it.
 
 ## Troubleshooting
 
