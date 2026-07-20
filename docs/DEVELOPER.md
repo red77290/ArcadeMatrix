@@ -107,24 +107,45 @@ If your new clock requires new user settings (e.g., `snake_speed`), you must mod
 
 ### Pixelcade-style marquee/box-art integration (arcade cabinet frontends)
 
-`/api/marquee` (above) together with `RetroFrontendListener`'s MQTT event hooks (`STOP_GAME` /
-`START_GAME:<path>` topics, or native Batocera/Recalbox `/Recalbox/EmulationStation/Event` topic)
-is the intended way to replicate a "Pixelcade"-like marquee display, without requiring an on-device
-image decoder for arbitrary artwork formats:
+Unlike `ArcadeMatrix_RPi` (which downloads Pixelcade marquee artwork live from GitHub on demand,
+see its `core/dmd_cache.py`), the ESP32 has no spare flash/RAM/CPU budget for an HTTPS client
+fetching images mid-game, and no unbounded disk cache to grow over time. The recommended
+architecture instead pre-caches all artwork **on the SD card ahead of time**, so displaying it at
+runtime is just a fast local file lookup - no network involved at all when a game launches:
 
-1. A small bridge script running on the frontend host (Batocera/Recalbox/RetroPie) listens for
-   "game launched" events (native EmulationStation MQTT events, or a custom hook script).
-2. On launch, the bridge script resolves the game's box-art/marquee image (PNG/JPEG from the
-   frontend's existing scraper cache), resizes/crops it to the panel's exact resolution
-   (128x32 or 256x64), converts it to raw RGB565 (see `tools/mugen_extractor` for the wire format),
-   and `POST`s the bytes to `http://<esp32-ip>/api/marquee`.
-3. On "stop game", the bridge script can either let the marquee's ~8s timer expire naturally, or
-   call `gif->stop()` indirectly by publishing an MQTT `STOP_GAME`/`stopgame` event (already wired
-   in `RetroFrontendListener::handleMessage()`), which resumes the idle GIF/clock rotation.
+1. **One-time setup**: run `tools/pixelcade_sync/pixelcade_sync.py` on your PC (not the ESP32) to
+   download Pixelcade's artwork repository and lay it out as `/pixelcade/<system>/<game>.png`.
+   Copy the result to your SD card. See that tool's README for filtering to just the systems you
+   use (the full repository is several hundred MB).
+2. **One-time setup**: run `tools/recalbox_daemon/install.sh` (macOS/Linux) or `install.ps1`
+   (Windows) from your PC to install a small event daemon on your Recalbox/Batocera device over
+   SSH - prompts for both IPs, no manual SSH session needed. This is the *same* daemon protocol
+   `ArcadeMatrix_RPi` uses (`core/ssh_installer.py`), so one install serves both projects.
+3. At runtime, the daemon publishes `{"status": "playing"|"browsing"|"stopped", "game": "<rom
+   basename>", "system": "<SystemId>"}` over MQTT on `recalbox/system/playing` (or
+   `batocera/system/playing`) whenever the selected/playing game changes.
+4. `RetroFrontendListener::handleGameEvent()` (firmware) parses this, maps the `SystemId` to a
+   Pixelcade folder name (`mapSystemToPixelcadeFolder()` - kept in sync with the RPi's
+   `dmd_cache.py` `SYSTEM_MAP`), and checks `/pixelcade/<folder>/<game>.png` on the SD card:
+   - If found: displays it immediately via `gif->playGif()` (GifEngine's PNG decoder, added
+     alongside GIF support - see `esp32-gif-png` in the changelog).
+   - If not found (not yet synced, or Pixelcade has no art for that game): falls back to scrolling
+     the game name as text via `MessageEngine`, matching the RPi's behavior when its cache misses.
+   - On `"status": "stopped"`: calls `gif->stop()`, resuming the idle GIF/clock rotation.
 
-This intentionally keeps all image decoding/resizing off the ESP32 (CPU/flash constrained) and in
-the bridge script (running on far more capable frontend hardware), matching the same "pre-convert
+This keeps 100% of image fetching/decoding/resizing off the runtime path entirely (done once,
+offline, on a PC with real bandwidth and no memory constraints), matching the same "pre-convert
 offline" philosophy as `.raw` GifEngine assets and `tools/mugen_extractor`.
+
+**Legacy / alternative paths still supported:**
+- `/api/marquee` (POST, raw RGB565 body) is still available for bridge scripts that want to push
+  an arbitrary, non-Pixelcade image directly (e.g. a custom-generated marquee) rather than relying
+  on the SD-cached Pixelcade lookup above.
+- The native `/Recalbox/EmulationStation/Event` topic (`rungame`/`stop`) is still subscribed to as
+  a basic fallback for setups that don't want to install the custom daemon, though it carries no
+  game/system detail (Recalbox doesn't include it on that topic), so only a generic placeholder can
+  be shown.
+- The plain-text `STOP_GAME`/`START_GAME:<path>` bridge protocol from older setups still works too.
 
 ---
 
