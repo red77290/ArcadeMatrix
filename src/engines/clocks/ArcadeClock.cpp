@@ -36,22 +36,38 @@ void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t 
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     // setTextSize and font are already set by drawStaticTime
-    
-    // Arcade 3D Outline Effect
-    // Draw thick shadow
+
+    // Outline style depends on the publisher theme, mirroring ArcadeMatrix_RPi's core/theme.py
+    // draw_styled_text(): real-world logos (Nintendo/Capcom/Sega) use a flat 4-direction outline
+    // like their actual branding, while the "arcade 3D" thick shadow + black outline combo is
+    // reserved for the more stylized/fictional themes (Cave..Bub). Everything else gets a plain
+    // single drop shadow, and Flip Clock has none.
     matrix->setTextColor(shadowColor);
-    matrix->setCursor(x + 2, y + 2); matrix->print(timeStr);
-    matrix->setCursor(x + 1, y + 2); matrix->print(timeStr);
-    matrix->setCursor(x + 2, y + 1); matrix->print(timeStr);
-    
-    // Draw outline (black)
-    uint16_t outline = matrix->color565(0, 0, 0);
-    matrix->setTextColor(outline);
-    matrix->setCursor(x - 1, y); matrix->print(timeStr);
-    matrix->setCursor(x + 1, y); matrix->print(timeStr);
-    matrix->setCursor(x, y - 1); matrix->print(timeStr);
-    matrix->setCursor(x, y + 1); matrix->print(timeStr);
-    
+    if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
+        // Flat outline, no diagonal offset - matches the real publisher logos (RPi parity).
+        matrix->setCursor(x + 1, y); matrix->print(timeStr);
+        matrix->setCursor(x - 1, y); matrix->print(timeStr);
+        matrix->setCursor(x, y + 1); matrix->print(timeStr);
+        matrix->setCursor(x, y - 1); matrix->print(timeStr);
+    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+        // Arcade 3D Outline Effect
+        // Draw thick shadow
+        matrix->setCursor(x + 2, y + 2); matrix->print(timeStr);
+        matrix->setCursor(x + 1, y + 2); matrix->print(timeStr);
+        matrix->setCursor(x + 2, y + 1); matrix->print(timeStr);
+
+        // Draw outline (black)
+        uint16_t outline = matrix->color565(0, 0, 0);
+        matrix->setTextColor(outline);
+        matrix->setCursor(x - 1, y); matrix->print(timeStr);
+        matrix->setCursor(x + 1, y); matrix->print(timeStr);
+        matrix->setCursor(x, y - 1); matrix->print(timeStr);
+        matrix->setCursor(x, y + 1); matrix->print(timeStr);
+    } else if (currentTheme != THEME_FLIP) {
+        // Plain drop shadow (Taito, Cyberpunk, Matrix Rain, Tetris GB, None/default, ...)
+        matrix->setCursor(x + 1, y + 1); matrix->print(timeStr);
+    }
+
     // Draw inner text
     matrix->setTextColor(textColor);
     matrix->setCursor(x, y);
