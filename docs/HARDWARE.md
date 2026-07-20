@@ -1,5 +1,7 @@
 # Hardware Requirements
 
+🇬🇧 English | 🇫🇷 [Français](HARDWARE_FR.md) | 🇪🇸 [Español](HARDWARE_ES.md)
+
 ## ESP32 Models
 The ArcadeMatrix firmware supports standard ESP32 boards, but requirements change based on your matrix size:
 

@@ -1,5 +1,7 @@
 # Changelog
 
+🇬🇧 English | 🇫🇷 [Français](CHANGELOG_FR.md) | 🇪🇸 [Español](CHANGELOG_ES.md)
+
 ## [1.1.0] - 2026-07-09
 
 ### Added

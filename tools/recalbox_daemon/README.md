@@ -1,5 +1,7 @@
 # recalbox_daemon
 
+🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
+
 Installs a lightweight event daemon on your Recalbox or Batocera device, so ArcadeMatrix (ESP32)
 can display live "now playing" marquee artwork - the same daemon protocol used by
 `ArcadeMatrix_RPi` (see its `core/ssh_installer.py`), so **one daemon install serves both

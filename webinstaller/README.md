@@ -1,5 +1,7 @@
 # ArcadeMatrix Web Installer
 
+🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
+
 This folder is the source for a static [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
 flashing page, published to GitHub Pages by `.github/workflows/build.yml`'s `deploy-pages` job
 (runs on every push to `main`, after both firmware builds succeed).
