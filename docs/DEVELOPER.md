@@ -72,7 +72,7 @@ Because of the monolithic architecture of the ESP32 version, adding a clock mean
 
 If your new clock requires new user settings (e.g., `snake_speed`), you must modify the configuration pipeline from the frontend all the way to the struct.
 
-1. **Update the Struct (`include/ConfigLoader.h`)**:
+1. **Update the Struct (`src/core/ConfigLoader.h`)**:
    Add your new variable to the main `Config` struct.
    ```cpp
    struct Config {
@@ -81,19 +81,29 @@ If your new clock requires new user settings (e.g., `snake_speed`), you must mod
    };
    ```
 
-2. **Update the JSON Parser & Generator (`src/WebServerAPI.cpp`)**:
+2. **Update the JSON Parser & Generator (`src/api/WebServerAPI.cpp`)**:
    The API communicates via JSON (`ArduinoJson`). 
    - Find the method that serializes the config to send to the browser and add: 
      `doc["snake_speed"] = config.snake_speed;`
    - Find the method that parses incoming JSON from the browser and add:
      `if (doc.containsKey("snake_speed")) config.snake_speed = doc["snake_speed"].as<int>();`
 
-3. **Update the File System Loader (`src/ConfigLoader.cpp`)**:
-   Ensure your new variable is read from and saved to the SD card's `config.json` file to survive reboots.
+3. **Update the File System Loader (`src/core/ConfigLoader.cpp`)**:
+   Ensure your new variable is read from and saved to the SD card's `conf.ini` file to survive reboots.
 
-4. **Update the Web UI (`data/index.html` & `data/main.js`)**:
+4. **Update the Web UI (`src/api/WebUI.h`, generated from the Vue frontend - see `scripts/build_webui.py`)**:
    - Add the HTML inputs for your setting.
-   - Update `main.js` to send your new variable in the JSON payload when the user clicks "Save".
+   - Update the frontend JS to send your new variable in the JSON payload when the user clicks "Save".
+
+### Notable REST endpoints (non-exhaustive)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/status` | GET | Uptime, free/min-free heap, PSRAM stats. |
+| `/api/settings` | GET/POST | Full config read/write (persists to `conf.ini`). |
+| `/api/wifi` | POST | `{ssid, password}` - saves credentials and attempts an immediate reconnect, reporting success/failure synchronously (does not require a reboot). |
+| `/api/marquee` | POST | Raw RGB565 image body (little-endian, row-major, exactly `width*height*2` bytes matching the configured panel resolution - see `tools/mugen_extractor` for the same wire format convention). Displays it immediately for ~8s, interrupting the idle rotation, then resumes. There is no on-device image decoder, so any bridge/frontend integration must pre-convert artwork (PNG/JPEG/box-art) to this raw format before POSTing. |
+| `/api/update` | POST | OTA firmware upload (`Update.h`), writes to the inactive OTA partition slot. |
 
 ---
 

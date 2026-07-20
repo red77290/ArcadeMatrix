@@ -15,6 +15,7 @@
 #include "engines/DateEngine.h"
 #include "engines/WeatherEngine.h"
 #include "engines/FighterEngine.h"
+#include "engines/MarqueeEngine.h"
 #include "core/RotationManager.h"
 
 // Hardware Pins for SD Card (VSPI)
@@ -33,6 +34,7 @@ WeatherEngine* weatherEngine = nullptr;
 FighterEngine* fighterEngine = nullptr;
 RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
+MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
 
@@ -118,6 +120,7 @@ void setup() {
     fighterEngine->initialize();
     rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
+    marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
 
     // 5. Connect to Wi-Fi
     if (config.wifi.ssid.length() > 0) {
@@ -158,6 +161,7 @@ void setup() {
             
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
+            webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
             
             if (config.mqtt.enabled) {
@@ -175,6 +179,7 @@ void setup() {
             
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
+            webServer->setMarqueeEngine(marqueeEngine);
         }
     } else {
         Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
@@ -187,6 +192,7 @@ void setup() {
         
         webServer = new WebServerAPI(80, messageEngine, clockEngine);
         webServer->begin();
+        webServer->setMarqueeEngine(marqueeEngine);
     }
     
     // Allow message to finish scrolling before main loop
@@ -222,7 +228,12 @@ void loop() {
     }
 
     // Handle Idle Rotation Logic
-    if (messageEngine && messageEngine->isActive()) {
+    // Marquee (live box-art/frontend push) takes priority over everything else while active,
+    // matching the RPi's behavior where a marquee push interrupts whatever the idle rotation
+    // was showing.
+    if (marqueeEngine && marqueeEngine->isActive()) {
+        marqueeEngine->loop();
+    } else if (messageEngine && messageEngine->isActive()) {
         messageEngine->loop();
     } else {
         rotationManager->loop();

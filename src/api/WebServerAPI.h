@@ -13,6 +13,7 @@
 #include "../core/ConfigLoader.h"
 #include "../engines/MessageEngine.h"
 #include "../engines/ClockEngine.h"
+#include "../engines/MarqueeEngine.h"
 
 /**
  * @class WebServerAPI
@@ -30,6 +31,12 @@ public:
     WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine);
     
     /**
+     * @brief Attach the MarqueeEngine used by the /api/marquee route. Optional: if never called,
+     * /api/marquee responds with 503 instead of crashing on a null pointer.
+     */
+    void setMarqueeEngine(MarqueeEngine* engine);
+
+    /**
      * @brief Initialize the web server, register routes, and start listening.
      */
     void begin();
@@ -38,6 +45,7 @@ private:
     AsyncWebServer server; ///< Underlying ESPAsyncWebServer instance
     MessageEngine* msg;    ///< Reference to the MessageEngine
     ClockEngine* clock;    ///< Reference to the ClockEngine
+    MarqueeEngine* marquee = nullptr; ///< Reference to the MarqueeEngine (set via setMarqueeEngine)
     
     /**
      * @brief Setup all REST API and Static File routes.
