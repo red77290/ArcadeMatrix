@@ -80,18 +80,21 @@ start_extractor.bat      # Windows
 
 ### Extraction Process
 
-The script will create (or empty) the `fighters_32` and `fighters_64` folders. For each character, it will create a subfolder (e.g., `fighters_32/Ryu/`) containing:
+The script creates (or empties) the single output folder given by `--dest`/`-o` (default
+`./fighters_32`) - run it twice with different `--dest` values if you need both a 32px and a 64px
+export (see the "target both" example above). For each character, it creates a subfolder (e.g.,
+`fighters_32/Ryu/`) containing:
 - `walk.fgt`
 - `attack.fgt`
 - `hit.fgt`
 - `win.fgt`
-- *(and optionally `special1.fgt`, `super1.fgt`, `fall.fgt` if found)*
+- *(and optionally `special1.fgt`/`special2.fgt`/`special3.fgt`, `super1.fgt`/`super2.fgt`/`super3.fgt`, and `fall.fgt` - up to 3 special moves and 3 super/ultra moves are auto-detected per character from their MUGEN `.air` animation IDs; any that aren't found are simply skipped)*
 
-It also generates two index files at the root of the export folder:
-- `index.json`
-- `index.txt`
+It also generates two index files at the root of the export folder, read by different engines:
+- `index.json` - full metadata including `has_special`/`has_super`/`special_count`/`super_count`. Read by the **Raspberry Pi** engine (`engines/fighter.py`), which uses these flags to pick among all loaded special/super variants at fight time.
+- `index.txt` - a simpler flat CSV (`name,height,ground_y,origin_x,width,head_y`) with no special/super metadata. Read by the **ESP32** engine (`FighterEngine.cpp`), which doesn't need those flags: it just attempts to load one random `special1`-`special3`/`super1`-`super3` file per battle and gracefully skips if that specific file doesn't exist for a given character (memory-conscious - only one special/super animation set is kept loaded at a time on ESP32, vs. all three on RPi).
 
-These index files contain the metadata (Height, `ground_y`, `origin_x`, etc.) needed by the ArcadeMatrix rendering engines to correctly position the fighters on the matrix.
+Both index files always contain the shared positioning metadata (`height`, `ground_y`, `origin_x`, `width`, `head_y`) needed by both engines to correctly align fighters on the matrix.
 
 ## Why did characters ignore the ground line before?
 
