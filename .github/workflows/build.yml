@@ -43,5 +43,55 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.env }}
-          path: .pio/build/${{ matrix.env }}/firmware.bin
+          path: |
+            .pio/build/${{ matrix.env }}/firmware.bin
+            .pio/build/${{ matrix.env }}/bootloader.bin
+            .pio/build/${{ matrix.env }}/partitions.bin
           if-no-files-found: error
+
+  deploy-pages:
+    # Only publish the web flasher from main - PRs/branches just build+test above.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download esp32dev artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-esp32dev
+          path: artifacts/esp32dev
+
+      - name: Download esp32s3 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-esp32s3
+          path: artifacts/esp32s3
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3.json _site/
+          cp -r webinstaller/bin _site/bin
+          cp artifacts/esp32dev/bootloader.bin _site/bootloader-esp32dev.bin
+          cp artifacts/esp32dev/partitions.bin _site/partitions-esp32dev.bin
+          cp artifacts/esp32dev/firmware.bin   _site/firmware-esp32dev.bin
+          cp artifacts/esp32s3/bootloader.bin  _site/bootloader-esp32s3.bin
+          cp artifacts/esp32s3/partitions.bin  _site/partitions-esp32s3.bin
+          cp artifacts/esp32s3/firmware.bin    _site/firmware-esp32s3.bin
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
