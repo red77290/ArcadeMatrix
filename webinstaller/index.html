@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ArcadeMatrix Web Installer</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.5;
+      color: #222;
+    }
+    h1 { font-size: 1.6rem; }
+    .board {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+    }
+    .board h2 { margin-top: 0; font-size: 1.1rem; }
+    .board p { color: #555; font-size: 0.95rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.35rem; border-radius: 4px; }
+    .warn {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+    }
+    footer { margin-top: 2rem; font-size: 0.85rem; color: #777; }
+    a { color: #0969da; }
+  </style>
+</head>
+<body>
+  <h1>ArcadeMatrix Web Installer</h1>
+  <p>
+    Flash ArcadeMatrix directly from Chrome or Edge over USB - no PlatformIO, no command line.
+    Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>
+    (uses the WebSerial API, so it only works in Chromium-based browsers, on desktop).
+  </p>
+
+  <div class="warn">
+    ⚠️ Pick the board that matches your hardware. Flashing the wrong image can boot-loop the
+    board (it won't damage it, but you'll need to re-flash with the correct one). See
+    <a href="../docs/HARDWARE.md">docs/HARDWARE.md</a> if you're not sure which chip you have.
+  </div>
+
+  <div class="board">
+    <h2>Standard ESP32 (WROOM/DevKit) - up to 128x32 panels</h2>
+    <p>No PSRAM required. This is the common/cheap ESP32 dev board.</p>
+    <esp-web-install-button manifest="manifest-esp32dev.json"></esp-web-install-button>
+  </div>
+
+  <div class="board">
+    <h2>ESP32-S3 (with PSRAM) - up to 256x64 panels</h2>
+    <p>Requires a PSRAM-equipped S3 board (e.g. ESP32-S3-DevKitC-1 N8R8/N16R8).</p>
+    <esp-web-install-button manifest="manifest-esp32s3.json"></esp-web-install-button>
+  </div>
+
+  <footer>
+    Binaries are rebuilt automatically from the latest <code>main</code> branch by CI.
+    See <a href="README.md">README.md</a> in this folder for how this page is generated and hosted.
+  </footer>
+</body>
+</html>
