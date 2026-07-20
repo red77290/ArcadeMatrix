@@ -8,6 +8,10 @@
 
 WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine) : server(port), msg(msgEngine), clock(clkEngine) {}
 
+void WebServerAPI::setMarqueeEngine(MarqueeEngine* engine) {
+    marquee = engine;
+}
+
 void WebServerAPI::begin() {
     setupRoutes();
     
@@ -466,6 +470,46 @@ void WebServerAPI::setupRoutes() {
         }
     });
     server.addHandler(wifiHandler);
+
+    // API: Live marquee/box-art image (raw RGB565, little-endian, row-major, matching the
+    // configured panel resolution exactly - see tools/mugen_extractor for the same wire format
+    // convention used by fighter sprites/date backgrounds). Parity feature with the RPi's
+    // /api/marquee, adapted to what an MCU with no general image decoder can realistically do.
+    server.on("/api/marquee", HTTP_POST,
+        [this](AsyncWebServerRequest *request) {
+            // The body handler below always sends the actual response once the full body has
+            // arrived; this only fires as a fallback for a genuinely empty POST (no body at all).
+            if (!request->_tempObject) {
+                request->send(400, "application/json", "{\"success\":false,\"message\":\"No image data received\"}");
+            }
+        },
+        nullptr,
+        [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (!marquee) {
+                if (index == 0) request->send(503, "application/json", "{\"success\":false,\"message\":\"Marquee engine not initialized\"}");
+                return;
+            }
+            // Buffer the whole payload before validating, following the same request->_tempObject
+            // pattern used by this library's own AsyncCallbackJsonWebHandler (auto-freed by
+            // AsyncWebServerRequest's destructor, so no manual cleanup/leak risk here).
+            if (index == 0 && total > 0) {
+                request->_tempObject = malloc(total);
+            }
+            if (request->_tempObject) {
+                memcpy((uint8_t*)request->_tempObject + index, data, len);
+            }
+            if (index + len == total) {
+                if (request->_tempObject && total == marquee->expectedBufferBytes()) {
+                    marquee->show((uint8_t*)request->_tempObject, total);
+                    request->send(200, "application/json", "{\"success\":true,\"message\":\"Marquee image received and displayed\"}");
+                } else {
+                    char msgBuf[128];
+                    snprintf(msgBuf, sizeof(msgBuf), "{\"success\":false,\"message\":\"Expected exactly %u bytes of raw RGB565 (panel resolution), got %u\"}", (unsigned)marquee->expectedBufferBytes(), (unsigned)total);
+                    request->send(400, "application/json", msgBuf);
+                }
+            }
+        }
+    );
 
     // Handle Preflight CORS
     server.onNotFound([](AsyncWebServerRequest *request) {
