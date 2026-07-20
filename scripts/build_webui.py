@@ -1,11 +1,11 @@
 import os
 import sys
 
-input_file = "scrap/data_src/dist/index.html"
-output_file = "src/WebUI.h"
+input_file = "data/index.html"
+output_file = "src/api/WebUI.h"
 
 if not os.path.exists(input_file):
-    print(f"Error: {input_file} not found. Please run 'npm run build' first.")
+    print(f"Error: {input_file} not found.")
     sys.exit(1)
 
 with open(input_file, "rb") as f:

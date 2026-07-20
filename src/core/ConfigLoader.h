@@ -64,6 +64,10 @@ struct TimeConfig {
     int clock_offset_y;     ///< Manual Y axis pixel offset
     String clock_color_1;   ///< Hex color string for gradient start
     String clock_color_2;   ///< Hex color string for gradient end
+    String clock_font_path; ///< Optional path to a custom .amf font on SD (e.g. "/fonts/tom-thumb.amf"),
+                             ///< or "" to use the compiled-in font family selected by clock_font.
+                             ///< Converted from a .bdf font (same ones ArcadeMatrix_RPi ships) via
+                             ///< tools/bdf_to_amfont, giving ESP32 the same custom-font capability.
 };
 
 /**
@@ -121,6 +125,8 @@ struct DateConfig {
     int date_offset_y;          ///< Manual Y axis pixel offset
     String date_color_1;        ///< Hex color string for gradient start
     String date_color_2;        ///< Hex color string for gradient end
+    String date_font_path;      ///< Optional path to a custom .amf font on SD, or "" to use the
+                                 ///< compiled-in font family selected by date_font (see clock_font_path).
 };
 
 /**

@@ -39,8 +39,14 @@ python3 bdf_to_amfont.py input.bdf output.amf [--first 0x20] [--last 0x7E]
   El valor por defecto es `0x20`-`0x7E` (ASCII imprimible), que coincide con el rango usado por las fuentes ya compiladas de ArcadeMatrix. Ampliar el rango aumenta el tamaño del archivo resultante (y el uso de RAM en el ESP32 una vez cargado), así que incluye solo lo que realmente necesites.
 - Los codepoints que falten en la BDF de origen dentro del rango solicitado se emiten como glifos vacíos, de ancho cero, en lugar de abortar la conversión.
 
-Después copia el archivo `.amf` resultante a la tarjeta SD (por ejemplo `/fonts/myfont.amf`) y establece
-`custom_font_path=/fonts/myfont.amf` bajo `[fonts]` en `conf.ini`. Consulta `docs/DEVELOPER_ES.md` para ver el flujo completo de extremo a extremo y el punto de integración actual (`MessageEngine`/`/api/message`).
+Después copia el archivo `.amf` resultante a la carpeta `/fonts` de la tarjeta SD (por ejemplo
+`/fonts/myfont.amf`). Se vuelve seleccionable de inmediato en la interfaz Web, página Settings, en
+el menú desplegable "Font" del Reloj o de la Fecha (cada uno se rellena en vivo mediante
+`GET /api/fonts`, que lista todos los archivos `.amf` encontrados en `/fonts`) - sin editar
+`conf.ini` manualmente. También puedes definirlo directamente vía `conf.ini`
+(`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` bajo `[time]` / `[date]`,
+o `custom_font_path=/fonts/myfont.amf` bajo `[fonts]` para el texto desplazante
+`MessageEngine`/`/api/message`). Consulta `docs/DEVELOPER_ES.md` para ver el flujo completo.
 
 ## Detalles del formato
 

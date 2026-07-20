@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../core/BitmapFontLoader.h"
 
 enum PublisherTheme {
     THEME_NONE = -1,
@@ -46,6 +47,10 @@ public:
     
     void setTheme(PublisherTheme theme);
     
+    // Reloads the custom SD font from config.dateSettings.date_font_path (or unloads it if now
+    // empty), so a live web UI change takes effect immediately instead of only after reboot.
+    void reloadCustomFont();
+    
     // Configures font scaling for high-res matrices (128x32, 256x64, etc.)
     void setResolution(int width, int height);
 
@@ -56,6 +61,7 @@ private:
     uint16_t shadowColor;
     
     PublisherTheme currentTheme;
+    BitmapFontLoader customFont; ///< Optional user-provided .amf font (config.dateSettings.date_font_path)
     
     int matrixW;
     int matrixH;

@@ -39,6 +39,7 @@ void ConfigLoader::setDefaults() {
     time.clock_offset_y = 0;
     time.clock_color_1 = "#ffffff";
     time.clock_color_2 = "#ffffff";
+    time.clock_font_path = "";
 
     idle.rotation = "clock,date,weather,gifs";
     idle.clock_duration_sec = 60;
@@ -71,6 +72,7 @@ void ConfigLoader::setDefaults() {
     dateSettings.date_offset_y = 0;
     dateSettings.date_color_1 = "#ffffff";
     dateSettings.date_color_2 = "#ffffff";
+    dateSettings.date_font_path = "";
 
     fonts.custom_font_path = "";
 }
@@ -142,6 +144,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "CLOCK_OFFSET_Y") time.clock_offset_y = value.toInt();
         else if (key == "CLOCK_COLOR_1") time.clock_color_1 = value;
         else if (key == "CLOCK_COLOR_2") time.clock_color_2 = value;
+        else if (key == "CLOCK_FONT_PATH") time.clock_font_path = value;
     }
     else if (currentSection == "IDLE") {
         if (key == "ROTATION") idle.rotation = value;
@@ -177,6 +180,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "BACKGROUND_SPRITE") dateSettings.background_sprite = value;
         else if (key == "DATE_COLOR_1") dateSettings.date_color_1 = value;
         else if (key == "DATE_COLOR_2") dateSettings.date_color_2 = value;
+        else if (key == "DATE_FONT_PATH") dateSettings.date_font_path = value;
     }
     else if (currentSection == "FONTS") {
         if (key == "CUSTOM_FONT_PATH") fonts.custom_font_path = value;
@@ -275,6 +279,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("clock_theme=" + String(time.clock_theme));
     file.println("clock_color_1=" + time.clock_color_1);
     file.println("clock_color_2=" + time.clock_color_2);
+    file.println("clock_font_path=" + time.clock_font_path);
     file.println();
 
     file.println("[matrix]");
@@ -335,6 +340,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("date_offset_y=" + String(dateSettings.date_offset_y));
     file.println("date_color_1=" + dateSettings.date_color_1);
     file.println("date_color_2=" + dateSettings.date_color_2);
+    file.println("date_font_path=" + dateSettings.date_font_path);
     file.println();
 
     file.println("[fonts]");

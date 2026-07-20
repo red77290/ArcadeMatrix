@@ -24,6 +24,11 @@ DateEngine::DateEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     currentTheme = THEME_NONE;
     matrixW = matrix->width();
     matrixH = matrix->height();
+    if (config.dateSettings.date_font_path.length() > 0) {
+        if (!customFont.loadFromSD(config.dateSettings.date_font_path.c_str())) {
+            Serial.println("DateEngine: date_font_path set but failed to load; using compiled-in font.");
+        }
+    }
 }
 
 DateEngine::~DateEngine() {}
@@ -54,6 +59,16 @@ void DateEngine::setCharacter(int characterId) {
 
 void DateEngine::setTheme(PublisherTheme theme) {
     currentTheme = theme;
+}
+
+void DateEngine::reloadCustomFont() {
+    if (config.dateSettings.date_font_path.length() > 0) {
+        if (!customFont.loadFromSD(config.dateSettings.date_font_path.c_str())) {
+            Serial.println("DateEngine: date_font_path set but failed to load; using compiled-in font.");
+        }
+    } else {
+        customFont.unload();
+    }
 }
 
 void DateEngine::applyThemeSettings() {
@@ -180,25 +195,32 @@ void DateEngine::applyThemeSettings() {
 
     // Apply font based on user config, independently of the theme
     if (currentTheme != THEME_BANPRESTO && currentTheme != THEME_NAMCO && currentTheme != THEME_CYBERPUNK && currentTheme != THEME_FLIP) {
-        switch (config.dateSettings.date_font) {
-            case THEME_NINTENDO:
-            case THEME_HUDSON:
-                matrix->setFont(isHD ? &FreeSansBold12pt7b : &FreeSansBold9pt7b); break;
-            case THEME_SEGA:
-                matrix->setFont(isHD ? &FreeMonoBold12pt7b : &FreeMonoBold9pt7b); break;
-            case THEME_CAVE:
-            case THEME_SNK:
-            case THEME_TECHNOS:
-                matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b); break;
-            case THEME_TAITO:
-            case THEME_KONAMI:
-                matrix->setFont(isHD ? &Retro_Gaming12pt7b : &Retro_Gaming9pt7b); break;
-            case THEME_CAPCOM:
-            case THEME_IGS:
-            case THEME_BANPRESTO:
-            case THEME_NAMCO:
-                matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b); break;
-            default: matrix->setFont(nullptr); break;
+        GFXfont* loadedCustomFont = customFont.getFont();
+        if (loadedCustomFont) {
+            // A user-supplied SD font (config.dateSettings.date_font_path, converted via
+            // tools/bdf_to_amfont) always takes priority over the compiled-in font families below.
+            matrix->setFont(loadedCustomFont);
+        } else {
+            switch (config.dateSettings.date_font) {
+                case THEME_NINTENDO:
+                case THEME_HUDSON:
+                    matrix->setFont(isHD ? &FreeSansBold12pt7b : &FreeSansBold9pt7b); break;
+                case THEME_SEGA:
+                    matrix->setFont(isHD ? &FreeMonoBold12pt7b : &FreeMonoBold9pt7b); break;
+                case THEME_CAVE:
+                case THEME_SNK:
+                case THEME_TECHNOS:
+                    matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b); break;
+                case THEME_TAITO:
+                case THEME_KONAMI:
+                    matrix->setFont(isHD ? &Retro_Gaming12pt7b : &Retro_Gaming9pt7b); break;
+                case THEME_CAPCOM:
+                case THEME_IGS:
+                case THEME_BANPRESTO:
+                case THEME_NAMCO:
+                    matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b); break;
+                default: matrix->setFont(nullptr); break;
+            }
         }
     }
     

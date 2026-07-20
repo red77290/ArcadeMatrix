@@ -43,9 +43,13 @@ python3 bdf_to_amfont.py input.bdf output.amf [--first 0x20] [--last 0x7E]
 - Codepoints missing from the source BDF within the requested range are emitted as blank,
   zero-width glyphs rather than aborting the conversion.
 
-Then copy the resulting `.amf` file to the SD card (e.g. `/fonts/myfont.amf`) and set
-`custom_font_path=/fonts/myfont.amf` under `[fonts]` in `conf.ini`. See `docs/DEVELOPER.md` for
-the full end-to-end workflow and current integration point (`MessageEngine`/`/api/message`).
+Then copy the resulting `.amf` file to the SD card's `/fonts` folder (e.g. `/fonts/myfont.amf`).
+It becomes immediately selectable in the Web UI's Settings page, in the "Font" dropdown for either
+the Clock or the Date (each populated live from `GET /api/fonts`, which lists every `.amf` file
+found in `/fonts`) - no manual `conf.ini` editing needed. You can also set it directly via
+`conf.ini` (`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` under `[time]`
+/ `[date]`, or `custom_font_path=/fonts/myfont.amf` under `[fonts]` for the scrolling
+`MessageEngine`/`/api/message`). See `docs/DEVELOPER.md` for the full end-to-end workflow.
 
 ## Format details
 
