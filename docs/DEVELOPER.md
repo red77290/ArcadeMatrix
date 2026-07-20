@@ -128,6 +128,34 @@ offline" philosophy as `.raw` GifEngine assets and `tools/mugen_extractor`.
 
 ---
 
+### Loading a custom bitmap font from SD (BitmapFontLoader)
+
+By default all fonts are compiled into the firmware (`src/engines/fonts/`). To add a custom font
+without a firmware rebuild:
+
+1. Obtain or create a BDF bitmap font. Any of the RPi project's bundled fonts work as a starting
+   point (`ArcadeMatrix_RPi/fonts/*.bdf`), or grab one from an X11/X BDF font archive.
+2. Convert it to ArcadeMatrix's `.amf` format:
+   ```bash
+   python3 tools/bdf_to_amfont/bdf_to_amfont.py myfont.bdf myfont.amf
+   ```
+   By default this covers printable ASCII (`0x20`-`0x7E`); pass `--first`/`--last` to cover a
+   different codepoint range if the BDF font has one (e.g. extended Latin-1).
+3. Copy `myfont.amf` to the SD card, e.g. `/fonts/myfont.amf`.
+4. Set `custom_font_path=/fonts/myfont.amf` under `[fonts]` in `conf.ini` (or via `/api/settings`).
+5. Reboot. `BitmapFontLoader::loadFromSD()` parses the file into a heap-allocated `GFXfont`-
+   compatible structure at boot and hands it to `MessageEngine` for the `/api/message` banner (the
+   default 5x7 font is used as a silent fallback if the file is missing/corrupt).
+
+**Format notes:** `.amf` mirrors Adafruit's own compiled-font layout exactly (byte-aligned
+per-glyph bitmap offsets, MSB-first packed bits) — see the docstring in
+`tools/bdf_to_amfont/bdf_to_amfont.py` for the exact binary layout, and `BitmapFontLoader.cpp`'s
+parser for the corresponding ESP32-side reader. Fonts are limited to 65535 bytes of packed glyph
+bitmap data (`GFXglyph.bitmapOffset` is a `uint16_t`) — the same ceiling Adafruit's own
+`fontconvert` tool imposes on compiled-in fonts, not a new limitation.
+
+---
+
 ## 3. Important Rules for ESP32 Development
 
 - **Avoid `String` objects**: Use `char` arrays (`char[]`) whenever possible to avoid heap fragmentation, which is fatal on ESP32.

@@ -1,6 +1,10 @@
 #include "MessageEngine.h"
 
-MessageEngine::MessageEngine(MatrixPanel_I2S_DMA* display) : matrix(display), active(false) {}
+MessageEngine::MessageEngine(MatrixPanel_I2S_DMA* display) : matrix(display), active(false), customFont(nullptr) {}
+
+void MessageEngine::setCustomFont(GFXfont* font) {
+    customFont = font;
+}
 
 void MessageEngine::displayMessage(const MessageConfig& config) {
     currentMsg = config;
@@ -58,6 +62,7 @@ void MessageEngine::loop() {
 
         matrix->clearScreen(); // Ensure black background for message priority overlay
         
+        matrix->setFont(customFont); // nullptr falls back to the default 5x7 font
         matrix->setTextSize(currentMsg.size);
         matrix->setTextColor(currentMsg.color);
         matrix->setCursor(cursorX, cursorY);

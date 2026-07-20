@@ -17,6 +17,7 @@
 #include "engines/FighterEngine.h"
 #include "engines/MarqueeEngine.h"
 #include "core/RotationManager.h"
+#include "core/BitmapFontLoader.h"
 
 // Hardware Pins for SD Card (VSPI)
 #define SD_CS_PIN 5
@@ -37,6 +38,7 @@ MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
+BitmapFontLoader customFontLoader;
 
 unsigned long lastTick = 0;
 uint8_t currentMinute = 42;
@@ -121,6 +123,16 @@ void setup() {
     rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
     marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+
+    // 4b. Optional SD-loadable custom bitmap font (see docs/DEVELOPER.md, tools/bdf_to_amfont)
+    if (config.fonts.custom_font_path.length() > 0) {
+        if (customFontLoader.loadFromSD(config.fonts.custom_font_path.c_str())) {
+            messageEngine->setCustomFont(customFontLoader.getFont());
+            Serial.println("Custom font applied to MessageEngine.");
+        } else {
+            Serial.println("Warning: custom_font_path set but failed to load; using default font.");
+        }
+    }
 
     // 5. Connect to Wi-Fi
     if (config.wifi.ssid.length() > 0) {
