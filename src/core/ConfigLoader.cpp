@@ -54,7 +54,7 @@ void ConfigLoader::setDefaults() {
 
     weather.api_key = "";
     weather.city = "";
-    weather.lang = "en";
+    weather.lang = "";
     weather.weather_offset_x = 0;
     weather.weather_offset_y = 0;
 

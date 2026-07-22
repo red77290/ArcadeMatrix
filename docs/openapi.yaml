@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: ArcadeMatrix Local API
+  description: API for controlling and configuring the ArcadeMatrix ESP32 firmware locally over Wi-Fi.
+  version: 1.0.0
+servers:
+  - url: http://ArcadeMatrix.local
+    description: Default local mDNS address (or use the device's assigned IP)
+tags:
+  - name: System
+    description: System status and power controls
+  - name: Configuration
+    description: Global settings and themes
+  - name: Media
+    description: Fonts, GIFs, and Playlists
+  - name: Engines
+    description: Direct control of specific display engines
+
+paths:
+  /api/status:
+    get:
+      tags:
+        - System
+      summary: Get system status
+      description: Returns memory usage, uptime, and system health.
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "online"
+                  uptime:
+                    type: integer
+                    description: Uptime in milliseconds
+                  free_heap:
+                    type: integer
+                  min_free_heap:
+                    type: integer
+                  max_alloc_heap:
+                    type: integer
+                  psram_found:
+                    type: boolean
+
+  /api/settings:
+    get:
+      tags:
+        - Configuration
+      summary: Get all settings
+      description: Returns the entire device configuration (Matrix, Clock, Weather, WiFi, MQTT, Standby, etc).
+      responses:
+        '200':
+          description: Configuration object
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags:
+        - Configuration
+      summary: Update settings
+      description: Partially update settings. Any omitted keys will remain unchanged. Will automatically save to SD card.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Settings successfully updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  sd_saved:
+                    type: boolean
+                  warning:
+                    type: string
+
+  /api/system/power:
+    post:
+      tags:
+        - System
+      summary: Toggle LED Matrix Power
+      description: Turn the display on or off without rebooting the ESP32.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state:
+                  type: boolean
+                  description: True to turn on the LEDs, False to turn off.
+      responses:
+        '200':
+          description: Success
+
+  /api/system/reboot:
+    post:
+      tags:
+        - System
+      summary: Reboot the ESP32
+      responses:
+        '200':
+          description: Device will reboot in 500ms
+
+  /api/system/shutdown:
+    post:
+      tags:
+        - System
+      summary: Reboot the ESP32 (Alias)
+      description: Since ESP32 cannot fully power down via software, this acts as a reboot.
+      responses:
+        '200':
+          description: Device will reboot in 500ms
+
+  /api/wifi:
+    post:
+      tags:
+        - System
+      summary: Reconfigure Wi-Fi
+      description: Updates the Wi-Fi credentials and attempts to connect immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ssid:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Successfully connected to new network
+        '500':
+          description: Failed to connect
+
+  /api/fonts:
+    get:
+      tags:
+        - Media
+      summary: List available custom fonts
+      description: Returns a list of .amf font files found in the /fonts directory on the SD card.
+      responses:
+        '200':
+          description: Array of font paths
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                  example: "/fonts/6x9.amf"
+
+  /api/playlists:
+    get:
+      tags:
+        - Media
+      summary: Get all GIF playlists
+      description: Returns the contents of /gifs/playlists.json containing all indexed animations.
+      responses:
+        '200':
+          description: JSON object mapping playlist categories to arrays of GIF file paths.
+        '404':
+          description: Index not generated yet.
+
+  /api/playlists/selected:
+    get:
+      tags:
+        - Media
+      summary: Get active GIF playlists
+      description: Returns the user's currently selected playlists.
+      responses:
+        '200':
+          description: Selected playlists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  playlists:
+                    type: array
+                    items:
+                      type: string
+
+  /api/playlists/save:
+    post:
+      tags:
+        - Media
+      summary: Save active GIF playlists
+      description: Updates the default selected playlists and saves them to SD card.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                playlists:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Success
+
+  /api/playlists/play:
+    post:
+      tags:
+        - Media
+      summary: Play specific GIF playlists immediately
+      description: Temporarily override the current rotation and start playing the provided playlists immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                playlists:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Success
+
+  /api/clock:
+    post:
+      tags:
+        - Engines
+      summary: Change Clock Theme
+      description: Dynamically change the current clock theme.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clock_theme:
+                  type: integer
+                  description: The PublisherTheme Enum ID (0=NINTENDO, 1=CAPCOM, etc).
+      responses:
+        '200':
+          description: Success
+
+  /api/message:
+    post:
+      tags:
+        - Engines
+      summary: Display a Marquee Text Message
+      description: Interrupts the current engine and scrolls a custom text message across the screen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  example: "Hello World!"
+                color:
+                  type: integer
+                  description: Text color as RGB565 integer (default 63488 / RED).
+                size:
+                  type: integer
+                  description: Text scale multiplier (default 2).
+                direction:
+                  type: string
+                  enum: [rtl, ltr]
+                  description: Scroll direction (default rtl).
+                speed:
+                  type: integer
+                  description: Scroll delay in milliseconds (default 30).
+                timeoutSeconds:
+                  type: integer
+                  description: Maximum time to show the message before returning to normal rotation (default 30).
+      responses:
+        '200':
+          description: Success
+
+  /api/marquee:
+    post:
+      tags:
+        - Engines
+      summary: Stream Raw RGB565 Image Data
+      description: Push raw, uncompressed RGB565 image data directly to the matrix frame buffer. Payload size must exactly match the screen resolution (width * height * 2 bytes).
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Image received and displayed.
+        '400':
+          description: Invalid payload size.

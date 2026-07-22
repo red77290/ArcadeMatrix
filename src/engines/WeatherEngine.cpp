@@ -73,12 +73,13 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
             const char* dayNames[7];
             const char* fixedLabels[MAX_FORECAST_DAYS];
             
-            if (config.weather.lang == "fr") {
+            String lang = config.weather.lang;
+            if (lang.equalsIgnoreCase("fr")) {
                 const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
                 const char* fr_fixedLabels[MAX_FORECAST_DAYS] = {"AUJ.", "DEMN", nullptr};
                 memcpy(dayNames, fr_dayNames, sizeof(dayNames));
                 memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
-            } else if (config.weather.lang == "es") {
+            } else if (lang.equalsIgnoreCase("es")) {
                 const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
                 const char* es_fixedLabels[MAX_FORECAST_DAYS] = {"HOY", "MANA", nullptr};
                 memcpy(dayNames, es_dayNames, sizeof(dayNames));
