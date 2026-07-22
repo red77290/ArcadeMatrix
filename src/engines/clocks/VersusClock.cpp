@@ -66,11 +66,14 @@ void VersusClock::update() {
         }
     }
     
+    // Advance animation state at most every 30ms, but always redraw below on every call. The
+    // outer main loop clears the DMA back buffer and flips it every ~33ms unconditionally
+    // (fixed ~30 FPS), so skipping the draw here (as this used to do) left the cleared buffer
+    // flipped to screen as a black flash on every iteration where this throttle hadn't elapsed
+    // yet - causing severe flicker.
     if (millis() - lastFrameTime > 30) {
         lastFrameTime = millis();
         animFrame++;
-        
-        matrix->fillScreen(0);
         
         // Animate HP
         if (animating) {
@@ -87,58 +90,60 @@ void VersusClock::update() {
                 lastMinute = storedTime.minutes;
             }
         }
-        
-        // Draw Health Bars
-        int barWidth = matrix->width() / 2 - 4;
-        drawHealthBar(2, 2, barWidth, 6, currentP1HP, true);
-        drawHealthBar(matrix->width() / 2 + 2, 2, barWidth, 6, currentP2HP, false);
-        
-        // Draw KO Text in middle
-        uint16_t red = matrix->color565(255, 0, 0);
-        uint16_t yellow = matrix->color565(255, 255, 0);
-        
-        matrix->setTextSize(1);
-        matrix->setFont(NULL);
-        matrix->setCursor(matrix->width() / 2 - 5, 2);
-        matrix->setTextColor(animFrame % 20 < 10 ? red : yellow);
-        matrix->print("V");
-        
-        // Draw Time below bars
-        char timeStr[12];
-        sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
-        
-        int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
-        matrix->setTextSize(gfxSize);
-        
-        int16_t bx, by;
-        uint16_t bw, bh;
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
-        
-        int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
-        int ty = (matrix->height() - bh) / 2 + 10 + config.time.clock_offset_y; // Push down below bars
-        
-        uint16_t color1 = matrix->color565(255, 255, 255);
-        if (config.time.clock_color_1[0] == '#') {
-            long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
-            color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
-        }
-        
-        // Shake effect when changing
-        if (animating) {
-            tx += (rand() % 3) - 1;
-            ty += (rand() % 3) - 1;
-        }
-        
-        matrix->setCursor(tx, ty);
-        matrix->setTextColor(color1);
-        matrix->print(timeStr);
-        
-        // Optional pulsing hit sparks if animating
-        if (animating && (rand() % 100 > 70)) {
-            int sparkX = tx + (rand() % bw);
-            int sparkY = ty + (rand() % bh);
-            matrix->fillCircle(sparkX, sparkY, 1 + (rand() % 2), matrix->color565(255, 255, 255));
-        }
+    }
+    
+    matrix->fillScreen(0);
+    
+    // Draw Health Bars
+    int barWidth = matrix->width() / 2 - 4;
+    drawHealthBar(2, 2, barWidth, 6, currentP1HP, true);
+    drawHealthBar(matrix->width() / 2 + 2, 2, barWidth, 6, currentP2HP, false);
+    
+    // Draw KO Text in middle
+    uint16_t red = matrix->color565(255, 0, 0);
+    uint16_t yellow = matrix->color565(255, 255, 0);
+    
+    matrix->setTextSize(1);
+    matrix->setFont(NULL);
+    matrix->setCursor(matrix->width() / 2 - 5, 2);
+    matrix->setTextColor(animFrame % 20 < 10 ? red : yellow);
+    matrix->print("V");
+    
+    // Draw Time below bars
+    char timeStr[12];
+    sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
+    
+    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    matrix->setTextSize(gfxSize);
+    
+    int16_t bx, by;
+    uint16_t bw, bh;
+    matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+    if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
+    
+    int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
+    int ty = (matrix->height() - bh) / 2 + 10 + config.time.clock_offset_y; // Push down below bars
+    
+    uint16_t color1 = matrix->color565(255, 255, 255);
+    if (config.time.clock_color_1[0] == '#') {
+        long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
+        color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
+    }
+    
+    // Shake effect when changing
+    if (animating) {
+        tx += (rand() % 3) - 1;
+        ty += (rand() % 3) - 1;
+    }
+    
+    matrix->setCursor(tx, ty);
+    matrix->setTextColor(color1);
+    matrix->print(timeStr);
+    
+    // Optional pulsing hit sparks if animating
+    if (animating && (rand() % 100 > 70)) {
+        int sparkX = tx + (rand() % bw);
+        int sparkY = ty + (rand() % bh);
+        matrix->fillCircle(sparkX, sparkY, 1 + (rand() % 2), matrix->color565(255, 255, 255));
     }
 }

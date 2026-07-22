@@ -19,12 +19,13 @@ with a sample `conf.ini`, GIFs/MUGEN folders, and the GIF playlist indexing scri
 ## Features
 - **Massive Clock Selection:** Animated clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, and **Versus (Mugen)**!
 - **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs and change settings live!
-- **MUGEN Fighter Engine:** Simulates 2D fighting games natively on the matrix using extracted sprites with perfect virtual ground alignment.
-- **GIF Engine:** Smooth playback of GIFs stored on the SD Card.
-- **MQTT Support:** Integrates seamlessly with Batocera and Recalbox to display game marques.
+- **MUGEN Fighting Engine:** Natively simulates 2D fighting games on the matrix using extracted sprites with perfect virtual-ground alignment.
+- **GIF Engine:** Smooth playback of GIFs stored on the SD card.
+- **Weather (OpenWeatherMap):** 3-day forecast, with a 15-minute fetch cache to save your API calls.
+- **MQTT Support:** Integrates seamlessly with Batocera and Recalbox to display game marquees.
 
 ## SD Card Structure
-Format your SD card to **FAT32**. Your SD card should look like this:
+Format your SD card to **FAT32** or **exFAT**. Your SD card should look like this:
 ```
 SD:/
   ├─ conf.ini
@@ -89,12 +90,12 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 1. Copy your `.bdf` font(s) into the `fonts/` folder on your SD card.
 2. Run the batch converter:
    ```bash
-   python3 tools/font_conversion/generate_fonts.py /Volumes/SDCARD   # pass the SD root or its fonts/ folder
+   python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # pass the SD root or its fonts/ folder
    ```
-   (No external dependencies - pure Python standard library. `start_generate_fonts.sh`/`.bat` are also provided if you'd rather not use the command line directly.)
-3. This converts every `.bdf` into a same-named `.amf` in place, and removes the `.bdf` originals. The resulting fonts appear immediately in the Web UI's Settings page (Clock/Date "Font" dropdowns) - no reboot needed.
+   (No external dependencies required. Standard Python only.)
+3. This converts each `.bdf` to an equivalently named `.amf` in-place. The resulting fonts immediately appear in the Web UI Settings page (Clock/Date "Font" dropdowns) - no restart required.
 
-For full details, see `tools/font_conversion/README.md`.
+For full details, check `tools/bdf_to_amfont/README.md`.
 
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.

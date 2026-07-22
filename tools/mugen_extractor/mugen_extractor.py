@@ -121,24 +121,32 @@ def process_character(char_dir, out_dir):
         master_palette = sff.first_palette
         if not master_palette: return False
 
-    required_anims = {
-        0: 'stand',
-        20: 'walk'
-    }
-    attack_anims = [200, 210, 220, 230, 240, 250, 400, 410, 420]
-    for act_id in attack_anims:
+    required_anims = {}
+    
+    # Stand (fallback to crouch 11 or first anim)
+    if 0 in air.animations: required_anims[0] = 'stand'
+    elif 11 in air.animations: required_anims[11] = 'stand'
+    elif len(air.animations) > 0: required_anims[list(air.animations.keys())[0]] = 'stand'
+    
+    # Walk (fallback to back walk 21 or run 100)
+    if 20 in air.animations: required_anims[20] = 'walk'
+    elif 21 in air.animations: required_anims[21] = 'walk'
+    elif 100 in air.animations: required_anims[100] = 'walk'
+
+    # Attack (any from 200-499)
+    for act_id in range(200, 500):
         if act_id in air.animations:
             required_anims[act_id] = 'attack'
             break
             
-    hit_anims = [5000, 5001, 5002, 5010, 5011, 5012]
-    for act_id in hit_anims:
+    # Hit (any from 5000-5099)
+    for act_id in range(5000, 5100):
         if act_id in air.animations:
             required_anims[act_id] = 'hit'
             break
             
-    win_anims = [180, 181, 182, 183]
-    for act_id in win_anims:
+    # Win (any from 180-199, includes taunts 190+)
+    for act_id in range(170, 200):
         if act_id in air.animations:
             required_anims[act_id] = 'win'
             break
@@ -217,11 +225,18 @@ def process_character(char_dir, out_dir):
 
     if not all_valid_frames: return False
     
-    # Ensure all mandatory animations are present
+    # Ensure all mandatory animations are present with fallbacks
     for req in ['stand', 'walk', 'attack', 'hit', 'win']:
         if req not in all_valid_frames:
-            logging.warning(f"Character {char_name} missing mandatory animation '{req}'. Skipping.")
-            return False
+            if 'stand' in all_valid_frames:
+                all_valid_frames[req] = all_valid_frames['stand']
+            elif 'walk' in all_valid_frames:
+                all_valid_frames[req] = all_valid_frames['walk']
+            elif len(all_valid_frames) > 0:
+                all_valid_frames[req] = list(all_valid_frames.values())[0]
+            else:
+                logging.warning(f"Character {char_name} completely empty. Skipping.")
+                return False
 
     if walk_h is None or walk_h <= 0: walk_h = global_max_y - global_min_y
     if walk_h <= 0: walk_h = TARGET_HEIGHT
@@ -244,7 +259,7 @@ def process_character(char_dir, out_dir):
         if walk_h > TARGET_HEIGHT:
             scale = TARGET_HEIGHT / walk_h
         canvas_w = max(1, int(orig_w * scale))
-        canvas_h = TARGET_HEIGHT
+        canvas_h = max(1, int(orig_h * scale))
     else:
         # FULLSIZE Mode
         scale = 1.0
@@ -351,7 +366,7 @@ if __name__ == "__main__":
     # start_extractor.sh/.bat wrappers (which prompt the user and pass -i/-o).
     parser.add_argument("--src", "-i", dest="src", type=str, required=True, help="Source directory containing Mugen characters")
     parser.add_argument("--dest", "-o", dest="dest", type=str, default="fighters_32", help="Output directory for the generated .fgt files and index (default: ./fighters_32)")
-    parser.add_argument("--mode", type=str, choices=['SCALED', 'FULLSIZE'], default='FULLSIZE', 
+    parser.add_argument("--mode", type=str, choices=['SCALED', 'FULLSIZE'], default='SCALED', 
                         help="SCALED: Resize character to perfectly fit screen height (for standard ESP32). FULLSIZE: Extract at 1:1 original scale (for RPi or ESP32-S3 with PSRAM).")
     parser.add_argument("--compress", action="store_true", help="Compress the output .fgt files using gzip (.fgt.gz). Ideal for RPi to save space.")
     args = parser.parse_args()

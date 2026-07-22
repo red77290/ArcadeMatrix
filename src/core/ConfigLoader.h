@@ -7,7 +7,7 @@
  */
 #pragma once
 #include <Arduino.h>
-#include <SD.h>
+#include "SDUtils.h"
 #include <vector>
 
 /**
@@ -95,6 +95,7 @@ struct IdleConfig {
 struct WeatherConfig {
     String api_key;         ///< OpenWeather API key
     String city;            ///< Target city for weather data
+    String lang;            ///< Language code (en, fr, es)
     int weather_offset_x;   ///< Manual X axis pixel offset
     int weather_offset_y;   ///< Manual Y axis pixel offset
 };
@@ -185,4 +186,8 @@ public:
 private:
     void parseLine(String line, String& currentSection);
     String extractValue(String line);
+    // Single attempt at writing conf.ini; saveToSD() wraps this with retries + validation
+    // since the SD card intermittently glitches on this project (SPI contention with the
+    // HUB75 DMA output / SD driver quirks) and a lost settings write must not fail silently.
+    bool writeConfigFile(const char* filepath);
 };

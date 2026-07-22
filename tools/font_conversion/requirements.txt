@@ -1,5 +1,0 @@
-# No external dependencies.
-# generate_fonts.py and tools/bdf_to_amfont/bdf_to_amfont.py both use only the Python standard
-# library (argparse, struct, sys, os, importlib) - nothing to install here. This file exists
-# only so start_generate_fonts.sh/.bat (and the project's other tool wrappers) have a consistent
-# `pip install -r requirements.txt` step to run, even though it's a no-op.

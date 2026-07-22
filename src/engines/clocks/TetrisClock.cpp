@@ -36,42 +36,58 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
     int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
     int gfxSize = 1;
     
-    // Setup temporary canvas to get bounds
-    GFXcanvas1 tempCanvas(matrix->width(), matrix->height());
-    tempCanvas.setTextSize(1);
-    tempCanvas.setFont(NULL);
-    
     int16_t bx, by;
     uint16_t bw, bh;
-    tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-    if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
     
-    int sMax = min((int)(matrix->width() / bw), (int)(matrix->height() / bh));
-    if (sMax < 1) sMax = 1;
+    int x, y;
     
-    if (logicalSize == 3) gfxSize = sMax;
-    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 3);
-    else gfxSize = max(1, sMax / 3);
-    
-    tempCanvas.setTextSize(gfxSize);
-    tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-    
-    int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
-    int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    {
+        // Setup temporary canvas in a block to free it immediately
+        GFXcanvas1 tempCanvas(matrix->width(), matrix->height());
+        if (!tempCanvas.getBuffer()) return; // Prevent crash if OOM
+        
+        tempCanvas.setTextSize(1);
+        tempCanvas.setFont(NULL);
+        
+        tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
+        
+        int sMax = min((int)(matrix->width() / bw), (int)(matrix->height() / bh));
+        if (sMax < 1) sMax = 1;
+        
+        if (logicalSize >= 5) gfxSize = sMax + 1;
+        else if (logicalSize == 4) gfxSize = sMax;
+        else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 4);
+        else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 4);
+        else gfxSize = max(1, sMax / 4);
+        
+        tempCanvas.setTextSize(gfxSize);
+        tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        
+        x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
+        y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    }
     
     GFXcanvas1 fullCanvas(matrix->width(), matrix->height());
+    if (!fullCanvas.getBuffer()) return; // Prevent crash if OOM
+    
     fullCanvas.fillScreen(0);
     fullCanvas.setTextSize(gfxSize);
     fullCanvas.setCursor(x, y);
     fullCanvas.setTextColor(1);
     fullCanvas.print(timeStr);
     
+    // Reuse a single mask canvas for all characters
+    GFXcanvas1 maskCanvas(matrix->width(), matrix->height());
+    if (!maskCanvas.getBuffer()) return;
+    
+    // std::list doesn't need reserve and prevents heap fragmentation!
+    
     for (int charIdx : targetIndices) {
         char maskStr[12];
         strcpy(maskStr, timeStr);
         maskStr[charIdx] = ' '; // Hide this character
         
-        GFXcanvas1 maskCanvas(matrix->width(), matrix->height());
         maskCanvas.fillScreen(0);
         maskCanvas.setTextSize(gfxSize);
         maskCanvas.setCursor(x, y);

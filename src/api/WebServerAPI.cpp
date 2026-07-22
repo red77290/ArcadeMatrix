@@ -1,10 +1,45 @@
 #include "WebServerAPI.h"
-#include <SD.h>
+#include "../core/SDUtils.h"
 #include <Update.h>
 #include "../core/MatrixEngine.h"
 #include "../engines/GifEngine.h"
 #include "../core/RotationManager.h"
 #include "WebUI.h"
+#include "../core/Globals.h"
+
+// Helper class to stream large files from SdFat to ESPAsyncWebServer
+class AsyncSdFatResponse : public AsyncAbstractResponse {
+private:
+    FsFile _content;
+public:
+    AsyncSdFatResponse(const String& path, const String& contentType) {
+        _code = 200;
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            _content = sd.open(path.c_str(), O_READ);
+            if (_content) _contentLength = _content.size();
+            else _contentLength = 0;
+            xSemaphoreGive(sdMutex);
+        } else {
+            _contentLength = 0;
+        }
+        _contentType = contentType;
+    }
+    ~AsyncSdFatResponse() {
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            if(_content) _content.close();
+            xSemaphoreGive(sdMutex);
+        }
+    }
+    size_t _fillBuffer(uint8_t *buf, size_t maxLen) override {
+        size_t bytesRead = 0;
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            if (_content) bytesRead = _content.read(buf, maxLen);
+            xSemaphoreGive(sdMutex);
+        }
+        return bytesRead;
+    }
+};
+
 
 WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine) : server(port), msg(msgEngine), clock(clkEngine) {}
 
@@ -25,11 +60,13 @@ void WebServerAPI::begin() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "identity");
+        response->addHeader("Cache-Control", "no-store, max-age=0");
         request->send(response);
     });
     server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "identity");
+        response->addHeader("Cache-Control", "no-store, max-age=0");
         request->send(response);
     });
 
@@ -47,7 +84,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(4096);
+        DynamicJsonDocument doc(512);
         doc["status"] = "online";
         doc["uptime"] = millis();
         doc["free_heap"] = ESP.getFreeHeap();
@@ -69,21 +106,27 @@ void WebServerAPI::setupRoutes() {
     server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(2048);
         JsonArray arr = doc.to<JsonArray>();
-        File dir = SD.open("/fonts");
-        if (dir && dir.isDirectory()) {
-            File entry = dir.openNextFile();
+        
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            FsFile dir = sd.open("/fonts", O_READ);
+            if (dir && dir.isDir()) {
+                FsFile entry = dir.openNextFile();
             while (entry) {
-                if (!entry.isDirectory()) {
-                    String name = String(entry.name());
+                yield();
+                if (!entry.isDir()) {
+                    String name = getFileName(entry);
                     if (name.endsWith(".amf") || name.endsWith(".AMF")) {
-                        // entry.name() may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
-                        arr.add(name.startsWith("/") ? name : ("/fonts/" + name));
+                        // getName may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
+                        if (!name.startsWith("/")) name = "/fonts/" + name;
+                        arr.add(name);
                     }
                 }
                 entry.close();
                 entry = dir.openNextFile();
             }
             dir.close();
+            }
+            xSemaphoreGive(sdMutex);
         }
         String response;
         serializeJson(doc, response);
@@ -91,9 +134,20 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: List GIF Playlists (reads /gifs/playlists.json from SD)
-    server.on("/api/playlists", HTTP_GET, [this](AsyncWebServerRequest *request){
-        if (SD.exists("/gifs/playlists.json")) {
-            request->send(SD, "/gifs/playlists.json", "application/json");
+    server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
+        bool exists = false;
+        String content = "";
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            FsFile f = sd.open("/gifs/playlists.json", O_READ);
+            if (f) {
+                exists = true;
+                content = f.readString();
+                f.close();
+            }
+            xSemaphoreGive(sdMutex);
+        }
+        if (exists && content.length() > 0) {
+            request->send(200, "application/json", content);
         } else {
             request->send(404, "application/json", "{\"error\":\"playlists.json not found. Run generate_index.sh\"}");
         }
@@ -117,13 +171,20 @@ void WebServerAPI::setupRoutes() {
         gifEngine.playPlaylists(paths);
         
         request->send(200, "application/json", "{\"success\":true}");
-    });
+    }, 4096);
     server.addHandler(playHandler);
     
-    // API: Settings (GET)
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        DynamicJsonDocument doc(4096);
+        // Reduce allocation from 4096 to 2048 to prevent heap fragmentation crashes
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 2048);
+        JsonObject doc = response->getRoot().as<JsonObject>();
+        
+        if (doc.isNull()) {
+            request->send(500, "text/plain", "OOM JSON");
+            delete response;
+            return;
+        }
 
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
@@ -163,6 +224,7 @@ void WebServerAPI::setupRoutes() {
         // Weather
         doc["weather_api_key"] = config.weather.api_key;
         doc["weather_city"] = config.weather.city;
+        doc["weather_lang"] = config.weather.lang;
         doc["weather_offset_x"] = config.weather.weather_offset_x;
         doc["weather_offset_y"] = config.weather.weather_offset_y;
 
@@ -184,14 +246,17 @@ void WebServerAPI::setupRoutes() {
         // password not sent for security
 
         // MQTT
-        doc["mqtt_enable"] = config.mqtt.enabled;
+        doc["mqtt_enabled"] = config.mqtt.enabled;
         doc["mqtt_broker"] = config.mqtt.broker;
         doc["mqtt_port"] = config.mqtt.port;
         doc["mqtt_user"] = config.mqtt.user;
+        doc["mqtt_pass"] = config.mqtt.pass;
+        doc["mqtt_topic_bato"] = config.mqtt.topic_batocera;
+        doc["mqtt_topic_recal"] = config.mqtt.topic_recalbox;
+        doc["mqtt_device"] = config.mqtt.deviceName;
 
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        response->setLength();
+        request->send(response);
     });
 
     // API: Settings (POST) — saves immediately to SD
@@ -260,6 +325,7 @@ void WebServerAPI::setupRoutes() {
         // Weather
         if (!doc["weather_api_key"].isNull()) config.weather.api_key = doc["weather_api_key"].as<String>();
         if (!doc["weather_city"].isNull()) config.weather.city = doc["weather_city"].as<String>();
+        if (!doc["weather_lang"].isNull()) config.weather.lang = doc["weather_lang"].as<String>();
         if (!doc["weather_offset_x"].isNull()) config.weather.weather_offset_x = doc["weather_offset_x"].as<int>();
         if (!doc["weather_offset_y"].isNull()) config.weather.weather_offset_y = doc["weather_offset_y"].as<int>();
 
@@ -290,7 +356,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["mqtt_pass"].isNull() && doc["mqtt_pass"].as<String>() != "") config.mqtt.pass = doc["mqtt_pass"].as<String>();
 
         // Save to SD immediately
-        config.saveToSD("/conf.ini");
+        bool saved = config.saveToSD("/conf.ini");
 
         if (rotationChanged) {
             extern RotationManager* rotationManager;
@@ -305,14 +371,34 @@ void WebServerAPI::setupRoutes() {
             return;
         }
         
-        request->send(200, "application/json", "{\"success\":true}");
-    });
+        if (!saved) {
+            // Settings were applied in RAM (so the display updates immediately) but could NOT be
+            // written to the SD card - they will be lost on the next reboot/power cycle. Surface
+            // this clearly instead of silently reporting success, so the user knows to retry
+            // (usually a transient SD card glitch) rather than assume everything was saved.
+            request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Settings applied but could not be saved to the SD card (conf.ini). They will be lost on reboot - please try saving again.\"}");
+            return;
+        }
+
+        request->send(200, "application/json", "{\"success\":true,\"sd_saved\":true}");
+    }, 4096);
     server.addHandler(settingsHandler);
     
     // API: Get Selected GIF Playlists
     server.on("/api/playlists/selected", HTTP_GET, [](AsyncWebServerRequest *request){
-        if (SD.exists("/playlists_selected.json")) {
-            request->send(SD, "/playlists_selected.json", "application/json");
+        bool exists = false;
+        String content = "";
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            FsFile f = sd.open("/playlists_selected.json", O_READ);
+            if (f) {
+                exists = true;
+                content = f.readString();
+                f.close();
+            }
+            xSemaphoreGive(sdMutex);
+        }
+        if (exists && content.length() > 0) {
+            request->send(200, "application/json", content);
         } else {
             // Return empty array instead of 404 to avoid UI crash
             request->send(200, "application/json", "{\"playlists\":[]}");
@@ -338,21 +424,24 @@ void WebServerAPI::setupRoutes() {
         gifEngine.setDefaultPlaylists(paths);
 
         // Write directly to SD (no async flag — prevents data loss on reboot)
-        if (SD.exists("/playlists_selected.json")) SD.remove("/playlists_selected.json");
-        File f = SD.open("/playlists_selected.json", FILE_WRITE);
-        if (f) {
-            DynamicJsonDocument saveDoc(4096);
-            JsonArray arr = saveDoc["playlists"].to<JsonArray>();
-            for (const String& p : paths) arr.add(p);
-            serializeJson(saveDoc, f);
-            f.close();
-            Serial.println("GIF playlists saved to SD.");
-        } else {
-            Serial.println("ERROR: Failed to write playlists_selected.json");
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
+            FsFile f = sd.open("/playlists_selected.json", O_WRITE | O_CREAT | O_TRUNC);
+            if (f) {
+                DynamicJsonDocument saveDoc(1024);
+                JsonArray arr = saveDoc["playlists"].to<JsonArray>();
+                for (const String& p : paths) arr.add(p);
+                serializeJson(saveDoc, f);
+                f.close();
+                Serial.println("GIF playlists saved to SD.");
+            } else {
+                Serial.println("ERROR: Failed to write playlists_selected.json");
+            }
+            xSemaphoreGive(sdMutex);
         }
 
         request->send(200, "application/json", "{\"success\":true}");
-    });
+    }, 4096);
     server.addHandler(savePlaylistsHandler);
 
     // API: Send Marquee Message
@@ -389,7 +478,11 @@ void WebServerAPI::setupRoutes() {
             clock->setTheme(static_cast<PublisherTheme>(themeId));
             extern ConfigLoader config;
             config.time.clock_theme = themeId;
-            config.saveToSD("/conf.ini");
+            bool saved = config.saveToSD("/conf.ini");
+            if (!saved) {
+                request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Theme applied but could not be saved to the SD card - it will revert on reboot.\"}");
+                return;
+            }
         }
         request->send(200, "application/json", "{\"success\":true}");
     });
@@ -485,7 +578,7 @@ void WebServerAPI::setupRoutes() {
 
         config.wifi.ssid = newSsid;
         config.wifi.password = newPass;
-        config.saveToSD("/conf.ini");
+        bool saved = config.saveToSD("/conf.ini");
 
         WiFi.disconnect(true);
         delay(100);
@@ -499,7 +592,10 @@ void WebServerAPI::setupRoutes() {
 
         if (WiFi.status() == WL_CONNECTED) {
             String msg = "Connected! IP: " + WiFi.localIP().toString();
+            if (!saved) msg += " (Warning: credentials could NOT be saved to SD - will be lost on reboot)";
             request->send(200, "application/json", "{\"success\":true,\"message\":\"" + msg + "\"}");
+        } else if (!saved) {
+            request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to connect AND could not save credentials to SD - nothing was persisted.\"}");
         } else {
             request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to connect to the new network. Credentials were still saved to SD for the next reboot.\"}");
         }

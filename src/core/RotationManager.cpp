@@ -71,6 +71,18 @@ void RotationManager::switchToModule(int index) {
   if (sequence.empty())
     return;
 
+  static int switchDepth = 0;
+  if (switchDepth > sequence.size()) {
+    // Infinite skip loop detected (e.g. no valid data for any module).
+    // Fallback to clock to prevent stack overflow and WDT crash.
+    switchDepth = 0;
+    sequence.clear();
+    sequence.push_back(MODULE_CLOCK);
+    switchToModule(0);
+    return;
+  }
+  switchDepth++;
+
   moduleStartTime = millis();
   RotationModule mod = sequence[index];
 
@@ -104,6 +116,8 @@ void RotationManager::switchToModule(int index) {
   if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER) {
     updateBackgroundSprites();
   }
+  
+  switchDepth = 0;
 }
 
 void RotationManager::loop() {
@@ -121,11 +135,7 @@ void RotationManager::loop() {
       advance = true;
     }
   } else {
-    // Draw background fighters for clock/date/weather
-    fighterEngine->loop();
-    fighterEngine->draw();
-
-    // Draw the main module
+    // Draw the main module first (background)
     if (currentMod == MODULE_CLOCK) {
       clockEngine->loop();
       if (now - moduleStartTime >=
@@ -141,6 +151,12 @@ void RotationManager::loop() {
       if (now - moduleStartTime >=
           config.idle.weather_duration_sec * 1000UL)
         advance = true;
+    }
+
+    // Draw fighters on top of clock/date/weather
+    if (config.idle.sprite_count > 0) {
+      fighterEngine->loop();
+      fighterEngine->draw();
     }
   }
 

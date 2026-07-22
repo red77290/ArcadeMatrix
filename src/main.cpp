@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
-#include <SD.h>
+#include <SPI.h>
+#include "core/SDUtils.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
@@ -25,6 +26,8 @@
 #define VSPI_MISO 19
 #define VSPI_MOSI 23
 
+SemaphoreHandle_t sdMutex;
+
 ConfigLoader config;
 MatrixEngine matrixEngine;
 GifEngine gifEngine;
@@ -39,6 +42,8 @@ MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
 BitmapFontLoader customFontLoader;
+
+SdFs sd;
 
 unsigned long lastTick = 0;
 uint8_t currentMinute = 42;
@@ -59,9 +64,12 @@ void setup() {
     esp_task_wdt_init(WDT_TIMEOUT_S, true /* panic and reboot on timeout */);
     esp_task_wdt_add(NULL);
 
+    sdMutex = xSemaphoreCreateMutex();
+
     // 1. Initialize SD Card using VSPI
     SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-    if (!SD.begin(SD_CS_PIN, SPI)) {
+    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
+    if (!sd.begin(spiConfig)) {
         Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
         while (1) { delay(100); }
     }
@@ -86,9 +94,10 @@ void setup() {
     // 4. Initialize Engines
     gifEngine.begin(matrixEngine.getDisplay());
 
-    // Load saved GIF playlists from SD, fallback to default /gifs
+    // Load saved GIF playlists from SD, fallback to all available playlists
     {
-        File playlistFile = SD.open("/playlists_selected.json", FILE_READ);
+        bool selectedLoaded = false;
+        FsFile playlistFile = sd.open("/playlists_selected.json", O_READ);
         if (playlistFile) {
             DynamicJsonDocument doc(4096);
             DeserializationError error = deserializeJson(doc, playlistFile);
@@ -99,15 +108,31 @@ void setup() {
                 for (JsonVariant v : arr) paths.push_back(v.as<String>());
                 if (!paths.empty()) {
                     gifEngine.setDefaultPlaylists(paths);
+                    selectedLoaded = true;
                     Serial.printf("Loaded %d GIF playlists from playlists_selected.json\n", paths.size());
-                } else {
-                    gifEngine.setDefaultPlaylists({"/gifs"});
                 }
+            }
+        }
+        
+        if (!selectedLoaded) {
+            std::vector<String> paths;
+            FsFile master = sd.open("/gifs/playlists.json", O_READ);
+            if (master) {
+                DynamicJsonDocument masterDoc(16384);
+                if (!deserializeJson(masterDoc, master)) {
+                    JsonObject root = masterDoc.as<JsonObject>();
+                    for (JsonPair kv : root) {
+                        paths.push_back(kv.value()["path"].as<String>());
+                    }
+                }
+                master.close();
+            }
+            if (!paths.empty()) {
+                gifEngine.setDefaultPlaylists(paths);
+                Serial.printf("Loaded %d GIF playlists from default playlists.json\n", paths.size());
             } else {
                 gifEngine.setDefaultPlaylists({"/gifs"});
             }
-        } else {
-            gifEngine.setDefaultPlaylists({"/gifs"});
         }
     }
 
@@ -264,15 +289,31 @@ void loop() {
     // Marquee (live box-art/frontend push) takes priority over everything else while active,
     // matching the RPi's behavior where a marquee push interrupts whatever the idle rotation
     // was showing.
-    if (marqueeEngine && marqueeEngine->isActive()) {
-        marqueeEngine->loop();
-    } else if (messageEngine && messageEngine->isActive()) {
-        messageEngine->loop();
-    } else {
-        rotationManager->loop();
+    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+        if (marqueeEngine && marqueeEngine->isActive()) {
+            marqueeEngine->loop();
+        } else if (messageEngine && messageEngine->isActive()) {
+            messageEngine->loop();
+        } else if (config.mqtt.enabled) {
+            if (gifEngine.isActive()) {
+                gifEngine.loop();
+            } else {
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.getDisplay()->setTextSize(1);
+                matrixEngine.getDisplay()->setTextColor(matrixEngine.getDisplay()->color565(128, 128, 128));
+                int yPos = (config.matrix.height / 2) - 8;
+                matrixEngine.getDisplay()->setCursor(4, yPos);
+                matrixEngine.getDisplay()->print("Waiting for");
+                matrixEngine.getDisplay()->setCursor(14, yPos + 10);
+                matrixEngine.getDisplay()->print("Marquee...");
+            }
+        } else {
+            rotationManager->loop();
+        }
+        
+        if (frontendListener) frontendListener->loop();
+        xSemaphoreGive(sdMutex);
     }
-    
-    if (frontendListener) frontendListener->loop();
 
     // 2. Fetch Time & Handle Night Mode
     static int lastSec = -1;
@@ -310,13 +351,17 @@ void loop() {
             clockEngine->updateTime(realTime);
             
             char dateBuffer[32];
-            if (config.dateSettings.format == "MM/DD") {
-                strftime(dateBuffer, sizeof(dateBuffer), "%m/%d", &timeinfo);
-            } else if (config.dateSettings.format == "DD MMM") {
-                strftime(dateBuffer, sizeof(dateBuffer), "%d %b", &timeinfo);
-            } else {
-                strftime(dateBuffer, sizeof(dateBuffer), "%d/%m", &timeinfo);
-            }
+            String fmt = config.dateSettings.format;
+            if (fmt.length() == 0) fmt = "%d/%m";
+            
+            // Allow basic UI tokens like DD/MM/YYYY, or let standard %d/%m/%Y pass through
+            fmt.replace("YYYY", "%Y");
+            fmt.replace("YY", "%y");
+            fmt.replace("MM", "%m");
+            fmt.replace("DD", "%d");
+            fmt.replace("MMM", "%b");
+            
+            strftime(dateBuffer, sizeof(dateBuffer), fmt.c_str(), &timeinfo);
             dateEngine->setDate(dateBuffer);
         }
     }

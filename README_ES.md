@@ -20,12 +20,13 @@ indexación de playlists GIF.)
 ## Características
 - **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine** y **Versus (Mugen)**.
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
-- **Motor de lucha MUGEN:** simula juegos de lucha 2D de forma nativa en la matriz usando sprites extraídos con una alineación perfecta sobre el suelo virtual.
-- **Motor GIF:** reproducción fluida de GIF almacenados en la tarjeta SD.
-- **Soporte MQTT:** se integra perfectamente con Batocera y Recalbox para mostrar los marquees de los juegos.
+- **Motor de Pelea MUGEN:** ¡Simula nativamente juegos de pelea 2D en la matriz usando sprites extraídos con una alineación perfecta en el suelo virtual!
+- **Motor GIF:** Reproducción fluida de GIFs almacenados en la tarjeta SD.
+- **Clima (OpenWeatherMap):** Pronóstico de 3 días, con una caché de búsqueda de 15 minutos para ahorrar llamadas a la API.
+- **Soporte MQTT:** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
 
 ## Estructura de la tarjeta SD
-Formatea tu tarjeta SD en **FAT32**. Tu tarjeta SD debería verse así:
+Formatea tu tarjeta SD en **FAT32** o **exFAT**. Tu tarjeta SD debería verse así:
 ```
 SD:/
   ├─ conf.ini
@@ -39,7 +40,7 @@ SD:/
           ├─ idle.fgt
           └─ attack.fgt
   └─ fighters_64/
-      └─ (misma estructura para paneles de 64px de alto)
+      ├─ (misma estructura para paneles de 64px de alto)
 ```
 *Nota: la carpeta `www/` ya no es necesaria en la tarjeta SD, ya que la interfaz web ahora está integrada directamente en el firmware del ESP32.*
 
@@ -88,14 +89,14 @@ Para ver todos los detalles, consulta `tools/gif_indexation/README_ES.md`.
 El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personalizadas cargadas desde la tarjeta SD en lugar de las ~6 fuentes compiladas en el firmware, usando las mismas fuentes `.bdf` que `ArcadeMatrix_RPi` ya incluye. Sin embargo, el ESP32 no tiene un analizador BDF a bordo, por lo que primero deben convertirse al formato compacto `.amf`.
 
 1. Copia tu(s) fuente(s) `.bdf` en la carpeta `fonts/` de tu tarjeta SD.
-2. Ejecuta el conversor por lotes:
+2. Ejecuta el convertidor por lotes:
    ```bash
-   python3 tools/font_conversion/generate_fonts.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
+   python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD   # pasa la raíz de la SD o su carpeta fonts/
    ```
-   (Sin dependencias externas - solo Python estándar. También se proporcionan `start_generate_fonts.sh`/`.bat` si prefieres no usar la línea de comandos directamente.)
-3. Esto convierte cada `.bdf` en un `.amf` del mismo nombre, en el mismo lugar, y elimina los `.bdf` originales. Las fuentes resultantes aparecen inmediatamente en la página Settings de la interfaz web (menús desplegables "Font" de Reloj/Fecha) - sin necesidad de reiniciar.
+   (No requiere dependencias externas. Solo Python estándar.)
+3. Esto convierte cada `.bdf` en un `.amf` del mismo nombre en el mismo lugar. Las fuentes resultantes aparecen de inmediato en la página de Configuración de la interfaz web (menús desplegables "Font" de Reloj/Fecha) - sin necesidad de reiniciar.
 
-Para ver todos los detalles, consulta `tools/font_conversion/README_ES.md`.
+Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 
 ## Compilación
 Para compilar el firmware por tu cuenta, debes usar **PlatformIO**.

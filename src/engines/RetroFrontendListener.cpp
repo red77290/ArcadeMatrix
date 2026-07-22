@@ -1,6 +1,6 @@
 #include "RetroFrontendListener.h"
 #include <ArduinoJson.h>
-#include <SD.h>
+#include "../core/SDUtils.h"
 
 RetroFrontendListener* RetroFrontendListener::instance = nullptr;
 
@@ -127,7 +127,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload) {
     String folder = mapSystemToPixelcadeFolder(String(systemRaw));
     String artPath = "/pixelcade/" + folder + "/" + game + ".png";
 
-    if (SD.exists(artPath)) {
+    if (sd.exists(artPath)) {
         Serial.printf("RetroFrontendListener: playing cached Pixelcade art %s\n", artPath.c_str());
         gif->playGif(artPath.c_str());
         return;

@@ -32,7 +32,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         25, 26, 27,   // R1, G1, B1
         14, 12, 13,   // R2, G2, B2
         33, 32, 22,   // A, B, C
-        17, 18,       // D, E (18 is standard for E on 64x64. Change to 21 if your shield uses 21)
+        17, 21,       // D, E (Changed from 18 to 21 to avoid conflict with VSPI SCK)
         4, 15, 16     // LAT, OE, CLK
     };
 

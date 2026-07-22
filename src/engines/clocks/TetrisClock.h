@@ -2,7 +2,7 @@
 #define TETRISCLOCK_H
 
 #include "../ClockEngine.h"
-#include <vector>
+#include <list>
 
 struct TetrisBlock {
     int charIndex;
@@ -22,7 +22,7 @@ public:
 private:
     bool isGameboy;
     TimeData storedTime;
-    std::vector<TetrisBlock> blocks;
+    std::list<TetrisBlock> blocks;
     char lastTimeStr[12];
     uint32_t lastFrameTime;
     int blockSize;

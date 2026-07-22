@@ -49,9 +49,22 @@ void SlotMachineClock::update() {
         strcpy(lastTimeStr, timeStr);
     }
     
+    // Advance animation state at most every 30ms, but always redraw below on every call. The
+    // outer main loop clears the DMA back buffer and flips it every ~33ms unconditionally
+    // (fixed ~30 FPS), so skipping the draw here (as this used to do) left the cleared buffer
+    // flipped to screen as a black flash on every iteration where this throttle hadn't elapsed
+    // yet - causing severe flicker.
     if (millis() - lastFrameTime > 30) {
         lastFrameTime = millis();
         
+        for (int i = 0; i < numDigits; i++) {
+            if (digits[i].spinning) {
+                digits[i].yOffset += digits[i].speed;
+            }
+        }
+    }
+
+    {
         matrix->fillScreen(0);
         
         int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
@@ -82,7 +95,6 @@ void SlotMachineClock::update() {
             int advance = (config.time.clock_font == -1) ? (6 * gfxSize) : (cbw + 1);
             
             if (digits[i].spinning) {
-                digits[i].yOffset += digits[i].speed;
                 if (digits[i].yOffset >= bh + 4) {
                     digits[i].yOffset = 0;
                     // Random char while spinning

@@ -23,3 +23,9 @@ fighters_32/
 fighters_64/
 release/sdCard/fighters_32/
 release/sdCard/fighters_64/
+
+# IDE
+.idea/
+
+# Python
+__pycache__/

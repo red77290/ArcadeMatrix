@@ -235,9 +235,11 @@ void DateEngine::applyThemeSettings() {
     if (sMax < 1) sMax = 1;
     
     int gfxSize = 1;
-    if (logicalSize == 3) gfxSize = sMax;
-    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 3);
-    else gfxSize = max(1, sMax / 3);
+    if (logicalSize >= 5) gfxSize = sMax;
+    else if (logicalSize == 4) gfxSize = max(1, (sMax * 4) / 5);
+    else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 5);
+    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 5);
+    else gfxSize = max(1, sMax / 5);
     
     matrix->setTextSize(gfxSize);
     
@@ -299,16 +301,31 @@ void DateEngine::loop() {
     uint16_t w, h;
     matrix->getTextBounds(currentDate, 0, 0, &x1, &y1, &w, &h);
     
-    // Use bounds x1 and y1 for precise centering, taking into account font offsets
-    int x = (matrixW - w) / 2 - x1 + config.dateSettings.date_offset_x;
-    int y;
-    if (currentTheme == THEME_NONE) {
-        y = (matrixH - 8) / 2 + config.dateSettings.date_offset_y; // Center default font vertically
-    } else {
-        // GFX Fonts draw from baseline, so we adjust y accurately using y1 bound
-        y = (matrixH - h) / 2 - y1 + config.dateSettings.date_offset_y; 
+    extern ConfigLoader config;
+    int logicalSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
+    int effectDepth = (logicalSize >= 5) ? 2 : 1;
+    
+    int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
+    if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+        leftExtra = 1; rightExtra = effectDepth + 1;
+        topExtra = 1; bottomExtra = effectDepth + 1;
+    } else if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
+        leftExtra = effectDepth; rightExtra = effectDepth;
+        topExtra = effectDepth; bottomExtra = effectDepth;
+    } else if (currentTheme != THEME_NONE) {
+        rightExtra = effectDepth; bottomExtra = effectDepth;
     }
     
+    int fullW = leftExtra + w + rightExtra;
+    int fullH = topExtra + h + bottomExtra;
+    
+    int x = (matrixW - fullW) / 2 + leftExtra + config.dateSettings.date_offset_x - x1;
+    int y = (matrixH - fullH) / 2 + topExtra + config.dateSettings.date_offset_y - y1;
+
+    // Calculate offset based on current date_size setting
+    // (Already calculated above)
+    // Calculate effect depth based on user request (1 pixel normally, 2 pixels for size 5)
+    // (Already calculated above, but kept here for scope if needed. We can just use the existing one.)
 
     // Draw shadow/outline. Mirrors ArcadeMatrix_RPi's core/theme.py draw_styled_text() and
     // ArcadeClock::drawTextWithShadow(): real-world publisher logos (Nintendo/Capcom/Sega) get a
@@ -318,25 +335,37 @@ void DateEngine::loop() {
     matrix->setTextColor(shadowColor);
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
         // Full outline for certain publishers
-        matrix->setCursor(x + 1, y); matrix->print(currentDate);
-        matrix->setCursor(x - 1, y); matrix->print(currentDate);
-        matrix->setCursor(x, y + 1); matrix->print(currentDate);
-        matrix->setCursor(x, y - 1); matrix->print(currentDate);
+        for (int i = 1; i <= effectDepth; i++) {
+            matrix->setCursor(x + i, y); matrix->print(currentDate);
+            matrix->setCursor(x - i, y); matrix->print(currentDate);
+            matrix->setCursor(x, y + i); matrix->print(currentDate);
+            matrix->setCursor(x, y - i); matrix->print(currentDate);
+        }
     } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
         // Arcade 3D Outline Effect
-        matrix->setCursor(x + 2, y + 2); matrix->print(currentDate);
-        matrix->setCursor(x + 1, y + 2); matrix->print(currentDate);
-        matrix->setCursor(x + 2, y + 1); matrix->print(currentDate);
+        int shadowDepth = effectDepth + 1;
+        for (int i = 1; i <= shadowDepth; i++) {
+            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i - 1, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i, y + i - 1); matrix->print(currentDate);
+        }
 
         uint16_t outline = matrix->color565(0, 0, 0);
         matrix->setTextColor(outline);
+        // Black outline remains crisp at 1-pixel thick to avoid looking like a gap
+        matrix->setCursor(x - 1, y - 1); matrix->print(currentDate);
+        matrix->setCursor(x, y - 1); matrix->print(currentDate);
+        matrix->setCursor(x + 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x - 1, y); matrix->print(currentDate);
         matrix->setCursor(x + 1, y); matrix->print(currentDate);
-        matrix->setCursor(x, y - 1); matrix->print(currentDate);
+        matrix->setCursor(x - 1, y + 1); matrix->print(currentDate);
         matrix->setCursor(x, y + 1); matrix->print(currentDate);
+        matrix->setCursor(x + 1, y + 1); matrix->print(currentDate);
     } else {
         // Drop shadow
-        matrix->setCursor(x + 1, y + 1); matrix->print(currentDate);
+        for (int i = 1; i <= effectDepth; i++) {
+            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
+        }
     }
     
     // Draw main text

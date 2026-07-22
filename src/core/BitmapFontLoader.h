@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <SD.h>
+#include "SDUtils.h"
 #include <gfxfont.h>
 
 /**

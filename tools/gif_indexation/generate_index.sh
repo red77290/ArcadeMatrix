@@ -32,20 +32,28 @@ echo "{" > "$OUT_FILE"
 # Iterate over directories
 first_dir=true
 find "$ROOT_DIR" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
-    folder_name=$(basename "$dir")
+    folder_name="${dir##*/}"
+    
+    # Skip hidden directories like .Trashes, .Spotlight-V100, etc.
+    if [[ "$folder_name" == .* ]]; then
+        continue
+    fi
     
     # Get all animations in this dir
     files=()
+    shopt -s nullglob
     for ext in gif raw GIF RAW; do
-        # Use nullglob to avoid literal '*.*' strings if no files match
-        shopt -s nullglob
         for f in "$dir"/*.$ext; do
             if [ -f "$f" ]; then
-                files+=("$(basename "$f")")
+                base_f="${f##*/}"
+                # Skip macOS AppleDouble (._) files
+                if [[ "$base_f" != ._* ]]; then
+                    files+=("$base_f")
+                fi
             fi
         done
-        shopt -u nullglob
     done
+    shopt -u nullglob
     
     if [ ${#files[@]} -gt 0 ]; then
         if [ "$first_dir" = true ]; then
@@ -55,22 +63,13 @@ find "$ROOT_DIR" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
         fi
         
         echo "  \"$folder_name\": {" >> "$OUT_FILE"
-        echo "    \"path\": \"/$folder_name\"," >> "$OUT_FILE"
-        echo "    \"files\": [" >> "$OUT_FILE"
+        echo "    \"path\": \"/gifs/$folder_name\"," >> "$OUT_FILE"
+        echo "    \"count\": ${#files[@]}" >> "$OUT_FILE"
+        printf "  }" >> "$OUT_FILE"
         
-        first_file=true
-        for file in "${files[@]}"; do
-            if [ "$first_file" = true ]; then
-                first_file=false
-            else
-                echo "," >> "$OUT_FILE"
-            fi
-            echo -n "      \"$file\"" >> "$OUT_FILE"
-        done
-        
-        echo "" >> "$OUT_FILE"
-        echo "    ]" >> "$OUT_FILE"
-        echo -n "  }" >> "$OUT_FILE"
+        # Also create an index.txt inside the folder for O(1) random access in GifEngine
+        INDEX_TXT="$dir/index.txt"
+        printf "%s\n" "${files[@]}" > "$INDEX_TXT"
         
         echo "[OK] Found ${#files[@]} animations in $folder_name"
     fi
