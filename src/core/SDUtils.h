@@ -1,5 +1,15 @@
 #pragma once
 #include <Arduino.h>
+#include <SdFat.h>
+
+extern SdFs sd;
+
+inline String getFileName(FsFile& f) {
+    char buf[256];
+    f.getName(buf, sizeof(buf));
+    return String(buf);
+}
+
 
 /**
  * Returns true if the filename is a macOS system file that should be ignored:

@@ -12,7 +12,7 @@
 #include <PNGdec.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <FS.h>
-#include <SD.h>
+#include "core/SDUtils.h"
 #include <vector>
 
 /**
@@ -93,8 +93,8 @@ private:
     std::vector<String> defaultPlaylists;
     std::vector<String> activeFiles;
     
-    File currentFile;                ///< Handle to the currently streaming file (GIF/raw)
-    File pngFile;                    ///< Separate handle for PNGdec's callbacks (synchronous decode)
+    FsFile currentFile;              ///< Handle to the currently streaming file (GIF/raw)
+    FsFile pngFile;                  ///< Separate handle for PNGdec's callbacks (synchronous decode)
     bool isRaw;                      ///< Flag indicating if file is .raw instead of .gif
     bool isPng;                      ///< Flag indicating if file is a static .png image
     unsigned long rawLastFrameTime;

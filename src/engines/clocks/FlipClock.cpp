@@ -111,9 +111,11 @@ void FlipClock::drawStaticTime() {
     
     int panelW = 10;
     int panelH = 14;
-    if (logicalSize == 3) { panelW = maxW; panelH = maxH; }
-    else if (logicalSize == 2) { panelW = maxW * 2 / 3; panelH = maxH * 2 / 3; }
-    else { panelW = maxW / 3; panelH = maxH / 3; }
+    if (logicalSize >= 5) { panelW = maxW * 1.5; panelH = maxH * 1.5; }
+    else if (logicalSize == 4) { panelW = maxW; panelH = maxH; }
+    else if (logicalSize == 3) { panelW = maxW * 3 / 4; panelH = maxH * 3 / 4; }
+    else if (logicalSize == 2) { panelW = maxW * 2 / 4; panelH = maxH * 2 / 4; }
+    else { panelW = maxW / 4; panelH = maxH / 4; }
     
     // Lower the floor for 64x32 compatibility
     if (panelW < 3) panelW = 3;
@@ -159,9 +161,11 @@ void FlipClock::drawFlappingTime() {
     
     int panelW = 10;
     int panelH = 14;
-    if (logicalSize == 3) { panelW = maxW; panelH = maxH; }
-    else if (logicalSize == 2) { panelW = maxW * 2 / 3; panelH = maxH * 2 / 3; }
-    else { panelW = maxW / 3; panelH = maxH / 3; }
+    if (logicalSize >= 5) { panelW = maxW * 1.5; panelH = maxH * 1.5; }
+    else if (logicalSize == 4) { panelW = maxW; panelH = maxH; }
+    else if (logicalSize == 3) { panelW = maxW * 3 / 4; panelH = maxH * 3 / 4; }
+    else if (logicalSize == 2) { panelW = maxW * 2 / 4; panelH = maxH * 2 / 4; }
+    else { panelW = maxW / 4; panelH = maxH / 4; }
     
     // Lower the floor for 64x32 compatibility
     if (panelW < 3) panelW = 3;

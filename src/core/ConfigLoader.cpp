@@ -1,5 +1,5 @@
 #include "ConfigLoader.h"
-#include <SD.h>
+#include "SDUtils.h"
 #include <ArduinoJson.h>
 #include "../engines/GifEngine.h"
 
@@ -54,6 +54,7 @@ void ConfigLoader::setDefaults() {
 
     weather.api_key = "";
     weather.city = "";
+    weather.lang = "en";
     weather.weather_offset_x = 0;
     weather.weather_offset_y = 0;
 
@@ -161,6 +162,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
     else if (currentSection == "WEATHER") {
         if (key == "API_KEY") weather.api_key = value;
         else if (key == "CITY") weather.city = value;
+        else if (key == "LANG") weather.lang = value;
         else if (key == "WEATHER_OFFSET_X") weather.weather_offset_x = value.toInt();
         else if (key == "WEATHER_OFFSET_Y") weather.weather_offset_y = value.toInt();
     }
@@ -211,7 +213,9 @@ bool ConfigLoader::parseFromString(const char* iniContent) {
 }
 
 bool ConfigLoader::parseFromSD(const char* filepath) {
-    File file = SD.open(filepath, FILE_READ);
+    if (!sd.exists(filepath)) return false;
+    
+    FsFile file = sd.open(filepath, O_READ);
     if (!file) {
         Serial.printf("Failed to open %s\n", filepath);
         return false;
@@ -226,7 +230,7 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     file.close();
 
     // Load saved playlists for default rotation
-    File playlistFile = SD.open("/playlists_selected.json", FILE_READ);
+    FsFile playlistFile = sd.open("/playlists_selected.json", O_READ);
     if (playlistFile) {
         DynamicJsonDocument doc(4096);
         DeserializationError error = deserializeJson(doc, playlistFile);
@@ -246,12 +250,30 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
+    // The SD card on this project shares timing-sensitive SPI access with a lot of other
+    // activity (HUB75 DMA output, GIF/font reads, ...). Transient "Wait Failed"/"Select Failed"
+    // glitches from the SD driver are common and usually resolve themselves a few milliseconds
+    // later - so a single failed SD.open()/write here shouldn't silently discard the user's
+    // settings. Retry a few times before giving up.
+    const int MAX_ATTEMPTS = 3;
+    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (writeConfigFile(filepath)) {
+            return true;
+        }
+        Serial.printf("ConfigLoader::saveToSD: attempt %d/%d failed, retrying...\n", attempt, MAX_ATTEMPTS);
+        delay(50);
+    }
+    Serial.println("ConfigLoader::saveToSD: all attempts failed - settings were NOT persisted to SD!");
+    return false;
+}
+
+bool ConfigLoader::writeConfigFile(const char* filepath) {
     // Some ESP32 cores append to the file if it exists, so we must remove it first to overwrite cleanly
-    if (SD.exists(filepath)) {
-        SD.remove(filepath);
+    if (sd.exists(filepath)) {
+        sd.remove(filepath);
     }
     
-    File file = SD.open(filepath, FILE_WRITE);
+    FsFile file = sd.open(filepath, O_WRITE | O_CREAT | O_TRUNC);
     if (!file) {
         Serial.println("Failed to open config file for writing");
         return false;
@@ -317,6 +339,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println("[weather]");
     file.println("api_key=" + weather.api_key);
     file.println("city=" + weather.city);
+    file.println("lang=" + weather.lang);
     file.println("weather_offset_x=" + String(weather.weather_offset_x));
     file.println("weather_offset_y=" + String(weather.weather_offset_y));
     file.println();
@@ -350,5 +373,21 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.println();
     
     file.close();
+
+    // Sanity check: an SD glitch mid-write can leave a truncated/empty file even though close()
+    // didn't report an error. A full conf.ini is always several hundred bytes, so treat anything
+    // implausibly small as a failed write (triggers a retry in saveToSD()).
+    FsFile check = sd.open(filepath, O_READ);
+    if (!check) {
+        Serial.println("ConfigLoader: conf.ini could not be reopened after writing - treating as failed write.");
+        return false;
+    }
+    size_t writtenSize = check.size();
+    check.close();
+    if (writtenSize < 200) {
+        Serial.printf("ConfigLoader: conf.ini looks truncated after writing (%u bytes) - treating as failed write.\n", (unsigned)writtenSize);
+        return false;
+    }
+
     return true;
 }

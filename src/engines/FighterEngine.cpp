@@ -1,9 +1,9 @@
-#include <SD.h>
+#include "../core/SDUtils.h"
 #include "FighterEngine.h"
 #include "../core/SDUtils.h"
 #include "../core/ConfigLoader.h"
 
-#define MAX_FIGHTER_FRAME_SIZE 20480
+#define MAX_FIGHTER_FRAME_SIZE 98304
 
 FighterEngine::FighterEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
 }
@@ -31,7 +31,7 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    File f = SD.open(indexPath);
+    FsFile f = sd.open(indexPath, O_READ);
     if (!f) {
         Serial.println("FighterEngine: No index.txt found!");
         return;
@@ -69,7 +69,7 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
-    File f = SD.open(indexPath);
+    FsFile f = sd.open(indexPath, O_READ);
     if (!f) return false;
     
     int targetLine = random(0, numAvailableFighters);
@@ -99,7 +99,9 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
-    File f = SD.open(filepath, FILE_READ);
+    if (!sd.exists(filepath)) return false;
+    
+    FsFile f = sd.open(filepath, O_READ);
     if (!f) {
         Serial.printf("FighterEngine Error: Could not open file %s\n", filepath);
         return false;
@@ -226,14 +228,24 @@ void FighterEngine::processLoadState() {
             if (!loadFighterAnim(p1.animWin, (loadDir + "/" + p1.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
             else currentLoadState = LOAD_P1_SPECIAL;
             break;
-        case LOAD_P1_SPECIAL:
-            loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(random(1, 4)) + ".fgt").c_str());
+        case LOAD_P1_SPECIAL: {
+            int t[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) {
+                if (loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
+            }
             currentLoadState = LOAD_P1_SUPER;
             break;
-        case LOAD_P1_SUPER:
-            loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(random(1, 4)) + ".fgt").c_str());
+        }
+        case LOAD_P1_SUPER: {
+            int t[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) {
+                if (loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
+            }
             currentLoadState = LOAD_P1_FALL;
             break;
+        }
         case LOAD_P1_FALL:
             loadFighterAnim(p1.animFall, (loadDir + "/" + p1.name + "/fall.fgt").c_str());
             currentLoadState = LOAD_P2_WALK;
@@ -254,28 +266,39 @@ void FighterEngine::processLoadState() {
             if (!loadFighterAnim(p2.animWin, (loadDir + "/" + p2.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
             else currentLoadState = LOAD_P2_SPECIAL;
             break;
-        case LOAD_P2_SPECIAL:
-            loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(random(1, 4)) + ".fgt").c_str());
+        case LOAD_P2_SPECIAL: {
+            int t[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) {
+                if (loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
+            }
             currentLoadState = LOAD_P2_SUPER;
             break;
-        case LOAD_P2_SUPER:
-            loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(random(1, 4)) + ".fgt").c_str());
+        }
+        case LOAD_P2_SUPER: {
+            int t[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) {
+                if (loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
+            }
             currentLoadState = LOAD_P2_FALL;
             break;
+        }
         case LOAD_P2_FALL:
             loadFighterAnim(p2.animFall, (loadDir + "/" + p2.name + "/fall.fgt").c_str());
             
             // Done! Finish setup
             {
-                // Align characters so their ACTUAL standing head touches the top of the screen (y=0)
-                int c1_ground_at_0 = p1.ground_y - p1.head_y;
-                int c2_ground_at_0 = p2.ground_y - p2.head_y;
-                int fight_max_h = (c1_ground_at_0 > c2_ground_at_0) ? c1_ground_at_0 : c2_ground_at_0;
+                // Align characters so their ground line touches the bottom of the screen
+                int ground_screen_y = matrix->height() - 1;
 
-                p1.direction = 1; p1.x = -p1.width_px; p1.y = fight_max_h - p1.ground_y;
+                p1.direction = 1; 
+                p1.x = -p1.width_px; 
+                p1.y = ground_screen_y - p1.ground_y;
                 
-                p2.direction = -1; p2.x = matrix->width();
-                p2.y = fight_max_h - p2.ground_y;
+                p2.direction = -1; 
+                p2.x = matrix->width();
+                p2.y = ground_screen_y - p2.ground_y;
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
@@ -333,7 +356,7 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             p.animSuper.cachedFrameIndex = -1;
             p.animFall.cachedFrameIndex = -1;
         }
-        p.activeFile = SD.open(anim->filepath, FILE_READ);
+        p.activeFile = sd.open(anim->filepath.c_str(), O_READ);
     }
 }
 

@@ -29,8 +29,9 @@ Get-ChildItem -Path $Path -Directory | ForEach-Object {
     $files = Get-ChildItem -Path $_.FullName -File | Where-Object { $_.Extension -match "\.(gif|raw)$" } | Select-Object -ExpandProperty Name
     
     if ($files.Count -gt 0) {
+        # Create the object for playlists.json
         $playlists[$folderName] = @{
-            "path" = "/$folderName"
+            "path" = "/gifs/$folderName"
             "files" = $files
         }
         $totalFiles += $files.Count
