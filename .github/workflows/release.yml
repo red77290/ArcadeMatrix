@@ -104,6 +104,8 @@ jobs:
             ArcadeMatrix-esp32dev.zip
             ArcadeMatrix-esp32s3.zip
             ArcadeMatrix-sdcard.zip
+            release/esp32dev/firmware-esp32dev.bin
+            release/esp32s3/firmware-esp32s3.bin
           generate_release_notes: true
           draft: false
           prerelease: false
