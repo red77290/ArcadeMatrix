@@ -6,6 +6,7 @@
 .DS_Store
 Thumbs.db
 *.bin
+!webinstaller/bin/*.bin
 *.elf
 *.map
 
