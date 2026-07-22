@@ -29,7 +29,7 @@ bool GifEngine::playGif(const char* filepath) {
     Serial.println(path);
     
     if (path.endsWith(".raw") || path.endsWith(".RAW")) {
-        currentFile = SD.open(filepath);
+        currentFile = sd.open(path.c_str(), O_READ);
         if (!currentFile) {
             Serial.println("Error: Failed to open RAW file!");
             return false;
@@ -144,7 +144,7 @@ void GifEngine::loadNextFileInPlaylist() {
         
         String indexPath = pPath + "/index.txt";
         indexPath.replace("//", "/");
-        File indexFile = SD.open(indexPath);
+        FsFile indexFile = sd.open(indexPath, O_READ);
         
         String targetPath = "";
         if (indexFile && indexFile.size() > 0) {
@@ -160,6 +160,7 @@ void GifEngine::loadNextFileInPlaylist() {
             targetPath.trim();
             // Skip macOS junk entries
             while (isMacJunk(targetPath) && indexFile.available()) {
+                yield();
                 targetPath = indexFile.readStringUntil('\n');
                 targetPath.trim();
             }
@@ -177,49 +178,7 @@ void GifEngine::loadNextFileInPlaylist() {
         }
         
         if (targetPath.length() == 0) {
-            File dir = SD.open(pPath);
-            if (dir && dir.isDirectory()) {
-                int count = 0;
-                File f = dir.openNextFile();
-                while (f) {
-                    if (!f.isDirectory() && !isMacJunk(String(f.name())) &&
-                        (String(f.name()).endsWith(".gif") || String(f.name()).endsWith(".GIF") ||
-                         String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW") ||
-                         String(f.name()).endsWith(".png") || String(f.name()).endsWith(".PNG"))) {
-                        String fname = String(f.name());
-                        if (fname.indexOf("._") == -1) count++;
-                    }
-                    f.close();
-                    f = dir.openNextFile();
-                }
-                dir.close();
-                
-                if (count > 0) {
-                    int target = random(count);
-                    int current = 0;
-                    dir = SD.open(pPath);
-                    f = dir.openNextFile();
-                    while (f) {
-                        if (!f.isDirectory() && !isMacJunk(String(f.name())) &&
-                            (String(f.name()).endsWith(".gif") || String(f.name()).endsWith(".GIF") ||
-                             String(f.name()).endsWith(".raw") || String(f.name()).endsWith(".RAW") ||
-                             String(f.name()).endsWith(".png") || String(f.name()).endsWith(".PNG"))) {
-                            String fname = String(f.name());
-                            if (true) {
-                                if (current == target) {
-                                    targetPath = fname.startsWith("/") ? fname : pPath + "/" + fname;
-                                    f.close();
-                                    break;
-                                }
-                                current++;
-                            }
-                        }
-                        f.close();
-                        f = dir.openNextFile();
-                    }
-                    dir.close();
-                }
-            }
+            Serial.printf("GifEngine: No index.txt found in %s, please run generate_index.sh\n", pPath.c_str());
         }
         
         if (targetPath.length() > 0) {
@@ -336,7 +295,7 @@ void GifEngine::playRawFrame() {
 
 void* GifEngine::GIFOpenFile(const char *fname, int32_t *pSize) {
     if (!instance) return nullptr;
-    instance->currentFile = SD.open(fname);
+    instance->currentFile = sd.open(fname, O_READ);
     if (instance->currentFile) {
         *pSize = instance->currentFile.size();
         return (void*)&instance->currentFile;
@@ -345,13 +304,13 @@ void* GifEngine::GIFOpenFile(const char *fname, int32_t *pSize) {
 }
 
 void GifEngine::GIFCloseFile(void *pHandle) {
-    File *f = static_cast<File *>(pHandle);
+    FsFile *f = static_cast<FsFile *>(pHandle);
     if (f && *f) f->close();
 }
 
 int32_t GifEngine::GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
     int32_t iBytesRead = iLen;
-    File *f = static_cast<File *>(pFile->fHandle);
+    FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
     
     iBytesRead = f->read(pBuf, iLen);
@@ -360,7 +319,7 @@ int32_t GifEngine::GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
 }
 
 int32_t GifEngine::GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
-    File *f = static_cast<File *>(pFile->fHandle);
+    FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
     
     f->seek(iPosition);
@@ -406,7 +365,7 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
 
 void* GifEngine::PNGOpenFile(const char *fname, int32_t *pSize) {
     if (instance) {
-        instance->pngFile = SD.open(fname);
+        instance->pngFile = sd.open(fname, O_READ);
         if (instance->pngFile) {
             *pSize = instance->pngFile.size();
             return (void*)&instance->pngFile;
@@ -416,12 +375,12 @@ void* GifEngine::PNGOpenFile(const char *fname, int32_t *pSize) {
 }
 
 void GifEngine::PNGCloseFile(void *pHandle) {
-    File *f = static_cast<File *>(pHandle);
+    FsFile *f = static_cast<FsFile *>(pHandle);
     if (f && *f) f->close();
 }
 
 int32_t GifEngine::PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen) {
-    File *f = static_cast<File *>(pFile->fHandle);
+    FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
 
     int32_t iBytesRead = f->read(pBuf, iLen);
@@ -430,7 +389,7 @@ int32_t GifEngine::PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen) {
 }
 
 int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
-    File *f = static_cast<File *>(pFile->fHandle);
+    FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
 
     f->seek(iPosition);

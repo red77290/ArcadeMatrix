@@ -219,7 +219,7 @@
           <button class="btn tab-btn" data-target="tab-info" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">System Info</button>
         </div>
 
-        <div class="settings-content">
+        <div class="settings-content" id="settings-content-wrapper" style="opacity: 0; pointer-events: none; transition: opacity 0.3s ease;">
           <div id="tab-hardware" class="glass tab-pane active" style="display:block;">
             <h3 data-i18n="matrix_hardware">Matrix Hardware</h3>
             <div class="form-group">
@@ -237,51 +237,6 @@
               <div class="form-group" style="flex: 1; min-width:80px;">
                 <label>Cols (Width)</label>
                 <input type="number" id="setting-matrix-cols" class="text-input" value="64" />
-              </div>
-            </div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Chain Length</label>
-                <input type="number" id="setting-matrix-chain" class="text-input" value="1" />
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Parallel</label>
-                <input type="number" id="setting-matrix-parallel" class="text-input" value="1" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Hardware Mapping</label>
-              <select id="setting-matrix-mapping" class="select-input">
-                <option value="adafruit-hat">Adafruit HAT</option>
-                <option value="adafruit-hat-pwm">Adafruit HAT (PWM)</option>
-                <option value="regular" selected>Joy-IT HAT / Regular (Active-3)</option>
-                <option value="regular-pi1">Regular Pi1</option>
-                <option value="classic-pi1">Classic Pi1</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>GPIO Slowdown (Increase if matrix is glitchy or black, e.g. 4 for Pi4, 5 for Pi5)</label>
-              <input type="number" id="setting-matrix-slowdown" class="text-input" value="2" />
-            </div>
-            <div class="form-group">
-              <label>RGB Sequence (Change if colors are swapped, e.g., red is green)</label>
-              <select id="setting-matrix-rgb-sequence" class="select-input">
-                <option value="RGB">RGB</option>
-                <option value="RBG">RBG</option>
-                <option value="GRB">GRB</option>
-                <option value="GBR">GBR</option>
-                <option value="BRG">BRG</option>
-                <option value="BGR">BGR</option>
-              </select>
-            </div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>PWM Bits (1-11, lower reduces flicker but degrades color)</label>
-                <input type="number" id="setting-matrix-pwm-bits" class="text-input" value="11" min="1" max="11" />
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>PWM LSB Nanoseconds (130-300, higher reduces flicker)</label>
-                <input type="number" id="setting-matrix-pwm-lsb-nanoseconds" class="text-input" value="130" min="50" max="1000" />
               </div>
             </div>
             <button id="btn-save-hardware" class="btn secondary" style="margin-top:1rem; width: 100%;">Save Hardware & Restart</button>
@@ -388,9 +343,9 @@
           <div id="sect-clock" class="glass tab-pane" style="display:none;">
             <h3 data-i18n="clock_config">Clock Configuration</h3>
             <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Clock Size</label>
-                <input type="number" id="setting-clock-size" class="text-input" value="2" min="1" max="100">
+              <div class="form-group" style="flex: 1; min-width:80px;" title="Taille de 1 (Minimum) à 5 (Oversize)">
+                <label>Size (1-5)</label>
+                <input type="number" id="setting-clock-size" class="text-input" value="4" min="1" max="5">
               </div>
               <div class="form-group" style="flex: 1; min-width:80px;">
                 <label>Offset X</label>
@@ -497,9 +452,9 @@
                 <label data-i18n="label_date_format">Date Format</label>
                 <input type="text" id="setting-date-format" class="text-input" value="DD/MM">
               </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>Date Size</label>
-                <input type="number" id="setting-date-size" class="text-input" value="2" min="1" max="100">
+              <div class="form-group" style="flex: 1; min-width:80px;" title="Taille de 1 (Minimum) à 5 (Oversize)">
+                <label>Size (1-5)</label>
+                <input type="number" id="setting-date-size" class="text-input" value="4" min="1" max="5">
               </div>
               <div class="form-group" style="flex: 1; min-width:80px;">
                 <label>Offset X</label>
@@ -539,16 +494,6 @@
                   <option value="16">Space Invader (Animated)</option>
                   <option value="17">Bub (Animated)</option>
                   <option value="18">Cyberpunk (Classic Drops)</option>
-                  <option value="19">Flip Clock</option>
-                  <option value="21">True Matrix (Katakana HD)</option>
-                  <option value="22">Pong Date</option>
-                  <option value="23">Tetris Date</option>
-                  <option value="24">Word Date</option>
-                  <option value="25">Binary Date</option>
-                  <option value="26">Pac-Man Date</option>
-                  <option value="27">Versus Health Bar</option>
-                  <option value="28">Slot Machine</option>
-                  <option value="29">Tetris Gameboy Clock</option>
                 </select>
               </div>
             </div>
@@ -574,6 +519,15 @@
             <div class="form-group" style="margin-top: 1rem;">
               <label data-i18n="label_city">City (e.g. Paris,FR)</label>
               <input type="text" id="setting-weather-city" class="text-input" placeholder="City name...">
+            </div>
+            
+            <div class="form-group">
+              <label>Language</label>
+              <select id="setting-weather-lang" class="select-input">
+                <option value="en">English (EN)</option>
+                <option value="fr">Français (FR)</option>
+                <option value="es">Español (ES)</option>
+              </select>
             </div>
             <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
               <div class="form-group" style="flex: 1; min-width:80px;">
@@ -645,6 +599,13 @@
                </div>
             </div>
             <p style="text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 1rem;">Auto-refreshing every 3 seconds</p>
+            
+            <h4 data-i18n="firmware_update" style="margin-top: 2rem; color: #e2e8f0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Firmware Update (OTA)</h4>
+            <form method='POST' action='/api/update' enctype='multipart/form-data' style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem;">
+              <input type='file' name='update' accept='.bin' style="flex: 1; color: #fff;" required>
+              <button class="btn primary" type='submit' data-i18n="btn_update">Update</button>
+            </form>
+
             <div style="display: flex; gap: 1rem; margin-top: 2rem;">
               <button id="btn-toggle-panel" class="btn primary" style="flex: 1;">Turn Panel OFF</button>
             </div>
@@ -658,6 +619,24 @@
     </main>
   </div>
   <script>
+    // Shared helper for all "/api/settings" POSTs: parses the JSON response and, if the ESP32
+    // applied the change in RAM but failed to persist it to the SD card (conf.ini) - which can
+    // happen on transient SD glitches - surfaces a clear warning instead of silently reporting
+    // success while the setting will actually revert on the next reboot.
+    async function postSettings(payload) {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      let result = {};
+      try { result = await res.json(); } catch (e) { /* ignore non-JSON responses */ }
+      if (result && result.sd_saved === false) {
+        alert(result.warning || 'Settings applied but could not be saved to the SD card - they will be lost on reboot.');
+      }
+      return result;
+    }
+
     document.addEventListener("DOMContentLoaded", async () => {
       try {
         const res = await fetch("/api/fonts");
@@ -687,6 +666,22 @@
         if (t.clock_font_path && clockFontSelect) clockFontSelect.value = t.clock_font_path;
         if (t.date_font_path && dateFontSelect) dateFontSelect.value = t.date_font_path;
         
+        if (t.brightness_limit !== undefined) document.getElementById('setting-brightness').value = t.brightness_limit;
+        if (t.clock_theme !== undefined) document.getElementById('setting-clock-theme').value = t.clock_theme;
+        if (t.clock_size !== undefined) document.getElementById('setting-clock-size').value = t.clock_size;
+        if (t.clock_offset_x !== undefined) document.getElementById('setting-clock-offset-x').value = t.clock_offset_x;
+        if (t.clock_offset_y !== undefined) document.getElementById('setting-clock-offset-y').value = t.clock_offset_y;
+        if (t.clock_color_1) document.getElementById('setting-clock-color-1').value = t.clock_color_1;
+        if (t.clock_color_2) document.getElementById('setting-clock-color-2').value = t.clock_color_2;
+        
+        if (t.date_theme !== undefined) document.getElementById('setting-date-theme').value = t.date_theme;
+        if (t.date_size !== undefined) document.getElementById('setting-date-size').value = t.date_size;
+        if (t.date_format) document.getElementById('setting-date-format').value = t.date_format;
+        if (t.date_offset_x !== undefined) document.getElementById('setting-date-offset-x').value = t.date_offset_x;
+        if (t.date_offset_y !== undefined) document.getElementById('setting-date-offset-y').value = t.date_offset_y;
+        if (t.date_color_1) document.getElementById('setting-date-color-1').value = t.date_color_1;
+        if (t.date_color_2) document.getElementById('setting-date-color-2').value = t.date_color_2;
+        
         // Populate matrix hardware
         if (t.matrix_rows) document.getElementById('setting-matrix-rows').value = t.matrix_rows;
         if (t.matrix_cols) document.getElementById('setting-matrix-cols').value = t.matrix_cols;
@@ -708,6 +703,7 @@
         }
         if (t.weather_api_key) document.getElementById('setting-weather-api-key').value = t.weather_api_key;
         if (t.weather_city) document.getElementById('setting-weather-city').value = t.weather_city;
+        if (t.weather_lang) document.getElementById('setting-weather-lang').value = t.weather_lang;
         if (t.weather_offset_x !== undefined) document.getElementById('setting-weather-offset-x').value = t.weather_offset_x;
         if (t.weather_offset_y !== undefined) document.getElementById('setting-weather-offset-y').value = t.weather_offset_y;
         if (t.matrix_rgb_sequence) document.getElementById('setting-matrix-rgb-sequence').value = t.matrix_rgb_sequence;
@@ -770,9 +766,17 @@
         if (t.mqtt_broker) document.getElementById('setting-mqtt-broker').value = t.mqtt_broker;
         if (t.mqtt_port !== undefined) document.getElementById('setting-mqtt-port').value = t.mqtt_port;
         if (t.mqtt_user) document.getElementById('setting-mqtt-user').value = t.mqtt_user;
+        if (t.mqtt_pass) document.getElementById('setting-mqtt-pass').value = t.mqtt_pass;
         if (t.wifi_ssid) document.getElementById('setting-wifi-ssid').value = t.wifi_ssid;
         if (t.wifi_pass) document.getElementById('setting-wifi-pass').value = t.wifi_pass;
-      }).catch(e => console.error("Failed to load settings", e));
+      }).catch(e => console.error("Failed to load settings", e))
+        .finally(() => {
+          const wrap = document.getElementById('settings-content-wrapper');
+          if (wrap) {
+              wrap.style.opacity = '1';
+              wrap.style.pointerEvents = 'auto';
+          }
+        });
       
       const btnReboot = document.getElementById('btn-reboot');
       if (btnReboot) {
@@ -815,33 +819,23 @@
               wake_up_at: document.getElementById('setting-wake-up-at').value
            };
            btnSaveNightMode.textContent = "Saving...";
-           await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+           await postSettings(payload);
            setTimeout(() => { btnSaveNightMode.textContent = "Save Night Mode"; }, 1000);
         });
       }
 
       const saveHardwareBtn = document.getElementById('btn-save-hardware');
       if (saveHardwareBtn) {
-          saveHardwareBtn.addEventListener('click', () => {
+          saveHardwareBtn.addEventListener('click', async () => {
              const payload = {
                 matrix_rows: document.getElementById('setting-matrix-rows').value,
-                matrix_cols: document.getElementById('setting-matrix-cols').value,
-                matrix_chain: document.getElementById('setting-matrix-chain').value,
-                matrix_parallel: document.getElementById('setting-matrix-parallel').value,
-                matrix_mapping: document.getElementById('setting-matrix-mapping').value,
-                matrix_slowdown: document.getElementById('setting-matrix-slowdown').value,
-                matrix_rgb_sequence: document.getElementById('setting-matrix-rgb-sequence').value,
-                matrix_pwm_bits: document.getElementById('setting-matrix-pwm-bits').value,
-                matrix_pwm_lsb_nanoseconds: document.getElementById('setting-matrix-pwm-lsb-nanoseconds').value
+                matrix_cols: document.getElementById('setting-matrix-cols').value
              };
-             fetch('/api/settings', {
-                 method: 'POST',
-                 headers: {'Content-Type': 'application/json'},
-                 body: JSON.stringify(payload)
-             }).then(() => {
+             const result = await postSettings(payload);
+             if (result.sd_saved !== false) {
                  alert("Hardware Matrix settings saved! The service will now restart to apply changes.");
                  setTimeout(() => window.location.reload(), 3000);
-             });
+             }
           });
       }
       
@@ -882,10 +876,7 @@
           const fighter_interval_sec = parseInt(document.getElementById('setting-fighter-interval').value) || 0;
           
           try {
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
+            await postSettings({
                 rotation: rotation.join(','),
                 clock_duration_sec: clock_dur,
                 date_duration_sec: date_dur,
@@ -893,7 +884,6 @@
                 gifs_count: gifs_count,
                 sprite_count: sprite_count,
                 fighter_interval_sec: fighter_interval_sec
-              })
             });
             const oldText = newSaveRotBtn.innerText;
             newSaveRotBtn.innerText = 'Saved ✔️';
@@ -929,11 +919,7 @@
               format_24h: (document.getElementById('setting-format24h').value === '1')
             };
             
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            await postSettings(payload);
             alert('Clock settings saved! (Restart may be required for some changes)');
           } catch (err) {
             console.error(err);
@@ -962,11 +948,7 @@
               date_color_2: safeStr('setting-date-color-2', '#ffffff')
             };
             
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            await postSettings(payload);
             alert('Date settings saved! (Restart may be required for some changes)');
           } catch (err) {
             console.error(err);
@@ -1006,16 +988,12 @@
           
           // Also save MQTT
           try {
-             await fetch('/api/settings', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({
-                     mqtt_enable: document.getElementById('setting-mqtt-enable').value === "1",
-                     mqtt_broker: document.getElementById('setting-mqtt-broker').value,
-                     mqtt_port: document.getElementById('setting-mqtt-port').value,
-                     mqtt_user: document.getElementById('setting-mqtt-user').value,
-                     mqtt_pass: document.getElementById('setting-mqtt-pass').value
-                 })
+             await postSettings({
+                 mqtt_enable: document.getElementById('setting-mqtt-enable').value === "1",
+                 mqtt_broker: document.getElementById('setting-mqtt-broker').value,
+                 mqtt_port: document.getElementById('setting-mqtt-port').value,
+                 mqtt_user: document.getElementById('setting-mqtt-user').value,
+                 mqtt_pass: document.getElementById('setting-mqtt-pass').value
              });
           } catch(e) {}
         });
@@ -1030,11 +1008,7 @@
           try {
             const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
             const payload = { brightness_limit: safeInt('setting-brightness', 40) };
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            await postSettings(payload);
             const oldText = newSaveMatrixBtn.innerText;
             newSaveMatrixBtn.innerText = 'Saved ✔️';
             setTimeout(() => newSaveMatrixBtn.innerText = oldText, 2000);
@@ -1057,14 +1031,11 @@
             const payload = {
               weather_api_key: safeStr('setting-weather-api-key', ''),
               weather_city: safeStr('setting-weather-city', ''),
+              weather_lang: safeStr('setting-weather-lang', 'en'),
               weather_offset_x: safeInt('setting-weather-offset-x', 0),
               weather_offset_y: safeInt('setting-weather-offset-y', 0)
             };
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            await postSettings(payload);
             const oldText = newSaveWeatherBtn.innerText;
             newSaveWeatherBtn.innerText = 'Saved ✔️';
             setTimeout(() => newSaveWeatherBtn.innerText = oldText, 2000);
@@ -1091,11 +1062,7 @@
               mqtt_user: safeStr('setting-mqtt-user', ''),
               mqtt_pass: safeStr('setting-mqtt-pass', '')
             };
-            await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+            await postSettings(payload);
             const oldText = newSaveMqttBtn.innerText;
             newSaveMqttBtn.innerText = 'Saved ✔️';
             setTimeout(() => newSaveMqttBtn.innerText = oldText, 2000);

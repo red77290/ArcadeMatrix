@@ -88,89 +88,97 @@ void PacmanClock::update() {
         pacX = -40.0f;
     }
     
+    int pacRadius = max(4, (int)(matrix->height() / 5.3f));
+    int ghostRadius = max(3, (int)(matrix->height() / 6.4f));
+    int ghostSpacing = ghostRadius * 2.5f;
+    int tailLength = ghostSpacing * 4;
+    
+    // Advance animation state at most every 50ms, but always redraw below on every call. The
+    // outer main loop clears the DMA back buffer and flips it every ~33ms unconditionally
+    // (fixed ~30 FPS), so skipping the draw here (as this used to do) left the cleared buffer
+    // flipped to screen as a black flash on every iteration where this throttle hadn't elapsed
+    // yet - causing severe flicker. State (pacX, animFrame) only advances on the throttle, but
+    // rendering below always redraws the current (possibly unchanged) state every call.
     if (millis() - lastFrameTime > 50) {
         lastFrameTime = millis();
         animFrame++;
         
-        matrix->fillScreen(0);
-        
-        int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
-        matrix->setTextSize(gfxSize);
-        // Default GFX font
-        matrix->setFont(NULL);
-        
-        int16_t bx, by;
-        uint16_t bw, bh;
-        matrix->getTextBounds(newTimeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
-        
-        int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
-        int ty = (matrix->height() - bh) / 2 + config.time.clock_offset_y;
-        
-        uint16_t color1 = matrix->color565(255, 255, 255);
-        if (config.time.clock_color_1[0] == '#') {
-            long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
-            color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
-        }
-        
-        if (!transitioning) {
-            matrix->setCursor(tx, ty);
-            matrix->setTextColor(color1);
-            matrix->print(newTimeStr);
-            
-            // Random pulsing dots
-            uint16_t dotColor = matrix->color565(255, 183, 174);
-            for (int i = 0; i < 5; i++) {
-                float px = (sin(animFrame * 0.1f + i) * matrix->width() / 2) + matrix->width() / 2;
-                float py = (cos(animFrame * 0.15f + i * 2) * matrix->height() / 2) + matrix->height() / 2;
-                matrix->drawPixel((int)px, (int)py, dotColor);
-            }
-        } else {
+        if (transitioning) {
             float pacSpeed = 1.5f * (matrix->width() / 64.0f);
             pacX += pacSpeed;
             
-            int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
-            
-            int pacRadius = max(4, (int)(matrix->height() / 5.3f));
-            int ghostRadius = max(3, (int)(matrix->height() / 6.4f));
-            int ghostSpacing = ghostRadius * 2.5f;
-            int tailLength = ghostSpacing * 4;
-            
-            if (pacX < matrix->width() + tailLength + 20) {
-                // To achieve clipping, we draw the text and then cover it with black rectangles
-                // Draw old time
-                matrix->setCursor(tx, ty);
-                matrix->setTextColor(matrix->color565(100, 100, 100));
-                matrix->print(oldTimeStr);
-                
-                // Cover eaten part (left of pacman)
-                matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
-                
-                // Draw new time
-                matrix->setCursor(tx, ty);
-                matrix->setTextColor(color1);
-                matrix->print(newTimeStr);
-                
-                // Cover uneaten part (right of pacman trailing tail)
-                int revealX = (int)pacX - tailLength;
-                if (revealX < matrix->width()) {
-                    matrix->fillRect(revealX > 0 ? revealX : 0, 0, matrix->width(), matrix->height(), 0);
-                }
-                
-                // Draw Pacman
-                drawPacman((int)pacX, matrix->height() / 2, pacRadius, mouthAngle, true);
-                
-                // Draw Ghosts
-                for (int i = 0; i < 4; i++) {
-                    float gx = pacX - (pacRadius * 2.5f) - (i * ghostSpacing);
-                    float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * 2;
-                    drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
-                }
-            } else {
+            if (pacX >= matrix->width() + tailLength + 20) {
                 transitioning = false;
                 lastMinute = storedTime.minutes;
                 strcpy(oldTimeStr, newTimeStr);
             }
+        }
+    }
+    
+    matrix->fillScreen(0);
+    
+    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    matrix->setTextSize(gfxSize);
+    // Default GFX font
+    matrix->setFont(NULL);
+    
+    int16_t bx, by;
+    uint16_t bw, bh;
+    matrix->getTextBounds(newTimeStr, 0, 0, &bx, &by, &bw, &bh);
+    if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
+    
+    int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
+    int ty = (matrix->height() - bh) / 2 + config.time.clock_offset_y;
+    
+    uint16_t color1 = matrix->color565(255, 255, 255);
+    if (config.time.clock_color_1[0] == '#') {
+        long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
+        color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
+    }
+    
+    if (!transitioning) {
+        matrix->setCursor(tx, ty);
+        matrix->setTextColor(color1);
+        matrix->print(newTimeStr);
+        
+        // Random pulsing dots
+        uint16_t dotColor = matrix->color565(255, 183, 174);
+        for (int i = 0; i < 5; i++) {
+            float px = (sin(animFrame * 0.1f + i) * matrix->width() / 2) + matrix->width() / 2;
+            float py = (cos(animFrame * 0.15f + i * 2) * matrix->height() / 2) + matrix->height() / 2;
+            matrix->drawPixel((int)px, (int)py, dotColor);
+        }
+    } else {
+        int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
+        
+        // To achieve clipping, we draw the text and then cover it with black rectangles
+        // Draw old time
+        matrix->setCursor(tx, ty);
+        matrix->setTextColor(matrix->color565(100, 100, 100));
+        matrix->print(oldTimeStr);
+        
+        // Cover eaten part (left of pacman)
+        matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
+        
+        // Draw new time
+        matrix->setCursor(tx, ty);
+        matrix->setTextColor(color1);
+        matrix->print(newTimeStr);
+        
+        // Cover uneaten part (right of pacman trailing tail)
+        int revealX = (int)pacX - tailLength;
+        if (revealX < matrix->width()) {
+            matrix->fillRect(revealX > 0 ? revealX : 0, 0, matrix->width(), matrix->height(), 0);
+        }
+        
+        // Draw Pacman
+        drawPacman((int)pacX, matrix->height() / 2, pacRadius, mouthAngle, true);
+        
+        // Draw Ghosts
+        for (int i = 0; i < 4; i++) {
+            float gx = pacX - (pacRadius * 2.5f) - (i * ghostSpacing);
+            float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * 2;
+            drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
         }
     }
 }

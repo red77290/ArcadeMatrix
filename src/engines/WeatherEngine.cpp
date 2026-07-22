@@ -40,31 +40,60 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
     if (apiKey.length() == 0 || city.length() == 0) return;
     if (WiFi.status() != WL_CONNECTED) return;
     
-    // Only update every 15 minutes (900000 ms) to save API calls
-    if (lastFetchTime > 0 && millis() - lastFetchTime < 900000) return;
+    // Only update every 15 minutes on success, or retry every 1 minute on failure.
+    uint32_t interval = validData ? 900000 : 60000;
+    if (lastFetchTime > 0 && millis() - lastFetchTime < interval) return;
+
+    // Set lastFetchTime immediately so we don't spam the API on failure
+    lastFetchTime = millis();
 
     HTTPClient http;
     // /forecast (3-hour steps, 5 days) instead of /weather (current only), to support the
     // 3-day forecast slideshow below - mirrors ArcadeMatrix_RPi's engines/weather.py.
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey;
+    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + config.weather.lang;
     
     http.begin(url);
     int httpCode = http.GET();
     
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
+        
+        // Use a filter to only parse the fields we actually need, drastically reducing RAM usage
+        // for the massive OWM forecast JSON payload.
+        StaticJsonDocument<256> filter;
+        filter["list"][0]["main"]["temp"] = true;
+        filter["list"][0]["weather"][0]["main"] = true;
+        filter["list"][0]["weather"][0]["icon"] = true;
         DynamicJsonDocument doc(8192);
-        DeserializationError error = deserializeJson(doc, payload);
+        DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
         
         if (!error && doc["list"].is<JsonArray>()) {
             JsonArray list = doc["list"].as<JsonArray>();
-            static const char* dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+            
+            const char* dayNames[7];
+            const char* fixedLabels[MAX_FORECAST_DAYS];
+            
+            if (config.weather.lang == "fr") {
+                const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
+                const char* fr_fixedLabels[MAX_FORECAST_DAYS] = {"AUJ.", "DEMN", nullptr};
+                memcpy(dayNames, fr_dayNames, sizeof(dayNames));
+                memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
+            } else if (config.weather.lang == "es") {
+                const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
+                const char* es_fixedLabels[MAX_FORECAST_DAYS] = {"HOY", "MANA", nullptr};
+                memcpy(dayNames, es_dayNames, sizeof(dayNames));
+                memcpy(fixedLabels, es_fixedLabels, sizeof(fixedLabels));
+            } else {
+                const char* en_dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+                const char* en_fixedLabels[MAX_FORECAST_DAYS] = {"TODAY", "TMRW", nullptr};
+                memcpy(dayNames, en_dayNames, sizeof(dayNames));
+                memcpy(fixedLabels, en_fixedLabels, sizeof(fixedLabels));
+            }
 
             struct tm timeinfo;
             bool haveTime = getLocalTime(&timeinfo, 0);
 
             const int sampleIndices[MAX_FORECAST_DAYS] = {0, 8, 16};
-            static const char* fixedLabels[MAX_FORECAST_DAYS] = {"TODAY", "TMRW", nullptr};
 
             numForecasts = 0;
             for (int i = 0; i < MAX_FORECAST_DAYS; i++) {
@@ -91,11 +120,17 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
 
             if (numForecasts > 0) {
                 validData = true;
-                lastFetchTime = millis();
                 activeSlide = 0;
                 lastSlideChange = millis();
+            } else {
+                Serial.println("WeatherEngine: Valid JSON but no forecasts parsed.");
             }
+        } else {
+            Serial.printf("WeatherEngine Parse Error: %s\n", error.c_str());
+            Serial.printf("Payload snippet: %.100s\n", payload.c_str());
         }
+    } else {
+        Serial.printf("WeatherEngine API Error: %d\n", httpCode);
     }
     http.end();
 }
@@ -161,6 +196,10 @@ void WeatherEngine::loop() {
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {
+    // Reset font to default GLCD font to avoid drawing from baseline (which pushes text off-screen)
+    // if another engine left a custom GFX font active.
+    matrix->setFont(nullptr);
+    
     char tempStr[16];
     sprintf(tempStr, "%.0fC", data.temp);
     
@@ -200,11 +239,10 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
     // Draw icon
     drawIcon(data.iconCode, iconX, iconY);
 
-    // Draw day label (TODAY/TMRW/weekday) above the temperature, small size regardless of the
-    // main text size to leave room for it.
+    // Draw day label (TODAY/TMRW/weekday) in the top-left corner, small size to avoid overlapping.
     matrix->setTextSize(1);
     matrix->setTextColor(matrix->color565(180, 180, 255));
-    matrix->setCursor(textX, iconY);
+    matrix->setCursor(2, 2);
     matrix->print(data.label);
 
     matrix->setTextSize(textSize);

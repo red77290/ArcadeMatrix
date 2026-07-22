@@ -1,6 +1,6 @@
 #pragma once
 #include "../ClockEngine.h"
-#include <SD.h>
+#include "../../core/SDUtils.h"
 #include "../DateEngine.h" // For PublisherTheme
 #include "../../core/BitmapFontLoader.h"
 
@@ -23,7 +23,7 @@ private:
     unsigned long lastFrameTime;
 
     void drawStaticTime();
-    void drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor);
+    void drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale = 1);
     void applyThemeFont();
     
     // Animations

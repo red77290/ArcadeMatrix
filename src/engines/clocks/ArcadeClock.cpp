@@ -31,44 +31,51 @@ void ArcadeClock::draw(const TimeData& t) {
     lastMinute = t.minutes;
 }
 
-void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor) {
+void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
     extern ConfigLoader config;
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
-    // setTextSize and font are already set by drawStaticTime
 
-    // Outline style depends on the publisher theme, mirroring ArcadeMatrix_RPi's core/theme.py
-    // draw_styled_text(): real-world logos (Nintendo/Capcom/Sega) use a flat 4-direction outline
-    // like their actual branding, while the "arcade 3D" thick shadow + black outline combo is
-    // reserved for the more stylized/fictional themes (Cave..Bub). Everything else gets a plain
-    // single drop shadow, and Flip Clock has none.
-    matrix->setTextColor(shadowColor);
+    int currentScale = max(1, scale);
+    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int effectDepth = (logicalSize >= 5) ? 2 : 1;
+
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
-        // Flat outline, no diagonal offset - matches the real publisher logos (RPi parity).
-        matrix->setCursor(x + 1, y); matrix->print(timeStr);
-        matrix->setCursor(x - 1, y); matrix->print(timeStr);
-        matrix->setCursor(x, y + 1); matrix->print(timeStr);
-        matrix->setCursor(x, y - 1); matrix->print(timeStr);
+        matrix->setTextColor(shadowColor);
+        for (int i = 1; i <= effectDepth; i++) {
+            matrix->setCursor(x + i, y); matrix->print(timeStr);
+            matrix->setCursor(x - i, y); matrix->print(timeStr);
+            matrix->setCursor(x, y + i); matrix->print(timeStr);
+            matrix->setCursor(x, y - i); matrix->print(timeStr);
+        }
     } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
         // Arcade 3D Outline Effect
-        // Draw thick shadow
-        matrix->setCursor(x + 2, y + 2); matrix->print(timeStr);
-        matrix->setCursor(x + 1, y + 2); matrix->print(timeStr);
-        matrix->setCursor(x + 2, y + 1); matrix->print(timeStr);
+        matrix->setTextColor(shadowColor);
+        int shadowDepth = effectDepth + 1;
+        for (int i = 1; i <= shadowDepth; i++) {
+            matrix->setCursor(x + i, y + i); matrix->print(timeStr);
+            matrix->setCursor(x + i - 1, y + i); matrix->print(timeStr);
+            matrix->setCursor(x + i, y + i - 1); matrix->print(timeStr);
+        }
 
-        // Draw outline (black)
         uint16_t outline = matrix->color565(0, 0, 0);
         matrix->setTextColor(outline);
+        // Black outline remains crisp at 1-pixel thick to avoid looking like a gap
+        matrix->setCursor(x - 1, y - 1); matrix->print(timeStr);
+        matrix->setCursor(x, y - 1); matrix->print(timeStr);
+        matrix->setCursor(x + 1, y - 1); matrix->print(timeStr);
         matrix->setCursor(x - 1, y); matrix->print(timeStr);
         matrix->setCursor(x + 1, y); matrix->print(timeStr);
-        matrix->setCursor(x, y - 1); matrix->print(timeStr);
+        matrix->setCursor(x - 1, y + 1); matrix->print(timeStr);
         matrix->setCursor(x, y + 1); matrix->print(timeStr);
-    } else if (currentTheme != THEME_FLIP) {
-        // Plain drop shadow (Taito, Cyberpunk, Matrix Rain, Tetris GB, None/default, ...)
         matrix->setCursor(x + 1, y + 1); matrix->print(timeStr);
+    } else if (currentTheme != THEME_FLIP) {
+        matrix->setTextColor(shadowColor);
+        for (int i = 1; i <= effectDepth; i++) {
+            matrix->setCursor(x + i, y + i); matrix->print(timeStr);
+        }
     }
 
-    // Draw inner text
     matrix->setTextColor(textColor);
     matrix->setCursor(x, y);
     matrix->print(timeStr);
@@ -81,11 +88,11 @@ void ArcadeClock::drawStaticTime() {
     const GFXfont* font9pt = nullptr;
     const GFXfont* font12pt = nullptr;
     
-    switch (config.time.clock_font) {
+    switch (currentTheme) {
         case THEME_NINTENDO: case THEME_HUDSON: font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b; break;
         case THEME_SEGA: font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b; break;
-        case THEME_CAVE: case THEME_SNK: case THEME_TECHNOS: font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b; break;
-        case THEME_TAITO: case THEME_KONAMI: font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b; break;
+        case THEME_CAVE: case THEME_SNK: case THEME_TECHNOS: case THEME_MARCO: font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b; break;
+        case THEME_TAITO: case THEME_KONAMI: case THEME_SPACE: font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b; break;
         case THEME_CAPCOM: case THEME_IGS: case THEME_BANPRESTO: case THEME_NAMCO: case THEME_RYU: case THEME_MEGAMAN: case THEME_MARIO: case THEME_BUB: font9pt = &namco__9pt7b; font12pt = &namco__12pt7b; break;
         default: font9pt = nullptr; font12pt = nullptr; break;
     }
@@ -121,15 +128,17 @@ void ArcadeClock::drawStaticTime() {
     int gfxSize = 1;
     bool use12pt = false;
     
-    if (logicalSize == 3) {
-        gfxSize = sMax;
-        // If sMax > 1, size 3 can just use 9pt scaled up.
+    if (logicalSize >= 5) {
+        gfxSize = sMax; 
+    } else if (logicalSize == 4) {
+        gfxSize = max(1, (sMax * 4) / 5);
+    } else if (logicalSize == 3) {
+        gfxSize = max(1, (sMax * 3) / 5);
     } else if (logicalSize == 2) {
-        gfxSize = max(1, (sMax * 2) / 3);
-        // If the user wants a smaller size, but sMax=1 (so it's already at scale 1), we must use the smaller default font
+        gfxSize = max(1, (sMax * 2) / 5);
         if (gfxSize == 1 && sMax == 1) fallbackToSmall = true;
     } else {
-        gfxSize = max(1, sMax / 3);
+        gfxSize = max(1, sMax / 5);
         if (gfxSize == 1 && sMax <= 2) fallbackToSmall = true;
     }
     
@@ -143,9 +152,11 @@ void ArcadeClock::drawStaticTime() {
         int sMaxDefault = min(matrix->width() / bw, matrix->height() / bh);
         if (sMaxDefault < 1) sMaxDefault = 1;
         
-        if (logicalSize == 3) gfxSize = sMaxDefault;
-        else if (logicalSize == 2) gfxSize = max(1, (sMaxDefault * 2) / 3);
-        else gfxSize = max(1, sMaxDefault / 3);
+        if (logicalSize >= 5) gfxSize = sMaxDefault;
+        else if (logicalSize == 4) gfxSize = max(1, (sMaxDefault * 4) / 5);
+        else if (logicalSize == 3) gfxSize = max(1, (sMaxDefault * 3) / 5);
+        else if (logicalSize == 2) gfxSize = max(1, (sMaxDefault * 2) / 5);
+        else gfxSize = max(1, sMaxDefault / 5);
         
         matrix->setTextSize(gfxSize);
     } else {
@@ -162,8 +173,25 @@ void ArcadeClock::drawStaticTime() {
         matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
     }
     
-    int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
-    int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int effectDepth = (logicalSize >= 5) ? 2 : 1;
+    
+    int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
+    if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+        leftExtra = 1; rightExtra = effectDepth + 1;
+        topExtra = 1; bottomExtra = effectDepth + 1;
+    } else if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
+        leftExtra = effectDepth; rightExtra = effectDepth;
+        topExtra = effectDepth; bottomExtra = effectDepth;
+    } else if (currentTheme != THEME_FLIP && currentTheme != THEME_NONE) {
+        rightExtra = effectDepth; bottomExtra = effectDepth;
+    }
+    
+    int fullW = leftExtra + bw + rightExtra;
+    int fullH = topExtra + bh + bottomExtra;
+    
+    int x = (matrix->width() - fullW) / 2 + leftExtra + config.time.clock_offset_x - bx;
+    int y = (matrix->height() - fullH) / 2 + topExtra - by + config.time.clock_offset_y;
     
     uint16_t textColor = matrix->color565(255, 255, 255);
     uint16_t shadowColor = matrix->color565(0, 0, 0);
@@ -248,6 +276,16 @@ void ArcadeClock::drawStaticTime() {
             textColor = matrix->color565(0, 255, 0); // Bub Green
             shadowColor = matrix->color565(255, 0, 255); // Pink
             break;
+            
+        case THEME_MARCO:
+            textColor = matrix->color565(0, 255, 0); // Green
+            shadowColor = matrix->color565(200, 200, 0); // Yellow/Gold
+            break;
+            
+        case THEME_SPACE:
+            textColor = matrix->color565(0, 255, 0); // Green
+            shadowColor = matrix->color565(255, 255, 255); // White shadow
+            break;
 
         case THEME_NONE:
         default:
@@ -256,7 +294,7 @@ void ArcadeClock::drawStaticTime() {
             break;
     }
     
-    drawTextWithShadow(x, y, textColor, shadowColor);
+    drawTextWithShadow(x, y, textColor, shadowColor, gfxSize);
 }
 
 void ArcadeClock::triggerAnimation() {

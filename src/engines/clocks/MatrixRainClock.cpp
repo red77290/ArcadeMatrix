@@ -40,9 +40,11 @@ void MatrixRainClock::drawTime() {
 
     int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
     int gfxSize = 1;
-    if (logicalSize == 3) gfxSize = sMax;
-    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 3);
-    else gfxSize = max(1, sMax / 3);
+    if (logicalSize >= 5) gfxSize = sMax + 1;
+    else if (logicalSize == 4) gfxSize = sMax;
+    else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 4);
+    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 4);
+    else gfxSize = max(1, sMax / 4);
 
     matrix->setTextSize(gfxSize);
     matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
