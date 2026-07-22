@@ -323,11 +323,17 @@ void WebServerAPI::setupRoutes() {
         }
 
         // Weather
-        if (!doc["weather_api_key"].isNull()) config.weather.api_key = doc["weather_api_key"].as<String>();
-        if (!doc["weather_city"].isNull()) config.weather.city = doc["weather_city"].as<String>();
-        if (!doc["weather_lang"].isNull()) config.weather.lang = doc["weather_lang"].as<String>();
+        bool weatherChanged = false;
+        if (!doc["weather_api_key"].isNull() && config.weather.api_key != doc["weather_api_key"].as<String>()) { config.weather.api_key = doc["weather_api_key"].as<String>(); weatherChanged = true; }
+        if (!doc["weather_city"].isNull() && config.weather.city != doc["weather_city"].as<String>()) { config.weather.city = doc["weather_city"].as<String>(); weatherChanged = true; }
+        if (!doc["weather_lang"].isNull() && config.weather.lang != doc["weather_lang"].as<String>()) { config.weather.lang = doc["weather_lang"].as<String>(); weatherChanged = true; }
         if (!doc["weather_offset_x"].isNull()) config.weather.weather_offset_x = doc["weather_offset_x"].as<int>();
         if (!doc["weather_offset_y"].isNull()) config.weather.weather_offset_y = doc["weather_offset_y"].as<int>();
+
+        if (weatherChanged) {
+            extern WeatherEngine* weatherEngine;
+            if (weatherEngine) weatherEngine->forceUpdate();
+        }
 
         // Time / NTP
         if (!doc["ntp_server"].isNull()) config.time.ntpServer = doc["ntp_server"].as<String>();
