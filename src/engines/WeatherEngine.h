@@ -23,6 +23,7 @@ public:
     
     void loop();
     void setCharacter(int characterId);
+    void forceUpdate() { lastFetchTime = 0; }
 
     bool hasValidData() const { return validData; }
 

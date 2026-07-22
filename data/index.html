@@ -703,7 +703,16 @@
         }
         if (t.weather_api_key) document.getElementById('setting-weather-api-key').value = t.weather_api_key;
         if (t.weather_city) document.getElementById('setting-weather-city').value = t.weather_city;
-        if (t.weather_lang) document.getElementById('setting-weather-lang').value = t.weather_lang;
+        if (t.weather_lang && t.weather_lang !== "") {
+          document.getElementById('setting-weather-lang').value = t.weather_lang;
+        } else {
+          let userLang = (navigator.language || navigator.userLanguage || 'en').substring(0, 2).toLowerCase();
+          if (userLang === 'fr' || userLang === 'es') {
+            document.getElementById('setting-weather-lang').value = userLang;
+          } else {
+            document.getElementById('setting-weather-lang').value = 'en';
+          }
+        }
         if (t.weather_offset_x !== undefined) document.getElementById('setting-weather-offset-x').value = t.weather_offset_x;
         if (t.weather_offset_y !== undefined) document.getElementById('setting-weather-offset-y').value = t.weather_offset_y;
         if (t.matrix_rgb_sequence) document.getElementById('setting-matrix-rgb-sequence').value = t.matrix_rgb_sequence;
@@ -1031,7 +1040,7 @@
             const payload = {
               weather_api_key: safeStr('setting-weather-api-key', ''),
               weather_city: safeStr('setting-weather-city', ''),
-              weather_lang: safeStr('setting-weather-lang', 'en'),
+              weather_lang: document.getElementById('setting-weather-lang').value,
               weather_offset_x: safeInt('setting-weather-offset-x', 0),
               weather_offset_y: safeInt('setting-weather-offset-y', 0)
             };
