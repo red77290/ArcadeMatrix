@@ -95,7 +95,9 @@ jobs:
           cd release/esp32s3  && zip -r ../../ArcadeMatrix-esp32s3.zip  . && cd -
 
       - name: Zip sample SD card bundle
-        run: cd release/sdCard && zip -r ../../ArcadeMatrix-sdcard.zip . -x '*.DS_Store' && cd -
+        run: |
+          rsync -a --exclude='venv' --exclude='__pycache__' tools/ release/sdCard/tools/
+          cd release/sdCard && zip -r ../../ArcadeMatrix-sdcard.zip . -x '*.DS_Store' && cd -
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
