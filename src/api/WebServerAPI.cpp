@@ -540,10 +540,27 @@ void WebServerAPI::setupRoutes() {
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
         response->addHeader("Connection", "close");
         request->send(response);
+
+        if (shouldReboot) {
+            Serial.println("OTA Update successful! Rebooting in 1 second...");
+            xTaskCreate([](void *param) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                extern MatrixEngine matrixEngine;
+                if (matrixEngine.getDisplay()) {
+                    matrixEngine.getDisplay()->fillScreen(0);
+                    matrixEngine.getDisplay()->flipDMABuffer();
+                    matrixEngine.getDisplay()->fillScreen(0);
+                    matrixEngine.getDisplay()->flipDMABuffer();
+                }
+                ESP.restart();
+            }, "ota_reboot", 2048, NULL, 1, NULL);
+        }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
             Serial.printf("Update Start: %s\n", filename.c_str());
-            if (!Update.begin((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)) {
+            extern GifEngine gifEngine;
+            gifEngine.stop();
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
                 Update.printError(Serial);
             }
         }
@@ -554,9 +571,7 @@ void WebServerAPI::setupRoutes() {
         }
         if (final) {
             if (Update.end(true)) {
-                Serial.printf("Update Success: %uB\nRebooting...\n", index+len);
-                delay(500);
-                ESP.restart();
+                Serial.printf("Update Success: %uB written.\n", index + len);
             } else {
                 Update.printError(Serial);
             }
