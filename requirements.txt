@@ -1,0 +1,2 @@
+# Python dependencies for ArcadeMatrix build & CI
+platformio>=6.1.0
