@@ -148,32 +148,27 @@ void GifEngine::loadNextFileInPlaylist() {
         
         String targetPath = "";
         if (indexFile && indexFile.size() > 0) {
-            long fileSize = indexFile.size();
-            long randomOffset = random(fileSize);
-            indexFile.seek(randomOffset);
-            
-            if (randomOffset != 0) {
-                indexFile.readStringUntil('\n');
-            }
-            
-            targetPath = indexFile.readStringUntil('\n');
-            targetPath.trim();
-            // Skip macOS junk entries
-            while (isMacJunk(targetPath) && indexFile.available()) {
-                yield();
-                targetPath = indexFile.readStringUntil('\n');
-                targetPath.trim();
-            }
-            
-            if (targetPath.length() == 0 || isMacJunk(targetPath)) {
-                indexFile.seek(0);
-                targetPath = indexFile.readStringUntil('\n');
-                targetPath.trim();
+            std::vector<String> validFiles;
+            while (indexFile.available()) {
+                String line = indexFile.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0 && !isMacJunk(line)) {
+                    if (line.indexOf("._") == -1 && line.indexOf("System Volume") == -1) {
+                        validFiles.push_back(line);
+                    }
+                }
             }
             indexFile.close();
             
-            if (targetPath.length() > 0) {
-                targetPath = pPath + "/" + targetPath;
+            if (!validFiles.empty()) {
+                int selectedIdx = random(validFiles.size());
+                String candidate = pPath + "/" + validFiles[selectedIdx];
+                // Prevent playing the exact same GIF twice in a row if playlist has multiple files
+                if (validFiles.size() > 1 && candidate == lastPlayedGif) {
+                    selectedIdx = (selectedIdx + 1 + random(validFiles.size() - 1)) % validFiles.size();
+                    candidate = pPath + "/" + validFiles[selectedIdx];
+                }
+                targetPath = candidate;
             }
         }
         
@@ -186,6 +181,7 @@ void GifEngine::loadNextFileInPlaylist() {
             if (targetPath.indexOf("._") == -1 && targetPath.indexOf("System Volume") == -1) {
                 if (playGif(targetPath.c_str())) {
                     playlistMode = true;
+                    lastPlayedGif = targetPath;
                     return; // SUCCESS!
                 }
             }

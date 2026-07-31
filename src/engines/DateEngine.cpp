@@ -72,182 +72,201 @@ void DateEngine::reloadCustomFont() {
 }
 
 void DateEngine::applyThemeSettings() {
-    // Base font size dependent on screen height
     bool isHD = (matrixH >= 64);
     matrix->setTextSize(1);
+
+    GFXfont* selectedFont = nullptr;
 
     switch (currentTheme) {
         case THEME_NINTENDO:
             textColor = matrix->color565(228, 0, 15); // Nintendo Red
             shadowColor = matrix->color565(255, 255, 255); // White outline
-            matrix->setFont(isHD ? &FreeSansBold12pt7b : &FreeSansBold9pt7b);
+            selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
             break;
             
         case THEME_CAPCOM:
             textColor = matrix->color565(255, 215, 0); // Yellow
             shadowColor = matrix->color565(0, 75, 175); // Blue
-            matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
             
         case THEME_TAITO:
             textColor = matrix->color565(0, 155, 219); // Light Blue
             shadowColor = matrix->color565(255, 255, 255); // White
-            matrix->setFont(isHD ? &Retro_Gaming12pt7b : &Retro_Gaming9pt7b);
+            selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b;
             break;
             
         case THEME_SEGA:
             textColor = matrix->color565(0, 85, 170); // Sega Blue
             shadowColor = matrix->color565(255, 255, 255); // White
-            matrix->setFont(isHD ? &FreeMonoBold12pt7b : &FreeMonoBold9pt7b);
+            selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
             break;
             
         case THEME_CAVE:
             textColor = matrix->color565(138, 43, 226); // Purple
             shadowColor = matrix->color565(255, 255, 0); // Yellow
-            matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b);
+            selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
             break;
             
         case THEME_KONAMI:
             textColor = matrix->color565(255, 69, 0); // Orange Red
             shadowColor = matrix->color565(255, 255, 255); // White
-            matrix->setFont(isHD ? &Retro_Gaming12pt7b : &Retro_Gaming9pt7b);
+            selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b;
             break;
             
         case THEME_SNK:
             textColor = matrix->color565(30, 144, 255); // Dodger Blue
             shadowColor = matrix->color565(255, 215, 0); // Gold
-            matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b);
+            selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
             break;
             
         case THEME_TECHNOS:
             textColor = matrix->color565(0, 0, 139); // Dark Blue
             shadowColor = matrix->color565(255, 255, 255);
-            matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b);
+            selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
             break;
             
         case THEME_IGS:
             textColor = matrix->color565(50, 205, 50); // Lime Green
             shadowColor = matrix->color565(255, 215, 0); // Gold
-            matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
             
         case THEME_HUDSON:
             textColor = matrix->color565(255, 255, 0); // Yellow
             shadowColor = matrix->color565(0, 0, 0); // Black
-            matrix->setFont(isHD ? &FreeSansBold12pt7b : &FreeSansBold9pt7b);
+            selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
             break;
             
         case THEME_BANPRESTO:
             textColor = matrix->color565(255, 0, 0); // Red
             shadowColor = matrix->color565(0, 0, 0); // Black
-            matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
             
         case THEME_NAMCO:
             textColor = matrix->color565(255, 0, 0); // Red
             shadowColor = matrix->color565(255, 215, 0); // Yellow
-            matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
 
         case THEME_RYU:
             textColor = matrix->color565(255, 255, 255);
             shadowColor = matrix->color565(200, 0, 0);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
         case THEME_MARIO:
             textColor = matrix->color565(255, 0, 0);
             shadowColor = matrix->color565(0, 0, 200);
+            selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
             break;
         case THEME_MARCO:
             textColor = matrix->color565(0, 255, 0);
             shadowColor = matrix->color565(200, 200, 0);
+            selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
             break;
         case THEME_MEGAMAN:
             textColor = matrix->color565(0, 255, 255);
             shadowColor = matrix->color565(0, 0, 200);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
         case THEME_SPACE:
             textColor = matrix->color565(0, 255, 0);
             shadowColor = matrix->color565(255, 255, 255);
+            selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b;
             break;
         case THEME_BUB:
             textColor = matrix->color565(255, 255, 0);
             shadowColor = matrix->color565(0, 200, 0);
+            selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
             break;
             
         case THEME_CYBERPUNK:
             textColor = matrix->color565(200, 255, 200);
             shadowColor = matrix->color565(0, 0, 0);
-            matrix->setFont(isHD ? &FreeMonoBold12pt7b : &FreeMonoBold9pt7b);
+            selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
             break;
             
         case THEME_FLIP:
             textColor = matrix->color565(255, 255, 255);
-            shadowColor = matrix->color565(40, 40, 40); // Used for background panel color here
-            matrix->setFont(nullptr);
+            shadowColor = matrix->color565(40, 40, 40);
+            selectedFont = nullptr;
             break;
 
         case THEME_NONE:
         default:
             textColor = matrix->color565(255, 255, 255);
             shadowColor = matrix->color565(0, 0, 0);
+            selectedFont = nullptr;
             break;
     }
 
-    // Apply font based on user config, independently of the theme
-    if (currentTheme != THEME_BANPRESTO && currentTheme != THEME_NAMCO && currentTheme != THEME_CYBERPUNK && currentTheme != THEME_FLIP) {
-        GFXfont* loadedCustomFont = customFont.getFont();
-        if (loadedCustomFont) {
-            // A user-supplied SD font (config.dateSettings.date_font_path, converted via
-            // tools/bdf_to_amfont) always takes priority over the compiled-in font families below.
-            matrix->setFont(loadedCustomFont);
-        } else {
-            switch (config.dateSettings.date_font) {
-                case THEME_NINTENDO:
-                case THEME_HUDSON:
-                    matrix->setFont(isHD ? &FreeSansBold12pt7b : &FreeSansBold9pt7b); break;
-                case THEME_SEGA:
-                    matrix->setFont(isHD ? &FreeMonoBold12pt7b : &FreeMonoBold9pt7b); break;
-                case THEME_CAVE:
-                case THEME_SNK:
-                case THEME_TECHNOS:
-                    matrix->setFont(isHD ? &PressStart2P12pt7b : &PressStart2P9pt7b); break;
-                case THEME_TAITO:
-                case THEME_KONAMI:
-                    matrix->setFont(isHD ? &Retro_Gaming12pt7b : &Retro_Gaming9pt7b); break;
-                case THEME_CAPCOM:
-                case THEME_IGS:
-                case THEME_BANPRESTO:
-                case THEME_NAMCO:
-                    matrix->setFont(isHD ? &namco__12pt7b : &namco__9pt7b); break;
-                default: matrix->setFont(nullptr); break;
-            }
+    // Apply custom font or user-configured font override ONLY if set
+    GFXfont* loadedCustomFont = customFont.getFont();
+    if (loadedCustomFont) {
+        selectedFont = loadedCustomFont;
+    } else if (config.dateSettings.date_font != THEME_NONE && config.dateSettings.date_font != 0) {
+        switch (config.dateSettings.date_font) {
+            case THEME_NINTENDO:
+            case THEME_HUDSON:
+                selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b; break;
+            case THEME_SEGA:
+                selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b; break;
+            case THEME_CAVE:
+            case THEME_SNK:
+            case THEME_TECHNOS:
+                selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b; break;
+            case THEME_TAITO:
+            case THEME_KONAMI:
+                selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b; break;
+            case THEME_CAPCOM:
+            case THEME_IGS:
+            case THEME_BANPRESTO:
+            case THEME_NAMCO:
+                selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b; break;
+            default: break;
         }
     }
     
-    // Responsive scaling
-    int logicalSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
+    matrix->setFont(selectedFont);
+
+    // Responsive scaling based on actual currentDate string
     int16_t bx, by;
     uint16_t bw, bh;
-    matrix->getTextBounds("88 MMM", 0, 0, &bx, &by, &bw, &bh);
-    if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
+    matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
     
-    int sMax = min((int)(matrixW / bw), (int)(matrixH / bh));
+    // Fallback to built-in font if GFX font is wider or taller than matrix display
+    if (selectedFont != nullptr && (bw > matrixW || bh > matrixH)) {
+        selectedFont = nullptr;
+        matrix->setFont(nullptr);
+        matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
+    }
+    
+    if (bw == 0 || bh == 0) { bw = strlen(currentDate) * 6; bh = 7; }
+    
+    int sMaxW = matrixW / bw;
+    int sMaxH = matrixH / bh;
+    int sMax = min(sMaxW, sMaxH);
     if (sMax < 1) sMax = 1;
     
+    int logicalSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
     int gfxSize = 1;
-    if (logicalSize >= 5) gfxSize = sMax;
-    else if (logicalSize == 4) gfxSize = max(1, (sMax * 4) / 5);
-    else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 5);
-    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 5);
-    else gfxSize = max(1, sMax / 5);
-    
-    matrix->setTextSize(gfxSize);
-    
-    matrix->getTextBounds("88 MMM", 0, 0, &bx, &by, &bw, &bh);
-    if (bw > matrixW) {
-        matrix->setFont(nullptr);
-        matrix->setTextSize(1);
+
+    if (selectedFont == nullptr) {
+        if (logicalSize >= 5) gfxSize = sMax;
+        else if (logicalSize == 4) gfxSize = min(sMax, 3);
+        else if (logicalSize == 3) gfxSize = min(sMax, 2);
+        else if (logicalSize == 2) gfxSize = min(sMax, 2);
+        else gfxSize = 1;
+    } else {
+        if (logicalSize >= 5) gfxSize = sMax;
+        else if (logicalSize == 4) gfxSize = max(1, (sMax * 4) / 5);
+        else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 5);
+        else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 5);
+        else gfxSize = 1;
     }
+
+    matrix->setTextSize(gfxSize);
 }
 
 void DateEngine::loop() {

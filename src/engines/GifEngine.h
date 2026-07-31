@@ -104,6 +104,7 @@ private:
     static const unsigned long pngHoldDurationMs = 5000;
     
     int remainingGifsToPlay;         ///< Counter for rotation limits
+    String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
     
     void loadNextFileInPlaylist();
     void playRawFrame();

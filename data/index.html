@@ -78,10 +78,10 @@
       <header>
         
         <div style="display: flex; align-items: center; gap: 1rem;">
-          <select id="lang-selector" class="select-input" style="padding: 0.2rem 0.5rem; background: transparent; border: 1px solid var(--glass-border); color: #fff; border-radius: 4px;">
-            <option value="en">EN</option>
-            <option value="fr">FR</option>
-            <option value="es">ES</option>
+          <select id="lang-selector" class="select-input" style="padding: 0.3rem 0.6rem; background: #1e293b; border: 1px solid var(--glass-border); color: #fff; border-radius: 6px; cursor: pointer;">
+            <option value="en" style="background:#1e293b; color:#fff;">🇬🇧 EN</option>
+            <option value="fr" style="background:#1e293b; color:#fff;">🇫🇷 FR</option>
+            <option value="es" style="background:#1e293b; color:#fff;">🇪🇸 ES</option>
           </select>
           <button id="mobile-menu-btn" class="btn secondary" style="display: none; padding: 0.5rem; font-size: 1.2rem; background: transparent; border: 1px solid var(--glass-border);">☰</button>
         <div class="status-indicator online" data-i18n="status_online">Online</div>
@@ -601,7 +601,7 @@
             <p style="text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 1rem;">Auto-refreshing every 3 seconds</p>
             
             <h4 data-i18n="firmware_update" style="margin-top: 2rem; color: #e2e8f0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Firmware Update (OTA)</h4>
-            <form method='POST' action='/api/update' enctype='multipart/form-data' style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem;">
+            <form id="form-ota-update" method='POST' action='/api/update' enctype='multipart/form-data' style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem;">
               <input type='file' name='update' accept='.bin' style="flex: 1; color: #fff;" required>
               <button class="btn primary" type='submit' data-i18n="btn_update">Update</button>
             </form>
@@ -803,6 +803,43 @@
               if (confirm("Are you sure you want to shut down the Raspberry Pi?")) {
                   fetch('/api/system/shutdown', { method: 'POST' });
                   alert("Shutting down... You will need to unplug and replug the power to start it again.");
+              }
+          });
+      }
+
+      const otaForm = document.getElementById('form-ota-update');
+      if (otaForm) {
+          otaForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const fileInput = otaForm.querySelector('input[type="file"]');
+              const submitBtn = otaForm.querySelector('button[type="submit"]');
+              if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+
+              const origText = submitBtn.innerText;
+              submitBtn.disabled = true;
+              submitBtn.innerText = "Flashing...";
+
+              const formData = new FormData();
+              formData.append("update", fileInput.files[0]);
+
+              try {
+                  const res = await fetch('/api/update', {
+                      method: 'POST',
+                      body: formData
+                  });
+                  const text = await res.text();
+                  if (res.ok && text.includes("OK")) {
+                      submitBtn.innerText = "Rebooting...";
+                      alert("OTA Update completed successfully! Firmware is rebooting now.");
+                      setTimeout(() => window.location.reload(), 8000);
+                  } else {
+                      alert("OTA Update failed: " + text);
+                      submitBtn.disabled = false;
+                      submitBtn.innerText = origText;
+                  }
+              } catch (err) {
+                  alert("OTA Update submitted! Device is now rebooting.");
+                  setTimeout(() => window.location.reload(), 8000);
               }
           });
       }
@@ -1299,6 +1336,173 @@
           }
         });
       }
+
+      // --- i18n Internationalization ---
+      const i18nTranslations = {
+        en: {
+          nav_settings: "Settings",
+          nav_playlists: "GIFs Playlists",
+          nav_clocks: "Clocks",
+          nav_messages: "Messages",
+          status_online: "Online",
+          folder_playlists: "Folder Playlists",
+          btn_scan_sd: "Scan SD Card",
+          btn_play_selected: "Play Selected",
+          clock_faces: "Clock Faces",
+          clock_style: "Clock Style",
+          btn_apply: "Apply",
+          custom_marquee: "Custom Marquee",
+          label_msg_text: "Message Text",
+          label_color: "Color",
+          label_font_size: "Font Size",
+          label_scroll_dir: "Scroll Direction",
+          label_speed: "Speed (Lower is faster)",
+          label_timeout: "Timeout (seconds)",
+          btn_send_msg: "Send to Matrix 🚀",
+          matrix_hardware: "Matrix Hardware",
+          label_brightness_limit: "Brightness Limit (%)",
+          btn_save_matrix: "Save Brightness",
+          night_mode: "Night Mode",
+          screensaver_rotation: "Screensaver Rotation (Idle)",
+          label_rotation_seq: "Rotation Sequence (Use arrows to reorder)",
+          label_clock_time: "Clock Time (s)",
+          label_date_time: "Date Time (s)",
+          label_weather_time: "Weather Time (s)",
+          label_gifs_rotation: "GIFs per Rotation",
+          label_bg_sprites: "Enable VS Fighting Background",
+          btn_save_rotation: "Save Rotation Config",
+          clock_config: "Clock Configuration",
+          date_config: "Date Configuration",
+          label_date_format: "Date Format",
+          label_date_theme: "Date Theme",
+          weather_setup: "Weather Setup (OpenWeatherMap)",
+          label_city: "City (e.g. Paris,FR)",
+          btn_save_weather: "Save Weather",
+          wifi_mqtt: "WiFi & MQTT",
+          label_wifi_ssid: "WiFi SSID",
+          label_mqtt_ip: "MQTT Broker IP",
+          btn_save_network: "Save Network & Reboot",
+          firmware_update: "Firmware Update (OTA)",
+          btn_update: "Update"
+        },
+        fr: {
+          nav_settings: "Paramètres",
+          nav_playlists: "Playlists GIFs",
+          nav_clocks: "Horloges",
+          nav_messages: "Messages",
+          status_online: "En ligne",
+          folder_playlists: "Dossiers de Playlists",
+          btn_scan_sd: "Analyser Carte SD",
+          btn_play_selected: "Jouer la sélection",
+          clock_faces: "Styles d'Horloge",
+          clock_style: "Style d'Horloge",
+          btn_apply: "Appliquer",
+          custom_marquee: "Message Défilant",
+          label_msg_text: "Texte du Message",
+          label_color: "Couleur",
+          label_font_size: "Taille de Police",
+          label_scroll_dir: "Direction Défilement",
+          label_speed: "Vitesse (Plus bas = plus rapide)",
+          label_timeout: "Délai d'affichage (sec)",
+          btn_send_msg: "Envoyer à la Matrice 🚀",
+          matrix_hardware: "Matériel Matrice",
+          label_brightness_limit: "Limite Luminosité (%)",
+          btn_save_matrix: "Sauvegarder Luminosité",
+          night_mode: "Mode Nuit",
+          screensaver_rotation: "Rotation d'Écran (Veille)",
+          label_rotation_seq: "Séquence de Rotation (Flèches pour réordonner)",
+          label_clock_time: "Durée Horloge (s)",
+          label_date_time: "Durée Date (s)",
+          label_weather_time: "Durée Météo (s)",
+          label_gifs_rotation: "GIFs par Rotation",
+          label_bg_sprites: "Activer fond VS Fighting",
+          btn_save_rotation: "Sauvegarder Rotation",
+          clock_config: "Configuration Horloge",
+          date_config: "Configuration Date",
+          label_date_format: "Format de Date",
+          label_date_theme: "Thème Éditeur",
+          weather_setup: "Configuration Météo (OpenWeatherMap)",
+          label_city: "Ville (ex: Paris,FR)",
+          btn_save_weather: "Sauvegarder Météo",
+          wifi_mqtt: "WiFi & MQTT",
+          label_wifi_ssid: "SSID WiFi",
+          label_mqtt_ip: "IP Broker MQTT",
+          btn_save_network: "Sauvegarder & Redémarrer",
+          firmware_update: "Mise à Jour Firmware (OTA)",
+          btn_update: "Mettre à jour"
+        },
+        es: {
+          nav_settings: "Ajustes",
+          nav_playlists: "Playlists GIFs",
+          nav_clocks: "Relojes",
+          nav_messages: "Mensajes",
+          status_online: "En línea",
+          folder_playlists: "Carpetas de Playlists",
+          btn_scan_sd: "Escanear Tarjeta SD",
+          btn_play_selected: "Reproducir Selección",
+          clock_faces: "Estilos de Reloj",
+          clock_style: "Estilo de Reloj",
+          btn_apply: "Aplicar",
+          custom_marquee: "Mensaje Desplazable",
+          label_msg_text: "Texto del Mensaje",
+          label_color: "Color",
+          label_font_size: "Tamaño de Fuente",
+          label_scroll_dir: "Dirección de Desplazamiento",
+          label_speed: "Velocidad (Menor = Más rápido)",
+          label_timeout: "Tiempo Límite (seg)",
+          btn_send_msg: "Enviar a la Matriz 🚀",
+          matrix_hardware: "Hardware Matriz",
+          label_brightness_limit: "Límite de Brillo (%)",
+          btn_save_matrix: "Guardar Brillo",
+          night_mode: "Modo Noche",
+          screensaver_rotation: "Rotación de Espera (Reposo)",
+          label_rotation_seq: "Secuencia de Rotación (Flechas para reordenar)",
+          label_clock_time: "Tiempo Reloj (s)",
+          label_date_time: "Tiempo Fecha (s)",
+          label_weather_time: "Tiempo Clima (s)",
+          label_gifs_rotation: "GIFs por Rotación",
+          label_bg_sprites: "Activar fondo VS Fighting",
+          btn_save_rotation: "Guardar Rotación",
+          clock_config: "Configuración de Reloj",
+          date_config: "Configuración de Fecha",
+          label_date_format: "Formato de Fecha",
+          label_date_theme: "Tema Editor",
+          weather_setup: "Configuración Clima (OpenWeatherMap)",
+          label_city: "Ciudad (ej. Madrid,ES)",
+          btn_save_weather: "Guardar Clima",
+          wifi_mqtt: "WiFi y MQTT",
+          label_wifi_ssid: "SSID WiFi",
+          label_mqtt_ip: "IP Broker MQTT",
+          btn_save_network: "Guardar y Reiniciar",
+          firmware_update: "Actualización Firmware (OTA)",
+          btn_update: "Actualizar"
+        }
+      };
+
+      window.applyLanguage = function(lang) {
+        const dict = i18nTranslations[lang] || i18nTranslations.en;
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.getAttribute('data-i18n');
+          if (dict[key]) {
+            el.textContent = dict[key];
+          }
+        });
+        localStorage.setItem('arcadematrix_lang', lang);
+      };
+
+      const langSelector = document.getElementById('lang-selector');
+      if (langSelector) {
+        const savedLang = localStorage.getItem('arcadematrix_lang') || (navigator.language.startsWith('fr') ? 'fr' : (navigator.language.startsWith('es') ? 'es' : 'en'));
+        langSelector.value = savedLang;
+        window.applyLanguage(savedLang);
+        langSelector.addEventListener('change', (e) => {
+          window.applyLanguage(e.target.value);
+        });
+      }
+      
+      // Also apply on load immediately
+      const currentLang = localStorage.getItem('arcadematrix_lang') || (navigator.language.startsWith('fr') ? 'fr' : (navigator.language.startsWith('es') ? 'es' : 'en'));
+      window.applyLanguage(currentLang);
     });
   </script>
 </body>
