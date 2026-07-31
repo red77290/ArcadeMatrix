@@ -81,6 +81,9 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
 
     display->setBrightness8(64); // Safe default brightness
     display->clearScreen();
+    display->flipDMABuffer();
+    display->clearScreen();
+    display->flipDMABuffer();
 
     return true;
 }
