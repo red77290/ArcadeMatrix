@@ -28,8 +28,10 @@ jobs:
           restore-keys: |
             pio-${{ matrix.env }}-
 
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
