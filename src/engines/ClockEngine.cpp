@@ -55,6 +55,10 @@ void ClockEngine::setTheme(PublisherTheme theme) {
         arcade->setTheme(theme);
         activeFace = arcade;
     }
+    
+    if (activeFace) {
+        activeFace->draw(currentTime);
+    }
 }
 
 void ClockEngine::updateTime(const TimeData& t) {
