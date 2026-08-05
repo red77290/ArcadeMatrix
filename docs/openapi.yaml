@@ -311,3 +311,26 @@ paths:
           description: Image received and displayed.
         '400':
           description: Invalid payload size.
+
+  /api/ota:
+    post:
+      tags:
+        - System
+      summary: OTA Firmware Update
+      description: Upload a new firmware.bin to flash the device over-the-air.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                update:
+                  type: string
+                  format: binary
+                  description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
+      responses:
+        '200':
+          description: Firmware updated successfully, device will reboot.
+        '400':
+          description: Update failed or no file provided.
