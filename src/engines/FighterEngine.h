@@ -43,6 +43,9 @@ struct FgtAnimation {
     uint32_t pixelsOffset = 0;///< Byte offset in the file where pixel data begins
     
     int cachedFrameIndex = -1;///< Used for frame caching optimization
+    
+    uint8_t* psramBuffer = nullptr; ///< Complete animation cached in PSRAM (if available)
+    uint32_t totalPixelsSize = 0;   ///< Total size of pixel data in bytes
 };
 
 /**

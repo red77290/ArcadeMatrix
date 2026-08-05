@@ -97,8 +97,10 @@ private:
     FsFile pngFile;                  ///< Separate handle for PNGdec's callbacks (synchronous decode)
     bool isRaw;                      ///< Flag indicating if file is .raw instead of .gif
     bool isPng;                      ///< Flag indicating if file is a static .png image
-    unsigned long rawLastFrameTime;
-    unsigned long pngShowStartTime;   ///< millis() when the current PNG was decoded/shown
+    uint32_t rawLastFrameTime;
+    uint32_t gifLastFrameTime = 0;
+    int gifCurrentDelay = 0;
+    uint32_t pngShowStartTime;   ///< millis() when the current PNG was decoded/shown
     // A static PNG has no natural "end of animation" signal like GIF/raw sequences do, so it's
     // held on screen for this long before advancing the playlist (or looping, for a single play).
     static const unsigned long pngHoldDurationMs = 5000;
@@ -109,6 +111,11 @@ private:
     void loadNextFileInPlaylist();
     void playRawFrame();
     bool decodePng(const char* filepath);
+    
+    // PSRAM caching
+    uint8_t* psramBuffer = nullptr;
+    size_t psramBufferSize = 0;
+    void freePsramBuffer();
 
     /**
      * @brief Normalize a user/config-provided playlist path to a full SD path under /gifs or

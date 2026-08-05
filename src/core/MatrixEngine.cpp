@@ -1,4 +1,5 @@
 #include "MatrixEngine.h"
+#include "../../include/HardwareProfile.h"
 
 /**
  * @brief Construct a new Matrix Engine object.
@@ -27,13 +28,27 @@ MatrixEngine::~MatrixEngine() {
  * @return false if out of memory or initialization failed.
  */
 bool MatrixEngine::begin(const MatrixConfig& config) {
-    // User's specific hardware pin mapping extracted from Retro_Pixel_LED_4_0_0.ino
+    int8_t out1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
+    int8_t out2[3] = {MATRIX_R2_PIN, MATRIX_G2_PIN, MATRIX_B2_PIN};
+    int8_t pins1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
+    int8_t pins2[3] = {MATRIX_R2_PIN, MATRIX_G2_PIN, MATRIX_B2_PIN};
+    
+    if (config.rgbSequence.length() >= 3) {
+        String seq = config.rgbSequence;
+        seq.toUpperCase();
+        for(int i = 0; i < 3; i++) {
+            if(seq[i] == 'R') { out1[0] = pins1[i]; out2[0] = pins2[i]; }
+            else if(seq[i] == 'G') { out1[1] = pins1[i]; out2[1] = pins2[i]; }
+            else if(seq[i] == 'B') { out1[2] = pins1[i]; out2[2] = pins2[i]; }
+        }
+    }
+
     HUB75_I2S_CFG::i2s_pins _pins = {
-        25, 26, 27,   // R1, G1, B1
-        14, 12, 13,   // R2, G2, B2
-        33, 32, 22,   // A, B, C
-        17, 21,       // D, E (Changed from 18 to 21 to avoid conflict with VSPI SCK)
-        4, 15, 16     // LAT, OE, CLK
+        out1[0], out1[1], out1[2],
+        out2[0], out2[1], out2[2],
+        MATRIX_A_PIN, MATRIX_B_PIN, MATRIX_C_PIN,
+        MATRIX_D_PIN, MATRIX_E_PIN,
+        MATRIX_LAT_PIN, MATRIX_OE_PIN, MATRIX_CLK_PIN
     };
 
     HUB75_I2S_CFG mxconfig(
@@ -44,7 +59,8 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     );
     
     // Increase minimum refresh rate to eliminate flickering
-    mxconfig.min_refresh_rate = 120;
+    mxconfig.setPixelColorDepthBits(8);
+    mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
     mxconfig.latch_blanking = 8; mxconfig.clkphase = false; // Fixes green pixel flickering in corners on some panels
 
     // Apply double buffering if not forced to single
@@ -96,7 +112,9 @@ void MatrixEngine::clear() {
 
 void MatrixEngine::setBrightness(uint8_t brightness) {
     if (display) {
-        display->setBrightness8(brightness);
+        // brightness is 0-100 (percentage), setBrightness8 expects 0-255
+        uint8_t scaledBrightness = (brightness * 255) / 100;
+        display->setBrightness8(scaledBrightness);
     }
 }
 

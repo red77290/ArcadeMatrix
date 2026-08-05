@@ -26,7 +26,7 @@ void BitmapFontLoader::unload() {
 bool BitmapFontLoader::loadFromSD(const char* path) {
     unload();
 
-    FsFile f = sd.open(path, O_READ);
+    FsFile f = sd.open(path, FILE_OPEN_READ);
     if (!f) {
         Serial.printf("BitmapFontLoader: cannot open %s\n", path);
         return false;

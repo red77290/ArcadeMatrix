@@ -49,7 +49,7 @@ void FlipClock::update() {
     }
 
     // Faster animation (20ms per frame)
-    if (millis() - lastFrameTime > 20) {
+    if (true) {
         lastFrameTime = millis();
         flipFrame++;
     }
