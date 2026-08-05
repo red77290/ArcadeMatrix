@@ -153,24 +153,32 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     }
     
     if (psramFound()) {
+        if (anim.totalPixelsSize > 8 * 1024 * 1024) {
+            LOGW("FighterEngine", "Animation too large (%d bytes) for %s", anim.totalPixelsSize, filepath);
+            free(anim.frameDelays);
+            f.close();
+            return false;
+        }
         anim.psramBuffer = (uint8_t*)heap_caps_malloc(anim.totalPixelsSize, MALLOC_CAP_SPIRAM);
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
-                        size_t offset = 0;
-                        while (toRead > 0) {
-                            size_t chunk = (toRead > 8192) ? 8192 : toRead;
-                            size_t r = f.read(anim.psramBuffer + offset, chunk);
-                            if (r == 0) break;
-                            offset += r;
-                            toRead -= r;
-                        }
+            size_t offset = 0;
+            while (toRead > 0) {
+                size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                size_t r = f.read(anim.psramBuffer + offset, chunk);
+                if (r == 0) break;
+                offset += r;
+                toRead -= r;
+            }
         } else {
-            LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Falling back to SD.", anim.totalPixelsSize, filepath);
+            LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
+            free(anim.frameDelays);
+            f.close();
+            return false;
         }
     }
     
     f.close();
-    
     anim.loaded = true;
     return true;
 }
