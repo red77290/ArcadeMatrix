@@ -97,3 +97,19 @@ Comme cette séparation des responsabilités est gérée automatiquement par `ES
 - **Watchdog matériel :** `main.cpp` initialise le watchdog de tâche ESP-IDF (`esp_task_wdt_init`, timeout de 30 s) comme toute première étape de `setup()`, avant de toucher à la carte SD ou à la matrice. Si `setup()` ou `loop()` se bloque plus longtemps que cela (échec de montage de la SD, échec d'initialisation DMA de la matrice, boucle infinie inattendue, blocage du pilote WiFi, ...), l'ESP32 redémarre tout seul au lieu de rester briqué jusqu'à ce que quelqu'un le trouve et coupe l'alimentation. Les deux boucles critiques existantes `while (1) { delay(100); }` (échec de montage SD / échec d'initialisation de la matrice) ne sont intentionnellement **pas** alimentées, afin de déclencher un redémarrage par watchdog (boucle de retry) plutôt qu'un blocage silencieux définitif.
 - **Mises à jour OTA (`/api/ota` via `Update.h`) :** écrit la nouvelle image du firmware dans le *slot* de partition OTA inactif puis redémarre immédiatement dessus une fois l'upload terminé sans erreur.
   **Limitation importante :** ce projet utilise le build Arduino-ESP32 standard (pas de `sdkconfig` personnalisé), qui **n'active pas** `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. Cela signifie qu'il n'existe actuellement **aucun rollback automatique** si une mauvaise image OTA démarre sur une boucle de crash — contrairement à la fonctionnalité native de rollback applicatif d'ESP-IDF (qui exige d'appeler explicitement `esp_ota_mark_app_valid_cancel_rollback()` après un boot réussi, ainsi qu'un bootloader compilé avec le support du rollback). La récupération après une mauvaise mise à jour OTA nécessite aujourd'hui soit un reflash série/USB, soit le flash d'une image saine à nouveau en OTA si l'appareil reste joignable en Wi-Fi. Activer un vrai rollback nécessiterait de quitter le build Arduino-ESP32 par défaut pour aller vers un `sdkconfig.defaults` personnalisé (framework `espidf` de PlatformIO, ou overrides sdkconfig via `board_build.embed_txtfiles`) — c'est identifié comme une tâche future de durcissement, non implémentée dans cette passe pour éviter un changement de niveau bootloader non vérifié.
+
+---
+
+## 6. Abstraction Matérielle (Injection Statique)
+
+Pour supporter de multiples cartes (ESP32 classique, ESP32-S3 Waveshare, etc.) sans pénaliser les performances, le projet utilise un modèle d'**Injection Statique (Static Polymorphism)** plutôt que de l'injection de dépendances dynamique (interfaces avec méthodes `virtual`).
+
+### Pourquoi pas de classes virtuelles (Orienté Objet) ?
+En C++ embarqué, l'utilisation du mot-clé `virtual` force la création d'une "vtable" (une table de résolution dynamique des méthodes). Puisque l'ESP32 met à jour une matrice LED jusqu'à 60 fois par seconde, les sauts mémoire constants dus à la vtable gaspillent des cycles processeurs critiques et fragmentent le cache mémoire.
+
+### La solution : Macros et Headers d'Abstraction
+Toute la logique matérielle est résolue **au moment de la compilation** :
+1. **`include/HardwareProfile.h`** : Agit comme un routeur statique. Il lit les flags de compilation envoyés par PlatformIO (par exemple `-D HARDWARE_PROFILE_WAVESHARE_S3`) et définit les macros de PIN (`MATRIX_R1_PIN`, `USE_SD_MMC`, etc.) correspondant exactement à la carte cible.
+2. **`src/core/SDUtils.h`** : Agit comme une **Interface/Facade**. Il masque l'implémentation sous-jacente (`SD_MMC` pour l'ESP32-S3 ou `SdFat` pour l'ESP32 classique). La logique métier (`WebServerAPI.cpp`, `GifEngine.cpp`) appelle des méthodes génériques comme `openNextFileHelper(dir)` sans jamais utiliser de `#ifdef` en interne.
+
+Ce modèle garantit que le code métier est totalement agnostique du matériel, tout en offrant un coût de performance (overhead) rigoureusement égal à zéro à l'exécution.
