@@ -113,6 +113,7 @@ private:
     bool decodePng(const char* filepath);
     
     // PSRAM caching
+    uint16_t* canvasBuffer = nullptr;
     uint8_t* psramBuffer = nullptr;
     size_t psramBufferSize = 0;
     void freePsramBuffer();

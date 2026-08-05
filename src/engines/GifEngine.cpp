@@ -286,6 +286,10 @@ void GifEngine::loop() {
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs);
         
+        if (canvasBuffer && matrix) {
+            matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
+        }
+        
         // Browser-like GIF delay normalization for badly encoded GIFs
         if (delayMs <= 10) {
             delayMs = 100; // Force 100ms for 0/10ms delays (like Chrome/Firefox)
@@ -421,9 +425,25 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             if (c != ucTransparent) {
                 int px = offsetX + (pDraw->iX + x) * scaleX;
                 if (scaleX == 1 && scaleY == 1) {
-                    instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                    if (instance->canvasBuffer) {
+                        if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height())
+                            instance->canvasBuffer[baseY * instance->matrix->width() + px] = usPalette[c];
+                    } else {
+                        instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                    }
                 } else {
-                    instance->matrix->fillRect(px, baseY, scaleX, scaleY, usPalette[c]);
+                    if (instance->canvasBuffer) {
+                        int mw = instance->matrix->width();
+                        int mh = instance->matrix->height();
+                        for (int sy = 0; sy < scaleY; sy++) {
+                            for (int sx = 0; sx < scaleX; sx++) {
+                                if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
+                                    instance->canvasBuffer[(baseY + sy) * mw + (px + sx)] = usPalette[c];
+                            }
+                        }
+                    } else {
+                        instance->matrix->fillRect(px, baseY, scaleX, scaleY, usPalette[c]);
+                    }
                 }
             }
         }
@@ -432,9 +452,25 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             uint16_t color = usPalette[*s++];
             int px = offsetX + (pDraw->iX + x) * scaleX;
             if (scaleX == 1 && scaleY == 1) {
-                instance->matrix->drawPixel(px, baseY, color);
+                if (instance->canvasBuffer) {
+                    if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height())
+                        instance->canvasBuffer[baseY * instance->matrix->width() + px] = color;
+                } else {
+                    instance->matrix->drawPixel(px, baseY, color);
+                }
             } else {
-                instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+                if (instance->canvasBuffer) {
+                    int mw = instance->matrix->width();
+                    int mh = instance->matrix->height();
+                    for (int sy = 0; sy < scaleY; sy++) {
+                        for (int sx = 0; sx < scaleX; sx++) {
+                            if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
+                                instance->canvasBuffer[(baseY + sy) * mw + (px + sx)] = color;
+                        }
+                    }
+                } else {
+                    instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+                }
             }
         }
     }
