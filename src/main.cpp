@@ -13,6 +13,20 @@
 #include "engines/clocks/ArcadeClock.h"
 #include "engines/MessageEngine.h"
 #include "api/WebServerAPI.h"
+#include <time.h>
+#include "HardwareProfile.h"
+#if defined(USE_RTC) && USE_RTC
+#include "../src/core/RTCUtils.h"
+#include "esp_sntp.h"
+
+void time_sync_notification_cb(struct timeval *tv) {
+    struct tm timeinfo;
+    gmtime_r(&tv->tv_sec, &timeinfo);
+    writeRTC(timeinfo);
+    Serial.println("RTC updated with UTC time from NTP");
+}
+#endif
+
 #include "engines/RetroFrontendListener.h"
 #include "engines/DateEngine.h"
 #include "engines/WeatherEngine.h"
@@ -75,6 +89,36 @@ void setup() {
     // so those still trigger a watchdog reboot (retry loop) rather than running forever silently.
     constexpr uint32_t WDT_TIMEOUT_S = 30;
     esp_task_wdt_init(WDT_TIMEOUT_S, true /* panic and reboot on timeout */);
+
+#if defined(USE_RTC) && USE_RTC
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    if (initRTC()) {
+        struct tm timeinfo;
+        if (readRTC(timeinfo)) {
+            // Early in setup, TZ is not set, so mktime assumes UTC (which is what we stored)
+            struct timeval tv;
+            
+            // To be strictly safe, unset TZ during mktime just in case
+            char* oldTZ = getenv("TZ");
+            setenv("TZ", "", 1);
+            tzset();
+            tv.tv_sec = mktime(&timeinfo);
+            if (oldTZ) setenv("TZ", oldTZ, 1);
+            else unsetenv("TZ");
+            tzset();
+            
+            tv.tv_usec = 0;
+            settimeofday(&tv, NULL);
+            Serial.println("System time set from Hardware RTC (UTC)");
+        } else {
+            Serial.println("Failed to read Hardware RTC");
+        }
+    } else {
+        Serial.println("Failed to init Hardware RTC");
+    }
+    sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+#endif
+
     esp_task_wdt_add(NULL);
 
     sdMutex = xSemaphoreCreateMutex();
