@@ -21,6 +21,7 @@ private:
     uint32_t animFrame;
     
     void drawHealthBar(int x, int y, int width, int height, float hpPercent, bool isPlayer1);
+    void drawKO(int x, int y);
 };
 
 #endif

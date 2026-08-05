@@ -24,6 +24,7 @@ public:
     
     // Reset to start of rotation (e.g. after manual interruption)
     void resetRotation();
+    RotationModule getCurrentModule() const { return sequence.empty() ? MODULE_CLOCK : sequence[currentIndex]; }
 
 private:
     ClockEngine* clockEngine;
@@ -41,4 +42,4 @@ private:
     void parseRotationString(const String& rotStr);
     void switchToModule(int index);
     void updateBackgroundSprites();
-};
+  };

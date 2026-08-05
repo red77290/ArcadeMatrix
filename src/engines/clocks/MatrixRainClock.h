@@ -18,7 +18,7 @@ private:
     int8_t colHead[MAX_COLUMNS];   // Head row (in glyph rows, not pixels) of each column's drop, may be negative (off-screen, not yet visible)
     int8_t colSpeedDivider[MAX_COLUMNS]; // Larger = slower (drop advances one row every N update() calls)
     uint8_t colTick[MAX_COLUMNS];
-    char colGlyphs[MAX_COLUMNS][16]; // Cached glyphs per column/row so the trail doesn't flicker every frame
+    uint8_t colGlyphs[MAX_COLUMNS][16]; // Cached glyph index per column/row so the trail doesn't flicker every frame
     int numColumns;
     bool initialized;
     TimeData storedTime;

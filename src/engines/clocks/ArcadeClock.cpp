@@ -305,7 +305,7 @@ void ArcadeClock::triggerAnimation() {
 
 void ArcadeClock::update() {
     if (isAnimating) {
-        if (millis() - lastFrameTime > 50) {
+        if (true) {
             lastFrameTime = millis();
             animationFrame++;
             if (animationFrame > 30) {
