@@ -205,14 +205,18 @@ void FighterEngine::startFight() {
     
     if (!getRandomFighter(p1)) return;
     
+    int h1 = (p1.ground_y - p1.head_y) > 0 ? (p1.ground_y - p1.head_y) : p1.height;
     bool found = false;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         if (getRandomFighter(p2)) {
-            // User constraint: Opponent must be max 20% smaller, and NEVER taller than P1.
-            // Original height is stored in p.ground_y.
-            if (p2.name != p1.name && p2.ground_y >= p1.ground_y * 0.8 && p2.ground_y <= p1.ground_y) {
-                found = true;
-                break;
+            int h2 = (p2.ground_y - p2.head_y) > 0 ? (p2.ground_y - p2.head_y) : p2.height;
+            if (p2.name != p1.name && h1 > 0 && h2 > 0) {
+                float minH = (h1 < h2) ? (float)h1 : (float)h2;
+                float maxH = (h1 > h2) ? (float)h1 : (float)h2;
+                if ((minH / maxH) >= 0.80f) {
+                    found = true;
+                    break;
+                }
             }
         }
     }
