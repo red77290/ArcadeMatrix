@@ -129,11 +129,17 @@ bool RotationManager::loop() {
   bool advance = false;
 
   if (currentMod == MODULE_GIFS) {
-    gifEngine->loop();
+    bool drewFrame = gifEngine->loop();
     // If GIF engine stopped naturally because it played all requested GIFs
     if (!gifEngine->isActive()) {
       advance = true;
     }
+    
+    if (advance) {
+      currentIndex = (currentIndex + 1) % sequence.size();
+      switchToModule(currentIndex);
+    }
+    return drewFrame;
   } else {
     // Draw the main module first (background)
     if (currentMod == MODULE_CLOCK) {
