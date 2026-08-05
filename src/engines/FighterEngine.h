@@ -126,13 +126,6 @@ public:
     void draw();
     
     /**
-     * @brief Preload the next fight in background on Core 0 (PSRAM only).
-     */
-    void preloadNextFight();
-    bool isPreloadReady() const { return isPreloaded; }
-    bool isPreloading() const { return isLoadingBackground; }
-
-    /**
      * @brief Check if a fight is currently ongoing.
      * @return true if combat is active.
      */
@@ -144,15 +137,6 @@ private:
     
     FighterPlayer p1;            ///< Player 1 (Left)
     FighterPlayer p2;            ///< Player 2 (Right)
-    
-    // Background Preloading Staging (Core 0)
-    FighterPlayer preloadedP1;
-    FighterPlayer preloadedP2;
-    volatile bool isPreloaded = false;
-    volatile bool isLoadingBackground = false;
-    TaskHandle_t loaderTaskHandle = nullptr;
-    static void loaderTaskFunc(void* param);
-    void runBackgroundPreload();
 
     int numAvailableFighters = 0;   ///< Number of total indexed fighters on SD
     uint32_t* fighterOffsets = nullptr; ///< File offsets for the fighter index
