@@ -497,6 +497,7 @@ void FighterEngine::stop() {
     active = false;
     freeFighter(p1);
     freeFighter(p2);
+    if (matrix) matrix->fillScreen(0);
 }
 
 void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
@@ -669,6 +670,7 @@ bool FighterEngine::loop() {
         extern ConfigLoader config;
         active = false;
         retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
+        if (matrix) matrix->fillScreen(0);
     }
     return true;
 }
