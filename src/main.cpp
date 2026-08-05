@@ -397,7 +397,7 @@ void loop() {
     // Marquee (live box-art/frontend push) takes priority over everything else while active,
     // matching the RPi's behavior where a marquee push interrupts whatever the idle rotation
     // was showing.
-    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+    Serial.println("[DEBUG] Taking sdMutex...");\n    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {\n        Serial.println("[DEBUG] sdMutex taken.");
         if (marqueeEngine && marqueeEngine->isActive()) {
             shouldFlip = marqueeEngine->loop();
         } else if (messageEngine && messageEngine->isActive()) {
@@ -419,17 +419,17 @@ void loop() {
                 shouldFlip = true;
             }
         } else {
-            shouldFlip = rotationManager->loop();
+            Serial.println("[DEBUG] Calling rotationManager->loop()...");\n            shouldFlip = rotationManager->loop();\n            Serial.println("[DEBUG] rotationManager->loop() returned.");
         }
         
         if (frontendListener) frontendListener->loop();
-        xSemaphoreGive(sdMutex);
+        Serial.println("[DEBUG] Giving sdMutex...");\n        xSemaphoreGive(sdMutex);
     }
 
     // 2. Fetch Time & Handle Night Mode
     static int lastSec = -1;
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 0)) {
+    Serial.println("[DEBUG] Checking getLocalTime...");\n    if (getLocalTime(&timeinfo, 0)) {\n        Serial.println("[DEBUG] getLocalTime returned true.");
         if (config.standby.night_mode_enabled) {
             int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
             int off_min = config.standby.turn_off_at.substring(0, 2).toInt() * 60 + config.standby.turn_off_at.substring(3).toInt();
@@ -459,7 +459,7 @@ void loop() {
             lastSec = timeinfo.tm_sec;
             
             TimeData realTime = {(uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec};
-            clockEngine->updateTime(realTime);
+            Serial.println("[DEBUG] clockEngine updated.");\n            clockEngine->updateTime(realTime);
             
             char dateBuffer[32];
             String fmt = config.dateSettings.format;
@@ -478,8 +478,17 @@ void loop() {
     }
     
     if (shouldFlip) {
+        static bool firstFlip = true;
+        if (firstFlip) {
+            Serial.println("[DEBUG] About to call flipDMABuffer()...");
+        }
         matrixEngine.getDisplay()->flipDMABuffer();
+        if (firstFlip) {
+            Serial.println("[DEBUG] flipDMABuffer() returned!");
+            firstFlip = false;
+        }
     }
+
     
     // Stable ~60 FPS frame limiter
     static unsigned long lastLoopTime = 0;
