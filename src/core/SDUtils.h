@@ -41,13 +41,13 @@ inline String getFileName(FsFile& f) {
  * - .Spotlight-*
  * - .Trashes
  */
-inline FsFile openNextFileHelper(FsFile& dir) {
+inline bool getNextFile(FsFile& dir, FsFile& file) {
 #if USE_SD_MMC
-    return dir.openNextFile();
+    file = dir.openNextFile();
+    return (bool)file;
 #else
-    FsFile file;
-    file.openNext(&dir, O_READ);
-    return file;
+    if (file) file.close();
+    return file.openNext(&dir, O_READ);
 #endif
 }
 
