@@ -5,6 +5,8 @@
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 
+extern SemaphoreHandle_t sdMutex;
+
 #define MAX_FIGHTER_FRAME_SIZE 98304
 
 FighterEngine::FighterEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
@@ -196,10 +198,129 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
     freeAnim(p.animFall);
 }
 
+void FighterEngine::preloadNextFight() {
+#if defined(BOARD_HAS_PSRAM)
+    if (!psramFound()) return;
+    if (isPreloaded || isLoadingBackground) return;
+    if (numAvailableFighters < 2) return;
+
+    isLoadingBackground = true;
+    xTaskCreatePinnedToCore(loaderTaskFunc, "FighterLoader", 8192, this, 1, &loaderTaskHandle, 0);
+#endif
+}
+
+void FighterEngine::loaderTaskFunc(void* param) {
+    FighterEngine* self = (FighterEngine*)param;
+    self->runBackgroundPreload();
+    self->loaderTaskHandle = nullptr;
+    vTaskDelete(NULL);
+}
+
+void FighterEngine::runBackgroundPreload() {
+    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+        freeFighter(preloadedP1);
+        freeFighter(preloadedP2);
+        
+        if (getRandomFighter(preloadedP1)) {
+            int h1 = (preloadedP1.ground_y - preloadedP1.head_y) > 0 ? (preloadedP1.ground_y - preloadedP1.head_y) : preloadedP1.height;
+            bool found = false;
+            for (int i = 0; i < 30; i++) {
+                if (getRandomFighter(preloadedP2)) {
+                    int h2 = (preloadedP2.ground_y - preloadedP2.head_y) > 0 ? (preloadedP2.ground_y - preloadedP2.head_y) : preloadedP2.height;
+                    if (preloadedP2.name != preloadedP1.name && h1 > 0 && h2 > 0) {
+                        float minH = (h1 < h2) ? (float)h1 : (float)h2;
+                        float maxH = (h1 > h2) ? (float)h1 : (float)h2;
+                        if ((minH / maxH) >= 0.80f) {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!found) {
+                int attempts = 0;
+                do {
+                    getRandomFighter(preloadedP2);
+                    attempts++;
+                } while (preloadedP1.name == preloadedP2.name && attempts < 10);
+            }
+            
+            String dir = getFightersDir();
+            bool ok = true;
+            ok &= loadFighterAnim(preloadedP1.animWalk, (dir + "/" + preloadedP1.name + "/walk.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP1.animAttack, (dir + "/" + preloadedP1.name + "/attack.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP1.animHit, (dir + "/" + preloadedP1.name + "/hit.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP1.animWin, (dir + "/" + preloadedP1.name + "/win.fgt").c_str());
+            
+            int t1[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSpecial, (dir + "/" + preloadedP1.name + "/special" + String(t1[i]) + ".fgt").c_str())) break; }
+            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSuper, (dir + "/" + preloadedP1.name + "/super" + String(t1[i]) + ".fgt").c_str())) break; }
+            loadFighterAnim(preloadedP1.animFall, (dir + "/" + preloadedP1.name + "/fall.fgt").c_str());
+
+            ok &= loadFighterAnim(preloadedP2.animWalk, (dir + "/" + preloadedP2.name + "/walk.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP2.animAttack, (dir + "/" + preloadedP2.name + "/attack.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP2.animHit, (dir + "/" + preloadedP2.name + "/hit.fgt").c_str());
+            ok &= loadFighterAnim(preloadedP2.animWin, (dir + "/" + preloadedP2.name + "/win.fgt").c_str());
+            
+            int t2[3] = {1, 2, 3};
+            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSpecial, (dir + "/" + preloadedP2.name + "/special" + String(t2[i]) + ".fgt").c_str())) break; }
+            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSuper, (dir + "/" + preloadedP2.name + "/super" + String(t2[i]) + ".fgt").c_str())) break; }
+            loadFighterAnim(preloadedP2.animFall, (dir + "/" + preloadedP2.name + "/fall.fgt").c_str());
+
+            if (ok) {
+                int scale = (matrix->height() >= 64 && dir.endsWith("32")) ? (matrix->height() / 32) : 1;
+                int p1_ground_at_0 = preloadedP1.ground_y - preloadedP1.head_y;
+                int p2_ground_at_0 = preloadedP2.ground_y - preloadedP2.head_y;
+                int fight_max_h = p1_ground_at_0 > p2_ground_at_0 ? p1_ground_at_0 : p2_ground_at_0;
+
+                preloadedP1.direction = 1;
+                preloadedP1.x = -preloadedP1.width_px * scale;
+                preloadedP1.y = (fight_max_h - preloadedP1.ground_y) * scale;
+
+                preloadedP2.direction = -1;
+                preloadedP2.x = matrix->width();
+                preloadedP2.y = (fight_max_h - preloadedP2.ground_y) * scale;
+
+                setPlayerState(preloadedP1, FIGHTER_WALK);
+                setPlayerState(preloadedP2, FIGHTER_WALK);
+
+                isPreloaded = true;
+                LOGI("FighterEngine", "Background Core 0 PSRAM preload completed for %s vs %s", preloadedP1.name.c_str(), preloadedP2.name.c_str());
+            } else {
+                freeFighter(preloadedP1);
+                freeFighter(preloadedP2);
+                LOGW("FighterEngine", "Background PSRAM preload failed");
+            }
+        }
+        xSemaphoreGive(sdMutex);
+    }
+    isLoadingBackground = false;
+}
+
 void FighterEngine::startFight() {
     if (millis() < retryDelayEnd) return;
     if (numAvailableFighters < 2) return;
     
+    // Instant swap if background preloaded in PSRAM!
+    if (isPreloaded) {
+        freeFighter(p1);
+        freeFighter(p2);
+        memcpy(&p1, (void*)&preloadedP1, sizeof(FighterPlayer));
+        memcpy(&p2, (void*)&preloadedP2, sizeof(FighterPlayer));
+        memset(&preloadedP1, 0, sizeof(FighterPlayer));
+        memset(&preloadedP2, 0, sizeof(FighterPlayer));
+        isPreloaded = false;
+
+        p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
+        fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
+        active = true;
+        currentLoadState = LOAD_IDLE;
+        LOGI("FighterEngine", "Fight started instantly (0ms) from PSRAM preloaded cache!");
+        return;
+    }
+
+    if (isLoadingBackground) return; // Wait for background loader task if running
+
     freeFighter(p1);
     freeFighter(p2);
     
