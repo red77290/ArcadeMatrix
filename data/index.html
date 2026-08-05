@@ -1163,20 +1163,6 @@ body {
               </div>
             </div>
             <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save MQTT Settings</button>
-            
-            <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
-            
-            <h4 style="margin-top: 1.5rem;">Recalbox / Batocera Sync</h4>
-            <p class="text-muted" style="font-size: 0.9em;">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
-            <div class="form-grid" style="align-items: end;">
-              <div class="form-group">
-                <label>Console IP Address</label>
-                <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
-              </div>
-              <div class="form-group">
-                <button id="btn-install-mqtt" class="btn btn-warning" style="width: 100%;">Install via SSH</button>
-              </div>
-            </div>
           </div>
           
           <div class="card glass shadow">
@@ -1729,28 +1715,6 @@ function initNetworkSettings() {
       } finally {
         btnSaveWifi.disabled = false;
         btnSaveWifi.textContent = 'Connect Wi-Fi';
-      }
-    });
-  }
-
-  const btnInstallMqtt = document.getElementById('btn-install-mqtt');
-  if (btnInstallMqtt) {
-    btnInstallMqtt.addEventListener('click', async () => {
-      const ip = document.getElementById('hw-mqtt-ip').value;
-      if (!ip) {
-        window.showToast('Please enter Console IP Address', 'error');
-        return;
-      }
-      btnInstallMqtt.disabled = true;
-      btnInstallMqtt.textContent = 'Installing...';
-      try {
-        await API.postAuth('/api/mqtt/install', { ip });
-        window.showToast('MQTT Sync Script Installed!', 'success');
-      } catch (e) {
-        window.showToast('Failed to install script', 'error');
-      } finally {
-        btnInstallMqtt.disabled = false;
-        btnInstallMqtt.textContent = 'Install via SSH';
       }
     });
   }
