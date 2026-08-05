@@ -169,7 +169,7 @@ void WebServerAPI::setupRoutes() {
         bool hasJson = false;
         
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile jsonFile = sd.open("/gifs/playlists.json", O_RDONLY);
+            FsFile jsonFile = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
             if (jsonFile) {
                 size_t len = jsonFile.size();
                 char* buf = (char*)malloc(len + 1);
@@ -516,7 +516,7 @@ void WebServerAPI::setupRoutes() {
         bool exists = false;
         String content = "";
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/playlists_selected.json", O_RDONLY);
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_READ);
             if (f) {
                 exists = true;
                 content = f.readString();
