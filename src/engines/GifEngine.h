@@ -61,7 +61,7 @@ public:
     /**
      * @brief Main processing loop for pushing pixels frame-by-frame.
      */
-    void loop();
+    bool loop();
     
     /**
      * @brief Check if the engine is currently processing or playing a GIF.
@@ -109,7 +109,7 @@ private:
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
     
     void loadNextFileInPlaylist();
-    void playRawFrame();
+    bool playRawFrame();
     bool decodePng(const char* filepath);
     
     // PSRAM caching

@@ -21,7 +21,7 @@ public:
     // over 5 days) and samples index 0 (now), 8 (~+24h) and 16 (~+48h) as Today/Tomorrow/Day3.
     void update(const String& apiKey, const String& city);
     
-    void loop();
+    bool loop();
     void setCharacter(int characterId);
     void forceUpdate() { lastFetchTime = 0; }
 

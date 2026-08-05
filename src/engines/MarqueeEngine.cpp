@@ -38,12 +38,12 @@ void MarqueeEngine::stop() {
     active = false;
 }
 
-void MarqueeEngine::loop() {
-    if (!active) return;
+bool MarqueeEngine::loop() {
+    if (!active) return true;
 
     if (millis() - startTime >= durationMs) {
         active = false;
-        return;
+        return true;
     }
 
     // main.cpp's loop() clears the screen every frame before calling into whichever engine is
@@ -54,4 +54,5 @@ void MarqueeEngine::loop() {
             matrix->drawPixel(x, y, buffer[y * panelWidth + x]);
         }
     }
+    return true;
 }

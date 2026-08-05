@@ -37,7 +37,7 @@ public:
     DateEngine(MatrixPanel_I2S_DMA* display);
     ~DateEngine();
 
-    void loop();
+    bool loop();
     
     // Updates the current date string (e.g. "Mer 08 Jul")
     void setDate(const char* dateStr);

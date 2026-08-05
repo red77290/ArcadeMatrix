@@ -164,13 +164,8 @@ void WebServerAPI::setupRoutes() {
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
             FsFile dir = sd.open("/gifs");
             if (dir && isDirectory(dir)) {
-#if USE_SD_MMC
-                FsFile file = dir.openNextFile();
+                FsFile file = openNextFileHelper(dir);
                 while (file) {
-#else
-                FsFile file;
-                while (file.openNext(&dir, O_READ)) {
-#endif
                     if (isDirectory(file)) {
                         String name = getFileName(file);
                         // Extract just the folder name if it contains full path
@@ -185,11 +180,7 @@ void WebServerAPI::setupRoutes() {
                             first = false;
                         }
                     }
-#if USE_SD_MMC
-                    file = dir.openNextFile();
-#else
-                    file.close();
-#endif
+                    file = openNextFileHelper(dir);
                 }
             }
             if (dir) dir.close();

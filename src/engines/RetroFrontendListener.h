@@ -18,7 +18,7 @@ class RetroFrontendListener {
 public:
     RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine = nullptr);
     void begin();
-    void loop();
+    bool loop();
 
 private:
     MqttConfig& mqttConfig;

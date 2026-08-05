@@ -17,8 +17,8 @@ void RetroFrontendListener::begin() {
     mqttClient.setCallback(RetroFrontendListener::callback);
 }
 
-void RetroFrontendListener::loop() {
-    if (!mqttConfig.enabled) return;
+bool RetroFrontendListener::loop() {
+    if (!mqttConfig.enabled) return true;
     
     if (!mqttClient.connected()) {
         long now = millis();
@@ -31,6 +31,7 @@ void RetroFrontendListener::loop() {
     } else {
         mqttClient.loop();
     }
+    return true;
 }
 
 void RetroFrontendListener::reconnect() {

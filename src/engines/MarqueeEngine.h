@@ -18,7 +18,7 @@ public:
     // durationSeconds (default 8s, matching the RPi's typical marquee dwell time).
     void show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds = 8);
     bool isActive();
-    void loop();
+    bool loop();
     void stop();
 
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }

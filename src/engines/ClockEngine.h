@@ -37,7 +37,7 @@ public:
     void updateTime(const TimeData& t);
     
     // Handles continuous frame rendering
-    void loop(); 
+    bool loop(); 
 
 private:
     MatrixPanel_I2S_DMA* matrix;

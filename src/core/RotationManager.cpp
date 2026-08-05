@@ -120,9 +120,9 @@ void RotationManager::switchToModule(int index) {
   switchDepth = 0;
 }
 
-void RotationManager::loop() {
+bool RotationManager::loop() {
   if (sequence.empty())
-    return;
+    return true;
 
   uint32_t now = millis();
   RotationModule currentMod = sequence[currentIndex];
@@ -164,4 +164,5 @@ void RotationManager::loop() {
     currentIndex = (currentIndex + 1) % sequence.size();
     switchToModule(currentIndex);
   }
+  return true;
 }

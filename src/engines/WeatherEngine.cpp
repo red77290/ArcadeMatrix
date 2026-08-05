@@ -183,8 +183,8 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
     }
 }
 
-void WeatherEngine::loop() {
-    if (!validData || numForecasts == 0) return;
+bool WeatherEngine::loop() {
+    if (!validData || numForecasts == 0) return true;
 
     // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
     // horizontal-scroll transition (see WeatherEngine.h for rationale).
@@ -194,6 +194,7 @@ void WeatherEngine::loop() {
     }
 
     drawForecast(forecasts[activeSlide]);
+    return true;
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {

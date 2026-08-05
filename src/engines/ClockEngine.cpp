@@ -64,8 +64,9 @@ void ClockEngine::updateTime(const TimeData& t) {
     }
 }
 
-void ClockEngine::loop() {
+bool ClockEngine::loop() {
     if (activeFace) {
         activeFace->update();
     }
+    return true;
 }

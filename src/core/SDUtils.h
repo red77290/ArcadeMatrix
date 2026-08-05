@@ -41,6 +41,16 @@ inline String getFileName(FsFile& f) {
  * - .Spotlight-*
  * - .Trashes
  */
+inline FsFile openNextFileHelper(FsFile& dir) {
+#if USE_SD_MMC
+    return dir.openNextFile();
+#else
+    FsFile file;
+    file.openNext(&dir, O_READ);
+    return file;
+#endif
+}
+
 inline bool isMacJunk(const String& name) {
     if (name.length() == 0) return true;
     // Get just the filename part (after last '/')

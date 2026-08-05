@@ -18,7 +18,7 @@ public:
     
     void displayMessage(const MessageConfig& config);
     bool isActive();
-    void loop();
+    bool loop();
     void stop();
 
     /// Sets an optional custom GFXfont (e.g. from BitmapFontLoader, loaded from SD) to use

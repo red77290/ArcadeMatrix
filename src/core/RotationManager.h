@@ -20,7 +20,7 @@ public:
     RotationManager(ClockEngine* c, DateEngine* d, WeatherEngine* w, GifEngine* g, FighterEngine* f);
     
     void begin(const ConfigLoader& cfg);
-    void loop();
+    bool loop();
     
     // Reset to start of rotation (e.g. after manual interruption)
     void resetRotation();
