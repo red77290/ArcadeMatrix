@@ -314,16 +314,17 @@ void FighterEngine::processLoadState() {
             // Done! Finish setup
             {
                 int scale = (matrix->height() >= 64 && getFightersDir().endsWith("32")) ? (matrix->height() / 32) : 1;
-                // Align characters so their ground line touches the bottom of the screen
-                int ground_screen_y = matrix->height() - 1;
+                int p1_ground_at_0 = p1.ground_y - p1.head_y;
+                int p2_ground_at_0 = p2.ground_y - p2.head_y;
+                int fight_max_h = p1_ground_at_0 > p2_ground_at_0 ? p1_ground_at_0 : p2_ground_at_0;
 
                 p1.direction = 1; 
                 p1.x = -p1.width_px * scale; 
-                p1.y = ground_screen_y - (p1.ground_y * scale);
+                p1.y = (fight_max_h - p1.ground_y) * scale;
                 
                 p2.direction = -1; 
                 p2.x = matrix->width();
-                p2.y = ground_screen_y - (p2.ground_y * scale);
+                p2.y = (fight_max_h - p2.ground_y) * scale;
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
