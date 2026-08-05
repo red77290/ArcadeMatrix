@@ -144,7 +144,8 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
-    if (frameSize > MAX_FIGHTER_FRAME_SIZE) {
+    int maxFrameSize = psramFound() ? (2 * 1024 * 1024) : 98304;
+    if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
         f.close();
@@ -185,7 +186,8 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) p.activeFile.close();
     if (p.currentFrameBuffer) {
-        free(p.currentFrameBuffer);
+        if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+        else free(p.currentFrameBuffer);
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
     }
@@ -494,8 +496,15 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     if (anim && anim->loaded) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
-            if (p.currentFrameBuffer) free(p.currentFrameBuffer);
-            p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+            if (p.currentFrameBuffer) {
+                if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+                else free(p.currentFrameBuffer);
+            }
+            if (psramFound()) {
+                p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
+            } else {
+                p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+            }
             p.currentBufferSize = newSize;
             
             // Force redraw since buffer was reallocated
