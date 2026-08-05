@@ -259,25 +259,29 @@ void FighterEngine::runBackgroundPreload() {
             
             String dir = getFightersDir();
             bool ok = true;
-            ok &= loadFighterAnim(preloadedP1.animWalk, (dir + "/" + preloadedP1.name + "/walk.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP1.animAttack, (dir + "/" + preloadedP1.name + "/attack.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP1.animHit, (dir + "/" + preloadedP1.name + "/hit.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP1.animWin, (dir + "/" + preloadedP1.name + "/win.fgt").c_str());
+            if (!loadFighterAnim(preloadedP1.animWalk, (dir + "/" + preloadedP1.name + "/walk.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP1.animAttack, (dir + "/" + preloadedP1.name + "/attack.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP1.animHit, (dir + "/" + preloadedP1.name + "/hit.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP1.animWin, (dir + "/" + preloadedP1.name + "/win.fgt").c_str())) ok = false;
             
-            int t1[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSpecial, (dir + "/" + preloadedP1.name + "/special" + String(t1[i]) + ".fgt").c_str())) break; }
-            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSuper, (dir + "/" + preloadedP1.name + "/super" + String(t1[i]) + ".fgt").c_str())) break; }
-            loadFighterAnim(preloadedP1.animFall, (dir + "/" + preloadedP1.name + "/fall.fgt").c_str());
+            if (ok) {
+                int t1[3] = {1, 2, 3};
+                for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSpecial, (dir + "/" + preloadedP1.name + "/special" + String(t1[i]) + ".fgt").c_str())) break; }
+                for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP1.animSuper, (dir + "/" + preloadedP1.name + "/super" + String(t1[i]) + ".fgt").c_str())) break; }
+                loadFighterAnim(preloadedP1.animFall, (dir + "/" + preloadedP1.name + "/fall.fgt").c_str());
+            }
 
-            ok &= loadFighterAnim(preloadedP2.animWalk, (dir + "/" + preloadedP2.name + "/walk.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP2.animAttack, (dir + "/" + preloadedP2.name + "/attack.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP2.animHit, (dir + "/" + preloadedP2.name + "/hit.fgt").c_str());
-            ok &= loadFighterAnim(preloadedP2.animWin, (dir + "/" + preloadedP2.name + "/win.fgt").c_str());
+            if (ok && !loadFighterAnim(preloadedP2.animWalk, (dir + "/" + preloadedP2.name + "/walk.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP2.animAttack, (dir + "/" + preloadedP2.name + "/attack.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP2.animHit, (dir + "/" + preloadedP2.name + "/hit.fgt").c_str())) ok = false;
+            if (ok && !loadFighterAnim(preloadedP2.animWin, (dir + "/" + preloadedP2.name + "/win.fgt").c_str())) ok = false;
             
-            int t2[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSpecial, (dir + "/" + preloadedP2.name + "/special" + String(t2[i]) + ".fgt").c_str())) break; }
-            for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSuper, (dir + "/" + preloadedP2.name + "/super" + String(t2[i]) + ".fgt").c_str())) break; }
-            loadFighterAnim(preloadedP2.animFall, (dir + "/" + preloadedP2.name + "/fall.fgt").c_str());
+            if (ok) {
+                int t2[3] = {1, 2, 3};
+                for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSpecial, (dir + "/" + preloadedP2.name + "/special" + String(t2[i]) + ".fgt").c_str())) break; }
+                for(int i=0; i<3; i++) { if (loadFighterAnim(preloadedP2.animSuper, (dir + "/" + preloadedP2.name + "/super" + String(t2[i]) + ".fgt").c_str())) break; }
+                loadFighterAnim(preloadedP2.animFall, (dir + "/" + preloadedP2.name + "/fall.fgt").c_str());
+            }
 
             if (ok) {
                 int scale = (matrix->height() >= 64 && dir.endsWith("32")) ? (matrix->height() / 32) : 1;
