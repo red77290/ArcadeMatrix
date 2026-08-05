@@ -321,6 +321,13 @@ void FighterEngine::startFight() {
         return;
     }
 
+#if defined(BOARD_HAS_PSRAM)
+    if (psramFound()) {
+        preloadNextFight();
+        return;
+    }
+#endif
+
     if (isLoadingBackground) return; // Wait for background loader task if running
 
     freeFighter(p1);
@@ -493,7 +500,7 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
     if (p.activeFile) p.activeFile.close();
-    if (anim && anim->loaded) {
+    if (anim && anim->loaded && !anim->psramBuffer) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
             if (p.currentFrameBuffer) {
@@ -531,8 +538,13 @@ bool FighterEngine::loop() {
     if (millis() < hitStopUntilMillis) return true;
     
     if (!active) {
-        startFight();
-        return true;
+        if (isPreloaded) {
+            startFight();
+        } else {
+            preloadNextFight();
+            return true;
+        }
+        if (!active) return true;
     }
     
     uint32_t now = millis();
