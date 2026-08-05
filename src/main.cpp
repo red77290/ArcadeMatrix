@@ -331,22 +331,41 @@ void setup() {
         webServer->setMarqueeEngine(marqueeEngine);
     }
     
+
     // Allow message to finish scrolling before main loop
+    Serial.println("[DEBUG] Waiting for MessageEngine to finish...");
+    unsigned long startWait = millis();
     while (messageEngine->isActive()) {
         matrixEngine.getDisplay()->fillScreen(0);
         messageEngine->loop();
         matrixEngine.getDisplay()->flipDMABuffer();
         delay(5);
+        if (millis() - startWait > 5000) {
+            Serial.println("[DEBUG] MessageEngine wait timeout! Force stopping.");
+            messageEngine->stop();
+            break;
+        }
     }
+    Serial.println("[DEBUG] MessageEngine finished.");
     
+    Serial.println("[DEBUG] Starting rotationManager...");
     rotationManager->begin(config);
+    Serial.println("[DEBUG] rotationManager started.");
     
     TimeData initialTime = {10, 42, 0};
     clockEngine->updateTime(initialTime);
+    Serial.println("[DEBUG] setup() complete. Entering loop().");
 }
+
 
 void loop() {
     esp_task_wdt_reset();
+
+    static bool firstLoop = true;
+    if (firstLoop) {
+        Serial.println("[DEBUG] Entered first loop() iteration!");
+        firstLoop = false;
+    }
 
     static bool wasPoweredOn = true;
 
