@@ -378,8 +378,9 @@ if __name__ == "__main__":
     COMPRESS_FGT = args.compress
 
     src_dir = args.src
+    target_h = 64 if "64" in args.dest else 32
     out_dirs = [
-        (args.dest, TARGET_HEIGHT)
+        (args.dest, target_h)
     ]
     
     start_time = time.time()
