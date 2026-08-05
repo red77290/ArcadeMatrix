@@ -165,12 +165,16 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
+            int chunkCount = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                size_t chunk = (toRead > 32768) ? 32768 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
                 toRead -= r;
+                if (++chunkCount % 2 == 0) {
+                    vTaskDelay(1); // Yield to FreeRTOS display task so clock rendering is never starved!
+                }
             }
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
