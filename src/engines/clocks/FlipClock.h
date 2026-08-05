@@ -9,15 +9,12 @@ public:
 
 private:
     int prevDigits[6];
-    bool flippingPanels[6];
+    int oldDigits[6];
+    int flipFrame[6];
     TimeData storedTime;
     
-    // Animation state
-    bool isFlipping;
-    int flipFrame;
     unsigned long lastFrameTime;
     
-    void drawStaticTime();
-    void drawFlappingTime();
-    void drawPanel(int x, int y, int w, int h, const char* text, uint16_t bgColor, uint16_t textColor, bool isFlippingPanel, int flipOffset);
+    void drawTime();
+    void drawPanel(int x, int y, int w, int h, const char* curText, const char* oldText, uint16_t bgColor, uint16_t textColor, int frame);
 };

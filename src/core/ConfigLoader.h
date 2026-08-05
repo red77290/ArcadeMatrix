@@ -23,7 +23,7 @@ struct MatrixConfig {
     bool forceSingleBuffer; ///< Force single buffering to save RAM on large displays
     int colorDepth;         ///< Number of bits per color channel (e.g. 8 for 16M colors, 3 for 512)
     String rgbSequence;     ///< Color sequence for the panel (e.g., "RGB", "BRG")
-    int pwmBits;            ///< PWM color depth bit limit (default 11)
+
     int limitRefreshRateHz; ///< Max matrix refresh rate (0 = unlimited)
 };
 

@@ -6,6 +6,7 @@
 #include "../core/RotationManager.h"
 #include "WebUI.h"
 #include "../core/Globals.h"
+#include "../core/Logger.h"
 
 // Helper class to stream large files from SdFat to ESPAsyncWebServer
 class AsyncSdFatResponse : public AsyncAbstractResponse {
@@ -95,7 +96,7 @@ void WebServerAPI::begin() {
     });
 
     server.begin();
-    Serial.println("Web Server Started.");
+    LOGI("WebServer", "Web Server Started.");
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
@@ -157,37 +158,62 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
-    // API: List GIF Playlists (Scans /gifs/ directory directly instead of needing playlists.json)
+    // API: Return dummy version to prevent UI 404 errors
+    server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"version\":\"2.0.0\", \"arch\":\"esp32s3\"}");
+    });
+
+    // API: List GIF Playlists (Reads playlists.json first, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
-        String content = "{\"playlists\":[";
-        bool first = true;
+        String content = "";
+        bool hasJson = false;
+        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile dir = sd.open("/gifs");
-            if (dir && isDirectory(dir)) {
-                FsFile file;
-                while (getNextFile(dir, file)) {
-                    if (isDirectory(file)) {
-                        String name = getFileName(file);
-                        // Extract just the folder name if it contains full path
-                        int lastSlash = name.lastIndexOf('/');
-                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                        
-                        if (name.length() > 0 && name[0] != '.') {
-                            if (!first) content += ",";
-                            content += "\"/gifs/";
-                            content += name;
-                            content += "\"";
-                            first = false;
+            FsFile jsonFile = sd.open("/gifs/playlists.json", O_RDONLY);
+            if (jsonFile) {
+                size_t len = jsonFile.size();
+                char* buf = (char*)malloc(len + 1);
+                if (buf) {
+                    jsonFile.read((uint8_t*)buf, len);
+                    buf[len] = '\0';
+                    content = buf;
+                    free(buf);
+                    hasJson = true;
+                }
+                jsonFile.close();
+            }
+            
+            if (!hasJson) {
+                content = "{";
+                bool first = true;
+                FsFile dir = sd.open("/gifs");
+                if (dir && isDirectory(dir)) {
+                    FsFile file;
+                    while (getNextFile(dir, file)) {
+                        if (isDirectory(file)) {
+                            String name = getFileName(file);
+                            // Extract just the folder name if it contains full path
+                            int lastSlash = name.lastIndexOf('/');
+                            if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                            
+                            if (name.length() > 0 && name[0] != '.') {
+                                if (!first) content += ",";
+                                content += "\"" + name + "\":{";
+                                content += "\"path\":\"/gifs/" + name + "\",";
+                                content += "\"count\":0"; // No count in fallback to prevent WDT crashes
+                                content += "}";
+                                first = false;
+                            }
                         }
                     }
                 }
+                if (dir) dir.close();
+                content += "}";
             }
-            if (dir) dir.close();
-            
-            // If there's a playlists.json, maybe use it as fallback? No, dynamic is better!
             xSemaphoreGive(sdMutex);
         }
-        content += "]}";
+        
+        if (content.length() == 0) content = "{}";
         request->send(200, "application/json", content);
     });
 
@@ -214,8 +240,8 @@ void WebServerAPI::setupRoutes() {
     
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        // Reduce allocation from 4096 to 2048 to prevent heap fragmentation crashes
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 2048);
+        // Use 4096 to prevent truncation of JSON payload (otherwise settings at the end like clock_color_1 will be missing)
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 4096);
         JsonObject doc = response->getRoot().as<JsonObject>();
         
         if (doc.isNull()) {
@@ -231,8 +257,6 @@ void WebServerAPI::setupRoutes() {
         doc["matrix_rows"] = config.matrix.height;
         doc["matrix_cols"] = config.matrix.width;
         doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
-        doc["matrix_pwm_bits"] = config.matrix.pwmBits;
-        doc["matrix_limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
 
         // Idle rotation
         doc["rotation"] = config.idle.rotation;
@@ -324,7 +348,6 @@ void WebServerAPI::setupRoutes() {
         if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
         if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
         if (!doc["matrix_rgb_sequence"].isNull()) config.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
-        if (!doc["matrix_pwm_bits"].isNull()) config.matrix.pwmBits = doc["matrix_pwm_bits"].as<int>();
         if (!doc["matrix_limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
         
         // Idle rotation
@@ -463,7 +486,7 @@ void WebServerAPI::setupRoutes() {
         bool exists = false;
         String content = "";
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_READ);
+            FsFile f = sd.open("/playlists_selected.json", O_RDONLY);
             if (f) {
                 exists = true;
                 content = f.readString();
@@ -506,9 +529,9 @@ void WebServerAPI::setupRoutes() {
                 for (const String& p : paths) arr.add(p);
                 serializeJson(saveDoc, f);
                 f.close();
-                Serial.println("GIF playlists saved to SD.");
+                LOGI("WebServer", "GIF playlists saved to SD.");
             } else {
-                Serial.println("ERROR: Failed to write playlists_selected.json");
+                LOGE("WebServer", "Failed to write playlists_selected.json");
             }
             xSemaphoreGive(sdMutex);
         }
@@ -602,7 +625,7 @@ void WebServerAPI::setupRoutes() {
         request->send(response);
 
         if (shouldReboot) {
-            Serial.println("OTA Update successful! Rebooting in 1 second...");
+            LOGI("OTA", "OTA Update successful! Rebooting in 1 second...");
             xTaskCreate([](void *param) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 extern MatrixEngine matrixEngine;
@@ -617,7 +640,7 @@ void WebServerAPI::setupRoutes() {
         }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
-            Serial.printf("Update Start: %s\n", filename.c_str());
+            LOGI("OTA", "Update Start: %s", filename.c_str());
             extern GifEngine gifEngine;
             gifEngine.stop();
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
@@ -631,7 +654,7 @@ void WebServerAPI::setupRoutes() {
         }
         if (final) {
             if (Update.end(true)) {
-                Serial.printf("Update Success: %uB written.\n", index + len);
+                LOGI("OTA", "Update Success: %uB written.", index + len);
             } else {
                 Update.printError(Serial);
             }
