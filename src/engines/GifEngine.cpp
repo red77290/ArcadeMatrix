@@ -280,12 +280,23 @@ void GifEngine::loop() {
             }
         }
     } else {
+        // We MUST draw the persistent canvas to the matrix back buffer EVERY single tick of the
+        // main loop. The main loop flips the DMA double buffer at 60fps. If we don't draw the
+        // canvas every tick, the screen will flip to an empty/old back buffer between GIF frames!
+        if (canvasBuffer && matrix) {
+            matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
+        }
+
         if (millis() - gifLastFrameTime < gifCurrentDelay) return;
         gifLastFrameTime = millis();
         
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs);
         
+        // After decoding a new frame into the canvas, we don't need to redraw it to the matrix
+        // here because it will be drawn on the NEXT tick of the loop (or we could draw it again,
+        // but it's already in canvasBuffer, the top of the loop will catch it next time).
+        // Actually, we should draw it NOW to minimize input lag for this frame.
         if (canvasBuffer && matrix) {
             matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
         }
