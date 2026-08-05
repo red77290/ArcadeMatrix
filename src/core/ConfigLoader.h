@@ -25,6 +25,10 @@ struct MatrixConfig {
     String rgbSequence;     ///< Color sequence for the panel (e.g., "RGB", "BRG")
 
     int limitRefreshRateHz; ///< Max matrix refresh rate (0 = unlimited)
+    String driverChip;      ///< Driver IC chip: SHIFTREG, FM6124, FM6126A, ICN2038S, SM16208
+    bool clkPhase;          ///< Clock phase toggle for pixel alignment / green corner fix
+    int latchBlanking;      ///< Latch blanking timing (1-16)
+    int rowAddressMode;     ///< Row addressing mode (0=Default, 1=AB-Direct, 2=ShiftRegister Row)
 };
 
 /**
@@ -142,6 +146,29 @@ struct FontConfig {
 };
 
 /**
+ * @struct CryptoConfig
+ * @brief Real-time crypto ticker settings.
+ */
+struct CryptoConfig {
+    bool enabled;
+    String symbols;         ///< Comma-separated list of symbols (e.g. "BTC,ETH,SOL,DOGE")
+    int duration_sec;       ///< Display duration per crypto token
+    int cache_ttl_min;      ///< Quote cache TTL in minutes (refresh rate)
+    String currency;        ///< USD or EUR
+};
+
+/**
+ * @struct StockConfig
+ * @brief Real-time stock market quote settings.
+ */
+struct StockConfig {
+    bool enabled;
+    String symbols;         ///< Comma-separated list of stock tickers (e.g. "AAPL,NVDA,TSLA,MSFT")
+    int duration_sec;       ///< Display duration per stock ticker
+    int cache_ttl_min;      ///< Quote cache TTL in minutes (refresh rate)
+};
+
+/**
  * @class ConfigLoader
  * @brief Main engine configuration parser.
  */
@@ -185,6 +212,8 @@ public:
     StandbyConfig standby;
     DateConfig dateSettings;
     FontConfig fonts;
+    CryptoConfig crypto;
+    StockConfig stock;
 
 private:
     void parseLine(String line, String& currentSection);

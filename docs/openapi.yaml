@@ -84,6 +84,31 @@ paths:
                   pwm_bits:
                     type: integer
                     description: "PWM bits (8-14)"
+                  matrix_driver_chip:
+                    type: string
+                    enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, SM16208]
+                    description: "LED Panel Hardware Driver Chip"
+                  matrix_clk_phase:
+                    type: boolean
+                    description: "Clock Phase toggle for pixel alignment"
+                  matrix_latch_blanking:
+                    type: integer
+                    description: "Latch blanking timing (1-16)"
+                  matrix_row_address_mode:
+                    type: integer
+                    description: "Row addressing mode (0=Default, 1=AB-Direct, 2=ShiftRegister Row)"
+                  crypto_symbols:
+                    type: string
+                    description: "Comma-separated crypto token symbols (e.g. BTC,ETH,SOL,DOGE)"
+                  crypto_cache_ttl_min:
+                    type: integer
+                    description: "Crypto quote cache TTL in minutes (refresh rate, default 1)"
+                  stock_symbols:
+                    type: string
+                    description: "Comma-separated stock ticker symbols (e.g. AAPL,NVDA,TSLA,MSFT)"
+                  stock_cache_ttl_min:
+                    type: integer
+                    description: "Stock quote cache TTL in minutes (refresh rate, default 1)"
                 properties:
                   success:
                     type: boolean
