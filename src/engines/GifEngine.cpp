@@ -285,6 +285,14 @@ void GifEngine::loop() {
         
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs);
+        
+        // Browser-like GIF delay normalization for badly encoded GIFs
+        if (delayMs <= 10) {
+            delayMs = 100; // Force 100ms for 0/10ms delays (like Chrome/Firefox)
+        } else if (delayMs < 20) {
+            delayMs = 20; // Cap at 50fps max to prevent matrix stuttering
+        }
+        
         gifCurrentDelay = delayMs;
         
         if (result <= 0) {
