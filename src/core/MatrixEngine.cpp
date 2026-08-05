@@ -71,7 +71,20 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     }
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
-    mxconfig.latch_blanking = 8; mxconfig.clkphase = false; // Fixes green pixel flickering in corners on some panels
+    mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 8;
+    mxconfig.clkphase = config.clkPhase;
+
+    String chip = config.driverChip;
+    chip.toUpperCase();
+    if (chip == "FM6124") {
+        mxconfig.driver = HUB75_I2S_CFG::FM6124;
+    } else if (chip == "FM6126" || chip == "FM6126A") {
+        mxconfig.driver = HUB75_I2S_CFG::FM6126A;
+    } else if (chip == "ICN2038S" || chip == "ICN2037" || chip == "SM16208") {
+        mxconfig.driver = HUB75_I2S_CFG::ICN2038S;
+    } else {
+        mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
+    }
 
     // Apply double buffering if not forced to single
     mxconfig.double_buff = !config.forceSingleBuffer;

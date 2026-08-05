@@ -412,7 +412,7 @@ bool FighterEngine::loop() {
     else if (p1.state == FIGHTER_SUPER) anim1 = &p1.animSuper;
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
-    if (anim1 && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
+    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames) && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
         p1.currentFrame++;
         p1.lastFrameTime = now;
         if (p1.currentFrame >= anim1->numFrames) {
@@ -432,7 +432,7 @@ bool FighterEngine::loop() {
     else if (p2.state == FIGHTER_SUPER) anim2 = &p2.animSuper;
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
-    if (anim2 && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
+    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames) && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
         p2.currentFrame++;
         p2.lastFrameTime = now;
         if (p2.currentFrame >= anim2->numFrames) {

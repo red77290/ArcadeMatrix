@@ -15,5 +15,7 @@ The exhaustive `conf.ini` parameter list is shipped in the `release/sdCard/` fol
 - `[IDLE]`: The sequence of modules to play when nothing is happening (Clock, Date, Weather, GIFs, Sprites), including `fighter_interval_sec` (delay between MUGEN fights). **New properties**: `mode` (e.g. `default`, `clock_only`) and `gifs_before_clock` (number of GIFs to play before reverting to the clock).
 - `[DATE]`: Background sprites, formatting, and `date_color_1`/`date_color_2` gradient colors for the date module.
 - `[WEATHER]`: OpenWeatherMap API keys.
+- `[CRYPTO]`: Symbols (`BTC,ETH,SOL,DOGE`), display duration, and `cache_ttl_min` (refresh rate in minutes, default 1).
+- `[STOCK]`: Stock tickers (`AAPL,NVDA,TSLA,MSFT`), display duration, and `cache_ttl_min` (refresh rate in minutes, default 1).
 - `[STANDBY]`: Night mode power-saving timers and `night_brightness` level (set to 0 to completely turn off the panel at night).
 - `[FONTS]`: Optional `custom_font_path` to an SD-loaded `.amf` bitmap font (see `tools/bdf_to_amfont/README.md`).
