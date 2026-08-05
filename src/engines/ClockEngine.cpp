@@ -20,6 +20,10 @@ ClockEngine::~ClockEngine() {
 }
 
 void ClockEngine::setTheme(PublisherTheme theme) {
+    if (currentTheme == theme && activeFace != nullptr) {
+        return;
+    }
+    
     if (activeFace) {
         delete activeFace;
         activeFace = nullptr;

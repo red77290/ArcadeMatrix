@@ -77,6 +77,10 @@ void DateEngine::setCharacter(int characterId) {
 }
 
 void DateEngine::setTheme(PublisherTheme theme) {
+    if (currentTheme == theme && activeFace != nullptr) {
+        return;
+    }
+    
     if (activeFace) {
         delete activeFace;
         activeFace = nullptr;
