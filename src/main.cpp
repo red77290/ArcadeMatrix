@@ -132,6 +132,13 @@ void setup() {
     // before the HUB75 matrix or other engines fragment the memory.
     WiFi.mode(WIFI_STA);
 
+    if (psramFound()) {
+        LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
+             ESP.getPsramSize() / (1024 * 1024), ESP.getPsramSize(), ESP.getFreePsram());
+    } else {
+        LOGI("System", "No PSRAM detected on hardware.");
+    }
+
     // 1. Initialize SD Card
 #if USE_SD_MMC
     if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
