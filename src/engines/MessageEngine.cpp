@@ -47,13 +47,13 @@ void MessageEngine::stop() {
     matrix->clearScreen();
 }
 
-void MessageEngine::loop() {
-    if (!active) return;
+bool MessageEngine::loop() {
+    if (!active) return true;
 
     // Check timeout priority
     if (millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
         stop();
-        return;
+        return true;
     }
 
     // Scroll logic based on speed (ms per pixel update)
@@ -83,4 +83,5 @@ void MessageEngine::loop() {
             if (cursorY < -textHeight) cursorY = matrix->height();
         }
     }
+    return true;
 }

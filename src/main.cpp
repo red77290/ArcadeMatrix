@@ -369,6 +369,7 @@ void loop() {
         shouldClear = false; // AnimatedGIF needs previous frame in buffer
     }
 
+    bool shouldFlip = true;
     if (shouldClear) {
         matrixEngine.getDisplay()->fillScreen(0);
     }
@@ -379,14 +380,14 @@ void loop() {
     // was showing.
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
         if (marqueeEngine && marqueeEngine->isActive()) {
-            marqueeEngine->loop();
+            shouldFlip = marqueeEngine->loop();
         } else if (messageEngine && messageEngine->isActive()) {
-            messageEngine->loop();
+            shouldFlip = messageEngine->loop();
         } else if (gifEngine.isActive() && rotationManager->getCurrentModule() != MODULE_GIFS) {
-            gifEngine.loop();
+            shouldFlip = gifEngine.loop();
         } else if (config.mqtt.enabled) {
             if (gifEngine.isActive()) {
-                gifEngine.loop();
+                shouldFlip = gifEngine.loop();
             } else {
                 matrixEngine.getDisplay()->fillScreen(0);
                 matrixEngine.getDisplay()->setTextSize(1);
@@ -396,9 +397,10 @@ void loop() {
                 matrixEngine.getDisplay()->print("Waiting for");
                 matrixEngine.getDisplay()->setCursor(14, yPos + 10);
                 matrixEngine.getDisplay()->print("Marquee...");
+                shouldFlip = true;
             }
         } else {
-            rotationManager->loop();
+            shouldFlip = rotationManager->loop();
         }
         
         if (frontendListener) frontendListener->loop();
@@ -456,7 +458,9 @@ void loop() {
         }
     }
     
-    matrixEngine.getDisplay()->flipDMABuffer();
+    if (shouldFlip) {
+        matrixEngine.getDisplay()->flipDMABuffer();
+    }
     
     // Stable ~60 FPS frame limiter
     static unsigned long lastLoopTime = 0;

@@ -269,7 +269,7 @@ void DateEngine::applyThemeSettings() {
     matrix->setTextSize(gfxSize);
 }
 
-void DateEngine::loop() {
+bool DateEngine::loop() {
     
     if (currentTheme == THEME_CYBERPUNK) {
         if (!dateDropsInit) {
@@ -391,4 +391,5 @@ void DateEngine::loop() {
     matrix->setTextColor(textColor);
     matrix->setCursor(x, y);
     matrix->print(currentDate);
+    return true;
 }

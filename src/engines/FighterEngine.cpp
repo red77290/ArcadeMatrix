@@ -383,19 +383,19 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     }
 }
 
-void FighterEngine::loop() {
-    if (millis() < retryDelayEnd) return;
+bool FighterEngine::loop() {
+    if (millis() < retryDelayEnd) return true;
     
     if (currentLoadState != LOAD_IDLE) {
         processLoadState();
-        return;
+        return true;
     }
     
-    if (millis() < hitStopUntilMillis) return;
+    if (millis() < hitStopUntilMillis) return true;
     
     if (!active) {
         startFight();
-        return;
+        return true;
     }
     
     uint32_t now = millis();
@@ -507,6 +507,7 @@ void FighterEngine::loop() {
         active = false;
         retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
     }
+    return true;
 }
 
 void FighterEngine::drawPlayer(FighterPlayer& p) {

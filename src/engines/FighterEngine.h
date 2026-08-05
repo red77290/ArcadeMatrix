@@ -118,7 +118,7 @@ public:
     /**
      * @brief Main loop to be called frequently to update animation logic.
      */
-    void loop();
+    bool loop();
     
     /**
      * @brief Draw the current frame of both fighters to the matrix.

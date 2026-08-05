@@ -251,52 +251,39 @@ void GifEngine::stop() {
     freePsramBuffer();
 }
 
-void GifEngine::loop() {
+bool GifEngine::loop() {
     if (hasPendingPlaylists) {
         stop();
-        playlists = pendingPlaylists;
         playlistMode = true;
         hasPendingPlaylists = false;
         loadNextFileInPlaylist();
-        return;
+        return true;
     }
 
     if (!isPlaying) {
         if (playlistMode) loadNextFileInPlaylist();
-        return;
+        return false;
     }
 
     if (isRaw) {
-        playRawFrame();
+        return playRawFrame();
     } else if (isPng) {
-        // Static image: already decoded directly onto the matrix by decodePng(). Nothing to
-        // redraw every tick - just wait out pngHoldDurationMs, then advance/loop like a
-        // single-frame raw sequence would.
-        if (millis() - pngShowStartTime >= pngHoldDurationMs) {
+        if (millis() - pngShowStartTime > pngHoldDurationMs) {
             if (playlistMode) {
                 loadNextFileInPlaylist();
+                return true; // We switched image, flip required
             } else {
-                pngShowStartTime = millis(); // Loop: just keep showing the same static image
+                pngShowStartTime = millis(); // Loop single file
             }
         }
+        return false; // PNG is static, no need to flip once displayed
     } else {
-        // We MUST draw the persistent canvas to the matrix back buffer EVERY single tick of the
-        // main loop. The main loop flips the DMA double buffer at 60fps. If we don't draw the
-        // canvas every tick, the screen will flip to an empty/old back buffer between GIF frames!
-        if (canvasBuffer && matrix) {
-            matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
-        }
-
-        if (millis() - gifLastFrameTime < gifCurrentDelay) return;
+        if (millis() - gifLastFrameTime < gifCurrentDelay) return false;
         gifLastFrameTime = millis();
         
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs);
         
-        // After decoding a new frame into the canvas, we don't need to redraw it to the matrix
-        // here because it will be drawn on the NEXT tick of the loop (or we could draw it again,
-        // but it's already in canvasBuffer, the top of the loop will catch it next time).
-        // Actually, we should draw it NOW to minimize input lag for this frame.
         if (canvasBuffer && matrix) {
             matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
         }
@@ -318,14 +305,16 @@ void GifEngine::loop() {
                 gif.reset(); // Loop single file
             }
         }
+        return true; // Frame decoded, requires flip
     }
 }
 
-void GifEngine::playRawFrame() {
-    if (millis() - rawLastFrameTime < 50) return; // ~20 FPS limit for raw files
+
+bool GifEngine::playRawFrame() {
+    if (millis() - rawLastFrameTime < 50) return false; // ~20 FPS limit for raw files
     rawLastFrameTime = millis();
     
-    if (!currentFile) return;
+    if (!currentFile) return false;
     
     int w = matrix->width();
     int h = matrix->height();
@@ -363,6 +352,7 @@ void GifEngine::playRawFrame() {
             currentFile.seek(0); // Loop single file
         }
     }
+    return true;
 }
 
 // --- AnimatedGIF Callbacks ---
