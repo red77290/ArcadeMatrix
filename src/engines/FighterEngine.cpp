@@ -153,8 +153,10 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     }
     
     if (psramFound()) {
-        if (anim.totalPixelsSize > 8 * 1024 * 1024) {
-            LOGW("FighterEngine", "Animation too large (%d bytes) for %s", anim.totalPixelsSize, filepath);
+        size_t freePsram = ESP.getFreePsram();
+        size_t safetyHeadroom = 1048576; // 1 MB safety reserve
+        if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
+            LOGW("FighterEngine", "Animation too large (%d bytes, free PSRAM: %u) for %s", anim.totalPixelsSize, (uint32_t)freePsram, filepath);
             free(anim.frameDelays);
             f.close();
             return false;
