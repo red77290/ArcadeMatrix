@@ -70,13 +70,6 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         depth = 8; // Safe fallback if invalid range
     }
     
-    // For large panels (e.g. 256x64, >= 16384 pixels), adjust depth to 5-bit (163 KB)
-    // so the DMA framebuffer fits cleanly in fast 240MHz Internal SRAM without PSRAM bus contention.
-    if (config.width * config.height * config.chainLength >= 16384 && depth > 5) {
-        depth = 5;
-        LOGI("MatrixEngine", "Large panel detected: Auto-adjusting color depth to 5-bit (RGB565) to fit in fast Internal SRAM.");
-    }
-    
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
     mxconfig.latch_blanking = config.latchBlanking > 0 ? config.latchBlanking : 8;
