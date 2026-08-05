@@ -476,11 +476,11 @@ bool FighterEngine::loop() {
             bool isHeavy = false;
             
             int rnd = random(100);
-            if (attacker->animSuper.loaded && rnd < 20) {
+            if (attacker->animSuper.loaded && rnd < 50) {
                 atkState = FIGHTER_SUPER;
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
                 isHeavy = true;
-            } else if (attacker->animSpecial.loaded && rnd < 50) {
+            } else if (attacker->animSpecial.loaded && rnd < 80) {
                 atkState = FIGHTER_SPECIAL;
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
                 isHeavy = true;
