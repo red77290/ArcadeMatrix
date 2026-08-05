@@ -17,6 +17,15 @@ bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
     if (!display) return false;
     matrix = display;
     gif.begin(LITTLE_ENDIAN_PIXELS);
+
+    // Allocate canvasBuffer in fast INTERNAL RAM to composite GIF delta frames.
+    // This is required when using double-buffering on the matrix, otherwise delta frames
+    // are drawn to alternating buffers causing horrible flickering and ghosting.
+    size_t matrixPixels = matrix->width() * matrix->height();
+    canvasBuffer = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (canvasBuffer) {
+        memset(canvasBuffer, 0, matrixPixels * 2);
+    }
     return true;
 }
 
@@ -73,6 +82,9 @@ bool GifEngine::playGif(const char* filepath) {
                             psramBufferSize = fileSize;
                             if (gif.open(psramBuffer, psramBufferSize, GIFDraw)) {
                                 Serial.println("GIF loaded directly from PSRAM!");
+                                if (canvasBuffer && matrix) {
+                                    memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
+                                }
                                 isRaw = false;
                                 isPng = false;
                                 isPlaying = true;
@@ -91,6 +103,9 @@ bool GifEngine::playGif(const char* filepath) {
         // Fallback to streaming from SD card
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             Serial.println("GIF opened successfully (streaming from SD)!");
+            if (canvasBuffer && matrix) {
+                memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
+            }
             isRaw = false;
             isPng = false;
             isPlaying = true;
