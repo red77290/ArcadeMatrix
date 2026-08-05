@@ -33,6 +33,8 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "engines/WeatherEngine.h"
 #include "engines/FighterEngine.h"
 #include "engines/MarqueeEngine.h"
+#include "engines/CryptoEngine.h"
+#include "engines/StockEngine.h"
 #include "core/RotationManager.h"
 #include "core/BitmapFontLoader.h"
 
@@ -48,6 +50,8 @@ ClockEngine* clockEngine = nullptr;
 DateEngine* dateEngine = nullptr;
 WeatherEngine* weatherEngine = nullptr;
 FighterEngine* fighterEngine = nullptr;
+CryptoEngine cryptoEngine;
+StockEngine stockEngine;
 RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
@@ -236,7 +240,9 @@ void setup() {
     weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
     fighterEngine = new FighterEngine(matrixEngine.getDisplay());
     fighterEngine->initialize();
-    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine);
+    cryptoEngine.begin(matrixEngine.getDisplay());
+    stockEngine.begin(matrixEngine.getDisplay());
+    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 

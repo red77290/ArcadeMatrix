@@ -257,6 +257,21 @@ void WebServerAPI::setupRoutes() {
         doc["matrix_rows"] = config.matrix.height;
         doc["matrix_cols"] = config.matrix.width;
         doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
+        doc["matrix_driver_chip"] = config.matrix.driverChip;
+        doc["matrix_clk_phase"] = config.matrix.clkPhase;
+        doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
+        doc["matrix_row_address_mode"] = config.matrix.rowAddressMode;
+
+        // Crypto & Stock
+        doc["crypto_enabled"] = config.crypto.enabled;
+        doc["crypto_symbols"] = config.crypto.symbols;
+        doc["crypto_duration_sec"] = config.crypto.duration_sec;
+        doc["crypto_cache_ttl_min"] = config.crypto.cache_ttl_min;
+        doc["crypto_currency"] = config.crypto.currency;
+        doc["stock_enabled"] = config.stock.enabled;
+        doc["stock_symbols"] = config.stock.symbols;
+        doc["stock_duration_sec"] = config.stock.duration_sec;
+        doc["stock_cache_ttl_min"] = config.stock.cache_ttl_min;
 
         // Idle rotation
         doc["rotation"] = config.idle.rotation;
@@ -349,6 +364,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
         if (!doc["matrix_rgb_sequence"].isNull()) config.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
         if (!doc["matrix_limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
+        if (!doc["matrix_driver_chip"].isNull()) config.matrix.driverChip = doc["matrix_driver_chip"].as<String>();
+        if (!doc["matrix_clk_phase"].isNull()) config.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();
+        if (!doc["matrix_latch_blanking"].isNull()) config.matrix.latchBlanking = doc["matrix_latch_blanking"].as<int>();
+        if (!doc["matrix_row_address_mode"].isNull()) config.matrix.rowAddressMode = doc["matrix_row_address_mode"].as<int>();
+
+        // Crypto & Stock
+        if (!doc["crypto_enabled"].isNull()) config.crypto.enabled = doc["crypto_enabled"].as<bool>();
+        if (!doc["crypto_symbols"].isNull()) config.crypto.symbols = doc["crypto_symbols"].as<String>();
+        if (!doc["crypto_duration_sec"].isNull()) config.crypto.duration_sec = doc["crypto_duration_sec"].as<int>();
+        if (!doc["crypto_cache_ttl_min"].isNull()) config.crypto.cache_ttl_min = doc["crypto_cache_ttl_min"].as<int>();
+        if (!doc["crypto_currency"].isNull()) config.crypto.currency = doc["crypto_currency"].as<String>();
+        if (!doc["stock_enabled"].isNull()) config.stock.enabled = doc["stock_enabled"].as<bool>();
+        if (!doc["stock_symbols"].isNull()) config.stock.symbols = doc["stock_symbols"].as<String>();
+        if (!doc["stock_duration_sec"].isNull()) config.stock.duration_sec = doc["stock_duration_sec"].as<int>();
+        if (!doc["stock_cache_ttl_min"].isNull()) config.stock.cache_ttl_min = doc["stock_cache_ttl_min"].as<int>();
         
         // Idle rotation
         bool rotationChanged = false;

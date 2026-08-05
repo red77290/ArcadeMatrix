@@ -7,9 +7,10 @@ extern ConfigLoader config;
 
 RotationManager::RotationManager(ClockEngine *c, DateEngine *d,
                                  WeatherEngine *w, GifEngine *g,
-                                 FighterEngine *f)
+                                 FighterEngine *f, CryptoEngine *cr,
+                                 StockEngine *st)
     : clockEngine(c), dateEngine(d), weatherEngine(w), gifEngine(g),
-      fighterEngine(f) {
+      fighterEngine(f), cryptoEngine(cr), stockEngine(st) {
   currentIndex = 0;
   moduleStartTime = 0;
 }
@@ -32,6 +33,10 @@ void RotationManager::parseRotationString(const String &rotStr) {
       sequence.push_back(MODULE_WEATHER);
     else if (mod == "gifs")
       sequence.push_back(MODULE_GIFS);
+    else if (mod == "crypto")
+      sequence.push_back(MODULE_CRYPTO);
+    else if (mod == "stock" || mod == "stocks")
+      sequence.push_back(MODULE_STOCKS);
 
     start = end + 1;
     end = s.indexOf(',', start);
@@ -47,6 +52,10 @@ void RotationManager::parseRotationString(const String &rotStr) {
     sequence.push_back(MODULE_WEATHER);
   else if (mod == "gifs")
     sequence.push_back(MODULE_GIFS);
+  else if (mod == "crypto")
+    sequence.push_back(MODULE_CRYPTO);
+  else if (mod == "stock" || mod == "stocks")
+    sequence.push_back(MODULE_STOCKS);
 
   if (sequence.empty()) {
     sequence.push_back(MODULE_CLOCK); // Fallback
@@ -114,13 +123,31 @@ void RotationManager::switchToModule(int index) {
       switchToModule(currentIndex);
       return;
     }
+  } else if (mod == MODULE_CRYPTO) {
+    if (cryptoEngine) {
+      cryptoEngine->updateConfig(config.crypto);
+      cryptoEngine->onDisplayStart();
+    } else {
+      currentIndex = (currentIndex + 1) % sequence.size();
+      switchToModule(currentIndex);
+      return;
+    }
+  } else if (mod == MODULE_STOCKS) {
+    if (stockEngine) {
+      stockEngine->updateConfig(config.stock);
+      stockEngine->onDisplayStart();
+    } else {
+      currentIndex = (currentIndex + 1) % sequence.size();
+      switchToModule(currentIndex);
+      return;
+    }
   }
 
   if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER) {
     updateBackgroundSprites();
   }
   
-  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS"};
+  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS", "CRYPTO", "STOCKS"};
   LOGI("RotationManager", "Switched to %s", modNames[mod]);
   
   switchDepth = 0;
@@ -162,6 +189,16 @@ bool RotationManager::loop() {
       weatherEngine->loop();
       if (now - moduleStartTime >=
           config.idle.weather_duration_sec * 1000UL)
+        advance = true;
+    } else if (currentMod == MODULE_CRYPTO) {
+      if (cryptoEngine) cryptoEngine->loop();
+      if (now - moduleStartTime >=
+          (config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5) * 1000UL)
+        advance = true;
+    } else if (currentMod == MODULE_STOCKS) {
+      if (stockEngine) stockEngine->loop();
+      if (now - moduleStartTime >=
+          (config.stock.duration_sec > 0 ? config.stock.duration_sec : 5) * 1000UL)
         advance = true;
     }
 

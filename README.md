@@ -18,6 +18,7 @@ with a sample `conf.ini`, GIFs/MUGEN folders, and the GIF playlist indexing scri
 
 ## Features
 - **Massive Clock Selection:** Animated clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain**, and **Versus (Mugen)**!
+- **Real-Time Crypto & Stock Market Tickers:** Live price quotes & 24h % badges from CoinGecko, Binance, and Yahoo Finance with configurable TTL cache.
 - **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs and change settings live!
 - **MUGEN Fighting Engine:** Natively simulates 2D fighting games on the matrix using extracted sprites with perfect virtual-ground alignment.
 - **GIF Engine:** Smooth playback of GIFs stored on the SD card.

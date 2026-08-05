@@ -39,6 +39,8 @@ graph TD
         Clock[ClockEngine]
         Date[DateEngine]
         Weather[WeatherEngine]
+        Crypto[CryptoEngine]
+        Stock[StockEngine]
         Mugen[FighterEngine]
     end
 
@@ -48,14 +50,15 @@ graph TD
         Clock --> PacMan[PacManClock]
     end
 
-    Config -.->|Reads| Clock & Date & Weather
-    Clock & Date & Weather --> Hardware[MatrixPanel_I2S_DMA]
+    Config -.->|Reads| Clock & Date & Weather & Crypto & Stock
+    Clock & Date & Weather & Crypto & Stock --> Hardware[MatrixPanel_I2S_DMA]
     Mugen -->|Overlay Draw| Hardware
 ```
 
 ### Components
 
-1. **Standalone Engines (`src/ClockEngine.cpp`, `src/DateEngine.cpp`, etc.)**: Each engine is a closed system. It manages its own state and contains its own logic to draw directly to the matrix hardware.
+1. **Standalone Engines (`src/ClockEngine.cpp`, `src/DateEngine.cpp`, `src/CryptoEngine.cpp`, `src/StockEngine.cpp`, etc.)**: Each engine is a closed system. It manages its own state and contains its own logic to draw directly to the matrix hardware.
+2. **Crypto & Stock Engines**: Real-time asset market quote tickers. Features multi-API fallback strategy (CoinGecko Primary, CoinGecko Simple ID, Binance Fallback, Yahoo v8 Chart API), per-symbol configurable TTL caching, and prominent multi-row layout for 64px panels.
 2. **Specialized Clocks**: For complex themes (e.g., Pong, PacMan), the logic is encapsulated into separate C++ classes (`PongClock.cpp`), but they still receive a pointer to the matrix hardware and draw their own pixels. There is no separation between "Renderer" and "Clock" here.
 3. **Fighter Engine (SD Card Streaming)**: The ESP32 does not have enough memory to load an entire MUGEN sprite sheet. Instead, the `FighterEngine` uses a custom streaming format (`.fgt`) and reads binary sprite frames directly from the SD card buffer frame-by-frame, drawing them over the active engine.
 

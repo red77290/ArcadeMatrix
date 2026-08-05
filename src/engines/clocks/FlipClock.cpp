@@ -221,11 +221,13 @@ void FlipClock::drawTime() {
         storedTime.seconds / 10, storedTime.seconds % 10
     };
 
-    char curStr[6][2];
-    char oldStr[6][2];
+    char curStr[6][8];
+    char oldStr[6][8];
     for (int i = 0; i < 6; i++) {
-        sprintf(curStr[i], "%d", curr[i]);
-        sprintf(oldStr[i], "%d", oldDigits[i] >= 0 ? oldDigits[i] : curr[i]);
+        int cDigit = (curr[i] >= 0) ? (curr[i] % 10) : 0;
+        int oDigit = (oldDigits[i] >= 0) ? (oldDigits[i] % 10) : cDigit;
+        snprintf(curStr[i], sizeof(curStr[i]), "%d", cDigit);
+        snprintf(oldStr[i], sizeof(oldStr[i]), "%d", oDigit);
     }
     
     int cx = startX;

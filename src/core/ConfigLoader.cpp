@@ -18,6 +18,10 @@ void ConfigLoader::setDefaults() {
     matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 0;
+    matrix.driverChip = "SHIFTREG";
+    matrix.clkPhase = false;
+    matrix.latchBlanking = 8;
+    matrix.rowAddressMode = 0;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -79,6 +83,17 @@ void ConfigLoader::setDefaults() {
     dateSettings.date_font_path = "";
 
     fonts.custom_font_path = "";
+
+    crypto.enabled = true;
+    crypto.symbols = "BTC,ETH,SOL,DOGE";
+    crypto.duration_sec = 5;
+    crypto.cache_ttl_min = 1;
+    crypto.currency = "USD";
+
+    stock.enabled = true;
+    stock.symbols = "AAPL,NVDA,TSLA,MSFT";
+    stock.duration_sec = 5;
+    stock.cache_ttl_min = 1;
 }
 
 String ConfigLoader::extractValue(String line) {
@@ -127,8 +142,11 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
         else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
-
         else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
+        else if (key == "DRIVER_CHIP") matrix.driverChip = value;
+        else if (key == "CLK_PHASE") matrix.clkPhase = (value == "true" || value == "1");
+        else if (key == "LATCH_BLANKING") matrix.latchBlanking = value.toInt();
+        else if (key == "ROW_ADDRESS_MODE") matrix.rowAddressMode = value.toInt();
     }
     else if (currentSection == "MQTT") {
         if (key == "ENABLED") mqtt.enabled = (value == "true" || value == "1");
@@ -192,6 +210,19 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
     }
     else if (currentSection == "FONTS") {
         if (key == "CUSTOM_FONT_PATH") fonts.custom_font_path = value;
+    }
+    else if (currentSection == "CRYPTO") {
+        if (key == "ENABLED") crypto.enabled = (value == "true" || value == "1");
+        else if (key == "SYMBOLS") crypto.symbols = value;
+        else if (key == "DURATION_SEC") crypto.duration_sec = value.toInt();
+        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") crypto.cache_ttl_min = value.toInt();
+        else if (key == "CURRENCY") crypto.currency = value;
+    }
+    else if (currentSection == "STOCK" || currentSection == "STOCKS") {
+        if (key == "ENABLED") stock.enabled = (value == "true" || value == "1");
+        else if (key == "SYMBOLS") stock.symbols = value;
+        else if (key == "DURATION_SEC") stock.duration_sec = value.toInt();
+        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") stock.cache_ttl_min = value.toInt();
     }
 }
 
@@ -322,6 +353,10 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
     file.println("rgb_sequence=" + matrix.rgbSequence);
     file.println("limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz));
+    file.println("driver_chip=" + matrix.driverChip);
+    file.println("clk_phase=" + String(matrix.clkPhase ? "1" : "0"));
+    file.println("latch_blanking=" + String(matrix.latchBlanking));
+    file.println("row_address_mode=" + String(matrix.rowAddressMode));
     file.println();
 
     file.println("[mqtt]");
@@ -380,6 +415,21 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("# Optional SD-loadable custom bitmap font (.amf format, see tools/bdf_to_amfont)");
     file.println("# Leave empty to use the compiled-in fonts only.");
     file.println("custom_font_path=" + fonts.custom_font_path);
+    file.println();
+
+    file.println("[crypto]");
+    file.println("enabled=" + String(crypto.enabled ? "1" : "0"));
+    file.println("symbols=" + crypto.symbols);
+    file.println("duration_sec=" + String(crypto.duration_sec));
+    file.println("cache_ttl_min=" + String(crypto.cache_ttl_min));
+    file.println("currency=" + crypto.currency);
+    file.println();
+
+    file.println("[stock]");
+    file.println("enabled=" + String(stock.enabled ? "1" : "0"));
+    file.println("symbols=" + stock.symbols);
+    file.println("duration_sec=" + String(stock.duration_sec));
+    file.println("cache_ttl_min=" + String(stock.cache_ttl_min));
     file.println();
     
     file.close();

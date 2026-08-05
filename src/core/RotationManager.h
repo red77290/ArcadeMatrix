@@ -8,16 +8,21 @@
 #include "../engines/GifEngine.h"
 #include "../engines/FighterEngine.h"
 
+#include "../engines/CryptoEngine.h"
+#include "../engines/StockEngine.h"
+
 enum RotationModule {
     MODULE_CLOCK,
     MODULE_DATE,
     MODULE_WEATHER,
-    MODULE_GIFS
+    MODULE_GIFS,
+    MODULE_CRYPTO,
+    MODULE_STOCKS
 };
 
 class RotationManager {
 public:
-    RotationManager(ClockEngine* c, DateEngine* d, WeatherEngine* w, GifEngine* g, FighterEngine* f);
+    RotationManager(ClockEngine* c, DateEngine* d, WeatherEngine* w, GifEngine* g, FighterEngine* f, CryptoEngine* cr = nullptr, StockEngine* st = nullptr);
     
     void begin(const ConfigLoader& cfg);
     bool loop();
@@ -32,6 +37,8 @@ private:
     WeatherEngine* weatherEngine;
     GifEngine* gifEngine;
     FighterEngine* fighterEngine;
+    CryptoEngine* cryptoEngine;
+    StockEngine* stockEngine;
     
     
     std::vector<RotationModule> sequence;

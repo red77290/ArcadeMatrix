@@ -649,6 +649,8 @@ body {
           <button class="tab-btn active" onclick="switchDisplayTab('clock')">🕒 Clock</button>
           <button class="tab-btn" onclick="switchDisplayTab('date')">📅 Date</button>
           <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
+          <button class="tab-btn" onclick="switchDisplayTab('crypto')">📈 Crypto</button>
+          <button class="tab-btn" onclick="switchDisplayTab('stock')">📊 Stocks</button>
           <button class="tab-btn" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
         </div>
         
@@ -849,6 +851,58 @@ body {
         </div>
         </div>
 
+        <div id="tab-crypto" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>📈 Real-Time Crypto Ticker</h3>
+          <p class="text-muted">Live quotes fetched directly on display from Binance / CoinGecko.</p>
+          <div class="form-grid col-3">
+            <div class="form-group">
+              <label>Duration per Token (s)</label>
+              <input type="number" id="cfg-dur-crypto" class="input" value="5" min="2" max="60">
+            </div>
+            <div class="form-group">
+              <label>Refresh Rate (Minutes)</label>
+              <input type="number" id="cfg-cache-crypto" class="input" value="1" min="1" max="1440">
+            </div>
+            <div class="form-group">
+              <label>Search Symbols</label>
+              <input type="text" id="crypto-search-input" class="input" placeholder="🔍 Search BTC, ETH, SOL, DOGE, XRP...">
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>Selected Crypto Symbols (Comma Separated)</label>
+            <input type="text" id="cfg-crypto-symbols" class="input" value="BTC,ETH,SOL,DOGE">
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
+
+        <div id="tab-stock" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>📊 Real-Time Stock Market Ticker</h3>
+          <p class="text-muted">Live stock prices & 24h % changes fetched from Yahoo Finance.</p>
+          <div class="form-grid col-3">
+            <div class="form-group">
+              <label>Duration per Stock (s)</label>
+              <input type="number" id="cfg-dur-stock" class="input" value="5" min="2" max="60">
+            </div>
+            <div class="form-group">
+              <label>Refresh Rate (Minutes)</label>
+              <input type="number" id="cfg-cache-stock" class="input" value="1" min="1" max="1440">
+            </div>
+            <div class="form-group">
+              <label>Search Symbols</label>
+              <input type="text" id="stock-search-input" class="input" placeholder="🔍 Search AAPL, NVDA, TSLA, MSFT, GOOGL...">
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 1rem;">
+            <label>Selected Stock Tickers (Comma Separated)</label>
+            <input type="text" id="cfg-stock-symbols" class="input" value="AAPL,NVDA,TSLA,MSFT">
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
+
         <div id="tab-idle" class="tab-pane">
         <div class="card glass shadow" style="margin-top: 2rem;">
           <h3>🔄 Idle Rotation & Night Mode</h3>
@@ -858,6 +912,8 @@ body {
               <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
               <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
               <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
               <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
             </div>
             <input type="hidden" id="cfg-rotation">
@@ -1024,7 +1080,27 @@ body {
               
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
-              
+              <div class="form-group">
+                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 high-density, ICN2038S, SM16208)">?</span></label>
+                <select id="hw-driver-chip" class="input">
+                  <option value="SHIFTREG">SHIFTREG (Standard P4/P5)</option>
+                  <option value="FM6124">FM6124 (P2 High Density)</option>
+                  <option value="FM6126A">FM6126A (P2.5 High Density)</option>
+                  <option value="ICN2038S">ICN2038S</option>
+                  <option value="SM16208">SM16208</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Clock Phase <span class="tooltip-icon" data-tooltip="Invert CLK signal phase to prevent edge pixel glitches">?</span></label>
+                <select id="hw-clk-phase" class="input">
+                  <option value="false">Normal (False)</option>
+                  <option value="true">Inverted (True)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Latch Blanking <span class="tooltip-icon" data-tooltip="Cycles of blanking during LATCH to eliminate ghosting">?</span></label>
+                <input type="number" id="hw-latch-blanking" class="input" value="8" min="1" max="32">
+              </div>
               <div class="form-group">
                 <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
                 <select id="hw-rgb" class="input">
@@ -1036,6 +1112,8 @@ body {
                   <option value="BGR">BGR</option>
                 </select>
               </div>
+            </div>
+            <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
                 <label>Color Depth (Bits/canal) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
                 <input type="number" id="hw-color-depth" class="input" value="8" min="2" max="8">
@@ -1044,19 +1122,10 @@ body {
                 <label>PWM Bits <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_bits">?</span></label>
                 <input type="number" id="hw-pwm-bits" class="input" value="11" min="8" max="14">
               </div>
-              
-              
-            </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>PWM LSB (ns) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_lsb">?</span></label>
-                <input type="number" id="hw-pwm-lsb" class="input" value="130">
-              </div>
               <div class="form-group">
                 <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
                 <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
               </div>
-              
             </div>
             <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save Hardware Settings</button>
           </div>
@@ -1802,6 +1871,17 @@ async function initSettings() {
     document.getElementById('cfg-weather-x').value = s.weather_offset_x || 0;
     document.getElementById('cfg-weather-y').value = s.weather_offset_y || 0;
 
+    // Crypto & Stock
+    if (document.getElementById('cfg-crypto-symbols')) document.getElementById('cfg-crypto-symbols').value = s.crypto_symbols || 'BTC,ETH,SOL,DOGE';
+    if (document.getElementById('cfg-dur-crypto')) document.getElementById('cfg-dur-crypto').value = s.crypto_duration_sec || 5;
+    if (document.getElementById('cfg-cache-crypto')) document.getElementById('cfg-cache-crypto').value = s.crypto_cache_ttl_min || 1;
+    if (document.getElementById('cfg-stock-symbols')) document.getElementById('cfg-stock-symbols').value = s.stock_symbols || 'AAPL,NVDA,TSLA,MSFT';
+    if (document.getElementById('cfg-dur-stock')) document.getElementById('cfg-dur-stock').value = s.stock_duration_sec || 5;
+    if (document.getElementById('cfg-cache-stock')) document.getElementById('cfg-cache-stock').value = s.stock_cache_ttl_min || 1;
+    if (document.getElementById('hw-driver-chip')) document.getElementById('hw-driver-chip').value = s.matrix_driver_chip || 'SHIFTREG';
+    if (document.getElementById('hw-clk-phase')) document.getElementById('hw-clk-phase').value = s.matrix_clk_phase ? 'true' : 'false';
+    if (document.getElementById('hw-latch-blanking')) document.getElementById('hw-latch-blanking').value = s.matrix_latch_blanking || 8;
+
     // Rotation
     document.getElementById('cfg-rotation').value = s.rotation;
     const rotationArr = (s.rotation || '').split(',').map(x => x.trim());
@@ -1861,6 +1941,13 @@ async function initSettings() {
             weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
             weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
 
+            crypto_symbols: document.getElementById('cfg-crypto-symbols') ? document.getElementById('cfg-crypto-symbols').value : 'BTC,ETH,SOL,DOGE',
+            crypto_duration_sec: parseInt(document.getElementById('cfg-dur-crypto')?.value) || 5,
+            crypto_cache_ttl_min: parseInt(document.getElementById('cfg-cache-crypto')?.value) || 1,
+            stock_symbols: document.getElementById('cfg-stock-symbols') ? document.getElementById('cfg-stock-symbols').value : 'AAPL,NVDA,TSLA,MSFT',
+            stock_duration_sec: parseInt(document.getElementById('cfg-dur-stock')?.value) || 5,
+            stock_cache_ttl_min: parseInt(document.getElementById('cfg-cache-stock')?.value) || 1,
+
             rotation: selectedRotations,
             clock_duration_sec: parseInt(document.getElementById('cfg-dur-clock').value) || 10,
           date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
@@ -1895,6 +1982,10 @@ async function initSettings() {
       const colorDepth = parseInt(document.getElementById('hw-color-depth').value) || 8;
       const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
       
+      const driverChip = document.getElementById('hw-driver-chip')?.value || 'SHIFTREG';
+      const clkPhase = document.getElementById('hw-clk-phase')?.value === 'true';
+      const latchBlanking = parseInt(document.getElementById('hw-latch-blanking')?.value) || 8;
+      
       try {
         await API.post('/api/settings', { 
           matrix_rows: rows,
@@ -1902,7 +1993,10 @@ async function initSettings() {
           matrix_chain: chain,
           matrix_rgb_sequence: rgb,
           color_depth: colorDepth,
-          matrix_limit_refresh_rate_hz: limitRefresh
+          matrix_limit_refresh_rate_hz: limitRefresh,
+          matrix_driver_chip: driverChip,
+          matrix_clk_phase: clkPhase,
+          matrix_latch_blanking: latchBlanking
         });
         window.showToast('Hardware settings saved! Restarting app...', 'success');
         setTimeout(async () => {
