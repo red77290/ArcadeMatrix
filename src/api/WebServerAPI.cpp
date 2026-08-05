@@ -162,12 +162,17 @@ void WebServerAPI::setupRoutes() {
         String content = "{\"playlists\":[";
         bool first = true;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            fs::File dir = sd.open("/gifs");
-            if (dir && dir.isDirectory()) {
-                fs::File file = dir.openNextFile();
+            FsFile dir = sd.open("/gifs");
+            if (dir && isDirectory(dir)) {
+#if USE_SD_MMC
+                FsFile file = dir.openNextFile();
                 while (file) {
-                    if (file.isDirectory()) {
-                        String name = file.name();
+#else
+                FsFile file;
+                while (file.openNext(&dir, O_READ)) {
+#endif
+                    if (isDirectory(file)) {
+                        String name = getFileName(file);
                         // Extract just the folder name if it contains full path
                         int lastSlash = name.lastIndexOf('/');
                         if (lastSlash >= 0) name = name.substring(lastSlash + 1);
@@ -180,7 +185,11 @@ void WebServerAPI::setupRoutes() {
                             first = false;
                         }
                     }
+#if USE_SD_MMC
                     file = dir.openNextFile();
+#else
+                    file.close();
+#endif
                 }
             }
             if (dir) dir.close();
