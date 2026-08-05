@@ -367,7 +367,6 @@ void FighterEngine::stop() {
     active = false;
     freeFighter(p1);
     freeFighter(p2);
-    if (matrix) matrix->fillScreen(0);
 }
 
 void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
@@ -535,7 +534,11 @@ bool FighterEngine::loop() {
         extern ConfigLoader config;
         active = false;
         retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
-        if (matrix) matrix->fillScreen(0);
+        if (matrix) {
+            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+            matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);
+            matrix->fillRect(p2.x, p2.y, p2.width_px * scale, p2.height * scale, 0);
+        }
     }
     return true;
 }
