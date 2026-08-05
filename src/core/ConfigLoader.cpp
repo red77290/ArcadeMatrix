@@ -1,5 +1,6 @@
 #include "ConfigLoader.h"
 #include "SDUtils.h"
+#include "Logger.h"
 #include <ArduinoJson.h>
 #include "../engines/GifEngine.h"
 
@@ -12,11 +13,10 @@ void ConfigLoader::setDefaults() {
     matrix.height = 32;
     matrix.panelType = "FM6126A";
     matrix.chainLength = 1;
-    matrix.powerLimitPercent = 20; // Safe default for USB power
+    matrix.powerLimitPercent = 100;
     matrix.forceSingleBuffer = false;
     matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
-    matrix.pwmBits = 11;
     matrix.limitRefreshRateHz = 0;
 
     wifi.ssid = "";
@@ -127,7 +127,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
         else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
-        else if (key == "PWM_BITS") matrix.pwmBits = value.toInt();
+
         else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
     }
     else if (currentSection == "MQTT") {
@@ -223,7 +223,7 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     
     FsFile file = sd.open(filepath, FILE_OPEN_READ);
     if (!file) {
-        Serial.printf("Failed to open %s\n", filepath);
+        LOGE("ConfigLoader", "Failed to open %s", filepath);
         return false;
     }
 
@@ -269,10 +269,10 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         if (writeConfigFile(filepath)) {
             return true;
         }
-        Serial.printf("ConfigLoader::saveToSD: attempt %d/%d failed, retrying...\n", attempt, MAX_ATTEMPTS);
+        LOGW("ConfigLoader", "saveToSD: attempt %d/%d failed, retrying...", attempt, MAX_ATTEMPTS);
         delay(50);
     }
-    Serial.println("ConfigLoader::saveToSD: all attempts failed - settings were NOT persisted to SD!");
+    LOGE("ConfigLoader", "saveToSD: all attempts failed - settings were NOT persisted to SD!");
     return false;
 }
 
@@ -284,7 +284,7 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     
     FsFile file = sd.open(filepath, FILE_OPEN_WRITE);
     if (!file) {
-        Serial.println("Failed to open config file for writing");
+        LOGE("ConfigLoader", "Failed to open config file for writing");
         return false;
     }
     
@@ -321,7 +321,6 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("color_depth=" + String(matrix.colorDepth));
     file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
     file.println("rgb_sequence=" + matrix.rgbSequence);
-    file.println("pwm_bits=" + String(matrix.pwmBits));
     file.println("limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz));
     file.println();
 
@@ -390,13 +389,13 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     // implausibly small as a failed write (triggers a retry in saveToSD()).
     FsFile check = sd.open(filepath, FILE_OPEN_READ);
     if (!check) {
-        Serial.println("ConfigLoader: conf.ini could not be reopened after writing - treating as failed write.");
+        LOGE("ConfigLoader", "conf.ini could not be reopened after writing - treating as failed write.");
         return false;
     }
     size_t writtenSize = check.size();
     check.close();
-    if (writtenSize < 200) {
-        Serial.printf("ConfigLoader: conf.ini looks truncated after writing (%u bytes) - treating as failed write.\n", (unsigned)writtenSize);
+    if (writtenSize < 100) {
+        LOGE("ConfigLoader", "conf.ini looks truncated after writing (%u bytes) - treating as failed write.", (unsigned)writtenSize);
         return false;
     }
 

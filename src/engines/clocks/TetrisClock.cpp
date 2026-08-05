@@ -100,10 +100,12 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
                     b.tx = startX + (px - 2) * blockSize;
                     b.ty = startY + (py - 2) * blockSize;
                     b.x = b.tx;
-                    b.y = b.ty - matrix->height() - (rand() % (int)matrix->height());
-                    
-                    float base_dy = max(1.5f, matrix->height() / 15.0f);
-                    b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy * 1.5f);
+                    b.y = b.ty - matrix->height() - (rand() % (int)(matrix->height() / 2));
+                    // Distance to fall is roughly height + some random offset (64-96 pixels)
+                    // At 60fps (16ms per frame), we want it to take ~60 frames (1 second).
+                    // So dy should be around 1.5 pixels per frame.
+                    float base_dy = max(1.0f, matrix->height() / 40.0f);
+                    b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy);
                     if (isGameboy) {
                         b.color = gameboyColors[charIdx % 4];
                     } else {
@@ -124,7 +126,7 @@ void TetrisClock::update() {
         if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
             for (auto& b : blocks) {
                 b.state = 2; // OUT
-                float base_dy = max(1.5f, matrix->height() / 15.0f);
+                float base_dy = max(1.0f, matrix->height() / 40.0f);
                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
             }
             std::vector<int> allIndices;
@@ -159,7 +161,7 @@ void TetrisClock::update() {
     // Frame-rate independent physics
     unsigned long currentMillis = millis();
     float dt = (currentMillis - lastFrameTime);
-    if (dt > 100) dt = 16.0f; // Cap at 100ms to avoid huge jumps
+    if (dt > 100) dt = 100.0f; // Cap at 100ms to avoid huge jumps, but don't reset to 16ms!
     lastFrameTime = currentMillis;
     float timeScale = dt / 16.0f; // Scale relative to 60fps
         

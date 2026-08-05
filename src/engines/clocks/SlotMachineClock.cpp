@@ -99,6 +99,15 @@ void SlotMachineClock::update() {
             long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
             color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
         }
+        if (color1 == 0) color1 = matrix->color565(255, 255, 255); // Fallback to white if black
+        
+        // Black outline
+        matrix->setTextColor(0);
+        matrix->setCursor(tx - 1, ty); matrix->print(currentTime);
+        matrix->setCursor(tx + 1, ty); matrix->print(currentTime);
+        matrix->setCursor(tx, ty - 1); matrix->print(currentTime);
+        matrix->setCursor(tx, ty + 1); matrix->print(currentTime);
+
         matrix->setTextColor(color1);
         matrix->setCursor(tx, ty);
         matrix->print(currentTime);
