@@ -13,6 +13,7 @@
 #include "engines/clocks/ArcadeClock.h"
 #include "engines/MessageEngine.h"
 #include "api/WebServerAPI.h"
+#include "core/Logger.h"
 #include <time.h>
 #include "HardwareProfile.h"
 #if defined(USE_RTC) && USE_RTC
@@ -80,7 +81,7 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     randomSeed(esp_random());
-    Serial.println("\n\n--- Starting ArcadeMatrix Firmware ---");
+    LOGI("System", "Starting ArcadeMatrix Firmware...");
 
     // Hardware watchdog: if setup()/loop() ever hangs (SD/matrix init failure, WiFi driver
     // lockup, an unexpected infinite loop, ...) for more than WDT_TIMEOUT_S seconds without
@@ -145,23 +146,23 @@ void setup() {
         while (1) { delay(100); }
     }
 #endif
-    Serial.println("SD Card mounted successfully.");
+    LOGI("SD", "SD Card mounted successfully.");
 
     // 2. Load Configuration from SD
     if (!config.parseFromSD("/conf.ini")) {
-        Serial.println("Warning: /conf.ini not found or failed to parse. Using defaults.");
+        LOGW("Config", "/conf.ini not found or failed to parse. Using defaults.");
     } else {
-        Serial.println("Configuration loaded from /conf.ini.");
+        LOGI("Config", "Configuration loaded from /conf.ini.");
     }
 
     // 3. Initialize Matrix
-    Serial.printf("Matrix Config: %dx%d, Chain: %d\n", config.matrix.width, config.matrix.height, config.matrix.chainLength);
+    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", config.matrix.width, config.matrix.height, config.matrix.chainLength);
     if (!matrixEngine.begin(config.matrix)) {
-        Serial.println("CRITICAL ERROR: Matrix init failed!");
+        LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
     }
     matrixEngine.setBrightness(config.matrix.powerLimitPercent);
-    Serial.printf("Free Heap after Matrix init: %d bytes\n", ESP.getFreeHeap());
+    LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
     // 4. Initialize Engines
     gifEngine.begin(matrixEngine.getDisplay());
@@ -184,7 +185,7 @@ void setup() {
                 if (!paths.empty()) {
                     gifEngine.setDefaultPlaylists(paths);
                     selectedLoaded = true;
-                    Serial.printf("Loaded %d GIF playlists from playlists_selected.json\n", paths.size());
+                    LOGI("GIF", "Loaded %d GIF playlists from playlists_selected.json", paths.size());
                 }
             }
         }
@@ -205,11 +206,23 @@ void setup() {
                 }
                 master.close();
             }
-            if (!paths.empty()) {
-                gifEngine.setDefaultPlaylists(paths);
-                Serial.printf("Loaded %d GIF playlists from default playlists.json\n", paths.size());
-            } else {
-                gifEngine.setDefaultPlaylists({"/gifs"});
+            if (paths.empty()) {
+                paths.push_back("/gifs");
+            }
+            
+            gifEngine.setDefaultPlaylists(paths);
+            LOGI("GIF", "Defaulted to %d GIF playlists.", paths.size());
+
+            // Save default selection to /playlists_selected.json so it persists immediately
+            if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
+            if (f) {
+                DynamicJsonDocument saveDoc(1024);
+                JsonArray arr = saveDoc["playlists"].to<JsonArray>();
+                for (const String& p : paths) arr.add(p);
+                serializeJson(saveDoc, f);
+                f.close();
+                LOGI("GIF", "Created initial playlists_selected.json on SD with all playlists.");
             }
         }
     }
@@ -217,7 +230,7 @@ void setup() {
     clockEngine = new ClockEngine(matrixEngine.getDisplay());
     clockEngine->setTheme(static_cast<PublisherTheme>(config.time.clock_theme));
     dateEngine = new DateEngine(matrixEngine.getDisplay());
-    dateEngine->setResolution(config.matrix.width, config.matrix.height);
+    dateEngine->setResolution(matrixEngine.getDisplay()->width(), matrixEngine.getDisplay()->height());
     dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
     
     weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
@@ -276,22 +289,20 @@ void setup() {
         Serial.println();
 
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("Wi-Fi Connected!");
-            Serial.print("IP Address: ");
-            Serial.println(WiFi.localIP());
+            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
             
             String ipMsg = "IP: " + WiFi.localIP().toString();
             MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 50, 5};
             messageEngine->displayMessage(ipConfig);
             
             if (MDNS.begin(config.wifi.hostname.c_str())) {
-                Serial.printf("mDNS responder started: http://%s.local\n", config.wifi.hostname.c_str());
+                LOGI("WiFi", "mDNS responder started: http://%s.local", config.wifi.hostname.c_str());
             }
             
             configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
-            Serial.println("NTP Time Sync initiated.");
+            LOGI("NTP", "NTP Time Sync initiated.");
             
-            Serial.printf("Free Heap before Web Server start: %d bytes\n", ESP.getFreeHeap());
+            LOGI("System", "Free Heap before Web Server start: %d bytes", ESP.getFreeHeap());
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
             marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
@@ -333,7 +344,7 @@ void setup() {
     
 
     // Allow message to finish scrolling before main loop
-    Serial.println("[DEBUG] Waiting for MessageEngine to finish...");
+    LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
     while (messageEngine->isActive()) {
         matrixEngine.getDisplay()->fillScreen(0);
@@ -341,20 +352,20 @@ void setup() {
         matrixEngine.getDisplay()->flipDMABuffer();
         delay(5);
         if (millis() - startWait > 5000) {
-            Serial.println("[DEBUG] MessageEngine wait timeout! Force stopping.");
+            LOGW("System", "MessageEngine wait timeout! Force stopping.");
             messageEngine->stop();
             break;
         }
     }
-    Serial.println("[DEBUG] MessageEngine finished.");
+    LOGD("System", "MessageEngine finished.");
     
-    Serial.println("[DEBUG] Starting rotationManager...");
+    LOGD("System", "Starting rotationManager...");
     rotationManager->begin(config);
-    Serial.println("[DEBUG] rotationManager started.");
+    LOGD("System", "rotationManager started.");
     
     TimeData initialTime = {10, 42, 0};
     clockEngine->updateTime(initialTime);
-    Serial.println("[DEBUG] setup() complete. Entering loop().");
+    LOGI("System", "Setup complete. Entering loop().");
 }
 
 
@@ -363,7 +374,7 @@ void loop() {
 
     static bool firstLoop = true;
     if (firstLoop) {
-        Serial.println("[DEBUG] Entered first loop() iteration!");
+        LOGD("System", "Entered first loop() iteration!");
         firstLoop = false;
     }
 
@@ -458,34 +469,83 @@ void loop() {
         if (timeinfo.tm_sec != lastSec) {
             lastSec = timeinfo.tm_sec;
             
+            static int lastDay = -1;
+            if (timeinfo.tm_mday != lastDay) {
+                lastDay = timeinfo.tm_mday;
+                if ((int)config.dateSettings.theme == 99 || config.dateSettings.theme == THEME_NONE) {
+                    PublisherTheme randomTheme = static_cast<PublisherTheme>(random(0, 20));
+                    dateEngine->setTheme(randomTheme);
+                    LOGI("DateEngine", "New day detected (%02d)! Selected dynamic Date theme: %d", lastDay, (int)randomTheme);
+                }
+            }
+            
             TimeData realTime = {(uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec};
-            Serial.println("[DEBUG] clockEngine updated.");
             clockEngine->updateTime(realTime);
             
-            char dateBuffer[32];
-            String fmt = config.dateSettings.format;
-            if (fmt.length() == 0) fmt = "%d/%m";
-            
-            // Allow basic UI tokens like DD/MM/YYYY, or let standard %d/%m/%Y pass through
-            fmt.replace("YYYY", "%Y");
-            fmt.replace("YY", "%y");
-            fmt.replace("MM", "%m");
-            fmt.replace("DD", "%d");
-            fmt.replace("MMM", "%b");
-            
-            strftime(dateBuffer, sizeof(dateBuffer), fmt.c_str(), &timeinfo);
-            dateEngine->setDate(dateBuffer);
+            static const char* fr_months_short[] = {"Janv", "Fevr", "Mars", "Avr", "Mai", "Juin", "Juil", "Aout", "Sept", "Oct", "Nov", "Dece"};
+            static const char* fr_months_long[]  = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
+            static const char* fr_days_short[]   = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
+            static const char* fr_days_long[]    = {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"};
+
+            static const char* es_months_short[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
+            static const char* es_months_long[]  = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
+            static const char* es_days_short[]   = {"Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"};
+            static const char* es_days_long[]    = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
+
+            static const char* en_months_short[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+            static const char* en_months_long[]  = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+            static const char* en_days_short[]   = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            static const char* en_days_long[]    = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+
+            const char** m_short = en_months_short;
+            const char** m_long  = en_months_long;
+            const char** d_short = en_days_short;
+            const char** d_long  = en_days_long;
+
+            String lang = config.weather.lang;
+            if (lang.equalsIgnoreCase("fr")) {
+                m_short = fr_months_short; m_long = fr_months_long;
+                d_short = fr_days_short;   d_long = fr_days_long;
+            } else if (lang.equalsIgnoreCase("es")) {
+                m_short = es_months_short; m_long = es_months_long;
+                d_short = es_days_short;   d_long = es_days_long;
+            }
+
+            String dateRes = config.dateSettings.format;
+            if (dateRes.length() == 0) dateRes = "DD/MM";
+
+            char numBuf[16];
+            snprintf(numBuf, sizeof(numBuf), "%04d", timeinfo.tm_year + 1900);
+            dateRes.replace("YYYY", numBuf); dateRes.replace("%Y", numBuf);
+
+            snprintf(numBuf, sizeof(numBuf), "%02d", (timeinfo.tm_year + 1900) % 100);
+            dateRes.replace("YY", numBuf); dateRes.replace("%y", numBuf);
+
+            snprintf(numBuf, sizeof(numBuf), "%02d", timeinfo.tm_mon + 1);
+            dateRes.replace("MM", numBuf); dateRes.replace("%m", numBuf);
+
+            dateRes.replace("MMMM", m_long[timeinfo.tm_mon]); dateRes.replace("%B", m_long[timeinfo.tm_mon]);
+            dateRes.replace("MMM", m_short[timeinfo.tm_mon]); dateRes.replace("%b", m_short[timeinfo.tm_mon]);
+
+            snprintf(numBuf, sizeof(numBuf), "%02d", timeinfo.tm_mday);
+            dateRes.replace("DD", numBuf); dateRes.replace("%d", numBuf);
+
+            dateRes.replace("DDDD", d_long[timeinfo.tm_wday]); dateRes.replace("%A", d_long[timeinfo.tm_wday]);
+            dateRes.replace("DDD", d_short[timeinfo.tm_wday]); dateRes.replace("%a", d_short[timeinfo.tm_wday]);
+
+            dateEngine->setDateData({(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)});
+            dateEngine->setDate(dateRes.c_str());
         }
     }
     
     if (shouldFlip) {
         static bool firstFlip = true;
         if (firstFlip) {
-            Serial.println("[DEBUG] About to call flipDMABuffer()...");
+            LOGD("System", "Calling flipDMABuffer()...");
         }
         matrixEngine.getDisplay()->flipDMABuffer();
         if (firstFlip) {
-            Serial.println("[DEBUG] flipDMABuffer() returned!");
+            LOGD("System", "flipDMABuffer() initialized successfully!");
             firstFlip = false;
         }
     }

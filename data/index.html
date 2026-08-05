@@ -1036,6 +1036,14 @@ body {
                   <option value="BGR">BGR</option>
                 </select>
               </div>
+              <div class="form-group">
+                <label>Color Depth (Bits/canal) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
+                <input type="number" id="hw-color-depth" class="input" value="8" min="2" max="8">
+              </div>
+              <div class="form-group">
+                <label>PWM Bits <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_bits">?</span></label>
+                <input type="number" id="hw-pwm-bits" class="input" value="11" min="8" max="14">
+              </div>
               
               
             </div>
@@ -1268,6 +1276,7 @@ const translations = {
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
     // Tooltips
+        tt_hw_color_depth: "Profondeur de couleur en bits par canal (R, G, B), de 2 à 8. 8 = RGB 24-bit (couleurs réelles). Baisser cette valeur (ex: 5 ou 6) augmente le soleil/luminosité et la fluidité.",
     tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
     tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
     tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
@@ -1288,6 +1297,7 @@ const translations = {
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
     // Tooltips
+    tt_hw_color_depth: "...",
     tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
     tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
     tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
@@ -1308,6 +1318,7 @@ const translations = {
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
     // Tooltips
+    tt_hw_color_depth: "...",
     tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
     tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
     tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
@@ -1714,6 +1725,8 @@ async function initSettings() {
     const clockFontSel = document.getElementById('cfg-clock-font');
     const dateFontSel = document.getElementById('cfg-date-font');
     if (clockFontSel && dateFontSel) {
+      clockFontSel.add(new Option("Default Theme Font", ""));
+      dateFontSel.add(new Option("Default Theme Font", ""));
       fonts.forEach(f => {
         clockFontSel.add(new Option(f, f));
         dateFontSel.add(new Option(f, f));
@@ -1745,8 +1758,8 @@ async function initSettings() {
     document.getElementById('hw-rows').value = s.matrix_rows;
     document.getElementById('hw-cols').value = s.matrix_cols;
     document.getElementById('hw-chain').value = s.matrix_chain;
-        document.getElementById('hw-mapping').value = s.matrix_mapping || 'regular';
     document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
+    document.getElementById('hw-color-depth').value = s.color_depth || 8;
                     document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
     
     // MQTT
@@ -1762,9 +1775,9 @@ async function initSettings() {
 
     // Clock
     document.getElementById('cfg-clock-theme').value = s.clock_theme;
-    document.getElementById('cfg-clock-font').value = s.clock_font;
-    document.getElementById('cfg-clock-format').value = s.time_format;
-    document.getElementById('cfg-clock-size').value = s.time_size || 2;
+    document.getElementById('cfg-clock-font').value = s.clock_font_path || '';
+    document.getElementById('cfg-clock-format').value = s.time_format || '';
+    document.getElementById('cfg-clock-size').value = s.clock_size || 2;
     document.getElementById('cfg-ntp-server').value = s.ntp_server || 'pool.ntp.org';
     document.getElementById('cfg-timezone').value = s.timezone || 'Europe/Paris';
     document.getElementById('cfg-clock-color1').value = s.clock_color_1.toLowerCase();
@@ -1774,7 +1787,7 @@ async function initSettings() {
 
     // Date
     document.getElementById('cfg-date-theme').value = s.date_theme;
-    document.getElementById('cfg-date-font').value = s.date_font;
+    document.getElementById('cfg-date-font').value = s.date_font_path || '';
     document.getElementById('cfg-date-format').value = s.date_format;
     document.getElementById('cfg-date-size').value = s.date_size || 1;
     document.getElementById('cfg-date-color1').value = s.date_color_1.toLowerCase();
@@ -1823,9 +1836,9 @@ async function initSettings() {
 
           const payload = {
             clock_theme: parseInt(document.getElementById('cfg-clock-theme').value),
-            clock_font: document.getElementById('cfg-clock-font').value,
+            clock_font_path: document.getElementById('cfg-clock-font').value,
             time_format: document.getElementById('cfg-clock-format').value,
-            time_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
+            clock_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
             ntp_server: document.getElementById('cfg-ntp-server').value,
             timezone: document.getElementById('cfg-timezone').value,
             clock_color_1: document.getElementById('cfg-clock-color1').value,
@@ -1834,7 +1847,7 @@ async function initSettings() {
             clock_offset_y: parseInt(document.getElementById('cfg-clock-y').value) || 0,
 
             date_theme: parseInt(document.getElementById('cfg-date-theme').value),
-            date_font: document.getElementById('cfg-date-font').value,
+            date_font_path: document.getElementById('cfg-date-font').value,
             date_format: document.getElementById('cfg-date-format').value,
             date_size: parseInt(document.getElementById('cfg-date-size').value) || 1,
             date_color_1: document.getElementById('cfg-date-color1').value,
@@ -1879,6 +1892,7 @@ async function initSettings() {
       const cols = parseInt(document.getElementById('hw-cols').value) || 64;
       const chain = parseInt(document.getElementById('hw-chain').value) || 1;
       const rgb = document.getElementById('hw-rgb').value || 'RGB';
+      const colorDepth = parseInt(document.getElementById('hw-color-depth').value) || 8;
       const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
       
       try {
@@ -1887,6 +1901,7 @@ async function initSettings() {
           matrix_cols: cols,
           matrix_chain: chain,
           matrix_rgb_sequence: rgb,
+          color_depth: colorDepth,
           matrix_limit_refresh_rate_hz: limitRefresh
         });
         window.showToast('Hardware settings saved! Restarting app...', 'success');
@@ -1946,20 +1961,34 @@ async function initPlaylists() {
       console.warn('Could not fetch selected playlists', e);
     }
     
-    let html = '';
+    const allPaths = Object.values(allPlaylists).map(p => p.path);
+    // Default to selecting ALL playlists if no custom selection saved yet
+    if (selectedPaths.length === 0) {
+      selectedPaths = [...allPaths];
+    }
+    
+    let html = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <button id="btn-select-all" class="btn btn-secondary" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Select All</button>
+        <button id="btn-deselect-all" class="btn btn-secondary" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Deselect All</button>
+      </div>
+    `;
+    
     for (const [name, info] of Object.entries(allPlaylists)) {
-      const isChecked = selectedPaths.includes(info.path) ? 'checked' : '';
+      const isChecked = selectedPaths.includes(info.path);
+      const checkedAttr = isChecked ? 'checked' : '';
       const count = info.count || (info.files ? info.files.length : 0);
+      const activeStyle = isChecked ? 'border-color:var(--primary); background:rgba(99,102,241,0.1);' : '';
       
       html += `
-        <div class="playlist-item">
+        <div class="playlist-item" style="display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px; transition:all 0.2s; ${activeStyle}">
           <div class="info">
-            <h4>${name}</h4>
-            <span>${count} GIFs found</span>
+            <h4 style="margin:0 0 0.2rem 0; font-size:1.05rem;">${name}</h4>
+            <span style="font-size:0.85rem; opacity:0.8;">${count} GIFs found</span>
           </div>
           <div class="action">
-            <label style="display:flex; align-items:center; cursor:pointer;">
-              <input type="checkbox" class="playlist-cb" value="${info.path}" ${isChecked} style="width:20px;height:20px;margin-right:10px;accent-color:var(--primary);">
+            <label style="display:flex; align-items:center; cursor:pointer; font-weight:600; font-size:0.95rem;">
+              <input type="checkbox" class="playlist-cb" value="${info.path}" ${checkedAttr} style="width:22px; height:22px; margin-right:8px; accent-color:var(--primary); cursor:pointer;">
               Include
             </label>
           </div>
@@ -1970,10 +1999,39 @@ async function initPlaylists() {
     if (Object.keys(allPlaylists).length === 0) {
       html = `<div style="padding:1rem;text-align:center;">No GIF folders found. Check your data/gifs directory.</div>`;
     } else {
-      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%;">Save GIF Playlists</button>`;
+      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%; font-weight:bold; padding:0.75rem;">Save GIF Playlists</button>`;
     }
     
     container.innerHTML = html;
+    
+    // Select All / Deselect All Handlers
+    document.getElementById('btn-select-all')?.addEventListener('click', () => {
+      document.querySelectorAll('.playlist-cb').forEach(cb => {
+        cb.checked = true;
+        const item = cb.closest('.playlist-item');
+        if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--primary); border-radius:8px; background:rgba(99,102,241,0.1);';
+      });
+    });
+    
+    document.getElementById('btn-deselect-all')?.addEventListener('click', () => {
+      document.querySelectorAll('.playlist-cb').forEach(cb => {
+        cb.checked = false;
+        const item = cb.closest('.playlist-item');
+        if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px;';
+      });
+    });
+
+    // Checkbox toggle visual feedback
+    document.querySelectorAll('.playlist-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const item = cb.closest('.playlist-item');
+        if (cb.checked) {
+          if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--primary); border-radius:8px; background:rgba(99,102,241,0.1);';
+        } else {
+          if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px;';
+        }
+      });
+    });
     
     const btnSave = document.getElementById('btn-save-playlists');
     if (btnSave) {

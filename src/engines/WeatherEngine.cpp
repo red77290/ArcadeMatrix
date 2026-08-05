@@ -1,9 +1,30 @@
 #include "WeatherEngine.h"
 #include "../core/ConfigLoader.h"
-extern ConfigLoader config;
+#include "../core/Logger.h"
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
+
+extern ConfigLoader config;
+
+struct SpiRamAllocator {
+  void* allocate(size_t size) {
+    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!p) p = malloc(size); // Fallback to SRAM
+    return p;
+  }
+  void deallocate(void* pointer) {
+    free(pointer);
+  }
+  void* reallocate(void* ptr, size_t new_size) {
+    void* p = heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!p) p = realloc(ptr, new_size);
+    return p;
+  }
+};
+
+using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
 WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     validData = false;
@@ -37,20 +58,36 @@ void WeatherEngine::setCharacter(int characterId) {
 }
 
 void WeatherEngine::update(const String& apiKey, const String& city) {
-    if (apiKey.length() == 0 || city.length() == 0) return;
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (apiKey.length() == 0 || city.length() == 0) {
+        static unsigned long lastWarn = 0;
+        if (millis() - lastWarn > 10000) {
+            LOGW("WeatherEngine", "Cannot fetch weather: API Key ('%s') or City ('%s') is missing!", apiKey.c_str(), city.c_str());
+            lastWarn = millis();
+        }
+        return;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        static unsigned long lastWarnWifi = 0;
+        if (millis() - lastWarnWifi > 10000) {
+            LOGW("WeatherEngine", "Cannot fetch weather: Wi-Fi not connected!");
+            lastWarnWifi = millis();
+        }
+        return;
+    }
     
-    // Only update every 15 minutes on success, or retry every 1 minute on failure.
-    uint32_t interval = validData ? 900000 : 60000;
+    // Only update every 15 minutes on success, or retry every 30 seconds on failure.
+    uint32_t interval = validData ? 900000 : 30000;
     if (lastFetchTime > 0 && millis() - lastFetchTime < interval) return;
 
     // Set lastFetchTime immediately so we don't spam the API on failure
     lastFetchTime = millis();
 
     HTTPClient http;
-    // /forecast (3-hour steps, 5 days) instead of /weather (current only), to support the
-    // 3-day forecast slideshow below - mirrors ArcadeMatrix_RPi's engines/weather.py.
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + config.weather.lang;
+    String reqLang = config.weather.lang;
+    if (reqLang.length() == 0) reqLang = "fr";
+    
+    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + reqLang;
+    LOGI("WeatherEngine", "Requesting URL: http://api.openweathermap.org/data/2.5/forecast?q=%s&units=metric&appid=***&lang=%s", city.c_str(), reqLang.c_str());
     
     http.begin(url);
     int httpCode = http.GET();
@@ -58,14 +95,8 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
     if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         
-        // Use a filter to only parse the fields we actually need, drastically reducing RAM usage
-        // for the massive OWM forecast JSON payload.
-        StaticJsonDocument<256> filter;
-        filter["list"][0]["main"]["temp"] = true;
-        filter["list"][0]["weather"][0]["main"] = true;
-        filter["list"][0]["weather"][0]["icon"] = true;
-        DynamicJsonDocument doc(8192);
-        DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+        SpiRamJsonDocument doc(32768);
+        DeserializationError error = deserializeJson(doc, payload);
         
         if (!error && doc["list"].is<JsonArray>()) {
             JsonArray list = doc["list"].as<JsonArray>();
@@ -123,15 +154,20 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
                 validData = true;
                 activeSlide = 0;
                 lastSlideChange = millis();
+                LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
             } else {
-                Serial.println("WeatherEngine: Valid JSON but no forecasts parsed.");
+                LOGE("WeatherEngine", "Error: Valid JSON received but 0 forecast entries parsed.");
             }
         } else {
-            Serial.printf("WeatherEngine Parse Error: %s\n", error.c_str());
-            Serial.printf("Payload snippet: %.100s\n", payload.c_str());
+            LOGE("WeatherEngine", "JSON Parse Error: %s", error.c_str());
+            LOGE("WeatherEngine", "Payload snippet: %.150s", payload.c_str());
         }
     } else {
-        Serial.printf("WeatherEngine API Error: %d\n", httpCode);
+        String errPayload = http.getString();
+        LOGE("WeatherEngine", "HTTP API Error Code: %d", httpCode);
+        if (errPayload.length() > 0) {
+            LOGE("WeatherEngine", "Error Response: %s", errPayload.c_str());
+        }
     }
     http.end();
 }

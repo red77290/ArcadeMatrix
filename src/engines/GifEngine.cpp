@@ -1,6 +1,7 @@
 #include "GifEngine.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/Logger.h"
 
 GifEngine* GifEngine::instance = nullptr;
 
@@ -34,13 +35,12 @@ bool GifEngine::playGif(const char* filepath) {
     playlistMode = false; // Playing a single GIF stops the playlist
     
     String path = String(filepath);
-    Serial.print("GifEngine trying to play: ");
-    Serial.println(path);
+    LOGI("GifEngine", "Trying to play: %s", path.c_str());
     
     if (path.endsWith(".raw") || path.endsWith(".RAW")) {
         currentFile = sd.open(path.c_str(), FILE_OPEN_READ);
         if (!currentFile) {
-            Serial.println("Error: Failed to open RAW file!");
+            LOGE("GifEngine", "Failed to open RAW file: %s", path.c_str());
             return false;
         }
         isRaw = true;
@@ -81,7 +81,7 @@ bool GifEngine::playGif(const char* filepath) {
                         if (bytesRead == fileSize) {
                             psramBufferSize = fileSize;
                             if (gif.open(psramBuffer, psramBufferSize, GIFDraw)) {
-                                Serial.println("GIF loaded directly from PSRAM!");
+                                LOGD("GifEngine", "GIF loaded directly from PSRAM: %s (%zu bytes)", path.c_str(), psramBufferSize);
                                 if (canvasBuffer && matrix) {
                                     memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
                                 }
@@ -102,7 +102,7 @@ bool GifEngine::playGif(const char* filepath) {
 #endif
         // Fallback to streaming from SD card
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-            Serial.println("GIF opened successfully (streaming from SD)!");
+            LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);
             if (canvasBuffer && matrix) {
                 memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
             }
@@ -111,7 +111,7 @@ bool GifEngine::playGif(const char* filepath) {
             isPlaying = true;
             return true;
         } else {
-            Serial.println("Error: gif.open() failed for GIF file!");
+            LOGE("GifEngine", "gif.open() failed for: %s", filepath);
         }
     }
     return false;
@@ -135,13 +135,13 @@ bool GifEngine::decodePng(const char* filepath) {
     // only needs to track pngShowStartTime to know when to advance/loop - see loop()/GifEngine.h.
     int rc = png->open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
     if (rc != PNG_SUCCESS) {
-        Serial.printf("Error: png.open() failed for %s (rc=%d)\n", filepath, rc);
+        LOGE("GifEngine", "png.open() failed for %s (rc=%d)", filepath, rc);
         return false;
     }
     rc = png->decode(NULL, 0);
     png->close();
     if (rc != PNG_SUCCESS) {
-        Serial.printf("Error: png.decode() failed for %s (rc=%d)\n", filepath, rc);
+        LOGE("GifEngine", "png.decode() failed for %s (rc=%d)", filepath, rc);
         return false;
     }
     return true;
@@ -236,7 +236,7 @@ void GifEngine::loadNextFileInPlaylist() {
         }
         
         if (targetPath.length() == 0) {
-            Serial.printf("GifEngine: No index.txt found in %s, please run generate_index.sh\n", pPath.c_str());
+            LOGW("GifEngine", "No index.txt found in %s, please run generate_index.sh", pPath.c_str());
         }
         
         if (targetPath.length() > 0) {
@@ -269,6 +269,7 @@ void GifEngine::stop() {
 bool GifEngine::loop() {
     if (hasPendingPlaylists) {
         stop();
+        playlists = pendingPlaylists;
         playlistMode = true;
         hasPendingPlaylists = false;
         loadNextFileInPlaylist();
@@ -294,23 +295,55 @@ bool GifEngine::loop() {
         return false; // PNG is static, no need to flip once displayed
     } else {
         if (millis() - gifLastFrameTime < gifCurrentDelay) return false;
-        gifLastFrameTime = millis();
+        // Advance target time by the intended delay.
+        // If we're lagging severely (e.g. CPU stall > 100ms), snap to current time to avoid fast-forwarding
+        gifLastFrameTime += gifCurrentDelay;
+        if (millis() - gifLastFrameTime > 100) {
+            gifLastFrameTime = millis();
+        }
         
+        unsigned long startDecode = millis();
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs);
         
         if (canvasBuffer && matrix) {
-            matrix->drawRGBBitmap(0, 0, canvasBuffer, matrix->width(), matrix->height());
+            int canvasW = gif.getCanvasWidth();
+            int canvasH = gif.getCanvasHeight();
+            if (canvasW <= 0) canvasW = 128;
+            if (canvasH <= 0) canvasH = 32;
+            
+            int scaleX = max(1, matrix->width() / canvasW);
+            int scaleY = max(1, matrix->height() / canvasH);
+            
+            int offsetX = (matrix->width() - (canvasW * scaleX)) / 2;
+            int offsetY = (matrix->height() - (canvasH * scaleY)) / 2;
+            int drawW = canvasW * scaleX;
+            int drawH = canvasH * scaleY;
+            
+            // Only push pixels within the GIF's actual scaled bounding box
+            for (int y = offsetY; y < offsetY + drawH; y++) {
+                if (y < 0 || y >= matrix->height()) continue;
+                for (int x = offsetX; x < offsetX + drawW; x++) {
+                    if (x < 0 || x >= matrix->width()) continue;
+                    matrix->drawPixel(x, y, canvasBuffer[y * matrix->width() + x]);
+                }
+            }
         }
         
-        // Browser-like GIF delay normalization for badly encoded GIFs
-        if (delayMs <= 10) {
-            delayMs = 100; // Force 100ms for 0/10ms delays (like Chrome/Firefox)
-        } else if (delayMs < 20) {
+        unsigned long decodeTime = millis() - startDecode;
+        
+        // Ensure minimum delay so we don't completely freeze the ESP32 with 0ms delay GIFs
+        if (delayMs < 20) {
             delayMs = 20; // Cap at 50fps max to prevent matrix stuttering
         }
         
         gifCurrentDelay = delayMs;
+        
+        static unsigned long lastLog = 0;
+        if (millis() - lastLog > 2000) {
+            LOGD("GifEngine", "Frame: delayMs=%d, decodeTime=%lums", delayMs, decodeTime);
+            lastLog = millis();
+        }
         
         if (result <= 0) {
             // End of GIF or error

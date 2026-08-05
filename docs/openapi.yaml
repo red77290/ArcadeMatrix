@@ -78,6 +78,13 @@ paths:
               schema:
                 type: object
                 properties:
+                  color_depth:
+                    type: integer
+                    description: "Color depth (3-8 bits)"
+                  pwm_bits:
+                    type: integer
+                    description: "PWM bits (8-14)"
+                properties:
                   success:
                     type: boolean
                   sd_saved:

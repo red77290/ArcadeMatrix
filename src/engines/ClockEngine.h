@@ -5,11 +5,7 @@
 // ClockType is removed since we use PublisherTheme from DateEngine.h for everything
 
 
-struct TimeData {
-    uint8_t hours;
-    uint8_t minutes;
-    uint8_t seconds;
-};
+#include "TimeData.h"
 
 #include "DateEngine.h" // For PublisherTheme
 

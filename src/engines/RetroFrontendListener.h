@@ -6,6 +6,7 @@
 #include "GifEngine.h"
 #include "ClockEngine.h"
 #include "MessageEngine.h"
+#include <unordered_map>
 
 // Listens for game-launch/stop events from Recalbox/Batocera over MQTT and displays the
 // corresponding Pixelcade-style marquee artwork directly from the SD card (see
@@ -29,6 +30,7 @@ private:
     PubSubClient mqttClient;
 
     unsigned long lastReconnectAttempt;
+    uint32_t currentRequestId = 0;
 
     void reconnect();
     static void callback(char* topic, byte* payload, unsigned int length);

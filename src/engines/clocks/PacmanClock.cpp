@@ -135,10 +135,18 @@ void PacmanClock::update() {
         long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
+    if (color1 == 0) color1 = matrix->color565(255, 255, 255); // Fallback to white if black
     
     if (!transitioning) {
-        matrix->setCursor(tx, ty);
+        // Black outline for crisp visibility
+        matrix->setTextColor(0);
+        matrix->setCursor(tx - 1, ty); matrix->print(newTimeStr);
+        matrix->setCursor(tx + 1, ty); matrix->print(newTimeStr);
+        matrix->setCursor(tx, ty - 1); matrix->print(newTimeStr);
+        matrix->setCursor(tx, ty + 1); matrix->print(newTimeStr);
+
         matrix->setTextColor(color1);
+        matrix->setCursor(tx, ty);
         matrix->print(newTimeStr);
         
         // Random pulsing dots
@@ -151,14 +159,15 @@ void PacmanClock::update() {
     } else {
         int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
         
-        // To achieve clipping, we draw the text and then cover it with black rectangles
         // Draw old time
         matrix->setCursor(tx, ty);
         matrix->setTextColor(matrix->color565(100, 100, 100));
         matrix->print(oldTimeStr);
         
         // Cover eaten part (left of pacman)
-        matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
+        if (pacX > 0) {
+            matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
+        }
         
         // Draw new time
         matrix->setCursor(tx, ty);
@@ -167,8 +176,8 @@ void PacmanClock::update() {
         
         // Cover uneaten part (right of reveal wave)
         int revealX = (int)pacX - pacRadius * 4;
-        if (revealX < matrix->width()) {
-            matrix->fillRect(revealX > 0 ? revealX : 0, 0, matrix->width(), matrix->height(), 0);
+        if (revealX > 0 && revealX < matrix->width()) {
+            matrix->fillRect(revealX, 0, matrix->width() - revealX, matrix->height(), 0);
         }
         
         // Draw Pacman

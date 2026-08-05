@@ -1,6 +1,9 @@
 #include "RotationManager.h"
-extern ConfigLoader config;
+#include "ConfigLoader.h"
+#include "Logger.h"
 #include <WiFi.h>
+
+extern ConfigLoader config;
 
 RotationManager::RotationManager(ClockEngine *c, DateEngine *d,
                                  WeatherEngine *w, GifEngine *g,
@@ -116,6 +119,9 @@ void RotationManager::switchToModule(int index) {
   if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER) {
     updateBackgroundSprites();
   }
+  
+  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS"};
+  LOGI("RotationManager", "Switched to %s", modNames[mod]);
   
   switchDepth = 0;
 }

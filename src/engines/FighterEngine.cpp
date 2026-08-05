@@ -1,6 +1,8 @@
 #include "../core/SDUtils.h"
 #include "FighterEngine.h"
+#include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 
 #define MAX_FIGHTER_FRAME_SIZE 98304
@@ -65,7 +67,7 @@ void FighterEngine::loadRoster() {
     }
     
     f.close();
-    Serial.printf("FighterEngine: Loaded %d fighters (Fast Offset mode: %d bytes RAM)\n", numAvailableFighters, numAvailableFighters * 4);
+    LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
 }
 
 bool FighterEngine::getRandomFighter(FighterPlayer& p) {
@@ -106,7 +108,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
-        Serial.printf("FighterEngine Error: Could not open file %s\n", filepath);
+        LOGE("FighterEngine", "Could not open file: %s", filepath);
         return false;
     }
     
@@ -141,7 +143,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
     if (frameSize > MAX_FIGHTER_FRAME_SIZE) {
-        Serial.printf("FighterEngine Error: Frame too big! %d bytes for %s\n", frameSize, filepath);
+        LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
         f.close();
         return false;
@@ -160,7 +162,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
                             toRead -= r;
                         }
         } else {
-            Serial.printf("FighterEngine Warning: PSRAM alloc failed for %d bytes (%s). Falling back to SD.\n", anim.totalPixelsSize, filepath);
+            LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Falling back to SD.", anim.totalPixelsSize, filepath);
         }
     }
     
@@ -332,7 +334,7 @@ void FighterEngine::processLoadState() {
             }
             break;
         case LOAD_FINISH:
-            Serial.printf("FighterEngine Error: Failed to start fight\n");
+            LOGE("FighterEngine", "Failed to start fight for %s vs %s", p1.name.c_str(), p2.name.c_str());
             active = false;
             retryDelayEnd = millis() + 5000;
             currentLoadState = LOAD_IDLE;

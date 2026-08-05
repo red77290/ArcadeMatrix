@@ -1,6 +1,7 @@
 #include "RetroFrontendListener.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/Logger.h"
 
 RetroFrontendListener* RetroFrontendListener::instance = nullptr;
 
@@ -108,10 +109,12 @@ void RetroFrontendListener::handleMessage(String topic, String msg) {
 }
 
 void RetroFrontendListener::handleGameEvent(const String& jsonPayload) {
+    uint32_t reqId = ++currentRequestId;
+
     StaticJsonDocument<256> doc;
     DeserializationError err = deserializeJson(doc, jsonPayload);
     if (err) {
-        Serial.printf("RetroFrontendListener: failed to parse JSON payload: %s\n", err.c_str());
+        LOGE("RetroFrontend", "Failed to parse MQTT JSON payload: %s", err.c_str());
         return;
     }
 
@@ -120,24 +123,63 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload) {
     const char* systemRaw = doc["system"] | "";
 
     if (strcmp(status, "stopped") == 0 || strlen(gameRaw) == 0) {
-        gif->stop();
+        if (reqId == currentRequestId) gif->stop();
         return;
     }
 
     String game = String(gameRaw);
     String folder = mapSystemToPixelcadeFolder(String(systemRaw));
-    String artPath = "/pixelcade/" + folder + "/" + game + ".png";
 
-    if (sd.exists(artPath)) {
-        Serial.printf("RetroFrontendListener: playing cached Pixelcade art %s\n", artPath.c_str());
-        gif->playGif(artPath.c_str());
+    // Rust-identical marquee search: try exact name, then clean name (without region/tags like " (USA)" or " [!]"),
+    // checking both .png and .gif extensions on the SD card.
+    String cleanGame = game;
+    int idxParen = cleanGame.indexOf(" (");
+    if (idxParen != -1) cleanGame = cleanGame.substring(0, idxParen);
+    int idxBrack = cleanGame.indexOf(" [");
+    if (idxBrack != -1) cleanGame = cleanGame.substring(0, idxBrack);
+    cleanGame.trim();
+
+    std::vector<String> nameVariants;
+    nameVariants.push_back(game);
+    if (cleanGame.length() > 0 && cleanGame != game) {
+        nameVariants.push_back(cleanGame);
+    }
+
+    String foundArtPath = "";
+    bool exists = false;
+
+    extern SemaphoreHandle_t sdMutex;
+    bool lockAcquired = (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)));
+
+    for (const String& nameVar : nameVariants) {
+        String basePath = "/pixelcade/" + folder + "/" + nameVar;
+        if (sd.exists(basePath + ".png")) {
+            foundArtPath = basePath + ".png";
+            exists = true;
+            break;
+        }
+        if (sd.exists(basePath + ".gif")) {
+            foundArtPath = basePath + ".gif";
+            exists = true;
+            break;
+        }
+    }
+
+    if (lockAcquired) {
+        xSemaphoreGive(sdMutex);
+    }
+
+    // Discard stale event if user rapidly scrolled to a newer game
+    if (reqId != currentRequestId) return;
+
+    if (exists && foundArtPath.length() > 0) {
+        LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath.c_str());
+        gif->playGif(foundArtPath.c_str());
         return;
     }
 
-    // No SD-cached artwork for this game (not yet synced by tools/pixelcade_sync/, or a game that
-    // Pixelcade simply doesn't have art for) - fall back to scrolling the game name as text, same
-    // behavior as ArcadeMatrix_RPi's main.py when its DMDCache has no cached/downloadable image.
-    Serial.printf("RetroFrontendListener: no cached artwork at %s, falling back to text\n", artPath.c_str());
+    // 3. Fallback to instant clean text display if artwork is not on SD card
+    LOGI("RetroFrontend", "No cached artwork for %s, displaying text title", game.c_str());
     if (message) {
         String clean = game;
         clean.replace("-", " ");

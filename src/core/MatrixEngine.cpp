@@ -1,4 +1,5 @@
 #include "MatrixEngine.h"
+#include "Logger.h"
 #include "../../include/HardwareProfile.h"
 
 /**
@@ -58,8 +59,17 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         _pins              // Custom pin mapping
     );
     
-    // Increase minimum refresh rate to eliminate flickering
-    mxconfig.setPixelColorDepthBits(8);
+    // Use configured per-channel color depth (2 to 8, default 8)
+    int depth = config.colorDepth;
+    if (depth <= 0) {
+        depth = 8; // Default fallback
+    } else if (depth > 8) {
+        depth = depth / 3; // Convert total bits to per-channel if > 8
+    }
+    if (depth < 2 || depth > 8) {
+        depth = 8; // Safe fallback if invalid range
+    }
+    mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
     mxconfig.latch_blanking = 8; mxconfig.clkphase = false; // Fixes green pixel flickering in corners on some panels
 
@@ -72,16 +82,9 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
             Serial.println("WARNING: 256x64 requested but no PSRAM found! This WILL cause Out-Of-Memory bootloops on a standard ESP32 WROOM.");
             // We no longer force 3-bit color here, because the user explicitly wants 24-bit on ESP32-S3.
         } else {
-            Serial.println("PSRAM found. 256x64 will use PSRAM for DMA buffering safely.");
-#if CONFIG_IDF_TARGET_ESP32S3
-            // KNOWN HARDWARE CONFLICT: on ESP32-S3 modules with octal PSRAM (N8R8/N16R8, the
-            // BOARD_HAS_PSRAM / qio_opi config used by the esp32s3 PlatformIO env), GPIO 33-37 are
-            // internally reserved for the PSRAM bus and are NOT available on the module's exposed
-            // pins. The pin map above uses GPIO 33 for HUB75 "A" and GPIO 32 for "B", which directly
-            // conflicts with this reserved range. This has NOT been re-validated against real S3
-            // hardware wiring - do not assume this default mapping works as-is on ESP32-S3 with
-            // 256x64 (i.e. exactly the case where PSRAM is required). See docs/HARDWARE.md.
-            Serial.println("WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM (GPIO33-37 reserved). Verify/adjust the pin map in MatrixEngine.cpp for your board before wiring a 256x64 panel.");
+            LOGI("MatrixEngine", "PSRAM found. 256x64 will use PSRAM for DMA buffering safely.");
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+            LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
 #endif
         }
     }
@@ -91,7 +94,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     
     // Allocate memory and start DMA
     if (!display->begin()) {
-        Serial.println("Error: Failed to allocate memory for Matrix DMA!");
+        LOGE("MatrixEngine", "Failed to allocate memory for Matrix DMA!");
         return false;
     }
 

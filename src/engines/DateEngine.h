@@ -3,6 +3,10 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/BitmapFontLoader.h"
 
+#include "TimeData.h"
+
+class ClockFace;
+
 enum PublisherTheme {
     THEME_NONE = -1,
     THEME_NINTENDO = 0,
@@ -41,6 +45,7 @@ public:
     
     // Updates the current date string (e.g. "Mer 08 Jul")
     void setDate(const char* dateStr);
+    void setDateData(const TimeData& d);
     
     // Legacy mapping (maps legacy character ID to new PublisherTheme)
     void setCharacter(int characterId);
@@ -62,6 +67,8 @@ private:
     
     PublisherTheme currentTheme;
     BitmapFontLoader customFont; ///< Optional user-provided .amf font (config.dateSettings.date_font_path)
+    ClockFace* activeFace;
+    TimeData currentDateData;
     
     int matrixW;
     int matrixH;
