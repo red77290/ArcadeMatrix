@@ -79,7 +79,7 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     FsFile f = sd.open(indexPath, FILE_OPEN_READ);
     if (!f) return false;
     
-    int targetLine = random(0, numAvailableFighters);
+    int targetLine = esp_random() % numAvailableFighters;
     f.seek(fighterOffsets[targetLine]);
     String result = f.readStringUntil('\n');
     result.trim();
@@ -381,7 +381,7 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P1_SPECIAL: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -390,7 +390,7 @@ void FighterEngine::processLoadState() {
         }
         case LOAD_P1_SUPER: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -419,7 +419,7 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P2_SPECIAL: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -428,7 +428,7 @@ void FighterEngine::processLoadState() {
         }
         case LOAD_P2_SUPER: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -598,14 +598,14 @@ bool FighterEngine::loop() {
         
         if (dist <= engage_dist) {
             // Fight! Random winner
-            FighterPlayer* attacker = (random(2) == 0) ? &p1 : &p2;
+            FighterPlayer* attacker = ((esp_random() % 2) == 0) ? &p1 : &p2;
             FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
             
             FighterState atkState = FIGHTER_ATTACK;
             FighterState tgtState = FIGHTER_HIT;
             bool isHeavy = false;
             
-            int rnd = random(100);
+            int rnd = esp_random() % 100;
             if (attacker->animSuper.loaded && rnd < 50) {
                 atkState = FIGHTER_SUPER;
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
