@@ -187,3 +187,52 @@ empaquetées (`GFXglyph.bitmapOffset` est un `uint16_t`) — c'est la même limi
 - **Évitez les objets `String` :** utilisez des tableaux de `char` (`char[]`) autant que possible pour éviter la fragmentation du tas, fatale sur ESP32.
 - **Bornes DMA :** ne dessinez jamais en dehors des limites `matrix_width` et `matrix_height`. Adafruit GFX gère la plupart des découpes, mais les écritures mémoire directes provoqueront des kernel panics.
 - **Fuites mémoire :** si vous allouez dynamiquement des classes (`new MyClock()`), assurez-vous de les `delete` quand le thème change pour éviter l'épuisement mémoire.
+---
+
+## 4. Ajouter une nouvelle cible matérielle (Hardware Profile)
+
+Si vous souhaitez porter ArcadeMatrix sur une nouvelle carte ESP32 (avec un brochage différent ou un autre type de mémoire flash/PSRAM), vous devez créer un nouveau profil matériel. Le projet utilise un système d'injection statique via des flags de compilation pour abstraire la couche matérielle.
+
+### Étape par étape
+
+1. **Définir le profil dans `include/HardwareProfile.h` :**
+   Ajoutez un nouveau bloc `#elif defined(HARDWARE_PROFILE_MON_NOUVEL_ESP)` pour définir les broches de votre matrice HUB75 et de votre carte SD.
+   ```cpp
+   #elif defined(HARDWARE_PROFILE_MON_NOUVEL_ESP)
+       // Profil : Mon Nouvel ESP32 Super Cool
+       #define MATRIX_R1_PIN 10
+       #define MATRIX_G1_PIN 11
+       // ... définissez toutes les broches de la matrice ...
+       
+       // SD Card
+       #define USE_SD_MMC 1 // 1 pour SD_MMC (rapide), 0 pour SdFat via SPI
+       #define SD_MMC_D0_PIN 12
+       #define SD_MMC_CMD_PIN 13
+       #define SD_MMC_CLK_PIN 14
+   ```
+
+2. **Créer l'environnement dans `platformio.ini` :**
+   Dans le fichier à la racine du projet, ajoutez un nouvel environnement (ex: `[env:mon_nouvel_esp]`).
+   Configurez les `build_flags` pour injecter la définition créée à l'étape précédente.
+   ```ini
+   [env:mon_nouvel_esp]
+   board = esp32-s3-devkitc-1
+   build_flags = 
+       -D HARDWARE_PROFILE_MON_NOUVEL_ESP
+       -D CORE_DEBUG_LEVEL=0
+   ```
+   *Note : Le code C++ (comme `SDUtils.h`) compilera automatiquement l'interface appropriée sans aucun "if/else" dans le code métier grâce à cette injection.*
+
+3. **Mettre à jour la CI/CD (GitHub Actions) :**
+   Pour que GitHub compile automatiquement le firmware de cette nouvelle carte à chaque push ou release :
+   - Ouvrez `.github/workflows/build.yml` et `.github/workflows/release.yml`.
+   - Ajoutez le nom de votre environnement dans la matrice de build :
+     `env: [esp32dev, esp32s3_waveshare, mon_nouvel_esp]`
+   - Dans le job `Assemble site` (de `build.yml`) et `Zip per-board flashing bundles` (de `release.yml`), ajoutez les commandes de copie/zip pour votre nouvel environnement (calquées sur les autres).
+
+4. **Créer le Manifest pour l'installateur Web (`webinstaller/`) :**
+   - Créez un nouveau fichier `webinstaller/manifest-mon_nouvel_esp.json` en dupliquant un existant.
+   - Mettez à jour les chemins pour qu'ils pointent vers les bons binaires (ex: `bootloader-mon_nouvel_esp.bin`).
+   - Éditez `webinstaller/index.html` pour ajouter un nouveau bouton `<esp-web-install-button manifest="manifest-mon_nouvel_esp.json">` dans l'interface de flashage web.
+
+Une fois cela fait, un simple `pio run -e mon_nouvel_esp` compilera le code entier, isolé et sécurisé, spécifiquement pour votre carte !
