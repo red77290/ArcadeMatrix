@@ -18,12 +18,14 @@ des playlists GIF.)
 
 
 ## Fonctionnalités
-- **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine** et **Versus (Mugen)** !
+- **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** et **Versus (Mugen)** !
 - **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
 - **Moteur de combat MUGEN :** simule nativement des jeux de combat 2D sur la matrice à l'aide de sprites extraits avec un alignement parfait sur le sol virtuel.
 - **Moteur GIF :** lecture fluide des GIF stockés sur la carte SD.
 - **Météo (OpenWeatherMap) :** prévisions sur 3 jours, avec mise en cache de 15 minutes pour économiser vos appels d'API.
 - **Support MQTT :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees des jeux.
+- **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web.
+ - **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
 
 ## Structure de la carte SD
 Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressembler à ceci :
@@ -31,8 +33,7 @@ Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressemble
 SD:/
   ├─ conf.ini
   ├─ gifs/
-  │   ├─ playlists.json
-  │   └─ mario.gif
+  │  │   └─ mario.gif
   └─ fighters_32/
       ├─ backgrounds/
       │   └─ stage1.raw
@@ -70,20 +71,12 @@ Ensuite, associez cet arrière-plan dans votre `conf.ini` sous la section `[DATE
 BACKGROUND_SPRITE=stage1.raw
 ```
 
-## Indexation des playlists GIF (sélection de dossiers dans la Web UI)
-La Web UI vous permet de cocher/décocher quels sous-dossiers de `gifs/` sont joués pendant la rotation en mode repos, mais elle a besoin d'un manifeste `playlists.json` pour savoir ce qu'il y a sur la carte SD. La lecture des GIF fonctionne très bien sans lui (le moteur lit toujours les fichiers directement depuis la carte SD) - cette étape n'est nécessaire que si vous voulez utiliser ce sélecteur à cases à cocher.
+## Playlists GIF (Découverte Automatique)
+Le firmware ESP32 scanne désormais dynamiquement votre carte SD et le dossier `/gifs/` à la volée. Vous n'avez plus besoin d'exécuter de scripts d'indexation ni de maintenir de fichier `playlists.json` !
 
-1. Organisez vos GIF en sous-dossiers sous `gifs/` sur votre carte SD, par ex. `gifs/mario/`, `gifs/sonic/` (chaque sous-dossier devient une playlist sélectionnable ; les fichiers `.gif` isolés directement sous `gifs/` sont toujours joués et n'ont pas besoin de cette étape).
-2. Lancez l'un des scripts natifs dans `tools/gif_indexation/` - aucun Python requis :
-   ```bash
-   ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - donnez la racine SD ou son dossier gifs/
-   ```
-   ```powershell
-   .\generate_index.ps1 -Path E:\           # Windows
-   ```
-3. Cela crée `gifs/playlists.json` sur la carte SD. Relancez-le à chaque ajout, suppression ou renommage d'un dossier dans `gifs/`.
-
-Pour tous les détails, consultez `tools/gif_indexation/README_FR.md`.
+1. Organisez simplement vos GIF dans des sous-dossiers sous `gifs/` sur votre carte SD, par ex. `gifs/mario/`, `gifs/sonic/`.
+2. L'interface Web les détectera automatiquement comme des playlists sélectionnables.
+3. Les fichiers `.gif` isolés placés directement à la racine de `gifs/` sont toujours joués par défaut.
 
 ## Polices personnalisées (conversion BDF → AMF)
 L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap personnalisées chargées depuis la carte SD à la place des ~6 polices compilées dans le firmware, en utilisant les mêmes polices `.bdf` qu'`ArcadeMatrix_RPi` fournit déjà. L'ESP32 n'a cependant aucun parseur BDF embarqué, elles doivent donc d'abord être converties au format compact `.amf`.
