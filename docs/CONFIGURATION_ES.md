@@ -11,7 +11,7 @@ La lista exhaustiva de parámetros de `conf.ini` se incluye en la carpeta `relea
 - `[WIFI]`: SSID, contraseña y hostname mDNS para acceder a la interfaz web.
 - `[MATRIX]`: mapeo de geometría (Width, Height, Chain count), profundidad de color y buferización. **Ajusta estos valores si tu matriz aparece distorsionada.** `PANEL_TYPE` se acepta y se guarda, pero actualmente no tiene efecto en el driver (mapeo de pines único y codificado para todos los tipos de panel - ver `docs/HARDWARE_ES.md`).
 - `[MQTT]`: dirección IP de tu Batocera/Recalbox para la sincronización Live Marquee.
-- `[TIME]`: zona horaria, opciones de diseño del reloj, y colores de degradado `clock_color_1`/`clock_color_2`.
+- `[TIME]`: Zona horaria, opciones de diseño del reloj y colores de degradado `clock_color_1`/`clock_color_2`. El `clock_theme` acepta más de 20 IDs de relojes (incluyendo Matrix Rain, Cyberpunk, Tetris, Pac-Man, etc.).
 - `[IDLE]`: secuencia de módulos que se reproducen cuando no está ocurriendo nada (Clock, Date, Weather, GIFs, Sprites), incluyendo `fighter_interval_sec` (retraso entre combates MUGEN).
 - `[DATE]`: fondos de sprites, formato, y colores de degradado `date_color_1`/`date_color_2` del módulo de fecha.
 - `[WEATHER]`: claves API de OpenWeatherMap.
