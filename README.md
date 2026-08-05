@@ -99,17 +99,9 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 
 For full details, check `tools/bdf_to_amfont/README.md`.
 
-## ⚡ Hardware & Power Requirements
-
-### Microcontroller Compatibility
+## ⚡ Hardware Compatibility
 - **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Fully supports all features (Real-Time Crypto, Stock Market, MUGEN, Weather, Web UI) for **128x32 / 64x32 matrix panels** (internal 320KB SRAM is sufficient for double-buffered DMA).
 - **ESP32-S3 with PSRAM (`esp32s3_waveshare`)**: Required for large **256x64 True Matrix panels** which require PSRAM for 256KB DMA double-buffering.
-
-### 🔋 Battery Autonomy Estimation (10,000 mAh Power Bank / 31.5 Wh Usable at 5V)
-- **128x32 Panels (e.g. 2x P4 64x32) @ 10% Brightness**:
-  - **ESP32-S3 / ESP32**: **~20 to 22 Hours** continuous operation (~1.5W total draw).
-- **256x64 Panels (e.g. 2x P2 128x64) @ 10% Brightness**:
-  - **ESP32-S3**: **~11 to 13 Hours** continuous operation (~2.8W total draw).
 
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.
