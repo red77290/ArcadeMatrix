@@ -1,371 +1,665 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ArcadeMatrix Dashboard</title>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
-  <!-- The UI is served entirely from firmware flash (PROGMEM) with no SD/filesystem dependency,
-       so all CSS/JS must be inlined here rather than loaded from external /assets/*.js|css files
-       (those were never served by WebServerAPI and silently 404'd, breaking view switching,
-       Playlists, and the Clocks quick-theme-switcher). -->
+  <meta name="description" content="Control panel for ArcadeMatrix LED matrix display">
+  <link rel="icon" href="/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root{--bg-color:#0f172a;--text-color:#f8fafc;--primary:#3b82f6;--primary-glow:#3b82f680;--glass-bg:#ffffff0d;--glass-border:#ffffff1a}
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{background-color:var(--bg-color);color:var(--text-color);font-family:Outfit,sans-serif;overflow:hidden}
-    .app-container{height:100vh;display:flex}
-    .sidebar{background:var(--glass-bg);border-right:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);width:250px;padding:2rem}
-    .logo h2{background:linear-gradient(90deg,#60a5fa,#a78bfa);-webkit-text-fill-color:transparent;-webkit-background-clip:text;margin-bottom:2rem;font-weight:700}
-    .nav-links{list-style:none}
-    .nav-links li{cursor:pointer;border-radius:8px;margin-bottom:.5rem;padding:1rem;transition:all .3s}
-    .nav-links li:hover{background:#ffffff1a}
-    .nav-links li.active{background:var(--primary);box-shadow:0 0 15px var(--primary-glow)}
-    .content{flex:1;padding:2rem 3rem;overflow-y:auto}
-    header{justify-content:space-between;align-items:center;margin-bottom:3rem;display:flex}
-    .status-indicator{border-radius:20px;padding:.5rem 1rem;font-size:.9rem;font-weight:500}
-    .status-indicator.online{color:#10b981;background:#10b98133;border:1px solid #10b981}
-    .view{animation:.5s fadeIn;display:none}
-    .view.active-view{display:block}
-    .cards-grid{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2rem;display:grid}
-    .glass{background:var(--glass-bg);border:1px solid var(--glass-border);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-radius:16px;padding:2rem}
-    .glass h3{margin-bottom:1.5rem;font-weight:500}
-    .btn{cursor:pointer;border:none;border-radius:8px;margin-right:.5rem;padding:.8rem 1.5rem;font-family:inherit;font-weight:500;transition:all .2s}
-    .btn.primary{background:var(--primary);color:#fff;box-shadow:0 4px 15px var(--primary-glow)}
-    .btn.primary:hover{box-shadow:0 6px 20px var(--primary-glow);transform:translateY(-2px)}
-    .btn.secondary{color:#fff;background:#ffffff1a}
-    .btn.secondary:hover{background:#fff3}
-    .slider-group{margin-top:1.5rem}
-    .slider-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}
-    input[type=range]{width:100%;accent-color:var(--primary)}
-    @keyframes fadeIn{0%{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-    .playlist-list{flex-direction:column;gap:1rem;margin-top:2rem;display:flex}
-    .playlist-item{background:#0003;border:1px solid #ffffff0d;border-radius:8px;justify-content:space-between;align-items:center;padding:1rem;display:flex}
-    .playlist-item .info h4{font-weight:500}
-    .playlist-item .info span{color:#94a3b8;font-size:.8rem}
-    .form-group{margin-bottom:1rem}
-    .form-group label{color:#cbd5e1;margin-bottom:.5rem;font-size:.9rem;display:block}
-    .text-input,.select-input{border:1px solid var(--glass-border);color:#fff;background:#0003;border-radius:8px;width:100%;padding:.8rem;font-family:inherit}
-    .text-input:focus,.select-input:focus{border-color:var(--primary);box-shadow:0 0 10px var(--primary-glow);outline:none}
-    @media (max-width:768px){
-      #mobile-menu-btn{display:block!important}
-      .sidebar{z-index:1000;transition:left .3s;position:fixed;top:0;bottom:0;left:-250px;box-shadow:5px 0 15px #00000080}
-      .sidebar.open{left:0}
-      .sidebar-overlay{-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);z-index:999;background:#00000080;display:none;position:fixed;inset:0}
-      .sidebar-overlay.open{display:block}
-      .content{padding:1.5rem 1rem}
-      header h1{font-size:1.5rem}
-    }
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #111827;
+  --bg-glass: rgba(17, 24, 39, 0.75);
+  --glass-border: rgba(99, 102, 241, 0.2);
+  --glass-blur: 16px;
+
+  --accent-primary: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-glow: rgba(99, 102, 241, 0.35);
+  --accent-success: #22c55e;
+  --accent-warning: #f59e0b;
+  --accent-danger: #ef4444;
+  --accent-info: #38bdf8;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+</style>
+  <style>
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  min-height: 100vh;
+  display: flex;
+  overflow-x: hidden;
+}
+
+#app {
+  display: flex;
+  width: 100vw;
+  min-height: 100vh;
+}
+
+#sidebar {
+  width: 260px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  flex-shrink: 0;
+}
+
+.logo h2 {
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.version-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--accent-primary);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+  margin-top: 0.25rem;
+}
+
+.nav-links {
+  list-style: none;
+  margin-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.nav-item:hover, .nav-item.active {
+  background: var(--accent-glow);
+  color: #fff;
+}
+
+#content {
+  flex: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.page {
+  display: none;
+}
+
+.page.active {
+  display: block;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    box-shadow: 4px 0 15px rgba(0,0,0,0.5);
+  }
+
+  #sidebar.open {
+    transform: translateX(0);
+  }
+
+  #mobile-menu-btn {
+    display: block !important;
+  }
+
+  #sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(2px);
+    z-index: 999;
+  }
+
+  #sidebar-overlay.open {
+    display: block;
+  }
+}
+
+#mobile-menu-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+  margin-right: 1rem;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+  background: var(--accent-glow);
+  color: #fff;
+  font-weight: 500;
+}
+
+.tab-pane {
+  display: none;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.tab-pane.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Playlist Styles */
+.playlist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  margin-bottom: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: transform 0.2s, background 0.2s;
+}
+.playlist-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateX(4px);
+}
+.playlist-item .info h4 {
+  margin: 0 0 0.3rem 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+.playlist-item .info span {
+  font-size: 0.85rem;
+  color: var(--accent-primary);
+  opacity: 0.9;
+}
+.playlist-item .action {
+  font-weight: 500;
+}
+
+/* Rotation Toggle Styles */
+.rotation-toggles .toggle-label {
+  display: inline-block;
+  padding: 0.6rem 1rem;
+  background: var(--bg-secondary);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  user-select: none;
+  font-size: 0.95rem;
+}
+.rotation-toggles input[type="checkbox"]:checked + .toggle-label {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.rotation-toggles input[type="checkbox"]:hover:not(:checked) + .toggle-label {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Tooltips */
+[data-tooltip] {
+  position: relative;
+  cursor: help;
+  display: inline-block;
+}
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 130%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: normal;
+  width: max-content;
+  max-width: 250px;
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  z-index: 1000;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+[data-tooltip]::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: var(--bg-secondary) transparent transparent transparent;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  z-index: 1000;
+  pointer-events: none;
+}
+[data-tooltip]:hover::after,
+[data-tooltip]:hover::before,
+[data-tooltip]:focus::after,
+[data-tooltip]:focus::before {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) scale(1);
+}
+.tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  color: var(--accent-primary);
+  font-size: 11px;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-family: monospace;
+  font-weight: bold;
+}
+
+</style>
+  <style>
+.card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+
+.shadow {
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.btn {
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-md);
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-primary {
+  background: var(--accent-primary);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
+.btn-warning {
+  background: var(--accent-warning);
+  color: #000;
+}
+
+.btn-danger {
+  background: var(--accent-danger);
+  color: #fff;
+}
+
+.input {
+  width: 100%;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color: #fff;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+.badge-accent {
+  background: var(--accent-glow);
+  color: var(--accent-hover);
+}
+
+#toast-container {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  z-index: 9999;
+}
+
+.toast {
+  padding: 1rem 1.5rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  animation: slideIn 200ms ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+</style>
+  <style>
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.metric-box {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  text-align: center;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.metric-val {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent-info);
+  margin-top: 0.25rem;
+}
+
+/* OTA Card Styles */
+.ota-card {
+  margin-top: 2rem;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.ota-info-box {
+  display: flex;
+  gap: 2rem;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.drop-zone {
+  border: 2px dashed var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent-warning);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.drop-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar-container {
+  position: relative;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-warning));
+  transition: width 150ms ease;
+}
+
+.progress-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+</style>
+  <style>
+    .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
+    .form-grid.col-4 { grid-template-columns: repeat(4, 1fr); }
   </style>
 </head>
-
 <body>
-  <div class="app-container">
-    <div class="sidebar-overlay" id="sidebar-overlay"></div>
-    <nav class="sidebar">
+  <div id="app">
+    <!-- Sidebar Overlay for Mobile -->
+    <div id="sidebar-overlay"></div>
+    
+    <!-- Sidebar Navigation -->
+    <nav id="sidebar">
       <div class="logo">
-        <h2>ArcadeMatrix</h2>
+        <h2>🎮 ArcadeMatrix</h2>
+        <span id="version-tag" class="version-badge">v1.0.0</span>
       </div>
       <ul class="nav-links">
-        <li class="active" data-view="settings" data-i18n="nav_settings">Settings</li>
-        <li data-view="playlists" data-i18n="nav_playlists">GIFs Playlists</li>
-        <li data-view="clocks" data-i18n="nav_clocks">Clocks</li>
-        <li data-view="messages" data-i18n="nav_messages">Messages</li>
+        <li class="nav-item active" data-page="dashboard">
+          <span class="icon">📊</span> <span data-i18n="nav_dashboard">Dashboard</span>
+        </li>
+        <li class="nav-item" data-page="display">
+          <span class="icon">🎨</span> <span data-i18n="nav_display">Display</span>
+        </li>
+        <li class="nav-item" data-page="media">
+          <span class="icon">🎬</span> <span data-i18n="nav_media">Media</span>
+        </li>
+        <li class="nav-item" data-page="message">
+          <span class="icon">💬</span> <span data-i18n="nav_message">Message</span>
+        </li>
+        <li class="nav-item" data-page="system">
+          <span class="icon">⚙️</span> <span data-i18n="nav_system">System</span>
+        </li>
       </ul>
+      <div class="sidebar-footer">
+        <select id="lang-selector">
+          <option value="en">English (EN)</option>
+          <option value="fr">Français (FR)</option>
+          <option value="es">Español (ES)</option>
+        </select>
+      </div>
     </nav>
 
-    <main class="content">
-      <header>
+    <!-- Main Content Pages -->
+    <main id="content">
+      <!-- Dashboard Page -->
+      <section id="page-dashboard" class="page active">
+        <header class="page-header">
+          <div class="header-left">
+            <button id="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_dashboard">Dashboard</h1>
+          </div>
+          <div id="status-badge" class="status-badge online">● Online</div>
+        </header>
+
+        <div class="dashboard-grid">
+          <!-- Power Control Card -->
+          <div class="card glass shadow">
+            <h3>Matrix Power</h3>
+            <div class="power-toggle-container">
+              <button id="btn-power-toggle" class="btn btn-power-on">Turn Panel OFF</button>
+            </div>
+            <div class="slider-group" style="margin-top: 1.5rem;">
+              <label>Matrix Brightness (<span id="val-brightness">40</span>%)</label>
+              <input type="range" id="slider-brightness" min="1" max="100" value="40">
+            </div>
+          </div>
+
+          <!-- System Metrics Grid -->
+          <div class="card glass shadow">
+            <h3>System Metrics</h3>
+            <div class="metrics-grid">
+              <div class="metric-box">
+                <div class="metric-label">CPU Load</div>
+                <div class="metric-val" id="metric-cpu">-- %</div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">Temperature</div>
+                <div class="metric-val" id="metric-temp">-- °C</div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">RAM Memory</div>
+                <div class="metric-val" id="metric-ram">-- MB</div>
+              </div>
+              <div class="metric-box">
+                <div class="metric-label">Disk Storage</div>
+                <div class="metric-val" id="metric-disk">-- GB</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="card glass shadow">
+            <h3>System Control</h3>
+            <div class="action-buttons">
+              <button id="btn-reboot" class="btn btn-warning">Reboot System</button>
+              <button id="btn-restart-app" class="btn btn-primary" style="margin-left: 0.5rem;">Restart App</button>
+              <button id="btn-shutdown" class="btn btn-danger">Shutdown</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Display Page -->
+      <section id="page-display" class="page">
+        <header class="page-header">
+          <div class="header-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_display">Display Settings</h1>
+          </div>
+        </header>
+
+        <div class="tabs">
+          <button class="tab-btn active" onclick="switchDisplayTab('clock')">🕒 Clock</button>
+          <button class="tab-btn" onclick="switchDisplayTab('date')">📅 Date</button>
+          <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
+          <button class="tab-btn" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
+        </div>
         
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <select id="lang-selector" class="select-input" style="padding: 0.3rem 0.6rem; background: #1e293b; border: 1px solid var(--glass-border); color: #fff; border-radius: 6px; cursor: pointer;">
-            <option value="en" style="background:#1e293b; color:#fff;">🇬🇧 EN</option>
-            <option value="fr" style="background:#1e293b; color:#fff;">🇫🇷 FR</option>
-            <option value="es" style="background:#1e293b; color:#fff;">🇪🇸 ES</option>
-          </select>
-          <button id="mobile-menu-btn" class="btn secondary" style="display: none; padding: 0.5rem; font-size: 1.2rem; background: transparent; border: 1px solid var(--glass-border);">☰</button>
-        <div class="status-indicator online" data-i18n="status_online">Online</div>
-      </header>
-
-
-
-      <!-- Playlists View -->
-      <section id="view-playlists" class="view">
-        <div class="glass">
-          <header style="display:flex; justify-content:space-between; align-items:center;">
-            <h2 data-i18n="folder_playlists">Folder Playlists</h2>
-            <div>
-              <button id="btn-scan-sd" class="btn secondary" data-i18n="btn_scan_sd">Scan SD Card</button>
-              <button id="btn-play-selected" class="btn primary" data-i18n="btn_play_selected">Play Selected</button>
-            </div>
-          </header>
-          <div class="playlist-list">
-            <div style="padding:2rem;text-align:center;opacity:0.7;">Loading GIFs...</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Clocks View -->
-      <section id="view-clocks" class="view">
-        <div class="glass">
-          <h2 data-i18n="clock_faces">Clock Faces</h2>
-          <div class="cards-grid" style="margin-top:2rem;">
-            <div class="card glass">
-              <h4 data-i18n="clock_style">Clock Style</h4>
-              <select id="clock-character" class="select-input" style="width:100%; margin-top:1rem; padding:0.5rem;">
-                <option value="-1">None / Default</option>
-                <option value="0">Nintendo</option>
-                <option value="1">Capcom</option>
-                <option value="2">Taito</option>
-                <option value="3">Sega</option>
-                <option value="4">Cave</option>
-                <option value="5">Konami</option>
-                <option value="6">SNK</option>
-                <option value="7">Technos</option>
-                <option value="8">IGS</option>
-                <option value="9">Hudson</option>
-                <option value="10">Banpresto</option>
-                <option value="11">Namco</option>
-                <option value="12">Ryu (Animated)</option>
-                <option value="13">Mario (Animated)</option>
-                <option value="14">Marco (Animated)</option>
-                <option value="15">Megaman (Animated)</option>
-                <option value="16">Space Invader (Animated)</option>
-                <option value="17">Bub (Animated)</option>
-                <option value="18">Cyberpunk (Matrix)</option>
-                <option value="19">Flip Clock</option>
-                <option value="21">True Matrix (Katakana HD)</option>
-                <option value="22">Pong Clock</option>
-                <option value="23">Tetris Clock</option>
-                <option value="24">Word Clock</option>
-                <option value="25">Binary Clock</option>
-                <option value="26">Pac-Man Clock</option>
-                <option value="27">Versus Health Bar</option>
-                <option value="28">Slot Machine Clock</option>
-                <option value="29">Tetris Gameboy Clock</option>
-              </select>
-              <button id="btn-apply-clock" class="btn primary" style="width:100%; margin-top:1rem;" data-i18n="btn_apply">Apply</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Messages View -->
-      <section id="view-messages" class="view">
-        <div class="glass">
-          <h2 data-i18n="custom_marquee">Custom Marquee</h2>
-          <p style="color: #94a3b8; margin-bottom: 2rem;">Send custom scrolling text directly to the LED Matrix.</p>
-
-          <div class="cards-grid">
-            <div>
-              <div class="form-group">
-                <label data-i18n="label_msg_text">Message Text</label>
-                <input type="text" id="msg-text" class="text-input" placeholder="Enter your text here..." />
-              </div>
-
-              <div class="form-group">
-                <label data-i18n="label_color">Color</label>
-                <input type="color" id="msg-color" value="#ff0055"
-                  style="width: 100%; height: 40px; background: none; border: none; cursor: pointer; border-radius: 8px;" />
-              </div>
-            </div>
-
-            <div>
-              <div class="form-group">
-                <label data-i18n="label_font_size">Font Size</label>
-                <select id="msg-size" class="select-input">
-                  <option value="1">Small (1x)</option>
-                  <option value="2" selected>Medium (2x)</option>
-                  <option value="3">Large (3x)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label data-i18n="label_scroll_dir">Scroll Direction</label>
-                <select id="msg-dir" class="select-input">
-                  <option value="rtl" selected>Right to Left ⬅️</option>
-                  <option value="ltr">Left to Right ➡️</option>
-                  <option value="ttb">Top to Bottom ⬇️</option>
-                  <option value="btt">Bottom to Top ⬆️</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label data-i18n="label_speed">Speed (Lower is faster)</label>
-                <input type="range" id="msg-speed" min="10" max="100" value="30">
-              </div>
-
-              <div class="form-group">
-                <label data-i18n="label_timeout">Timeout (seconds)</label>
-                <input type="number" id="msg-timeout" class="text-input" value="30" min="1" max="300" />
-              </div>
-            </div>
-          </div>
-
-          <button class="btn primary" id="btn-send-msg"
-            style="width: 100%; margin-top: 2rem; font-size: 1.1rem; padding: 1rem;" data-i18n="btn_send_msg">Send to Matrix 🚀</button>
-        </div>
-      </section>
-
-      <!-- Settings View -->
-      <section id="view-settings" class="view active-view">
-        <div class="settings-tabs" style="display:flex; gap:1rem; margin-bottom:1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; overflow-x: auto;">
-          <button class="btn tab-btn active" data-target="tab-hardware" style="background:transparent; border:none; color:#fff; font-weight:bold; cursor:pointer; white-space:nowrap;">Hardware</button>
-          <button class="btn tab-btn" data-target="tab-rotation" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Screensaver</button>
-          <button class="btn tab-btn" data-target="sect-clock" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Clock</button>
-          <button class="btn tab-btn" data-target="sect-date" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Date</button>
-          <button class="btn tab-btn" data-target="tab-weather" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Weather</button>
-          <button class="btn tab-btn" data-target="tab-network" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">Network</button>
-          <button class="btn tab-btn" data-target="tab-info" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; white-space:nowrap;">System Info</button>
-        </div>
-
-        <div class="settings-content" id="settings-content-wrapper" style="opacity: 0; pointer-events: none; transition: opacity 0.3s ease;">
-          <div id="tab-hardware" class="glass tab-pane active" style="display:block;">
-            <h3 data-i18n="matrix_hardware">Matrix Hardware</h3>
+        <div id="tab-clock" class="tab-pane active">
+          <div class="card glass shadow">
+            <h3>🕒 Clock Settings</h3>
+          <div class="form-grid">
             <div class="form-group">
-              <label data-i18n="label_brightness_limit">Brightness Limit (%)</label>
-              <input type="number" id="setting-brightness" class="text-input" value="40" />
-            </div>
-            <button id="btn-save-matrix" class="btn primary" style="margin-top:1rem; width: 100%; margin-bottom:2rem;" data-i18n="btn_save_matrix">Save Brightness</button>
-            
-            <h3>Hardware Dimensions</h3>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Rows (Height)</label>
-                <input type="number" id="setting-matrix-rows" class="text-input" value="32" />
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Cols (Width)</label>
-                <input type="number" id="setting-matrix-cols" class="text-input" value="64" />
-              </div>
-            </div>
-            <button id="btn-save-hardware" class="btn secondary" style="margin-top:1rem; width: 100%;">Save Hardware & Restart</button>
-
-            <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
-            <h3 data-i18n="night_mode">Night Mode</h3>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>Enable Night Mode</label>
-                <select id="setting-night-mode-enabled" class="select-input">
-                  <option value="1">Yes</option>
-                  <option value="0" selected>No</option>
-                </select>
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Night Brightness (%)</label>
-                <input type="number" id="setting-night-brightness" class="text-input" value="10" />
-                <small style="color: #94a3b8; font-size: 0.8rem;">Set to 0 to turn panel OFF</small>
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Turn Night ON At</label>
-                <input type="time" id="setting-turn-off-at" class="text-input" value="23:00" />
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Turn Night OFF At</label>
-                <input type="time" id="setting-wake-up-at" class="text-input" value="07:00" />
-              </div>
-            </div>
-            <button id="btn-save-night-mode" class="btn secondary" style="margin-top:1rem; width: 100%;">Save Night Mode</button>
-          </div>
-
-          <div id="tab-rotation" class="glass tab-pane" style="display:none;">
-            <h3 data-i18n="screensaver_rotation">Screensaver Rotation (Idle)</h3>
-            <div class="form-group">
-              <label data-i18n="label_rotation_seq">Rotation Sequence (Use arrows to reorder)</label>
-              <ul id="rotation-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem;">
-                <li data-id="clock" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
-                  <div style="display:flex; flex-direction:column; gap: 2px;">
-                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
-                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
-                  </div>
-                  <input type="checkbox" id="rot-clock" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
-                  <label for="rot-clock" style="font-size:1.1rem; flex:1; cursor:pointer;">Clock</label>
-                </li>
-                <li data-id="date" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
-                  <div style="display:flex; flex-direction:column; gap: 2px;">
-                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
-                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
-                  </div>
-                  <input type="checkbox" id="rot-date" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
-                  <label for="rot-date" style="font-size:1.1rem; flex:1; cursor:pointer;">Date</label>
-                </li>
-                <li data-id="weather" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
-                  <div style="display:flex; flex-direction:column; gap: 2px;">
-                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
-                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
-                  </div>
-                  <input type="checkbox" id="rot-weather" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
-                  <label for="rot-weather" style="font-size:1.1rem; flex:1; cursor:pointer;">Weather</label>
-                </li>
-                <li data-id="gifs" class="sortable-item glass" style="padding: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
-                  <div style="display:flex; flex-direction:column; gap: 2px;">
-                     <button class="btn-move-up" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▲</button>
-                     <button class="btn-move-down" style="padding:0 5px; background:var(--primary); border:none; color:white; border-radius:4px; font-size:0.8rem; cursor:pointer;">▼</button>
-                  </div>
-                  <input type="checkbox" id="rot-gifs" checked style="width:20px;height:20px;margin-left:0.5rem;"/> 
-                  <label for="rot-gifs" style="font-size:1.1rem; flex:1; cursor:pointer;">GIFs</label>
-                </li>
-              </ul>
-            </div>
-            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-              <div class="form-group" style="flex: 1;">
-                <label data-i18n="label_clock_time">Clock Time (s)</label>
-                <input type="number" id="setting-clock-dur" class="text-input" value="60" min="5" />
-              </div>
-              <div class="form-group" style="flex: 1;">
-                <label data-i18n="label_date_time">Date Time (s)</label>
-                <input type="number" id="setting-date-dur" class="text-input" value="10" min="5" />
-              </div>
-              <div class="form-group" style="flex: 1;">
-                <label data-i18n="label_weather_time">Weather Time (s)</label>
-                <input type="number" id="setting-weather-dur" class="text-input" value="15" min="5" />
-              </div>
-            </div>
-            <div style="display: flex; gap: 1rem;">
-              <div class="form-group" style="flex: 1;">
-                <label data-i18n="label_gifs_rotation">GIFs per Rotation</label>
-                <input type="number" id="setting-gifs-count" class="text-input" value="3" min="0" />
-              </div>
-              <div class="form-group" style="flex: 1;">
-                <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.5rem;">
-                  <input type="checkbox" id="setting-sprite-enable" style="width:20px;height:20px;" checked />
-                  <label for="setting-sprite-enable" style="cursor:pointer;" data-i18n="label_bg_sprites">Enable VS Fighting Background</label>
-                </div>
-                <div style="margin-top: 0.5rem;">
-                  <label style="font-size: 0.85em; opacity: 0.8;">Delay between fights: <span id="fighter-interval-val">10</span>s</label>
-                  <input type="range" id="setting-fighter-interval" min="0" max="60" value="10" style="width: 100%;" oninput="document.getElementById('fighter-interval-val').innerText = this.value" />
-                </div>
-              </div>
-            </div>
-            <button id="btn-save-idle" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_rotation">Save Rotation Config</button>
-          </div>
-
-          <div id="sect-clock" class="glass tab-pane" style="display:none;">
-            <h3 data-i18n="clock_config">Clock Configuration</h3>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;" title="Taille de 1 (Minimum) à 5 (Oversize)">
-                <label>Size (1-5)</label>
-                <input type="number" id="setting-clock-size" class="text-input" value="4" min="1" max="5">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset X</label>
-                <input type="number" id="setting-clock-offset-x" class="text-input" value="0">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset Y</label>
-                <input type="number" id="setting-clock-offset-y" class="text-input" value="0">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>Font</label>
-                <select id="setting-clock-font" class="select-input">
-                  <option value="">Loading fonts...</option>
-                </select>
-              </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>Clock Theme</label>
-                <select id="setting-clock-theme" class="text-input">
-                  <option value="-1">None / Default</option>
-                  <option value="20">Custom Gradient / Color</option>
+              <label>Theme</label>
+              <select id="cfg-clock-theme" class="input">
+                <optgroup label="Publisher Colors">
                   <option value="0">Nintendo</option>
                   <option value="1">Capcom</option>
                   <option value="2">Taito</option>
@@ -378,15 +672,20 @@
                   <option value="9">Hudson</option>
                   <option value="10">Banpresto</option>
                   <option value="11">Namco</option>
-                  <option value="12">Ryu (Animated)</option>
-                  <option value="13">Mario (Animated)</option>
-                  <option value="14">Marco (Animated)</option>
-                  <option value="15">Megaman (Animated)</option>
-                  <option value="16">Space Invader (Animated)</option>
-                  <option value="17">Bub (Animated)</option>
-                  <option value="18">Cyberpunk (Classic Drops)</option>
+                </optgroup>
+                <optgroup label="Animated Characters">
+                  <option value="12">Ryu</option>
+                  <option value="13">Mario</option>
+                  <option value="14">Marco</option>
+                  <option value="15">Megaman</option>
+                  <option value="16">Space Invader</option>
+                  <option value="17">Bub</option>
+                </optgroup>
+                <optgroup label="Effects & Games">
+                  <option value="18">Cyberpunk</option>
                   <option value="19">Flip Clock</option>
-                  <option value="21">True Matrix (Katakana HD)</option>
+                  <option value="20">Custom Gradient</option>
+                  <option value="21">True Matrix</option>
                   <option value="22">Pong Clock</option>
                   <option value="23">Tetris Clock</option>
                   <option value="24">Word Clock</option>
@@ -394,87 +693,63 @@
                   <option value="26">Pac-Man Clock</option>
                   <option value="27">Versus Health Bar</option>
                   <option value="28">Slot Machine</option>
-                  <option value="29">Tetris Gameboy Clock</option>
-                </select>
-              </div>
+                  <option value="29">Tetris Gameboy</option>
+                </optgroup>
+              </select>
             </div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;" id="clock-custom-colors-container">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Color 1 (Gradient Start)</label>
-                <input type="color" id="setting-clock-color-1" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Color 2 (Gradient End)</label>
-                <input type="color" id="setting-clock-color-2" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
-              </div>
+            <div class="form-group">
+              <label>Font</label>
+              <select id="cfg-clock-font" class="input"></select>
             </div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>NTP Server</label>
-                <input type="text" id="setting-ntp-server" class="text-input" placeholder="pool.ntp.org" />
-              </div>
-              <div class="form-group" style="flex: 2; min-width:150px;">
-                <label>Timezone (City)</label>
-                <select id="setting-timezone" class="text-input">
-                  <option data-iana="Etc/UTC" value="UTC0">UTC / GMT</option>
-                  <option data-iana="Europe/London" value="GMT0BST,M3.5.0/1,M10.5.0">Europe/London</option>
-                  <option data-iana="Europe/Paris" value="CET-1CEST,M3.5.0,M10.5.0/3">Europe/Paris (CET)</option>
-                  <option data-iana="Europe/Berlin" value="CET-1CEST,M3.5.0,M10.5.0/3">Europe/Berlin (CET)</option>
-                  <option data-iana="Europe/Madrid" value="CET-1CEST,M3.5.0,M10.5.0/3">Europe/Madrid (CET)</option>
-                  <option data-iana="Europe/Rome" value="CET-1CEST,M3.5.0,M10.5.0/3">Europe/Rome (CET)</option>
-                  <option data-iana="Europe/Moscow" value="MSK-3">Europe/Moscow</option>
-                  <option data-iana="America/New_York" value="EST5EDT,M3.2.0,M11.1.0">America/New_York (EST)</option>
-                  <option data-iana="America/Chicago" value="CST6CDT,M3.2.0,M11.1.0">America/Chicago (CST)</option>
-                  <option data-iana="America/Denver" value="MST7MDT,M3.2.0,M11.1.0">America/Denver (MST)</option>
-                  <option data-iana="America/Los_Angeles" value="PST8PDT,M3.2.0,M11.1.0">America/Los_Angeles (PST)</option>
-                  <option data-iana="America/Sao_Paulo" value="<-03>3">America/Sao_Paulo</option>
-                  <option data-iana="Asia/Tokyo" value="JST-9">Asia/Tokyo</option>
-                  <option data-iana="Asia/Shanghai" value="CST-8">Asia/Shanghai</option>
-                  <option data-iana="Asia/Dubai" value="<+04>-4">Asia/Dubai</option>
-                  <option data-iana="Australia/Sydney" value="AEST-10AEDT,M10.1.0,M4.1.0/3">Australia/Sydney</option>
-                </select>
-              </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>24h Format</label>
-                <select id="setting-format24h" class="text-input">
-                  <option value="1">Yes</option>
-                  <option value="0">No</option>
-                </select>
-              </div>
+            <div class="form-group">
+              <label>Format (Chrono strftime)</label>
+              <input type="text" id="cfg-clock-format" class="input" placeholder="%H:%M:%S">
             </div>
-            <button id="btn-save-clock" class="btn primary" style="margin-top:1rem; width: 100%;">Save Clock</button>
+            <div class="form-group">
+              <label>Size (Scale)</label>
+              <input type="number" id="cfg-clock-size" class="input" value="2">
+            </div>
           </div>
-            
-          <div id="sect-date" class="glass tab-pane" style="display:none;">
-            <h3 data-i18n="date_config">Date Configuration</h3>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label data-i18n="label_date_format">Date Format</label>
-                <input type="text" id="setting-date-format" class="text-input" value="DD/MM">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;" title="Taille de 1 (Minimum) à 5 (Oversize)">
-                <label>Size (1-5)</label>
-                <input type="number" id="setting-date-size" class="text-input" value="4" min="1" max="5">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset X</label>
-                <input type="number" id="setting-date-offset-x" class="text-input" value="0">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset Y</label>
-                <input type="number" id="setting-date-offset-y" class="text-input" value="0">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label>Font</label>
-                <select id="setting-date-font" class="select-input">
-                  <option value="">Loading fonts...</option>
-                </select>
-              </div>
-              <div class="form-group" style="flex: 1; min-width:120px;">
-                <label data-i18n="label_date_theme">Date Theme</label>
-                <select id="setting-date-theme" class="text-input">
-                  <option value="-1">None / Default</option>
-                  <option value="20">Custom Gradient / Color</option>
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>NTP Server</label>
+              <input type="text" id="cfg-ntp-server" class="input" placeholder="pool.ntp.org">
+            </div>
+            <div class="form-group">
+              <label>Timezone (e.g. Europe/Paris)</label>
+              <input type="text" id="cfg-timezone" class="input" placeholder="Europe/Paris">
+            </div>
+          </div>
+          <div class="form-grid col-4" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Primary Color</label>
+              <input type="color" id="cfg-clock-color1" class="input" value="#ffffff">
+            </div>
+            <div class="form-group">
+              <label>Secondary Color</label>
+              <input type="color" id="cfg-clock-color2" class="input" value="#000000">
+            </div>
+            <div class="form-group">
+              <label>Offset X</label>
+              <input type="number" id="cfg-clock-x" class="input">
+            </div>
+            <div class="form-group">
+              <label>Offset Y</label>
+              <input type="number" id="cfg-clock-y" class="input">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
+
+        <div id="tab-date" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>📅 Date Settings</h3>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Theme</label>
+              <select id="cfg-date-theme" class="input">
+                <optgroup label="Publisher Colors">
                   <option value="0">Nintendo</option>
                   <option value="1">Capcom</option>
                   <option value="2">Taito</option>
@@ -487,1022 +762,1278 @@
                   <option value="9">Hudson</option>
                   <option value="10">Banpresto</option>
                   <option value="11">Namco</option>
-                  <option value="12">Ryu (Animated)</option>
-                  <option value="13">Mario (Animated)</option>
-                  <option value="14">Marco (Animated)</option>
-                  <option value="15">Megaman (Animated)</option>
-                  <option value="16">Space Invader (Animated)</option>
-                  <option value="17">Bub (Animated)</option>
-                  <option value="18">Cyberpunk (Classic Drops)</option>
-                </select>
-              </div>
+                </optgroup>
+                <optgroup label="Animated Characters">
+                  <option value="12">Ryu</option>
+                  <option value="13">Mario</option>
+                  <option value="14">Marco</option>
+                  <option value="15">Megaman</option>
+                  <option value="16">Space Invader</option>
+                  <option value="17">Bub</option>
+                </optgroup>
+                <optgroup label="Effects & Games">
+                  <option value="18">Cyberpunk</option>
+                  <option value="19">Flip Clock</option>
+                  <option value="20">Custom Gradient</option>
+                  <option value="21">True Matrix</option>
+                </optgroup>
+              </select>
             </div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;" id="date-custom-colors-container">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Color 1 (Gradient Start)</label>
-                <input type="color" id="setting-date-color-1" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Color 2 (Gradient End)</label>
-                <input type="color" id="setting-date-color-2" value="#ffffff" style="width: 100%; height: 40px; background: none; border: none; cursor: pointer;">
-              </div>
+            <div class="form-group">
+              <label>Font</label>
+              <select id="cfg-date-font" class="input"></select>
             </div>
-            <button id="btn-save-date" class="btn primary" style="margin-top:1rem; width: 100%;">Save Date</button>
+            <div class="form-group">
+              <label>Format (Chrono strftime)</label>
+              <input type="text" id="cfg-date-format" class="input" placeholder="%a %d %b">
+            </div>
+            <div class="form-group">
+              <label>Size (Scale)</label>
+              <input type="number" id="cfg-date-size" class="input" value="1">
+            </div>
           </div>
+          <div class="form-grid col-4" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Primary Color</label>
+              <input type="color" id="cfg-date-color1" class="input" value="#ffffff">
+            </div>
+            <div class="form-group">
+              <label>Secondary Color</label>
+              <input type="color" id="cfg-date-color2" class="input" value="#000000">
+            </div>
+            <div class="form-group">
+              <label>Offset X</label>
+              <input type="number" id="cfg-date-x" class="input">
+            </div>
+            <div class="form-group">
+              <label>Offset Y</label>
+              <input type="number" id="cfg-date-y" class="input">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
 
-          <div id="tab-weather" class="glass tab-pane" style="display:none;">
-            <h3 data-i18n="weather_setup">Weather Setup (OpenWeatherMap)</h3>
-            <div class="form-group" style="margin-top: 1rem;">
-              <label>API Key (OpenWeatherMap)</label>
-              <input type="text" id="setting-weather-api-key" class="text-input" placeholder="e.g. 1a2b3c...">
+        <div id="tab-weather" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>☁️ Weather Settings (OpenWeatherMap)</h3>
+          <div class="form-grid col-3">
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="text" id="cfg-weather-api" class="input" placeholder="OpenWeatherMap API Key">
             </div>
-            <div class="form-group" style="margin-top: 1rem;">
-              <label data-i18n="label_city">City (e.g. Paris,FR)</label>
-              <input type="text" id="setting-weather-city" class="text-input" placeholder="City name...">
+            <div class="form-group">
+              <label>City</label>
+              <input type="text" id="cfg-weather-city" class="input" placeholder="Paris,FR">
             </div>
-            
             <div class="form-group">
               <label>Language</label>
-              <select id="setting-weather-lang" class="select-input">
-                <option value="en">English (EN)</option>
-                <option value="fr">Français (FR)</option>
-                <option value="es">Español (ES)</option>
+              <select id="cfg-weather-lang" class="input">
+                <option value="en">EN</option>
+                <option value="fr">FR</option>
+                <option value="es">ES</option>
               </select>
             </div>
-            <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset X</label>
-                <input type="number" id="setting-weather-offset-x" class="text-input" value="0">
-              </div>
-              <div class="form-group" style="flex: 1; min-width:80px;">
-                <label>Offset Y</label>
-                <input type="number" id="setting-weather-offset-y" class="text-input" value="0">
-              </div>
-            </div>
-            <button id="btn-save-weather" class="btn primary" style="margin-top:1rem; width: 100%;" data-i18n="btn_save_weather">Save Weather</button>
           </div>
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Offset X</label>
+              <input type="number" id="cfg-weather-x" class="input" value="0">
+            </div>
+            <div class="form-group">
+              <label>Offset Y</label>
+              <input type="number" id="cfg-weather-y" class="input" value="0">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
 
-          <div id="tab-network" class="glass tab-pane" style="display:none;">
-            <h3 data-i18n="wifi_mqtt">WiFi & MQTT</h3>
+        <div id="tab-idle" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>🔄 Idle Rotation & Night Mode</h3>
+          <div class="form-group">
+            <label>Active Screens in Rotation</label>
+            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
+            </div>
+            <input type="hidden" id="cfg-rotation">
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
             <div class="form-group">
-              <label data-i18n="label_wifi_ssid">WiFi SSID (Decoratif sur Pi)</label>
-              <input type="text" id="setting-wifi-ssid" class="text-input" placeholder="Your Network" />
+              <label>GIFs per cycle</label>
+              <input type="number" id="cfg-dur-gifs" class="input" min="1">
             </div>
             <div class="form-group">
-              <label>WiFi Password</label>
-              <input type="password" id="setting-wifi-pass" class="text-input" placeholder="••••••••" />
+              <label>Sprites on screen</label>
+              <select id="cfg-sprite-enable" class="input">
+                <option value="true">ON</option>
+                <option value="false">OFF</option>
+              </select>
             </div>
+            <div class="form-group">
+              <label>Fighter Interval (s)</label>
+              <input type="number" id="cfg-fighter-int" class="input" min="1">
+            </div>
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Clock Duration (s)</label>
+              <input type="number" id="cfg-dur-clock" class="input" min="5">
+            </div>
+            <div class="form-group">
+              <label>Date Duration (s)</label>
+              <input type="number" id="cfg-dur-date" class="input" min="5">
+            </div>
+            <div class="form-group">
+              <label>Weather Duration (s)</label>
+              <input type="number" id="cfg-dur-weather" class="input" min="5">
+            </div>
+          </div>
+          <hr style="margin: 1.5rem 0; border-color: rgba(255,255,255,0.1);">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Night Mode</label>
+              <select id="cfg-night-enable" class="input">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Turn Off At (HH:MM)</label>
+              <input type="text" id="cfg-night-off" class="input" placeholder="23:00">
+            </div>
+            <div class="form-group">
+              <label>Wake Up At (HH:MM)</label>
+              <input type="text" id="cfg-night-on" class="input" placeholder="07:00">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
+      </section>
+
+      <!-- Media Page -->
+      <section id="page-media" class="page">
+        <header class="page-header">
+          <div class="header-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_media">Media Management</h1>
+          </div>
+        </header>
+        <div class="card glass shadow">
+          <h3>Custom Marquee Image</h3>
+          <p class="text-muted">Upload an image to display immediately on the matrix.</p>
+          <div id="marquee-drop-zone" class="drop-zone">
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text">Drop image here or click to browse</div>
+            <input type="file" id="marquee-file-input" accept="image/png, image/jpeg, image/gif" style="display: none;">
+          </div>
+        </div>
+        
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>GIF Playlists</h3>
+          <p>Select which GIF folders play during idle rotation.</p>
+          <div class="playlist-list"></div>
+        </div>
+      </section>
+
+      <!-- Message Page -->
+      <section id="page-message" class="page">
+        <header class="page-header">
+          <div class="header-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_message">Custom Message</h1>
+          </div>
+        </header>
+        <div class="card glass shadow">
+          <h3>Custom Marquee Message</h3>
+          <div class="form-group">
+            <label>Text</label>
+            <input type="text" id="msg-input" class="input" placeholder="Type text to scroll...">
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Color (Hex)</label>
+              <input type="color" id="msg-color" class="input" value="#ffffff" style="height: 42px; padding: 0.2rem;">
+            </div>
+            <div class="form-group">
+              <label>Size (Scale)</label>
+              <input type="number" id="msg-size" class="input" value="1" min="1" max="5">
+            </div>
+            <div class="form-group">
+              <label>Direction</label>
+              <select id="msg-direction" class="input">
+                <option value="left">Scroll Left</option>
+                <option value="right">Scroll Right</option>
+                <option value="up">Scroll Up</option>
+                <option value="down">Scroll Down</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Speed (Higher = Slower)</label>
+              <input type="number" id="msg-speed" class="input" value="30">
+            </div>
+            <div class="form-group">
+              <label>Timeout (Seconds)</label>
+              <input type="number" id="msg-timeout" class="input" value="10">
+            </div>
+          </div>
+          <button id="btn-send-message" class="btn btn-primary" style="margin-top: 1.5rem;">Send to Matrix 🚀</button>
+        </div>
+      </section>
+
+      <!-- System Page -->
+      <section id="page-system" class="page">
+        <header class="page-header">
+          <div class="header-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_system">System Management</h1>
+          </div>
+        </header>
+
+        <div class="tabs" style="margin-bottom: 1.5rem;">
+          <button class="tab-btn active" onclick="switchSystemTab('hardware')">⚙️ Hardware</button>
+          
+          <button class="tab-btn" onclick="switchSystemTab('mqtt')">🔄 MQTT & API</button>
+          <button class="tab-btn" onclick="switchSystemTab('ota')">🚀 Updates</button>
+        </div>
+        
+        <!-- Hardware Settings -->
+        <div id="sys-tab-hardware" class="tab-pane active">
+          <div class="card glass shadow">
+            <h3>Matrix Hardware Configuration</h3>
+            <div class="form-grid col-4">
+              <div class="form-group">
+                <label>Rows (Height)</label>
+                <input type="number" id="hw-rows" class="input" value="32">
+              </div>
+              <div class="form-group">
+                <label>Cols (Width)</label>
+                <input type="number" id="hw-cols" class="input" value="64">
+              </div>
+              <div class="form-group">
+                <label>Chain Length <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
+                <input type="number" id="hw-chain" class="input" value="1">
+              </div>
+              
+            </div>
+            <div class="form-grid col-4" style="margin-top: 1rem;">
+              
+              <div class="form-group">
+                <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
+                <select id="hw-rgb" class="input">
+                  <option value="RGB">RGB</option>
+                  <option value="RBG">RBG</option>
+                  <option value="GRB">GRB</option>
+                  <option value="GBR">GBR</option>
+                  <option value="BRG">BRG</option>
+                  <option value="BGR">BGR</option>
+                </select>
+              </div>
+              
+              
+            </div>
+            <div class="form-grid col-4" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>PWM LSB (ns) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_lsb">?</span></label>
+                <input type="number" id="hw-pwm-lsb" class="input" value="130">
+              </div>
+              <div class="form-group">
+                <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
+                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
+              </div>
+              
+            </div>
+            <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save Hardware Settings</button>
+          </div>
+        </div>
+
+        <!-- MQTT & API -->
+        <div id="sys-tab-mqtt" class="tab-pane">
+          <div class="card glass shadow" style="margin-bottom: 2rem;">
+            <h3>MQTT Integration</h3>
             <div class="form-group">
               <label>Enable MQTT</label>
-              <select id="setting-mqtt-enable" class="select-input">
-                <option value="1">Yes</option>
-                <option value="0">No</option>
+              <select id="hw-mqtt-enable" class="input">
+                <option value="0">Disabled</option>
+                <option value="1">Enabled</option>
               </select>
             </div>
-            <div class="form-group">
-              <label data-i18n="label_mqtt_ip">MQTT Broker IP</label>
-              <input type="text" id="setting-mqtt-broker" class="text-input" placeholder="192.168.x.x" />
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Broker IP</label>
+                <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
+              </div>
+              <div class="form-group">
+                <label>Port</label>
+                <input type="number" id="hw-mqtt-port" class="input" value="1883">
+              </div>
             </div>
-            <div class="form-group">
-              <label>MQTT Port</label>
-              <input type="number" id="setting-mqtt-port" class="text-input" value="1883" />
+            <div class="form-grid" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
+              </div>
+              <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
+              </div>
             </div>
-            <div class="form-group">
-              <label>MQTT User (Optional)</label>
-              <input type="text" id="setting-mqtt-user" class="text-input" />
-            </div>
-            <div class="form-group">
-              <label>MQTT Pass (Optional)</label>
-              <input type="password" id="setting-mqtt-pass" class="text-input" />
-            </div>
-            <button class="btn primary" style="margin-top:1rem;" id="btn-save-network" data-i18n="btn_save_network">Save Network & Reboot</button>
-          </div>
-
-          <div id="tab-info" class="glass tab-pane" style="display:none;">
-            <h3>System Information</h3>
-            <div id="system-metrics-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-               <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; text-align: center;">
-                 <div style="font-size: 0.9rem; color: #94a3b8;">CPU Load</div>
-                 <div id="metric-cpu" style="font-size: 1.5rem; font-weight: bold; color: #38bdf8;">-- %</div>
-               </div>
-               <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; text-align: center;">
-                 <div style="font-size: 0.9rem; color: #94a3b8;">Temperature</div>
-                 <div id="metric-temp" style="font-size: 1.5rem; font-weight: bold; color: #f43f5e;">-- °C</div>
-               </div>
-               <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; text-align: center;">
-                 <div style="font-size: 0.9rem; color: #94a3b8;">RAM Usage</div>
-                 <div id="metric-ram" style="font-size: 1.5rem; font-weight: bold; color: #a855f7;">-- / -- MB</div>
-               </div>
-               <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; text-align: center;">
-                 <div style="font-size: 0.9rem; color: #94a3b8;">Disk Space</div>
-                 <div id="metric-disk" style="font-size: 1.5rem; font-weight: bold; color: #22c55e;">-- / -- GB</div>
-               </div>
-            </div>
-            <p style="text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 1rem;">Auto-refreshing every 3 seconds</p>
+            <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save MQTT Settings</button>
             
-            <h4 data-i18n="firmware_update" style="margin-top: 2rem; color: #e2e8f0; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Firmware Update (OTA)</h4>
-            <form id="form-ota-update" method='POST' action='/api/update' enctype='multipart/form-data' style="display: flex; gap: 1rem; align-items: center; margin-top: 1rem;">
-              <input type='file' name='update' accept='.bin' style="flex: 1; color: #fff;" required>
-              <button class="btn primary" type='submit' data-i18n="btn_update">Update</button>
-            </form>
+            <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
+            
+            <h4 style="margin-top: 1.5rem;">Recalbox / Batocera Sync</h4>
+            <p class="text-muted" style="font-size: 0.9em;">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
+            <div class="form-grid" style="align-items: end;">
+              <div class="form-group">
+                <label>Console IP Address</label>
+                <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
+              </div>
+              <div class="form-group">
+                <button id="btn-install-mqtt" class="btn btn-warning" style="width: 100%;">Install via SSH</button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card glass shadow">
+            <h3>API Authentication</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Require Auth for API</label>
+                <select id="hw-api-auth" class="input">
+                  <option value="false">Disabled</option>
+                  <option value="true">Enabled</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>API Token</label>
+                <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
+              </div>
+            </div>
+            <button id="btn-save-api" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save API Auth</button>
+          </div>
+        </div>
 
-            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-              <button id="btn-toggle-panel" class="btn primary" style="flex: 1;">Turn Panel OFF</button>
+        <!-- OTA Firmware Update -->
+        <div id="sys-tab-ota" class="tab-pane">
+          <div class="card glass shadow ota-card">
+            <div class="card-header-badge">
+              <h3>🔄 Firmware Update (OTA)</h3>
+              <span class="badge badge-accent">Rust Powered</span>
             </div>
-            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-              <button id="btn-reboot" class="btn secondary" style="flex: 1; border-color: #f59e0b; color: #f59e0b;">Reboot System</button>
-              <button id="btn-shutdown" class="btn secondary" style="flex: 1; border-color: #ef4444; color: #ef4444;">Shutdown</button>
+            <p class="text-muted">Update the ArcadeMatrix daemon binary without re-flashing your SD card image.</p>
+
+            <div class="ota-info-box">
+              <div>Current Version: <strong id="ota-current-version">v1.0.0</strong></div>
+              <div>Target Architecture: <strong id="ota-current-arch">aarch64</strong></div>
             </div>
+
+            <div id="ota-drop-zone" class="drop-zone">
+              <div class="drop-icon">📁</div>
+              <div class="drop-text" data-i18n="ota_drop">Drop firmware binary here or click to browse</div>
+              <input type="file" id="ota-file-input" accept=".bin,*" style="display: none;">
+            </div>
+
+            <div id="ota-file-details" class="file-details" style="display: none;">
+              <span id="ota-filename">arcadematrix</span>
+              <span id="ota-filesize" class="badge">4.8 MB</span>
+            </div>
+
+            <div id="ota-progress-container" class="progress-bar-container" style="display: none;">
+              <div id="ota-progress-fill" class="progress-bar-fill"></div>
+              <span id="ota-progress-text" class="progress-text">0%</span>
+            </div>
+
+            <button id="btn-ota-update" class="btn btn-warning btn-lg" style="margin-top: 1.5rem; width: 100%;" disabled>
+              Upload & Update Firmware
+            </button>
           </div>
         </div>
       </section>
     </main>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
   </div>
+
   <script>
-    // Shared helper for all "/api/settings" POSTs: parses the JSON response and, if the ESP32
-    // applied the change in RAM but failed to persist it to the SD card (conf.ini) - which can
-    // happen on transient SD glitches - surfaces a clear warning instead of silently reporting
-    // success while the setting will actually revert on the next reboot.
-    async function postSettings(payload) {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      let result = {};
-      try { result = await res.json(); } catch (e) { /* ignore non-JSON responses */ }
-      if (result && result.sd_saved === false) {
-        alert(result.warning || 'Settings applied but could not be saved to the SD card - they will be lost on reboot.');
+// --- js/api.js ---
+const API = {
+  async get(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    return await res.json();
+  },
+
+  async post(url, data) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    return await res.json();
+  },
+
+  async postAuth(url, data) {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('api_token');
+    if (token) headers['X-API-Token'] = token;
+    
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+    });
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    return await res.json();
+  },
+
+  async uploadMarquee(file) {
+    const formData = new FormData();
+    formData.append('image', file);
+    const res = await fetch('/api/marquee', {
+      method: 'POST',
+      body: formData
+    });
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    return await res.json();
+  },
+
+  uploadFirmware(file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('firmware', file);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          onProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            resolve({ status: 'success' });
+          }
+        } else {
+          try {
+            reject(JSON.parse(xhr.responseText));
+          } catch {
+            reject({ message: `HTTP Error ${xhr.status}` });
+          }
+        }
+      };
+
+      xhr.onerror = () => reject({ message: 'Network connection error' });
+      xhr.open('POST', '/api/update');
+      xhr.send(formData);
+    });
+  },
+
+  async waitForReconnect(timeoutMs = 60000, intervalMs = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const res = await fetch('/api/version', { signal: AbortSignal.timeout(1500) });
+        if (res.ok) return await res.json();
+      } catch {}
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    throw new Error('Device did not respond after reboot');
+  }
+};
+
+
+// --- js/i18n.js ---
+const translations = {
+  en: {
+    nav_dashboard: "Dashboard",
+    nav_display: "Display",
+    nav_media: "Media",
+    nav_message: "Message",
+    nav_system: "System",
+    ota_drop: "Drop firmware binary here or click to browse",
+    ota_confirm: "This will replace the running firmware and restart the device. Continue?",
+    
+    // Tooltips
+    tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
+    tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
+    tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
+    tt_hw_rgb: "Change this if your colors appear swapped (e.g., Red looks Blue).",
+    tt_hw_slowdown: "GPIO Slowdown. Crucial for modern Raspberry Pis to prevent flickering (Pi 3 = 1-2, Pi 4 = 2-3, Pi 5 = 4).",
+    tt_hw_pwm_bits: "Lowering this increases refresh rate but reduces color depth. 11 is default.",
+    tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
+    tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
+    tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
+  },
+  fr: {
+    nav_dashboard: "Tableau de bord",
+    nav_display: "Affichage",
+    nav_media: "Médias",
+    nav_message: "Message",
+    nav_system: "Système",
+    ota_drop: "Glissez le binaire ici ou cliquez pour parcourir",
+    ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
+    
+    // Tooltips
+    tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
+    tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
+    tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
+    tt_hw_rgb: "Modifiez ceci si vos couleurs sont inversées (ex: le rouge apparait bleu).",
+    tt_hw_slowdown: "Ralentissement GPIO. Indispensable pour éviter le clignotement sur les Pi récents (Pi 3 = 1-2, Pi 4 = 2-3).",
+    tt_hw_pwm_bits: "Baisser cette valeur augmente la fluidité mais réduit les nuances de couleurs. 11 par défaut.",
+    tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
+    tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
+    tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
+  },
+  es: {
+    nav_dashboard: "Panel",
+    nav_display: "Pantalla",
+    nav_media: "Medios",
+    nav_message: "Mensaje",
+    nav_system: "Sistema",
+    ota_drop: "Arrastra el binario aquí o haz clic para buscar",
+    ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
+    
+    // Tooltips
+    tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
+    tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
+    tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
+    tt_hw_rgb: "Cambia esto si tus colores aparecen intercambiados (ej: rojo se ve azul).",
+    tt_hw_slowdown: "Ralentización GPIO. Crucial para evitar parpadeos en Pi recientes (Pi 3 = 1-2, Pi 4 = 2-3).",
+    tt_hw_pwm_bits: "Bajar este valor aumenta la tasa de refresco pero reduce la profundidad de color. 11 por defecto.",
+    tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
+    tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
+    tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
+  }
+};
+
+function setLanguage(lang) {
+  const dict = translations[lang] || translations.en;
+  
+  // Text content translation
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (dict[key]) {
+      el.textContent = dict[key];
+    }
+  });
+
+  // Tooltip translation
+  document.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
+    const key = el.getAttribute('data-i18n-tooltip');
+    if (dict[key]) {
+      el.setAttribute('data-tooltip', dict[key]);
+      el.setAttribute('tabindex', '0'); // For mobile focus
+    }
+  });
+}
+
+
+// --- js/components/toast.js ---
+pubFn();
+
+function pubFn() {
+  window.showToast = function(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.remove();
+    }, 3500);
+  };
+}
+
+
+// --- js/app.js ---
+
+let selectedOtaFile = null;
+
+window.switchDisplayTab = function(tabId) {
+  // Update buttons
+  document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  event.currentTarget.classList.add('active');
+
+  // Update panes
+  document.querySelectorAll('#page-display .tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  document.getElementById('tab-' + tabId).classList.add('active');
+};
+
+window.switchSystemTab = function(tabId) {
+  // Update buttons
+  document.querySelectorAll('#page-system .tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  event.currentTarget.classList.add('active');
+
+  // Update panes
+  document.querySelectorAll('#page-system .tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  document.getElementById('sys-tab-' + tabId).classList.add('active');
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  initNavigation();
+  initDashboard();
+  initOta();
+  loadVersion();
+  initCustomMarquee();
+  initNetworkSettings();
+  initSettings();
+  initPlaylists();
+});
+
+function initNavigation() {
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+      item.classList.add('active');
+      const pageId = `page-${item.getAttribute('data-page')}`;
+      const pageEl = document.getElementById(pageId);
+      if (pageEl) pageEl.classList.add('active');
+    });
+  });
+
+  const langSelect = document.getElementById('lang-selector');
+  if (langSelect) {
+    const defaultLang = navigator.language.split('-')[0];
+    const initialLang = ['en', 'fr', 'es'].includes(defaultLang) ? defaultLang : 'en';
+    langSelect.value = initialLang;
+    setLanguage(initialLang);
+    langSelect.addEventListener('change', (e) => setLanguage(e.target.value));
+  }
+}
+
+async function loadVersion() {
+  try {
+    const data = await API.get('/api/version');
+    const versionTag = document.getElementById('version-tag');
+    const otaVer = document.getElementById('ota-current-version');
+    const otaArch = document.getElementById('ota-current-arch');
+
+    if (versionTag) versionTag.textContent = `v${data.version}`;
+    if (otaVer) otaVer.textContent = `v${data.version}`;
+    if (otaArch) otaArch.textContent = data.arch || 'aarch64';
+  } catch (e) {
+    console.error('Failed to load version:', e);
+  }
+}
+
+function initDashboard() {
+  const btnPower = document.getElementById('btn-power-toggle');
+  if (btnPower) {
+    btnPower.addEventListener('click', async () => {
+      const isOff = btnPower.classList.contains('btn-power-off');
+      const newState = isOff;
+      try {
+        await API.post('/api/system/power', { state: newState });
+        btnPower.textContent = newState ? 'Turn Panel OFF' : 'Turn Panel ON';
+        btnPower.className = `btn ${newState ? 'btn-power-on' : 'btn-power-off'}`;
+        window.showToast(newState ? 'Panel powered ON' : 'Panel powered OFF', 'info');
+      } catch (e) {
+        window.showToast('Failed to toggle power', 'error');
       }
-      return result;
+    });
+  }
+
+  const btnReboot = document.getElementById('btn-reboot');
+  if (btnReboot) {
+    btnReboot.addEventListener('click', async () => {
+      if (confirm('Are you sure you want to reboot the system?')) {
+        try {
+          await API.post('/api/system/reboot');
+          window.showToast('Rebooting system...', 'info');
+        } catch (e) {
+          window.showToast('Failed to reboot system', 'error');
+        }
+      }
+    });
+  }
+
+  const btnRestartApp = document.getElementById('btn-restart-app');
+  if (btnRestartApp) {
+    btnRestartApp.addEventListener('click', async () => {
+      if (confirm('Are you sure you want to soft restart the application? (Hardware config will be reapplied)')) {
+        try {
+          await API.post('/api/system/reboot');
+          window.showToast('Restarting application...', 'info');
+          setTimeout(() => location.reload(), 2000);
+        } catch (e) {
+          window.showToast('Failed to restart application', 'error');
+        }
+      }
+    });
+  }
+
+  const btnShutdown = document.getElementById('btn-shutdown');
+  if (btnShutdown) {
+    btnShutdown.addEventListener('click', async () => {
+      if (confirm('Are you sure you want to shutdown the system?')) {
+        try {
+          await API.post('/api/system/shutdown');
+          window.showToast('Shutting down system...', 'info');
+        } catch (e) {
+          window.showToast('Failed to shutdown system', 'error');
+        }
+      }
+    });
+  }
+
+  // System Info Polling
+  setInterval(async () => {
+    try {
+      const info = await API.get('/api/system_info');
+      document.getElementById('metric-cpu').textContent = `${info.cpu_load.toFixed(1)} %`;
+      document.getElementById('metric-temp').textContent = `${info.temperature_c.toFixed(1)} °C`;
+      document.getElementById('metric-ram').textContent = `${info.ram_used_mb} MB`;
+      document.getElementById('metric-disk').textContent = `${info.disk_free_gb} GB`;
+    } catch {}
+  }, 4000);
+}
+
+function initOta() {
+  const dropZone = document.getElementById('ota-drop-zone');
+  const fileInput = document.getElementById('ota-file-input');
+  const btnUpdate = document.getElementById('btn-ota-update');
+  const fileDetails = document.getElementById('ota-file-details');
+  const fileNameEl = document.getElementById('ota-filename');
+  const fileSizeEl = document.getElementById('ota-filesize');
+  const progressContainer = document.getElementById('ota-progress-container');
+  const progressFill = document.getElementById('ota-progress-fill');
+  const progressText = document.getElementById('ota-progress-text');
+
+  if (!dropZone || !fileInput || !btnUpdate) return;
+
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      handleFileSelected(fileInput.files[0]);
+    }
+  });
+
+  function handleFileSelected(file) {
+    selectedOtaFile = file;
+    fileNameEl.textContent = file.name;
+    fileSizeEl.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+    fileDetails.style.display = 'block';
+    btnUpdate.disabled = false;
+  }
+
+  btnUpdate.addEventListener('click', async () => {
+    if (!selectedOtaFile) return;
+
+    if (!confirm('⚠️ This will replace the running firmware binary and restart the device. Continue?')) {
+      return;
     }
 
-    document.addEventListener("DOMContentLoaded", async () => {
+    btnUpdate.disabled = true;
+    progressContainer.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = '0%';
+
+    try {
+      window.showToast('Uploading firmware binary...', 'info');
+      await API.uploadFirmware(selectedOtaFile, (percent) => {
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      });
+
+      progressText.textContent = 'Restarting daemon...';
+      window.showToast('Firmware replaced! Reconnecting to device...', 'info');
+
+      const versionData = await API.waitForReconnect();
+      window.showToast(`✅ Firmware updated to v${versionData.version}!`, 'success');
+      loadVersion();
+    } catch (err) {
+      window.showToast(`❌ Update failed: ${err.message || err.status}`, 'error');
+    } finally {
+      btnUpdate.disabled = false;
+      progressContainer.style.display = 'none';
+    }
+  });
+}
+
+function initCustomMarquee() {
+  const dropZone = document.getElementById('marquee-drop-zone');
+  const fileInput = document.getElementById('marquee-file-input');
+  if (!dropZone || !fileInput) return;
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+      uploadMarqueeImage(e.dataTransfer.files[0]);
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      uploadMarqueeImage(fileInput.files[0]);
+    }
+  });
+
+  async function uploadMarqueeImage(file) {
+    window.showToast('Uploading marquee image...', 'info');
+    try {
+      await API.uploadMarquee(file);
+      window.showToast('Marquee image displayed!', 'success');
+    } catch (e) {
+      window.showToast('Failed to display marquee image', 'error');
+    }
+  }
+}
+
+function initNetworkSettings() {
+  const btnSaveWifi = document.getElementById('btn-save-wifi');
+  if (btnSaveWifi) {
+    btnSaveWifi.addEventListener('click', async () => {
+      const ssid = document.getElementById('hw-wifi-ssid').value;
+      const pass = document.getElementById('hw-wifi-pass').value;
+      if (!ssid || !pass) {
+        window.showToast('Please enter both SSID and Password', 'error');
+        return;
+      }
+      btnSaveWifi.disabled = true;
+      btnSaveWifi.textContent = 'Connecting...';
       try {
-        const res = await fetch("/api/fonts");
-        if (res.ok) {
-          const fonts = await res.json();
-          const clockFontSelect = document.getElementById("setting-clock-font");
-          const dateFontSelect = document.getElementById("setting-date-font");
-          
-          let optionsHtml = '<option value="">System/Default</option>';
-          fonts.forEach(f => {
-            optionsHtml += `<option value="${f}">${f}</option>`;
-          });
-          
-          if (clockFontSelect) clockFontSelect.innerHTML = optionsHtml;
-          if (dateFontSelect) dateFontSelect.innerHTML = optionsHtml;
-          
-        }
+        await API.postAuth('/api/wifi', { ssid, password: pass });
+        window.showToast('Connected to Wi-Fi!', 'success');
       } catch (e) {
-        console.error("Failed to load dynamic fonts", e);
+        window.showToast('Failed to connect to Wi-Fi', 'error');
+      } finally {
+        btnSaveWifi.disabled = false;
+        btnSaveWifi.textContent = 'Connect Wi-Fi';
       }
-      
-      // Load general settings regardless of fonts success
-      fetch("/api/settings").then(r => r.json()).then(t => {
-        const clockFontSelect = document.getElementById("setting-clock-font");
-        const dateFontSelect = document.getElementById("setting-date-font");
-        
-        if (t.clock_font_path && clockFontSelect) clockFontSelect.value = t.clock_font_path;
-        if (t.date_font_path && dateFontSelect) dateFontSelect.value = t.date_font_path;
-        
-        if (t.brightness_limit !== undefined) document.getElementById('setting-brightness').value = t.brightness_limit;
-        if (t.clock_theme !== undefined) document.getElementById('setting-clock-theme').value = t.clock_theme;
-        if (t.clock_size !== undefined) document.getElementById('setting-clock-size').value = t.clock_size;
-        if (t.clock_offset_x !== undefined) document.getElementById('setting-clock-offset-x').value = t.clock_offset_x;
-        if (t.clock_offset_y !== undefined) document.getElementById('setting-clock-offset-y').value = t.clock_offset_y;
-        if (t.clock_color_1) document.getElementById('setting-clock-color-1').value = t.clock_color_1;
-        if (t.clock_color_2) document.getElementById('setting-clock-color-2').value = t.clock_color_2;
-        
-        if (t.date_theme !== undefined) document.getElementById('setting-date-theme').value = t.date_theme;
-        if (t.date_size !== undefined) document.getElementById('setting-date-size').value = t.date_size;
-        if (t.date_format) document.getElementById('setting-date-format').value = t.date_format;
-        if (t.date_offset_x !== undefined) document.getElementById('setting-date-offset-x').value = t.date_offset_x;
-        if (t.date_offset_y !== undefined) document.getElementById('setting-date-offset-y').value = t.date_offset_y;
-        if (t.date_color_1) document.getElementById('setting-date-color-1').value = t.date_color_1;
-        if (t.date_color_2) document.getElementById('setting-date-color-2').value = t.date_color_2;
-        
-        // Populate matrix hardware
-        if (t.matrix_rows) document.getElementById('setting-matrix-rows').value = t.matrix_rows;
-        if (t.matrix_cols) document.getElementById('setting-matrix-cols').value = t.matrix_cols;
-        if (t.matrix_chain) document.getElementById('setting-matrix-chain').value = t.matrix_chain;
-        if (t.matrix_parallel) document.getElementById('setting-matrix-parallel').value = t.matrix_parallel;
-        if (t.matrix_mapping) document.getElementById('setting-matrix-mapping').value = t.matrix_mapping;
-        if (t.matrix_slowdown !== undefined) document.getElementById('setting-matrix-slowdown').value = t.matrix_slowdown;
-        if (t.sprite_count !== undefined) {
-            const el = document.getElementById('setting-sprite-enable');
-            if(el) el.checked = (t.sprite_count > 0);
-        }
-        if (t.fighter_interval_sec !== undefined) {
-            const el = document.getElementById('setting-fighter-interval');
-            const valEl = document.getElementById('fighter-interval-val');
-            if(el) {
-                el.value = t.fighter_interval_sec;
-                if(valEl) valEl.innerText = t.fighter_interval_sec;
-            }
-        }
-        if (t.weather_api_key) document.getElementById('setting-weather-api-key').value = t.weather_api_key;
-        if (t.weather_city) document.getElementById('setting-weather-city').value = t.weather_city;
-        if (t.weather_lang && t.weather_lang !== "") {
-          document.getElementById('setting-weather-lang').value = t.weather_lang;
-        } else {
-          let userLang = (navigator.language || navigator.userLanguage || 'en').substring(0, 2).toLowerCase();
-          if (userLang === 'fr' || userLang === 'es') {
-            document.getElementById('setting-weather-lang').value = userLang;
-          } else {
-            document.getElementById('setting-weather-lang').value = 'en';
-          }
-        }
-        if (t.weather_offset_x !== undefined) document.getElementById('setting-weather-offset-x').value = t.weather_offset_x;
-        if (t.weather_offset_y !== undefined) document.getElementById('setting-weather-offset-y').value = t.weather_offset_y;
-        if (t.matrix_rgb_sequence) document.getElementById('setting-matrix-rgb-sequence').value = t.matrix_rgb_sequence;
-        if (t.matrix_pwm_bits !== undefined) document.getElementById('setting-matrix-pwm-bits').value = t.matrix_pwm_bits;
-        if (t.matrix_pwm_lsb_nanoseconds !== undefined) document.getElementById('setting-matrix-pwm-lsb-nanoseconds').value = t.matrix_pwm_lsb_nanoseconds;
-        
-        // Rotation and Durations
-        if (t.clock_duration_sec !== undefined) document.getElementById('setting-clock-dur').value = t.clock_duration_sec;
-        if (t.date_duration_sec !== undefined) document.getElementById('setting-date-dur').value = t.date_duration_sec;
-        if (t.weather_duration_sec !== undefined) document.getElementById('setting-weather-dur').value = t.weather_duration_sec;
-        if (t.gifs_count !== undefined) document.getElementById('setting-gifs-count').value = t.gifs_count;
-        
-        if (t.rotation) {
-            const rotArr = t.rotation.split(',');
-            const ul = document.getElementById('rotation-list');
-            if (ul) {
-                ul.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-                rotArr.forEach(id => {
-                    const li = ul.querySelector(`li[data-id="${id.trim()}"]`);
-                    if (li) {
-                        ul.appendChild(li); // Move to bottom to match sequence order
-                        const cb = li.querySelector('input[type="checkbox"]');
-                        if (cb) cb.checked = true;
-                    }
-                });
-            }
-        }
-        
-        // Night Mode
-        if (t.night_mode_enabled !== undefined) document.getElementById('setting-night-mode-enabled').value = t.night_mode_enabled ? "1" : "0";
-        if (t.matrix_brightness_night !== undefined) document.getElementById('setting-night-brightness').value = t.matrix_brightness_night;
-        if (t.turn_off_at) document.getElementById('setting-turn-off-at').value = t.turn_off_at;
-        if (t.wake_up_at) document.getElementById('setting-wake-up-at').value = t.wake_up_at;
-        
-        const btnToggle = document.getElementById('btn-toggle-panel');
-        if (btnToggle && t.matrix_power !== undefined) {
-           btnToggle.textContent = t.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
-           btnToggle.dataset.state = t.matrix_power ? "1" : "0";
-        }
-        
-        // MQTT / Network
-        if (t.mqtt_enabled !== undefined) {
-            const el = document.getElementById('setting-mqtt-enable');
-            if (el) el.value = t.mqtt_enabled ? "1" : "0";
-        }
-        if (t.timezone) {
-            const tzEl = document.getElementById('setting-timezone');
-            if (tzEl) {
-               tzEl.value = t.timezone;
-               // Fallback if the user has a custom POSIX string not in the list
-               if (tzEl.value !== t.timezone) {
-                   const opt = document.createElement('option');
-                   opt.value = t.timezone;
-                   opt.innerHTML = t.timezone;
-                   tzEl.appendChild(opt);
-                   tzEl.value = t.timezone;
-               }
-            }
-        }
-        if (t.mqtt_broker) document.getElementById('setting-mqtt-broker').value = t.mqtt_broker;
-        if (t.mqtt_port !== undefined) document.getElementById('setting-mqtt-port').value = t.mqtt_port;
-        if (t.mqtt_user) document.getElementById('setting-mqtt-user').value = t.mqtt_user;
-        if (t.mqtt_pass) document.getElementById('setting-mqtt-pass').value = t.mqtt_pass;
-        if (t.wifi_ssid) document.getElementById('setting-wifi-ssid').value = t.wifi_ssid;
-        if (t.wifi_pass) document.getElementById('setting-wifi-pass').value = t.wifi_pass;
-      }).catch(e => console.error("Failed to load settings", e))
-        .finally(() => {
-          const wrap = document.getElementById('settings-content-wrapper');
-          if (wrap) {
-              wrap.style.opacity = '1';
-              wrap.style.pointerEvents = 'auto';
-          }
-        });
-      
-      const btnReboot = document.getElementById('btn-reboot');
-      if (btnReboot) {
-          btnReboot.addEventListener('click', () => {
-              if (confirm("Are you sure you want to reboot the Raspberry Pi?")) {
-                  fetch('/api/system/reboot', { method: 'POST' });
-                  alert("Rebooting... The UI will be unavailable for a minute.");
-              }
-          });
-      }
-      
-      const btnShutdown = document.getElementById('btn-shutdown');
-      if (btnShutdown) {
-          btnShutdown.addEventListener('click', () => {
-              if (confirm("Are you sure you want to shut down the Raspberry Pi?")) {
-                  fetch('/api/system/shutdown', { method: 'POST' });
-                  alert("Shutting down... You will need to unplug and replug the power to start it again.");
-              }
-          });
-      }
+    });
+  }
 
-      const otaForm = document.getElementById('form-ota-update');
-      if (otaForm) {
-          otaForm.addEventListener('submit', async (e) => {
-              e.preventDefault();
-              const fileInput = otaForm.querySelector('input[type="file"]');
-              const submitBtn = otaForm.querySelector('button[type="submit"]');
-              if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
-
-              const origText = submitBtn.innerText;
-              submitBtn.disabled = true;
-              submitBtn.innerText = "Flashing...";
-
-              const formData = new FormData();
-              formData.append("update", fileInput.files[0]);
-
-              try {
-                  const res = await fetch('/api/update', {
-                      method: 'POST',
-                      body: formData
-                  });
-                  const text = await res.text();
-                  if (res.ok && text.includes("OK")) {
-                      submitBtn.innerText = "Rebooting...";
-                      alert("OTA Update completed successfully! Firmware is rebooting now.");
-                      setTimeout(() => window.location.reload(), 8000);
-                  } else {
-                      alert("OTA Update failed: " + text);
-                      submitBtn.disabled = false;
-                      submitBtn.innerText = origText;
-                  }
-              } catch (err) {
-                  alert("OTA Update submitted! Device is now rebooting.");
-                  setTimeout(() => window.location.reload(), 8000);
-              }
-          });
+  const btnInstallMqtt = document.getElementById('btn-install-mqtt');
+  if (btnInstallMqtt) {
+    btnInstallMqtt.addEventListener('click', async () => {
+      const ip = document.getElementById('hw-mqtt-ip').value;
+      if (!ip) {
+        window.showToast('Please enter Console IP Address', 'error');
+        return;
       }
+      btnInstallMqtt.disabled = true;
+      btnInstallMqtt.textContent = 'Installing...';
+      try {
+        await API.postAuth('/api/mqtt/install', { ip });
+        window.showToast('MQTT Sync Script Installed!', 'success');
+      } catch (e) {
+        window.showToast('Failed to install script', 'error');
+      } finally {
+        btnInstallMqtt.disabled = false;
+        btnInstallMqtt.textContent = 'Install via SSH';
+      }
+    });
+  }
 
-      const btnToggle = document.getElementById('btn-toggle-panel');
-      if (btnToggle) {
-        btnToggle.addEventListener('click', async () => {
-           const newState = btnToggle.dataset.state === "0"; // if 0, switch to 1 (true)
-           const res = await fetch('/api/system/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({state: newState}) });
-           const data = await res.json();
-           btnToggle.dataset.state = data.matrix_power ? "1" : "0";
-           btnToggle.textContent = data.matrix_power ? "Turn Panel OFF" : "Turn Panel ON";
-        });
+  const btnSaveMqtt = document.getElementById('btn-save-mqtt');
+  if (btnSaveMqtt) {
+    btnSaveMqtt.addEventListener('click', async () => {
+      const mqtt_enable = document.getElementById('hw-mqtt-enable').value === '1';
+      const mqtt_broker = document.getElementById('hw-mqtt-broker').value;
+      const mqtt_port = parseInt(document.getElementById('hw-mqtt-port').value, 10);
+      const mqtt_user = document.getElementById('hw-mqtt-user').value;
+      const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
+      try {
+        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
+        window.showToast('MQTT Settings Saved!', 'success');
+      } catch (e) {
+        window.showToast('Failed to save MQTT Settings', 'error');
       }
-      
-      const btnSaveNightMode = document.getElementById('btn-save-night-mode');
-      if (btnSaveNightMode) {
-        btnSaveNightMode.addEventListener('click', async () => {
-           const payload = {
-              night_mode_enabled: document.getElementById('setting-night-mode-enabled').value === "1",
-              matrix_brightness_night: parseInt(document.getElementById('setting-night-brightness').value, 10),
-              turn_off_at: document.getElementById('setting-turn-off-at').value,
-              wake_up_at: document.getElementById('setting-wake-up-at').value
-           };
-           btnSaveNightMode.textContent = "Saving...";
-           await postSettings(payload);
-           setTimeout(() => { btnSaveNightMode.textContent = "Save Night Mode"; }, 1000);
-        });
-      }
+    });
+  }
 
-      const saveHardwareBtn = document.getElementById('btn-save-hardware');
-      if (saveHardwareBtn) {
-          saveHardwareBtn.addEventListener('click', async () => {
-             const payload = {
-                matrix_rows: document.getElementById('setting-matrix-rows').value,
-                matrix_cols: document.getElementById('setting-matrix-cols').value
-             };
-             const result = await postSettings(payload);
-             if (result.sd_saved !== false) {
-                 alert("Hardware Matrix settings saved! The service will now restart to apply changes.");
-                 setTimeout(() => window.location.reload(), 3000);
-             }
-          });
+  const btnSaveApi = document.getElementById('btn-save-api');
+  if (btnSaveApi) {
+    btnSaveApi.addEventListener('click', async () => {
+      const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
+      const api_token = document.getElementById('hw-api-token').value;
+      try {
+        await API.post('/api/settings', { api_auth_enabled, api_token });
+        window.showToast('API Auth Settings Saved!', 'success');
+      } catch (e) {
+        window.showToast('Failed to save API Auth Settings', 'error');
       }
-      
-      // Fix Rotation List Reordering
-      document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation(); // Prevent buggy minified JS from crashing
-          const li = e.target.closest('li');
-          const ul = li.parentNode;
-          if (e.target.classList.contains('btn-move-up') && li.previousElementSibling) {
-            ul.insertBefore(li, li.previousElementSibling);
-          } else if (e.target.classList.contains('btn-move-down') && li.nextElementSibling) {
-            ul.insertBefore(li.nextElementSibling, li);
-          }
-        });
+    });
+  }
+}
+
+async function initSettings() {
+  // Load fonts list
+  try {
+    const fonts = await API.get('/api/fonts');
+    const clockFontSel = document.getElementById('cfg-clock-font');
+    const dateFontSel = document.getElementById('cfg-date-font');
+    if (clockFontSel && dateFontSel) {
+      fonts.forEach(f => {
+        clockFontSel.add(new Option(f, f));
+        dateFontSel.add(new Option(f, f));
       });
-      
-      // Fix Rotation Save
-      const saveRotBtn = document.getElementById('btn-save-idle');
-      if (saveRotBtn) {
-        // Clone and replace button to remove buggy event listeners
-        const newSaveRotBtn = saveRotBtn.cloneNode(true);
-        saveRotBtn.parentNode.replaceChild(newSaveRotBtn, saveRotBtn);
-        newSaveRotBtn.addEventListener('click', async () => {
-          const items = document.querySelectorAll('#rotation-list li');
-          const rotation = [];
-          items.forEach(li => {
-            const cb = li.querySelector('input[type="checkbox"]');
-            if (cb && cb.checked) {
-              rotation.push(li.getAttribute('data-id'));
-            }
-          });
-          const clock_dur = parseInt(document.getElementById('setting-clock-dur').value, 10);
-          const date_dur = parseInt(document.getElementById('setting-date-dur').value, 10);
-          const weather_dur = parseInt(document.getElementById('setting-weather-dur').value, 10);
-          const gifs_count = parseInt(document.getElementById('setting-gifs-count').value, 10);
-          const sprite_count = document.getElementById('setting-sprite-enable').checked ? 1 : 0;
-          const fighter_interval_sec = parseInt(document.getElementById('setting-fighter-interval').value) || 0;
-          
-          try {
-            await postSettings({
-                rotation: rotation.join(','),
-                clock_duration_sec: clock_dur,
-                date_duration_sec: date_dur,
-                weather_duration_sec: weather_dur,
-                gifs_count: gifs_count,
-                sprite_count: sprite_count,
-                fighter_interval_sec: fighter_interval_sec
-            });
-            const oldText = newSaveRotBtn.innerText;
-            newSaveRotBtn.innerText = 'Saved ✔️';
-            setTimeout(() => newSaveRotBtn.innerText = oldText, 2000);
-          } catch(err) {
-            console.error('Failed to save rotation', err);
-          }
-        });
-      }
+    }
+  } catch (e) {
+    console.warn('Failed to load fonts list', e);
+  }
 
-      const saveClockBtn = document.getElementById('btn-save-clock');
-      if (saveClockBtn) {
-        const newSaveClockBtn = saveClockBtn.cloneNode(true);
-        saveClockBtn.parentNode.replaceChild(newSaveClockBtn, saveClockBtn);
-        newSaveClockBtn.addEventListener('click', async () => {
-          try {
-            const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
-            const safeStr = (id, def) => { const el = document.getElementById(id); return el ? el.value : def; };
-            const tzEl = document.getElementById('setting-timezone');
-            const iana = tzEl.options[tzEl.selectedIndex].getAttribute('data-iana');
-            
-            const payload = {
-              clock_theme: safeInt('setting-clock-theme', 0),
-              clock_font_path: safeStr('setting-clock-font', ''),
-              clock_size: safeInt('setting-clock-size', 1),
-              clock_offset_x: safeInt('setting-clock-offset-x', 0),
-              clock_offset_y: safeInt('setting-clock-offset-y', 0),
-              clock_color_1: safeStr('setting-clock-color-1', '#ffffff'),
-              clock_color_2: safeStr('setting-clock-color-2', '#ffffff'),
-              ntp_server: document.getElementById('setting-ntp-server').value,
-              timezone: tzEl.value,
-              timezone_iana: iana,
-              format_24h: (document.getElementById('setting-format24h').value === '1')
-            };
-            
-            await postSettings(payload);
-            alert('Clock settings saved! (Restart may be required for some changes)');
-          } catch (err) {
-            console.error(err);
-            alert('Error saving clock settings.');
-          }
-        });
-      }
+  // Load current settings
+  try {
+    const s = await API.get('/api/settings');
+    
+    // Dashboard
+    const sliderBright = document.getElementById('slider-brightness');
+    if (sliderBright) {
+      sliderBright.value = s.brightness_limit;
+      document.getElementById('val-brightness').textContent = s.brightness_limit;
+      sliderBright.addEventListener('input', (e) => {
+        document.getElementById('val-brightness').textContent = e.target.value;
+      });
+      sliderBright.addEventListener('change', async (e) => {
+        await API.post('/api/settings', { brightness_limit: parseInt(e.target.value) });
+        window.showToast('Brightness updated', 'info');
+      });
+    }
 
-      const saveDateBtn = document.getElementById('btn-save-date');
-      if (saveDateBtn) {
-        const newSaveDateBtn = saveDateBtn.cloneNode(true);
-        saveDateBtn.parentNode.replaceChild(newSaveDateBtn, saveDateBtn);
-        newSaveDateBtn.addEventListener('click', async () => {
-          try {
-            const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
-            const safeStr = (id, def) => { const el = document.getElementById(id); return el ? el.value : def; };
-            
-            const payload = {
-              date_theme: safeInt('setting-date-theme', 0),
-              date_font_path: safeStr('setting-date-font', ''),
-              date_size: safeInt('setting-date-size', 1),
-              date_offset_x: safeInt('setting-date-offset-x', 0),
-              date_offset_y: safeInt('setting-date-offset-y', 0),
-              date_format: safeStr('setting-date-format', '%d/%m/%Y'),
-              date_color_1: safeStr('setting-date-color-1', '#ffffff'),
-              date_color_2: safeStr('setting-date-color-2', '#ffffff')
-            };
-            
-            await postSettings(payload);
-            alert('Date settings saved! (Restart may be required for some changes)');
-          } catch (err) {
-            console.error(err);
-            alert('Error saving date settings.');
-          }
-        });
-      }
+    // Hardware
+    document.getElementById('hw-rows').value = s.matrix_rows;
+    document.getElementById('hw-cols').value = s.matrix_cols;
+    document.getElementById('hw-chain').value = s.matrix_chain;
+        document.getElementById('hw-mapping').value = s.matrix_mapping || 'regular';
+    document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
+                    document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
+    
+    // MQTT
+    document.getElementById('hw-mqtt-enable').value = s.mqtt_enabled ? '1' : '0';
+    document.getElementById('hw-mqtt-broker').value = s.mqtt_broker;
+    document.getElementById('hw-mqtt-port').value = s.mqtt_port;
+    document.getElementById('hw-mqtt-user').value = s.mqtt_user || '';
+    document.getElementById('hw-mqtt-pass').value = s.mqtt_pass || '';
 
-      const saveNetworkBtn = document.getElementById('btn-save-network');
-      if (saveNetworkBtn) {
-        saveNetworkBtn.addEventListener('click', async () => {
-          const ssid = document.getElementById('setting-wifi-ssid').value;
-          const pass = document.getElementById('setting-wifi-pass').value;
-          
-          if (ssid) {
-             const oldText = saveNetworkBtn.innerText;
-             saveNetworkBtn.innerText = 'Connecting...';
-             saveNetworkBtn.disabled = true;
-             try {
-                const res = await fetch('/api/wifi', {
-                   method: 'POST',
-                   headers: { 'Content-Type': 'application/json' },
-                   body: JSON.stringify({ ssid: ssid, password: pass })
-                });
-                const result = await res.json();
-                if(res.ok) {
-                   alert(result.message || 'Wi-Fi connected successfully!');
-                } else {
-                   alert('Failed to connect: ' + result.message);
-                }
-             } catch(err) {
-                alert('Connection error');
-             }
-             saveNetworkBtn.innerText = oldText;
-             saveNetworkBtn.disabled = false;
-          }
-          
-          // Also save MQTT
-          try {
-             await postSettings({
-                 mqtt_enable: document.getElementById('setting-mqtt-enable').value === "1",
-                 mqtt_broker: document.getElementById('setting-mqtt-broker').value,
-                 mqtt_port: document.getElementById('setting-mqtt-port').value,
-                 mqtt_user: document.getElementById('setting-mqtt-user').value,
-                 mqtt_pass: document.getElementById('setting-mqtt-pass').value
-             });
-          } catch(e) {}
-        });
-      }
-      
-      // Fix Matrix Save
-      const saveMatrixBtn = document.getElementById('btn-save-matrix');
-      if (saveMatrixBtn) {
-        const newSaveMatrixBtn = saveMatrixBtn.cloneNode(true);
-        saveMatrixBtn.parentNode.replaceChild(newSaveMatrixBtn, saveMatrixBtn);
-        newSaveMatrixBtn.addEventListener('click', async () => {
-          try {
-            const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
-            const payload = { brightness_limit: safeInt('setting-brightness', 40) };
-            await postSettings(payload);
-            const oldText = newSaveMatrixBtn.innerText;
-            newSaveMatrixBtn.innerText = 'Saved ✔️';
-            setTimeout(() => newSaveMatrixBtn.innerText = oldText, 2000);
-          } catch(err) {
-            console.error('Failed to save matrix', err);
-            alert("Error saving settings.");
-          }
-        });
-      }
-      
-      // Fix Weather Save
-      const saveWeatherBtn = document.getElementById('btn-save-weather');
-      if (saveWeatherBtn) {
-        const newSaveWeatherBtn = saveWeatherBtn.cloneNode(true);
-        saveWeatherBtn.parentNode.replaceChild(newSaveWeatherBtn, saveWeatherBtn);
-        newSaveWeatherBtn.addEventListener('click', async () => {
-          try {
-            const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
-            const safeStr = (id, def) => { const el = document.getElementById(id); return el ? el.value : def; };
-            const payload = {
-              weather_api_key: safeStr('setting-weather-api-key', ''),
-              weather_city: safeStr('setting-weather-city', ''),
-              weather_lang: document.getElementById('setting-weather-lang').value,
-              weather_offset_x: safeInt('setting-weather-offset-x', 0),
-              weather_offset_y: safeInt('setting-weather-offset-y', 0)
-            };
-            await postSettings(payload);
-            const oldText = newSaveWeatherBtn.innerText;
-            newSaveWeatherBtn.innerText = 'Saved ✔️';
-            setTimeout(() => newSaveWeatherBtn.innerText = oldText, 2000);
-          } catch(err) {
-            console.error('Failed to save weather', err);
-            alert("Error saving weather settings.");
-          }
-        });
-      }
+    // API
+    document.getElementById('hw-api-auth').value = s.api_auth_enabled ? 'true' : 'false';
+    document.getElementById('hw-api-token').value = s.api_token || '';
 
-      // Fix MQTT Save
-      const saveMqttBtn = document.getElementById('btn-save-network');
-      if (saveMqttBtn) {
-        const newSaveMqttBtn = saveMqttBtn.cloneNode(true);
-        saveMqttBtn.parentNode.replaceChild(newSaveMqttBtn, saveMqttBtn);
-        newSaveMqttBtn.addEventListener('click', async () => {
-          try {
-            const safeInt = (id, def) => { const el = document.getElementById(id); return el && !isNaN(parseInt(el.value, 10)) ? parseInt(el.value, 10) : def; };
-            const safeStr = (id, def) => { const el = document.getElementById(id); return el ? el.value : def; };
-            const payload = {
-              mqtt_enable: safeInt('setting-mqtt-enable', 0),
-              mqtt_broker: safeStr('setting-mqtt-broker', ''),
-              mqtt_port: safeInt('setting-mqtt-port', 1883),
-              mqtt_user: safeStr('setting-mqtt-user', ''),
-              mqtt_pass: safeStr('setting-mqtt-pass', '')
-            };
-            await postSettings(payload);
-            const oldText = newSaveMqttBtn.innerText;
-            newSaveMqttBtn.innerText = 'Saved ✔️';
-            setTimeout(() => newSaveMqttBtn.innerText = oldText, 2000);
-          } catch(err) {
-            console.error('Failed to save network', err);
-          }
-        });
-      }
-      
-      // Neutralize buggy JS minified save config
-      const saveConfigBtn = document.getElementById('btn-save-config');
-      if (saveConfigBtn) {
-        const newSaveConfigBtn = saveConfigBtn.cloneNode(true);
-        saveConfigBtn.parentNode.replaceChild(newSaveConfigBtn, saveConfigBtn);
-        newSaveConfigBtn.addEventListener('click', () => {
-          alert('Please use the specific save buttons for each section. This general save button is deprecated.');
-        });
-      }
-      
-      // System Info Polling
-      let infoPollInterval = null;
-      function startInfoPolling() {
-        if (infoPollInterval) clearInterval(infoPollInterval);
-        const fetchInfo = async () => {
-          try {
-            const res = await fetch('/api/system_info');
-            if (res.ok) {
-              const data = await res.json();
-              document.getElementById('metric-cpu').innerText = `${data.cpu_load}%`;
-              document.getElementById('metric-temp').innerText = `${data.temperature_c} °C`;
-              document.getElementById('metric-ram').innerText = `${data.ram_used_mb} / ${data.ram_total_mb} MB`;
-              document.getElementById('metric-disk').innerText = `${data.disk_free_gb} / ${data.disk_total_gb} GB`;
-            }
-          } catch (e) {
-            console.error("Failed to fetch system info");
-          }
+    // Clock
+    document.getElementById('cfg-clock-theme').value = s.clock_theme;
+    document.getElementById('cfg-clock-font').value = s.clock_font;
+    document.getElementById('cfg-clock-format').value = s.time_format;
+    document.getElementById('cfg-clock-size').value = s.time_size || 2;
+    document.getElementById('cfg-ntp-server').value = s.ntp_server || 'pool.ntp.org';
+    document.getElementById('cfg-timezone').value = s.timezone || 'Europe/Paris';
+    document.getElementById('cfg-clock-color1').value = s.clock_color_1.toLowerCase();
+    document.getElementById('cfg-clock-color2').value = s.clock_color_2.toLowerCase();
+    document.getElementById('cfg-clock-x').value = s.clock_offset_x;
+    document.getElementById('cfg-clock-y').value = s.clock_offset_y;
+
+    // Date
+    document.getElementById('cfg-date-theme').value = s.date_theme;
+    document.getElementById('cfg-date-font').value = s.date_font;
+    document.getElementById('cfg-date-format').value = s.date_format;
+    document.getElementById('cfg-date-size').value = s.date_size || 1;
+    document.getElementById('cfg-date-color1').value = s.date_color_1.toLowerCase();
+    document.getElementById('cfg-date-color2').value = s.date_color_2.toLowerCase();
+    document.getElementById('cfg-date-x').value = s.date_offset_x;
+    document.getElementById('cfg-date-y').value = s.date_offset_y;
+
+    // Weather
+    document.getElementById('cfg-weather-api').value = s.weather_api_key;
+    document.getElementById('cfg-weather-city').value = s.weather_city;
+    document.getElementById('cfg-weather-lang').value = s.weather_lang;
+    document.getElementById('cfg-weather-x').value = s.weather_offset_x || 0;
+    document.getElementById('cfg-weather-y').value = s.weather_offset_y || 0;
+
+    // Rotation
+    document.getElementById('cfg-rotation').value = s.rotation;
+    const rotationArr = (s.rotation || '').split(',').map(x => x.trim());
+    document.querySelectorAll('.rotation-toggles input[type="checkbox"]').forEach(cb => {
+      cb.checked = rotationArr.includes(cb.value);
+    });
+    document.getElementById('cfg-dur-clock').value = s.clock_duration_sec;
+    document.getElementById('cfg-dur-date').value = s.date_duration_sec;
+    document.getElementById('cfg-dur-weather').value = s.weather_duration_sec;
+    document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
+    document.getElementById('cfg-sprite-enable').value = (s.sprite_count > 0) ? 'true' : 'false';
+    document.getElementById('cfg-fighter-int').value = s.fighter_interval_sec || 5;
+
+    // Night Mode
+    document.getElementById('cfg-night-enable').value = s.night_mode_enabled ? 'true' : 'false';
+    document.getElementById('cfg-night-off').value = s.turn_off_at;
+    document.getElementById('cfg-night-on').value = s.wake_up_at;
+
+  } catch (e) {
+    console.error('Failed to load settings', e);
+  }
+
+  // Save Display Settings
+  const btnSaveDisplayList = document.querySelectorAll('.btn-save-display');
+  btnSaveDisplayList.forEach(btnSaveDisplay => {
+    btnSaveDisplay.addEventListener('click', async () => {
+      btnSaveDisplay.disabled = true;
+      btnSaveDisplay.textContent = 'Saving...';
+      try {
+          const selectedRotations = Array.from(document.querySelectorAll('.rotation-toggles input[type="checkbox"]:checked'))
+            .map(cb => cb.value).join(',');
+
+          const payload = {
+            clock_theme: parseInt(document.getElementById('cfg-clock-theme').value),
+            clock_font: document.getElementById('cfg-clock-font').value,
+            time_format: document.getElementById('cfg-clock-format').value,
+            time_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
+            ntp_server: document.getElementById('cfg-ntp-server').value,
+            timezone: document.getElementById('cfg-timezone').value,
+            clock_color_1: document.getElementById('cfg-clock-color1').value,
+            clock_color_2: document.getElementById('cfg-clock-color2').value,
+            clock_offset_x: parseInt(document.getElementById('cfg-clock-x').value) || 0,
+            clock_offset_y: parseInt(document.getElementById('cfg-clock-y').value) || 0,
+
+            date_theme: parseInt(document.getElementById('cfg-date-theme').value),
+            date_font: document.getElementById('cfg-date-font').value,
+            date_format: document.getElementById('cfg-date-format').value,
+            date_size: parseInt(document.getElementById('cfg-date-size').value) || 1,
+            date_color_1: document.getElementById('cfg-date-color1').value,
+            date_color_2: document.getElementById('cfg-date-color2').value,
+            date_offset_x: parseInt(document.getElementById('cfg-date-x').value) || 0,
+            date_offset_y: parseInt(document.getElementById('cfg-date-y').value) || 0,
+
+            weather_api_key: document.getElementById('cfg-weather-api').value,
+            weather_city: document.getElementById('cfg-weather-city').value,
+            weather_lang: document.getElementById('cfg-weather-lang').value,
+            weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
+            weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
+
+            rotation: selectedRotations,
+            clock_duration_sec: parseInt(document.getElementById('cfg-dur-clock').value) || 10,
+          date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
+          weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
+          gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
+          idle_sprite_count: document.getElementById('cfg-sprite-enable').value === 'true' ? 2 : 0,
+          idle_fighter_interval: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
+
+          night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
+          turn_off_at: document.getElementById('cfg-night-off').value,
+          wake_up_at: document.getElementById('cfg-night-on').value,
         };
-        fetchInfo();
-        infoPollInterval = setInterval(fetchInfo, 3000);
+        await API.post('/api/settings', payload);
+        window.showToast('Display settings saved!', 'success');
+      } catch (e) {
+        window.showToast('Failed to save settings', 'error');
+      } finally {
+        btnSaveDisplay.disabled = false;
+        btnSaveDisplay.textContent = 'Save Display Settings';
       }
-      
-      function stopInfoPolling() {
-        if (infoPollInterval) {
-          clearInterval(infoPollInterval);
-          infoPollInterval = null;
-        }
-      }
-      
-      // Hook into tab switching to start/stop polling
-      document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          if (btn.getAttribute('data-target') === 'tab-info') {
-            startInfoPolling();
-          } else {
-            stopInfoPolling();
-          }
-        });
-      });
-      
     });
-  </script>
-  <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      // Internal Tabs logic
-      document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          document.querySelectorAll('.tab-btn').forEach(b => {
-            b.classList.remove('active');
-            b.style.color = '#94a3b8';
-            b.style.fontWeight = 'normal';
-          });
-          e.currentTarget.classList.add('active');
-          e.currentTarget.style.color = '#fff';
-          e.currentTarget.style.fontWeight = 'bold';
-          
-          document.querySelectorAll('.tab-pane').forEach(pane => {
-            pane.style.display = 'none';
-          });
-          document.getElementById(e.currentTarget.getAttribute('data-target')).style.display = 'block';
-        });
-      });
-    });
-  </script>
-  <!-- Sidebar navigation, mobile menu, GIF Playlists scanning/wiring and the Clocks tab's
-       quick-theme-switcher used to live only in the external Vite bundle (assets/index-*.js),
-       which was never actually served by the firmware (no /assets/* route exists) - so none of
-       this ever ran on real hardware. Restored here inline so it ships with the rest of the UI. -->
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      // --- Sidebar view switching ---
-      const navItems = document.querySelectorAll('.nav-links li');
-      const views = document.querySelectorAll('.view');
-      navItems.forEach(item => {
-        item.addEventListener('click', () => {
-          navItems.forEach(n => n.classList.remove('active'));
-          views.forEach(v => v.classList.remove('active-view'));
-          item.classList.add('active');
-          const target = document.getElementById(`view-${item.dataset.view}`);
-          if (target) target.classList.add('active-view');
-          const sidebar = document.querySelector('.sidebar');
-          const overlay = document.getElementById('sidebar-overlay');
-          if (sidebar && overlay) {
-            sidebar.classList.remove('open');
-            overlay.classList.remove('open');
-          }
-        });
-      });
+  });
 
-      // --- Mobile menu ---
-      const mobileBtn = document.getElementById('mobile-menu-btn');
-      const sidebar = document.querySelector('.sidebar');
-      const overlay = document.getElementById('sidebar-overlay');
-      if (mobileBtn && sidebar && overlay) {
-        mobileBtn.addEventListener('click', () => {
-          sidebar.classList.add('open');
-          overlay.classList.add('open');
+  // Save HW settings
+  const btnSaveHw = document.getElementById('btn-save-hw');
+  if (btnSaveHw) {
+    btnSaveHw.addEventListener('click', async () => {
+      const rows = parseInt(document.getElementById('hw-rows').value) || 32;
+      const cols = parseInt(document.getElementById('hw-cols').value) || 64;
+      const chain = parseInt(document.getElementById('hw-chain').value) || 1;
+      const rgb = document.getElementById('hw-rgb').value || 'RGB';
+      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
+      
+      try {
+        await API.post('/api/settings', { 
+          matrix_rows: rows,
+          matrix_cols: cols,
+          matrix_chain: chain,
+          matrix_rgb_sequence: rgb,
+          matrix_limit_refresh_rate_hz: limitRefresh
         });
-        overlay.addEventListener('click', () => {
-          sidebar.classList.remove('open');
-          overlay.classList.remove('open');
-        });
+        window.showToast('Hardware settings saved! Restarting app...', 'success');
+        setTimeout(async () => {
+          await API.post('/api/system/reboot');
+        }, 1500);
+      } catch (e) {
+        window.showToast('Failed to save HW settings', 'error');
       }
+    });
+  }
 
-      // --- GIF Playlists (reads /gifs/playlists.json generated by tools/gif_indexation) ---
-      const playlistList = document.querySelector('.playlist-list');
-      async function loadPlaylists() {
-        if (!playlistList) return;
-        playlistList.innerHTML = '<div style="padding:2rem;text-align:center;">Loading GIFs...<br><small style="opacity:0.7">Reading SD Card, this may take a few seconds...</small></div>';
+  // Send Custom Message
+  const btnSendMsg = document.getElementById('btn-send-message');
+  if (btnSendMsg) {
+    btnSendMsg.addEventListener('click', async () => {
+      const text = document.getElementById('msg-input').value;
+      const color = document.getElementById('msg-color')?.value || '#ffffff';
+      const size = parseInt(document.getElementById('msg-size')?.value) || 1;
+      const direction = document.getElementById('msg-direction')?.value || 'left';
+      const speed = parseInt(document.getElementById('msg-speed')?.value) || 30;
+      const timeout = parseInt(document.getElementById('msg-timeout')?.value) || 10;
+      
+      if (!text) return;
+      try {
+        await API.post('/api/message', {
+          text: text,
+          color: color,
+          size: size,
+          direction: direction,
+          speed: speed,
+          timeoutSeconds: timeout
+        });
+        window.showToast('Message sent!', 'success');
+      } catch (e) {
+        window.showToast('Failed to send message', 'error');
+      }
+    });
+  }
+}
+
+async function initPlaylists() {
+  const container = document.querySelector('.playlist-list');
+  if (!container) return;
+  
+  container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-color);">Loading GIFs...<br><small style="opacity:0.7">Reading SD Card, this may take a few seconds...</small></div>`;
+  
+  try {
+    const res = await API.get('/api/playlists');
+    const allPlaylists = res; 
+    
+    let selectedPaths = [];
+    try {
+      const selRes = await API.get('/api/playlists/selected');
+      selectedPaths = selRes.playlists || [];
+    } catch (e) {
+      console.warn('Could not fetch selected playlists', e);
+    }
+    
+    let html = '';
+    for (const [name, info] of Object.entries(allPlaylists)) {
+      const isChecked = selectedPaths.includes(info.path) ? 'checked' : '';
+      const count = info.count || (info.files ? info.files.length : 0);
+      
+      html += `
+        <div class="playlist-item">
+          <div class="info">
+            <h4>${name}</h4>
+            <span>${count} GIFs found</span>
+          </div>
+          <div class="action">
+            <label style="display:flex; align-items:center; cursor:pointer;">
+              <input type="checkbox" class="playlist-cb" value="${info.path}" ${isChecked} style="width:20px;height:20px;margin-right:10px;accent-color:var(--primary);">
+              Include
+            </label>
+          </div>
+        </div>
+      `;
+    }
+    
+    if (Object.keys(allPlaylists).length === 0) {
+      html = `<div style="padding:1rem;text-align:center;">No GIF folders found. Check your data/gifs directory.</div>`;
+    } else {
+      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%;">Save GIF Playlists</button>`;
+    }
+    
+    container.innerHTML = html;
+    
+    const btnSave = document.getElementById('btn-save-playlists');
+    if (btnSave) {
+      btnSave.addEventListener('click', async () => {
+        btnSave.disabled = true;
+        btnSave.textContent = 'Saving...';
+        
+        const checkboxes = document.querySelectorAll('.playlist-cb:checked');
+        const pathsToSave = Array.from(checkboxes).map(cb => cb.value);
+        
         try {
-          const res = await fetch('/api/playlists');
-          if (!res.ok) throw new Error('Failed to load playlists');
-          const playlists = await res.json();
-
-          let selected = [];
-          try {
-            const selRes = await fetch('/api/playlists/selected');
-            if (selRes.ok) selected = (await selRes.json()).playlists || [];
-          } catch (e) {
-            console.warn('Could not fetch selected playlists', e);
-          }
-
-          const entries = Object.values(playlists);
-          if (entries.length === 0) {
-            playlistList.innerHTML = '<div style="padding:2rem;text-align:center;opacity:0.7;">No playlists found. Run tools/gif_indexation/generate_index.sh on your SD card\'s /gifs folder.</div>';
-            return;
-          }
-
-          let html = '';
-          for (const entry of entries) {
-            const isChecked = selected.includes(entry.path) ? 'checked' : '';
-            const count = entry.count ?? (entry.files ? entry.files.length : 0);
-            html += `
-              <div class="playlist-item">
-                <input type="checkbox" class="playlist-checkbox" value="${entry.path}" style="width:20px; height:20px;" ${isChecked} />
-                <div class="info">
-                  <h4>${entry.path}</h4>
-                  <span>${count} animations</span>
-                </div>
-              </div>
-            `;
-          }
-          playlistList.innerHTML = html;
-
-          playlistList.querySelectorAll('.playlist-checkbox').forEach(cb => {
-            cb.addEventListener('change', async () => {
-              const checked = Array.from(playlistList.querySelectorAll('.playlist-checkbox:checked')).map(c => c.value);
-              try {
-                await fetch('/api/playlists/save', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ playlists: checked })
-                });
-              } catch (e) {
-                console.error('Failed to save selected playlists', e);
-              }
-            });
-          });
+          await API.post('/api/playlists/save', { playlists: pathsToSave });
+          window.showToast('Playlists saved successfully!', 'success');
         } catch (e) {
-          console.error('Failed to load playlists', e);
-          playlistList.innerHTML = '<div style="padding:2rem;text-align:center;color:#f43f5e;">Failed to load playlists. Is the SD card inserted and formatted correctly?</div>';
+          window.showToast('Failed to save playlists', 'error');
+        } finally {
+          btnSave.disabled = false;
+          btnSave.textContent = 'Save GIF Playlists';
         }
+      });
+    }
+    
+  } catch (e) {
+    container.innerHTML = `<div style="padding:2rem;text-align:center;color:#ef4444;">Failed to load playlists.</div>`;
+    console.error(e);
+  }
+}
+
+
+
+</script>
+  <script>
+    function toggleSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('sidebar-overlay');
+      if (sidebar.classList.contains('open')) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+      } else {
+        sidebar.classList.add('open');
+        overlay.classList.add('open');
       }
-      loadPlaylists();
+    }
 
-      const btnScanSd = document.getElementById('btn-scan-sd');
-      if (btnScanSd) btnScanSd.addEventListener('click', loadPlaylists);
-
-      const btnPlaySelected = document.getElementById('btn-play-selected');
-      if (btnPlaySelected) {
-        btnPlaySelected.addEventListener('click', async () => {
-          const selected = Array.from(document.querySelectorAll('.playlist-checkbox:checked')).map(c => c.value);
-          try {
-            await fetch('/api/playlists/play', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ playlists: selected })
-            });
-            const oldText = btnPlaySelected.innerText;
-            btnPlaySelected.innerText = 'Playing ✔️';
-            setTimeout(() => btnPlaySelected.innerText = oldText, 2000);
-          } catch (e) {
-            console.error('Failed to play playlists', e);
+    // Auto-close sidebar when clicking a nav item on mobile
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', () => {
+          if (window.innerWidth <= 768) {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-overlay').classList.remove('open');
           }
         });
-      }
+      });
 
-      // --- Clocks tab quick theme switcher ---
-      const btnApplyClock = document.getElementById('btn-apply-clock');
-      if (btnApplyClock) {
-        btnApplyClock.addEventListener('click', async () => {
-          const select = document.getElementById('clock-character');
-          const themeId = parseInt(select.value, 10);
-          try {
-            await fetch('/api/clock', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ clock_theme: themeId })
-            });
-            const oldText = btnApplyClock.innerText;
-            btnApplyClock.innerText = 'Applied ✔️';
-            setTimeout(() => btnApplyClock.innerText = oldText, 2000);
-          } catch (e) {
-            console.error('Failed to apply clock theme', e);
-          }
-        });
-      }
-
-      // --- i18n Internationalization ---
-      const i18nTranslations = {
-        en: {
-          nav_settings: "Settings",
-          nav_playlists: "GIFs Playlists",
-          nav_clocks: "Clocks",
-          nav_messages: "Messages",
-          status_online: "Online",
-          folder_playlists: "Folder Playlists",
-          btn_scan_sd: "Scan SD Card",
-          btn_play_selected: "Play Selected",
-          clock_faces: "Clock Faces",
-          clock_style: "Clock Style",
-          btn_apply: "Apply",
-          custom_marquee: "Custom Marquee",
-          label_msg_text: "Message Text",
-          label_color: "Color",
-          label_font_size: "Font Size",
-          label_scroll_dir: "Scroll Direction",
-          label_speed: "Speed (Lower is faster)",
-          label_timeout: "Timeout (seconds)",
-          btn_send_msg: "Send to Matrix 🚀",
-          matrix_hardware: "Matrix Hardware",
-          label_brightness_limit: "Brightness Limit (%)",
-          btn_save_matrix: "Save Brightness",
-          night_mode: "Night Mode",
-          screensaver_rotation: "Screensaver Rotation (Idle)",
-          label_rotation_seq: "Rotation Sequence (Use arrows to reorder)",
-          label_clock_time: "Clock Time (s)",
-          label_date_time: "Date Time (s)",
-          label_weather_time: "Weather Time (s)",
-          label_gifs_rotation: "GIFs per Rotation",
-          label_bg_sprites: "Enable VS Fighting Background",
-          btn_save_rotation: "Save Rotation Config",
-          clock_config: "Clock Configuration",
-          date_config: "Date Configuration",
-          label_date_format: "Date Format",
-          label_date_theme: "Date Theme",
-          weather_setup: "Weather Setup (OpenWeatherMap)",
-          label_city: "City (e.g. Paris,FR)",
-          btn_save_weather: "Save Weather",
-          wifi_mqtt: "WiFi & MQTT",
-          label_wifi_ssid: "WiFi SSID",
-          label_mqtt_ip: "MQTT Broker IP",
-          btn_save_network: "Save Network & Reboot",
-          firmware_update: "Firmware Update (OTA)",
-          btn_update: "Update"
-        },
-        fr: {
-          nav_settings: "Paramètres",
-          nav_playlists: "Playlists GIFs",
-          nav_clocks: "Horloges",
-          nav_messages: "Messages",
-          status_online: "En ligne",
-          folder_playlists: "Dossiers de Playlists",
-          btn_scan_sd: "Analyser Carte SD",
-          btn_play_selected: "Jouer la sélection",
-          clock_faces: "Styles d'Horloge",
-          clock_style: "Style d'Horloge",
-          btn_apply: "Appliquer",
-          custom_marquee: "Message Défilant",
-          label_msg_text: "Texte du Message",
-          label_color: "Couleur",
-          label_font_size: "Taille de Police",
-          label_scroll_dir: "Direction Défilement",
-          label_speed: "Vitesse (Plus bas = plus rapide)",
-          label_timeout: "Délai d'affichage (sec)",
-          btn_send_msg: "Envoyer à la Matrice 🚀",
-          matrix_hardware: "Matériel Matrice",
-          label_brightness_limit: "Limite Luminosité (%)",
-          btn_save_matrix: "Sauvegarder Luminosité",
-          night_mode: "Mode Nuit",
-          screensaver_rotation: "Rotation d'Écran (Veille)",
-          label_rotation_seq: "Séquence de Rotation (Flèches pour réordonner)",
-          label_clock_time: "Durée Horloge (s)",
-          label_date_time: "Durée Date (s)",
-          label_weather_time: "Durée Météo (s)",
-          label_gifs_rotation: "GIFs par Rotation",
-          label_bg_sprites: "Activer fond VS Fighting",
-          btn_save_rotation: "Sauvegarder Rotation",
-          clock_config: "Configuration Horloge",
-          date_config: "Configuration Date",
-          label_date_format: "Format de Date",
-          label_date_theme: "Thème Éditeur",
-          weather_setup: "Configuration Météo (OpenWeatherMap)",
-          label_city: "Ville (ex: Paris,FR)",
-          btn_save_weather: "Sauvegarder Météo",
-          wifi_mqtt: "WiFi & MQTT",
-          label_wifi_ssid: "SSID WiFi",
-          label_mqtt_ip: "IP Broker MQTT",
-          btn_save_network: "Sauvegarder & Redémarrer",
-          firmware_update: "Mise à Jour Firmware (OTA)",
-          btn_update: "Mettre à jour"
-        },
-        es: {
-          nav_settings: "Ajustes",
-          nav_playlists: "Playlists GIFs",
-          nav_clocks: "Relojes",
-          nav_messages: "Mensajes",
-          status_online: "En línea",
-          folder_playlists: "Carpetas de Playlists",
-          btn_scan_sd: "Escanear Tarjeta SD",
-          btn_play_selected: "Reproducir Selección",
-          clock_faces: "Estilos de Reloj",
-          clock_style: "Estilo de Reloj",
-          btn_apply: "Aplicar",
-          custom_marquee: "Mensaje Desplazable",
-          label_msg_text: "Texto del Mensaje",
-          label_color: "Color",
-          label_font_size: "Tamaño de Fuente",
-          label_scroll_dir: "Dirección de Desplazamiento",
-          label_speed: "Velocidad (Menor = Más rápido)",
-          label_timeout: "Tiempo Límite (seg)",
-          btn_send_msg: "Enviar a la Matriz 🚀",
-          matrix_hardware: "Hardware Matriz",
-          label_brightness_limit: "Límite de Brillo (%)",
-          btn_save_matrix: "Guardar Brillo",
-          night_mode: "Modo Noche",
-          screensaver_rotation: "Rotación de Espera (Reposo)",
-          label_rotation_seq: "Secuencia de Rotación (Flechas para reordenar)",
-          label_clock_time: "Tiempo Reloj (s)",
-          label_date_time: "Tiempo Fecha (s)",
-          label_weather_time: "Tiempo Clima (s)",
-          label_gifs_rotation: "GIFs por Rotación",
-          label_bg_sprites: "Activar fondo VS Fighting",
-          btn_save_rotation: "Guardar Rotación",
-          clock_config: "Configuración de Reloj",
-          date_config: "Configuración de Fecha",
-          label_date_format: "Formato de Fecha",
-          label_date_theme: "Tema Editor",
-          weather_setup: "Configuración Clima (OpenWeatherMap)",
-          label_city: "Ciudad (ej. Madrid,ES)",
-          btn_save_weather: "Guardar Clima",
-          wifi_mqtt: "WiFi y MQTT",
-          label_wifi_ssid: "SSID WiFi",
-          label_mqtt_ip: "IP Broker MQTT",
-          btn_save_network: "Guardar y Reiniciar",
-          firmware_update: "Actualización Firmware (OTA)",
-          btn_update: "Actualizar"
-        }
-      };
-
-      window.applyLanguage = function(lang) {
-        const dict = i18nTranslations[lang] || i18nTranslations.en;
-        document.querySelectorAll('[data-i18n]').forEach(el => {
-          const key = el.getAttribute('data-i18n');
-          if (dict[key]) {
-            el.textContent = dict[key];
-          }
-        });
-        localStorage.setItem('arcadematrix_lang', lang);
-      };
-
-      const langSelector = document.getElementById('lang-selector');
-      if (langSelector) {
-        const savedLang = localStorage.getItem('arcadematrix_lang') || (navigator.language.startsWith('fr') ? 'fr' : (navigator.language.startsWith('es') ? 'es' : 'en'));
-        langSelector.value = savedLang;
-        window.applyLanguage(savedLang);
-        langSelector.addEventListener('change', (e) => {
-          window.applyLanguage(e.target.value);
-        });
-      }
-      
-      // Also apply on load immediately
-      const currentLang = localStorage.getItem('arcadematrix_lang') || (navigator.language.startsWith('fr') ? 'fr' : (navigator.language.startsWith('es') ? 'es' : 'en'));
-      window.applyLanguage(currentLang);
+      // Close sidebar when clicking overlay
+      document.getElementById('sidebar-overlay').addEventListener('click', () => {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebar-overlay').classList.remove('open');
+      });
     });
   </script>
 </body>

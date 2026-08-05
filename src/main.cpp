@@ -1,7 +1,8 @@
+#include <FS.h>
 #include <Arduino.h>
 #include <SPI.h>
-#include <SPI.h>
 #include "core/SDUtils.h"
+#include "HardwareProfile.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
@@ -20,11 +21,7 @@
 #include "core/RotationManager.h"
 #include "core/BitmapFontLoader.h"
 
-// Hardware Pins for SD Card (VSPI)
-#define SD_CS_PIN 5
-#define VSPI_SCK 18
-#define VSPI_MISO 19
-#define VSPI_MOSI 23
+// Pins definition moved to HardwareProfile.h
 
 SemaphoreHandle_t sdMutex;
 
@@ -43,11 +40,27 @@ WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
 BitmapFontLoader customFontLoader;
 
+#if !USE_SD_MMC
 SdFs sd;
+#endif
 
 unsigned long lastTick = 0;
 uint8_t currentMinute = 42;
 #ifndef UNIT_TEST
+
+
+String getPosixTimezone(String tz) {
+    if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome") return "CET-1CEST,M3.5.0,M10.5.0/3";
+    if (tz == "Europe/London") return "GMT0BST,M3.5.0/1,M10.5.0";
+    if (tz == "America/New_York") return "EST5EDT,M3.2.0,M11.1.0";
+    if (tz == "America/Chicago") return "CST6CDT,M3.2.0,M11.1.0";
+    if (tz == "America/Denver") return "MST7MDT,M3.2.0,M11.1.0";
+    if (tz == "America/Los_Angeles") return "PST8PDT,M3.2.0,M11.1.0";
+    if (tz == "Asia/Tokyo") return "JST-9";
+    if (tz == "Asia/Shanghai") return "CST-8";
+    if (tz == "Australia/Sydney") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+    return tz; // Fallback to raw string (which could be a POSIX string)
+}
 
 void setup() {
     Serial.begin(115200);
@@ -66,13 +79,28 @@ void setup() {
 
     sdMutex = xSemaphoreCreateMutex();
 
-    // 1. Initialize SD Card using VSPI
+    // 0. Pre-initialize Wi-Fi driver to reserve its internal RAM buffers
+    // before the HUB75 matrix or other engines fragment the memory.
+    WiFi.mode(WIFI_STA);
+
+    // 1. Initialize SD Card
+#if USE_SD_MMC
+    if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
+        Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
+        while (1) { delay(100); }
+    }
+    if (!sd.begin("/sdcard", true)) { // true = 1-bit mode
+        Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
+        while (1) { delay(100); }
+    }
+#else
     SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
     SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
     if (!sd.begin(spiConfig)) {
         Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
         while (1) { delay(100); }
     }
+#endif
     Serial.println("SD Card mounted successfully.");
 
     // 2. Load Configuration from SD
@@ -97,7 +125,10 @@ void setup() {
     // Load saved GIF playlists from SD, fallback to all available playlists
     {
         bool selectedLoaded = false;
-        FsFile playlistFile = sd.open("/playlists_selected.json", O_READ);
+        FsFile playlistFile;
+        if (sd.exists("/playlists_selected.json")) {
+            playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
+        }
         if (playlistFile) {
             DynamicJsonDocument doc(4096);
             DeserializationError error = deserializeJson(doc, playlistFile);
@@ -116,7 +147,10 @@ void setup() {
         
         if (!selectedLoaded) {
             std::vector<String> paths;
-            FsFile master = sd.open("/gifs/playlists.json", O_READ);
+            FsFile master;
+            if (sd.exists("/gifs/playlists.json")) {
+                master = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
+            }
             if (master) {
                 DynamicJsonDocument masterDoc(16384);
                 if (!deserializeJson(masterDoc, master)) {
@@ -210,7 +244,7 @@ void setup() {
                 Serial.printf("mDNS responder started: http://%s.local\n", config.wifi.hostname.c_str());
             }
             
-            configTzTime(config.time.timezone.c_str(), config.time.ntpServer.c_str());
+            configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
             Serial.println("NTP Time Sync initiated.");
             
             Serial.printf("Free Heap before Web Server start: %d bytes\n", ESP.getFreeHeap());
@@ -270,11 +304,21 @@ void setup() {
 void loop() {
     esp_task_wdt_reset();
 
+    static bool wasPoweredOn = true;
+
     // 1. Manual Power Toggle
     if (!config.standby.matrix_power) {
+        if (wasPoweredOn) {
+            matrixEngine.getDisplay()->fillScreen(0);
+            matrixEngine.getDisplay()->flipDMABuffer();
+            matrixEngine.getDisplay()->fillScreen(0);
+            matrixEngine.getDisplay()->flipDMABuffer();
+            wasPoweredOn = false;
+        }
         delay(100);
-        return; // display is already cleared by WebServerAPI
+        return;
     }
+    wasPoweredOn = true;
 
     bool shouldClear = true;
     if (gifEngine.isActive()) {
@@ -294,6 +338,8 @@ void loop() {
             marqueeEngine->loop();
         } else if (messageEngine && messageEngine->isActive()) {
             messageEngine->loop();
+        } else if (gifEngine.isActive() && rotationManager->getCurrentModule() != MODULE_GIFS) {
+            gifEngine.loop();
         } else if (config.mqtt.enabled) {
             if (gifEngine.isActive()) {
                 gifEngine.loop();
@@ -368,11 +414,11 @@ void loop() {
     
     matrixEngine.getDisplay()->flipDMABuffer();
     
-    // Stable ~30 FPS frame limiter
+    // Stable ~60 FPS frame limiter
     static unsigned long lastLoopTime = 0;
     unsigned long currentLoopTime = millis();
-    if (currentLoopTime - lastLoopTime < 33) {
-        delay(33 - (currentLoopTime - lastLoopTime));
+    if (currentLoopTime - lastLoopTime < 16) {
+        delay(16 - (currentLoopTime - lastLoopTime));
     }
     lastLoopTime = millis();
 }

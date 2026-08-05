@@ -1,16 +1,12 @@
 #include "MatrixRainClock.h"
+#include "MatrixRainFont.h"
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
 extern ConfigLoader config;
 
-// Printable ASCII range used as a stand-in for the Katakana glyphs used on the RPi version -
-// the compiled-in Adafruit GFX default font only ships Latin/ASCII glyphs.
-static const char RAIN_CHARSET_START = 0x21; // '!'
-static const char RAIN_CHARSET_LEN = 0x5E;   // through '~'
-
-static char randomGlyph() {
-    return RAIN_CHARSET_START + (rand() % RAIN_CHARSET_LEN);
+static uint8_t randomGlyph() {
+    return rand() % MATRIX_RAIN_NUM_GLYPHS;
 }
 
 MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display)
@@ -60,7 +56,7 @@ void MatrixRainClock::drawTime() {
 }
 
 void MatrixRainClock::update() {
-    const int glyphW = 6;
+    const int glyphW = 8; // TrueMatrix is 8x8
     const int glyphH = 8;
 
     if (!initialized) {
@@ -84,7 +80,7 @@ void MatrixRainClock::update() {
     if (rows > 16) rows = 16;
 
     // Throttle the fall speed independently of the display's ~30 FPS refresh loop.
-    if (millis() - lastFrameTime > 60) {
+    if (true) {
         lastFrameTime = millis();
         for (int c = 0; c < numColumns; c++) {
             colTick[c]++;
@@ -108,8 +104,6 @@ void MatrixRainClock::update() {
     }
 
     matrix->fillScreen(0);
-    matrix->setFont(NULL);
-    matrix->setTextSize(1);
 
     const int trailLength = 8;
     for (int c = 0; c < numColumns; c++) {
@@ -124,9 +118,13 @@ void MatrixRainClock::update() {
                 if (green < 40) green = 40;
                 color = matrix->color565(0, green, 0);
             }
-            matrix->setTextColor(color);
-            matrix->setCursor(c * glyphW, r * glyphH);
-            matrix->print(colGlyphs[c][r]);
+            
+            int x = c * glyphW;
+            int y = r * glyphH;
+            uint8_t glyphIndex = colGlyphs[c][r];
+            
+            // Draw the 8x8 1-bit bitmap
+            matrix->drawBitmap(x, y, MATRIX_RAIN_GLYPHS[glyphIndex], 8, 8, color);
         }
     }
 

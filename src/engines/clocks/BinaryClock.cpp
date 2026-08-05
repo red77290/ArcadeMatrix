@@ -29,10 +29,10 @@ void BinaryClock::update() {
     int startX = (matrix->width() - (5 * spacingX)) / 2;
     int startY = matrix->height() - (matrix->height() / 6);
     
-    uint16_t colorH = matrix->color565(0, 255, 255);
-    uint16_t colorM = matrix->color565(0, 255, 0);
-    uint16_t colorS = matrix->color565(255, 255, 255);
-    uint16_t colorDim = matrix->color565(30, 30, 30);
+    uint16_t colorH = matrix->color565(0, 220, 255);
+    uint16_t colorM = matrix->color565(255, 0, 180);
+    uint16_t colorS = matrix->color565(200, 200, 200);
+    uint16_t colorDim = matrix->color565(25, 25, 25);
     
     for (int col = 0; col < 6; col++) {
         int x = startX + col * spacingX;

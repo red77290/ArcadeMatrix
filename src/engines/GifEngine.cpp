@@ -4,7 +4,7 @@
 
 GifEngine* GifEngine::instance = nullptr;
 
-GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), rawLastFrameTime(0), pngShowStartTime(0) {
+GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), rawLastFrameTime(0), pngShowStartTime(0), psramBuffer(nullptr), psramBufferSize(0) {
     instance = this;
 }
 
@@ -29,7 +29,7 @@ bool GifEngine::playGif(const char* filepath) {
     Serial.println(path);
     
     if (path.endsWith(".raw") || path.endsWith(".RAW")) {
-        currentFile = sd.open(path.c_str(), O_READ);
+        currentFile = sd.open(path.c_str(), FILE_OPEN_READ);
         if (!currentFile) {
             Serial.println("Error: Failed to open RAW file!");
             return false;
@@ -49,8 +49,48 @@ bool GifEngine::playGif(const char* filepath) {
         }
         return false;
     } else {
+#if defined(BOARD_HAS_PSRAM)
+        if (psramFound()) {
+            FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
+            if (f) {
+                size_t fileSize = f.size();
+                // Check if we have enough free PSRAM, leave some headroom (e.g. 500KB)
+                if (ESP.getFreePsram() > fileSize + 512000) {
+                    psramBuffer = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
+                    if (psramBuffer) {
+                        size_t toRead = fileSize;
+                        size_t offset = 0;
+                        while (toRead > 0) {
+                            size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                            size_t r = f.read(psramBuffer + offset, chunk);
+                            if (r == 0) break;
+                            offset += r;
+                            toRead -= r;
+                        }
+                        size_t bytesRead = offset;
+                        f.close();
+                        if (bytesRead == fileSize) {
+                            psramBufferSize = fileSize;
+                            if (gif.open(psramBuffer, psramBufferSize, GIFDraw)) {
+                                Serial.println("GIF loaded directly from PSRAM!");
+                                isRaw = false;
+                                isPng = false;
+                                isPlaying = true;
+                                return true;
+                            }
+                        }
+                        // Fallback if failed
+                        freePsramBuffer();
+                    }
+                } else {
+                    f.close();
+                }
+            }
+        }
+#endif
+        // Fallback to streaming from SD card
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-            Serial.println("GIF opened successfully!");
+            Serial.println("GIF opened successfully (streaming from SD)!");
             isRaw = false;
             isPng = false;
             isPlaying = true;
@@ -60,6 +100,14 @@ bool GifEngine::playGif(const char* filepath) {
         }
     }
     return false;
+}
+
+void GifEngine::freePsramBuffer() {
+    if (psramBuffer) {
+        heap_caps_free(psramBuffer);
+        psramBuffer = nullptr;
+        psramBufferSize = 0;
+    }
 }
 
 bool GifEngine::decodePng(const char* filepath) {
@@ -144,7 +192,7 @@ void GifEngine::loadNextFileInPlaylist() {
         
         String indexPath = pPath + "/index.txt";
         indexPath.replace("//", "/");
-        FsFile indexFile = sd.open(indexPath, O_READ);
+        FsFile indexFile = sd.open(indexPath, FILE_OPEN_READ);
         
         String targetPath = "";
         if (indexFile && indexFile.size() > 0) {
@@ -200,6 +248,7 @@ void GifEngine::stop() {
         isPlaying = false;
     }
     playlistMode = false;
+    freePsramBuffer();
 }
 
 void GifEngine::loop() {
@@ -231,7 +280,13 @@ void GifEngine::loop() {
             }
         }
     } else {
-        int result = gif.playFrame(true, nullptr);
+        if (millis() - gifLastFrameTime < gifCurrentDelay) return;
+        gifLastFrameTime = millis();
+        
+        int delayMs = 0;
+        int result = gif.playFrame(false, &delayMs);
+        gifCurrentDelay = delayMs;
+        
         if (result <= 0) {
             // End of GIF or error
             if (playlistMode) {
@@ -291,7 +346,7 @@ void GifEngine::playRawFrame() {
 
 void* GifEngine::GIFOpenFile(const char *fname, int32_t *pSize) {
     if (!instance) return nullptr;
-    instance->currentFile = sd.open(fname, O_READ);
+    instance->currentFile = sd.open(fname, FILE_OPEN_READ);
     if (instance->currentFile) {
         *pSize = instance->currentFile.size();
         return (void*)&instance->currentFile;
@@ -326,33 +381,53 @@ int32_t GifEngine::GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
 void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     if (!instance || !instance->matrix) return;
     
+    int canvasW = instance->gif.getCanvasWidth();
+    int canvasH = instance->gif.getCanvasHeight();
+    if (canvasW <= 0) canvasW = 128; // Fallback
+    if (canvasH <= 0) canvasH = 32;
+    
+    int scaleX = instance->matrix->width() / canvasW;
+    int scaleY = instance->matrix->height() / canvasH;
+    if (scaleX < 1) scaleX = 1;
+    if (scaleY < 1) scaleY = 1;
+    
+    int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+    int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+
     uint8_t *s;
     uint16_t *usPalette;
     int x, y, iWidth;
 
     iWidth = pDraw->iWidth;
-    if (iWidth > instance->matrix->width()) iWidth = instance->matrix->width();
-
     usPalette = pDraw->pPalette;
     y = pDraw->iY + pDraw->y;
     
-    if (y >= instance->matrix->height() || pDraw->iX >= instance->matrix->width()) return;
+    int baseY = offsetY + y * scaleY;
 
     s = pDraw->pPixels;
     
     if (pDraw->ucHasTransparency) {
         uint8_t c, ucTransparent = pDraw->ucTransparent;
-        int xOffset = pDraw->iX;
         for (x = 0; x < iWidth; x++) {
             c = *s++;
             if (c != ucTransparent) {
-                instance->matrix->drawPixel(xOffset + x, y, usPalette[c]);
+                int px = offsetX + (pDraw->iX + x) * scaleX;
+                if (scaleX == 1 && scaleY == 1) {
+                    instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                } else {
+                    instance->matrix->fillRect(px, baseY, scaleX, scaleY, usPalette[c]);
+                }
             }
         }
     } else {
-        int xOffset = pDraw->iX;
         for (x = 0; x < iWidth; x++) {
-            instance->matrix->drawPixel(xOffset + x, y, usPalette[*s++]);
+            uint16_t color = usPalette[*s++];
+            int px = offsetX + (pDraw->iX + x) * scaleX;
+            if (scaleX == 1 && scaleY == 1) {
+                instance->matrix->drawPixel(px, baseY, color);
+            } else {
+                instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+            }
         }
     }
 }
@@ -361,7 +436,7 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
 
 void* GifEngine::PNGOpenFile(const char *fname, int32_t *pSize) {
     if (instance) {
-        instance->pngFile = sd.open(fname, O_READ);
+        instance->pngFile = sd.open(fname, FILE_OPEN_READ);
         if (instance->pngFile) {
             *pSize = instance->pngFile.size();
             return (void*)&instance->pngFile;
@@ -396,19 +471,39 @@ int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
 int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     if (!instance || !instance->matrix || !instance->png) return 0;
 
-    // 256px covers the widest supported panel (ESP32-S3 @ 256x64); getLineAsRGB565() writes
-    // exactly pDraw->iWidth pixels so this is a safe upper bound for either target.
-    static uint16_t lineBuffer[256];
+    int canvasW = instance->png->getWidth();
+    int canvasH = instance->png->getHeight();
+    if (canvasW <= 0) canvasW = 128;
+    if (canvasH <= 0) canvasH = 32;
+
+    int scaleX = instance->matrix->width() / canvasW;
+    int scaleY = instance->matrix->height() / canvasH;
+    if (scaleX < 1) scaleX = 1;
+    if (scaleY < 1) scaleY = 1;
+
+    int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+    int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+
+    static uint16_t lineBuffer[512]; // Increased to 512 for safety
     int iWidth = pDraw->iWidth;
-    if (iWidth > 256) iWidth = 256;
+    if (iWidth > 512) iWidth = 512;
 
     instance->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
 
     int y = pDraw->y;
-    if (y >= instance->matrix->height()) return 1;
+    int baseY = offsetY + y * scaleY;
 
-    for (int x = 0; x < iWidth && x < instance->matrix->width(); x++) {
-        instance->matrix->drawPixel(x, y, lineBuffer[x]);
+    for (int x = 0; x < iWidth; x++) {
+        uint16_t color = lineBuffer[x];
+        // Don't draw absolute black as transparent if we don't want to, but for PNG usually we respect alpha.
+        // The PNG library blends to a background if we set it, or returns true RGB565.
+        // Assuming we just draw it:
+        int px = offsetX + x * scaleX;
+        if (scaleX == 1 && scaleY == 1) {
+            instance->matrix->drawPixel(px, baseY, color);
+        } else {
+            instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+        }
     }
     return 1;
 }

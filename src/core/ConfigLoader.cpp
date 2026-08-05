@@ -10,11 +10,14 @@ ConfigLoader::ConfigLoader() {
 void ConfigLoader::setDefaults() {
     matrix.width = 64;
     matrix.height = 32;
-    matrix.panelType = "P3";
-    matrix.chainLength = 2;
-    matrix.powerLimitPercent = 50;
+    matrix.panelType = "FM6126A";
+    matrix.chainLength = 1;
+    matrix.powerLimitPercent = 20; // Safe default for USB power
     matrix.forceSingleBuffer = false;
-    matrix.colorDepth = 24;
+    matrix.colorDepth = 8;
+    matrix.rgbSequence = "RGB";
+    matrix.pwmBits = 11;
+    matrix.limitRefreshRateHz = 0;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -120,9 +123,12 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "HEIGHT") matrix.height = value.toInt();
         else if (key == "PANEL_TYPE") matrix.panelType = value;
         else if (key == "CHAIN") matrix.chainLength = value.toInt();
-        else if (key == "BRIGHTNESS_LIMIT") matrix.powerLimitPercent = value.toInt();
+        else if (key == "BRIGHTNESS_LIMIT" || key == "BRIGHTNESS") matrix.powerLimitPercent = value.toInt();
         else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
+        else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
+        else if (key == "PWM_BITS") matrix.pwmBits = value.toInt();
+        else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
     }
     else if (currentSection == "MQTT") {
         if (key == "ENABLED") mqtt.enabled = (value == "true" || value == "1");
@@ -215,7 +221,7 @@ bool ConfigLoader::parseFromString(const char* iniContent) {
 bool ConfigLoader::parseFromSD(const char* filepath) {
     if (!sd.exists(filepath)) return false;
     
-    FsFile file = sd.open(filepath, O_READ);
+    FsFile file = sd.open(filepath, FILE_OPEN_READ);
     if (!file) {
         Serial.printf("Failed to open %s\n", filepath);
         return false;
@@ -230,7 +236,10 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     file.close();
 
     // Load saved playlists for default rotation
-    FsFile playlistFile = sd.open("/playlists_selected.json", O_READ);
+    FsFile playlistFile;
+    if (sd.exists("/playlists_selected.json")) {
+        playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
+    }
     if (playlistFile) {
         DynamicJsonDocument doc(4096);
         DeserializationError error = deserializeJson(doc, playlistFile);
@@ -273,7 +282,7 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
         sd.remove(filepath);
     }
     
-    FsFile file = sd.open(filepath, O_WRITE | O_CREAT | O_TRUNC);
+    FsFile file = sd.open(filepath, FILE_OPEN_WRITE);
     if (!file) {
         Serial.println("Failed to open config file for writing");
         return false;
@@ -290,9 +299,9 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println();
 
     file.println("[time]");
-    file.println("ntpServer=" + time.ntpServer);
+    file.println("ntp_server=" + time.ntpServer);
     file.println("timezone=" + time.timezone);
-    file.println("format24h=" + String(time.format24h ? "1" : "0"));
+    file.println("format_24h=" + String(time.format24h ? "1" : "0"));
     file.println("clock_font=" + String(time.clock_font));
     file.println("clock_size=" + String(time.clock_size));
     file.println("clock_offset_x=" + String(time.clock_offset_x));
@@ -303,7 +312,6 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("clock_color_2=" + time.clock_color_2);
     file.println("clock_font_path=" + time.clock_font_path);
     file.println();
-
     file.println("[matrix]");
     file.println("width=" + String(matrix.width));
     file.println("height=" + String(matrix.height));
@@ -312,6 +320,9 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("brightness_limit=" + String(matrix.powerLimitPercent));
     file.println("color_depth=" + String(matrix.colorDepth));
     file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
+    file.println("rgb_sequence=" + matrix.rgbSequence);
+    file.println("pwm_bits=" + String(matrix.pwmBits));
+    file.println("limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz));
     file.println();
 
     file.println("[mqtt]");
@@ -377,7 +388,7 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     // Sanity check: an SD glitch mid-write can leave a truncated/empty file even though close()
     // didn't report an error. A full conf.ini is always several hundred bytes, so treat anything
     // implausibly small as a failed write (triggers a retry in saveToSD()).
-    FsFile check = sd.open(filepath, O_READ);
+    FsFile check = sd.open(filepath, FILE_OPEN_READ);
     if (!check) {
         Serial.println("ConfigLoader: conf.ini could not be reopened after writing - treating as failed write.");
         return false;

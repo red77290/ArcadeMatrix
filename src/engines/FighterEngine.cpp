@@ -31,7 +31,10 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    FsFile f = sd.open(indexPath, O_READ);
+    FsFile f;
+    if (sd.exists(indexPath)) {
+        f = sd.open(indexPath, FILE_OPEN_READ);
+    }
     if (!f) {
         Serial.println("FighterEngine: No index.txt found!");
         return;
@@ -69,7 +72,7 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
-    FsFile f = sd.open(indexPath, O_READ);
+    FsFile f = sd.open(indexPath, FILE_OPEN_READ);
     if (!f) return false;
     
     int targetLine = random(0, numAvailableFighters);
@@ -101,7 +104,7 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (!sd.exists(filepath)) return false;
     
-    FsFile f = sd.open(filepath, O_READ);
+    FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
         Serial.printf("FighterEngine Error: Could not open file %s\n", filepath);
         return false;
@@ -136,11 +139,29 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     anim.cachedFrameIndex = -1;
     
     int frameSize = anim.width * anim.height * 2;
+    anim.totalPixelsSize = frameSize * anim.numFrames;
     if (frameSize > MAX_FIGHTER_FRAME_SIZE) {
         Serial.printf("FighterEngine Error: Frame too big! %d bytes for %s\n", frameSize, filepath);
         free(anim.frameDelays);
         f.close();
         return false;
+    }
+    
+    if (psramFound()) {
+        anim.psramBuffer = (uint8_t*)heap_caps_malloc(anim.totalPixelsSize, MALLOC_CAP_SPIRAM);
+        if (anim.psramBuffer) {
+            size_t toRead = anim.totalPixelsSize;
+                        size_t offset = 0;
+                        while (toRead > 0) {
+                            size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                            size_t r = f.read(anim.psramBuffer + offset, chunk);
+                            if (r == 0) break;
+                            offset += r;
+                            toRead -= r;
+                        }
+        } else {
+            Serial.printf("FighterEngine Warning: PSRAM alloc failed for %d bytes (%s). Falling back to SD.\n", anim.totalPixelsSize, filepath);
+        }
     }
     
     f.close();
@@ -152,6 +173,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
 void FighterEngine::freeAnim(FgtAnimation& anim) {
     if (anim.loaded) {
         if (anim.frameDelays) { free(anim.frameDelays); anim.frameDelays = nullptr; }
+        if (anim.psramBuffer) { heap_caps_free(anim.psramBuffer); anim.psramBuffer = nullptr; }
         anim.loaded = false;
     }
 }
@@ -289,16 +311,17 @@ void FighterEngine::processLoadState() {
             
             // Done! Finish setup
             {
+                int scale = (matrix->height() >= 64 && getFightersDir().endsWith("32")) ? (matrix->height() / 32) : 1;
                 // Align characters so their ground line touches the bottom of the screen
                 int ground_screen_y = matrix->height() - 1;
 
                 p1.direction = 1; 
-                p1.x = -p1.width_px; 
-                p1.y = ground_screen_y - p1.ground_y;
+                p1.x = -p1.width_px * scale; 
+                p1.y = ground_screen_y - (p1.ground_y * scale);
                 
                 p2.direction = -1; 
                 p2.x = matrix->width();
-                p2.y = ground_screen_y - p2.ground_y;
+                p2.y = ground_screen_y - (p2.ground_y * scale);
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
@@ -356,7 +379,7 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             p.animSuper.cachedFrameIndex = -1;
             p.animFall.cachedFrameIndex = -1;
         }
-        p.activeFile = sd.open(anim->filepath.c_str(), O_READ);
+        p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
     }
 }
 
@@ -423,10 +446,11 @@ void FighterEngine::loop() {
         // Move towards each other
         uint32_t elapsed = now - lastMoveTime;
         if (elapsed >= 35) { // Speed throttle (1 pixel per 35ms -> ~28 FPS)
-            int pixelsToMove = elapsed / 35;
+            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+            int pixelsToMove = (elapsed / 35) * scale;
             p1.x += pixelsToMove;
             p2.x -= pixelsToMove;
-            lastMoveTime += pixelsToMove * 35;
+            lastMoveTime += (elapsed / 35) * 35; // Correctly advance time
         }
         
         // Collision detection (simple distance using origins)
@@ -466,10 +490,12 @@ void FighterEngine::loop() {
     }
     
     // Dynamic Movement during special/super/fall
-    if (p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) p1.x += p1.direction * 2;
-    if (p1.state == FIGHTER_FALL) p1.x -= p1.direction * 2;
-    if (p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) p2.x += p2.direction * 2;
-    if (p2.state == FIGHTER_FALL) p2.x -= p2.direction * 2;
+    int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+    int moveAmt = 2 * scale;
+    if (p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) p1.x += p1.direction * moveAmt;
+    if (p1.state == FIGHTER_FALL) p1.x -= p1.direction * moveAmt;
+    if (p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) p2.x += p2.direction * moveAmt;
+    if (p2.state == FIGHTER_FALL) p2.x -= p2.direction * moveAmt;
     
     // End sequence
     if (fightEndTime == 0 && (p1.isDead || p2.isDead)) {
@@ -498,24 +524,32 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     if (p.currentFrame >= anim->numFrames) return;
     
     int frameSize = anim->width * anim->height * 2;
-    if (p.currentFrame != anim->cachedFrameIndex) {
-        if (p.activeFile && p.currentFrameBuffer) {
-            uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-            p.activeFile.seek(offset);
-            p.activeFile.read(p.currentFrameBuffer, frameSize);
-            anim->cachedFrameIndex = p.currentFrame;
-        } else {
-            return;
+    uint8_t* ptr = nullptr;
+    
+    if (anim->psramBuffer) {
+        ptr = anim->psramBuffer + (p.currentFrame * frameSize);
+    } else {
+        if (p.currentFrame != anim->cachedFrameIndex) {
+            if (p.activeFile && p.currentFrameBuffer) {
+                uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
+                p.activeFile.seek(offset);
+                p.activeFile.read(p.currentFrameBuffer, frameSize);
+                anim->cachedFrameIndex = p.currentFrame;
+            } else {
+                return;
+            }
         }
+        ptr = p.currentFrameBuffer;
     }
     
-    uint8_t* ptr = p.currentFrameBuffer;
     if (!ptr) return;
     
     bool invert = (p.state == FIGHTER_SUPER && p.currentFrame < 2);
     
     int offsetY = 0;
     if (shakeRemainingFrames > 0) offsetY = random(-2, 3);
+    
+    int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
     
     for (int y = 0; y < anim->height; y++) {
         for (int x = 0; x < anim->width; x++) {
@@ -525,16 +559,20 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
             if (color != anim->transparentColor) {
                 if (invert) color = ~color;
                 
-                int drawX = p.x + x;
+                int drawX = p.x + (x * scale);
                 // Flip horizontally if facing left
                 if (p.direction == -1) {
-                    drawX = p.x + (anim->width - 1 - x);
+                    drawX = p.x + ((anim->width - 1 - x) * scale);
                 }
                 
-                int drawY = p.y + y + offsetY;
+                int drawY = p.y + (y * scale) + offsetY;
                 
-                if (drawX >= 0 && drawX < matrix->width() && drawY >= 0 && drawY < matrix->height()) {
-                    matrix->drawPixel(drawX, drawY, color);
+                for (int dy = 0; dy < scale; dy++) {
+                    for (int dx = 0; dx < scale; dx++) {
+                        if (drawX + dx >= 0 && drawX + dx < matrix->width() && drawY + dy >= 0 && drawY + dy < matrix->height()) {
+                            matrix->drawPixel(drawX + dx, drawY + dy, color);
+                        }
+                    }
                 }
             }
         }

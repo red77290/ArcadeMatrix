@@ -15,7 +15,7 @@ public:
     AsyncSdFatResponse(const String& path, const String& contentType) {
         _code = 200;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            _content = sd.open(path.c_str(), O_READ);
+            _content = sd.open(path.c_str(), FILE_OPEN_READ);
             if (_content) _contentLength = _content.size();
             else _contentLength = 0;
             xSemaphoreGive(sdMutex);
@@ -32,8 +32,29 @@ public:
     }
     size_t _fillBuffer(uint8_t *buf, size_t maxLen) override {
         size_t bytesRead = 0;
+        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            if (_content) bytesRead = _content.read(buf, maxLen);
+            if (_content) {
+                // Guarantee the bounce buffer is strictly DMA capable
+                uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+                if (bounceBuf) {
+                    size_t toRead = maxLen;
+                    size_t offset = 0;
+                    while (toRead > 0) {
+                        size_t chunk = (toRead > 512) ? 512 : toRead;
+                        size_t r = _content.read(bounceBuf, chunk);
+                        if (r > 0) memcpy(buf + offset, bounceBuf, r);
+                        if (r == 0) break;
+                        offset += r;
+                        toRead -= r;
+                        bytesRead += r;
+                    }
+                    heap_caps_free(bounceBuf);
+                } else {
+                    // Fallback if DMA memory is completely exhausted (might crash, but at least we tried)
+                    bytesRead = _content.read(buf, maxLen);
+                }
+            }
             xSemaphoreGive(sdMutex);
         }
         return bytesRead;
@@ -46,6 +67,9 @@ WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine*
 void WebServerAPI::setMarqueeEngine(MarqueeEngine* engine) {
     marquee = engine;
 }
+
+
+extern String getPosixTimezone(String tz);
 
 void WebServerAPI::begin() {
     setupRoutes();
@@ -108,12 +132,12 @@ void WebServerAPI::setupRoutes() {
         JsonArray arr = doc.to<JsonArray>();
         
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile dir = sd.open("/fonts", O_READ);
-            if (dir && dir.isDir()) {
+            FsFile dir = sd.open("/fonts", FILE_OPEN_READ);
+            if (dir && isDirectory(dir)) {
                 FsFile entry = dir.openNextFile();
             while (entry) {
                 yield();
-                if (!entry.isDir()) {
+                if (!isDirectory(entry)) {
                     String name = getFileName(entry);
                     if (name.endsWith(".amf") || name.endsWith(".AMF")) {
                         // getName may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
@@ -133,24 +157,39 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
-    // API: List GIF Playlists (reads /gifs/playlists.json from SD)
+    // API: List GIF Playlists (Scans /gifs/ directory directly instead of needing playlists.json)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
-        bool exists = false;
-        String content = "";
+        String content = "{\"playlists\":[";
+        bool first = true;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/gifs/playlists.json", O_READ);
-            if (f) {
-                exists = true;
-                content = f.readString();
-                f.close();
+            fs::File dir = sd.open("/gifs");
+            if (dir && dir.isDirectory()) {
+                fs::File file = dir.openNextFile();
+                while (file) {
+                    if (file.isDirectory()) {
+                        String name = file.name();
+                        // Extract just the folder name if it contains full path
+                        int lastSlash = name.lastIndexOf('/');
+                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                        
+                        if (name.length() > 0 && name[0] != '.') {
+                            if (!first) content += ",";
+                            content += "\"/gifs/";
+                            content += name;
+                            content += "\"";
+                            first = false;
+                        }
+                    }
+                    file = dir.openNextFile();
+                }
             }
+            if (dir) dir.close();
+            
+            // If there's a playlists.json, maybe use it as fallback? No, dynamic is better!
             xSemaphoreGive(sdMutex);
         }
-        if (exists && content.length() > 0) {
-            request->send(200, "application/json", content);
-        } else {
-            request->send(404, "application/json", "{\"error\":\"playlists.json not found. Run generate_index.sh\"}");
-        }
+        content += "]}";
+        request->send(200, "application/json", content);
     });
 
     // API: Play GIF Playlists immediately
@@ -189,6 +228,12 @@ void WebServerAPI::setupRoutes() {
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
         doc["color_depth"] = config.matrix.colorDepth;
+        doc["matrix_chain"] = config.matrix.chainLength;
+        doc["matrix_rows"] = config.matrix.height;
+        doc["matrix_cols"] = config.matrix.width;
+        doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
+        doc["matrix_pwm_bits"] = config.matrix.pwmBits;
+        doc["matrix_limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
 
         // Idle rotation
         doc["rotation"] = config.idle.rotation;
@@ -276,6 +321,12 @@ void WebServerAPI::setupRoutes() {
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
         if (!doc["color_depth"].isNull()) config.matrix.colorDepth = doc["color_depth"].as<int>();
+        if (!doc["matrix_chain"].isNull()) config.matrix.chainLength = doc["matrix_chain"].as<int>();
+        if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
+        if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
+        if (!doc["matrix_rgb_sequence"].isNull()) config.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
+        if (!doc["matrix_pwm_bits"].isNull()) config.matrix.pwmBits = doc["matrix_pwm_bits"].as<int>();
+        if (!doc["matrix_limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
         
         // Idle rotation
         bool rotationChanged = false;
@@ -298,9 +349,17 @@ void WebServerAPI::setupRoutes() {
         if (!doc["clock_font_path"].isNull()) { config.time.clock_font_path = doc["clock_font_path"].as<String>(); clockChanged = true; }
         if (!doc["clock_theme"].isNull()) { config.time.clock_theme = doc["clock_theme"].as<int>(); clockChanged = true; }
         
-        if (clockChanged) {
+        // Note: We no longer update the clockEngine here if we are going to reboot anyway!
+        // To be safe against race conditions, we will just apply it if NOT rebooting.
+        bool willReboot = (!doc["reboot"].isNull() && doc["reboot"].as<bool>());
+        if (clockChanged && !willReboot) {
             extern ClockEngine* clockEngine;
-            if (clockEngine) clockEngine->setTheme((PublisherTheme)config.time.clock_theme);
+            if (clockEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    clockEngine->setTheme((PublisherTheme)config.time.clock_theme);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
         // Date
         if (!doc["date_font"].isNull()) config.dateSettings.date_font = doc["date_font"].as<int>();
@@ -330,16 +389,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["weather_offset_x"].isNull()) config.weather.weather_offset_x = doc["weather_offset_x"].as<int>();
         if (!doc["weather_offset_y"].isNull()) config.weather.weather_offset_y = doc["weather_offset_y"].as<int>();
 
-        if (weatherChanged) {
+        if (weatherChanged && !willReboot) {
             extern WeatherEngine* weatherEngine;
-            if (weatherEngine) weatherEngine->forceUpdate();
+            if (weatherEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    weatherEngine->forceUpdate();
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // Time / NTP
         if (!doc["ntp_server"].isNull()) config.time.ntpServer = doc["ntp_server"].as<String>();
         if (!doc["timezone"].isNull()) config.time.timezone = doc["timezone"].as<String>();
         if (!doc["ntp_server"].isNull() || !doc["timezone"].isNull()) {
-            configTzTime(config.time.timezone.c_str(), config.time.ntpServer.c_str());
+            configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
         }
         if (!doc["format_24h"].isNull()) config.time.format24h = doc["format_24h"].as<bool>();
 
@@ -364,9 +428,14 @@ void WebServerAPI::setupRoutes() {
         // Save to SD immediately
         bool saved = config.saveToSD("/conf.ini");
 
-        if (rotationChanged) {
+        if (rotationChanged && !willReboot) {
             extern RotationManager* rotationManager;
-            if (rotationManager) rotationManager->begin(config);
+            if (rotationManager) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    rotationManager->begin(config);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // If reboot requested, save and restart
@@ -390,12 +459,12 @@ void WebServerAPI::setupRoutes() {
     }, 4096);
     server.addHandler(settingsHandler);
     
-    // API: Get Selected GIF Playlists
+    // API: Get Selected GIF Playlist
     server.on("/api/playlists/selected", HTTP_GET, [](AsyncWebServerRequest *request){
         bool exists = false;
         String content = "";
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/playlists_selected.json", O_READ);
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_READ);
             if (f) {
                 exists = true;
                 content = f.readString();
@@ -406,7 +475,6 @@ void WebServerAPI::setupRoutes() {
         if (exists && content.length() > 0) {
             request->send(200, "application/json", content);
         } else {
-            // Return empty array instead of 404 to avoid UI crash
             request->send(200, "application/json", "{\"playlists\":[]}");
         }
     });
@@ -432,7 +500,7 @@ void WebServerAPI::setupRoutes() {
         // Write directly to SD (no async flag — prevents data loss on reboot)
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
             if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
-            FsFile f = sd.open("/playlists_selected.json", O_WRITE | O_CREAT | O_TRUNC);
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
             if (f) {
                 DynamicJsonDocument saveDoc(1024);
                 JsonArray arr = saveDoc["playlists"].to<JsonArray>();
@@ -505,13 +573,6 @@ void WebServerAPI::setupRoutes() {
         
         if (!doc["state"].isNull()) {
             config.standby.matrix_power = doc["state"].as<bool>();
-            if (!config.standby.matrix_power) {
-                extern MatrixEngine matrixEngine;
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
-            }
         }
         DynamicJsonDocument resp(1024);
         resp["status"] = "success";

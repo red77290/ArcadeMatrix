@@ -8,20 +8,20 @@ PongClock::PongClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastMin
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));
-    pad_h = max(12, (int)(matrix->height() / 3));
+    pad_h = max(8, (int)(matrix->height() / 3.0f));
     
-    p1_y = (matrix->height() - pad_h) / 2;
+    p1_y = matrix->height() / 2.0f;
     p2_y = p1_y;
     resetBall(true);
 }
 
 void PongClock::resetBall(bool leftServed) {
-    ball_y = matrix->height() / 2;
-    ball_dy = (((float)rand() / RAND_MAX) * 2.0f - 1.0f) * (matrix->height() / 32.0f);
+    ball_y = matrix->height() / 2.0f;
+    ball_dy = (((float)rand() / RAND_MAX) * 3.0f - 1.5f); // -1.5 to 1.5
     
-    float base_dx = 1.5f * (matrix->width() / 64.0f);
+    float base_dx = max(1.5f, matrix->width() / 40.0f);
     if (leftServed) {
-        ball_x = pad_w + 1;
+        ball_x = pad_w + 2;
         ball_dx = base_dx;
     } else {
         ball_x = matrix->width() - pad_w - 3;
@@ -35,7 +35,9 @@ void PongClock::draw(const TimeData& t) {
 
 void PongClock::drawScores() {
     matrix->setFont(NULL);
-    matrix->setTextSize(1);
+    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
+    matrix->setTextSize(gfxSize);
     
     char scoreLeft[3];
     char scoreRight[3];
@@ -47,14 +49,15 @@ void PongClock::drawScores() {
     matrix->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
     
     int center = matrix->width() / 2;
+    int yOffset = max(4, (matrix->height() / 8)); // Scaled margin
     
     // Draw left score
     matrix->setTextColor(matrix->color565(255, 255, 255));
-    matrix->setCursor(center - bw - 8, 4);
+    matrix->setCursor(center - bw - 8, yOffset - by);
     matrix->print(scoreLeft);
     
     // Draw right score
-    matrix->setCursor(center + 8, 4);
+    matrix->setCursor(center + 8, yOffset - by);
     matrix->print(scoreRight);
 }
 
@@ -66,8 +69,7 @@ void PongClock::update() {
         lastMinute = storedTime.minutes;
     }
 
-    if (millis() - lastFrameTime > 20) { // ~50 FPS
-        lastFrameTime = millis();
+    // No internal throttle, rely on main loop 60 FPS
         
         // Physics update
         ball_x += ball_dx;
@@ -82,23 +84,23 @@ void PongClock::update() {
             ball_dy *= -1;
         }
         
-        float ai_speed = 1.0f * (matrix->height() / 32.0f);
+        float ai_speed = matrix->height() / 20.0f;
         // P1 AI (Left)
         float target_p1 = ball_y - (pad_h / 2);
         if (ball_dx < 0) {
-            if (p1_y < target_p1) p1_y += ai_speed;
-            if (p1_y > target_p1) p1_y -= ai_speed;
+            if (forceMiss) {
+                if (ball_y > matrix->height() / 2) target_p1 = 0;
+                else target_p1 = matrix->height() - pad_h;
+            }
+            if (p1_y < target_p1) p1_y += min(ai_speed, target_p1 - p1_y);
+            if (p1_y > target_p1) p1_y -= min(ai_speed, p1_y - target_p1);
         }
         
         // P2 AI (Right)
         float target_p2 = ball_y - (pad_h / 2);
         if (ball_dx > 0) {
-            if (forceMiss) {
-                if (ball_y > matrix->height() / 2) target_p2 = 0;
-                else target_p2 = matrix->height() - pad_h;
-            }
-            if (p2_y < target_p2) p2_y += ai_speed;
-            if (p2_y > target_p2) p2_y -= ai_speed;
+            if (p2_y < target_p2) p2_y += min(ai_speed, target_p2 - p2_y);
+            if (p2_y > target_p2) p2_y -= min(ai_speed, p2_y - target_p2);
         }
         
         // Clamp
@@ -108,27 +110,22 @@ void PongClock::update() {
         if (p2_y > matrix->height() - pad_h) p2_y = matrix->height() - pad_h;
         
         // Paddle Collisions
-        if (ball_dx < 0 && ball_x <= pad_w) {
+        if (ball_dx < 0 && ball_x <= pad_w + ball_size) {
             if (ball_y >= p1_y - ball_size && ball_y <= p1_y + pad_h) {
-                ball_x = pad_w;
-                ball_dx *= -1.05f;
-                ball_dy += (ball_y - (p1_y + pad_h/2)) * 0.15f;
+                ball_x = pad_w + ball_size + 1;
+                ball_dx = abs(ball_dx);
             }
         } else if (ball_dx > 0 && ball_x >= matrix->width() - pad_w - ball_size) {
             if (ball_y >= p2_y - ball_size && ball_y <= p2_y + pad_h) {
-                ball_x = matrix->width() - pad_w - ball_size;
-                ball_dx *= -1.05f;
-                ball_dy += (ball_y - (p2_y + pad_h/2)) * 0.15f;
+                ball_x = matrix->width() - pad_w - ball_size - 1;
+                ball_dx = -abs(ball_dx);
             }
         }
         
-        // Speed cap
-        float max_dx = 3.0f * (matrix->width() / 64.0f);
-        float max_dy = 2.5f * (matrix->height() / 32.0f);
-        if (ball_dx > max_dx) ball_dx = max_dx;
-        if (ball_dx < -max_dx) ball_dx = -max_dx;
-        if (ball_dy > max_dy) ball_dy = max_dy;
-        if (ball_dy < -max_dy) ball_dy = -max_dy;
+        // Speed cap isn't strictly necessary since we bounce with constant dx, 
+        // but let's keep it safe.
+        // ball_dx doesn't accelerate in Rust. It just flips sign.
+        // We will remove the acceleration from C++ paddle collision.
         
         // Scoring
         if (ball_x < -10) {
@@ -138,7 +135,7 @@ void PongClock::update() {
             resetBall(false);
             forceMiss = false;
         }
-    }
+
     
     // Draw
     uint16_t white = matrix->color565(255, 255, 255);

@@ -2,6 +2,7 @@
 #define WORDCLOCK_H
 
 #include "../ClockEngine.h"
+#include <vector>
 
 class WordClock : public ClockFace {
 public:
@@ -11,7 +12,11 @@ public:
 
 private:
     TimeData storedTime;
-    const char* numberToFrench(int n);
+    
+    void renderFR(int hours, int minutes, int gfxSize);
+    void renderEN(int hours, int minutes, int gfxSize);
+    void renderES(int hours, int minutes, int gfxSize);
+    void drawLines(const std::vector<String>& lines, int gfxSize);
 };
 
 #endif
