@@ -354,6 +354,8 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_FINISH:
             LOGE("FighterEngine", "Failed to start fight for %s vs %s", p1.name.c_str(), p2.name.c_str());
+            freeFighter(p1);
+            freeFighter(p2);
             active = false;
             retryDelayEnd = millis() + 5000;
             currentLoadState = LOAD_IDLE;
