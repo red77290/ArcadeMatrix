@@ -397,9 +397,7 @@ void loop() {
     // Marquee (live box-art/frontend push) takes priority over everything else while active,
     // matching the RPi's behavior where a marquee push interrupts whatever the idle rotation
     // was showing.
-    Serial.println("[DEBUG] Taking sdMutex...");
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        Serial.println("[DEBUG] sdMutex taken.");
         if (marqueeEngine && marqueeEngine->isActive()) {
             shouldFlip = marqueeEngine->loop();
         } else if (messageEngine && messageEngine->isActive()) {
@@ -421,22 +419,17 @@ void loop() {
                 shouldFlip = true;
             }
         } else {
-            Serial.println("[DEBUG] Calling rotationManager->loop()...");
             shouldFlip = rotationManager->loop();
-            Serial.println("[DEBUG] rotationManager->loop() returned.");
         }
         
         if (frontendListener) frontendListener->loop();
-        Serial.println("[DEBUG] Giving sdMutex...");
         xSemaphoreGive(sdMutex);
     }
 
     // 2. Fetch Time & Handle Night Mode
     static int lastSec = -1;
     struct tm timeinfo;
-    Serial.println("[DEBUG] Checking getLocalTime...");
     if (getLocalTime(&timeinfo, 0)) {
-        Serial.println("[DEBUG] getLocalTime returned true.");
         if (config.standby.night_mode_enabled) {
             int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
             int off_min = config.standby.turn_off_at.substring(0, 2).toInt() * 60 + config.standby.turn_off_at.substring(3).toInt();
