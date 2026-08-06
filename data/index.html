@@ -1724,11 +1724,12 @@ function initNetworkSettings() {
     btnSaveMqtt.addEventListener('click', async () => {
       const mqtt_enable = document.getElementById('hw-mqtt-enable').value === '1';
       const mqtt_broker = document.getElementById('hw-mqtt-broker').value;
+      console.log("SENDING MQTT BROKER:", mqtt_broker);
       const mqtt_port = parseInt(document.getElementById('hw-mqtt-port').value, 10);
       const mqtt_user = document.getElementById('hw-mqtt-user').value;
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
-        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
+        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, reboot: true });
         window.showToast('MQTT Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
@@ -1856,7 +1857,8 @@ async function initSettings() {
     document.getElementById('cfg-dur-date').value = s.date_duration_sec;
     document.getElementById('cfg-dur-weather').value = s.weather_duration_sec;
     document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
-    document.getElementById('cfg-sprite-enable').value = (s.sprite_count > 0) ? 'true' : 'false';
+    let sprite_on = (s.sprite_count !== undefined) ? (s.sprite_count > 0) : s.fighter_enabled;
+    document.getElementById('cfg-sprite-enable').value = sprite_on ? 'true' : 'false';
     document.getElementById('cfg-fighter-int').value = s.fighter_interval_sec || 5;
 
     // Night Mode
@@ -1917,7 +1919,7 @@ async function initSettings() {
           date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
           weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
           gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
-          sprite_count: document.getElementById('cfg-sprite-enable').value === 'true' ? 2 : 0,
+          fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true', document.getElementById('cfg-sprite-enable').value === 'true' ? 2 : 0,
           fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
 
           night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',

@@ -279,7 +279,7 @@ void WebServerAPI::setupRoutes() {
         doc["date_duration_sec"] = config.idle.date_duration_sec;
         doc["weather_duration_sec"] = config.idle.weather_duration_sec;
         doc["gifs_count"] = config.idle.gifs_count;
-        doc["sprite_count"] = config.idle.sprite_count;
+        doc["fighter_enabled"] = config.idle.fighter_enabled;
         doc["fighter_interval_sec"] = config.idle.fighter_interval_sec;
 
         // Clock
@@ -387,7 +387,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_duration_sec"].isNull()) config.idle.date_duration_sec = doc["date_duration_sec"].as<int>();
         if (!doc["weather_duration_sec"].isNull()) config.idle.weather_duration_sec = doc["weather_duration_sec"].as<int>();
         if (!doc["gifs_count"].isNull()) config.idle.gifs_count = doc["gifs_count"].as<int>();
-        if (!doc["sprite_count"].isNull()) config.idle.sprite_count = doc["sprite_count"].as<int>();
+        if (!doc["fighter_enabled"].isNull()) config.idle.fighter_enabled = doc["fighter_enabled"].as<bool>();
         if (!doc["fighter_interval_sec"].isNull()) config.idle.fighter_interval_sec = doc["fighter_interval_sec"].as<int>();
         
         // Clock
@@ -472,7 +472,10 @@ void WebServerAPI::setupRoutes() {
 
         // MQTT
         if (!doc["mqtt_enable"].isNull()) config.mqtt.enabled = doc["mqtt_enable"].as<bool>();
-        if (!doc["mqtt_broker"].isNull()) config.mqtt.broker = doc["mqtt_broker"].as<String>();
+        if (!doc["mqtt_broker"].isNull()) {
+            config.mqtt.broker = doc["mqtt_broker"].as<String>();
+            LOGI("WebAPI", "Received MQTT Broker IP from WebUI: '%s'", config.mqtt.broker.c_str());
+        }
         if (!doc["mqtt_port"].isNull()) config.mqtt.port = doc["mqtt_port"].as<int>();
         if (!doc["mqtt_user"].isNull()) config.mqtt.user = doc["mqtt_user"].as<String>();
         if (!doc["mqtt_pass"].isNull() && doc["mqtt_pass"].as<String>() != "") config.mqtt.pass = doc["mqtt_pass"].as<String>();
@@ -500,13 +503,13 @@ void WebServerAPI::setupRoutes() {
         
         if (!saved) {
             // Settings were applied in RAM (so the display updates immediately) but could NOT be
-            // written to the SD card - they will be lost on the next reboot/power cycle. Surface
-            // this clearly instead of silently reporting success, so the user knows to retry
-            // (usually a transient SD card glitch) rather than assume everything was saved.
+            // written to the SD card - they will be lost on the next reboot/power cycle.
+            LOGE("WebAPI", "SD Card Write FAILED! Config changes were NOT saved and will be lost on reboot.");
             request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Settings applied but could not be saved to the SD card (conf.ini). They will be lost on reboot - please try saving again.\"}");
             return;
         }
 
+        LOGI("WebAPI", "Config successfully saved to SD card.");
         request->send(200, "application/json", "{\"success\":true,\"sd_saved\":true}");
     }, 4096);
     server.addHandler(settingsHandler);
