@@ -316,7 +316,7 @@ bool RetroFrontendListener::downloadPixelcadeArt(const String& folder, const Str
                 sd.mkdir(dirPath.c_str());
             }
             
-            FsFile file = sd.open(savePath.c_str(), FILE_WRITE);
+            FsFile file = sd.open(savePath.c_str(), FILE_OPEN_WRITE);
             if (file) {
                 WiFiClient* stream = http.getStreamPtr();
                     int len = http.getSize();
