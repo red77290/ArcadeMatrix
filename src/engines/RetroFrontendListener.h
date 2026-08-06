@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <PicoMQTT.h>
+#include <HTTPClient.h>
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
 #include "ClockEngine.h"
@@ -38,16 +39,23 @@ private:
     static void callback(char* topic, byte* payload, unsigned int length);
     static RetroFrontendListener* instance;
 
-    void handleMessage(String topic, String message);
+    void handleMessage(String topic, String payload);
+
+    bool hasPendingEvent = false;
+    String pendingPayload = "";
 
     // Parses a {"status": "...", "game": "...", "system": "..."} JSON payload (the format
     // published by tools/recalbox_daemon/arcadematrix_daemon.py) and either displays the matching
     // SD-cached Pixelcade artwork, falls back to scrolling text, or stops playback on "stopped".
-    void handleGameEvent(const String& jsonPayload);
+    void handleGameEvent(const String& jsonPayload, uint32_t reqId);
 
     // Maps a Recalbox/Batocera SystemId (e.g. "snes", "fbneo") to the folder name used by the
     // Pixelcade repository (e.g. "snes", "mame") - mirrors ArcadeMatrix_RPi's core/dmd_cache.py
     // SYSTEM_MAP exactly, so artwork synced by tools/pixelcade_sync/ resolves identically on
     // both projects.
     static String mapSystemToPixelcadeFolder(const String& systemId);
+
+    // Downloads the missing artwork from Pixelcade GitHub repository to the SD card.
+    // Returns true if successfully downloaded.
+    bool downloadPixelcadeArt(const String& folder, const String& name, String& outPath, uint32_t reqId);
 };

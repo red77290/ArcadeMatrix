@@ -5,7 +5,7 @@
 
 GifEngine* GifEngine::instance = nullptr;
 
-GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), rawLastFrameTime(0), pngShowStartTime(0), psramBuffer(nullptr), psramBufferSize(0) {
+GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), needsInitialFlip(false), rawLastFrameTime(0), pngShowStartTime(0), psramBuffer(nullptr), psramBufferSize(0) {
     instance = this;
 }
 
@@ -49,11 +49,17 @@ bool GifEngine::playGif(const char* filepath) {
         rawLastFrameTime = 0;
         return true;
     } else if (path.endsWith(".png") || path.endsWith(".PNG")) {
+        // Clear back buffer before drawing PNG to remove any leftover text
+        if (matrix) {
+            matrix->fillScreen(0);
+        }
+        
         if (decodePng(filepath)) {
             isRaw = false;
             isPng = true;
             isPlaying = true;
             pngShowStartTime = millis();
+            needsInitialFlip = true; // Request a flip in the main loop so the drawn PNG becomes visible
             return true;
         }
         return false;
@@ -284,6 +290,10 @@ bool GifEngine::loop() {
     if (isRaw) {
         return playRawFrame();
     } else if (isPng) {
+        if (needsInitialFlip) {
+            needsInitialFlip = false;
+            return true; // Return true to force main.cpp to flip the buffer once
+        }
         if (millis() - pngShowStartTime > pngHoldDurationMs) {
             if (playlistMode) {
                 loadNextFileInPlaylist();
@@ -449,8 +459,10 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     
     int scaleX = instance->matrix->width() / canvasW;
     int scaleY = instance->matrix->height() / canvasH;
-    if (scaleX < 1) scaleX = 1;
-    if (scaleY < 1) scaleY = 1;
+    int scale = min(scaleX, scaleY);
+    if (scale < 1) scale = 1;
+    scaleX = scale;
+    scaleY = scale;
     
     int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
     int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
@@ -571,8 +583,10 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
 
     int scaleX = instance->matrix->width() / canvasW;
     int scaleY = instance->matrix->height() / canvasH;
-    if (scaleX < 1) scaleX = 1;
-    if (scaleY < 1) scaleY = 1;
+    int scale = min(scaleX, scaleY);
+    if (scale < 1) scale = 1;
+    scaleX = scale;
+    scaleY = scale;
 
     int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
     int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
