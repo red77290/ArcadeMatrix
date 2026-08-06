@@ -14,12 +14,41 @@ RetroFrontendListener::RetroFrontendListener(MqttConfig& config, GifEngine* gifE
 void RetroFrontendListener::begin() {
     if (!mqttConfig.enabled || mqttConfig.broker.isEmpty()) return;
     
-    mqttClient.setServer(mqttConfig.broker.c_str(), mqttConfig.port);
-    mqttClient.setCallback(RetroFrontendListener::callback);
+    if (mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
+        LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
+        internalBroker = new PicoMQTT::Server(mqttConfig.port);
+        
+        // Subscribe to the configured topics locally
+        if (mqttConfig.topic_batocera.length() > 0) {
+            internalBroker->subscribe(mqttConfig.topic_batocera.c_str(), [](const char* topic, const char* payload) {
+                if (instance) instance->handleMessage(String(topic), String(payload));
+            });
+        }
+        if (mqttConfig.topic_recalbox.length() > 0) {
+            internalBroker->subscribe(mqttConfig.topic_recalbox.c_str(), [](const char* topic, const char* payload) {
+                if (instance) instance->handleMessage(String(topic), String(payload));
+            });
+        }
+        internalBroker->subscribe("/Recalbox/EmulationStation/Event", [](const char* topic, const char* payload) {
+            if (instance) instance->handleMessage(String(topic), String(payload));
+        });
+        
+        internalBroker->begin();
+        LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
+    } else {
+        LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%d", mqttConfig.broker.c_str(), mqttConfig.port);
+        mqttClient.setServer(mqttConfig.broker.c_str(), mqttConfig.port);
+        mqttClient.setCallback(RetroFrontendListener::callback);
+    }
 }
 
 bool RetroFrontendListener::loop() {
     if (!mqttConfig.enabled) return true;
+    
+    if (internalBroker) {
+        internalBroker->loop();
+        return true;
+    }
     
     if (!mqttClient.connected()) {
         long now = millis();
