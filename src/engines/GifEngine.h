@@ -95,8 +95,9 @@ private:
     
     FsFile currentFile;              ///< Handle to the currently streaming file (GIF/raw)
     FsFile pngFile;                  ///< Separate handle for PNGdec's callbacks (synchronous decode)
-    bool isRaw;                      ///< Flag indicating if file is .raw instead of .gif
+    bool isRaw;                      ///< Flag indicating if file is a raw uncompressed frame
     bool isPng;                      ///< Flag indicating if file is a static .png image
+    bool needsInitialFlip;           ///< Flag to force a single matrix flip when a static PNG is first loaded
     uint32_t rawLastFrameTime;
     uint32_t gifLastFrameTime = 0;
     int gifCurrentDelay = 0;
