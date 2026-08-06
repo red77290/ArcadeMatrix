@@ -186,3 +186,6 @@ Adafruit a las fuentes compiladas, no una limitación nueva.
 - **Evita los objetos `String`:** usa arrays de `char` (`char[]`) siempre que sea posible para evitar la fragmentación del heap, algo fatal en ESP32.
 - **Límites DMA:** nunca dibujes fuera de los límites de `matrix_width` y `matrix_height`. Adafruit GFX gestiona la mayor parte del clipping, pero las escrituras directas en memoria provocarán kernel panics.
 - **Fugas de memoria:** si asignas dinámicamente clases (`new MyClock()`), asegúrate de hacer `delete` cuando el tema cambie para evitar agotar la memoria.
+
+## Pruebas Unitarias y TDD
+El proyecto sigue los principios de TDD para la integración de API. Al agregar una nueva API, implemente la interfaz Provider correspondiente (`ICryptoProvider`, etc.) y escriba pruebas unitarias utilizando objetos Mock antes de conectarla. Las pruebas deben lograr la máxima cobertura en el análisis de JSON y la lógica de respaldo sin requerir hardware físico.

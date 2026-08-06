@@ -1,30 +1,12 @@
 #include "WeatherEngine.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
-#include <HTTPClient.h>
 #include <WiFi.h>
-#include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 
 extern ConfigLoader config;
 
-struct SpiRamAllocator {
-  void* allocate(size_t size) {
-    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = malloc(size); // Fallback to SRAM
-    return p;
-  }
-  void deallocate(void* pointer) {
-    free(pointer);
-  }
-  void* reallocate(void* ptr, size_t new_size) {
-    void* p = heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = realloc(ptr, new_size);
-    return p;
-  }
-};
 
-using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
 WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     validData = false;
@@ -37,6 +19,12 @@ WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
 }
 
 WeatherEngine::~WeatherEngine() {}
+
+void WeatherEngine::addProvider(IWeatherProvider* provider) {
+    if (provider) {
+        providers.push_back(provider);
+    }
+}
 
 void WeatherEngine::setCharacter(int characterId) {
     switch (characterId) {
@@ -82,94 +70,25 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
     // Set lastFetchTime immediately so we don't spam the API on failure
     lastFetchTime = millis();
 
-    HTTPClient http;
     String reqLang = config.weather.lang;
     if (reqLang.length() == 0) reqLang = "fr";
     
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + reqLang;
-    LOGI("WeatherEngine", "Requesting URL: http://api.openweathermap.org/data/2.5/forecast?q=%s&units=metric&appid=***&lang=%s", city.c_str(), reqLang.c_str());
-    
-    http.begin(url);
-    int httpCode = http.GET();
-    
-    if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
-        
-        SpiRamJsonDocument doc(32768);
-        DeserializationError error = deserializeJson(doc, payload);
-        
-        if (!error && doc["list"].is<JsonArray>()) {
-            JsonArray list = doc["list"].as<JsonArray>();
-            
-            const char* dayNames[7];
-            const char* fixedLabels[MAX_FORECAST_DAYS];
-            
-            String lang = config.weather.lang;
-            if (lang.equalsIgnoreCase("fr")) {
-                const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
-                const char* fr_fixedLabels[MAX_FORECAST_DAYS] = {"AUJ.", "DEMN", nullptr};
-                memcpy(dayNames, fr_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
-            } else if (lang.equalsIgnoreCase("es")) {
-                const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
-                const char* es_fixedLabels[MAX_FORECAST_DAYS] = {"HOY", "MANA", nullptr};
-                memcpy(dayNames, es_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, es_fixedLabels, sizeof(fixedLabels));
-            } else {
-                const char* en_dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-                const char* en_fixedLabels[MAX_FORECAST_DAYS] = {"TODAY", "TMRW", nullptr};
-                memcpy(dayNames, en_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, en_fixedLabels, sizeof(fixedLabels));
-            }
-
-            struct tm timeinfo;
-            bool haveTime = getLocalTime(&timeinfo, 0);
-
-            const int sampleIndices[MAX_FORECAST_DAYS] = {0, 8, 16};
-
-            numForecasts = 0;
-            for (int i = 0; i < MAX_FORECAST_DAYS; i++) {
-                int idx = sampleIndices[i];
-                if (idx >= (int)list.size()) break;
-
-                JsonObject item = list[idx];
-                WeatherData& d = forecasts[numForecasts];
-                d.temp = item["main"]["temp"].as<float>();
-                d.description = item["weather"][0]["main"].as<String>();
-                d.iconCode = item["weather"][0]["icon"].as<String>();
-
-                if (fixedLabels[i] != nullptr) {
-                    d.label = fixedLabels[i];
-                } else if (haveTime) {
-                    // Day 3 (~+48h): show the actual weekday name, matching the RPi's behavior.
-                    int dayOfWeek = (timeinfo.tm_wday + 2) % 7;
-                    d.label = dayNames[dayOfWeek];
-                } else {
-                    d.label = "DAY3";
-                }
-                numForecasts++;
-            }
-
-            if (numForecasts > 0) {
-                validData = true;
-                activeSlide = 0;
-                lastSlideChange = millis();
-                LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
-            } else {
-                LOGE("WeatherEngine", "Error: Valid JSON received but 0 forecast entries parsed.");
-            }
-        } else {
-            LOGE("WeatherEngine", "JSON Parse Error: %s", error.c_str());
-            LOGE("WeatherEngine", "Payload snippet: %.150s", payload.c_str());
-        }
-    } else {
-        String errPayload = http.getString();
-        LOGE("WeatherEngine", "HTTP API Error Code: %d", httpCode);
-        if (errPayload.length() > 0) {
-            LOGE("WeatherEngine", "Error Response: %s", errPayload.c_str());
+    bool fetched = false;
+    for (IWeatherProvider* provider : providers) {
+        if (provider->fetchForecast(apiKey, city, reqLang, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
+            fetched = true;
+            break;
         }
     }
-    http.end();
+    
+    if (fetched && numForecasts > 0) {
+        validData = true;
+        activeSlide = 0;
+        lastSlideChange = millis();
+        LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
+    } else {
+        LOGE("WeatherEngine", "Error: Failed to parse weather data or 0 forecast entries parsed.");
+    }
 }
 
 void WeatherEngine::drawIcon(const String& icon, int x, int y) {
