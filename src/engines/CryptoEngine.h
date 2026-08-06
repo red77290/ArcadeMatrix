@@ -57,7 +57,7 @@ private:
     bool fetchSuccess;
     String currentImageUrl;
     
-    PNG png;
+    PNG* pngPtr = nullptr;
     uint16_t* currentDecodeBuffer;
     static int pngDraw(PNGDRAW *pDraw);
     static CryptoEngine* instance;

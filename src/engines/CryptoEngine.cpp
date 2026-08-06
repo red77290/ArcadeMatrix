@@ -122,13 +122,16 @@ void CryptoEngine::fetchQuote(const String& symbol) {
                     memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
                     currentDecodeBuffer = cache.iconPixels;
                     
-                    PNG png;
-                    int rc = png.openRAM(buf, size, pngDraw);
+                    PNG* png = new PNG();
+                    pngPtr = png;
+                    int rc = png->openRAM(buf, size, pngDraw);
                     if (rc == PNG_SUCCESS) {
-                        png.decode(NULL, 0);
+                        png->decode(NULL, 0);
                         cache.hasIcon = true;
                     }
-                    png.close();
+                    png->close();
+                    delete png;
+                    pngPtr = nullptr;
                     free(buf);
                     currentDecodeBuffer = nullptr;
                 } else {
@@ -175,7 +178,7 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
     
     uint16_t lineBuffer[16];
     // We decode to RGB565. Transparency will be handled by drawing only non-black or by PNG library.
-    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
+    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
     
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];

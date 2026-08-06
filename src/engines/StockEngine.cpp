@@ -122,13 +122,16 @@ void StockEngine::fetchQuote(const String& symbol) {
                     
                     memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
                     currentDecodeBuffer = cache.iconPixels;
-                    
-                    int rc = png.openRAM(buf, size, pngDraw);
+                    PNG* png = new PNG();
+                    pngPtr = png;
+                    int rc = png->openRAM(buf, size, pngDraw);
                     if (rc == PNG_SUCCESS) {
-                        png.decode(NULL, 0);
+                        png->decode(NULL, 0);
                         cache.hasIcon = true;
                     }
-                    png.close();
+                    png->close();
+                    delete png;
+                    pngPtr = nullptr;
                     free(buf);
                     currentDecodeBuffer = nullptr;
                 } else {
@@ -174,7 +177,7 @@ int StockEngine::pngDraw(PNGDRAW *pDraw) {
     if (y >= 16) return 0;
     
     uint16_t lineBuffer[16];
-    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
     
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
