@@ -10,7 +10,7 @@ public:
     float mockChange = 5.0f;
     int fetchCount = 0;
     
-    bool fetchQuote(const String& symbol, float& outPrice, float& outChange) override {
+    bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) override {
         fetchCount++;
         if (mockSuccess) {
             outPrice = mockPrice;
@@ -28,7 +28,7 @@ public:
     float mockChange = -2.5f;
     int fetchCount = 0;
     
-    bool fetchQuote(const String& symbol, float& outPrice, float& outChange) override {
+    bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) override {
         fetchCount++;
         if (mockSuccess) {
             outPrice = mockPrice;
