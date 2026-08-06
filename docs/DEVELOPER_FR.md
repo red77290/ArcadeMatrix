@@ -236,3 +236,6 @@ Si vous souhaitez porter ArcadeMatrix sur une nouvelle carte ESP32 (avec un broc
    - Éditez `webinstaller/index.html` pour ajouter un nouveau bouton `<esp-web-install-button manifest="manifest-mon_nouvel_esp.json">` dans l'interface de flashage web.
 
 Une fois cela fait, un simple `pio run -e mon_nouvel_esp` compilera le code entier, isolé et sécurisé, spécifiquement pour votre carte !
+
+## Tests Unitaires & TDD
+Le projet suit les principes TDD pour l'intégration des API. Lors de l'ajout d'une nouvelle API, implémentez l'interface Provider correspondante (`ICryptoProvider` etc.) et écrivez les tests unitaires avec des objets Mock avant l'intégration finale. Les tests doivent garantir une couverture maximale sur l'analyse JSON et la logique de fallback (secours) sans nécessiter de matériel physique.

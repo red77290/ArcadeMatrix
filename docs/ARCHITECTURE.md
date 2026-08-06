@@ -139,3 +139,6 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
   or `board_build.embed_txtfiles`-based sdkconfig overrides) — flagged as a future hardening task,
   not implemented in this pass to avoid an unverified bootloader-level change.
 
+
+## Dependency Injection & Providers
+The project uses a Dependency Injection (DI) architecture for its API-driven engines (Crypto, Stock, Weather). Engines are decoupled from HTTP logic via interfaces (`IProvider` in C++, `traits` in Rust). This allows fallback mechanisms across multiple providers and enables comprehensive unit testing via Mocks.

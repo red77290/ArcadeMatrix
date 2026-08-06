@@ -37,6 +37,10 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "engines/StockEngine.h"
 #include "core/RotationManager.h"
 #include "core/BitmapFontLoader.h"
+#include "api/CoinGeckoProvider.h"
+#include "api/BinanceProvider.h"
+#include "api/OpenWeatherMapProvider.h"
+#include "api/YahooFinanceProvider.h"
 
 // Pins definition moved to HardwareProfile.h
 
@@ -245,10 +249,18 @@ void setup() {
     dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
     
     weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
+    weatherEngine->addProvider(new OpenWeatherMapProvider());
+    
     fighterEngine = new FighterEngine(matrixEngine.getDisplay());
     fighterEngine->initialize();
+    
     cryptoEngine.begin(matrixEngine.getDisplay());
+    cryptoEngine.addProvider(new CoinGeckoProvider());
+    cryptoEngine.addProvider(new BinanceProvider());
+    
     stockEngine.begin(matrixEngine.getDisplay());
+    stockEngine.addProvider(new YahooFinanceProvider());
+    
     rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation

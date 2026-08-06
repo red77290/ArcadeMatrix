@@ -1,13 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-
-struct WeatherData {
-    String description;
-    float temp;
-    String iconCode;
-    String label; // "Today" / "Tmrw" / abbreviated weekday name
-};
+#include <vector>
+#include "../api/IWeatherProvider.h"
 
 class WeatherEngine {
 public:
@@ -15,6 +10,8 @@ public:
 
     WeatherEngine(MatrixPanel_I2S_DMA* display);
     ~WeatherEngine();
+    
+    void addProvider(IWeatherProvider* provider);
 
     // Fetch a new 3-day forecast if the cache interval has passed. Mirrors the RPi's
     // WeatherEngine._fetch_weather(): uses OpenWeatherMap's free /forecast endpoint (3-hour steps
@@ -29,6 +26,7 @@ public:
 
 private:
     MatrixPanel_I2S_DMA* matrix;
+    std::vector<IWeatherProvider*> providers;
     WeatherData forecasts[MAX_FORECAST_DAYS];
     int numForecasts;
     bool validData;

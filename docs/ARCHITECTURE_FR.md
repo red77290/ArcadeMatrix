@@ -113,3 +113,6 @@ Toute la logique matérielle est résolue **au moment de la compilation** :
 2. **`src/core/SDUtils.h`** : Agit comme une **Interface/Facade**. Il masque l'implémentation sous-jacente (`SD_MMC` pour l'ESP32-S3 ou `SdFat` pour l'ESP32 classique). La logique métier (`WebServerAPI.cpp`, `GifEngine.cpp`) appelle des méthodes génériques comme `openNextFileHelper(dir)` sans jamais utiliser de `#ifdef` en interne.
 
 Ce modèle garantit que le code métier est totalement agnostique du matériel, tout en offrant un coût de performance (overhead) rigoureusement égal à zéro à l'exécution.
+
+## Injection de Dépendances & Fournisseurs (Providers)
+Le projet utilise une architecture d'Injection de Dépendances (DI) pour ses moteurs basés sur des API (Crypto, Stock, Météo). Les moteurs sont découplés de la logique HTTP via des interfaces (`IProvider` en C++, `traits` en Rust). Cela permet des mécanismes de secours sur plusieurs fournisseurs et rend possible l'utilisation de tests unitaires complets via des Mocks.

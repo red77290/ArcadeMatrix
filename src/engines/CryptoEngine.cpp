@@ -1,12 +1,23 @@
 #include "CryptoEngine.h"
 #include "../core/Logger.h"
+#include <HTTPClient.h>
+
+CryptoEngine* CryptoEngine::instance = nullptr;
 
 CryptoEngine::CryptoEngine() 
     : matrix(nullptr), currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
-      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {}
+      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
+    instance = this;
+}
 
 void CryptoEngine::begin(MatrixPanel_I2S_DMA* display) {
     matrix = display;
+}
+
+void CryptoEngine::addProvider(ICryptoProvider* provider) {
+    if (provider) {
+        providers.push_back(provider);
+    }
 }
 
 void CryptoEngine::updateConfig(const CryptoConfig& cfg) {
@@ -64,85 +75,66 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         return;
     }
     
-    // Reset transient price for fresh fetch attempt
     float newPrice = 0.0f;
     float newChange = 0.0f;
+    String newImgUrl = "";
     bool fetched = false;
     
-    String lowerSymbol = symbol;
-    lowerSymbol.toLowerCase();
-    
-    HTTPClient http;
-    http.setTimeout(3000);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-    
-    // 2a. PRIMARY API: CoinGecko Markets API by Symbol
-    String cgUrl = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&symbols=" + lowerSymbol;
-    LOGI("CryptoEngine", "[CoinGecko Primary] Fetching live crypto quote for %s...", symbol.c_str());
-    
-    int code = -1;
-    if (http.begin(cgUrl)) {
-        code = http.GET();
-        if (code == 200) {
-            String payload = http.getString();
-            DynamicJsonDocument doc(2048);
-            DeserializationError err = deserializeJson(doc, payload);
-            if (!err && doc.is<JsonArray>() && doc.size() > 0) {
-                JsonObject coin = doc[0];
-                newPrice = coin["current_price"] | 0.0f;
-                newChange = coin["price_change_percentage_24h"] | 0.0f;
-                if (newPrice > 0.0f) fetched = true;
-            }
-        }
-        http.end();
-    }
-    
-    // 2b. CoinGecko Simple Price API by Coin ID (handles ERGO, FLUX, KASPA, etc.)
-    if (!fetched) {
-        String coinId = lowerSymbol;
-        if (lowerSymbol == "erg") coinId = "ergo";
-        
-        String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=usd&include_24hr_change=true";
-        LOGI("CryptoEngine", "[CoinGecko ID Fallback] Fetching quote for ID %s...", coinId.c_str());
-        if (http.begin(cgSimpleUrl)) {
-            code = http.GET();
-            if (code == 200) {
-                String payload = http.getString();
-                DynamicJsonDocument doc(1024);
-                DeserializationError err = deserializeJson(doc, payload);
-                if (!err && doc.containsKey(coinId)) {
-                    JsonObject item = doc[coinId];
-                    newPrice = item["usd"] | 0.0f;
-                    newChange = item["usd_24h_change"] | 0.0f;
-                    if (newPrice > 0.0f) fetched = true;
-                }
-            }
-            http.end();
+    // Try each provider until one succeeds
+    for (ICryptoProvider* provider : providers) {
+        if (provider->fetchQuote(symbol, newPrice, newChange, newImgUrl)) {
+            fetched = true;
+            break;
         }
     }
     
-    // 2c. FALLBACK: Binance API
-    if (!fetched) {
-        String apiSymbol = symbol;
-        if (!apiSymbol.endsWith("USDT") && !apiSymbol.endsWith("USD")) {
-            apiSymbol += "USDT";
+    // Download and Cache Icon
+    if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
+        String sdPath = "/crypto_icons/" + symbol + ".png";
+        if (!sd.exists(sdPath)) {
+            String proxyUrl = "https://wsrv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
+            HTTPClient httpImg;
+            httpImg.setTimeout(5000);
+            if (httpImg.begin(proxyUrl)) {
+                int code = httpImg.GET();
+                if (code == 200) {
+                    if (!sd.exists("/crypto_icons")) sd.mkdir("/crypto_icons");
+                    FsFile f = sd.open(sdPath, FILE_WRITE);
+                    if (f) {
+                        httpImg.writeToStream(&f);
+                        f.close();
+                    }
+                }
+                httpImg.end();
+            }
         }
-        String binanceUrl = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + apiSymbol;
-        LOGI("CryptoEngine", "[Binance Fallback] Fetching live quote for %s...", apiSymbol.c_str());
         
-        if (http.begin(binanceUrl)) {
-            code = http.GET();
-            if (code == 200) {
-                String payload = http.getString();
-                StaticJsonDocument<512> doc;
-                DeserializationError err = deserializeJson(doc, payload);
-                if (!err) {
-                    newPrice = doc["lastPrice"] | 0.0f;
-                    newChange = doc["priceChangePercent"] | 0.0f;
-                    if (newPrice > 0.0f) fetched = true;
+        // Load into RAM
+        if (sd.exists(sdPath)) {
+            FsFile f = sd.open(sdPath, FILE_READ);
+            if (f) {
+                size_t size = f.size();
+                uint8_t* buf = (uint8_t*)malloc(size);
+                if (buf) {
+                    f.read(buf, size);
+                    f.close();
+                    
+                    memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
+                    currentDecodeBuffer = cache.iconPixels;
+                    
+                    PNG png;
+                    int rc = png.openRAM(buf, size, pngDraw);
+                    if (rc == PNG_SUCCESS) {
+                        png.decode(NULL, 0);
+                        cache.hasIcon = true;
+                    }
+                    png.close();
+                    free(buf);
+                    currentDecodeBuffer = nullptr;
+                } else {
+                    f.close();
                 }
             }
-            http.end();
         }
     }
     
@@ -150,6 +142,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
     if (fetched && newPrice > 0.0f) {
         cache.price = newPrice;
         cache.changePercent24h = newChange;
+        cache.imageUrl = newImgUrl;
         cache.lastFetchTime = now;
         cache.hasData = true;
         
@@ -169,6 +162,31 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         fetchSuccess = false;
         LOGW("CryptoEngine", "No quote available for %s", symbol.c_str());
     }
+}
+
+int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
+    if (!instance || !instance->currentDecodeBuffer) return 0;
+    
+    int iWidth = pDraw->iWidth;
+    if (iWidth > 16) iWidth = 16;
+    
+    int y = pDraw->y;
+    if (y >= 16) return 0;
+    
+    uint16_t lineBuffer[16];
+    // We decode to RGB565. Transparency will be handled by drawing only non-black or by PNG library.
+    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
+    
+    for (int x = 0; x < iWidth; x++) {
+        uint16_t color = lineBuffer[x];
+        // Only save non-black pixels (assuming black is background/transparent)
+        if (color != 0) {
+            instance->currentDecodeBuffer[y * 16 + x] = color;
+        } else {
+            instance->currentDecodeBuffer[y * 16 + x] = 0x0000; // Transparent indicator
+        }
+    }
+    return 1;
 }
 
 bool CryptoEngine::loop() {
@@ -220,11 +238,24 @@ void CryptoEngine::renderQuote() {
         // 1. Draw 16x16 Scaled Icon (2x scale)
         int iconX = 6;
         int iconY = 6;
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                uint16_t color = icon[y * 8 + x];
-                if (color != 0) {
-                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+        
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasIcon) {
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    uint16_t color = cache.iconPixels[y * 16 + x];
+                    if (color != 0) {
+                        matrix->drawPixel(iconX + x, iconY + y, color);
+                    }
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
                 }
             }
         }
@@ -262,11 +293,24 @@ void CryptoEngine::renderQuote() {
         int iconY = (mH - 16) / 2;
         if (iconY < 0) iconY = 0;
         
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                uint16_t color = icon[y * 8 + x];
-                if (color != 0) {
-                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasIcon) {
+            // Draw 16x16 scaled down to 8x8 by dropping every other pixel
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
                 }
             }
         }

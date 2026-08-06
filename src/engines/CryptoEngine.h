@@ -1,12 +1,13 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
 #include <vector>
 #include <map>
 #include "../core/ConfigLoader.h"
+#include "../api/ICryptoProvider.h"
 #include "icons/CryptoStockIcons.h"
+#include <PNGdec.h>
+#include "../core/SDUtils.h"
 
 #ifndef ASSET_QUOTE_CACHE_H
 #define ASSET_QUOTE_CACHE_H
@@ -15,6 +16,9 @@ struct AssetQuoteCache {
     float changePercent24h = 0.0f;
     uint32_t lastFetchTime = 0;
     bool hasData = false;
+    String imageUrl = "";
+    uint16_t iconPixels[256]; // 16x16 RGB565 buffer
+    bool hasIcon = false;
 };
 #endif
 
@@ -27,6 +31,7 @@ public:
     CryptoEngine();
     
     void begin(MatrixPanel_I2S_DMA* display);
+    void addProvider(ICryptoProvider* provider);
     void updateConfig(const CryptoConfig& cfg);
     void onDisplayStart();
     bool loop();
@@ -40,6 +45,8 @@ private:
     uint32_t lastItemSwitchTime;
     uint32_t lastFetchTime;
     
+    std::vector<ICryptoProvider*> providers;
+    
     // Per-symbol quote cache map
     std::map<String, AssetQuoteCache> quoteCache;
     
@@ -48,6 +55,12 @@ private:
     float currentPrice;
     float changePercent24h;
     bool fetchSuccess;
+    String currentImageUrl;
+    
+    PNG png;
+    uint16_t* currentDecodeBuffer;
+    static int pngDraw(PNGDRAW *pDraw);
+    static CryptoEngine* instance;
     
     void parseSymbols();
     void fetchQuote(const String& symbol);
