@@ -1,12 +1,23 @@
 #include "StockEngine.h"
 #include "../core/Logger.h"
+#include <HTTPClient.h>
+
+StockEngine* StockEngine::instance = nullptr;
 
 StockEngine::StockEngine() 
     : matrix(nullptr), currentSymbolIndex(0), lastItemSwitchTime(0),
-      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {}
+      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
+    instance = this;
+}
 
 void StockEngine::begin(MatrixPanel_I2S_DMA* display) {
     matrix = display;
+}
+
+void StockEngine::addProvider(IStockProvider* provider) {
+    if (provider) {
+        providers.push_back(provider);
+    }
 }
 
 void StockEngine::updateConfig(const StockConfig& cfg) {
@@ -48,6 +59,7 @@ void StockEngine::onDisplayStart() {
 
 void StockEngine::fetchQuote(const String& symbol) {
     activeSymbol = symbol;
+    activeSymbol = symbol;
     fetchSuccess = false;
     
     uint32_t now = millis();
@@ -66,69 +78,113 @@ void StockEngine::fetchQuote(const String& symbol) {
     
     float newPrice = 0.0f;
     float newChange = 0.0f;
+    String newImgUrl = "";
     bool fetched = false;
     
-    // Yahoo Finance v8 Chart API (does not require crumb/cookie, bypasses 401 error)
-    String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
-    LOGI("StockEngine", "Fetching live stock quote for %s...", symbol.c_str());
+    // Try each provider until one succeeds
+    for (IStockProvider* provider : providers) {
+        if (provider->fetchQuote(symbol, newPrice, newChange, newImgUrl)) {
+            fetched = true;
+            break;
+        }
+    }
     
-    HTTPClient http;
-    http.setTimeout(3000);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-    
-    int code = -1;
-    if (http.begin(url)) {
-        code = http.GET();
-        if (code != 200) {
-            http.end();
-            // Fallback to query2 if query1 failed
-            String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
-            if (http.begin(fallbackUrl)) {
-                code = http.GET();
+    // Download and Cache Icon
+    if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
+        String sdPath = "/stock_icons/" + symbol + ".png";
+        if (!sd.exists(sdPath)) {
+            String proxyUrl = "https://wsrv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
+            HTTPClient httpImg;
+            httpImg.setTimeout(5000);
+            if (httpImg.begin(proxyUrl)) {
+                int code = httpImg.GET();
+                if (code == 200) {
+                    if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
+                    FsFile f = sd.open(sdPath, FILE_WRITE);
+                    if (f) {
+                        httpImg.writeToStream(&f);
+                        f.close();
+                    }
+                }
+                httpImg.end();
             }
         }
         
-        if (code == 200) {
-            String payload = http.getString();
-            DynamicJsonDocument doc(2048);
-            DeserializationError err = deserializeJson(doc, payload);
-            if (!err) {
-                JsonObject meta = doc["chart"]["result"][0]["meta"];
-                newPrice = meta["regularMarketPrice"] | 0.0f;
-                float prevClose = meta["previousClose"] | meta["chartPreviousClose"] | newPrice;
-                if (prevClose > 0.0f && newPrice > 0.0f) {
-                    newChange = ((newPrice - prevClose) / prevClose) * 100.0f;
+        // Load into RAM
+        if (sd.exists(sdPath)) {
+            FsFile f = sd.open(sdPath, FILE_READ);
+            if (f) {
+                size_t size = f.size();
+                uint8_t* buf = (uint8_t*)malloc(size);
+                if (buf) {
+                    f.read(buf, size);
+                    f.close();
+                    
+                    memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
+                    currentDecodeBuffer = cache.iconPixels;
+                    
+                    int rc = png.openRAM(buf, size, pngDraw);
+                    if (rc == PNG_SUCCESS) {
+                        png.decode(NULL, 0);
+                        cache.hasIcon = true;
+                    }
+                    png.close();
+                    free(buf);
+                    currentDecodeBuffer = nullptr;
                 } else {
-                    newChange = 0.0f;
+                    f.close();
                 }
-                if (newPrice > 0.0f) fetched = true;
             }
         }
-        http.end();
     }
     
+    // Update cache if successful
     if (fetched && newPrice > 0.0f) {
         cache.price = newPrice;
         cache.changePercent24h = newChange;
+        cache.imageUrl = newImgUrl;
         cache.lastFetchTime = now;
         cache.hasData = true;
         
         currentPrice = newPrice;
         changePercent24h = newChange;
         fetchSuccess = true;
-        LOGI("StockEngine", "[Fetch Success] Updated stock cache for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
+        LOGI("StockEngine", "[Fetch Success] Updated cache for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
     } else if (cache.hasData) {
         // Fallback to last known cached price for THIS symbol if HTTP failed
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
-        LOGW("StockEngine", "[HTTP Failed] Reusing last known cached price for %s: $%.2f", symbol.c_str(), currentPrice);
+        LOGW("StockEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.2f", symbol.c_str(), currentPrice);
     } else {
         currentPrice = 0.0f;
         changePercent24h = 0.0f;
         fetchSuccess = false;
-        LOGW("StockEngine", "No stock quote available for %s", symbol.c_str());
+        LOGW("StockEngine", "No quote available for %s", symbol.c_str());
     }
+}
+
+int StockEngine::pngDraw(PNGDRAW *pDraw) {
+    if (!instance || !instance->currentDecodeBuffer) return 0;
+    
+    int iWidth = pDraw->iWidth;
+    if (iWidth > 16) iWidth = 16;
+    
+    int y = pDraw->y;
+    if (y >= 16) return 0;
+    
+    uint16_t lineBuffer[16];
+    instance->png.getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+    
+    for (int x = 0; x < iWidth; x++) {
+        uint16_t color = lineBuffer[x];
+        if (color != 0) {
+            instance->currentDecodeBuffer[y * 16 + x] = color;
+        } else {
+            instance->currentDecodeBuffer[y * 16 + x] = 0x0000;
+        }
+    }
+    return 1;
 }
 
 bool StockEngine::loop() {
@@ -176,11 +232,24 @@ void StockEngine::renderQuote() {
         // 1. Draw 16x16 Scaled Icon (2x scale)
         int iconX = 6;
         int iconY = 6;
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                uint16_t color = icon[y * 8 + x];
-                if (color != 0) {
-                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+        
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasIcon) {
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    uint16_t color = cache.iconPixels[y * 16 + x];
+                    if (color != 0) {
+                        matrix->drawPixel(iconX + x, iconY + y, color);
+                    }
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
                 }
             }
         }
@@ -218,11 +287,24 @@ void StockEngine::renderQuote() {
         int iconY = (mH - 16) / 2;
         if (iconY < 0) iconY = 0;
         
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                uint16_t color = icon[y * 8 + x];
-                if (color != 0) {
-                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasIcon) {
+            // Draw 16x16 scaled down to 8x8 by dropping every other pixel
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) {
+                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                    }
                 }
             }
         }
