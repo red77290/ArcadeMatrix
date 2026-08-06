@@ -99,7 +99,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
                 int code = httpImg.GET();
                 if (code == 200) {
                     if (!sd.exists("/crypto_icons")) sd.mkdir("/crypto_icons");
-                    FsFile f = sd.open(sdPath, FILE_WRITE);
+                    FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
                     if (f) {
                         httpImg.writeToStream(&f);
                         f.close();
@@ -111,7 +111,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         
         // Load into RAM
         if (sd.exists(sdPath)) {
-            FsFile f = sd.open(sdPath, FILE_READ);
+            FsFile f = sd.open(sdPath, FILE_OPEN_READ);
             if (f) {
                 size_t size = f.size();
                 uint8_t* buf = (uint8_t*)malloc(size);
