@@ -419,6 +419,13 @@ void loop() {
     }
     wasPoweredOn = true;
 
+    // Handle incoming MQTT events before evaluating display logic
+    // We do NOT wrap this in sdMutex because frontendListener handles SD access and network
+    // operations asynchronously, and takes sdMutex internally only when needed!
+    if (frontendListener) {
+        frontendListener->loop();
+    }
+
     bool shouldClear = true;
     if (gifEngine.isActive()) {
         shouldClear = false; // AnimatedGIF needs previous frame in buffer
@@ -458,7 +465,6 @@ void loop() {
             shouldFlip = rotationManager->loop();
         }
         
-        if (frontendListener) frontendListener->loop();
         xSemaphoreGive(sdMutex);
     }
 
