@@ -19,6 +19,7 @@ indexación de playlists GIF.)
 
 ## Características
 - **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** y **Versus (Mugen)**.
+- **Tickers de Criptomonedas y Bolsa en tiempo real:** cotizaciones en vivo y distintivos % 24h de CoinGecko, Binance y Yahoo Finance con caché configurable.
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
 - **Motor de Pelea MUGEN:** ¡Simula nativamente juegos de pelea 2D en la matriz usando sprites extraídos con una alineación perfecta en el suelo virtual!
 - **Motor GIF:** Reproducción fluida de GIFs almacenados en la tarjeta SD.
