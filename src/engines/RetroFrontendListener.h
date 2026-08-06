@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <PicoMQTT.h>
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
 #include "ClockEngine.h"
@@ -28,6 +29,7 @@ private:
     MessageEngine* message;
     WiFiClient espClient;
     PubSubClient mqttClient;
+    PicoMQTT::Server* internalBroker = nullptr;
 
     unsigned long lastReconnectAttempt;
     uint32_t currentRequestId = 0;
