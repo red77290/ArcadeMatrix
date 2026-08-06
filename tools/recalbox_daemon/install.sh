@@ -11,7 +11,7 @@
 # Linux distros. `sshpass` is optional but recommended (lets this script try Recalbox's/Batocera's
 # well-known default passwords automatically); without it you'll be prompted for the password
 # once per attempt.
-set -euo pipefail
+set -uo pipefail
 
 RECALBOX_PASS="recalboxroot"
 BATOCERA_PASS="linux"
@@ -101,24 +101,24 @@ if [ "$SYSTEM" = "recalbox" ]; then
     sed "s/{{BROKER}}/$BROKER_IP/g" "$SCRIPT_DIR/arcadematrix_daemon.py" > "$TMP_DIR/arcadematrix_daemon.py"
 
     echo "Cleaning up any previous install..."
-    ssh_run "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh"
-    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR"
+    ssh_run "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh || true" || true
+    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR" || true
 
     echo "Uploading daemon..."
-    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/recalbox/share/arcadematrix_daemon.py"
-    scp_run "$PASSWORD" "$SCRIPT_DIR/arcadematrix_launcher(permanent).sh" "$TARGET_DIR/arcadematrix_launcher(permanent).sh"
-    ssh_run "$PASSWORD" "chmod +x '$TARGET_DIR/arcadematrix_launcher(permanent).sh'"
+    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/recalbox/share/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
+    scp_run "$PASSWORD" "$SCRIPT_DIR/arcadematrix_launcher(permanent).sh" "$TARGET_DIR/arcadematrix_launcher(permanent).sh" || { echo "SCP failed!"; exit 1; }
+    ssh_run "$PASSWORD" "chmod +x '$TARGET_DIR/arcadematrix_launcher(permanent).sh'" || true
 else
     TARGET_DIR="/userdata/system/scripts"
     sed "s/{{BROKER}}/$BROKER_IP/g" "$SCRIPT_DIR/arcadematrix_mqtt_batocera.sh" > "$TMP_DIR/arcadematrix_mqtt.sh"
 
     echo "Cleaning up any previous install..."
-    ssh_run "$PASSWORD" "pkill -f arcadematrix_mqtt.sh || true"
-    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR"
+    ssh_run "$PASSWORD" "pkill -f arcadematrix_mqtt.sh || true" || true
+    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR" || true
 
     echo "Uploading hook script..."
-    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh"
-    ssh_run "$PASSWORD" "chmod +x $TARGET_DIR/arcadematrix_mqtt.sh"
+    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh" || { echo "SCP failed!"; exit 1; }
+    ssh_run "$PASSWORD" "chmod +x $TARGET_DIR/arcadematrix_mqtt.sh" || true
 fi
 
 echo "Rebooting $TARGET_IP to apply changes..."
