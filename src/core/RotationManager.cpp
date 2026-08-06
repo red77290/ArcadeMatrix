@@ -74,7 +74,7 @@ void RotationManager::resetRotation() {
 }
 
 void RotationManager::updateBackgroundSprites() {
-  if (config.idle.sprite_count > 0 && !fighterEngine->isActive()) {
+  if (config.idle.fighter_enabled && !fighterEngine->isActive()) {
     fighterEngine->startFight();
   }
 }
@@ -203,7 +203,7 @@ bool RotationManager::loop() {
     }
 
     // Draw fighters on top of clock/date/weather
-    if (config.idle.sprite_count > 0) {
+    if (config.idle.fighter_enabled) {
       fighterEngine->loop();
       fighterEngine->draw();
     }

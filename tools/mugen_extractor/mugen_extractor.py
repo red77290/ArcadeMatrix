@@ -225,18 +225,11 @@ def process_character(char_dir, out_dir):
 
     if not all_valid_frames: return False
     
-    # Ensure all mandatory animations are present with fallbacks
+    # Ensure all mandatory animations are present
     for req in ['stand', 'walk', 'attack', 'hit', 'win']:
         if req not in all_valid_frames:
-            if 'stand' in all_valid_frames:
-                all_valid_frames[req] = all_valid_frames['stand']
-            elif 'walk' in all_valid_frames:
-                all_valid_frames[req] = all_valid_frames['walk']
-            elif len(all_valid_frames) > 0:
-                all_valid_frames[req] = list(all_valid_frames.values())[0]
-            else:
-                logging.warning(f"Character {char_name} completely empty. Skipping.")
-                return False
+            logging.warning(f"Character {char_name} missing mandatory animation '{req}'. Skipping.")
+            return False
 
     if walk_h is None or walk_h <= 0: walk_h = global_max_y - global_min_y
     if walk_h <= 0: walk_h = TARGET_HEIGHT
