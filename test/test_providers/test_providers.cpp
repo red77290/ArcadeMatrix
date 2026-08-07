@@ -26,10 +26,9 @@ void test_parse_coingecko_simple(void) {
     String payload = "{\"ergo\":{\"usd\":1.23,\"usd_24h_change\":-5.12}}";
     float price = 0.0f;
     float change = 0.0f;
-    String imageUrl = "";
     
     CoinGeckoProvider provider;
-    bool success = provider.parseSimple(payload, "ergo", price, change, imageUrl);
+    bool success = provider.parseSimple(payload, "ergo", price, change);
     
     TEST_ASSERT_TRUE(success);
     TEST_ASSERT_EQUAL_FLOAT(1.23f, price);
@@ -40,10 +39,9 @@ void test_parse_binance(void) {
     String payload = "{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"62000.00\",\"priceChangePercent\":\"1.5\"}";
     float price = 0.0f;
     float change = 0.0f;
-    String imageUrl = "";
     
     BinanceProvider provider;
-    bool success = provider.parsePayload(payload, price, change, imageUrl);
+    bool success = provider.parsePayload(payload, price, change);
     
     TEST_ASSERT_TRUE(success);
     TEST_ASSERT_EQUAL_FLOAT(62000.0f, price);
@@ -54,10 +52,9 @@ void test_parse_yahoo_finance(void) {
     String payload = "{\"chart\":{\"result\":[{\"meta\":{\"regularMarketPrice\":150.25,\"previousClose\":148.00}}]}}";
     float price = 0.0f;
     float change = 0.0f;
-    String imageUrl = "";
     
     YahooFinanceProvider provider;
-    bool success = provider.parsePayload(payload, price, change, imageUrl);
+    bool success = provider.parsePayload(payload, price, change);
     
     TEST_ASSERT_TRUE(success);
     TEST_ASSERT_EQUAL_FLOAT(150.25f, price);
