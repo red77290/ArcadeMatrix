@@ -88,13 +88,47 @@ void test_parse_openweathermap(void) {
     TEST_ASSERT_EQUAL_STRING("TODAY", forecasts[0].label.c_str());
 }
 
+void test_parse_coingecko_malformed(void) {
+    String badPayload = "{\"invalid_json\": true}";
+    float price = 0.0f;
+    float change = 0.0f;
+    String imageUrl = "";
+
+    CoinGeckoProvider provider;
+    bool success = provider.parsePrimary(badPayload, price, change, imageUrl);
+    TEST_ASSERT_FALSE(success);
+}
+
+void test_parse_binance_malformed(void) {
+    String badPayload = "{\"symbol\":\"BTCUSDT\", \"error\":\"Rate limited\"}";
+    float price = 0.0f;
+    float change = 0.0f;
+
+    BinanceProvider provider;
+    bool success = provider.parsePayload(badPayload, price, change);
+    TEST_ASSERT_FALSE(success);
+}
+
+void test_parse_yahoo_malformed(void) {
+    String badPayload = "{\"chart\":{\"result\":[]}}";
+    float price = 0.0f;
+    float change = 0.0f;
+
+    YahooFinanceProvider provider;
+    bool success = provider.parsePayload(badPayload, price, change);
+    TEST_ASSERT_FALSE(success);
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
     RUN_TEST(test_parse_coingecko_primary);
     RUN_TEST(test_parse_coingecko_simple);
+    RUN_TEST(test_parse_coingecko_malformed);
     RUN_TEST(test_parse_binance);
+    RUN_TEST(test_parse_binance_malformed);
     RUN_TEST(test_parse_yahoo_finance);
+    RUN_TEST(test_parse_yahoo_malformed);
     RUN_TEST(test_parse_openweathermap);
     UNITY_END();
 }

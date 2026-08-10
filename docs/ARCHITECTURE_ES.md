@@ -15,9 +15,9 @@ A diferencia de la versión Raspberry Pi, que utiliza una canalización de rende
 
 ---
 
-## 2. Estructura monolítica del motor
+## 2. Arquitectura modular acoplada al hardware con renderizado directo
 
-Debido a las restricciones anteriores, el ESP32 usa una **estructura monolítica del motor**.
+En lugar de una abstracción pesada de múltiples capas, el ESP32 utiliza una **arquitectura modular acoplada al hardware con renderizado directo**.
 
 ### Diagrama
 

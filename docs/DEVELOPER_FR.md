@@ -8,65 +8,81 @@ Bienvenue dans le guide de développement ESP32 d'ArcadeMatrix. Ce document expl
 
 ## 1. Ajouter une nouvelle horloge spécialisée
 
-En raison de l'architecture monolithique de la version ESP32, ajouter une horloge signifie créer une classe C++ qui gère sa propre logique et son propre dessin matériel.
+Grâce à l'architecture modulaire couplée au matériel d'ArcadeMatrix, ajouter une nouvelle horloge consiste à dériver ou instancier une classe d'affichage sous `src/engines/clocks/` qui gère sa propre logique et son rendu direct.
+
+### Matrice de Compatibilité des Thèmes d'Horloge (IDs 0 à 29)
+
+| ID | Thème / Horloge | Classe / Fichier | 128x32 | 256x64 | Police Perso (.amf) | Couleurs Persos | Statut Matériel |
+|---|---|---|:---:|:---:|:---:|:---:|:---:|
+| 0 | Nintendo | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 1 | Capcom | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 2 | Taito | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 3 | Sega | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 4 | Cave | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 5 | Konami | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 6 | SNK | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 7 | Technos | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 8 | IGS | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 9 | Hudson | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 10 | Banpresto | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 11 | Namco | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 12 | Ryu | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 13 | Mario | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 14 | Marco | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 15 | Megaman | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 16 | Bub | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 17 | Space Invaders | `ArcadeClock` | ✓ | ✓ | — | — | Validé matériel |
+| 18 | Cyberpunk | `CyberpunkClock` | ✓ | ✓ | — | — | Validé matériel |
+| 19 | FlipClock | `FlipClock` | ✓ | ✓ | — | — | Validé matériel |
+| **20** | **Custom Gradient** | `ClockEngine` | **✓** | **✓** | **✓** | **✓** | **Validé matériel** |
+| 21 | PongClock | `PongClock` | ✓ | ✓ | — | — | Validé matériel |
+| 22 | TetrisClock | `TetrisClock` | ✓ | ✓ | — | — | Validé matériel |
+| 23 | TetrisGameboy | `TetrisGameboyClock` | ✓ | ✓ | — | — | Validé matériel |
+| 24 | PacmanClock | `PacmanClock` | ✓ | ✓ | — | — | Validé matériel |
+| 25 | WordClock | `WordClock` | ✓ | ✓ | — | — | Validé matériel |
+| 26 | BinaryClock | `BinaryClock` | ✓ | ✓ | — | — | Validé matériel |
+| 27 | VersusClock | `VersusClock` | ✓ | ✓ | — | — | Validé matériel |
+| 28 | SlotMachineClock | `SlotMachineClock` | ✓ | ✓ | — | — | Validé matériel |
+| 29 | MatrixRainClock | `MatrixRainClock` | ✓ | ✓ | — | — | Validé matériel |
+
+---
 
 ### Étape par étape
 
-1. **Créer le header (`include/MyClock.h`) :**
+1. **Créer le header (`src/engines/clocks/MyClock.h`) :**
    ```cpp
    #pragma once
    #include <Arduino.h>
-   #include "MatrixDisplay.h" // Your HUB75 matrix wrapper
-   #include "ConfigLoader.h"
+   #include "ESP32-HUB75-MatrixPanel-I2S-DMA.h"
+   #include "core/ConfigLoader.h"
 
    class MyClock {
    public:
-       MyClock(MatrixDisplay* display, Config* config);
-       void loop(); // Called every frame
+       MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config);
+       void loop(); // Appelé à chaque frame
    private:
-       MatrixDisplay* _display;
-       Config* _config;
-       
-       // Your state variables
-       int _snakeLength;
+       MatrixPanel_I2S_DMA* _display;
+       ConfigLoader* _config;
    };
    ```
 
-2. **Créer l'implémentation (`src/MyClock.cpp`) :**
+2. **Créer l'implémentation (`src/engines/clocks/MyClock.cpp`) :**
    ```cpp
    #include "MyClock.h"
 
-   MyClock::MyClock(MatrixDisplay* display, Config* config) {
-       _display = display;
-       _config = config;
-       _snakeLength = 3;
-   }
+   MyClock::MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config) : _display(display), _config(config) {}
 
    void MyClock::loop() {
-       // 1. Clear screen or draw background
+       if (!_display) return;
        _display->fillScreen(0);
-
-       // 2. Execute logic
-       // ...
-
-       // 3. Draw directly using Adafruit GFX primitives
        _display->drawPixel(10, 10, _display->color565(255, 0, 0));
    }
    ```
 
 3. **Enregistrer l'horloge dans `ClockEngine.cpp` :**
-   - Incluez votre header en haut de `src/ClockEngine.cpp`.
-   - Instanciez votre horloge dynamiquement (ou comme variable membre) dans le `ClockEngine` selon le thème sélectionné par l'utilisateur.
-   - Exemple dans `ClockEngine::loop()` :
-     ```cpp
-     switch (_config->time_theme) {
-         case 22:
-             if (!_myClock) _myClock = new MyClock(_display, _config);
-             _myClock->loop();
-             break;
-         // ...
-     }
-     ```
+   - Incluez votre header dans `src/engines/ClockEngine.cpp`.
+   - Instanciez votre horloge selon le thème `clock_theme` sélectionné par l'utilisateur.
+   - Déclenchez l'appel dans `ClockEngine::loop()`.
 
 ---
 
@@ -237,5 +253,16 @@ Si vous souhaitez porter ArcadeMatrix sur une nouvelle carte ESP32 (avec un broc
 
 Une fois cela fait, un simple `pio run -e mon_nouvel_esp` compilera le code entier, isolé et sécurisé, spécifiquement pour votre carte !
 
-## Tests Unitaires & TDD
-Le projet suit les principes TDD pour l'intégration des API. Lors de l'ajout d'une nouvelle API, implémentez l'interface Provider correspondante (`ICryptoProvider` etc.) et écrivez les tests unitaires avec des objets Mock avant l'intégration finale. Les tests doivent garantir une couverture maximale sur l'analyse JSON et la logique de fallback (secours) sans nécessiter de matériel physique.
+---
+
+## 5. Limites Connues & Sécurité (Known Limitations & Security)
+
+### Sécurité
+- **API non authentifiée** : L'API REST HTTP et le serveur WebUI s'exécutent sans authentification sur le réseau local. ArcadeMatrix est conçu pour être utilisé sur un réseau de confiance (LAN privé). Ne pas exposer directement le port 80 à Internet sans reverse proxy authentifié.
+- **CORS** : Les en-têtes `Access-Control-Allow-Origin: *` sont activés par défaut pour permettre le contrôle depuis des applications Web locales.
+
+### Limites Connues
+- **Pas de rollback OTA automatique** : Le processus de mise à jour OTA écrit dans la partition secondaire et bascule le bootloader. En cas de démarrage avec un firmware fonctionnellement défectueux, il n'y a pas de mécanisme de restauration automatique sans re-flashage physique ou WebSerial.
+- **Réseau Synchrone dans les Providers** : Bien que le serveur HTTP `AsyncWebServer` soit asynchrone, les rafraîchissements réseau des providers (`CryptoEngine`, `StockEngine`, `WeatherEngine`) s'exécutent de manière synchrone avec mise en cache locale. En cas de perte de connexion, le dernier état en cache est conservé sans bloquer la boucle d'affichage principale.
+- **Carte SD requise pour GIF et MUGEN** : Les animations GIF et les sprites MUGEN nécessitent impérativement une carte SD installée et formatée en FAT32 ou exFAT.
+

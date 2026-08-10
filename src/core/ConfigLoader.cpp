@@ -307,6 +307,110 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     return false;
 }
 
+String ConfigLoader::serializeToString() {
+    String out = "";
+    out += "# ==========================================\n";
+    out += "# ArcadeMatrix - Configuration File\n";
+    out += "# ==========================================\n\n";
+
+    out += "[wifi]\n";
+    out += "ssid=" + wifi.ssid + "\n";
+    out += "password=" + wifi.password + "\n";
+    out += "hostname=" + wifi.hostname + "\n\n";
+
+    out += "[time]\n";
+    out += "ntp_server=" + time.ntpServer + "\n";
+    out += "timezone=" + time.timezone + "\n";
+    out += "format_24h=" + String(time.format24h ? "1" : "0") + "\n";
+    out += "clock_font=" + String(time.clock_font) + "\n";
+    out += "clock_size=" + String(time.clock_size) + "\n";
+    out += "clock_offset_x=" + String(time.clock_offset_x) + "\n";
+    out += "clock_offset_y=" + String(time.clock_offset_y) + "\n";
+    out += "clock_theme=" + String(time.clock_theme) + "\n";
+    out += "clock_color_1=" + time.clock_color_1 + "\n";
+    out += "clock_color_2=" + time.clock_color_2 + "\n";
+    out += "clock_font_path=" + time.clock_font_path + "\n\n";
+
+    out += "[matrix]\n";
+    out += "width=" + String(matrix.width) + "\n";
+    out += "height=" + String(matrix.height) + "\n";
+    out += "panel_type=" + matrix.panelType + "\n";
+    out += "chain=" + String(matrix.chainLength) + "\n";
+    out += "brightness_limit=" + String(matrix.powerLimitPercent) + "\n";
+    out += "color_depth=" + String(matrix.colorDepth) + "\n";
+    out += "force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0") + "\n";
+    out += "rgb_sequence=" + matrix.rgbSequence + "\n";
+    out += "limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz) + "\n";
+    out += "driver_chip=" + matrix.driverChip + "\n";
+    out += "clk_phase=" + String(matrix.clkPhase ? "1" : "0") + "\n";
+    out += "latch_blanking=" + String(matrix.latchBlanking) + "\n";
+    out += "row_address_mode=" + String(matrix.rowAddressMode) + "\n\n";
+
+    out += "[mqtt]\n";
+    out += "enabled=" + String(mqtt.enabled ? "1" : "0") + "\n";
+    out += "broker=" + mqtt.broker + "\n";
+    out += "port=" + String(mqtt.port) + "\n";
+    out += "user=" + mqtt.user + "\n";
+    out += "pass=" + mqtt.pass + "\n";
+    out += "topic_batocera=" + mqtt.topic_batocera + "\n";
+    out += "topic_recalbox=" + mqtt.topic_recalbox + "\n";
+    out += "device_name=" + mqtt.deviceName + "\n\n";
+
+    out += "[idle]\n";
+    out += "rotation=" + idle.rotation + "\n";
+    out += "clock_duration_sec=" + String(idle.clock_duration_sec) + "\n";
+    out += "date_duration_sec=" + String(idle.date_duration_sec) + "\n";
+    out += "weather_duration_sec=" + String(idle.weather_duration_sec) + "\n";
+    out += "gifs_count=" + String(idle.gifs_count) + "\n";
+    out += "fighter_enabled=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
+    out += "fighter_interval_sec=" + String(idle.fighter_interval_sec) + "\n";
+    out += "mode=" + idle.mode + "\n";
+    out += "gifs_before_clock=" + String(idle.gifs_before_clock) + "\n\n";
+
+    out += "[weather]\n";
+    out += "api_key=" + weather.api_key + "\n";
+    out += "city=" + weather.city + "\n";
+    out += "lang=" + weather.lang + "\n";
+    out += "weather_offset_x=" + String(weather.weather_offset_x) + "\n";
+    out += "weather_offset_y=" + String(weather.weather_offset_y) + "\n\n";
+
+    out += "[standby]\n";
+    out += "night_mode_enabled=" + String(standby.night_mode_enabled ? "1" : "0") + "\n";
+    out += "turn_off_at=" + standby.turn_off_at + "\n";
+    out += "wake_up_at=" + standby.wake_up_at + "\n";
+    out += "night_brightness=" + String(standby.night_brightness) + "\n\n";
+
+    out += "[date]\n";
+    out += "theme=" + String(dateSettings.theme) + "\n";
+    out += "background_sprite=" + dateSettings.background_sprite + "\n";
+    out += "format=" + dateSettings.format + "\n";
+    out += "date_font=" + String(dateSettings.date_font) + "\n";
+    out += "date_size=" + String(dateSettings.date_size) + "\n";
+    out += "date_offset_x=" + String(dateSettings.date_offset_x) + "\n";
+    out += "date_offset_y=" + String(dateSettings.date_offset_y) + "\n";
+    out += "date_color_1=" + dateSettings.date_color_1 + "\n";
+    out += "date_color_2=" + dateSettings.date_color_2 + "\n";
+    out += "date_font_path=" + dateSettings.date_font_path + "\n\n";
+
+    out += "[fonts]\n";
+    out += "custom_font_path=" + fonts.custom_font_path + "\n\n";
+
+    out += "[crypto]\n";
+    out += "enabled=" + String(crypto.enabled ? "1" : "0") + "\n";
+    out += "symbols=" + crypto.symbols + "\n";
+    out += "duration_sec=" + String(crypto.duration_sec) + "\n";
+    out += "cache_ttl_min=" + String(crypto.cache_ttl_min) + "\n";
+    out += "currency=" + crypto.currency + "\n\n";
+
+    out += "[stock]\n";
+    out += "enabled=" + String(stock.enabled ? "1" : "0") + "\n";
+    out += "symbols=" + stock.symbols + "\n";
+    out += "duration_sec=" + String(stock.duration_sec) + "\n";
+    out += "cache_ttl_min=" + String(stock.cache_ttl_min) + "\n\n";
+
+    return out;
+}
+
 bool ConfigLoader::writeConfigFile(const char* filepath) {
     // Some ESP32 cores append to the file if it exists, so we must remove it first to overwrite cleanly
     if (sd.exists(filepath)) {
@@ -319,119 +423,8 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
         return false;
     }
     
-    file.println("# ==========================================");
-    file.println("# ArcadeMatrix - Configuration File");
-    file.println("# ==========================================\n");
-
-    file.println("[wifi]");
-    file.println("ssid=" + wifi.ssid);
-    file.println("password=" + wifi.password);
-    file.println("hostname=" + wifi.hostname);
-    file.println();
-
-    file.println("[time]");
-    file.println("ntp_server=" + time.ntpServer);
-    file.println("timezone=" + time.timezone);
-    file.println("format_24h=" + String(time.format24h ? "1" : "0"));
-    file.println("clock_font=" + String(time.clock_font));
-    file.println("clock_size=" + String(time.clock_size));
-    file.println("clock_offset_x=" + String(time.clock_offset_x));
-    file.println("clock_offset_y=" + String(time.clock_offset_y));
-    file.println("# Theme/Character: 0=Nintendo, 1=Capcom, 2=Taito, 3=Sega, 4=Cave, 5=Konami, 6=SNK, 7=Technos, 8=IGS, 9=Hudson, 10=Banpresto, 11=Namco, 12=Ryu, 13=Mario, 14=Marco, 15=Megaman, 16=Bub, 17=SpaceInvader, 18=Cyberpunk, 19=FlipClock");
-    file.println("clock_theme=" + String(time.clock_theme));
-    file.println("clock_color_1=" + time.clock_color_1);
-    file.println("clock_color_2=" + time.clock_color_2);
-    file.println("clock_font_path=" + time.clock_font_path);
-    file.println();
-    file.println("[matrix]");
-    file.println("width=" + String(matrix.width));
-    file.println("height=" + String(matrix.height));
-    file.println("panel_type=" + matrix.panelType);
-    file.println("chain=" + String(matrix.chainLength));
-    file.println("brightness_limit=" + String(matrix.powerLimitPercent));
-    file.println("color_depth=" + String(matrix.colorDepth));
-    file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
-    file.println("rgb_sequence=" + matrix.rgbSequence);
-    file.println("limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz));
-    file.println("driver_chip=" + matrix.driverChip);
-    file.println("clk_phase=" + String(matrix.clkPhase ? "1" : "0"));
-    file.println("latch_blanking=" + String(matrix.latchBlanking));
-    file.println("row_address_mode=" + String(matrix.rowAddressMode));
-    file.println();
-
-    file.println("[mqtt]");
-    file.println("enabled=" + String(mqtt.enabled ? "1" : "0"));
-    file.println("broker=" + mqtt.broker);
-    file.println("port=" + String(mqtt.port));
-    file.println("user=" + mqtt.user);
-    file.println("pass=" + mqtt.pass);
-    file.println("topic_batocera=" + mqtt.topic_batocera);
-    file.println("topic_recalbox=" + mqtt.topic_recalbox);
-    file.println();
-
-    file.println("[idle]");
-    file.println("rotation=" + idle.rotation);
-    file.println("clock_duration_sec=" + String(idle.clock_duration_sec));
-    file.println("date_duration_sec=" + String(idle.date_duration_sec));
-    file.println("weather_duration_sec=" + String(idle.weather_duration_sec));
-    file.println("gifs_count=" + String(idle.gifs_count));
-    file.println("fighter_enabled=" + String(idle.fighter_enabled ? "true" : "false"));
-    file.println("fighter_interval_sec=" + String(idle.fighter_interval_sec));
-    file.println("mode=" + idle.mode);
-    file.println("gifs_before_clock=" + String(idle.gifs_before_clock));
-    file.println();
-    
-    file.println("[weather]");
-    file.println("api_key=" + weather.api_key);
-    file.println("city=" + weather.city);
-    file.println("lang=" + weather.lang);
-    file.println("weather_offset_x=" + String(weather.weather_offset_x));
-    file.println("weather_offset_y=" + String(weather.weather_offset_y));
-    file.println();
-
-    file.println("[standby]");
-    file.println("night_mode_enabled=" + String(standby.night_mode_enabled ? "1" : "0"));
-    file.println("turn_off_at=" + standby.turn_off_at);
-    file.println("wake_up_at=" + standby.wake_up_at);
-    file.println("night_brightness=" + String(standby.night_brightness));
-    file.println();
-
-    file.println("[date]");
-    file.println("# Theme colors for the Date display");
-    file.println("# -1=None, 0=Nintendo, 1=Capcom, 2=Taito, 3=Sega, 4=Cave, 5=Konami, 6=SNK, 7=Technos, 8=IGS, 9=Hudson, 10=Banpresto, 11=Namco");
-    file.println("theme=" + String(dateSettings.theme));
-    file.println("background_sprite=" + dateSettings.background_sprite);
-    file.println("format=" + dateSettings.format);
-    file.println("date_font=" + String(dateSettings.date_font));
-    file.println("date_size=" + String(dateSettings.date_size));
-    file.println("date_offset_x=" + String(dateSettings.date_offset_x));
-    file.println("date_offset_y=" + String(dateSettings.date_offset_y));
-    file.println("date_color_1=" + dateSettings.date_color_1);
-    file.println("date_color_2=" + dateSettings.date_color_2);
-    file.println("date_font_path=" + dateSettings.date_font_path);
-    file.println();
-
-    file.println("[fonts]");
-    file.println("# Optional SD-loadable custom bitmap font (.amf format, see tools/bdf_to_amfont)");
-    file.println("# Leave empty to use the compiled-in fonts only.");
-    file.println("custom_font_path=" + fonts.custom_font_path);
-    file.println();
-
-    file.println("[crypto]");
-    file.println("enabled=" + String(crypto.enabled ? "1" : "0"));
-    file.println("symbols=" + crypto.symbols);
-    file.println("duration_sec=" + String(crypto.duration_sec));
-    file.println("cache_ttl_min=" + String(crypto.cache_ttl_min));
-    file.println("currency=" + crypto.currency);
-    file.println();
-
-    file.println("[stock]");
-    file.println("enabled=" + String(stock.enabled ? "1" : "0"));
-    file.println("symbols=" + stock.symbols);
-    file.println("duration_sec=" + String(stock.duration_sec));
-    file.println("cache_ttl_min=" + String(stock.cache_ttl_min));
-    file.println();
-    
+    String content = serializeToString();
+    file.print(content);
     file.close();
 
     // Sanity check: an SD glitch mid-write can leave a truncated/empty file even though close()

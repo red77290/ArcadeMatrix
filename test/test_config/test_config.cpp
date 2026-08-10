@@ -4,24 +4,24 @@
 #include <unity.h>
 #include "core/ConfigLoader.h"
 
-void setUp(void) {
-    // set stuff up here
-}
-
-void tearDown(void) {
-    // clean stuff up here
-}
+void setUp(void) {}
+void tearDown(void) {}
 
 void test_default_values(void) {
     ConfigLoader config;
-    // Test if defaults are properly set
-    TEST_ASSERT_EQUAL_UINT16(64, config.matrix.width);
-    TEST_ASSERT_EQUAL_UINT16(32, config.matrix.height);
-    TEST_ASSERT_EQUAL_STRING("P3", config.matrix.panelType.c_str());
-    TEST_ASSERT_EQUAL_UINT8(2, config.matrix.chainLength);
-    TEST_ASSERT_EQUAL_UINT8(24, config.matrix.colorDepth);
+    // Verify true defaults from ConfigLoader::setDefaults()
+    TEST_ASSERT_EQUAL_INT(64, config.matrix.width);
+    TEST_ASSERT_EQUAL_INT(32, config.matrix.height);
+    TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.panelType.c_str());
+    TEST_ASSERT_EQUAL_INT(1, config.matrix.chainLength);
+    TEST_ASSERT_EQUAL_INT(100, config.matrix.powerLimitPercent);
+    TEST_ASSERT_EQUAL_INT(8, config.matrix.colorDepth);
+    TEST_ASSERT_EQUAL_STRING("SHIFTREG", config.matrix.driverChip.c_str());
     TEST_ASSERT_FALSE(config.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING("pool.ntp.org", config.time.ntpServer.c_str());
+    TEST_ASSERT_TRUE(config.time.format24h);
+    TEST_ASSERT_EQUAL_STRING("clock,date,weather,gifs", config.idle.rotation.c_str());
+    TEST_ASSERT_TRUE(config.idle.fighter_enabled);
 }
 
 void test_parse_valid_ini(void) {
@@ -31,15 +31,17 @@ void test_parse_valid_ini(void) {
         "[WIFI]\n"
         "SSID=\"MyNetwork\"\n"
         "PASSWORD=\"Secret123\"\n"
+        "HOSTNAME=\"MyMatrix\"\n"
         "\n"
         "[MATRIX]\n"
         "WIDTH=256\n"
         "HEIGHT=64\n"
-        "PANEL_TYPE=P4\n"
+        "PANEL_TYPE=FM6126A\n"
         "CHAIN=2\n"
         "BRIGHTNESS_LIMIT=40\n"
         "COLOR_DEPTH=16\n"
         "FORCE_SINGLE_BUFFER=true\n"
+        "DRIVER_CHIP=FM6126A\n"
         "\n"
         "[MQTT]\n"
         "ENABLED=true\n"
@@ -51,7 +53,10 @@ void test_parse_valid_ini(void) {
         "\n"
         "[TIME]\n"
         "NTP_SERVER=\"time.google.com\"\n"
-        "FORMAT_24H=false\n";
+        "FORMAT_24H=false\n"
+        "CLOCK_THEME=20\n"
+        "CLOCK_COLOR_1=\"#FF0000\"\n"
+        "CLOCK_COLOR_2=\"#00FF00\"\n";
 
     bool success = config.parseFromString(iniData);
     TEST_ASSERT_TRUE(success);
@@ -59,26 +64,31 @@ void test_parse_valid_ini(void) {
     // Assert WiFi
     TEST_ASSERT_EQUAL_STRING("MyNetwork", config.wifi.ssid.c_str());
     TEST_ASSERT_EQUAL_STRING("Secret123", config.wifi.password.c_str());
+    TEST_ASSERT_EQUAL_STRING("MyMatrix", config.wifi.hostname.c_str());
 
     // Assert Matrix
-    TEST_ASSERT_EQUAL_UINT16(256, config.matrix.width);
-    TEST_ASSERT_EQUAL_UINT16(64, config.matrix.height);
-    TEST_ASSERT_EQUAL_STRING("P4", config.matrix.panelType.c_str());
-    TEST_ASSERT_EQUAL_UINT8(2, config.matrix.chainLength);
-    TEST_ASSERT_EQUAL_UINT8(40, config.matrix.powerLimitPercent);
-    TEST_ASSERT_EQUAL_UINT8(16, config.matrix.colorDepth);
+    TEST_ASSERT_EQUAL_INT(256, config.matrix.width);
+    TEST_ASSERT_EQUAL_INT(64, config.matrix.height);
+    TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.panelType.c_str());
+    TEST_ASSERT_EQUAL_INT(2, config.matrix.chainLength);
+    TEST_ASSERT_EQUAL_INT(40, config.matrix.powerLimitPercent);
+    TEST_ASSERT_EQUAL_INT(16, config.matrix.colorDepth);
     TEST_ASSERT_TRUE(config.matrix.forceSingleBuffer);
+    TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.driverChip.c_str());
 
     // Assert MQTT
     TEST_ASSERT_TRUE(config.mqtt.enabled);
     TEST_ASSERT_EQUAL_STRING("192.168.1.100", config.mqtt.broker.c_str());
-    TEST_ASSERT_EQUAL_UINT16(1883, config.mqtt.port);
+    TEST_ASSERT_EQUAL_INT(1883, config.mqtt.port);
     TEST_ASSERT_EQUAL_STRING("mqtt_user", config.mqtt.user.c_str());
     TEST_ASSERT_EQUAL_STRING("ArcadeMatrix", config.mqtt.deviceName.c_str());
 
     // Assert Time
     TEST_ASSERT_EQUAL_STRING("time.google.com", config.time.ntpServer.c_str());
     TEST_ASSERT_FALSE(config.time.format24h);
+    TEST_ASSERT_EQUAL_INT(20, config.time.clock_theme);
+    TEST_ASSERT_EQUAL_STRING("#FF0000", config.time.clock_color_1.c_str());
+    TEST_ASSERT_EQUAL_STRING("#00FF00", config.time.clock_color_2.c_str());
 }
 
 void test_parse_malformed_ini(void) {
@@ -97,12 +107,39 @@ void test_parse_malformed_ini(void) {
     TEST_ASSERT_EQUAL_STRING("Spaces Before And After", config.wifi.password.c_str());
 }
 
+void test_round_trip_in_memory(void) {
+    ConfigLoader original;
+    original.wifi.ssid = "RoundTripSSID";
+    original.wifi.password = "RoundTripPass";
+    original.matrix.width = 128;
+    original.matrix.height = 64;
+    original.matrix.powerLimitPercent = 75;
+    original.time.clock_theme = 15;
+    original.time.clock_color_1 = "#123456";
+
+    String serialized = original.serializeToString();
+    TEST_ASSERT_TRUE(serialized.length() > 100);
+
+    ConfigLoader reloaded;
+    bool success = reloaded.parseFromString(serialized.c_str());
+    TEST_ASSERT_TRUE(success);
+
+    TEST_ASSERT_EQUAL_STRING(original.wifi.ssid.c_str(), reloaded.wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING(original.wifi.password.c_str(), reloaded.wifi.password.c_str());
+    TEST_ASSERT_EQUAL_INT(original.matrix.width, reloaded.matrix.width);
+    TEST_ASSERT_EQUAL_INT(original.matrix.height, reloaded.matrix.height);
+    TEST_ASSERT_EQUAL_INT(original.matrix.powerLimitPercent, reloaded.matrix.powerLimitPercent);
+    TEST_ASSERT_EQUAL_INT(original.time.clock_theme, reloaded.time.clock_theme);
+    TEST_ASSERT_EQUAL_STRING(original.time.clock_color_1.c_str(), reloaded.time.clock_color_1.c_str());
+}
+
 void setup() {
-    delay(2000); // Give time for monitor to connect
+    delay(2000);
     UNITY_BEGIN();
     RUN_TEST(test_default_values);
     RUN_TEST(test_parse_valid_ini);
     RUN_TEST(test_parse_malformed_ini);
+    RUN_TEST(test_round_trip_in_memory);
     UNITY_END();
 }
 

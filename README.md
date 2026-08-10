@@ -8,7 +8,7 @@ Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This p
 
 **[⬇️ Download the latest pre-built firmware](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 (built and tested automatically by CI on every tagged release - pick `ArcadeMatrix-esp32dev.zip`
-or `ArcadeMatrix-esp32s3.zip` depending on your board, then flash `firmware-*.bin`,
+or `ArcadeMatrix-esp32s3_waveshare.zip` depending on your board, then flash `firmware-*.bin`,
 `bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` with `esptool.py` - see
 [Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release) for exact offsets and
 command. The browser-based Web Installer above will be the easier option once the repo is public.

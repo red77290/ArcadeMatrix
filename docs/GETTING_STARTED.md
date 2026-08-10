@@ -75,9 +75,8 @@ pio run -e esp32dev -t upload --upload-port COM5           # Windows example
 ### Flashing a pre-built release
 
 If you don't want to build from source, download `ArcadeMatrix-esp32dev.zip` or
-`ArcadeMatrix-esp32s3.zip` from the [latest release](https://github.com/red77290/ArcadeMatrix/releases/latest)
-instead - each contains `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin`, and
-`boot_app0.bin`, built and test-gated by CI. Flash all four with `esptool.py` at the offsets used
+`ArcadeMatrix-esp32s3_waveshare.zip` from the [latest release](https://github.com/red77290/ArcadeMatrix/releases/latest)
+instead — `ArcadeMatrix-esp32s3_waveshare.zip` contains `firmware-esp32s3_waveshare.bin`, `bootloader-esp32s3_waveshare.bin`, `partitions-esp32s3_waveshare.bin` and `boot_app0.bin` for the Waveshare ESP32-S3 board. Flash all four with `esptool.py` at the offsets used
 by the Arduino-ESP32 default partitioning (same offsets the browser-based Web Installer uses -
 see `webinstaller/README.md`):
 

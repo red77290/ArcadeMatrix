@@ -15,9 +15,9 @@ Unlike the Raspberry Pi version which uses a decoupled, high-level Python render
 
 ---
 
-## 2. The Monolithic Engine Structure
+## 2. Hardware-Coupled Modular Embedded Architecture with Direct Rendering
 
-Because of the constraints above, the ESP32 uses a **Monolithic Engine Structure**.
+Rather than a heavy multi-layer abstraction, the ESP32 uses a **Hardware-Coupled Modular Embedded Architecture with Direct Rendering**.
 
 ### Diagram
 

@@ -29,6 +29,8 @@ public:
     
     // Reset to start of rotation (e.g. after manual interruption)
     void resetRotation();
+    void parseRotationString(const String& rotStr);
+    const std::vector<RotationModule>& getSequence() const { return sequence; }
     RotationModule getCurrentModule() const { return sequence.empty() ? MODULE_CLOCK : sequence[currentIndex]; }
 
 private:
@@ -46,7 +48,6 @@ private:
     
     uint32_t moduleStartTime;
     
-    void parseRotationString(const String& rotStr);
     void switchToModule(int index);
     void updateBackgroundSprites();
   };

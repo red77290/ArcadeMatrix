@@ -63,9 +63,8 @@ pio run -e esp32dev -t upload --upload-port COM5           # Windows example
 ### Flashear una release precompilada
 
 Si no quieres compilar desde el código fuente, descarga `ArcadeMatrix-esp32dev.zip` o
-`ArcadeMatrix-esp32s3.zip` desde la [última release](https://github.com/red77290/ArcadeMatrix/releases/latest)
-en su lugar. Cada una contiene `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` y
-`boot_app0.bin`, compilados y validados por la CI. Flashea los cuatro con `esptool.py` en los offsets usados
+`ArcadeMatrix-esp32s3_waveshare.zip` desde la [última release](https://github.com/red77290/ArcadeMatrix/releases/latest)
+en su lugar — `ArcadeMatrix-esp32s3_waveshare.zip` contiene `firmware-esp32s3_waveshare.bin`, `bootloader-esp32s3_waveshare.bin`, `partitions-esp32s3_waveshare.bin` y `boot_app0.bin` para la placa ESP32-S3 Waveshare. Flashea los cuatro con `esptool.py` en los offsets usados
 por el particionado predeterminado de Arduino-ESP32 (los mismos offsets que utiliza el Web Installer basado en navegador;
 consulta `webinstaller/README_ES.md`):
 

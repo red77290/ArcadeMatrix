@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+
+echo "🔍 Running ArcadeMatrix pre-commit validations..."
+
+echo "--------------------------------------------------"
+echo "1/3 Validating Web Installer Manifests & Binaries..."
+python3 scripts/validate_webinstaller.py
+
+echo "--------------------------------------------------"
+echo "2/3 Validating Documentation Drift & Config Keys..."
+python3 scripts/validate_docs.py
+
+echo "--------------------------------------------------"
+echo "3/3 Validating Unit Test Compilation (PlatformIO)..."
+pio test -e esp32dev --without-uploading --without-testing
+
+echo "--------------------------------------------------"
+echo "🎉 All ArcadeMatrix pre-commit validations PASSED!"

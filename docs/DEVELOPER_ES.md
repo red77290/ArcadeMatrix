@@ -8,65 +8,81 @@ Bienvenido a la guía de desarrollo ESP32 de ArcadeMatrix. Este documento explic
 
 ## 1. Añadir un nuevo reloj especializado
 
-Debido a la arquitectura monolítica de la versión ESP32, añadir un reloj significa crear una clase C++ que gestione su propia lógica y su propio dibujo sobre el hardware.
+Gracias a la arquitectura modular acoplada al hardware de ArcadeMatrix, añadir un nuevo reloj consiste en derivar o instanciar una clase de visualización bajo `src/engines/clocks/` que gestione su propia lógica y dibujo directo.
+
+### Matriz de Compatibilidad de Temas de Reloj (IDs 0 a 29)
+
+| ID | Tema / Reloj | Clase / Archivo | 128x32 | 256x64 | Fuente Personalizada (.amf) | Colores Personalizados | Estado en Hardware |
+|---|---|---|:---:|:---:|:---:|:---:|:---:|
+| 0 | Nintendo | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 1 | Capcom | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 2 | Taito | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 3 | Sega | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 4 | Cave | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 5 | Konami | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 6 | SNK | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 7 | Technos | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 8 | IGS | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 9 | Hudson | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 10 | Banpresto | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 11 | Namco | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 12 | Ryu | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 13 | Mario | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 14 | Marco | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 15 | Megaman | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 16 | Bub | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 17 | Space Invaders | `ArcadeClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 18 | Cyberpunk | `CyberpunkClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 19 | FlipClock | `FlipClock` | ✓ | ✓ | — | — | Validado en hardware |
+| **20** | **Custom Gradient** | `ClockEngine` | **✓** | **✓** | **✓** | **✓** | **Validado en hardware** |
+| 21 | PongClock | `PongClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 22 | TetrisClock | `TetrisClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 23 | TetrisGameboy | `TetrisGameboyClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 24 | PacmanClock | `PacmanClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 25 | WordClock | `WordClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 26 | BinaryClock | `BinaryClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 27 | VersusClock | `VersusClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 28 | SlotMachineClock | `SlotMachineClock` | ✓ | ✓ | — | — | Validado en hardware |
+| 29 | MatrixRainClock | `MatrixRainClock` | ✓ | ✓ | — | — | Validado en hardware |
+
+---
 
 ### Paso a paso
 
-1. **Crea el header (`include/MyClock.h`):**
+1. **Crea el header (`src/engines/clocks/MyClock.h`):**
    ```cpp
    #pragma once
    #include <Arduino.h>
-   #include "MatrixDisplay.h" // Your HUB75 matrix wrapper
-   #include "ConfigLoader.h"
+   #include "ESP32-HUB75-MatrixPanel-I2S-DMA.h"
+   #include "core/ConfigLoader.h"
 
    class MyClock {
    public:
-       MyClock(MatrixDisplay* display, Config* config);
-       void loop(); // Called every frame
+       MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config);
+       void loop(); // Llamado en cada cuadro
    private:
-       MatrixDisplay* _display;
-       Config* _config;
-       
-       // Your state variables
-       int _snakeLength;
+       MatrixPanel_I2S_DMA* _display;
+       ConfigLoader* _config;
    };
    ```
 
-2. **Crea la implementación (`src/MyClock.cpp`):**
+2. **Crea la implementación (`src/engines/clocks/MyClock.cpp`):**
    ```cpp
    #include "MyClock.h"
 
-   MyClock::MyClock(MatrixDisplay* display, Config* config) {
-       _display = display;
-       _config = config;
-       _snakeLength = 3;
-   }
+   MyClock::MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config) : _display(display), _config(config) {}
 
    void MyClock::loop() {
-       // 1. Clear screen or draw background
+       if (!_display) return;
        _display->fillScreen(0);
-
-       // 2. Execute logic
-       // ...
-
-       // 3. Draw directly using Adafruit GFX primitives
        _display->drawPixel(10, 10, _display->color565(255, 0, 0));
    }
    ```
 
 3. **Registra el reloj en `ClockEngine.cpp`:**
-   - Incluye tu header al principio de `src/ClockEngine.cpp`.
-   - Instancia tu reloj dinámicamente (o como variable miembro) dentro de `ClockEngine` según el tema seleccionado por el usuario.
-   - Ejemplo dentro de `ClockEngine::loop()`:
-     ```cpp
-     switch (_config->time_theme) {
-         case 22:
-             if (!_myClock) _myClock = new MyClock(_display, _config);
-             _myClock->loop();
-             break;
-         // ...
-     }
-     ```
+   - Incluye tu header al principio de `src/engines/ClockEngine.cpp`.
+   - Instancia tu reloj según el tema `clock_theme` seleccionado por el usuario.
+   - Ejecuta la llamada en `ClockEngine::loop()`.
 
 ---
 
@@ -187,5 +203,16 @@ Adafruit a las fuentes compiladas, no una limitación nueva.
 - **Límites DMA:** nunca dibujes fuera de los límites de `matrix_width` y `matrix_height`. Adafruit GFX gestiona la mayor parte del clipping, pero las escrituras directas en memoria provocarán kernel panics.
 - **Fugas de memoria:** si asignas dinámicamente clases (`new MyClock()`), asegúrate de hacer `delete` cuando el tema cambie para evitar agotar la memoria.
 
-## Pruebas Unitarias y TDD
-El proyecto sigue los principios de TDD para la integración de API. Al agregar una nueva API, implemente la interfaz Provider correspondiente (`ICryptoProvider`, etc.) y escriba pruebas unitarias utilizando objetos Mock antes de conectarla. Las pruebas deben lograr la máxima cobertura en el análisis de JSON y la lógica de respaldo sin requerir hardware físico.
+---
+
+## 4. Limitaciones Conocidas y Seguridad
+
+### Seguridad
+- **API sin autenticación**: La API REST HTTP y el servidor WebUI se ejecutan sin autenticación en la red local. ArcadeMatrix está diseñado para usarse en una red de confianza (LAN privada). No expongas el puerto 80 directamente a Internet sin un reverse proxy con autenticación.
+- **CORS**: Las cabeceras `Access-Control-Allow-Origin: *` están habilitadas por defecto para permitir el control desde aplicaciones web locales.
+
+### Limitaciones Conocidas
+- **Sin Rollback OTA Automático**: El proceso de actualización OTA escribe en la partición secundaria y cambia el flag del bootloader. Si se inicia un firmware funcionalmente defectuoso, no existe un mecanismo de restauración automática sin reflash físico o WebSerial.
+- **Consultas de Red Sincrónicas en los Providers**: Aunque `AsyncWebServer` procesa las peticiones HTTP de forma asíncrona, las actualizaciones de cotizaciones de los proveedores (`CryptoEngine`, `StockEngine`, `WeatherEngine`) realizan peticiones de red de forma sincrónica con caché local en memoria. En caso de fallo de red, se conserva el último valor en caché sin bloquear el bucle principal de pantalla.
+- **Tarjeta SD Requerida para GIF y MUGEN**: La reproducción de GIFs animados y sprites MUGEN requiere estrictamente una tarjeta microSD formateada en FAT32 o exFAT.
+
