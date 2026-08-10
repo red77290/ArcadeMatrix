@@ -59,6 +59,8 @@ Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichi
 3. Lancez le script en pointant `--src` vers votre dossier MUGEN `chars/` :
    ```bash
    python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_32
+   # Ou avec un facteur d'échelle personnalisé (ex: --scale 0.5 pour diviser par 2 la taille des sprites et économiser 75% de RAM) :
+   python mugen_extractor.py --src /Chemin/Vers/Vos/Personnages/Mugen/chars --dest ./fighters_64 --scale 0.5
    ```
 4. Le script génère les fichiers `.fgt` ainsi qu'un manifeste `index.txt`/`index.json` dans le dossier `--dest`. Lancez-le deux fois (avec `--dest ./fighters_32` puis `--dest ./fighters_64`) si vous voulez des assets pour les deux tailles de matrice.
 5. Copiez le dossier `fighters_32/` ou `fighters_64/` obtenu sur votre carte SD.
