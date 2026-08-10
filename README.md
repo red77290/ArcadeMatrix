@@ -2,18 +2,28 @@
 
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
-Welcome to the open-source ESP32 firmware for driving HUB75 LED Matrices! This project allows you to display Arcade Clocks, Animated GIFs, Weather, and even simulated **MUGEN fighting game sprites** directly on a real LED matrix.
+Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This project allows you to display Arcade clocks, animated GIFs, live weather, and even **MUGEN fighting game sprites** simulated directly on a real LED matrix.
 
-## 💾 Installation
+---
 
-**[⬇️ Download the latest pre-built firmware](https://github.com/red77290/ArcadeMatrix/releases/latest)**
-(built and tested automatically by CI on every tagged release - pick `ArcadeMatrix-esp32dev.zip`
-or `ArcadeMatrix-esp32s3_waveshare.zip` depending on your board, then flash `firmware-*.bin`,
-`bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` with `esptool.py` - see
-[Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release) for exact offsets and
-command. The browser-based Web Installer above will be the easier option once the repo is public.
-Also grab `ArcadeMatrix-sdcard.zip` from the same release - a ready-to-copy SD card starter kit
-with a sample `conf.ini`, GIFs/MUGEN folders, and the GIF playlist indexing scripts.)
+> [!IMPORTANT]
+> ### ⚡ One-Click Web Installer (Browser Flash)
+> Flash your ESP32 board directly from your web browser (Chrome / Edge / Opera) in one click with zero software to install!
+> 
+> 👉 **[🚀 Launch ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/webinstaller/)**
+> 
+> | Firmware Version | Compatible Hardware Board | Web Installer Button |
+> | :--- | :--- | :--- |
+> | **ESP32-DevKit (Classic)** | ESP32-DevKitC, NodeMCU-32S, WROOM-32 (4MB Flash) | Select **ESP32 (Standard)** |
+> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (8MB Flash + PSRAM) | Select **ESP32-S3 (Waveshare)** |
+
+---
+
+## 💾 Releases & SD Card Kit
+
+**[⬇️ Download Latest Pre-built Release & SD Card Kit](https://github.com/red77290/ArcadeMatrix/releases/latest)**
+- **Firmware Bundles**: Pick `ArcadeMatrix-esp32dev.zip` or `ArcadeMatrix-esp32s3_waveshare.zip` depending on your board (contains `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` for manual `esptool.py` flashing - see [Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release)).
+- **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: Ready-to-copy root folder structure containing `conf.ini`, GIF/MUGEN asset folders, and playlist indexing scripts.
 
 
 ## Features
