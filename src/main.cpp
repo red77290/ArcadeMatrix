@@ -472,29 +472,29 @@ void loop() {
     static int lastSec = -1;
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
+        bool is_night = false;
         if (config.standby.night_mode_enabled) {
             int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
             int off_min = config.standby.turn_off_at.substring(0, 2).toInt() * 60 + config.standby.turn_off_at.substring(3).toInt();
             int wake_min = config.standby.wake_up_at.substring(0, 2).toInt() * 60 + config.standby.wake_up_at.substring(3).toInt();
-            bool is_night = false;
             if (off_min > wake_min) {
                 is_night = (now_min >= off_min || now_min < wake_min);
             } else {
                 is_night = (now_min >= off_min && now_min < wake_min);
             }
-            
-            if (is_night) {
-                if (config.standby.night_brightness == 0) {
-                    matrixEngine.getDisplay()->fillScreen(0);
-                    matrixEngine.getDisplay()->flipDMABuffer();
-                    delay(1000);
-                    return;
-                } else {
-                    matrixEngine.setBrightness(config.standby.night_brightness);
-                }
+        }
+        
+        if (is_night) {
+            if (config.standby.night_brightness == 0) {
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.getDisplay()->flipDMABuffer();
+                delay(1000);
+                return;
             } else {
-                matrixEngine.setBrightness(config.matrix.powerLimitPercent);
+                matrixEngine.setBrightness(config.standby.night_brightness);
             }
+        } else {
+            matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
         
         if (timeinfo.tm_sec != lastSec) {
