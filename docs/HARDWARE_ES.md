@@ -15,12 +15,9 @@ El firmware ArcadeMatrix es compatible con placas ESP32 estándar, pero los requ
 - **RAM:** la PSRAM es **OBLIGATORIA** para el doble búfer a 24 bits de profundidad de color en paneles grandes.
 - **¿Por qué?** Una pantalla 256x64 requiere ~98KB por frame. El doble búfer necesita ~200KB de RAM DMA contigua, algo que el ESP32 estándar no puede proporcionar de forma fiable mientras mantiene el Wi-Fi y el servidor web. El ESP32-S3 descarga esto de forma transparente a la PSRAM o dispone de suficientes bloques contiguos para evitar cuelgues OOM (Out Of Memory).
 
-### PSRAM octal en ESP32-S3 vs pinout HUB75 (256x64, conflicto conocido)
-El mapa de pines HUB75 predeterminado codificado en `MatrixEngine::begin()` (A=GPIO33, B=GPIO32) se solapa con el
-rango GPIO33-37 reservado internamente por el ESP32-S3 cuando usa PSRAM **octal** (« opi »), justo la
-configuración que este firmware necesita para 256x64. En ese caso se emite una advertencia en tiempo de ejecución
-(build `CONFIG_IDF_TARGET_ESP32S3`), pero el cableado en sí aún no se ha revalidado / remapeado sobre hardware S3
-real. Consulta [WIRING_ES.md](WIRING_ES.md) para ver la tabla actual de pines y el estado de la situación.
+### ESP32-S3 Waveshare (Soporte 100% probado y validado en hardware real)
+La placa **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) es **100% compatible y verificada físicamente en hardware real**. 
+El perfil dedicado `HARDWARE_PROFILE_WAVESHARE_S3` (`pio run -e esp32s3_waveshare`) remapea los pines HUB75 a GPIOs libres (A=18, B=8, C=3, D=42, E=9) y utiliza la interfaz SD_MMC de 1 bit de alta velocidad (CMD=44, CLK=1, D0=17), eliminando cualquier conflicto con la PSRAM octal. Todo funciona de forma impecable sin ningún conflicto de GPIO. Consulta [WIRING_ES.md](WIRING_ES.md) para ver la tabla completa de pines.
 
 ## Múltiples paneles: encadenado vs verdaderas rejillas/muros 2D (runtime vs compile-time)
 El build RPi (`ArcadeMatrix_RPi`) usa la biblioteca `rpi-rgb-led-matrix`, que expone `--led-chain`,

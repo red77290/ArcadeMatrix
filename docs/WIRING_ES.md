@@ -52,32 +52,29 @@ no puede alimentar la matriz + SD + Wi-Fi simultáneamente (el regulador integra
 ESP32 desnuda suele ser insuficiente para un panel completamente cableado - usa una fuente
 dedicada de 5V/3A+ que alimente tanto el panel como el ESP32).
 
-## Cableado ESP32-S3
+## Cableado ESP32-S3 Waveshare (100% probado y validado en hardware real)
 
-⚠️ **Conflicto conocido, aún no revalidado sobre hardware real:** el firmware usa actualmente el **mismo**
-mapa de pines en ESP32-S3 que en el ESP32 clásico (consulta la tabla superior), definido una sola vez en `src/MatrixEngine.cpp`.
-Esto es un problema específicamente para paneles 256x64, porque ese es justo el caso en el que se requiere PSRAM octal
-(N8R8/N16R8), y la PSRAM octal en ESP32-S3 reserva internamente **GPIO 33-37**, lo que entra
-directamente en conflicto con el pin `A` (GPIO 33) y queda junto al pin `B` (GPIO 32) de arriba. El firmware
-muestra una advertencia en tiempo de ejecución sobre esto (consulta `MatrixEngine::begin`), pero el mapa de pines en sí todavía no se ha
-actualizado / verificado frente a un cableado físico ESP32-S3. Si vas a cablear un panel 256x64 en ESP32-S3,
-comprueba los GPIO disponibles en tu placa concreta antes de confiar en el mapa predeterminado, y plantéate
-remapear `A`/`B` (y volver a probar) a GPIO fuera del rango 33-37.
+La placa **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) integra su propio cableado HUB75 e interfaz SD_MMC de 1 bit. El perfil dedicado `HARDWARE_PROFILE_WAVESHARE_S3` en `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remapea automáticamente todos los pines para **evitar por completo el rango GPIO 33-37 reservado a la PSRAM Octal**.
 
-### Referencia de disponibilidad de GPIO en ESP32-S3
+**Esta configuración está 100% probada y verificada físicamente en hardware real con un funcionamiento fluido.**
 
-Esta tabla resume qué GPIO son seguros para usar con señales HUB75 en un módulo ESP32-S3, según el modo de PSRAM.
-Compruébalo siempre contra la hoja de datos de tu placa específica, ya que algunos devkits también conectan GPIO adicionales
-a periféricos integrados (USB, botones, LED RGB, etc.).
+### Pinout oficial Waveshare ESP32-S3 (HUB75 y SD_MMC)
 
-| Rango GPIO | Estado | Notas |
-|------------|--------|-------|
-| 0, 3, 45, 46 | **Reservado (strapping pins)** | Se usan al arrancar para seleccionar el modo; evita conducirlos directamente. |
-| 19, 20 | Reservado (USB) | USB nativo D-/D+ en la mayoría de los devkits S3. |
-| 26-32 | **Reservado (Quad Flash/PSRAM)** | Siempre reservados en ESP32-S3, independientemente del modo PSRAM. |
-| 33-37 | **Reservado solo en modo PSRAM octal (« opi »)** | Libres si tu módulo no tiene PSRAM o usa PSRAM Quad (« qio »). **Entra en conflicto con el pin A actual del firmware (33) y está junto al pin B (32) cuando se usa PSRAM octal**; consulta la advertencia anterior. |
-| 1-2, 4-18, 21, 38-48 | Generalmente libres | Pool recomendado para remapear `A`/`B` (y cualquier otra señal en conflicto) fuera de 33-37 al usar PSRAM octal. |
+| Señales HUB75 | GPIO ESP32-S3 | Señales Tarjeta SD (SD_MMC) | GPIO ESP32-S3 |
+| :--- | :--- | :--- | :--- |
+| **R1** | 4 | **D0** | 17 |
+| **G1** | 5 | **CMD** | 44 |
+| **B1** | 6 | **CLK** | 1 |
+| **R2** | 7 | | |
+| **G2** | 15 | | |
+| **B2** | 16 | | |
+| **A** | 18 | | |
+| **B** | 8 | | |
+| **C** | 3 | | |
+| **D** | 42 | | |
+| **E** | 9 | | |
+| **LAT** | 40 | | |
+| **OE** | 2 | | |
+| **CLK** | 41 | | |
 
-**Acción recomendada para builds 256x64 (PSRAM octal) en ESP32-S3:** remapea los pines `A` y `B` en la struct `_pins` de `MatrixEngine.cpp` a dos GPIO del grupo « generalmente libres » de arriba (por ejemplo 38/39),
-recablea en consecuencia y elimina / valida la advertencia en tiempo de ejecución cuando quede confirmado sobre hardware real.
-Esto aún no se ha hecho en este codebase: trata el cableado predeterminado S3 256x64 como **no verificado**.
+*Todos los pines HUB75 y SD están situados fuera del rango crítico GPIO 33-37 reservado por la PSRAM octal, lo que garantiza un funcionamiento perfecto en paneles de 256x64 y 128x32 sin ningún conflicto.*

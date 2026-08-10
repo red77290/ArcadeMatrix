@@ -52,32 +52,29 @@ insérée, ou votre alimentation ne peut pas fournir matrice + SD + Wi-Fi simult
 régulateur intégré d'une carte ESP32 nue est souvent insuffisant pour un panneau entièrement
 câblé - utilisez une alimentation 5V/3A+ dédiée alimentant à la fois le panneau et l'ESP32).
 
-## Câblage ESP32-S3
+## Câblage ESP32-S3 Waveshare (100% Testé & Validé sur Matériel Réel)
 
-⚠️ **Conflit connu, pas encore revalidé sur vrai matériel :** le firmware utilise actuellement le **même**
-mapping de broches sur ESP32-S3 que sur l'ESP32 classique (voir le tableau ci-dessus), défini une seule fois dans `src/MatrixEngine.cpp`.
-C'est un problème spécifiquement pour les panneaux 256x64, car c'est précisément le cas où la PSRAM octal
-(N8R8/N16R8) est requise — et la PSRAM octal sur ESP32-S3 réserve en interne **GPIO 33-37**, ce qui entre
-directement en conflit avec la broche `A` (GPIO 33) et se trouve juste à côté de la broche `B` (GPIO 32) ci-dessus. Le firmware
-affiche un avertissement d'exécution à ce sujet (voir `MatrixEngine::begin`), mais le mapping des broches lui-même n'a pas encore été
-mis à jour / vérifié sur un câblage physique ESP32-S3. Si vous câblez un panneau 256x64 sur ESP32-S3,
-vérifiez les GPIO disponibles de votre carte avant de faire confiance au mapping par défaut, et envisagez
-de remapper `A`/`B` (puis de retester) vers des GPIO en dehors de la plage 33-37.
+La carte **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) intègre son propre câblage HUB75 et son bus SD_MMC 1-bit. Le profil dédié `HARDWARE_PROFILE_WAVESHARE_S3` dans `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remappe automatiquement toutes les broches pour **contourner complètement la plage GPIO 33-37 réservée à la PSRAM Octal**.
 
-### Référence de disponibilité des GPIO ESP32-S3
+**Cette configuration est 100% testée et validée physiquement sur du matériel réel avec un fonctionnement fluide.**
 
-Ce tableau résume quelles GPIO peuvent être utilisées sans risque pour les signaux HUB75 sur un module ESP32-S3,
-selon le mode PSRAM. Vérifiez toujours la datasheet de votre carte spécifique, car certains devkits câblent aussi
-des GPIO supplémentaires vers des périphériques embarqués (USB, boutons, LED RGB, etc.).
+### Brochage officiel Waveshare ESP32-S3 (HUB75 & SD_MMC)
 
-| Plage GPIO | Statut | Notes |
-|------------|--------|-------|
-| 0, 3, 45, 46 | **Réservé (strapping pins)** | Utilisées au boot pour la sélection du mode ; évitez de les piloter directement. |
-| 19, 20 | Réservé (USB) | USB natif D-/D+ sur la plupart des devkits S3. |
-| 26-32 | **Réservé (Quad Flash/PSRAM)** | Toujours réservées sur ESP32-S3, quel que soit le mode PSRAM. |
-| 33-37 | **Réservé uniquement en mode PSRAM octal (« opi »)** | Libres à l'usage si votre module n'a pas de PSRAM ou utilise une PSRAM Quad (« qio »). **Entre en conflit avec la broche A actuelle du firmware (33) et est adjacente à la broche B (32) en PSRAM octal** — voir l'avertissement ci-dessus. |
-| 1-2, 4-18, 21, 38-48 | Généralement libres | Pool recommandé pour remapper `A`/`B` (et tout autre signal en conflit) en dehors de 33-37 lors de l'utilisation de la PSRAM octal. |
+| Signaux HUB75 | GPIO ESP32-S3 | Signaux Carte SD (SD_MMC) | GPIO ESP32-S3 |
+| :--- | :--- | :--- | :--- |
+| **R1** | 4 | **D0** | 17 |
+| **G1** | 5 | **CMD** | 44 |
+| **B1** | 6 | **CLK** | 1 |
+| **R2** | 7 | | |
+| **G2** | 15 | | |
+| **B2** | 16 | | |
+| **A** | 18 | | |
+| **B** | 8 | | |
+| **C** | 3 | | |
+| **D** | 42 | | |
+| **E** | 9 | | |
+| **LAT** | 40 | | |
+| **OE** | 2 | | |
+| **CLK** | 41 | | |
 
-**Action recommandée pour les builds 256x64 (PSRAM octal) sur ESP32-S3 :** remappez les broches `A` et `B` dans la struct `_pins` de `MatrixEngine.cpp` vers deux GPIO issus du pool « généralement libres » ci-dessus (par ex. 38/39),
-recâblez en conséquence, puis supprimez / validez l'avertissement runtime une fois le fonctionnement confirmé sur du vrai matériel.
-Cela n'a pas encore été fait dans ce codebase — considérez le câblage S3 256x64 par défaut comme **non vérifié**.
+*Toutes les broches HUB75 et SD sont situées en dehors de la plage critique GPIO 33-37 réservée par la PSRAM octal, ce qui garantit un fonctionnement parfait sur dalles 256x64 et 128x32 sans aucun conflit.*

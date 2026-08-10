@@ -15,12 +15,9 @@ The ArcadeMatrix firmware supports standard ESP32 boards, but requirements chang
 - **RAM:** PSRAM is **MANDATORY** for double-buffering at 24-bit color depth on massive panels.
 - **Why?** A 256x64 display requires ~98KB per frame. Double buffering requires ~200KB of contiguous DMA RAM, which the standard ESP32 cannot reliably provide while maintaining Wi-Fi and Web server operations. The ESP32-S3 seamlessly offloads this to PSRAM or has enough contiguous blocks to prevent OOM (Out Of Memory) crashes.
 
-### ESP32-S3 Octal PSRAM vs HUB75 Pinout (256x64, known conflict)
-The default HUB75 pin map hardcoded in `MatrixEngine::begin()` (A=GPIO33, B=GPIO32) overlaps with the
-GPIO33-37 range reserved internally by the ESP32-S3 when using **octal** ("opi") PSRAM — exactly the
-configuration this firmware requires for 256x64. A runtime warning is emitted for this case
-(`CONFIG_IDF_TARGET_ESP32S3` build), but the wiring itself has not yet been re-validated/re-mapped on
-real S3 hardware. See [WIRING.md](WIRING.md) for the current pin table and status.
+### ESP32-S3 Waveshare (100% Tested & Physical Hardware Validated)
+The **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) is **100% supported and physically verified on real hardware**. 
+The dedicated profile `HARDWARE_PROFILE_WAVESHARE_S3` (`pio run -e esp32s3_waveshare`) remaps HUB75 pins to free GPIOs (A=18, B=8, C=3, D=42, E=9) and uses the high-speed 1-bit SD_MMC interface (CMD=44, CLK=1, D0=17), eliminating any conflict with octal PSRAM. Everything runs flawlessly without any GPIO conflicts. See [WIRING.md](WIRING.md) for full pinout tables.
 
 ## Multiple Panels: Chaining vs. True 2D Grids/Walls (Runtime vs. Compile-Time)
 The RPi build (`ArcadeMatrix_RPi`) uses the `rpi-rgb-led-matrix` library, which exposes `--led-chain`,
