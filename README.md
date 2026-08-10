@@ -58,6 +58,8 @@ To display fighters in the `SPRITES` module, the ESP32 expects `.fgt` raw files.
 3. Run the script, pointing `--src` at your MUGEN `chars/` folder:
    ```bash
    python mugen_extractor.py --src /Path/To/Your/Mugen/chars --dest ./fighters_32
+   # Or with custom scaling (e.g., --scale 0.5 to scale down by 50% saving 75% RAM):
+   python mugen_extractor.py --src /Path/To/Your/Mugen/chars --dest ./fighters_64 --scale 0.5
    ```
 4. The script generates `.fgt` files along with an `index.txt`/`index.json` manifest in the `--dest` folder. Run it twice (with `--dest ./fighters_32` and `--dest ./fighters_64`) if you want assets for both matrix sizes.
 5. Copy the resulting `fighters_32/` or `fighters_64/` folder to your SD card.
