@@ -173,6 +173,8 @@ void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
         sanitized.push_back(sanitizePlaylistPath(p));
     }
     defaultPlaylists = sanitized;
+    pendingPlaylists = sanitized;
+    hasPendingPlaylists = true;
 }
 
 String GifEngine::sanitizePlaylistPath(String p) {
