@@ -15,9 +15,9 @@ Contrairement à la version Raspberry Pi, qui utilise un pipeline de rendu Pytho
 
 ---
 
-## 2. Structure de moteur monolithique
+## 2. Architecture modulaire couplée au matériel avec rendu direct
 
-À cause des contraintes ci-dessus, l'ESP32 utilise une **structure de moteur monolithique**.
+Plutôt qu'une abstraction lourde multi-couches, l'ESP32 utilise une **architecture modulaire couplée au matériel avec rendu direct**.
 
 ### Diagramme
 

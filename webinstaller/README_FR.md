@@ -32,13 +32,14 @@ Ouvrez `index.html` via un serveur de fichiers statique local (pas via `file://`
 après avoir copié dans ce dossier de vrais binaires correspondant aux chemins du manifest, par exemple :
 
 ```bash
-pio run -e esp32dev -e esp32s3
+pio run -e esp32dev -e esp32s3_waveshare
 cp .pio/build/esp32dev/bootloader.bin webinstaller/bootloader-esp32dev.bin
 cp .pio/build/esp32dev/partitions.bin webinstaller/partitions-esp32dev.bin
 cp .pio/build/esp32dev/firmware.bin   webinstaller/firmware-esp32dev.bin
-cp .pio/build/esp32s3/bootloader.bin  webinstaller/bootloader-esp32s3.bin
-cp .pio/build/esp32s3/partitions.bin  webinstaller/partitions-esp32s3.bin
-cp .pio/build/esp32s3/firmware.bin    webinstaller/firmware-esp32s3.bin
+cp .pio/build/esp32s3_waveshare/bootloader.bin  webinstaller/bootloader-esp32s3_waveshare.bin
+cp .pio/build/esp32s3_waveshare/partitions.bin  webinstaller/partitions-esp32s3_waveshare.bin
+cp .pio/build/esp32s3_waveshare/firmware.bin    webinstaller/firmware-esp32s3_waveshare.bin
+python3 scripts/validate_webinstaller.py
 cd webinstaller && python3 -m http.server 8080
 ```
 

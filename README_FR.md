@@ -8,7 +8,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 **[⬇️ Télécharger le dernier firmware précompilé](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 (construit et testé automatiquement par la CI à chaque release taguée - choisissez `ArcadeMatrix-esp32dev.zip`
-ou `ArcadeMatrix-esp32s3.zip` selon votre carte, puis flashez `firmware-*.bin`,
+ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte, puis flashez `firmware-*.bin`,
 `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` avec `esptool.py` - voir
 [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release) pour les offsets exacts et la
 commande. Le Web Installer via navigateur ci-dessus sera l'option la plus simple une fois le dépôt public.

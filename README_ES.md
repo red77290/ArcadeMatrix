@@ -8,7 +8,7 @@
 
 **[⬇️ Descargar el último firmware precompilado](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 (compilado y probado automáticamente por la CI en cada release etiquetada: elige `ArcadeMatrix-esp32dev.zip`
-o `ArcadeMatrix-esp32s3.zip` según tu placa, y luego flashea `firmware-*.bin`,
+o `ArcadeMatrix-esp32s3_waveshare.zip` según tu placa, y luego flashea `firmware-*.bin`,
 `bootloader-*.bin`, `partitions-*.bin` y `boot_app0.bin` con `esptool.py`; consulta
 [Primeros pasos](docs/GETTING_STARTED_ES.md#flashing-a-pre-built-release) para ver los offsets exactos y el
 comando. El Web Installer en el navegador de arriba será la opción más sencilla cuando el repositorio sea público.

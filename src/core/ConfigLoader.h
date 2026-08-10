@@ -196,6 +196,12 @@ public:
     bool parseFromSD(const char* filepath);
     
     /**
+     * @brief Serialize the current configuration to an INI formatted string in memory.
+     * @return INI string content.
+     */
+    String serializeToString();
+
+    /**
      * @brief Serialize the current configuration back to the SD Card.
      * @param filepath Path to save the config file to.
      * @return true on success.
