@@ -78,6 +78,44 @@ paths:
               schema:
                 type: object
                 properties:
+                  color_depth:
+                    type: integer
+                    description: "Color depth (3-8 bits)"
+                  pwm_bits:
+                    type: integer
+                    description: "PWM bits (8-14)"
+                  matrix_driver_chip:
+                    type: string
+                    enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, SM16208]
+                    description: "LED Panel Hardware Driver Chip"
+                  matrix_clk_phase:
+                    type: boolean
+                    description: "Clock Phase toggle for pixel alignment"
+                  matrix_latch_blanking:
+                    type: integer
+                    description: "Latch blanking timing (1-16)"
+                  matrix_row_address_mode:
+                    type: integer
+                    description: "Row addressing mode (0=Default, 1=AB-Direct, 2=ShiftRegister Row)"
+                  crypto_symbols:
+                    type: string
+                    description: "Comma-separated crypto token symbols (e.g. BTC,ETH,SOL,DOGE)"
+                  crypto_cache_ttl_min:
+                    type: integer
+                    description: "Crypto quote cache TTL in minutes (refresh rate, default 1)"
+                  stock_symbols:
+                    type: string
+                    description: "Comma-separated stock ticker symbols (e.g. AAPL,NVDA,TSLA,MSFT)"
+                  stock_cache_ttl_min:
+                    type: integer
+                    description: "Stock quote cache TTL in minutes (refresh rate, default 1)"
+                  sprite_count:
+                    type: integer
+                    description: "Sprite/Fighter overlay toggle (0 = disabled/OFF, 2 = enabled/ON)"
+                  fighter_interval_sec:
+                    type: integer
+                    description: "Interval in seconds between MUGEN fights"
+                properties:
                   success:
                     type: boolean
                   sd_saved:
@@ -311,3 +349,26 @@ paths:
           description: Image received and displayed.
         '400':
           description: Invalid payload size.
+
+  /api/ota:
+    post:
+      tags:
+        - System
+      summary: OTA Firmware Update
+      description: Upload a new firmware.bin to flash the device over-the-air.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                update:
+                  type: string
+                  format: binary
+                  description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
+      responses:
+        '200':
+          description: Firmware updated successfully, device will reboot.
+        '400':
+          description: Update failed or no file provided.

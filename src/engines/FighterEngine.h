@@ -43,6 +43,9 @@ struct FgtAnimation {
     uint32_t pixelsOffset = 0;///< Byte offset in the file where pixel data begins
     
     int cachedFrameIndex = -1;///< Used for frame caching optimization
+    
+    uint8_t* psramBuffer = nullptr; ///< Complete animation cached in PSRAM (if available)
+    uint32_t totalPixelsSize = 0;   ///< Total size of pixel data in bytes
 };
 
 /**
@@ -115,7 +118,7 @@ public:
     /**
      * @brief Main loop to be called frequently to update animation logic.
      */
-    void loop();
+    bool loop();
     
     /**
      * @brief Draw the current frame of both fighters to the matrix.
@@ -134,7 +137,7 @@ private:
     
     FighterPlayer p1;            ///< Player 1 (Left)
     FighterPlayer p2;            ///< Player 2 (Right)
-    
+
     int numAvailableFighters = 0;   ///< Number of total indexed fighters on SD
     uint32_t* fighterOffsets = nullptr; ///< File offsets for the fighter index
     uint32_t retryDelayEnd = 0;     ///< Delay timer for retry logic

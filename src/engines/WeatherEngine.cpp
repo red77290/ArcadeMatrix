@@ -1,9 +1,12 @@
 #include "WeatherEngine.h"
 #include "../core/ConfigLoader.h"
-extern ConfigLoader config;
-#include <HTTPClient.h>
+#include "../core/Logger.h"
 #include <WiFi.h>
-#include <ArduinoJson.h>
+#include <esp_heap_caps.h>
+
+extern ConfigLoader config;
+
+
 
 WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     validData = false;
@@ -16,6 +19,12 @@ WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
 }
 
 WeatherEngine::~WeatherEngine() {}
+
+void WeatherEngine::addProvider(IWeatherProvider* provider) {
+    if (provider) {
+        providers.push_back(provider);
+    }
+}
 
 void WeatherEngine::setCharacter(int characterId) {
     switch (characterId) {
@@ -37,103 +46,49 @@ void WeatherEngine::setCharacter(int characterId) {
 }
 
 void WeatherEngine::update(const String& apiKey, const String& city) {
-    if (apiKey.length() == 0 || city.length() == 0) return;
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (apiKey.length() == 0 || city.length() == 0) {
+        static unsigned long lastWarn = 0;
+        if (millis() - lastWarn > 10000) {
+            LOGW("WeatherEngine", "Cannot fetch weather: API Key ('%s') or City ('%s') is missing!", apiKey.c_str(), city.c_str());
+            lastWarn = millis();
+        }
+        return;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        static unsigned long lastWarnWifi = 0;
+        if (millis() - lastWarnWifi > 10000) {
+            LOGW("WeatherEngine", "Cannot fetch weather: Wi-Fi not connected!");
+            lastWarnWifi = millis();
+        }
+        return;
+    }
     
-    // Only update every 15 minutes on success, or retry every 1 minute on failure.
-    uint32_t interval = validData ? 900000 : 60000;
+    // Only update every 15 minutes on success, or retry every 30 seconds on failure.
+    uint32_t interval = validData ? 900000 : 30000;
     if (lastFetchTime > 0 && millis() - lastFetchTime < interval) return;
 
     // Set lastFetchTime immediately so we don't spam the API on failure
     lastFetchTime = millis();
 
-    HTTPClient http;
-    // /forecast (3-hour steps, 5 days) instead of /weather (current only), to support the
-    // 3-day forecast slideshow below - mirrors ArcadeMatrix_RPi's engines/weather.py.
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + config.weather.lang;
+    String reqLang = config.weather.lang;
+    if (reqLang.length() == 0) reqLang = "fr";
     
-    http.begin(url);
-    int httpCode = http.GET();
-    
-    if (httpCode == HTTP_CODE_OK) {
-        String payload = http.getString();
-        
-        // Use a filter to only parse the fields we actually need, drastically reducing RAM usage
-        // for the massive OWM forecast JSON payload.
-        StaticJsonDocument<256> filter;
-        filter["list"][0]["main"]["temp"] = true;
-        filter["list"][0]["weather"][0]["main"] = true;
-        filter["list"][0]["weather"][0]["icon"] = true;
-        DynamicJsonDocument doc(8192);
-        DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
-        
-        if (!error && doc["list"].is<JsonArray>()) {
-            JsonArray list = doc["list"].as<JsonArray>();
-            
-            const char* dayNames[7];
-            const char* fixedLabels[MAX_FORECAST_DAYS];
-            
-            String lang = config.weather.lang;
-            if (lang.equalsIgnoreCase("fr")) {
-                const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
-                const char* fr_fixedLabels[MAX_FORECAST_DAYS] = {"AUJ.", "DEMN", nullptr};
-                memcpy(dayNames, fr_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
-            } else if (lang.equalsIgnoreCase("es")) {
-                const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
-                const char* es_fixedLabels[MAX_FORECAST_DAYS] = {"HOY", "MANA", nullptr};
-                memcpy(dayNames, es_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, es_fixedLabels, sizeof(fixedLabels));
-            } else {
-                const char* en_dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-                const char* en_fixedLabels[MAX_FORECAST_DAYS] = {"TODAY", "TMRW", nullptr};
-                memcpy(dayNames, en_dayNames, sizeof(dayNames));
-                memcpy(fixedLabels, en_fixedLabels, sizeof(fixedLabels));
-            }
-
-            struct tm timeinfo;
-            bool haveTime = getLocalTime(&timeinfo, 0);
-
-            const int sampleIndices[MAX_FORECAST_DAYS] = {0, 8, 16};
-
-            numForecasts = 0;
-            for (int i = 0; i < MAX_FORECAST_DAYS; i++) {
-                int idx = sampleIndices[i];
-                if (idx >= (int)list.size()) break;
-
-                JsonObject item = list[idx];
-                WeatherData& d = forecasts[numForecasts];
-                d.temp = item["main"]["temp"].as<float>();
-                d.description = item["weather"][0]["main"].as<String>();
-                d.iconCode = item["weather"][0]["icon"].as<String>();
-
-                if (fixedLabels[i] != nullptr) {
-                    d.label = fixedLabels[i];
-                } else if (haveTime) {
-                    // Day 3 (~+48h): show the actual weekday name, matching the RPi's behavior.
-                    int dayOfWeek = (timeinfo.tm_wday + 2) % 7;
-                    d.label = dayNames[dayOfWeek];
-                } else {
-                    d.label = "DAY3";
-                }
-                numForecasts++;
-            }
-
-            if (numForecasts > 0) {
-                validData = true;
-                activeSlide = 0;
-                lastSlideChange = millis();
-            } else {
-                Serial.println("WeatherEngine: Valid JSON but no forecasts parsed.");
-            }
-        } else {
-            Serial.printf("WeatherEngine Parse Error: %s\n", error.c_str());
-            Serial.printf("Payload snippet: %.100s\n", payload.c_str());
+    bool fetched = false;
+    for (IWeatherProvider* provider : providers) {
+        if (provider->fetchForecast(apiKey, city, reqLang, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
+            fetched = true;
+            break;
         }
-    } else {
-        Serial.printf("WeatherEngine API Error: %d\n", httpCode);
     }
-    http.end();
+    
+    if (fetched && numForecasts > 0) {
+        validData = true;
+        activeSlide = 0;
+        lastSlideChange = millis();
+        LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
+    } else {
+        LOGE("WeatherEngine", "Error: Failed to parse weather data or 0 forecast entries parsed.");
+    }
 }
 
 void WeatherEngine::drawIcon(const String& icon, int x, int y) {
@@ -183,8 +138,8 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
     }
 }
 
-void WeatherEngine::loop() {
-    if (!validData || numForecasts == 0) return;
+bool WeatherEngine::loop() {
+    if (!validData || numForecasts == 0) return true;
 
     // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
     // horizontal-scroll transition (see WeatherEngine.h for rationale).
@@ -194,6 +149,7 @@ void WeatherEngine::loop() {
     }
 
     drawForecast(forecasts[activeSlide]);
+    return true;
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {

@@ -18,12 +18,15 @@ indexación de playlists GIF.)
 
 
 ## Características
-- **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine** y **Versus (Mugen)**.
+- **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** y **Versus (Mugen)**.
+- **Tickers de Criptomonedas y Bolsa en tiempo real:** cotizaciones en vivo y distintivos % 24h de CoinGecko, Binance y Yahoo Finance con caché configurable.
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
 - **Motor de Pelea MUGEN:** ¡Simula nativamente juegos de pelea 2D en la matriz usando sprites extraídos con una alineación perfecta en el suelo virtual!
 - **Motor GIF:** Reproducción fluida de GIFs almacenados en la tarjeta SD.
 - **Clima (OpenWeatherMap):** Pronóstico de 3 días, con una caché de búsqueda de 15 minutos para ahorrar llamadas a la API.
 - **Soporte MQTT:** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
+- **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
+ - **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
 
 ## Estructura de la tarjeta SD
 Formatea tu tarjeta SD en **FAT32** o **exFAT**. Tu tarjeta SD debería verse así:
@@ -31,8 +34,7 @@ Formatea tu tarjeta SD en **FAT32** o **exFAT**. Tu tarjeta SD debería verse as
 SD:/
   ├─ conf.ini
   ├─ gifs/
-  │   ├─ playlists.json
-  │   └─ mario.gif
+  │  │   └─ mario.gif
   └─ fighters_32/
       ├─ backgrounds/
       │   └─ stage1.raw
@@ -57,6 +59,8 @@ Para mostrar luchadores en el módulo `SPRITES`, el ESP32 espera archivos brutos
 3. Ejecuta el script apuntando `--src` a tu carpeta `chars/` de MUGEN:
    ```bash
    python mugen_extractor.py --src /Ruta/A/Tus/Personajes/Mugen/chars --dest ./fighters_32
+   # O con un factor de escala personalizado (ej: --scale 0.5 para reducir al 50% ahorrando 75% de RAM):
+   python mugen_extractor.py --src /Ruta/A/Tus/Personajes/Mugen/chars --dest ./fighters_64 --scale 0.5
    ```
 4. El script genera los archivos `.fgt` junto con un manifiesto `index.txt`/`index.json` en la carpeta `--dest`. Ejecútalo dos veces (con `--dest ./fighters_32` y `--dest ./fighters_64`) si quieres assets para ambos tamaños de matriz.
 5. Copia la carpeta resultante `fighters_32/` o `fighters_64/` a tu tarjeta SD.

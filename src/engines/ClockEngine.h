@@ -5,11 +5,7 @@
 // ClockType is removed since we use PublisherTheme from DateEngine.h for everything
 
 
-struct TimeData {
-    uint8_t hours;
-    uint8_t minutes;
-    uint8_t seconds;
-};
+#include "TimeData.h"
 
 #include "DateEngine.h" // For PublisherTheme
 
@@ -33,11 +29,11 @@ public:
     ClockEngine(MatrixPanel_I2S_DMA* display);
     ~ClockEngine();
 
-    void setTheme(PublisherTheme theme);
+    void setTheme(PublisherTheme theme, bool forceReload = false);
     void updateTime(const TimeData& t);
     
     // Handles continuous frame rendering
-    void loop(); 
+    bool loop(); 
 
 private:
     MatrixPanel_I2S_DMA* matrix;

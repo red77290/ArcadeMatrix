@@ -1,7 +1,11 @@
 #include "../core/SDUtils.h"
 #include "FighterEngine.h"
+#include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
+
+extern SemaphoreHandle_t sdMutex;
 
 #define MAX_FIGHTER_FRAME_SIZE 98304
 
@@ -31,7 +35,10 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    FsFile f = sd.open(indexPath, O_READ);
+    FsFile f;
+    if (sd.exists(indexPath)) {
+        f = sd.open(indexPath, FILE_OPEN_READ);
+    }
     if (!f) {
         Serial.println("FighterEngine: No index.txt found!");
         return;
@@ -62,17 +69,17 @@ void FighterEngine::loadRoster() {
     }
     
     f.close();
-    Serial.printf("FighterEngine: Loaded %d fighters (Fast Offset mode: %d bytes RAM)\n", numAvailableFighters, numAvailableFighters * 4);
+    LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
 }
 
 bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
-    FsFile f = sd.open(indexPath, O_READ);
+    FsFile f = sd.open(indexPath, FILE_OPEN_READ);
     if (!f) return false;
     
-    int targetLine = random(0, numAvailableFighters);
+    int targetLine = esp_random() % numAvailableFighters;
     f.seek(fighterOffsets[targetLine]);
     String result = f.readStringUntil('\n');
     result.trim();
@@ -101,9 +108,9 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (!sd.exists(filepath)) return false;
     
-    FsFile f = sd.open(filepath, O_READ);
+    FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
-        Serial.printf("FighterEngine Error: Could not open file %s\n", filepath);
+        LOGE("FighterEngine", "Could not open file: %s", filepath);
         return false;
     }
     
@@ -136,15 +143,48 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     anim.cachedFrameIndex = -1;
     
     int frameSize = anim.width * anim.height * 2;
-    if (frameSize > MAX_FIGHTER_FRAME_SIZE) {
-        Serial.printf("FighterEngine Error: Frame too big! %d bytes for %s\n", frameSize, filepath);
+    anim.totalPixelsSize = frameSize * anim.numFrames;
+    int maxFrameSize = psramFound() ? (2 * 1024 * 1024) : 98304;
+    if (frameSize > maxFrameSize) {
+        LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
         f.close();
         return false;
     }
     
-    f.close();
+    if (psramFound()) {
+        size_t freePsram = ESP.getFreePsram();
+        size_t safetyHeadroom = 1048576; // 1 MB safety reserve
+        if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
+            LOGW("FighterEngine", "Animation too large (%d bytes, free PSRAM: %u) for %s", anim.totalPixelsSize, (uint32_t)freePsram, filepath);
+            free(anim.frameDelays);
+            f.close();
+            return false;
+        }
+        anim.psramBuffer = (uint8_t*)heap_caps_malloc(anim.totalPixelsSize, MALLOC_CAP_SPIRAM);
+        if (anim.psramBuffer) {
+            size_t toRead = anim.totalPixelsSize;
+            size_t offset = 0;
+            int chunkCount = 0;
+            while (toRead > 0) {
+                size_t chunk = (toRead > 32768) ? 32768 : toRead;
+                size_t r = f.read(anim.psramBuffer + offset, chunk);
+                if (r == 0) break;
+                offset += r;
+                toRead -= r;
+                if (++chunkCount % 2 == 0) {
+                    vTaskDelay(1); // Yield to FreeRTOS display task so clock rendering is never starved!
+                }
+            }
+        } else {
+            LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
+            free(anim.frameDelays);
+            f.close();
+            return false;
+        }
+    }
     
+    f.close();
     anim.loaded = true;
     return true;
 }
@@ -152,6 +192,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
 void FighterEngine::freeAnim(FgtAnimation& anim) {
     if (anim.loaded) {
         if (anim.frameDelays) { free(anim.frameDelays); anim.frameDelays = nullptr; }
+        if (anim.psramBuffer) { heap_caps_free(anim.psramBuffer); anim.psramBuffer = nullptr; }
         anim.loaded = false;
     }
 }
@@ -159,7 +200,8 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) p.activeFile.close();
     if (p.currentFrameBuffer) {
-        free(p.currentFrameBuffer);
+        if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+        else free(p.currentFrameBuffer);
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
     }
@@ -181,14 +223,18 @@ void FighterEngine::startFight() {
     
     if (!getRandomFighter(p1)) return;
     
+    int h1 = (p1.ground_y - p1.head_y) > 0 ? (p1.ground_y - p1.head_y) : p1.height;
     bool found = false;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         if (getRandomFighter(p2)) {
-            // User constraint: Opponent must be max 20% smaller, and NEVER taller than P1.
-            // Original height is stored in p.ground_y.
-            if (p2.name != p1.name && p2.ground_y >= p1.ground_y * 0.8 && p2.ground_y <= p1.ground_y) {
-                found = true;
-                break;
+            int h2 = (p2.ground_y - p2.head_y) > 0 ? (p2.ground_y - p2.head_y) : p2.height;
+            if (p2.name != p1.name && h1 > 0 && h2 > 0) {
+                float minH = (h1 < h2) ? (float)h1 : (float)h2;
+                float maxH = (h1 > h2) ? (float)h1 : (float)h2;
+                if ((minH / maxH) >= 0.80f) {
+                    found = true;
+                    break;
+                }
             }
         }
     }
@@ -204,7 +250,7 @@ void FighterEngine::startFight() {
     
     loadDir = getFightersDir();
     currentLoadState = LOAD_INIT;
-    active = true; // Set active to true to prevent multiple startFight calls
+    active = true;
 }
 
 void FighterEngine::processLoadState() {
@@ -230,7 +276,7 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P1_SPECIAL: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -239,7 +285,7 @@ void FighterEngine::processLoadState() {
         }
         case LOAD_P1_SUPER: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -268,7 +314,7 @@ void FighterEngine::processLoadState() {
             break;
         case LOAD_P2_SPECIAL: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -277,7 +323,7 @@ void FighterEngine::processLoadState() {
         }
         case LOAD_P2_SUPER: {
             int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = random(3); int temp=t[i]; t[i]=t[r]; t[r]=temp; }
+            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
             for(int i=0; i<3; i++) {
                 if (loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
             }
@@ -289,16 +335,18 @@ void FighterEngine::processLoadState() {
             
             // Done! Finish setup
             {
-                // Align characters so their ground line touches the bottom of the screen
-                int ground_screen_y = matrix->height() - 1;
+                int scale = (matrix->height() >= 64 && getFightersDir().endsWith("32")) ? (matrix->height() / 32) : 1;
+                int p1_ground_at_0 = p1.ground_y - p1.head_y;
+                int p2_ground_at_0 = p2.ground_y - p2.head_y;
+                int fight_max_h = p1_ground_at_0 > p2_ground_at_0 ? p1_ground_at_0 : p2_ground_at_0;
 
                 p1.direction = 1; 
-                p1.x = -p1.width_px; 
-                p1.y = ground_screen_y - p1.ground_y;
+                p1.x = -p1.width_px * scale; 
+                p1.y = (fight_max_h - p1.ground_y) * scale;
                 
                 p2.direction = -1; 
                 p2.x = matrix->width();
-                p2.y = ground_screen_y - p2.ground_y;
+                p2.y = (fight_max_h - p2.ground_y) * scale;
                 
                 setPlayerState(p1, FIGHTER_WALK);
                 setPlayerState(p2, FIGHTER_WALK);
@@ -309,7 +357,9 @@ void FighterEngine::processLoadState() {
             }
             break;
         case LOAD_FINISH:
-            Serial.printf("FighterEngine Error: Failed to start fight\n");
+            LOGE("FighterEngine", "Failed to start fight for %s vs %s", p1.name.c_str(), p2.name.c_str());
+            freeFighter(p1);
+            freeFighter(p2);
             active = false;
             retryDelayEnd = millis() + 5000;
             currentLoadState = LOAD_IDLE;
@@ -340,11 +390,18 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
     if (p.activeFile) p.activeFile.close();
-    if (anim && anim->loaded) {
+    if (anim && anim->loaded && !anim->psramBuffer) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
-            if (p.currentFrameBuffer) free(p.currentFrameBuffer);
-            p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+            if (p.currentFrameBuffer) {
+                if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+                else free(p.currentFrameBuffer);
+            }
+            if (psramFound()) {
+                p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
+            } else {
+                p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+            }
             p.currentBufferSize = newSize;
             
             // Force redraw since buffer was reallocated
@@ -356,23 +413,23 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             p.animSuper.cachedFrameIndex = -1;
             p.animFall.cachedFrameIndex = -1;
         }
-        p.activeFile = sd.open(anim->filepath.c_str(), O_READ);
+        p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
     }
 }
 
-void FighterEngine::loop() {
-    if (millis() < retryDelayEnd) return;
+bool FighterEngine::loop() {
+    if (millis() < retryDelayEnd) return true;
     
     if (currentLoadState != LOAD_IDLE) {
         processLoadState();
-        return;
+        return true;
     }
     
-    if (millis() < hitStopUntilMillis) return;
+    if (millis() < hitStopUntilMillis) return true;
     
     if (!active) {
         startFight();
-        return;
+        if (!active) return true;
     }
     
     uint32_t now = millis();
@@ -387,7 +444,7 @@ void FighterEngine::loop() {
     else if (p1.state == FIGHTER_SUPER) anim1 = &p1.animSuper;
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
-    if (anim1 && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
+    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames) && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
         p1.currentFrame++;
         p1.lastFrameTime = now;
         if (p1.currentFrame >= anim1->numFrames) {
@@ -407,7 +464,7 @@ void FighterEngine::loop() {
     else if (p2.state == FIGHTER_SUPER) anim2 = &p2.animSuper;
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
-    if (anim2 && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
+    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames) && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
         p2.currentFrame++;
         p2.lastFrameTime = now;
         if (p2.currentFrame >= anim2->numFrames) {
@@ -423,10 +480,11 @@ void FighterEngine::loop() {
         // Move towards each other
         uint32_t elapsed = now - lastMoveTime;
         if (elapsed >= 35) { // Speed throttle (1 pixel per 35ms -> ~28 FPS)
-            int pixelsToMove = elapsed / 35;
+            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+            int pixelsToMove = (elapsed / 35) * scale;
             p1.x += pixelsToMove;
             p2.x -= pixelsToMove;
-            lastMoveTime += pixelsToMove * 35;
+            lastMoveTime += (elapsed / 35) * 35; // Correctly advance time
         }
         
         // Collision detection (simple distance using origins)
@@ -437,19 +495,19 @@ void FighterEngine::loop() {
         
         if (dist <= engage_dist) {
             // Fight! Random winner
-            FighterPlayer* attacker = (random(2) == 0) ? &p1 : &p2;
+            FighterPlayer* attacker = ((esp_random() % 2) == 0) ? &p1 : &p2;
             FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
             
             FighterState atkState = FIGHTER_ATTACK;
             FighterState tgtState = FIGHTER_HIT;
             bool isHeavy = false;
             
-            int rnd = random(100);
-            if (attacker->animSuper.loaded && rnd < 20) {
+            int rnd = esp_random() % 100;
+            if (attacker->animSuper.loaded && rnd < 50) {
                 atkState = FIGHTER_SUPER;
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
                 isHeavy = true;
-            } else if (attacker->animSpecial.loaded && rnd < 50) {
+            } else if (attacker->animSpecial.loaded && rnd < 80) {
                 atkState = FIGHTER_SPECIAL;
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
                 isHeavy = true;
@@ -466,10 +524,12 @@ void FighterEngine::loop() {
     }
     
     // Dynamic Movement during special/super/fall
-    if (p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) p1.x += p1.direction * 2;
-    if (p1.state == FIGHTER_FALL) p1.x -= p1.direction * 2;
-    if (p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) p2.x += p2.direction * 2;
-    if (p2.state == FIGHTER_FALL) p2.x -= p2.direction * 2;
+    int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+    int moveAmt = 2 * scale;
+    if (p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) p1.x += p1.direction * moveAmt;
+    if (p1.state == FIGHTER_FALL) p1.x -= p1.direction * moveAmt;
+    if (p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) p2.x += p2.direction * moveAmt;
+    if (p2.state == FIGHTER_FALL) p2.x -= p2.direction * moveAmt;
     
     // End sequence
     if (fightEndTime == 0 && (p1.isDead || p2.isDead)) {
@@ -480,7 +540,13 @@ void FighterEngine::loop() {
         extern ConfigLoader config;
         active = false;
         retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
+        if (matrix) {
+            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+            matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);
+            matrix->fillRect(p2.x, p2.y, p2.width_px * scale, p2.height * scale, 0);
+        }
     }
+    return true;
 }
 
 void FighterEngine::drawPlayer(FighterPlayer& p) {
@@ -498,24 +564,32 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     if (p.currentFrame >= anim->numFrames) return;
     
     int frameSize = anim->width * anim->height * 2;
-    if (p.currentFrame != anim->cachedFrameIndex) {
-        if (p.activeFile && p.currentFrameBuffer) {
-            uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-            p.activeFile.seek(offset);
-            p.activeFile.read(p.currentFrameBuffer, frameSize);
-            anim->cachedFrameIndex = p.currentFrame;
-        } else {
-            return;
+    uint8_t* ptr = nullptr;
+    
+    if (anim->psramBuffer) {
+        ptr = anim->psramBuffer + (p.currentFrame * frameSize);
+    } else {
+        if (p.currentFrame != anim->cachedFrameIndex) {
+            if (p.activeFile && p.currentFrameBuffer) {
+                uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
+                p.activeFile.seek(offset);
+                p.activeFile.read(p.currentFrameBuffer, frameSize);
+                anim->cachedFrameIndex = p.currentFrame;
+            } else {
+                return;
+            }
         }
+        ptr = p.currentFrameBuffer;
     }
     
-    uint8_t* ptr = p.currentFrameBuffer;
     if (!ptr) return;
     
     bool invert = (p.state == FIGHTER_SUPER && p.currentFrame < 2);
     
     int offsetY = 0;
     if (shakeRemainingFrames > 0) offsetY = random(-2, 3);
+    
+    int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
     
     for (int y = 0; y < anim->height; y++) {
         for (int x = 0; x < anim->width; x++) {
@@ -525,16 +599,20 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
             if (color != anim->transparentColor) {
                 if (invert) color = ~color;
                 
-                int drawX = p.x + x;
+                int drawX = p.x + (x * scale);
                 // Flip horizontally if facing left
                 if (p.direction == -1) {
-                    drawX = p.x + (anim->width - 1 - x);
+                    drawX = p.x + ((anim->width - 1 - x) * scale);
                 }
                 
-                int drawY = p.y + y + offsetY;
+                int drawY = p.y + (y * scale) + offsetY;
                 
-                if (drawX >= 0 && drawX < matrix->width() && drawY >= 0 && drawY < matrix->height()) {
-                    matrix->drawPixel(drawX, drawY, color);
+                for (int dy = 0; dy < scale; dy++) {
+                    for (int dx = 0; dx < scale; dx++) {
+                        if (drawX + dx >= 0 && drawX + dx < matrix->width() && drawY + dy >= 0 && drawY + dy < matrix->height()) {
+                            matrix->drawPixel(drawX + dx, drawY + dy, color);
+                        }
+                    }
                 }
             }
         }

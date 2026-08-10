@@ -185,3 +185,6 @@ bitmap data (`GFXglyph.bitmapOffset` is a `uint16_t`) — the same ceiling Adafr
 - **Avoid `String` objects**: Use `char` arrays (`char[]`) whenever possible to avoid heap fragmentation, which is fatal on ESP32.
 - **DMA Bounds**: Never draw outside the boundaries of `matrix_width` and `matrix_height`. Adafruit GFX handles most clipping, but direct memory writes will cause kernel panics.
 - **Memory Leaks**: If you dynamically allocate classes (`new MyClock()`), ensure you `delete` them when the theme switches to prevent memory exhaustion.
+
+## Unit Testing & TDD
+The project follows TDD principles for API integration. When adding a new API (e.g. for Crypto or Weather), implement the corresponding Provider interface (`ICryptoProvider` etc.) and write Unit Tests using Mock objects before wiring it up in `main.cpp` or `app.rs`. Tests must achieve maximum coverage for JSON parsing and fallback logic without requiring physical hardware.

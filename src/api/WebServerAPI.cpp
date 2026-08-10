@@ -6,6 +6,7 @@
 #include "../core/RotationManager.h"
 #include "WebUI.h"
 #include "../core/Globals.h"
+#include "../core/Logger.h"
 
 // Helper class to stream large files from SdFat to ESPAsyncWebServer
 class AsyncSdFatResponse : public AsyncAbstractResponse {
@@ -15,7 +16,7 @@ public:
     AsyncSdFatResponse(const String& path, const String& contentType) {
         _code = 200;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            _content = sd.open(path.c_str(), O_READ);
+            _content = sd.open(path.c_str(), FILE_OPEN_READ);
             if (_content) _contentLength = _content.size();
             else _contentLength = 0;
             xSemaphoreGive(sdMutex);
@@ -32,8 +33,29 @@ public:
     }
     size_t _fillBuffer(uint8_t *buf, size_t maxLen) override {
         size_t bytesRead = 0;
+        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            if (_content) bytesRead = _content.read(buf, maxLen);
+            if (_content) {
+                // Guarantee the bounce buffer is strictly DMA capable
+                uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+                if (bounceBuf) {
+                    size_t toRead = maxLen;
+                    size_t offset = 0;
+                    while (toRead > 0) {
+                        size_t chunk = (toRead > 512) ? 512 : toRead;
+                        size_t r = _content.read(bounceBuf, chunk);
+                        if (r > 0) memcpy(buf + offset, bounceBuf, r);
+                        if (r == 0) break;
+                        offset += r;
+                        toRead -= r;
+                        bytesRead += r;
+                    }
+                    heap_caps_free(bounceBuf);
+                } else {
+                    // Fallback if DMA memory is completely exhausted (might crash, but at least we tried)
+                    bytesRead = _content.read(buf, maxLen);
+                }
+            }
             xSemaphoreGive(sdMutex);
         }
         return bytesRead;
@@ -46,6 +68,9 @@ WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine*
 void WebServerAPI::setMarqueeEngine(MarqueeEngine* engine) {
     marquee = engine;
 }
+
+
+extern String getPosixTimezone(String tz);
 
 void WebServerAPI::begin() {
     setupRoutes();
@@ -71,7 +96,7 @@ void WebServerAPI::begin() {
     });
 
     server.begin();
-    Serial.println("Web Server Started.");
+    LOGI("WebServer", "Web Server Started.");
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
@@ -108,12 +133,12 @@ void WebServerAPI::setupRoutes() {
         JsonArray arr = doc.to<JsonArray>();
         
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile dir = sd.open("/fonts", O_READ);
-            if (dir && dir.isDir()) {
+            FsFile dir = sd.open("/fonts", FILE_OPEN_READ);
+            if (dir && isDirectory(dir)) {
                 FsFile entry = dir.openNextFile();
             while (entry) {
                 yield();
-                if (!entry.isDir()) {
+                if (!isDirectory(entry)) {
                     String name = getFileName(entry);
                     if (name.endsWith(".amf") || name.endsWith(".AMF")) {
                         // getName may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
@@ -133,24 +158,63 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
-    // API: List GIF Playlists (reads /gifs/playlists.json from SD)
+    // API: Return dummy version to prevent UI 404 errors
+    server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"version\":\"2.0.0\", \"arch\":\"esp32s3\"}");
+    });
+
+    // API: List GIF Playlists (Reads playlists.json first, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
-        bool exists = false;
         String content = "";
+        bool hasJson = false;
+        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/gifs/playlists.json", O_READ);
-            if (f) {
-                exists = true;
-                content = f.readString();
-                f.close();
+            FsFile jsonFile = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
+            if (jsonFile) {
+                size_t len = jsonFile.size();
+                char* buf = (char*)malloc(len + 1);
+                if (buf) {
+                    jsonFile.read((uint8_t*)buf, len);
+                    buf[len] = '\0';
+                    content = buf;
+                    free(buf);
+                    hasJson = true;
+                }
+                jsonFile.close();
+            }
+            
+            if (!hasJson) {
+                content = "{";
+                bool first = true;
+                FsFile dir = sd.open("/gifs");
+                if (dir && isDirectory(dir)) {
+                    FsFile file;
+                    while (getNextFile(dir, file)) {
+                        if (isDirectory(file)) {
+                            String name = getFileName(file);
+                            // Extract just the folder name if it contains full path
+                            int lastSlash = name.lastIndexOf('/');
+                            if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                            
+                            if (name.length() > 0 && name[0] != '.') {
+                                if (!first) content += ",";
+                                content += "\"" + name + "\":{";
+                                content += "\"path\":\"/gifs/" + name + "\",";
+                                content += "\"count\":0"; // No count in fallback to prevent WDT crashes
+                                content += "}";
+                                first = false;
+                            }
+                        }
+                    }
+                }
+                if (dir) dir.close();
+                content += "}";
             }
             xSemaphoreGive(sdMutex);
         }
-        if (exists && content.length() > 0) {
-            request->send(200, "application/json", content);
-        } else {
-            request->send(404, "application/json", "{\"error\":\"playlists.json not found. Run generate_index.sh\"}");
-        }
+        
+        if (content.length() == 0) content = "{}";
+        request->send(200, "application/json", content);
     });
 
     // API: Play GIF Playlists immediately
@@ -176,8 +240,8 @@ void WebServerAPI::setupRoutes() {
     
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        // Reduce allocation from 4096 to 2048 to prevent heap fragmentation crashes
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 2048);
+        // Use 4096 to prevent truncation of JSON payload (otherwise settings at the end like clock_color_1 will be missing)
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 4096);
         JsonObject doc = response->getRoot().as<JsonObject>();
         
         if (doc.isNull()) {
@@ -189,6 +253,25 @@ void WebServerAPI::setupRoutes() {
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
         doc["color_depth"] = config.matrix.colorDepth;
+        doc["matrix_chain"] = config.matrix.chainLength;
+        doc["matrix_rows"] = config.matrix.height;
+        doc["matrix_cols"] = config.matrix.width;
+        doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
+        doc["matrix_driver_chip"] = config.matrix.driverChip;
+        doc["matrix_clk_phase"] = config.matrix.clkPhase;
+        doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
+        doc["matrix_row_address_mode"] = config.matrix.rowAddressMode;
+
+        // Crypto & Stock
+        doc["crypto_enabled"] = config.crypto.enabled;
+        doc["crypto_symbols"] = config.crypto.symbols;
+        doc["crypto_duration_sec"] = config.crypto.duration_sec;
+        doc["crypto_cache_ttl_min"] = config.crypto.cache_ttl_min;
+        doc["crypto_currency"] = config.crypto.currency;
+        doc["stock_enabled"] = config.stock.enabled;
+        doc["stock_symbols"] = config.stock.symbols;
+        doc["stock_duration_sec"] = config.stock.duration_sec;
+        doc["stock_cache_ttl_min"] = config.stock.cache_ttl_min;
 
         // Idle rotation
         doc["rotation"] = config.idle.rotation;
@@ -196,7 +279,7 @@ void WebServerAPI::setupRoutes() {
         doc["date_duration_sec"] = config.idle.date_duration_sec;
         doc["weather_duration_sec"] = config.idle.weather_duration_sec;
         doc["gifs_count"] = config.idle.gifs_count;
-        doc["sprite_count"] = config.idle.sprite_count;
+        doc["fighter_enabled"] = config.idle.fighter_enabled;
         doc["fighter_interval_sec"] = config.idle.fighter_interval_sec;
 
         // Clock
@@ -276,6 +359,26 @@ void WebServerAPI::setupRoutes() {
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
         if (!doc["color_depth"].isNull()) config.matrix.colorDepth = doc["color_depth"].as<int>();
+        if (!doc["matrix_chain"].isNull()) config.matrix.chainLength = doc["matrix_chain"].as<int>();
+        if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
+        if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
+        if (!doc["matrix_rgb_sequence"].isNull()) config.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
+        if (!doc["matrix_limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
+        if (!doc["matrix_driver_chip"].isNull()) config.matrix.driverChip = doc["matrix_driver_chip"].as<String>();
+        if (!doc["matrix_clk_phase"].isNull()) config.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();
+        if (!doc["matrix_latch_blanking"].isNull()) config.matrix.latchBlanking = doc["matrix_latch_blanking"].as<int>();
+        if (!doc["matrix_row_address_mode"].isNull()) config.matrix.rowAddressMode = doc["matrix_row_address_mode"].as<int>();
+
+        // Crypto & Stock
+        if (!doc["crypto_enabled"].isNull()) config.crypto.enabled = doc["crypto_enabled"].as<bool>();
+        if (!doc["crypto_symbols"].isNull()) config.crypto.symbols = doc["crypto_symbols"].as<String>();
+        if (!doc["crypto_duration_sec"].isNull()) config.crypto.duration_sec = doc["crypto_duration_sec"].as<int>();
+        if (!doc["crypto_cache_ttl_min"].isNull()) config.crypto.cache_ttl_min = doc["crypto_cache_ttl_min"].as<int>();
+        if (!doc["crypto_currency"].isNull()) config.crypto.currency = doc["crypto_currency"].as<String>();
+        if (!doc["stock_enabled"].isNull()) config.stock.enabled = doc["stock_enabled"].as<bool>();
+        if (!doc["stock_symbols"].isNull()) config.stock.symbols = doc["stock_symbols"].as<String>();
+        if (!doc["stock_duration_sec"].isNull()) config.stock.duration_sec = doc["stock_duration_sec"].as<int>();
+        if (!doc["stock_cache_ttl_min"].isNull()) config.stock.cache_ttl_min = doc["stock_cache_ttl_min"].as<int>();
         
         // Idle rotation
         bool rotationChanged = false;
@@ -284,7 +387,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_duration_sec"].isNull()) config.idle.date_duration_sec = doc["date_duration_sec"].as<int>();
         if (!doc["weather_duration_sec"].isNull()) config.idle.weather_duration_sec = doc["weather_duration_sec"].as<int>();
         if (!doc["gifs_count"].isNull()) config.idle.gifs_count = doc["gifs_count"].as<int>();
-        if (!doc["sprite_count"].isNull()) config.idle.sprite_count = doc["sprite_count"].as<int>();
+        if (!doc["fighter_enabled"].isNull()) config.idle.fighter_enabled = doc["fighter_enabled"].as<bool>();
         if (!doc["fighter_interval_sec"].isNull()) config.idle.fighter_interval_sec = doc["fighter_interval_sec"].as<int>();
         
         // Clock
@@ -298,13 +401,22 @@ void WebServerAPI::setupRoutes() {
         if (!doc["clock_font_path"].isNull()) { config.time.clock_font_path = doc["clock_font_path"].as<String>(); clockChanged = true; }
         if (!doc["clock_theme"].isNull()) { config.time.clock_theme = doc["clock_theme"].as<int>(); clockChanged = true; }
         
-        if (clockChanged) {
+        // Note: We no longer update the clockEngine here if we are going to reboot anyway!
+        // To be safe against race conditions, we will just apply it if NOT rebooting.
+        bool willReboot = (!doc["reboot"].isNull() && doc["reboot"].as<bool>());
+        if (clockChanged && !willReboot) {
             extern ClockEngine* clockEngine;
-            if (clockEngine) clockEngine->setTheme((PublisherTheme)config.time.clock_theme);
+            if (clockEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    clockEngine->setTheme((PublisherTheme)config.time.clock_theme, true);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
         // Date
-        if (!doc["date_font"].isNull()) config.dateSettings.date_font = doc["date_font"].as<int>();
-        if (!doc["date_size"].isNull()) config.dateSettings.date_size = doc["date_size"].as<int>();
+        bool dateChanged = false;
+        if (!doc["date_font"].isNull()) { config.dateSettings.date_font = doc["date_font"].as<int>(); dateChanged = true; }
+        if (!doc["date_size"].isNull()) { config.dateSettings.date_size = doc["date_size"].as<int>(); dateChanged = true; }
         if (!doc["date_offset_x"].isNull()) config.dateSettings.date_offset_x = doc["date_offset_x"].as<int>();
         if (!doc["date_offset_y"].isNull()) config.dateSettings.date_offset_y = doc["date_offset_y"].as<int>();
         if (!doc["date_format"].isNull()) config.dateSettings.format = doc["date_format"].as<String>();
@@ -313,13 +425,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_color_2"].isNull()) config.dateSettings.date_color_2 = doc["date_color_2"].as<String>();
         if (!doc["date_font_path"].isNull()) {
             config.dateSettings.date_font_path = doc["date_font_path"].as<String>();
-            extern DateEngine* dateEngine;
-            if (dateEngine) dateEngine->reloadCustomFont();
+            dateChanged = true;
         }
         if (!doc["date_theme"].isNull()) {
             config.dateSettings.theme = doc["date_theme"].as<int>();
+            dateChanged = true;
+        }
+        if (dateChanged && !willReboot) {
             extern DateEngine* dateEngine;
-            if (dateEngine) dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
+            if (dateEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    dateEngine->reloadCustomFont();
+                    dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // Weather
@@ -330,16 +450,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["weather_offset_x"].isNull()) config.weather.weather_offset_x = doc["weather_offset_x"].as<int>();
         if (!doc["weather_offset_y"].isNull()) config.weather.weather_offset_y = doc["weather_offset_y"].as<int>();
 
-        if (weatherChanged) {
+        if (weatherChanged && !willReboot) {
             extern WeatherEngine* weatherEngine;
-            if (weatherEngine) weatherEngine->forceUpdate();
+            if (weatherEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    weatherEngine->forceUpdate();
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // Time / NTP
         if (!doc["ntp_server"].isNull()) config.time.ntpServer = doc["ntp_server"].as<String>();
         if (!doc["timezone"].isNull()) config.time.timezone = doc["timezone"].as<String>();
         if (!doc["ntp_server"].isNull() || !doc["timezone"].isNull()) {
-            configTzTime(config.time.timezone.c_str(), config.time.ntpServer.c_str());
+            configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
         }
         if (!doc["format_24h"].isNull()) config.time.format24h = doc["format_24h"].as<bool>();
 
@@ -356,7 +481,10 @@ void WebServerAPI::setupRoutes() {
 
         // MQTT
         if (!doc["mqtt_enable"].isNull()) config.mqtt.enabled = doc["mqtt_enable"].as<bool>();
-        if (!doc["mqtt_broker"].isNull()) config.mqtt.broker = doc["mqtt_broker"].as<String>();
+        if (!doc["mqtt_broker"].isNull()) {
+            config.mqtt.broker = doc["mqtt_broker"].as<String>();
+            LOGI("WebAPI", "Received MQTT Broker IP from WebUI: '%s'", config.mqtt.broker.c_str());
+        }
         if (!doc["mqtt_port"].isNull()) config.mqtt.port = doc["mqtt_port"].as<int>();
         if (!doc["mqtt_user"].isNull()) config.mqtt.user = doc["mqtt_user"].as<String>();
         if (!doc["mqtt_pass"].isNull() && doc["mqtt_pass"].as<String>() != "") config.mqtt.pass = doc["mqtt_pass"].as<String>();
@@ -364,9 +492,14 @@ void WebServerAPI::setupRoutes() {
         // Save to SD immediately
         bool saved = config.saveToSD("/conf.ini");
 
-        if (rotationChanged) {
+        if (rotationChanged && !willReboot) {
             extern RotationManager* rotationManager;
-            if (rotationManager) rotationManager->begin(config);
+            if (rotationManager) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    rotationManager->begin(config);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // If reboot requested, save and restart
@@ -379,23 +512,23 @@ void WebServerAPI::setupRoutes() {
         
         if (!saved) {
             // Settings were applied in RAM (so the display updates immediately) but could NOT be
-            // written to the SD card - they will be lost on the next reboot/power cycle. Surface
-            // this clearly instead of silently reporting success, so the user knows to retry
-            // (usually a transient SD card glitch) rather than assume everything was saved.
+            // written to the SD card - they will be lost on the next reboot/power cycle.
+            LOGE("WebAPI", "SD Card Write FAILED! Config changes were NOT saved and will be lost on reboot.");
             request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Settings applied but could not be saved to the SD card (conf.ini). They will be lost on reboot - please try saving again.\"}");
             return;
         }
 
+        LOGI("WebAPI", "Config successfully saved to SD card.");
         request->send(200, "application/json", "{\"success\":true,\"sd_saved\":true}");
     }, 4096);
     server.addHandler(settingsHandler);
     
-    // API: Get Selected GIF Playlists
+    // API: Get Selected GIF Playlist
     server.on("/api/playlists/selected", HTTP_GET, [](AsyncWebServerRequest *request){
         bool exists = false;
         String content = "";
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/playlists_selected.json", O_READ);
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_READ);
             if (f) {
                 exists = true;
                 content = f.readString();
@@ -406,7 +539,6 @@ void WebServerAPI::setupRoutes() {
         if (exists && content.length() > 0) {
             request->send(200, "application/json", content);
         } else {
-            // Return empty array instead of 404 to avoid UI crash
             request->send(200, "application/json", "{\"playlists\":[]}");
         }
     });
@@ -432,16 +564,16 @@ void WebServerAPI::setupRoutes() {
         // Write directly to SD (no async flag — prevents data loss on reboot)
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
             if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
-            FsFile f = sd.open("/playlists_selected.json", O_WRITE | O_CREAT | O_TRUNC);
+            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
             if (f) {
                 DynamicJsonDocument saveDoc(1024);
                 JsonArray arr = saveDoc["playlists"].to<JsonArray>();
                 for (const String& p : paths) arr.add(p);
                 serializeJson(saveDoc, f);
                 f.close();
-                Serial.println("GIF playlists saved to SD.");
+                LOGI("WebServer", "GIF playlists saved to SD.");
             } else {
-                Serial.println("ERROR: Failed to write playlists_selected.json");
+                LOGE("WebServer", "Failed to write playlists_selected.json");
             }
             xSemaphoreGive(sdMutex);
         }
@@ -460,9 +592,26 @@ void WebServerAPI::setupRoutes() {
         
         MessageConfig cfg;
         cfg.text = doc["text"] | "Hello";
-        cfg.color = doc["color"] | 63488;
+        
+        if (doc["color"].is<const char*>()) {
+            const char* hex = doc["color"].as<const char*>();
+            if (hex[0] == '#') hex++;
+            long val = strtol(hex, NULL, 16);
+            extern MatrixEngine matrixEngine;
+            cfg.color = matrixEngine.getDisplay() ? matrixEngine.getDisplay()->color565((val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF) : 0xFFFF;
+        } else {
+            cfg.color = doc["color"] | 63488;
+        }
+        
         cfg.size = doc["size"] | 2;
-        cfg.direction = doc["direction"] | "rtl";
+        
+        String dir = doc["direction"] | "rtl";
+        if (dir == "left") dir = "rtl";
+        else if (dir == "right") dir = "ltr";
+        else if (dir == "down") dir = "ttb";
+        else if (dir == "up") dir = "btt";
+        cfg.direction = dir;
+        
         cfg.speed = doc["speed"] | 30;
         cfg.timeoutSeconds = doc["timeoutSeconds"] | 30;
         
@@ -505,13 +654,6 @@ void WebServerAPI::setupRoutes() {
         
         if (!doc["state"].isNull()) {
             config.standby.matrix_power = doc["state"].as<bool>();
-            if (!config.standby.matrix_power) {
-                extern MatrixEngine matrixEngine;
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
-            }
         }
         DynamicJsonDocument resp(1024);
         resp["status"] = "success";
@@ -542,7 +684,7 @@ void WebServerAPI::setupRoutes() {
         request->send(response);
 
         if (shouldReboot) {
-            Serial.println("OTA Update successful! Rebooting in 1 second...");
+            LOGI("OTA", "OTA Update successful! Rebooting in 1 second...");
             xTaskCreate([](void *param) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 extern MatrixEngine matrixEngine;
@@ -557,7 +699,7 @@ void WebServerAPI::setupRoutes() {
         }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
-            Serial.printf("Update Start: %s\n", filename.c_str());
+            LOGI("OTA", "Update Start: %s", filename.c_str());
             extern GifEngine gifEngine;
             gifEngine.stop();
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
@@ -571,7 +713,7 @@ void WebServerAPI::setupRoutes() {
         }
         if (final) {
             if (Update.end(true)) {
-                Serial.printf("Update Success: %uB written.\n", index + len);
+                LOGI("OTA", "Update Success: %uB written.", index + len);
             } else {
                 Update.printError(Serial);
             }

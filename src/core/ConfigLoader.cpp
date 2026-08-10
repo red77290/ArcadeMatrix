@@ -1,5 +1,6 @@
 #include "ConfigLoader.h"
 #include "SDUtils.h"
+#include "Logger.h"
 #include <ArduinoJson.h>
 #include "../engines/GifEngine.h"
 
@@ -10,11 +11,17 @@ ConfigLoader::ConfigLoader() {
 void ConfigLoader::setDefaults() {
     matrix.width = 64;
     matrix.height = 32;
-    matrix.panelType = "P3";
-    matrix.chainLength = 2;
-    matrix.powerLimitPercent = 50;
+    matrix.panelType = "FM6126A";
+    matrix.chainLength = 1;
+    matrix.powerLimitPercent = 100;
     matrix.forceSingleBuffer = false;
-    matrix.colorDepth = 24;
+    matrix.colorDepth = 8;
+    matrix.rgbSequence = "RGB";
+    matrix.limitRefreshRateHz = 0;
+    matrix.driverChip = "SHIFTREG";
+    matrix.clkPhase = false;
+    matrix.latchBlanking = 8;
+    matrix.rowAddressMode = 0;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -46,7 +53,7 @@ void ConfigLoader::setDefaults() {
     idle.date_duration_sec = 10;
     idle.weather_duration_sec = 15;
     idle.gifs_count = 3;
-    idle.sprite_count = 1;
+    idle.fighter_enabled = true;
     idle.fighter_interval_sec = 10;
     
     idle.mode = "gifs_then_clock";
@@ -76,6 +83,17 @@ void ConfigLoader::setDefaults() {
     dateSettings.date_font_path = "";
 
     fonts.custom_font_path = "";
+
+    crypto.enabled = true;
+    crypto.symbols = "BTC,ETH,SOL,DOGE";
+    crypto.duration_sec = 5;
+    crypto.cache_ttl_min = 1;
+    crypto.currency = "USD";
+
+    stock.enabled = true;
+    stock.symbols = "AAPL,NVDA,TSLA,MSFT";
+    stock.duration_sec = 5;
+    stock.cache_ttl_min = 1;
 }
 
 String ConfigLoader::extractValue(String line) {
@@ -120,9 +138,15 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "HEIGHT") matrix.height = value.toInt();
         else if (key == "PANEL_TYPE") matrix.panelType = value;
         else if (key == "CHAIN") matrix.chainLength = value.toInt();
-        else if (key == "BRIGHTNESS_LIMIT") matrix.powerLimitPercent = value.toInt();
+        else if (key == "BRIGHTNESS_LIMIT" || key == "BRIGHTNESS") matrix.powerLimitPercent = value.toInt();
         else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
+        else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
+        else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
+        else if (key == "DRIVER_CHIP") matrix.driverChip = value;
+        else if (key == "CLK_PHASE") matrix.clkPhase = (value == "true" || value == "1");
+        else if (key == "LATCH_BLANKING") matrix.latchBlanking = value.toInt();
+        else if (key == "ROW_ADDRESS_MODE") matrix.rowAddressMode = value.toInt();
     }
     else if (currentSection == "MQTT") {
         if (key == "ENABLED") mqtt.enabled = (value == "true" || value == "1");
@@ -153,7 +177,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "DATE_DURATION_SEC") idle.date_duration_sec = value.toInt();
         else if (key == "WEATHER_DURATION_SEC") idle.weather_duration_sec = value.toInt();
         else if (key == "GIFS_COUNT") idle.gifs_count = value.toInt();
-        else if (key == "SPRITE_COUNT") idle.sprite_count = value.toInt();
+        else if (key == "FIGHTER_ENABLED") idle.fighter_enabled = (value == "true" || value == "1");
         else if (key == "FIGHTER_INTERVAL_SEC") idle.fighter_interval_sec = value.toInt();
         
         else if (key == "MODE") idle.mode = value; // Legacy
@@ -187,6 +211,19 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
     else if (currentSection == "FONTS") {
         if (key == "CUSTOM_FONT_PATH") fonts.custom_font_path = value;
     }
+    else if (currentSection == "CRYPTO") {
+        if (key == "ENABLED") crypto.enabled = (value == "true" || value == "1");
+        else if (key == "SYMBOLS") crypto.symbols = value;
+        else if (key == "DURATION_SEC") crypto.duration_sec = value.toInt();
+        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") crypto.cache_ttl_min = value.toInt();
+        else if (key == "CURRENCY") crypto.currency = value;
+    }
+    else if (currentSection == "STOCK" || currentSection == "STOCKS") {
+        if (key == "ENABLED") stock.enabled = (value == "true" || value == "1");
+        else if (key == "SYMBOLS") stock.symbols = value;
+        else if (key == "DURATION_SEC") stock.duration_sec = value.toInt();
+        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") stock.cache_ttl_min = value.toInt();
+    }
 }
 
 bool ConfigLoader::parseFromString(const char* iniContent) {
@@ -215,9 +252,9 @@ bool ConfigLoader::parseFromString(const char* iniContent) {
 bool ConfigLoader::parseFromSD(const char* filepath) {
     if (!sd.exists(filepath)) return false;
     
-    FsFile file = sd.open(filepath, O_READ);
+    FsFile file = sd.open(filepath, FILE_OPEN_READ);
     if (!file) {
-        Serial.printf("Failed to open %s\n", filepath);
+        LOGE("ConfigLoader", "Failed to open %s", filepath);
         return false;
     }
 
@@ -230,7 +267,10 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     file.close();
 
     // Load saved playlists for default rotation
-    FsFile playlistFile = sd.open("/playlists_selected.json", O_READ);
+    FsFile playlistFile;
+    if (sd.exists("/playlists_selected.json")) {
+        playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
+    }
     if (playlistFile) {
         DynamicJsonDocument doc(4096);
         DeserializationError error = deserializeJson(doc, playlistFile);
@@ -260,10 +300,10 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         if (writeConfigFile(filepath)) {
             return true;
         }
-        Serial.printf("ConfigLoader::saveToSD: attempt %d/%d failed, retrying...\n", attempt, MAX_ATTEMPTS);
+        LOGW("ConfigLoader", "saveToSD: attempt %d/%d failed, retrying...", attempt, MAX_ATTEMPTS);
         delay(50);
     }
-    Serial.println("ConfigLoader::saveToSD: all attempts failed - settings were NOT persisted to SD!");
+    LOGE("ConfigLoader", "saveToSD: all attempts failed - settings were NOT persisted to SD!");
     return false;
 }
 
@@ -273,9 +313,9 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
         sd.remove(filepath);
     }
     
-    FsFile file = sd.open(filepath, O_WRITE | O_CREAT | O_TRUNC);
+    FsFile file = sd.open(filepath, FILE_OPEN_WRITE);
     if (!file) {
-        Serial.println("Failed to open config file for writing");
+        LOGE("ConfigLoader", "Failed to open config file for writing");
         return false;
     }
     
@@ -290,9 +330,9 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println();
 
     file.println("[time]");
-    file.println("ntpServer=" + time.ntpServer);
+    file.println("ntp_server=" + time.ntpServer);
     file.println("timezone=" + time.timezone);
-    file.println("format24h=" + String(time.format24h ? "1" : "0"));
+    file.println("format_24h=" + String(time.format24h ? "1" : "0"));
     file.println("clock_font=" + String(time.clock_font));
     file.println("clock_size=" + String(time.clock_size));
     file.println("clock_offset_x=" + String(time.clock_offset_x));
@@ -303,7 +343,6 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("clock_color_2=" + time.clock_color_2);
     file.println("clock_font_path=" + time.clock_font_path);
     file.println();
-
     file.println("[matrix]");
     file.println("width=" + String(matrix.width));
     file.println("height=" + String(matrix.height));
@@ -312,6 +351,12 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("brightness_limit=" + String(matrix.powerLimitPercent));
     file.println("color_depth=" + String(matrix.colorDepth));
     file.println("force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0"));
+    file.println("rgb_sequence=" + matrix.rgbSequence);
+    file.println("limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz));
+    file.println("driver_chip=" + matrix.driverChip);
+    file.println("clk_phase=" + String(matrix.clkPhase ? "1" : "0"));
+    file.println("latch_blanking=" + String(matrix.latchBlanking));
+    file.println("row_address_mode=" + String(matrix.rowAddressMode));
     file.println();
 
     file.println("[mqtt]");
@@ -330,7 +375,7 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("date_duration_sec=" + String(idle.date_duration_sec));
     file.println("weather_duration_sec=" + String(idle.weather_duration_sec));
     file.println("gifs_count=" + String(idle.gifs_count));
-    file.println("sprite_count=" + String(idle.sprite_count));
+    file.println("fighter_enabled=" + String(idle.fighter_enabled ? "true" : "false"));
     file.println("fighter_interval_sec=" + String(idle.fighter_interval_sec));
     file.println("mode=" + idle.mode);
     file.println("gifs_before_clock=" + String(idle.gifs_before_clock));
@@ -371,21 +416,36 @@ bool ConfigLoader::writeConfigFile(const char* filepath) {
     file.println("# Leave empty to use the compiled-in fonts only.");
     file.println("custom_font_path=" + fonts.custom_font_path);
     file.println();
+
+    file.println("[crypto]");
+    file.println("enabled=" + String(crypto.enabled ? "1" : "0"));
+    file.println("symbols=" + crypto.symbols);
+    file.println("duration_sec=" + String(crypto.duration_sec));
+    file.println("cache_ttl_min=" + String(crypto.cache_ttl_min));
+    file.println("currency=" + crypto.currency);
+    file.println();
+
+    file.println("[stock]");
+    file.println("enabled=" + String(stock.enabled ? "1" : "0"));
+    file.println("symbols=" + stock.symbols);
+    file.println("duration_sec=" + String(stock.duration_sec));
+    file.println("cache_ttl_min=" + String(stock.cache_ttl_min));
+    file.println();
     
     file.close();
 
     // Sanity check: an SD glitch mid-write can leave a truncated/empty file even though close()
     // didn't report an error. A full conf.ini is always several hundred bytes, so treat anything
     // implausibly small as a failed write (triggers a retry in saveToSD()).
-    FsFile check = sd.open(filepath, O_READ);
+    FsFile check = sd.open(filepath, FILE_OPEN_READ);
     if (!check) {
-        Serial.println("ConfigLoader: conf.ini could not be reopened after writing - treating as failed write.");
+        LOGE("ConfigLoader", "conf.ini could not be reopened after writing - treating as failed write.");
         return false;
     }
     size_t writtenSize = check.size();
     check.close();
-    if (writtenSize < 200) {
-        Serial.printf("ConfigLoader: conf.ini looks truncated after writing (%u bytes) - treating as failed write.\n", (unsigned)writtenSize);
+    if (writtenSize < 100) {
+        LOGE("ConfigLoader", "conf.ini looks truncated after writing (%u bytes) - treating as failed write.", (unsigned)writtenSize);
         return false;
     }
 

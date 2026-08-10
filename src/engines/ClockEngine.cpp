@@ -19,7 +19,11 @@ ClockEngine::~ClockEngine() {
     if (activeFace) delete activeFace;
 }
 
-void ClockEngine::setTheme(PublisherTheme theme) {
+void ClockEngine::setTheme(PublisherTheme theme, bool forceReload) {
+    if (!forceReload && currentTheme == theme && activeFace != nullptr) {
+        return;
+    }
+    
     if (activeFace) {
         delete activeFace;
         activeFace = nullptr;
@@ -55,6 +59,10 @@ void ClockEngine::setTheme(PublisherTheme theme) {
         arcade->setTheme(theme);
         activeFace = arcade;
     }
+    
+    if (activeFace) {
+        activeFace->draw(currentTime);
+    }
 }
 
 void ClockEngine::updateTime(const TimeData& t) {
@@ -64,8 +72,9 @@ void ClockEngine::updateTime(const TimeData& t) {
     }
 }
 
-void ClockEngine::loop() {
+bool ClockEngine::loop() {
     if (activeFace) {
         activeFace->update();
     }
+    return true;
 }

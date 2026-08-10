@@ -39,49 +39,46 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
     int16_t bx, by;
     uint16_t bw, bh;
     
-    int x, y;
+    // We always draw text at scale 1 to a small canvas, then scale it up using blockSize!
+    // But wait, what if the user wants it to be smaller than the max size?
+    // Let's determine blockSize based on matrix size.
     
-    {
-        // Setup temporary canvas in a block to free it immediately
-        GFXcanvas1 tempCanvas(matrix->width(), matrix->height());
-        if (!tempCanvas.getBuffer()) return; // Prevent crash if OOM
-        
-        tempCanvas.setTextSize(1);
-        tempCanvas.setFont(NULL);
-        
-        tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
-        
-        int sMax = min((int)(matrix->width() / bw), (int)(matrix->height() / bh));
-        if (sMax < 1) sMax = 1;
-        
-        if (logicalSize >= 5) gfxSize = sMax + 1;
-        else if (logicalSize == 4) gfxSize = sMax;
-        else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 4);
-        else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 4);
-        else gfxSize = max(1, sMax / 4);
-        
-        tempCanvas.setTextSize(gfxSize);
-        tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-        
-        x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
-        y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
-    }
+    // First, find the unscaled text bounds.
+    GFXcanvas1 tempCanvas(128, 32);
+    tempCanvas.setTextSize(1);
+    tempCanvas.setFont(NULL);
+    tempCanvas.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+    if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
     
-    GFXcanvas1 fullCanvas(matrix->width(), matrix->height());
-    if (!fullCanvas.getBuffer()) return; // Prevent crash if OOM
+    int sMax = min((int)(matrix->width() / bw), (int)(matrix->height() / bh));
+    if (sMax < 1) sMax = 1;
+    
+    if (logicalSize >= 5) gfxSize = sMax + 1;
+    else if (logicalSize == 4) gfxSize = sMax;
+    else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 4);
+    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 4);
+    else gfxSize = max(1, sMax / 4);
+    
+    blockSize = gfxSize; // The grid block size is equal to the text scale!
+    
+    int scaledW = bw * blockSize;
+    int scaledH = bh * blockSize;
+    
+    int startX = (matrix->width() - scaledW) / 2 + config.time.clock_offset_x - (bx * blockSize);
+    int startY = (matrix->height() - scaledH) / 2 + config.time.clock_offset_y - (by * blockSize);
+    
+    // Draw full text at scale 1
+    GFXcanvas1 fullCanvas(bw + 4, bh + 4);
+    if (!fullCanvas.getBuffer()) return; // Prevent crash
     
     fullCanvas.fillScreen(0);
-    fullCanvas.setTextSize(gfxSize);
-    fullCanvas.setCursor(x, y);
+    fullCanvas.setTextSize(1);
+    fullCanvas.setCursor(2 - bx, 2 - by); // Margin of 2
     fullCanvas.setTextColor(1);
     fullCanvas.print(timeStr);
     
-    // Reuse a single mask canvas for all characters
-    GFXcanvas1 maskCanvas(matrix->width(), matrix->height());
+    GFXcanvas1 maskCanvas(bw + 4, bh + 4);
     if (!maskCanvas.getBuffer()) return;
-    
-    // std::list doesn't need reserve and prevents heap fragmentation!
     
     for (int charIdx : targetIndices) {
         char maskStr[12];
@@ -89,25 +86,30 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
         maskStr[charIdx] = ' '; // Hide this character
         
         maskCanvas.fillScreen(0);
-        maskCanvas.setTextSize(gfxSize);
-        maskCanvas.setCursor(x, y);
+        maskCanvas.setTextSize(1);
+        maskCanvas.setCursor(2 - bx, 2 - by);
         maskCanvas.setTextColor(1);
         maskCanvas.print(maskStr);
         
-        for (int py = 0; py < matrix->height(); py += blockSize) {
-            for (int px = 0; px < matrix->width(); px += blockSize) {
+        for (int py = 0; py < bh + 4; py++) {
+            for (int px = 0; px < bw + 4; px++) {
                 if (fullCanvas.getPixel(px, py) && !maskCanvas.getPixel(px, py)) {
                     TetrisBlock b;
                     b.charIndex = charIdx;
-                    b.tx = px;
-                    b.ty = py;
-                    b.x = px;
-                    b.y = py - matrix->height() - (rand() % 40);
-                    b.dy = (((float)rand() / RAND_MAX) * 2.0f + 1.0f) * (matrix->height() / 32.0f); // 1.0 to 3.0 scaled
+                    
+                    b.tx = startX + (px - 2) * blockSize;
+                    b.ty = startY + (py - 2) * blockSize;
+                    b.x = b.tx;
+                    b.y = b.ty - matrix->height() - (rand() % (int)(matrix->height() / 2));
+                    // Distance to fall is roughly height + some random offset (64-96 pixels)
+                    // At 60fps (16ms per frame), we want it to take ~60 frames (1 second).
+                    // So dy should be around 1.5 pixels per frame.
+                    float base_dy = max(1.0f, matrix->height() / 40.0f);
+                    b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy);
                     if (isGameboy) {
-                        b.color = gameboyColors[rand() % 4];
+                        b.color = gameboyColors[charIdx % 4];
                     } else {
-                        b.color = tetrisColors[rand() % 7];
+                        b.color = tetrisColors[charIdx % 7];
                     }
                     b.state = 0; // IN
                     blocks.push_back(b);
@@ -116,7 +118,6 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
         }
     }
 }
-
 void TetrisClock::update() {
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
@@ -125,7 +126,8 @@ void TetrisClock::update() {
         if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
             for (auto& b : blocks) {
                 b.state = 2; // OUT
-                b.dy = (((float)rand() / RAND_MAX) * 1.5f + 0.5f) * (matrix->height() / 32.0f);
+                float base_dy = max(1.0f, matrix->height() / 40.0f);
+                b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
             }
             std::vector<int> allIndices;
             for(int i=0; i<strlen(timeStr); i++) allIndices.push_back(i);
@@ -143,7 +145,8 @@ void TetrisClock::update() {
                         for(int idx : changedIndices) {
                             if(b.charIndex == idx) {
                                 b.state = 2; // OUT
-                                b.dy = (((float)rand() / RAND_MAX) * 1.5f + 0.5f) * (matrix->height() / 32.0f);
+                                float base_dy = max(1.5f, matrix->height() / 15.0f);
+                                b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
                                 break;
                             }
                         }
@@ -155,20 +158,24 @@ void TetrisClock::update() {
         strcpy(lastTimeStr, timeStr);
     }
     
-    if (millis() - lastFrameTime > 20) { // ~50 FPS
-        lastFrameTime = millis();
+    // Frame-rate independent physics
+    unsigned long currentMillis = millis();
+    float dt = (currentMillis - lastFrameTime);
+    if (dt > 100) dt = 100.0f; // Cap at 100ms to avoid huge jumps, but don't reset to 16ms!
+    lastFrameTime = currentMillis;
+    float timeScale = dt / 16.0f; // Scale relative to 60fps
         
-        for (auto it = blocks.begin(); it != blocks.end(); ) {
+    for (auto it = blocks.begin(); it != blocks.end(); ) {
             if (it->state == 0) { // IN
-                it->y += it->dy;
+                it->y += it->dy * timeScale;
                 if (it->y >= it->ty) {
                     it->y = it->ty;
                     it->state = 1; // FIXED
                 }
                 ++it;
             } else if (it->state == 2) { // OUT
-                it->y += it->dy;
-                it->dy += 0.2f * (matrix->height() / 32.0f); // Gravity
+                it->y += it->dy * timeScale;
+                it->dy += 0.4f * timeScale; // Gravity matches Rust
                 if (it->y > matrix->height()) {
                     it = blocks.erase(it);
                 } else {
@@ -178,7 +185,7 @@ void TetrisClock::update() {
                 ++it; // FIXED
             }
         }
-    }
+
     
     // Draw
     for (const auto& b : blocks) {
