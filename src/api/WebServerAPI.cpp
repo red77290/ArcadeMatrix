@@ -408,14 +408,15 @@ void WebServerAPI::setupRoutes() {
             extern ClockEngine* clockEngine;
             if (clockEngine) {
                 if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                    clockEngine->setTheme((PublisherTheme)config.time.clock_theme);
+                    clockEngine->setTheme((PublisherTheme)config.time.clock_theme, true);
                     xSemaphoreGive(sdMutex);
                 }
             }
         }
         // Date
-        if (!doc["date_font"].isNull()) config.dateSettings.date_font = doc["date_font"].as<int>();
-        if (!doc["date_size"].isNull()) config.dateSettings.date_size = doc["date_size"].as<int>();
+        bool dateChanged = false;
+        if (!doc["date_font"].isNull()) { config.dateSettings.date_font = doc["date_font"].as<int>(); dateChanged = true; }
+        if (!doc["date_size"].isNull()) { config.dateSettings.date_size = doc["date_size"].as<int>(); dateChanged = true; }
         if (!doc["date_offset_x"].isNull()) config.dateSettings.date_offset_x = doc["date_offset_x"].as<int>();
         if (!doc["date_offset_y"].isNull()) config.dateSettings.date_offset_y = doc["date_offset_y"].as<int>();
         if (!doc["date_format"].isNull()) config.dateSettings.format = doc["date_format"].as<String>();
@@ -424,13 +425,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["date_color_2"].isNull()) config.dateSettings.date_color_2 = doc["date_color_2"].as<String>();
         if (!doc["date_font_path"].isNull()) {
             config.dateSettings.date_font_path = doc["date_font_path"].as<String>();
-            extern DateEngine* dateEngine;
-            if (dateEngine) dateEngine->reloadCustomFont();
+            dateChanged = true;
         }
         if (!doc["date_theme"].isNull()) {
             config.dateSettings.theme = doc["date_theme"].as<int>();
+            dateChanged = true;
+        }
+        if (dateChanged && !willReboot) {
             extern DateEngine* dateEngine;
-            if (dateEngine) dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
+            if (dateEngine) {
+                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                    dateEngine->reloadCustomFont();
+                    dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
+                    xSemaphoreGive(sdMutex);
+                }
+            }
         }
 
         // Weather
@@ -583,9 +592,26 @@ void WebServerAPI::setupRoutes() {
         
         MessageConfig cfg;
         cfg.text = doc["text"] | "Hello";
-        cfg.color = doc["color"] | 63488;
+        
+        if (doc["color"].is<const char*>()) {
+            const char* hex = doc["color"].as<const char*>();
+            if (hex[0] == '#') hex++;
+            long val = strtol(hex, NULL, 16);
+            extern MatrixEngine matrixEngine;
+            cfg.color = matrixEngine.getDisplay() ? matrixEngine.getDisplay()->color565((val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF) : 0xFFFF;
+        } else {
+            cfg.color = doc["color"] | 63488;
+        }
+        
         cfg.size = doc["size"] | 2;
-        cfg.direction = doc["direction"] | "rtl";
+        
+        String dir = doc["direction"] | "rtl";
+        if (dir == "left") dir = "rtl";
+        else if (dir == "right") dir = "ltr";
+        else if (dir == "down") dir = "ttb";
+        else if (dir == "up") dir = "btt";
+        cfg.direction = dir;
+        
         cfg.speed = doc["speed"] | 30;
         cfg.timeoutSeconds = doc["timeoutSeconds"] | 30;
         
