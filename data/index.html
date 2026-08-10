@@ -629,7 +629,6 @@ body {
             <h3>System Control</h3>
             <div class="action-buttons">
               <button id="btn-reboot" class="btn btn-warning">Reboot System</button>
-              <button id="btn-restart-app" class="btn btn-primary" style="margin-left: 0.5rem;">Restart App</button>
               <button id="btn-shutdown" class="btn btn-danger">Shutdown</button>
             </div>
           </div>
@@ -646,15 +645,88 @@ body {
         </header>
 
         <div class="tabs">
-          <button class="tab-btn active" onclick="switchDisplayTab('clock')">🕒 Clock</button>
+          <button class="tab-btn active" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
+          <button class="tab-btn" onclick="switchDisplayTab('clock')">🕒 Clock</button>
           <button class="tab-btn" onclick="switchDisplayTab('date')">📅 Date</button>
           <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
           <button class="tab-btn" onclick="switchDisplayTab('crypto')">📈 Crypto</button>
           <button class="tab-btn" onclick="switchDisplayTab('stock')">📊 Stocks</button>
-          <button class="tab-btn" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
         </div>
         
-        <div id="tab-clock" class="tab-pane active">
+        <div id="tab-idle" class="tab-pane active">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>🔄 Idle Rotation & Night Mode</h3>
+          <div class="form-group">
+            <label>Active Screens in Rotation</label>
+            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
+            </div>
+            <input type="hidden" id="cfg-rotation">
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>GIFs per cycle</label>
+              <input type="number" id="cfg-dur-gifs" class="input" min="1">
+            </div>
+            <div class="form-group">
+              <label>Sprites on screen</label>
+              <select id="cfg-sprite-enable" class="input">
+                <option value="true">ON</option>
+                <option value="false">OFF</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Fighter Interval (s)</label>
+              <input type="number" id="cfg-fighter-int" class="input" min="1">
+            </div>
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Clock Duration (s)</label>
+              <input type="number" id="cfg-dur-clock" class="input" min="1">
+            </div>
+            <div class="form-group">
+              <label>Date Duration (s)</label>
+              <input type="number" id="cfg-dur-date" class="input" min="1">
+            </div>
+            <div class="form-group">
+              <label>Weather Duration (s)</label>
+              <input type="number" id="cfg-dur-weather" class="input" min="1">
+            </div>
+          </div>
+          <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 1.5rem 0;">
+          <h4>🌙 Night Mode</h4>
+          <div class="form-grid col-4" style="margin-top: 0.5rem;">
+            <div class="form-group">
+              <label>Enable Night Mode</label>
+              <select id="cfg-night-enable" class="input">
+                <option value="true">YES</option>
+                <option value="false">NO</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Turn OFF at</label>
+              <input type="time" id="cfg-night-off" class="input" value="23:00">
+            </div>
+            <div class="form-group">
+              <label>Wake UP at</label>
+              <input type="time" id="cfg-night-on" class="input" value="07:00">
+            </div>
+            <div class="form-group">
+              <label>Night Brightness (%)</label>
+              <input type="number" id="cfg-night-bright" class="input" value="0" min="0" max="100">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        </div>
+        </div>
+
+        <div id="tab-clock" class="tab-pane">
           <div class="card glass shadow">
             <h3>🕒 Clock Settings</h3>
           <div class="form-grid">
@@ -898,74 +970,6 @@ body {
           <div class="form-group" style="margin-top: 1rem;">
             <label>Selected Stock Tickers (Comma Separated)</label>
             <input type="text" id="cfg-stock-symbols" class="input" value="AAPL,NVDA,TSLA,MSFT">
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-idle" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>🔄 Idle Rotation & Night Mode</h3>
-          <div class="form-group">
-            <label>Active Screens in Rotation</label>
-            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
-            </div>
-            <input type="hidden" id="cfg-rotation">
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>GIFs per cycle</label>
-              <input type="number" id="cfg-dur-gifs" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Sprites on screen</label>
-              <select id="cfg-sprite-enable" class="input">
-                <option value="true">ON</option>
-                <option value="false">OFF</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Fighter Interval (s)</label>
-              <input type="number" id="cfg-fighter-int" class="input" min="1">
-            </div>
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Clock Duration (s)</label>
-              <input type="number" id="cfg-dur-clock" class="input" min="5">
-            </div>
-            <div class="form-group">
-              <label>Date Duration (s)</label>
-              <input type="number" id="cfg-dur-date" class="input" min="5">
-            </div>
-            <div class="form-group">
-              <label>Weather Duration (s)</label>
-              <input type="number" id="cfg-dur-weather" class="input" min="5">
-            </div>
-          </div>
-          <hr style="margin: 1.5rem 0; border-color: rgba(255,255,255,0.1);">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Night Mode</label>
-              <select id="cfg-night-enable" class="input">
-                <option value="false">Disabled</option>
-                <option value="true">Enabled</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Turn Off At (HH:MM)</label>
-              <input type="text" id="cfg-night-off" class="input" placeholder="23:00">
-            </div>
-            <div class="form-group">
-              <label>Wake Up At (HH:MM)</label>
-              <input type="text" id="cfg-night-on" class="input" placeholder="07:00">
-            </div>
           </div>
           <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
         </div>
@@ -1331,7 +1335,7 @@ const translations = {
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
     // Tooltips
-        tt_hw_color_depth: "Profondeur de couleur en bits par canal (R, G, B), de 2 à 8. 8 = RGB 24-bit (couleurs réelles). Baisser cette valeur (ex: 5 ou 6) augmente le soleil/luminosité et la fluidité.",
+    tt_hw_color_depth: "Color depth in bits per channel (R, G, B), from 2 to 8. 8 = RGB 24-bit (real colors). Lowering this value (e.g. 5 or 6) increases brightness and animation smoothness.",
     tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
     tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
     tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
@@ -1352,7 +1356,7 @@ const translations = {
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
     // Tooltips
-    tt_hw_color_depth: "...",
+    tt_hw_color_depth: "Profondeur de couleur en bits par canal (R, G, B), de 2 à 8. 8 = RGB 24-bit (couleurs réelles). Baisser cette valeur (ex: 5 ou 6) augmente la luminosité et la fluidité.",
     tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
     tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
     tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
@@ -1373,7 +1377,7 @@ const translations = {
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
     // Tooltips
-    tt_hw_color_depth: "...",
+    tt_hw_color_depth: "Profundidad de color en bits por canal (R, G, B), de 2 a 8. 8 = RGB 24-bit (colores reales). Bajar este valor (ej: 5 o 6) aumenta el brillo y la fluidez.",
     tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
     tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
     tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
@@ -1916,26 +1920,67 @@ async function initSettings() {
 
             rotation: selectedRotations,
             clock_duration_sec: parseInt(document.getElementById('cfg-dur-clock').value) || 10,
-          date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
-          weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
-          gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
-          fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true', document.getElementById('cfg-sprite-enable').value === 'true' ? 2 : 0,
-          fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
+            date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
+            weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
+            gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
+            fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
+            fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
 
-          night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
-          turn_off_at: document.getElementById('cfg-night-off').value,
-          wake_up_at: document.getElementById('cfg-night-on').value,
-        };
-        await API.post('/api/settings', payload);
-        window.showToast('Display settings saved!', 'success');
-      } catch (e) {
-        window.showToast('Failed to save settings', 'error');
-      } finally {
-        btnSaveDisplay.disabled = false;
-        btnSaveDisplay.textContent = 'Save Display Settings';
-      }
+            night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
+            turn_off_at: document.getElementById('cfg-night-off').value,
+            wake_up_at: document.getElementById('cfg-night-on').value,
+            night_brightness: parseInt(document.getElementById('cfg-night-bright')?.value) || 0,
+          };
+          await API.post('/api/settings', payload);
+          window.showToast('Display settings saved!', 'success');
+        } catch (e) {
+          window.showToast('Failed to save settings', 'error');
+        } finally {
+          btnSaveDisplay.disabled = false;
+          btnSaveDisplay.textContent = 'Save Display Settings';
+        }
+      });
     });
-  });
+
+    const cryptoSearch = document.getElementById('crypto-search-input');
+    if (cryptoSearch) {
+      cryptoSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const sym = cryptoSearch.value.trim().toUpperCase();
+          if (sym) {
+            const input = document.getElementById('cfg-crypto-symbols');
+            let current = input.value.split(',').map(s => s.trim()).filter(Boolean);
+            if (!current.includes(sym)) {
+              current.push(sym);
+              input.value = current.join(',');
+              window.showToast(`Added ${sym} to Crypto list`, 'info');
+            }
+            cryptoSearch.value = '';
+          }
+        }
+      });
+    }
+
+    const stockSearch = document.getElementById('stock-search-input');
+    if (stockSearch) {
+      stockSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const sym = stockSearch.value.trim().toUpperCase();
+          if (sym) {
+            const input = document.getElementById('cfg-stock-symbols');
+            let current = input.value.split(',').map(s => s.trim()).filter(Boolean);
+            if (!current.includes(sym)) {
+              current.push(sym);
+              input.value = current.join(',');
+              window.showToast(`Added ${sym} to Stock list`, 'info');
+            }
+            stockSearch.value = '';
+          }
+        }
+      });
+    }
 
   // Save HW settings
   const btnSaveHw = document.getElementById('btn-save-hw');

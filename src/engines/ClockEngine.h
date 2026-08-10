@@ -29,7 +29,7 @@ public:
     ClockEngine(MatrixPanel_I2S_DMA* display);
     ~ClockEngine();
 
-    void setTheme(PublisherTheme theme);
+    void setTheme(PublisherTheme theme, bool forceReload = false);
     void updateTime(const TimeData& t);
     
     // Handles continuous frame rendering

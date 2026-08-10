@@ -19,8 +19,8 @@ ClockEngine::~ClockEngine() {
     if (activeFace) delete activeFace;
 }
 
-void ClockEngine::setTheme(PublisherTheme theme) {
-    if (currentTheme == theme && activeFace != nullptr) {
+void ClockEngine::setTheme(PublisherTheme theme, bool forceReload) {
+    if (!forceReload && currentTheme == theme && activeFace != nullptr) {
         return;
     }
     

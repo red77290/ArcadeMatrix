@@ -192,13 +192,29 @@ bool RotationManager::loop() {
         advance = true;
     } else if (currentMod == MODULE_CRYPTO) {
       if (cryptoEngine) cryptoEngine->loop();
-      if (now - moduleStartTime >=
-          (config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5) * 1000UL)
+      size_t symbolCount = 0;
+      if (!config.crypto.symbols.isEmpty()) {
+        symbolCount = 1;
+        for (unsigned int i = 0; i < config.crypto.symbols.length(); i++) {
+          if (config.crypto.symbols.charAt(i) == ',') symbolCount++;
+        }
+      }
+      if (symbolCount == 0) symbolCount = 1;
+      uint32_t perSymbolSec = config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5;
+      if (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL))
         advance = true;
     } else if (currentMod == MODULE_STOCKS) {
       if (stockEngine) stockEngine->loop();
-      if (now - moduleStartTime >=
-          (config.stock.duration_sec > 0 ? config.stock.duration_sec : 5) * 1000UL)
+      size_t symbolCount = 0;
+      if (!config.stock.symbols.isEmpty()) {
+        symbolCount = 1;
+        for (unsigned int i = 0; i < config.stock.symbols.length(); i++) {
+          if (config.stock.symbols.charAt(i) == ',') symbolCount++;
+        }
+      }
+      if (symbolCount == 0) symbolCount = 1;
+      uint32_t perSymbolSec = config.stock.duration_sec > 0 ? config.stock.duration_sec : 5;
+      if (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL))
         advance = true;
     }
 
