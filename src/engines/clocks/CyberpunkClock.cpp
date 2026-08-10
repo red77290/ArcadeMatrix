@@ -69,7 +69,7 @@ void CyberpunkClock::update() {
         dropsInit = true;
     }
 
-    if (millis() - lastFrameTime > 100) {
+    if (true) {
         lastFrameTime = millis();
         // Update physics
         for (int i=0; i<NUM_DROPS; i++) {

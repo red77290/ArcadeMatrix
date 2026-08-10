@@ -287,6 +287,30 @@ void ArcadeClock::drawStaticTime() {
             shadowColor = matrix->color565(255, 255, 255); // White shadow
             break;
 
+        case THEME_CUSTOM_GRADIENT: {
+            uint16_t defaultC1 = matrix->color565(0, 255, 255);  // Cyan
+            uint16_t defaultC2 = matrix->color565(255, 0, 255);  // Magenta
+            if (config.time.clock_color_1.length() > 0) {
+                const char* hex1 = config.time.clock_color_1.c_str();
+                if (hex1[0] == '#') hex1++;
+                if (strlen(hex1) >= 6) {
+                    long val1 = strtol(hex1, NULL, 16);
+                    defaultC1 = matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF);
+                }
+            }
+            if (config.time.clock_color_2.length() > 0) {
+                const char* hex2 = config.time.clock_color_2.c_str();
+                if (hex2[0] == '#') hex2++;
+                if (strlen(hex2) >= 6) {
+                    long val2 = strtol(hex2, NULL, 16);
+                    defaultC2 = matrix->color565((val2 >> 16) & 0xFF, (val2 >> 8) & 0xFF, val2 & 0xFF);
+                }
+            }
+            textColor = defaultC1;
+            shadowColor = defaultC2;
+            break;
+        }
+
         case THEME_NONE:
         default:
             textColor = matrix->color565(255, 255, 255);
@@ -305,7 +329,7 @@ void ArcadeClock::triggerAnimation() {
 
 void ArcadeClock::update() {
     if (isAnimating) {
-        if (millis() - lastFrameTime > 50) {
+        if (true) {
             lastFrameTime = millis();
             animationFrame++;
             if (animationFrame > 30) {

@@ -1,16 +1,12 @@
 #include "MatrixRainClock.h"
+#include "MatrixRainFont.h"
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
 extern ConfigLoader config;
 
-// Printable ASCII range used as a stand-in for the Katakana glyphs used on the RPi version -
-// the compiled-in Adafruit GFX default font only ships Latin/ASCII glyphs.
-static const char RAIN_CHARSET_START = 0x21; // '!'
-static const char RAIN_CHARSET_LEN = 0x5E;   // through '~'
-
-static char randomGlyph() {
-    return RAIN_CHARSET_START + (rand() % RAIN_CHARSET_LEN);
+static uint8_t randomGlyph() {
+    return rand() % MATRIX_RAIN_NUM_GLYPHS;
 }
 
 MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display)
@@ -52,15 +48,20 @@ void MatrixRainClock::drawTime() {
     int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
     int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
 
-    // Solid backing box so the time stays legible over the noisy rain background.
-    matrix->fillRect(x + bx - 2, y + by - 2, bw + 4, bh + 4, matrix->color565(0, 0, 0));
-    matrix->setTextColor(matrix->color565(220, 255, 220));
+    // Black outline so time remains readable over the rain without blocking background kanjis
+    matrix->setTextColor(matrix->color565(0, 0, 0));
+    matrix->setCursor(x - 1, y); matrix->print(timeStr);
+    matrix->setCursor(x + 1, y); matrix->print(timeStr);
+    matrix->setCursor(x, y - 1); matrix->print(timeStr);
+    matrix->setCursor(x, y + 1); matrix->print(timeStr);
+
+    matrix->setTextColor(matrix->color565(255, 255, 255)); // Bright white text
     matrix->setCursor(x, y);
     matrix->print(timeStr);
 }
 
 void MatrixRainClock::update() {
-    const int glyphW = 6;
+    const int glyphW = 8; // TrueMatrix is 8x8
     const int glyphH = 8;
 
     if (!initialized) {
@@ -70,8 +71,8 @@ void MatrixRainClock::update() {
         if (rows > 16) rows = 16;
 
         for (int c = 0; c < numColumns; c++) {
-            colHead[c] = -(rand() % 16);
-            colSpeedDivider[c] = 1 + (rand() % 3);
+            colHead[c] = -(rand() % 6);
+            colSpeedDivider[c] = 1 + (rand() % 2);
             colTick[c] = 0;
             for (int r = 0; r < rows; r++) {
                 colGlyphs[c][r] = randomGlyph();
@@ -83,50 +84,51 @@ void MatrixRainClock::update() {
     int rows = matrix->height() / glyphH;
     if (rows > 16) rows = 16;
 
-    // Throttle the fall speed independently of the display's ~30 FPS refresh loop.
-    if (millis() - lastFrameTime > 60) {
-        lastFrameTime = millis();
-        for (int c = 0; c < numColumns; c++) {
-            colTick[c]++;
-            if (colTick[c] >= colSpeedDivider[c]) {
-                colTick[c] = 0;
-                colHead[c]++;
-                // Occasionally mutate a glyph in the trail for a bit of extra "flicker".
-                if (colHead[c] >= 0 && colHead[c] < rows && (rand() % 4) == 0) {
-                    colGlyphs[c][colHead[c]] = randomGlyph();
-                }
-                if (colHead[c] - rows > 4) {
-                    // Off the bottom of the screen: respawn this column from the top.
-                    colHead[c] = -(rand() % 16);
-                    colSpeedDivider[c] = 1 + (rand() % 3);
-                    for (int r = 0; r < rows; r++) {
-                        colGlyphs[c][r] = randomGlyph();
-                    }
+    // Advance fall animation
+    for (int c = 0; c < numColumns; c++) {
+        colTick[c]++;
+        if (colTick[c] >= colSpeedDivider[c]) {
+            colTick[c] = 0;
+            colHead[c]++;
+            // Occasionally mutate a glyph in the trail for a bit of extra "flicker".
+            if (colHead[c] >= 0 && colHead[c] < rows && (rand() % 3) == 0) {
+                colGlyphs[c][colHead[c]] = randomGlyph();
+            }
+            if (colHead[c] - rows > 2) {
+                // Immediately respawn near the top to maintain continuous rain
+                colHead[c] = -(rand() % 4);
+                colSpeedDivider[c] = 1 + (rand() % 2);
+                for (int r = 0; r < rows; r++) {
+                    colGlyphs[c][r] = randomGlyph();
                 }
             }
         }
     }
 
     matrix->fillScreen(0);
-    matrix->setFont(NULL);
-    matrix->setTextSize(1);
 
     const int trailLength = 8;
     for (int c = 0; c < numColumns; c++) {
-        for (int r = 0; r <= colHead[c] && r >= colHead[c] - trailLength; r++) {
+        for (int r = 0; r <= colHead[c]; r++) {
             if (r < 0 || r >= rows) continue;
             int distFromHead = colHead[c] - r;
+            if (distFromHead > trailLength) continue;
+            
             uint16_t color;
             if (distFromHead == 0) {
                 color = matrix->color565(255, 255, 255); // Bright white head
             } else {
-                int green = 255 - (distFromHead * (255 / trailLength));
-                if (green < 40) green = 40;
+                int green = 255 - (distFromHead * (220 / trailLength));
+                if (green < 30) green = 30;
                 color = matrix->color565(0, green, 0);
             }
-            matrix->setTextColor(color);
-            matrix->setCursor(c * glyphW, r * glyphH);
-            matrix->print(colGlyphs[c][r]);
+            
+            int x = c * glyphW;
+            int y = r * glyphH;
+            uint8_t glyphIndex = colGlyphs[c][r];
+            
+            // Draw the 8x8 1-bit bitmap
+            matrix->drawBitmap(x, y, MATRIX_RAIN_GLYPHS[glyphIndex], 8, 8, color);
         }
     }
 

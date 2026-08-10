@@ -19,16 +19,16 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
     textHeight = 8 * currentMsg.size;
 
     // Initialize starting position based on direction
-    if (currentMsg.direction == "rtl") {
+    if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
         cursorX = matrix->width();
         cursorY = (matrix->height() - textHeight) / 2;
-    } else if (currentMsg.direction == "ltr") {
+    } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
         cursorX = -textWidth;
         cursorY = (matrix->height() - textHeight) / 2;
-    } else if (currentMsg.direction == "ttb") {
+    } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
         cursorX = (matrix->width() - textWidth) / 2;
         cursorY = -textHeight;
-    } else if (currentMsg.direction == "btt") {
+    } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
         cursorX = (matrix->width() - textWidth) / 2;
         cursorY = matrix->height();
     } else {
@@ -47,13 +47,13 @@ void MessageEngine::stop() {
     matrix->clearScreen();
 }
 
-void MessageEngine::loop() {
-    if (!active) return;
+bool MessageEngine::loop() {
+    if (!active) return true;
 
     // Check timeout priority
     if (millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
         stop();
-        return;
+        return true;
     }
 
     // Scroll logic based on speed (ms per pixel update)
@@ -69,18 +69,19 @@ void MessageEngine::loop() {
         matrix->print(currentMsg.text);
 
         // Update coordinates
-        if (currentMsg.direction == "rtl") {
+        if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
             cursorX--;
             if (cursorX < -textWidth) cursorX = matrix->width(); // Loop
-        } else if (currentMsg.direction == "ltr") {
+        } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
             cursorX++;
             if (cursorX > matrix->width()) cursorX = -textWidth;
-        } else if (currentMsg.direction == "ttb") {
+        } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
             cursorY++;
             if (cursorY > matrix->height()) cursorY = -textHeight;
-        } else if (currentMsg.direction == "btt") {
+        } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
             cursorY--;
             if (cursorY < -textHeight) cursorY = matrix->height();
         }
     }
+    return true;
 }

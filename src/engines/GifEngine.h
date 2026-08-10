@@ -61,7 +61,7 @@ public:
     /**
      * @brief Main processing loop for pushing pixels frame-by-frame.
      */
-    void loop();
+    bool loop();
     
     /**
      * @brief Check if the engine is currently processing or playing a GIF.
@@ -95,10 +95,13 @@ private:
     
     FsFile currentFile;              ///< Handle to the currently streaming file (GIF/raw)
     FsFile pngFile;                  ///< Separate handle for PNGdec's callbacks (synchronous decode)
-    bool isRaw;                      ///< Flag indicating if file is .raw instead of .gif
+    bool isRaw;                      ///< Flag indicating if file is a raw uncompressed frame
     bool isPng;                      ///< Flag indicating if file is a static .png image
-    unsigned long rawLastFrameTime;
-    unsigned long pngShowStartTime;   ///< millis() when the current PNG was decoded/shown
+    bool needsInitialFlip;           ///< Flag to force a single matrix flip when a static PNG is first loaded
+    uint32_t rawLastFrameTime;
+    uint32_t gifLastFrameTime = 0;
+    int gifCurrentDelay = 0;
+    uint32_t pngShowStartTime;   ///< millis() when the current PNG was decoded/shown
     // A static PNG has no natural "end of animation" signal like GIF/raw sequences do, so it's
     // held on screen for this long before advancing the playlist (or looping, for a single play).
     static const unsigned long pngHoldDurationMs = 5000;
@@ -107,8 +110,14 @@ private:
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
     
     void loadNextFileInPlaylist();
-    void playRawFrame();
+    bool playRawFrame();
     bool decodePng(const char* filepath);
+    
+    // PSRAM caching
+    uint16_t* canvasBuffer = nullptr;
+    uint8_t* psramBuffer = nullptr;
+    size_t psramBufferSize = 0;
+    void freePsramBuffer();
 
     /**
      * @brief Normalize a user/config-provided playlist path to a full SD path under /gifs or

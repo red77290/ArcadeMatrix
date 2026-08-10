@@ -3,14 +3,6 @@
 
 #include "../ClockEngine.h"
 
-struct SlotDigit {
-    char targetChar;
-    char currentChar;
-    float yOffset;
-    float speed;
-    bool spinning;
-};
-
 class SlotMachineClock : public ClockFace {
 public:
     SlotMachineClock(MatrixPanel_I2S_DMA* display);
@@ -19,9 +11,13 @@ public:
 
 private:
     TimeData storedTime;
-    char lastTimeStr[12];
-    SlotDigit digits[12];
-    int numDigits;
+    int lastMinute;
+    uint32_t animFrame;
+    bool spinning;
+    float spinSpeed;
+    float yOffset;
+    char currentTime[12];
+    char targetTime[12];
     uint32_t lastFrameTime;
 };
 

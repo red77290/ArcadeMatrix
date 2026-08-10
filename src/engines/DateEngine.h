@@ -3,6 +3,10 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/BitmapFontLoader.h"
 
+#include "TimeData.h"
+
+class ClockFace;
+
 enum PublisherTheme {
     THEME_NONE = -1,
     THEME_NINTENDO = 0,
@@ -25,9 +29,7 @@ enum PublisherTheme {
     THEME_BUB = 17,
     THEME_CYBERPUNK = 18,
     THEME_FLIP = 19,
-    // 20 is reserved for a "Custom gradient" theme handled by ArcadeClock (parity with the RPi's
-    // theme ID 20). 21 mirrors the RPi's TrueMatrixRenderer (character-based digital rain), unlike
-    // THEME_CYBERPUNK above which only animates falling pixel dots.
+    THEME_CUSTOM_GRADIENT = 20,
     THEME_MATRIX_RAIN = 21,
     THEME_TETRIS_GB = 29
 };
@@ -37,10 +39,11 @@ public:
     DateEngine(MatrixPanel_I2S_DMA* display);
     ~DateEngine();
 
-    void loop();
+    bool loop();
     
     // Updates the current date string (e.g. "Mer 08 Jul")
     void setDate(const char* dateStr);
+    void setDateData(const TimeData& d);
     
     // Legacy mapping (maps legacy character ID to new PublisherTheme)
     void setCharacter(int characterId);
@@ -62,6 +65,8 @@ private:
     
     PublisherTheme currentTheme;
     BitmapFontLoader customFont; ///< Optional user-provided .amf font (config.dateSettings.date_font_path)
+    ClockFace* activeFace;
+    TimeData currentDateData;
     
     int matrixW;
     int matrixH;

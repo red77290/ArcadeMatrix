@@ -7,11 +7,19 @@ MarqueeEngine::MarqueeEngine(MatrixPanel_I2S_DMA* display, int width, int height
     // Allocate lazily-sized to the configured panel resolution. PSRAM is used automatically by
     // the ESP32 Arduino allocator when available (256x64 / S3 case); on classic ESP32 at 128x32
     // this is only 8KB, well within the free SRAM budget documented in docs/HARDWARE.md.
-    buffer = new uint16_t[(size_t)panelWidth * panelHeight];
+    size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
+    if (psramFound()) {
+        buffer = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM);
+    } else {
+        buffer = (uint16_t*)malloc(bufferSize);
+    }
 }
 
 MarqueeEngine::~MarqueeEngine() {
-    delete[] buffer;
+    if (buffer) {
+        if (psramFound()) heap_caps_free(buffer);
+        else free(buffer);
+    }
 }
 
 void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds) {
@@ -30,12 +38,12 @@ void MarqueeEngine::stop() {
     active = false;
 }
 
-void MarqueeEngine::loop() {
-    if (!active) return;
+bool MarqueeEngine::loop() {
+    if (!active) return true;
 
     if (millis() - startTime >= durationMs) {
         active = false;
-        return;
+        return true;
     }
 
     // main.cpp's loop() clears the screen every frame before calling into whichever engine is
@@ -46,4 +54,5 @@ void MarqueeEngine::loop() {
             matrix->drawPixel(x, y, buffer[y * panelWidth + x]);
         }
     }
+    return true;
 }

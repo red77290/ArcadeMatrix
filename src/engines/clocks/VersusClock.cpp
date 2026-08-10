@@ -7,7 +7,7 @@ extern ConfigLoader config;
 VersusClock::VersusClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
     storedTime = {0, 0, 0};
     lastMinute = -1;
-    animating = false;
+    animating = false; // Kept for compatibility but unused
     currentP1HP = 100.0f;
     targetP1HP = 100.0f;
     currentP2HP = 100.0f;
@@ -21,129 +21,136 @@ void VersusClock::draw(const TimeData& t) {
 }
 
 void VersusClock::drawHealthBar(int x, int y, int width, int height, float hpPercent, bool isPlayer1) {
-    uint16_t border = matrix->color565(255, 255, 255);
-    uint16_t bg = matrix->color565(100, 0, 0);
-    uint16_t fill = matrix->color565(255, 255, 0);
-    uint16_t dmg = matrix->color565(255, 0, 0);
+    uint16_t border = matrix->color565(180, 180, 180);
+    uint16_t bg = matrix->color565(50, 0, 0);
+    uint16_t fill = matrix->color565(255, 220, 0);
     
-    if (hpPercent > 0.5f) {
-        fill = matrix->color565(0, 255, 0);
-    } else if (hpPercent > 0.2f) {
-        fill = matrix->color565(255, 255, 0);
-    } else {
-        fill = matrix->color565(255, 0, 0);
+    if (hpPercent <= 0.3f) {
+        fill = matrix->color565(255, 40, 40);
     }
     
-    // Border
-    matrix->drawRect(x, y, width, height, border);
     // Background
-    matrix->fillRect(x + 1, y + 1, width - 2, height - 2, bg);
+    matrix->fillRect(x, y, width + 1, height + 1, bg);
     
-    int fillWidth = (int)((width - 2) * hpPercent);
+    // Border corners
+    matrix->drawPixel(x, y, border);
+    matrix->drawPixel(x + width, y, border);
+    matrix->drawPixel(x, y + height, border);
+    matrix->drawPixel(x + width, y + height, border);
+    
+    int fillWidth = (int)(width * hpPercent);
     if (fillWidth > 0) {
         if (isPlayer1) {
-            matrix->fillRect(x + 1, y + 1, fillWidth, height - 2, fill);
+            // Fill right-aligned, drains from left
+            int xStart = x + width - fillWidth + 1;
+            matrix->fillRect(xStart, y + 1, fillWidth, height - 1, fill);
         } else {
-            matrix->fillRect(x + width - 1 - fillWidth, y + 1, fillWidth, height - 2, fill);
+            // Fill left-aligned, drains from right
+            matrix->fillRect(x, y + 1, fillWidth, height - 1, fill);
+        }
+    }
+}
+
+void VersusClock::drawKO(int x, int y) {
+    uint16_t red = matrix->color565(255, 0, 0);
+    
+    // K
+    uint8_t k[5][6] = {
+        {1, 0, 0, 0, 1, 0},
+        {1, 0, 0, 1, 0, 0},
+        {1, 1, 0, 0, 0, 0},
+        {1, 0, 0, 1, 0, 0},
+        {1, 0, 0, 0, 1, 0}
+    };
+    for(int row=0; row<5; row++) {
+        for(int col=0; col<6; col++) {
+            if (k[row][col]) matrix->drawPixel(x + col, y + row, red);
+        }
+    }
+    
+    // O
+    uint8_t o[5][6] = {
+        {0, 1, 1, 1, 0, 0},
+        {1, 0, 0, 0, 1, 0},
+        {1, 0, 0, 0, 1, 0},
+        {1, 0, 0, 0, 1, 0},
+        {0, 1, 1, 1, 0, 0}
+    };
+    for(int row=0; row<5; row++) {
+        for(int col=0; col<6; col++) {
+            if (o[row][col]) matrix->drawPixel(x + 7 + col, y + row, red);
         }
     }
 }
 
 void VersusClock::update() {
-    if (lastMinute == -1) {
-        lastMinute = storedTime.minutes;
-        targetP1HP = (storedTime.hours / 24.0f);
-        targetP2HP = (storedTime.minutes / 60.0f);
-        currentP1HP = targetP1HP;
-        currentP2HP = targetP2HP;
-    } else if (lastMinute != storedTime.minutes && !animating) {
-        animating = true;
-        // Strike animation: drop P2 HP
-        targetP2HP = (storedTime.minutes / 60.0f);
-        targetP1HP = (storedTime.hours / 24.0f);
-        if (storedTime.minutes == 0) {
-            currentP2HP = 1.0f; // Reset bar visually before draining to 0
-        }
-    }
-    
-    // Advance animation state at most every 30ms, but always redraw below on every call. The
-    // outer main loop clears the DMA back buffer and flips it every ~33ms unconditionally
-    // (fixed ~30 FPS), so skipping the draw here (as this used to do) left the cleared buffer
-    // flipped to screen as a black flash on every iteration where this throttle hadn't elapsed
-    // yet - causing severe flicker.
-    if (millis() - lastFrameTime > 30) {
+    if (true) {
         lastFrameTime = millis();
         animFrame++;
-        
-        // Animate HP
-        if (animating) {
-            if (currentP1HP > targetP1HP) currentP1HP -= 0.02f;
-            if (currentP1HP < targetP1HP) currentP1HP += 0.02f;
-            if (abs(currentP1HP - targetP1HP) < 0.02f) currentP1HP = targetP1HP;
-            
-            if (currentP2HP > targetP2HP) currentP2HP -= 0.02f;
-            if (currentP2HP < targetP2HP) currentP2HP += 0.02f;
-            if (abs(currentP2HP - targetP2HP) < 0.02f) currentP2HP = targetP2HP;
-            
-            if (currentP1HP == targetP1HP && currentP2HP == targetP2HP) {
-                animating = false;
-                lastMinute = storedTime.minutes;
-            }
-        }
     }
     
     matrix->fillScreen(0);
     
-    // Draw Health Bars
-    int barWidth = matrix->width() / 2 - 4;
-    drawHealthBar(2, 2, barWidth, 6, currentP1HP, true);
-    drawHealthBar(matrix->width() / 2 + 2, 2, barWidth, 6, currentP2HP, false);
+    int w = matrix->width();
+    int h = matrix->height();
     
-    // Draw KO Text in middle
-    uint16_t red = matrix->color565(255, 0, 0);
-    uint16_t yellow = matrix->color565(255, 255, 0);
+    int barW = w / 2 - 10;
     
-    matrix->setTextSize(1);
-    matrix->setFont(NULL);
-    matrix->setCursor(matrix->width() / 2 - 5, 2);
-    matrix->setTextColor(animFrame % 20 < 10 ? red : yellow);
-    matrix->print("V");
+    float p1HP = 1.0f - min(1.0f, storedTime.hours / 23.0f);
+    float p2HP = 1.0f - min(1.0f, storedTime.minutes / 59.0f);
     
-    // Draw Time below bars
+    // P1 Health Bar (left side)
+    drawHealthBar(5, 2, barW, 4, p1HP, true);
+    
+    // P2 Health Bar (right side)
+    drawHealthBar(w - 5 - barW, 2, barW, 4, p2HP, false);
+    
+    // "KO" blink in center
+    if ((animFrame / 10) % 2 == 0) {
+        drawKO(w / 2 - 7, 0);
+    }
+    
+    // Draw Time (HH:MM) centered
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
     
     int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
     matrix->setTextSize(gfxSize);
+    matrix->setFont(NULL);
     
     int16_t bx, by;
     uint16_t bw, bh;
     matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
     if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
     
-    int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
-    int ty = (matrix->height() - bh) / 2 + 10 + config.time.clock_offset_y; // Push down below bars
+    int tx = (w - bw) / 2 + config.time.clock_offset_x;
+    int ty = (h - bh) / 2 + 4 + config.time.clock_offset_y;
     
     uint16_t color1 = matrix->color565(255, 255, 255);
     if (config.time.clock_color_1[0] == '#') {
         long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
+    if (color1 == 0) color1 = matrix->color565(255, 255, 255); // Fallback to white if black
     
-    // Shake effect when changing
-    if (animating) {
-        tx += (rand() % 3) - 1;
-        ty += (rand() % 3) - 1;
-    }
-    
+    // Black outline
+    matrix->setTextColor(0);
+    matrix->setCursor(tx - 1, ty); matrix->print(timeStr);
+    matrix->setCursor(tx + 1, ty); matrix->print(timeStr);
+    matrix->setCursor(tx, ty - 1); matrix->print(timeStr);
+    matrix->setCursor(tx, ty + 1); matrix->print(timeStr);
+
     matrix->setCursor(tx, ty);
     matrix->setTextColor(color1);
     matrix->print(timeStr);
     
-    // Optional pulsing hit sparks if animating
-    if (animating && (rand() % 100 > 70)) {
-        int sparkX = tx + (rand() % bw);
-        int sparkY = ty + (rand() % bh);
-        matrix->fillCircle(sparkX, sparkY, 1 + (rand() % 2), matrix->color565(255, 255, 255));
-    }
+    // Bouncing fighter blobs at bottom corners
+    int bounce1 = (int)(sin(animFrame * 0.2f) * 2.0f);
+    int bounce2 = (int)(cos(animFrame * 0.2f) * 2.0f);
+    
+    uint16_t blue = matrix->color565(0, 200, 255);
+    uint16_t orange = matrix->color565(255, 100, 0);
+    
+    matrix->fillRect(10, h - 8 + bounce1, 6, 6, blue);
+    matrix->fillRect(w - 16, h - 8 + bounce2, 6, 6, orange);
 }

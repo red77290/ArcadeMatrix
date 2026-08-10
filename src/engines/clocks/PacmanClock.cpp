@@ -88,10 +88,10 @@ void PacmanClock::update() {
         pacX = -40.0f;
     }
     
-    int pacRadius = max(4, (int)(matrix->height() / 5.3f));
-    int ghostRadius = max(3, (int)(matrix->height() / 6.4f));
-    int ghostSpacing = ghostRadius * 2.5f;
-    int tailLength = ghostSpacing * 4;
+    int pacRadius = max(4, (int)(6.0f * matrix->height() / 32.0f));
+    int ghostRadius = pacRadius - 1;
+    int ghostSpacing = pacRadius * 2;
+    int tailLength = pacRadius * 4;
     
     // Advance animation state at most every 50ms, but always redraw below on every call. The
     // outer main loop clears the DMA back buffer and flips it every ~33ms unconditionally
@@ -99,15 +99,15 @@ void PacmanClock::update() {
     // flipped to screen as a black flash on every iteration where this throttle hadn't elapsed
     // yet - causing severe flicker. State (pacX, animFrame) only advances on the throttle, but
     // rendering below always redraws the current (possibly unchanged) state every call.
-    if (millis() - lastFrameTime > 50) {
+    if (true) {
         lastFrameTime = millis();
         animFrame++;
         
         if (transitioning) {
-            float pacSpeed = 1.5f * (matrix->width() / 64.0f);
+            float pacSpeed = max(1.5f, 3.0f * matrix->width() / 64.0f);
             pacX += pacSpeed;
             
-            if (pacX >= matrix->width() + tailLength + 20) {
+            if (pacX >= matrix->width() + pacRadius * 3.0f) {
                 transitioning = false;
                 lastMinute = storedTime.minutes;
                 strcpy(oldTimeStr, newTimeStr);
@@ -135,10 +135,18 @@ void PacmanClock::update() {
         long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
+    if (color1 == 0) color1 = matrix->color565(255, 255, 255); // Fallback to white if black
     
     if (!transitioning) {
-        matrix->setCursor(tx, ty);
+        // Black outline for crisp visibility
+        matrix->setTextColor(0);
+        matrix->setCursor(tx - 1, ty); matrix->print(newTimeStr);
+        matrix->setCursor(tx + 1, ty); matrix->print(newTimeStr);
+        matrix->setCursor(tx, ty - 1); matrix->print(newTimeStr);
+        matrix->setCursor(tx, ty + 1); matrix->print(newTimeStr);
+
         matrix->setTextColor(color1);
+        matrix->setCursor(tx, ty);
         matrix->print(newTimeStr);
         
         // Random pulsing dots
@@ -151,24 +159,25 @@ void PacmanClock::update() {
     } else {
         int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
         
-        // To achieve clipping, we draw the text and then cover it with black rectangles
         // Draw old time
         matrix->setCursor(tx, ty);
         matrix->setTextColor(matrix->color565(100, 100, 100));
         matrix->print(oldTimeStr);
         
         // Cover eaten part (left of pacman)
-        matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
+        if (pacX > 0) {
+            matrix->fillRect(0, 0, (int)pacX, matrix->height(), 0);
+        }
         
         // Draw new time
         matrix->setCursor(tx, ty);
         matrix->setTextColor(color1);
         matrix->print(newTimeStr);
         
-        // Cover uneaten part (right of pacman trailing tail)
-        int revealX = (int)pacX - tailLength;
-        if (revealX < matrix->width()) {
-            matrix->fillRect(revealX > 0 ? revealX : 0, 0, matrix->width(), matrix->height(), 0);
+        // Cover uneaten part (right of reveal wave)
+        int revealX = (int)pacX - pacRadius * 4;
+        if (revealX > 0 && revealX < matrix->width()) {
+            matrix->fillRect(revealX, 0, matrix->width() - revealX, matrix->height(), 0);
         }
         
         // Draw Pacman
@@ -176,8 +185,8 @@ void PacmanClock::update() {
         
         // Draw Ghosts
         for (int i = 0; i < 4; i++) {
-            float gx = pacX - (pacRadius * 2.5f) - (i * ghostSpacing);
-            float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * 2;
+            float gx = pacX - (pacRadius * 3.0f) - (i * ghostSpacing);
+            float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * (pacRadius / 3.0f);
             drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
         }
     }

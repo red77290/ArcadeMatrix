@@ -1,13 +1,36 @@
 #pragma once
 #include <Arduino.h>
-#include <SdFat.h>
+#include "HardwareProfile.h"
 
+#if USE_SD_MMC
+#include <SD_MMC.h>
+#define sd SD_MMC
+typedef fs::File FsFile;
+#define FILE_OPEN_READ "r"
+#define FILE_OPEN_WRITE "w"
+#else
+#include <SdFat.h>
 extern SdFs sd;
+#define FILE_OPEN_READ O_READ
+#define FILE_OPEN_WRITE (O_WRITE | O_CREAT | O_TRUNC)
+#endif
+
+inline bool isDirectory(FsFile& f) {
+#if USE_SD_MMC
+    return f.isDirectory();
+#else
+    return f.isDir();
+#endif
+}
 
 inline String getFileName(FsFile& f) {
+#if USE_SD_MMC
+    return String(f.name());
+#else
     char buf[256];
     f.getName(buf, sizeof(buf));
     return String(buf);
+#endif
 }
 
 
@@ -18,6 +41,16 @@ inline String getFileName(FsFile& f) {
  * - .Spotlight-*
  * - .Trashes
  */
+inline bool getNextFile(FsFile& dir, FsFile& file) {
+#if USE_SD_MMC
+    file = dir.openNextFile();
+    return (bool)file;
+#else
+    if (file) file.close();
+    return file.openNext(&dir, O_READ);
+#endif
+}
+
 inline bool isMacJunk(const String& name) {
     if (name.length() == 0) return true;
     // Get just the filename part (after last '/')

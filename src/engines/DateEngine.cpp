@@ -2,7 +2,19 @@
 #include <string.h>
 #include "fonts/ArcadeFonts.h"
 #include "../core/ConfigLoader.h"
+#include "../core/Logger.h"
 #include <stdlib.h>
+
+#include "clocks/CyberpunkClock.h"
+#include "clocks/FlipClock.h"
+#include "clocks/PongClock.h"
+#include "clocks/TetrisClock.h"
+#include "clocks/WordClock.h"
+#include "clocks/BinaryClock.h"
+#include "clocks/PacmanClock.h"
+#include "clocks/VersusClock.h"
+#include "clocks/SlotMachineClock.h"
+#include "clocks/MatrixRainClock.h"
 
 extern ConfigLoader config;
 
@@ -17,8 +29,9 @@ static DateDrop dateDrops[NUM_DROPS];
 static bool dateDropsInit = false;
 static unsigned long dateLastFrameTime = 0;
 
-DateEngine::DateEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+DateEngine::DateEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr) {
     strcpy(currentDate, "01 Jan");
+    currentDateData = {1, 1, 26};
     textColor = matrix->color565(255, 255, 255);
     shadowColor = matrix->color565(0, 0, 0);
     currentTheme = THEME_NONE;
@@ -26,12 +39,18 @@ DateEngine::DateEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
     matrixH = matrix->height();
     if (config.dateSettings.date_font_path.length() > 0) {
         if (!customFont.loadFromSD(config.dateSettings.date_font_path.c_str())) {
-            Serial.println("DateEngine: date_font_path set but failed to load; using compiled-in font.");
+            LOGW("DateEngine", "date_font_path set but failed to load; using compiled-in font.");
         }
     }
 }
 
-DateEngine::~DateEngine() {}
+DateEngine::~DateEngine() {
+    if (activeFace) delete activeFace;
+}
+
+void DateEngine::setDateData(const TimeData& d) {
+    currentDateData = d;
+}
 
 void DateEngine::setDate(const char* dateStr) {
     strncpy(currentDate, dateStr, sizeof(currentDate) - 1);
@@ -58,7 +77,51 @@ void DateEngine::setCharacter(int characterId) {
 }
 
 void DateEngine::setTheme(PublisherTheme theme) {
+    if (currentTheme == theme && activeFace != nullptr) {
+        return;
+    }
+    
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+    }
+
+    if ((int)theme == 99 || theme == THEME_NONE) {
+        int r = random(0, 12);
+        static const PublisherTheme available[] = {
+            THEME_NINTENDO, THEME_CAPCOM, THEME_TAITO, THEME_SEGA,
+            THEME_CAVE, THEME_KONAMI, THEME_SNK, THEME_CYBERPUNK,
+            THEME_FLIP, THEME_MATRIX_RAIN, static_cast<PublisherTheme>(23), // Tetris
+            static_cast<PublisherTheme>(26) // Pacman
+        };
+        theme = available[r];
+    }
+    
     currentTheme = theme;
+
+    if (theme == THEME_CYBERPUNK) {
+        activeFace = new CyberpunkClock(matrix);
+    } else if (theme == THEME_FLIP) {
+        activeFace = new FlipClock(matrix);
+    } else if ((int)theme == 22) {
+        activeFace = new PongClock(matrix);
+    } else if ((int)theme == 23) {
+        activeFace = new TetrisClock(matrix, false);
+    } else if ((int)theme == 29) {
+        activeFace = new TetrisClock(matrix, true);
+    } else if ((int)theme == 24) {
+        activeFace = new WordClock(matrix);
+    } else if ((int)theme == 25) {
+        activeFace = new BinaryClock(matrix);
+    } else if ((int)theme == 26) {
+        activeFace = new PacmanClock(matrix);
+    } else if ((int)theme == 27) {
+        activeFace = new VersusClock(matrix);
+    } else if (theme == THEME_MATRIX_RAIN) {
+        activeFace = new MatrixRainClock(matrix);
+    } else if ((int)theme == 28) {
+        activeFace = new SlotMachineClock(matrix);
+    }
 }
 
 void DateEngine::reloadCustomFont() {
@@ -72,6 +135,10 @@ void DateEngine::reloadCustomFont() {
 }
 
 void DateEngine::applyThemeSettings() {
+    if (matrix) {
+        matrixW = matrix->width();
+        matrixH = matrix->height();
+    }
     bool isHD = (matrixH >= 64);
     matrix->setTextSize(1);
 
@@ -193,6 +260,31 @@ void DateEngine::applyThemeSettings() {
             selectedFont = nullptr;
             break;
 
+        case THEME_CUSTOM_GRADIENT: {
+            uint16_t defaultC1 = matrix->color565(0, 255, 255);  // Cyan
+            uint16_t defaultC2 = matrix->color565(255, 0, 255);  // Magenta
+            if (config.dateSettings.date_color_1.length() > 0) {
+                const char* hex1 = config.dateSettings.date_color_1.c_str();
+                if (hex1[0] == '#') hex1++;
+                if (strlen(hex1) >= 6) {
+                    long val1 = strtol(hex1, NULL, 16);
+                    defaultC1 = matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF);
+                }
+            }
+            if (config.dateSettings.date_color_2.length() > 0) {
+                const char* hex2 = config.dateSettings.date_color_2.c_str();
+                if (hex2[0] == '#') hex2++;
+                if (strlen(hex2) >= 6) {
+                    long val2 = strtol(hex2, NULL, 16);
+                    defaultC2 = matrix->color565((val2 >> 16) & 0xFF, (val2 >> 8) & 0xFF, val2 & 0xFF);
+                }
+            }
+            textColor = defaultC1;
+            shadowColor = defaultC2;
+            selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
+            break;
+        }
+
         case THEME_NONE:
         default:
             textColor = matrix->color565(255, 255, 255);
@@ -230,47 +322,34 @@ void DateEngine::applyThemeSettings() {
     
     matrix->setFont(selectedFont);
 
-    // Responsive scaling based on actual currentDate string
+    // Apply user-configured date size directly
+    int targetSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
+    matrix->setTextSize(targetSize);
+
+    // Check bounds at targetSize
     int16_t bx, by;
     uint16_t bw, bh;
     matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
     
-    // Fallback to built-in font if GFX font is wider or taller than matrix display
+    // Fallback to built-in font if GFX font overflows total matrix bounds at targetSize
     if (selectedFont != nullptr && (bw > matrixW || bh > matrixH)) {
         selectedFont = nullptr;
         matrix->setFont(nullptr);
-        matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
+        matrix->setTextSize(targetSize);
     }
-    
-    if (bw == 0 || bh == 0) { bw = strlen(currentDate) * 6; bh = 7; }
-    
-    int sMaxW = matrixW / bw;
-    int sMaxH = matrixH / bh;
-    int sMax = min(sMaxW, sMaxH);
-    if (sMax < 1) sMax = 1;
-    
-    int logicalSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
-    int gfxSize = 1;
-
-    if (selectedFont == nullptr) {
-        if (logicalSize >= 5) gfxSize = sMax;
-        else if (logicalSize == 4) gfxSize = min(sMax, 3);
-        else if (logicalSize == 3) gfxSize = min(sMax, 2);
-        else if (logicalSize == 2) gfxSize = min(sMax, 2);
-        else gfxSize = 1;
-    } else {
-        if (logicalSize >= 5) gfxSize = sMax;
-        else if (logicalSize == 4) gfxSize = max(1, (sMax * 4) / 5);
-        else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 5);
-        else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 5);
-        else gfxSize = 1;
-    }
-
-    matrix->setTextSize(gfxSize);
 }
 
-void DateEngine::loop() {
+bool DateEngine::loop() {
+    if (matrix) {
+        matrixW = matrix->width();
+        matrixH = matrix->height();
+    }
     
+    if (activeFace) {
+        activeFace->draw(currentDateData);
+        activeFace->update();
+        return true;
+    }
     if (currentTheme == THEME_CYBERPUNK) {
         if (!dateDropsInit) {
             for (int i=0; i<NUM_DROPS; i++) {
@@ -315,7 +394,7 @@ void DateEngine::loop() {
     // 2. Set Font and Color based on theme
     applyThemeSettings();
     
-    // 3. Calculate positioning
+    // 3. Calculate exact positioning (identical to ArcadeClock for perfect alignment)
     int16_t x1, y1;
     uint16_t w, h;
     matrix->getTextBounds(currentDate, 0, 0, &x1, &y1, &w, &h);
@@ -331,7 +410,7 @@ void DateEngine::loop() {
     } else if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
         leftExtra = effectDepth; rightExtra = effectDepth;
         topExtra = effectDepth; bottomExtra = effectDepth;
-    } else if (currentTheme != THEME_NONE) {
+    } else if (currentTheme != THEME_FLIP && currentTheme != THEME_NONE) {
         rightExtra = effectDepth; bottomExtra = effectDepth;
     }
     
@@ -341,16 +420,7 @@ void DateEngine::loop() {
     int x = (matrixW - fullW) / 2 + leftExtra + config.dateSettings.date_offset_x - x1;
     int y = (matrixH - fullH) / 2 + topExtra + config.dateSettings.date_offset_y - y1;
 
-    // Calculate offset based on current date_size setting
-    // (Already calculated above)
-    // Calculate effect depth based on user request (1 pixel normally, 2 pixels for size 5)
-    // (Already calculated above, but kept here for scope if needed. We can just use the existing one.)
-
-    // Draw shadow/outline. Mirrors ArcadeMatrix_RPi's core/theme.py draw_styled_text() and
-    // ArcadeClock::drawTextWithShadow(): real-world publisher logos (Nintendo/Capcom/Sega) get a
-    // flat 4-direction outline, the more stylized/fictional themes (Cave..Bub) get the thicker
-    // "arcade 3D" shadow + black outline combo, and everything else falls back to a plain drop
-    // shadow (Flip Clock draws no shadow at all, handled separately above via THEME_FLIP's font).
+    // Draw shadow/outline. Mirrors ArcadeClock::drawTextWithShadow()
     matrix->setTextColor(shadowColor);
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
         // Full outline for certain publishers
@@ -371,7 +441,6 @@ void DateEngine::loop() {
 
         uint16_t outline = matrix->color565(0, 0, 0);
         matrix->setTextColor(outline);
-        // Black outline remains crisp at 1-pixel thick to avoid looking like a gap
         matrix->setCursor(x - 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x, y - 1); matrix->print(currentDate);
         matrix->setCursor(x + 1, y - 1); matrix->print(currentDate);
@@ -391,4 +460,5 @@ void DateEngine::loop() {
     matrix->setTextColor(textColor);
     matrix->setCursor(x, y);
     matrix->print(currentDate);
+    return true;
 }
