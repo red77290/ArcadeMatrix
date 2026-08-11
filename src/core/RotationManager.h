@@ -10,6 +10,8 @@
 
 #include "../engines/CryptoEngine.h"
 #include "../engines/StockEngine.h"
+#include "../engines/TempEngine.h"
+#include "../engines/DecibelEngine.h"
 
 enum RotationModule {
     MODULE_CLOCK,
@@ -17,12 +19,14 @@ enum RotationModule {
     MODULE_WEATHER,
     MODULE_GIFS,
     MODULE_CRYPTO,
-    MODULE_STOCKS
+    MODULE_STOCKS,
+    MODULE_TEMP,
+    MODULE_DECIBEL
 };
 
 class RotationManager {
 public:
-    RotationManager(ClockEngine* c, DateEngine* d, WeatherEngine* w, GifEngine* g, FighterEngine* f, CryptoEngine* cr = nullptr, StockEngine* st = nullptr);
+    RotationManager(ClockEngine* c, DateEngine* d, WeatherEngine* w, GifEngine* g, FighterEngine* f, CryptoEngine* cr = nullptr, StockEngine* st = nullptr, TempEngine* t = nullptr, DecibelEngine* db = nullptr);
     
     void begin(const ConfigLoader& cfg);
     bool loop();
@@ -41,7 +45,8 @@ private:
     FighterEngine* fighterEngine;
     CryptoEngine* cryptoEngine;
     StockEngine* stockEngine;
-    
+    TempEngine* tempEngine;
+    DecibelEngine* decibelEngine;
     
     std::vector<RotationModule> sequence;
     int currentIndex;
@@ -50,4 +55,4 @@ private:
     
     void switchToModule(int index);
     void updateBackgroundSprites();
-  };
+};

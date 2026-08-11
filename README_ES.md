@@ -28,6 +28,9 @@
 
 ## Características
 - **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** y **Versus (Mugen)**.
+- **🌡️ Temperatura y Humedad Interior (SHTC3):** Pantalla adaptativa (°C/°F), iconos Pixel Art de termómetro y agua, y endpoint REST  para integración con Home Assistant.
+- **🔊 Sonómetro y Medidor de Decibelios (Uso para Salón de Arcade / Gaming Room :) :** Medición en tiempo real del nivel de ruido con 6 smileys en Pixel Art (<45dB 😊 a >88dB 🚨). **¡Ideal para controlar el nivel sonoro en una sala de arcade ruidosa, gaming room o fiesta retro!**
+- **🎵 Visualizador de Música Rítmica:** 4 modos de visualización prioritaria (Spectrum Equalizer con retención de picos, Oscilloscope Waveform, Radial Circles y Neon Fire).
 - **Tickers de Criptomonedas y Bolsa en tiempo real:** cotizaciones en vivo y distintivos % 24h de CoinGecko, Binance y Yahoo Finance con caché configurable.
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
 - **Motor de Pelea MUGEN:** ¡Simula nativamente juegos de pelea 2D en la matriz usando sprites extraídos con una alineación perfecta en el suelo virtual!

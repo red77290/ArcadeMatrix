@@ -19,6 +19,23 @@ Le firmware ArcadeMatrix prend en charge les cartes ESP32 standard, mais les exi
 La carte **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) est **100% prise en charge et validée physiquement sur du matériel réel**. 
 Le profil dédié `HARDWARE_PROFILE_WAVESHARE_S3` (`pio run -e esp32s3_waveshare`) remappe les broches HUB75 sur des GPIO libres (A=18, B=8, C=3, D=42, E=9) et utilise l'interface SD_MMC 1-bit rapide (CMD=44, CLK=1, D0=17), éliminant tout conflit avec la PSRAM octal. Tout fonctionne impeccablement sans aucun conflit. Voir [WIRING_FR.md](WIRING_FR.md) pour le tableau de brochage complet.
 
+---
+
+## 🎙️ Capteurs Matériels & Visualiseurs Audio
+
+### 🌡️ Capteur de Température & Humidité Intérieure (SHTC3)
+- **Bus :** I2C (`SDA=47`, `SCL=48`, adresse `0x70`).
+- **Fonctionnalités :** Mesure automatique de la température ambiante (°C / °F) et de l'humidité relative avec dégradé de couleur dynamique et icônes Pixel Art.
+- **API Domotique :** Expose une route REST JSON `GET /api/sensor` idéale pour remonter la température intérieure dans **Home Assistant** ou un système domotique.
+
+### 🔊 Sonomètre Décibelomètre & Visualiseur Rythmique (ES7210 / I2S DMA)
+- **Bus :** Codec Audio I2C `0x40` + Bus I2S DMA (`SCLK=13`, `LRCK=12`, `ASDOUT=11`, `MCLK=14`).
+- **Usage en Salle d'Arcade / Gaming Room :)** :
+  - Le sonomètre est **particulièrement utile et ludique dans une salle d'arcade bruyante**, une *gaming room* ou un événement retro gaming ! Il permet de surveiller le volume sonore ambiant en temps réel, d'avertir visuellement avec des **smileys Pixel Art réactifs** (<45dB 😊 à >88dB 🚨) quand la salle devient trop bruyante, et d'ambiancer la pièce grâce aux **4 modes du visualiseur de musique rythmique** (Equalizer Spectrum, Oscilloscope Waveform, Radial Circles, Neon Fire).
+- **Optimisation Lazy Sampling** : L'échantillonnage I2S DMA est actif uniquement lorsque le module est affiché à l'écran (`onActivate()`) pour économiser l'énergie et la charge CPU.
+
+---
+
 ## Panneaux multiples : chaînage vs vraies grilles/murs 2D (runtime vs compile-time)
 Le build RPi (`ArcadeMatrix_RPi`) utilise la bibliothèque `rpi-rgb-led-matrix`, qui expose `--led-chain`,
 `--led-parallel` et `--led-rows` comme options **entièrement configurables à l'exécution** — un Raspberry Pi dispose de 2 à 3 connecteurs GPIO HUB75 indépendants, donc construire un mur 2D de panneaux (par ex. 2 rangées x 2 colonnes) n'est qu'un changement de config, sans recompilation.
@@ -28,18 +45,9 @@ Les cartes ESP32 n'exposent qu'une **seule** sortie HUB75. Ce firmware prend dé
 (par ex. `CHAIN=4` pour un ruban 512x32) — cela fonctionne aujourd'hui et ne nécessite aucun changement de firmware.
 
 **Les vraies grilles/murs 2D (plusieurs rangées de panneaux chaînés, par ex. un mur 2x2) ne sont PAS actuellement intégrés à ce firmware.** La bibliothèque sous-jacente `ESP32-HUB75-MatrixPanel-I2S-DMA` fournit bien un helper
-`VirtualMatrixPanel_T` qui remappe des coordonnées virtuelles (x,y) sur un chaînage serpentin / zig-zag de panneaux pour construire un tel mur, mais c'est une **classe template C++** — sa forme de chaînage et son type de scan sont des paramètres **au moment de la compilation**, pas quelque chose qui peut être lu depuis `conf.ini` au boot comme tous les autres réglages de ce projet. L'intégrer proprement nécessiterait soit :
-1. Un flag / environnement PlatformIO dédié par agencement de mur (recompile + reflash pour changer le layout), ou
-2. Refactorer tous les moteurs (~46 call sites) du type concret `MatrixPanel_I2S_DMA*` vers une interface commune basée sur `Adafruit_GFX*`, afin de pouvoir substituer une instance `VirtualMatrixPanel_T`.
+`VirtualMatrixPanel_T` qui remappe des coordonnées virtuelles (x,y) sur un chaînage serpentin / zig-zag de panneaux pour construire un tel mur, mais c'est une **classe template C++** — sa forme de chaînage et son type de scan sont des paramètres **au moment de la compilation**, pas quelque شيء qui peut être lu depuis `conf.ini` au boot comme tous les autres réglages de ce projet.
 
-Les deux options sont loin d'être triviales et constituent un vrai manque architectural par rapport au support runtime complet de `--led-parallel` sur RPi — c'est suivi comme limitation connue au lieu d'être ignoré silencieusement. Le chaînage sur une seule rangée via `CHAIN=` reste aujourd'hui la manière prise en charge pour construire un affichage plus grand.
-
-### Utilisation de la flash
-Le firmware n'utilise jamais SPIFFS / LittleFS — tous les assets runtime (GIF, sprites de combattants, playlists,
-`conf.ini`) vivent sur la carte SD externe. Pour cette raison, l'environnement PlatformIO `esp32dev` utilise
-`board_build.partitions = min_spiffs.csv` au lieu de la table de partitions par défaut d'Arduino-ESP32 : cela
-conserve la même disposition OTA double banque (deux slots d'app, donc `/api/update` continue de fonctionner) mais
-agrandit chaque slot d'app de 1.25MB à ~1.875MB en récupérant la partition SPIFFS d'environ 900KB, sinon gaspillée. Au moment de la rédaction, le firmware `esp32dev` utilise ~66 % de son slot d'app (contre 98 %+ avant ce changement) — une marge confortable pour les fonctionnalités PNG / icônes météo prévues ensuite.
+---
 
 ## Matériel de matrice
 - **Type :** panneaux de matrice LED RGB HUB75 / HUB75E (P2, P2.5, P3, P4, P5).

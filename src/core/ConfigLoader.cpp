@@ -48,16 +48,26 @@ void ConfigLoader::setDefaults() {
     time.clock_color_2 = "#ffffff";
     time.clock_font_path = "";
 
-    idle.rotation = "clock,date,weather,gifs";
+    idle.rotation = "clock,date,weather,gifs,temp,decibel";
     idle.clock_duration_sec = 60;
     idle.date_duration_sec = 10;
     idle.weather_duration_sec = 15;
+    idle.temp_duration_sec = 8;
+    idle.decibel_duration_sec = 10;
     idle.gifs_count = 3;
     idle.fighter_enabled = true;
     idle.fighter_interval_sec = 10;
     
     idle.mode = "gifs_then_clock";
     idle.gifs_before_clock = 10;
+
+    env.unit = "C";
+    env.temp_offset = 0.0f;
+
+    audio.visualizer_enabled = false;
+    audio.visualizer_mode = "spectrum";
+    audio.mic_gain = 1.0f;
+    audio.db_calibration = 0.0f;
 
     weather.api_key = "";
     weather.city = "";
@@ -176,12 +186,24 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "CLOCK_DURATION_SEC") idle.clock_duration_sec = value.toInt();
         else if (key == "DATE_DURATION_SEC") idle.date_duration_sec = value.toInt();
         else if (key == "WEATHER_DURATION_SEC") idle.weather_duration_sec = value.toInt();
+        else if (key == "TEMP_DURATION_SEC") idle.temp_duration_sec = value.toInt();
+        else if (key == "DECIBEL_DURATION_SEC" || key == "DB_DURATION_SEC") idle.decibel_duration_sec = value.toInt();
         else if (key == "GIFS_COUNT") idle.gifs_count = value.toInt();
         else if (key == "FIGHTER_ENABLED") idle.fighter_enabled = (value == "true" || value == "1");
         else if (key == "FIGHTER_INTERVAL_SEC") idle.fighter_interval_sec = value.toInt();
         
         else if (key == "MODE") idle.mode = value; // Legacy
         else if (key == "GIFS_BEFORE_CLOCK") idle.gifs_before_clock = value.toInt(); // Legacy
+    }
+    else if (currentSection == "ENVIRONMENT" || currentSection == "TEMP") {
+        if (key == "UNIT" || key == "TEMP_UNIT") env.unit = value;
+        else if (key == "TEMP_OFFSET") env.temp_offset = value.toFloat();
+    }
+    else if (currentSection == "AUDIO" || currentSection == "SOUND") {
+        if (key == "VISUALIZER_ENABLED") audio.visualizer_enabled = (value == "true" || value == "1");
+        else if (key == "VISUALIZER_MODE") audio.visualizer_mode = value;
+        else if (key == "MIC_GAIN") audio.mic_gain = value.toFloat();
+        else if (key == "DB_CALIBRATION") audio.db_calibration = value.toFloat();
     }
     else if (currentSection == "WEATHER") {
         if (key == "API_KEY") weather.api_key = value;
@@ -361,11 +383,23 @@ String ConfigLoader::serializeToString() {
     out += "clock_duration_sec=" + String(idle.clock_duration_sec) + "\n";
     out += "date_duration_sec=" + String(idle.date_duration_sec) + "\n";
     out += "weather_duration_sec=" + String(idle.weather_duration_sec) + "\n";
+    out += "temp_duration_sec=" + String(idle.temp_duration_sec) + "\n";
+    out += "decibel_duration_sec=" + String(idle.decibel_duration_sec) + "\n";
     out += "gifs_count=" + String(idle.gifs_count) + "\n";
     out += "fighter_enabled=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
     out += "fighter_interval_sec=" + String(idle.fighter_interval_sec) + "\n";
     out += "mode=" + idle.mode + "\n";
     out += "gifs_before_clock=" + String(idle.gifs_before_clock) + "\n\n";
+
+    out += "[environment]\n";
+    out += "unit=" + env.unit + "\n";
+    out += "temp_offset=" + String(env.temp_offset, 1) + "\n\n";
+
+    out += "[audio]\n";
+    out += "visualizer_enabled=" + String(audio.visualizer_enabled ? "1" : "0") + "\n";
+    out += "visualizer_mode=" + audio.visualizer_mode + "\n";
+    out += "mic_gain=" + String(audio.mic_gain, 2) + "\n";
+    out += "db_calibration=" + String(audio.db_calibration, 1) + "\n\n";
 
     out += "[weather]\n";
     out += "api_key=" + weather.api_key + "\n";

@@ -27,11 +27,19 @@ ArcadeMatrix est entièrement configurable sans recompiler le code C++. Tous les
 | | `CLOCK_COLOR_1` | `clock_color_1` | string | `"#ffffff"` | `"#FF0000"` | **En direct** | Oui | Non | Couleur Hex de début de dégradé |
 | | `CLOCK_COLOR_2` | `clock_color_2` | string | `"#ffffff"` | `"#00FF00"` | **En direct** | Oui | Non | Couleur Hex de fin de dégradé |
 | | `CLOCK_FONT_PATH`| `clock_font_path`| string | `""` | `"/fonts/my.amf"`| **En direct** | Oui | Non | Chemin vers une police `.amf` sur SD |
-| **[IDLE]** | `ROTATION` | `rotation` | string | `"clock,date,weather,gifs"` | `"clock,gifs"` | **En direct** | Oui | Non | Modules actifs (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`) |
+| **[IDLE]** | `ROTATION` | `rotation` | string | `"clock,date,weather,gifs,temp,decibel"` | `"clock,temp,decibel"` | **En direct** | Oui | Non | Modules actifs (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`, `temp`, `decibel`) |
 | | `CLOCK_DURATION_SEC`|`clock_duration_sec`| int | `60` | `30` | **En direct** | Oui | Non | Durée d'affichage de l'horloge en secondes |
 | | `GIFS_COUNT` | `gifs_count` | int | `3` | `5` | **En direct** | Oui | Non | Nombre de GIFs à jouer par cycle |
 | | `FIGHTER_ENABLED`| `fighter_enabled` | bool | `true` | `false` | **En direct** | Oui | Non | Activer l'overlay de combat MUGEN |
 | | `FIGHTER_INTERVAL_SEC`|`fighter_interval_sec`| int | `10` | `20` | **En direct** | Oui | Non | Intervalle en secondes entre les combats MUGEN |
+| | `TEMP_DURATION_SEC`|`temp_duration_sec`| int | `8` | `10` | **En direct** | Oui | Non | Durée d'affichage de la température intérieure |
+| | `DECIBEL_DURATION_SEC`|`decibel_duration_sec`| int | `10` | `15` | **En direct** | Oui | Non | Durée d'affichage du sonomètre (décibel) |
+| **[ENVIRONMENT]**| `UNIT` | `temp_unit` | string | `"C"` | `"F"` | **En direct** | Oui | Non | Unité de température (`"C"` ou `"F"`) |
+| | `TEMP_OFFSET` | `temp_offset` | float | `0.0` | `-1.2` | **En direct** | Oui | Non | Offset de calibration de la température en °C |
+| **[AUDIO]** | `VISUALIZER_ENABLED`|`visualizer_enabled`| bool | `false` | `true` | **En direct** | Oui | Non | Force l'affichage prioritaire du visualiseur audio rythmique |
+| | `VISUALIZER_MODE`|`visualizer_mode`| string | `"spectrum"`| `"waveform"`| **En direct** | Oui | Non | Mode visuel (`spectrum`, `waveform`, `radial`, `neon_fire`) |
+| | `MIC_GAIN` | `mic_gain` | float | `1.0` | `2.5` | **En direct** | Oui | Non | Multiplicateur de gain microphone (0.1 à 10.0) |
+| | `DB_CALIBRATION` | `db_calibration` | float | `0.0` | `3.5` | **En direct** | Oui | Non | Offset de calibration du niveau sonore en dB |
 | **[STANDBY]**| `NIGHT_MODE_ENABLED`|`night_mode_enabled`| bool | `false` | `true` | **En direct** | Oui | Non | Activer la mise en veille automatique la nuit |
 | | `TURN_OFF_AT` | `turn_off_at` | string | `"23:00"` | `"22:30"` | **En direct** | Oui | Non | Heure d'extinction (HH:MM) |
 | | `WAKE_UP_AT` | `wake_up_at` | string | `"07:00"` | `"08:00"` | **En direct** | Oui | Non | Heure de réveil (HH:MM) |
@@ -47,5 +55,5 @@ ArcadeMatrix est entièrement configurable sans recompiler le code C++. Tous les
 
 ## 📌 Remarques Importantes
 
-- **`ROTATION`** : La chaîne `ROTATION` gère la séquence des modules d'affichage autonome (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`). **Attention : `sprites` n'est pas un module de rotation**. Les combattants MUGEN sont gérés par le moteur d'overlay `FighterEngine` via la propriété `FIGHTER_ENABLED`.
-- **Réinitialisation & Reboot** : Les modifications de géométrie matérielle (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) ou de Wi-Fi nécessitent un redémarrage du système (`POST /api/system/reboot` ou bouton *Reboot System* sur la WebUI). Toutes les autres options (thèmes, couleurs, durées, luminosité) s'appliquent immédiatement à chaud.
+- **`ROTATION`** : La chaîne `ROTATION` gère la séquence des modules d'affichage autonome (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`, `temp`, `decibel`). Si le matériel (capteur SHTC3 ou Codec ES7210) n'est pas détecté, le module correspondant est automatiquement ignoré et grisé sur l'interface.
+- **Réinitialisation & Reboot** : Les modifications de géométrie matérielle (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) ou de Wi-Fi nécessitent un redémarrage du système (`POST /api/system/reboot` ou bouton *Reboot System* sur la WebUI). Toutes les autres options (thèmes, couleurs, durées, luminosité, visualiseur) s'appliquent immédiatement à chaud.

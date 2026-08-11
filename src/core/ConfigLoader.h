@@ -82,10 +82,12 @@ struct TimeConfig {
  * @brief Manages the automatic rotation sequence between modules.
  */
 struct IdleConfig {
-    String rotation;        ///< Comma-separated list of active modules (e.g. "clock,date,gifs")
+    String rotation;        ///< Comma-separated list of active modules (e.g. "clock,date,gifs,temp,decibel")
     int clock_duration_sec; ///< Seconds to display the Clock
     int date_duration_sec;  ///< Seconds to display the Date
     int weather_duration_sec;///< Seconds to display the Weather
+    int temp_duration_sec;   ///< Seconds to display Indoor Temperature & Humidity
+    int decibel_duration_sec;///< Seconds to display Decibel Meter
     int gifs_count;         ///< Number of GIFs to play before rotating
     bool fighter_enabled;   ///< Whether MUGEN fighters are enabled
     int fighter_interval_sec; ///< Seconds to wait between MUGEN fights
@@ -93,6 +95,26 @@ struct IdleConfig {
     // Legacy support for backwards compatibility
     String mode;
     int gifs_before_clock;
+};
+
+/**
+ * @struct EnvironmentConfig
+ * @brief Indoor Temperature & Humidity sensor settings.
+ */
+struct EnvironmentConfig {
+    String unit;            ///< Temperature unit ("C" or "F")
+    float temp_offset;      ///< Temperature offset adjustment in C
+};
+
+/**
+ * @struct AudioConfig
+ * @brief Microphone, Rhythmic Visualizer, and Decibel Meter settings.
+ */
+struct AudioConfig {
+    bool visualizer_enabled;///< Priority visualizer toggle
+    String visualizer_mode; ///< Visualizer display mode ("spectrum", "waveform", "radial", "neon_fire")
+    float mic_gain;         ///< Microphone gain multiplier (default 1.0)
+    float db_calibration;   ///< Decibel calibration offset in dB
 };
 
 /**
@@ -220,6 +242,8 @@ public:
     FontConfig fonts;
     CryptoConfig crypto;
     StockConfig stock;
+    EnvironmentConfig env;
+    AudioConfig audio;
 
 private:
     void parseLine(String line, String& currentSection);
