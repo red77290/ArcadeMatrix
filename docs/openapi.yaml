@@ -350,6 +350,56 @@ paths:
         '400':
           description: Invalid payload size.
 
+  /api/sensor:
+    get:
+      tags:
+        - Engines
+      summary: Get Indoor Temperature & Humidity Sensor Data
+      description: Returns real-time ambient temperature (°C and °F), humidity (%), unit preference, and sensor connection status. Suitable for Home Assistant REST sensor integration.
+      responses:
+        '200':
+          description: Sensor environment data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: boolean
+                  temperature_c:
+                    type: number
+                  temperature_f:
+                    type: number
+                  humidity:
+                    type: number
+                  unit:
+                    type: string
+                  status:
+                    type: string
+
+  /api/visualizer:
+    post:
+      tags:
+        - Engines
+      summary: Control Priority Rhythmic Music Visualizer
+      description: Toggle the audio-reactive visualizer display override and select active visualizer mode or mic gain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                mode:
+                  type: string
+                gain:
+                  type: number
+      responses:
+        '200':
+          description: Success
+
   /api/ota:
     post:
       tags:

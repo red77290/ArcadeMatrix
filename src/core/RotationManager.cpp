@@ -8,9 +8,11 @@ extern ConfigLoader config;
 RotationManager::RotationManager(ClockEngine *c, DateEngine *d,
                                  WeatherEngine *w, GifEngine *g,
                                  FighterEngine *f, CryptoEngine *cr,
-                                 StockEngine *st)
+                                 StockEngine *st, TempEngine *t,
+                                 DecibelEngine *db)
     : clockEngine(c), dateEngine(d), weatherEngine(w), gifEngine(g),
-      fighterEngine(f), cryptoEngine(cr), stockEngine(st) {
+      fighterEngine(f), cryptoEngine(cr), stockEngine(st),
+      tempEngine(t), decibelEngine(db) {
   currentIndex = 0;
   moduleStartTime = 0;
 }
@@ -37,11 +39,15 @@ void RotationManager::parseRotationString(const String &rotStr) {
       sequence.push_back(MODULE_CRYPTO);
     else if (mod == "stock" || mod == "stocks")
       sequence.push_back(MODULE_STOCKS);
+    else if (mod == "temp" || mod == "temperature")
+      sequence.push_back(MODULE_TEMP);
+    else if (mod == "decibel" || mod == "db")
+      sequence.push_back(MODULE_DECIBEL);
 
     start = end + 1;
     end = s.indexOf(',', start);
   }
-  // Last one
+  // Last item
   String mod = s.substring(start);
   mod.trim();
   if (mod == "clock")
@@ -56,6 +62,10 @@ void RotationManager::parseRotationString(const String &rotStr) {
     sequence.push_back(MODULE_CRYPTO);
   else if (mod == "stock" || mod == "stocks")
     sequence.push_back(MODULE_STOCKS);
+  else if (mod == "temp" || mod == "temperature")
+    sequence.push_back(MODULE_TEMP);
+  else if (mod == "decibel" || mod == "db")
+    sequence.push_back(MODULE_DECIBEL);
 
   if (sequence.empty()) {
     sequence.push_back(MODULE_CLOCK); // Fallback
@@ -84,9 +94,8 @@ void RotationManager::switchToModule(int index) {
     return;
 
   static int switchDepth = 0;
-  if (switchDepth > sequence.size()) {
-    // Infinite skip loop detected (e.g. no valid data for any module).
-    // Fallback to clock to prevent stack overflow and WDT crash.
+  if (switchDepth > (int)sequence.size()) {
+    // Infinite skip loop protection
     switchDepth = 0;
     sequence.clear();
     sequence.push_back(MODULE_CLOCK);
@@ -98,17 +107,19 @@ void RotationManager::switchToModule(int index) {
   moduleStartTime = millis();
   RotationModule mod = sequence[index];
 
-  // Stop any playing GIFs if we are leaving GIF mode
+  // Deactivate Decibel audio sampling if leaving Decibel mode
+  if (mod != MODULE_DECIBEL && decibelEngine && decibelEngine->isActive()) {
+    decibelEngine->onDeactivate();
+  }
+
+  // Stop any playing GIFs if leaving GIF mode
   if (mod != MODULE_GIFS && gifEngine->isActive()) {
     gifEngine->stop();
   }
 
   if (mod == MODULE_WEATHER) {
-    // Only attempt weather if we have internet and valid data
-    weatherEngine->update(config.weather.api_key,
-                          config.weather.city);
+    weatherEngine->update(config.weather.api_key, config.weather.city);
     if (!weatherEngine->hasValidData() || WiFi.status() != WL_CONNECTED) {
-      // Skip weather
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
       return;
@@ -116,9 +127,8 @@ void RotationManager::switchToModule(int index) {
   } else if (mod == MODULE_GIFS) {
     if (config.idle.gifs_count > 0 && gifEngine->hasDefaultPlaylists()) {
       gifEngine->playDefaultPlaylists(config.idle.gifs_count);
-      fighterEngine->stop(); // Turn off background fighters during full-screen GIFs
+      fighterEngine->stop();
     } else {
-      // Skip GIFs if none configured
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
       return;
@@ -141,13 +151,30 @@ void RotationManager::switchToModule(int index) {
       switchToModule(currentIndex);
       return;
     }
+  } else if (mod == MODULE_TEMP) {
+    if (!hardwareHAL.isTempSensorAvailable()) {
+      // Auto-skip Temp module if physical sensor is missing
+      currentIndex = (currentIndex + 1) % sequence.size();
+      switchToModule(currentIndex);
+      return;
+    }
+  } else if (mod == MODULE_DECIBEL) {
+    if (!hardwareHAL.isAudioAvailable()) {
+      // Auto-skip Decibel module if audio input is missing
+      currentIndex = (currentIndex + 1) % sequence.size();
+      switchToModule(currentIndex);
+      return;
+    }
+    if (decibelEngine) {
+      decibelEngine->onActivate();
+    }
   }
 
-  if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER) {
+  if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER || mod == MODULE_TEMP || mod == MODULE_DECIBEL) {
     updateBackgroundSprites();
   }
   
-  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS", "CRYPTO", "STOCKS"};
+  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS", "CRYPTO", "STOCKS", "TEMP", "DECIBEL"};
   LOGI("RotationManager", "Switched to %s", modNames[mod]);
   
   switchDepth = 0;
@@ -161,71 +188,63 @@ bool RotationManager::loop() {
   RotationModule currentMod = sequence[currentIndex];
   bool advance = false;
 
+  // Single module in rotation sequence (Solo mode): do NOT advance timer
+  bool isSoloMode = (sequence.size() == 1);
+
   if (currentMod == MODULE_GIFS) {
     bool drewFrame = gifEngine->loop();
-    // If GIF engine stopped naturally because it played all requested GIFs
     if (!gifEngine->isActive()) {
       advance = true;
     }
-    
-    if (advance) {
+    if (advance && !isSoloMode) {
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
     }
     return drewFrame;
   } else {
-    // Draw the main module first (background)
     if (currentMod == MODULE_CLOCK) {
       clockEngine->loop();
-      if (now - moduleStartTime >=
-          config.idle.clock_duration_sec * 1000UL)
+      if (!isSoloMode && (now - moduleStartTime >= config.idle.clock_duration_sec * 1000UL))
         advance = true;
     } else if (currentMod == MODULE_DATE) {
       dateEngine->loop();
-      if (now - moduleStartTime >=
-          config.idle.date_duration_sec * 1000UL)
+      if (!isSoloMode && (now - moduleStartTime >= config.idle.date_duration_sec * 1000UL))
         advance = true;
     } else if (currentMod == MODULE_WEATHER) {
       weatherEngine->loop();
-      if (now - moduleStartTime >=
-          config.idle.weather_duration_sec * 1000UL)
+      if (!isSoloMode && (now - moduleStartTime >= config.idle.weather_duration_sec * 1000UL))
         advance = true;
     } else if (currentMod == MODULE_CRYPTO) {
       if (cryptoEngine) cryptoEngine->loop();
-      size_t symbolCount = 0;
-      if (!config.crypto.symbols.isEmpty()) {
-        symbolCount = 1;
-        for (unsigned int i = 0; i < config.crypto.symbols.length(); i++) {
-          if (config.crypto.symbols.charAt(i) == ',') symbolCount++;
-        }
-      }
-      if (symbolCount == 0) symbolCount = 1;
+      size_t symbolCount = (config.crypto.symbols.length() > 0) ? 1 : 1;
       uint32_t perSymbolSec = config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5;
-      if (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL))
+      if (!isSoloMode && (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL)))
         advance = true;
     } else if (currentMod == MODULE_STOCKS) {
       if (stockEngine) stockEngine->loop();
-      size_t symbolCount = 0;
-      if (!config.stock.symbols.isEmpty()) {
-        symbolCount = 1;
-        for (unsigned int i = 0; i < config.stock.symbols.length(); i++) {
-          if (config.stock.symbols.charAt(i) == ',') symbolCount++;
-        }
-      }
-      if (symbolCount == 0) symbolCount = 1;
+      size_t symbolCount = (config.stock.symbols.length() > 0) ? 1 : 1;
       uint32_t perSymbolSec = config.stock.duration_sec > 0 ? config.stock.duration_sec : 5;
-      if (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL))
+      if (!isSoloMode && (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL)))
+        advance = true;
+    } else if (currentMod == MODULE_TEMP) {
+      if (tempEngine) tempEngine->loop();
+      uint32_t dur = config.idle.temp_duration_sec >= 3 ? config.idle.temp_duration_sec : 8;
+      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL))
+        advance = true;
+    } else if (currentMod == MODULE_DECIBEL) {
+      if (decibelEngine) decibelEngine->loop();
+      uint32_t dur = config.idle.decibel_duration_sec >= 3 ? config.idle.decibel_duration_sec : 10;
+      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL))
         advance = true;
     }
 
-    // Draw fighters on top of clock/date/weather
     if (config.idle.fighter_enabled) {
       fighterEngine->loop();
       fighterEngine->draw();
     }
   }
 
-  if (advance) {
+  if (advance && !isSoloMode) {
     currentIndex = (currentIndex + 1) % sequence.size();
     switchToModule(currentIndex);
   }

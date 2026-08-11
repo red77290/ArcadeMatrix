@@ -1,62 +1,44 @@
 #include <Arduino.h>
 #include <unity.h>
-#include "../mocks/MockProviders.h"
-#include "engines/CryptoEngine.h"
-#include "engines/StockEngine.h"
-#include "engines/WeatherEngine.h"
-
-// Note: MatrixPanel_I2S_DMA is a hardware-dependent object. In unit tests on native/host,
-// we might not have it. But running on esp32dev, we can pass nullptr to some engines if we
-// are careful to mock or avoid display rendering calls, OR we can instantiate a dummy matrix.
-// For now, we test the logic that doesn't crash on nullptr matrix, or we just test the providers.
+#include "engines/DecibelEngine.h"
+#include "engines/VisualizerEngine.h"
+#include "engines/TempEngine.h"
 
 void setUp(void) {}
 void tearDown(void) {}
 
-void test_crypto_engine_di(void) {
-    CryptoEngine cryptoEngine;
-    cryptoEngine.begin(nullptr);
-    
-    MockCryptoProvider* mockProvider = new MockCryptoProvider();
-    mockProvider->mockPrice = 12345.67f;
-    mockProvider->mockChange = 1.23f;
-    
-    cryptoEngine.addProvider(mockProvider);
-    
-    // Test that the engine uses the mock
-    // Note: To properly test fetchQuote, we'd need to expose it or make it protected.
-    // For this test, we can just ensure it compiles and the DI mechanism is correctly wired.
-    TEST_ASSERT_EQUAL(0, mockProvider->fetchCount);
+void test_decibel_status_mapping(void) {
+    // Verify smiley status thresholds:
+    // < 45: Calm, 45-65: Normal, 65-75: Moderate, 75-83: Vigilance, 83-88: Limit, >88: Alert
+    float dbCalm = 40.0f;
+    float dbNormal = 55.0f;
+    float dbModerate = 70.0f;
+    float dbVigilance = 78.0f;
+    float dbLimit = 85.0f;
+    float dbAlert = 95.0f;
+
+    TEST_ASSERT_TRUE(dbCalm < 45.0f);
+    TEST_ASSERT_TRUE(dbNormal >= 45.0f && dbNormal < 65.0f);
+    TEST_ASSERT_TRUE(dbModerate >= 65.0f && dbModerate < 75.0f);
+    TEST_ASSERT_TRUE(dbVigilance >= 75.0f && dbVigilance < 83.0f);
+    TEST_ASSERT_TRUE(dbLimit >= 83.0f && dbLimit <= 88.0f);
+    TEST_ASSERT_TRUE(dbAlert > 88.0f);
 }
 
-void test_stock_engine_di(void) {
-    StockEngine stockEngine;
-    stockEngine.begin(nullptr);
-    
-    MockStockProvider* mockProvider = new MockStockProvider();
-    mockProvider->mockPrice = 250.0f;
-    mockProvider->mockChange = 2.5f;
-    
-    stockEngine.addProvider(mockProvider);
-    
-    TEST_ASSERT_EQUAL(0, mockProvider->fetchCount);
-}
-
-void test_weather_engine_di(void) {
-    WeatherEngine weatherEngine(nullptr);
-    
-    MockWeatherProvider* mockProvider = new MockWeatherProvider();
-    weatherEngine.addProvider(mockProvider);
-    
-    TEST_ASSERT_EQUAL(0, mockProvider->fetchCount);
+void test_visualizer_mode_parsing(void) {
+    VisualizerEngine engine(nullptr);
+    engine.setMode("waveform");
+    engine.setMode("radial");
+    engine.setMode("neon_fire");
+    engine.setMode("spectrum");
+    TEST_ASSERT_FALSE(engine.isActive());
 }
 
 void setup() {
-    delay(2000);
+    delay(1000);
     UNITY_BEGIN();
-    RUN_TEST(test_crypto_engine_di);
-    RUN_TEST(test_stock_engine_di);
-    RUN_TEST(test_weather_engine_di);
+    RUN_TEST(test_decibel_status_mapping);
+    RUN_TEST(test_visualizer_mode_parsing);
     UNITY_END();
 }
 

@@ -20,8 +20,13 @@ void test_default_values(void) {
     TEST_ASSERT_FALSE(config.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING("pool.ntp.org", config.time.ntpServer.c_str());
     TEST_ASSERT_TRUE(config.time.format24h);
-    TEST_ASSERT_EQUAL_STRING("clock,date,weather,gifs", config.idle.rotation.c_str());
+    TEST_ASSERT_EQUAL_STRING("clock,date,weather,gifs,temp,decibel", config.idle.rotation.c_str());
     TEST_ASSERT_TRUE(config.idle.fighter_enabled);
+    TEST_ASSERT_EQUAL_INT(8, config.idle.temp_duration_sec);
+    TEST_ASSERT_EQUAL_INT(10, config.idle.decibel_duration_sec);
+    TEST_ASSERT_EQUAL_STRING("C", config.env.unit.c_str());
+    TEST_ASSERT_FALSE(config.audio.visualizer_enabled);
+    TEST_ASSERT_EQUAL_STRING("spectrum", config.audio.visualizer_mode.c_str());
 }
 
 void test_parse_valid_ini(void) {
@@ -42,6 +47,21 @@ void test_parse_valid_ini(void) {
         "COLOR_DEPTH=16\n"
         "FORCE_SINGLE_BUFFER=true\n"
         "DRIVER_CHIP=FM6126A\n"
+        "\n"
+        "[IDLE]\n"
+        "ROTATION=\"temp,decibel\"\n"
+        "TEMP_DURATION_SEC=12\n"
+        "DECIBEL_DURATION_SEC=15\n"
+        "\n"
+        "[ENVIRONMENT]\n"
+        "UNIT=\"F\"\n"
+        "TEMP_OFFSET=1.5\n"
+        "\n"
+        "[AUDIO]\n"
+        "VISUALIZER_ENABLED=true\n"
+        "VISUALIZER_MODE=\"waveform\"\n"
+        "MIC_GAIN=1.8\n"
+        "DB_CALIBRATION=2.0\n"
         "\n"
         "[MQTT]\n"
         "ENABLED=true\n"
@@ -75,6 +95,17 @@ void test_parse_valid_ini(void) {
     TEST_ASSERT_EQUAL_INT(16, config.matrix.colorDepth);
     TEST_ASSERT_TRUE(config.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.driverChip.c_str());
+
+    // Assert Idle, Env, Audio
+    TEST_ASSERT_EQUAL_STRING("temp,decibel", config.idle.rotation.c_str());
+    TEST_ASSERT_EQUAL_INT(12, config.idle.temp_duration_sec);
+    TEST_ASSERT_EQUAL_INT(15, config.idle.decibel_duration_sec);
+    TEST_ASSERT_EQUAL_STRING("F", config.env.unit.c_str());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.5f, config.env.temp_offset);
+    TEST_ASSERT_TRUE(config.audio.visualizer_enabled);
+    TEST_ASSERT_EQUAL_STRING("waveform", config.audio.visualizer_mode.c_str());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.8f, config.audio.mic_gain);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.0f, config.audio.db_calibration);
 
     // Assert MQTT
     TEST_ASSERT_TRUE(config.mqtt.enabled);
@@ -116,6 +147,10 @@ void test_round_trip_in_memory(void) {
     original.matrix.powerLimitPercent = 75;
     original.time.clock_theme = 15;
     original.time.clock_color_1 = "#123456";
+    original.idle.temp_duration_sec = 14;
+    original.env.unit = "F";
+    original.audio.visualizer_enabled = true;
+    original.audio.visualizer_mode = "radial";
 
     String serialized = original.serializeToString();
     TEST_ASSERT_TRUE(serialized.length() > 100);
@@ -131,6 +166,10 @@ void test_round_trip_in_memory(void) {
     TEST_ASSERT_EQUAL_INT(original.matrix.powerLimitPercent, reloaded.matrix.powerLimitPercent);
     TEST_ASSERT_EQUAL_INT(original.time.clock_theme, reloaded.time.clock_theme);
     TEST_ASSERT_EQUAL_STRING(original.time.clock_color_1.c_str(), reloaded.time.clock_color_1.c_str());
+    TEST_ASSERT_EQUAL_INT(14, reloaded.idle.temp_duration_sec);
+    TEST_ASSERT_EQUAL_STRING("F", reloaded.env.unit.c_str());
+    TEST_ASSERT_TRUE(reloaded.audio.visualizer_enabled);
+    TEST_ASSERT_EQUAL_STRING("radial", reloaded.audio.visualizer_mode.c_str());
 }
 
 void setup() {
