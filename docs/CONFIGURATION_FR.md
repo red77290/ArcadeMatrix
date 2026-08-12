@@ -17,7 +17,7 @@ ArcadeMatrix est entièrement configurable sans recompiler le code C++. Tous les
 | | `HEIGHT` | `matrix_rows` | int | `32` | `64` | DMA Matrix | Oui | **Oui** | Hauteur totale de la matrice en pixels |
 | | `CHAIN` | `matrix_chain` | int | `1` | `2` | Panneaux | Oui | **Oui** | Nombre de panneaux chaînés |
 | | `BRIGHTNESS_LIMIT`|`brightness_limit`| int | `100` | `80` | **En direct** | Oui | Non | Limitation de luminosité (0-100%) |
-| | `COLOR_DEPTH` | `color_depth` | int | `8` | `8` | Profondeur | Oui | **Oui** | Bits par canal de couleur (8 par défaut) |
+| | `PWM_BITS` | `pwm_bits` | int | `8` | `8` | Profondeur | Oui | **Oui** | Bits par canal de couleur (8 par défaut) |
 | | `DRIVER_CHIP` | `matrix_driver_chip`| string | `"SHIFTREG"` | `"FM6126A"` | Driver IC | Oui | **Oui** | Puce driver (`SHIFTREG`, `FM6126A`, `ICN2038S`, `SM16208`) |
 | | `FORCE_SINGLE_BUFFER`| `force_single_buffer`| bool | `false` | `true` | Mémoire RAM | Oui | **Oui** | Force le mode simple buffer pour économiser la RAM |
 | **[TIME]** | `NTP_SERVER` | `ntp_server` | string | `"pool.ntp.org"` | `"time.google.com"` | Synchro NTP | Oui | Non | Serveur de temps NTP |
@@ -56,4 +56,4 @@ ArcadeMatrix est entièrement configurable sans recompiler le code C++. Tous les
 ## 📌 Remarques Importantes
 
 - **`ROTATION`** : La chaîne `ROTATION` gère la séquence des modules d'affichage autonome (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`, `temp`, `decibel`). Si le matériel (capteur SHTC3 ou Codec ES7210) n'est pas détecté, le module correspondant est automatiquement ignoré et grisé sur l'interface.
-- **Réinitialisation & Reboot** : Les modifications de géométrie matérielle (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) ou de Wi-Fi nécessitent un redémarrage du système (`POST /api/system/reboot` ou bouton *Reboot System* sur la WebUI). Toutes les autres options (thèmes, couleurs, durées, luminosité, visualiseur) s'appliquent immédiatement à chaud.
+- **Réinitialisation & Reboot** : Les modifications de géométrie matérielle (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `PWM_BITS`) ou de Wi-Fi nécessitent un redémarrage du système (`POST /api/system/reboot` ou bouton *Reboot System* sur la WebUI). Toutes les autres options (thèmes, couleurs, durées, luminosité, visualiseur) s'appliquent immédiatement à chaud.

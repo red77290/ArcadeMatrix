@@ -17,7 +17,7 @@ ArcadeMatrix is fully configurable without recompiling C++ code. All parameters 
 | | `HEIGHT` | `matrix_rows` | int | `32` | `64` | DMA Matrix | Yes | **Yes** | Total matrix height in pixels |
 | | `CHAIN` | `matrix_chain` | int | `1` | `2` | Panels | Yes | **Yes** | Number of chained panels |
 | | `BRIGHTNESS_LIMIT`|`brightness_limit`| int | `100` | `80` | **Live** | Yes | No | Brightness limit (0-100%) |
-| | `COLOR_DEPTH` | `color_depth` | int | `8` | `8` | Depth | Yes | **Yes** | Color channel bit depth (8 default) |
+| | `PWM_BITS` | `pwm_bits` | int | `8` | `8` | Depth | Yes | **Yes** | Color channel bit depth (8 default) |
 | | `DRIVER_CHIP` | `matrix_driver_chip`| string | `"SHIFTREG"` | `"FM6126A"` | Driver IC | Yes | **Yes** | Driver IC chip (`SHIFTREG`, `FM6126A`, `ICN2038S`, `SM16208`) |
 | | `FORCE_SINGLE_BUFFER`| `force_single_buffer`| bool | `false` | `true` | RAM Memory | Yes | **Yes** | Force single buffering to save RAM |
 | **[TIME]** | `NTP_SERVER` | `ntp_server` | string | `"pool.ntp.org"` | `"time.google.com"` | NTP Sync | Yes | No | NTP Time Server URL |
@@ -48,4 +48,4 @@ ArcadeMatrix is fully configurable without recompiling C++ code. All parameters 
 ## 📌 Important Notes
 
 - **`ROTATION`**: The `ROTATION` string controls autonomous display modules (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`). **Note: `sprites` is NOT a rotation module**. MUGEN fighters are rendered dynamically as an overlay by `FighterEngine` via `FIGHTER_ENABLED`.
-- **Reboot Requirement**: Hardware geometry changes (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) and Wi-Fi credentials require a system reboot (`POST /api/system/reboot` or the *Reboot System* button in the Web UI). All visual parameters (themes, colors, durations, brightness) update live on the fly.
+- **Reboot Requirement**: Hardware geometry changes (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `PWM_BITS`) and Wi-Fi credentials require a system reboot (`POST /api/system/reboot` or the *Reboot System* button in the Web UI). All visual parameters (themes, colors, durations, brightness) update live on the fly.

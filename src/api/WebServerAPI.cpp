@@ -300,7 +300,7 @@ void WebServerAPI::setupRoutes() {
 
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
-        doc["color_depth"] = config.matrix.colorDepth;
+        doc["pwm_bits"] = config.matrix.pwmBits;
         doc["matrix_chain"] = config.matrix.chainLength;
         doc["matrix_rows"] = config.matrix.height;
         doc["matrix_cols"] = config.matrix.width;
@@ -418,7 +418,7 @@ void WebServerAPI::setupRoutes() {
             extern MatrixEngine matrixEngine;
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
-        if (!doc["color_depth"].isNull()) config.matrix.colorDepth = doc["color_depth"].as<int>();
+        if (!doc["pwm_bits"].isNull()) config.matrix.pwmBits = doc["pwm_bits"].as<int>();
         if (!doc["matrix_chain"].isNull()) config.matrix.chainLength = doc["matrix_chain"].as<int>();
         if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
         if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
