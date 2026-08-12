@@ -60,7 +60,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     );
     
     // Use configured per-channel color depth (2 to 8, default 8)
-    int depth = config.colorDepth;
+    int depth = config.pwmBits;
     if (depth <= 0) {
         depth = 8; // Default fallback
     } else if (depth > 8) {

@@ -125,9 +125,9 @@ void RotationManager::switchToModule(int index) {
       return;
     }
   } else if (mod == MODULE_GIFS) {
+    fighterEngine->stop();
     if (config.idle.gifs_count > 0 && gifEngine->hasDefaultPlaylists()) {
       gifEngine->playDefaultPlaylists(config.idle.gifs_count);
-      fighterEngine->stop();
     } else {
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);

@@ -1,80 +1,84 @@
-/**
- * @file ConfigLoader.h
- * @brief Parses and saves the main configuration file (`conf.ini`).
- * 
- * Defines all configuration structures (WiFi, Matrix, MQTT, etc.) and provides 
- * an INI parser to read from and write to the SD card.
- */
 #pragma once
 #include <Arduino.h>
-#include "SDUtils.h"
-#include <vector>
 
 /**
  * @struct MatrixConfig
- * @brief Hardware configuration for the HUB75 DMA LED Matrix.
+ * @brief Configuration settings for the LED Matrix panel hardware.
  */
 struct MatrixConfig {
-    int width;              ///< Total pixel width of the display
-    int height;             ///< Total pixel height of the display
-    String panelType;       ///< Hardware type (e.g., FM6126A, ICN2038S)
-    int chainLength;        ///< Number of chained panels
-    int powerLimitPercent;  ///< Brightness capping to prevent power supply issues
-    bool forceSingleBuffer; ///< Force single buffering to save RAM on large displays
-    int colorDepth;         ///< Number of bits per color channel (e.g. 8 for 16M colors, 3 for 512)
-    String rgbSequence;     ///< Color sequence for the panel (e.g., "RGB", "BRG")
-
-    int limitRefreshRateHz; ///< Max matrix refresh rate (0 = unlimited)
-    String driverChip;      ///< Driver IC chip: SHIFTREG, FM6124, FM6126A, ICN2038S, SM16208
-    bool clkPhase;          ///< Clock phase toggle for pixel alignment / green corner fix
-    int latchBlanking;      ///< Latch blanking timing (1-16)
-    int rowAddressMode;     ///< Row addressing mode (0=Default, 1=AB-Direct, 2=ShiftRegister Row)
+    int width;              ///< Matrix panel width in pixels (e.g. 64, 128, 256)
+    int height;             ///< Matrix panel height in pixels (e.g. 32, 64)
+    String panelType;       ///< Driver chip type ("FM6126A", "ICN2038S", "SHIFTREG")
+    int chainLength;        ///< Number of daisy-chained panels (default 1)
+    int powerLimitPercent;  ///< Maximum brightness percentage (0-100)
+    bool forceSingleBuffer; ///< Force single buffer mode to save RAM
+    int pwmBits;         ///< Color depth in bits per channel (e.g. 8 for 24-bit RGB)
+    String rgbSequence;     ///< RGB sequence mapping (e.g. "RGB", "RBG", "BGR")
+    int limitRefreshRateHz; ///< Optional refresh rate limiter in Hz (0 = unlimited)
+    String driverChip;      ///< Driver chip implementation ("SHIFTREG", "FM6126A")
+    bool clkPhase;          ///< Clock phase toggle for glitched displays
+    int latchBlanking;      ///< Latch blanking pulse width
+    int rowAddressMode;     ///< Row address mode for multiplexed panels
 };
 
 /**
- * @struct WiFiConfig
- * @brief Network connectivity settings.
+ * @struct WifiConfig
+ * @brief Credentials for local Wi-Fi connectivity.
  */
-struct WiFiConfig {
-    String ssid;            ///< Network SSID
-    String password;        ///< WPA2 Password
-    String hostname;        ///< mDNS hostname (e.g., "arcadematrix")
+struct WifiConfig {
+    String ssid;            ///< Wi-Fi network SSID
+    String password;        ///< Wi-Fi network password
+    String hostname;        ///< mDNS hostname (e.g. "arcadematrix")
 };
 
 /**
  * @struct MqttConfig
- * @brief Settings for the MQTT client connecting to Batocera/Recalbox.
+ * @brief MQTT broker integration settings for Batocera and Recalbox.
  */
 struct MqttConfig {
-    bool enabled;           ///< Should MQTT listener be active?
-    String broker;          ///< IP address of the MQTT Broker
-    int port;               ///< MQTT Port (default 1883)
-    String user;            ///< MQTT Username (optional)
-    String pass;            ///< MQTT Password (optional)
-    String deviceName;      ///< Client ID presented to the broker
-    String topic_batocera;  ///< Subscribed topic for Batocera events
-    String topic_recalbox;  ///< Subscribed topic for Recalbox events
+    bool enabled;           ///< Toggle MQTT listener active status
+    String broker;          ///< Broker IP address or hostname
+    int port;               ///< Broker port (default 1883)
+    String user;            ///< Optional broker username
+    String pass;            ///< Optional broker password
+    String deviceName;      ///< Device client ID
+    String topic_batocera;  ///< MQTT topic for Batocera system status
+    String topic_recalbox;  ///< MQTT topic for Recalbox system status
 };
 
 /**
  * @struct TimeConfig
- * @brief NTP Time and Clock display settings.
+ * @brief Real-time clock display parameters and NTP settings.
  */
 struct TimeConfig {
-    String ntpServer;       ///< NTP Server URL (e.g. "pool.ntp.org")
-    String timezone;        ///< POSIX Timezone string (e.g. "CET-1CEST")
-    bool format24h;         ///< Use 24-hour format instead of 12-hour AM/PM
-    int clock_font;         ///< Font ID for the Arcade Clock
-    int clock_size;         ///< Scale multiplier (1, 2, or 3)
-    int clock_theme;        ///< PublisherTheme ID (Nintendo, Capcom, etc.)
-    int clock_offset_x;     ///< Manual X axis pixel offset
-    int clock_offset_y;     ///< Manual Y axis pixel offset
-    String clock_color_1;   ///< Hex color string for gradient start
-    String clock_color_2;   ///< Hex color string for gradient end
-    String clock_font_path; ///< Optional path to a custom .amf font on SD (e.g. "/fonts/tom-thumb.amf"),
-                             ///< or "" to use the compiled-in font family selected by clock_font.
-                             ///< Converted from a .bdf font (same ones ArcadeMatrix_RPi ships) via
-                             ///< tools/bdf_to_amfont, giving ESP32 the same custom-font capability.
+    String ntpServer;       ///< NTP server address (default "pool.ntp.org")
+    String timezone;        ///< POSIX timezone string (e.g. "CET-1CEST,M3.5.0,M10.5.0/3")
+    bool format24h;         ///< 24-hour format toggle (true = 24h, false = 12h AM/PM)
+    int clock_font;         ///< Selected clock font index (0 to 5)
+    int clock_size;         ///< Clock font size multiplier
+    int clock_theme;        ///< Clock theme index
+    int clock_offset_x;     ///< Horizontal position offset
+    int clock_offset_y;     ///< Vertical position offset
+    String clock_color_1;   ///< Primary gradient color in hex (e.g. "#ffffff")
+    String clock_color_2;   ///< Secondary gradient color in hex
+    String clock_font_path; ///< Custom SD font file path
+};
+
+/**
+ * @struct DateSettingsConfig
+ * @brief Date display parameters.
+ */
+struct DateSettingsConfig {
+    int theme;              ///< Date theme index
+    String format;          ///< Date format string ("DD/MM" or "MM/DD")
+    int date_font;          ///< Font index
+    int date_size;          ///< Font size multiplier
+    int date_offset_x;      ///< Horizontal offset
+    int date_offset_y;      ///< Vertical offset
+    String background_sprite;///< Background raw image filename
+    String date_color_1;    ///< Primary gradient color
+    String date_color_2;    ///< Secondary gradient color
+    String date_font_path;  ///< Custom font path
 };
 
 /**
@@ -119,52 +123,36 @@ struct AudioConfig {
 
 /**
  * @struct WeatherConfig
- * @brief OpenWeatherMap integration settings.
+ * @brief OpenWeatherMap service parameters.
  */
 struct WeatherConfig {
-    String api_key;         ///< OpenWeather API key
-    String city;            ///< Target city for weather data
-    String lang;            ///< Language code (en, fr, es)
-    int weather_offset_x;   ///< Manual X axis pixel offset
-    int weather_offset_y;   ///< Manual Y axis pixel offset
+    String api_key;         ///< OpenWeatherMap API key
+    String city;            ///< Target city string (e.g. "Paris,FR")
+    String lang;            ///< Language code (e.g. "fr", "en")
+    int weather_offset_x;   ///< Position X offset
+    int weather_offset_y;   ///< Position Y offset
 };
 
 /**
  * @struct StandbyConfig
- * @brief Power saving and sleep scheduling.
+ * @brief Night mode and automatic power schedule settings.
  */
 struct StandbyConfig {
-    bool night_mode_enabled;///< Enable automatic matrix sleep
-    String turn_off_at;     ///< Time string (HH:MM) to power down the LEDs
-    String wake_up_at;      ///< Time string (HH:MM) to power up the LEDs
-    int night_brightness;   ///< Night time brightness
-    bool matrix_power;      ///< Runtime toggle for panel power
-};
-
-/**
- * @struct DateConfig
- * @brief DateEngine visual settings.
- */
-struct DateConfig {
-    int theme;                  ///< PublisherTheme ID
-    String background_sprite;   ///< Optional static background for date view
-    String format;              ///< Date string format (e.g. "DD/MM")
-    int date_font;              ///< Font ID for the Date
-    int date_size;              ///< Scale multiplier
-    int date_offset_x;          ///< Manual X axis pixel offset
-    int date_offset_y;          ///< Manual Y axis pixel offset
-    String date_color_1;        ///< Hex color string for gradient start
-    String date_color_2;        ///< Hex color string for gradient end
-    String date_font_path;      ///< Optional path to a custom .amf font on SD, or "" to use the
-                                 ///< compiled-in font family selected by date_font (see clock_font_path).
+    bool night_mode_enabled;///< Night mode toggle
+    String turn_off_at;     ///< Standby start time ("HH:MM")
+    String wake_up_at;      ///< Standby end time ("HH:MM")
+    int night_brightness;   ///< Standby brightness level (0-100)
+    
+    // Runtime state flag
+    bool matrix_power = true;
 };
 
 /**
  * @struct FontConfig
- * @brief Optional SD-loadable custom bitmap font (see BitmapFontLoader/tools/bdf_to_amfont).
+ * @brief SD-loadable custom font configuration.
  */
 struct FontConfig {
-    String custom_font_path;    ///< Path to a .amf file on SD (e.g. "/fonts/myfont.amf"), or "" to disable
+    String custom_font_path;
 };
 
 /**
@@ -173,10 +161,10 @@ struct FontConfig {
  */
 struct CryptoConfig {
     bool enabled;
-    String symbols;         ///< Comma-separated list of symbols (e.g. "BTC,ETH,SOL,DOGE")
-    int duration_sec;       ///< Display duration per crypto token
-    int cache_ttl_min;      ///< Quote cache TTL in minutes (refresh rate)
-    String currency;        ///< USD or EUR
+    String symbols;         ///< Comma-separated list of crypto symbols (e.g. "BTC,ETH,SOL")
+    int duration_sec;       ///< Display duration per crypto symbol
+    int cache_ttl_min;      ///< Market data cache TTL in minutes
+    String currency;        ///< Currency string (e.g. "USD", "EUR")
 };
 
 /**
@@ -218,38 +206,32 @@ public:
     bool parseFromSD(const char* filepath);
     
     /**
-     * @brief Serialize the current configuration to an INI formatted string in memory.
-     * @return INI string content.
-     */
-    String serializeToString();
-
-    /**
-     * @brief Serialize the current configuration back to the SD Card.
-     * @param filepath Path to save the config file to.
+     * @brief Save the current active configuration back to the SD Card file.
+     * @param filepath Path to the target file.
      * @return true on success.
      */
     bool saveToSD(const char* filepath);
-    
-    // Publicly accessible configurations
+
+    /**
+     * @brief Cleanly strip comments from an INI line without destroying hex colors (#FF0000).
+     */
+    static String stripComments(String line);
+
     MatrixConfig matrix;
-    WiFiConfig wifi;
+    WifiConfig wifi;
     MqttConfig mqtt;
     TimeConfig time;
+    DateSettingsConfig dateSettings;
     IdleConfig idle;
+    EnvironmentConfig env;
+    AudioConfig audio;
     WeatherConfig weather;
     StandbyConfig standby;
-    DateConfig dateSettings;
     FontConfig fonts;
     CryptoConfig crypto;
     StockConfig stock;
-    EnvironmentConfig env;
-    AudioConfig audio;
 
 private:
     void parseLine(String line, String& currentSection);
     String extractValue(String line);
-    // Single attempt at writing conf.ini; saveToSD() wraps this with retries + validation
-    // since the SD card intermittently glitches on this project (SPI contention with the
-    // HUB75 DMA output / SD driver quirks) and a lost settings write must not fail silently.
-    bool writeConfigFile(const char* filepath);
 };

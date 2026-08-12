@@ -17,7 +17,7 @@ ArcadeMatrix es totalmente configurable sin recompilar el código C++. Todos los
 | | `HEIGHT` | `matrix_rows` | int | `32` | `64` | DMA Matrix | Sí | **Sí** | Alto total de la matriz en píxeles |
 | | `CHAIN` | `matrix_chain` | int | `1` | `2` | Paneles | Sí | **Sí** | Número de paneles encadenados |
 | | `BRIGHTNESS_LIMIT`|`brightness_limit`| int | `100` | `80` | **En vivo** | Sí | No | Límite de brillo (0-100%) |
-| | `COLOR_DEPTH` | `color_depth` | int | `8` | `8` | Profundidad | Sí | **Sí** | Bits por canal de color (8 por defecto) |
+| | `PWM_BITS` | `pwm_bits` | int | `8` | `8` | Profundidad | Sí | **Sí** | Bits por canal de color (8 por defecto) |
 | | `DRIVER_CHIP` | `matrix_driver_chip`| string | `"SHIFTREG"` | `"FM6126A"` | Chip Driver | Sí | **Sí** | Chip driver (`SHIFTREG`, `FM6126A`, `ICN2038S`, `SM16208`) |
 | | `FORCE_SINGLE_BUFFER`| `force_single_buffer`| bool | `false` | `true` | Memoria RAM | Sí | **Sí** | Fuerza búfer único para ahorrar RAM |
 | **[TIME]** | `NTP_SERVER` | `ntp_server` | string | `"pool.ntp.org"` | `"time.google.com"` | Sincro NTP | Sí | No | Servidor de hora NTP |
@@ -48,4 +48,4 @@ ArcadeMatrix es totalmente configurable sin recompilar el código C++. Todos los
 ## 📌 Notas Importantes
 
 - **`ROTATION`**: La cadena `ROTATION` controla los módulos de visualización autónomos (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`). **Nota: `sprites` NO es un módulo de rotación**. Los luchadores MUGEN se renderizan dinámicamente como una superposición mediante `FighterEngine` a través de `FIGHTER_ENABLED`.
-- **Requisito de Reinicio**: Los cambios en la geometría del hardware (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) y las credenciales Wi-Fi requieren un reinicio del sistema (`POST /api/system/reboot` o el botón *Reboot System* en la Web UI). Todas las demás opciones se aplican inmediatamente en directo.
+- **Requisito de Reinicio**: Los cambios en la geometría del hardware (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `PWM_BITS`) y las credenciales Wi-Fi requieren un reinicio del sistema (`POST /api/system/reboot` o el botón *Reboot System* en la Web UI). Todas las demás opciones se aplican inmediatamente en directo.
