@@ -16,6 +16,29 @@ RotationManager::RotationManager(ClockEngine *c, DateEngine *d,
   currentIndex = 0;
   moduleStartTime = 0;
 }
+size_t RotationManager::countSymbols(const String& symbols) {
+  if (symbols.length() == 0) return 0;
+  size_t count = 0;
+  int start = 0;
+  int len = symbols.length();
+  while (start < len) {
+    int comma = symbols.indexOf(',', start);
+    String token;
+    if (comma == -1) {
+      token = symbols.substring(start);
+      start = len;
+    } else {
+      token = symbols.substring(start, comma);
+      start = comma + 1;
+    }
+    token.trim();
+    if (token.length() > 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
 
 void RotationManager::parseRotationString(const String &rotStr) {
   sequence.clear();
@@ -134,23 +157,21 @@ void RotationManager::switchToModule(int index) {
       return;
     }
   } else if (mod == MODULE_CRYPTO) {
-    if (cryptoEngine) {
-      cryptoEngine->updateConfig(config.crypto);
-      cryptoEngine->onDisplayStart();
-    } else {
+    if (!config.crypto.enabled || countSymbols(config.crypto.symbols) == 0 || !cryptoEngine) {
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
       return;
     }
+    cryptoEngine->updateConfig(config.crypto);
+    cryptoEngine->onDisplayStart();
   } else if (mod == MODULE_STOCKS) {
-    if (stockEngine) {
-      stockEngine->updateConfig(config.stock);
-      stockEngine->onDisplayStart();
-    } else {
+    if (!config.stock.enabled || countSymbols(config.stock.symbols) == 0 || !stockEngine) {
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
       return;
     }
+    stockEngine->updateConfig(config.stock);
+    stockEngine->onDisplayStart();
   } else if (mod == MODULE_TEMP) {
     if (!hardwareHAL.isTempSensorAvailable()) {
       // Auto-skip Temp module if physical sensor is missing
@@ -216,15 +237,17 @@ bool RotationManager::loop() {
         advance = true;
     } else if (currentMod == MODULE_CRYPTO) {
       if (cryptoEngine) cryptoEngine->loop();
-      size_t symbolCount = (config.crypto.symbols.length() > 0) ? 1 : 1;
+      size_t symbolCount = countSymbols(config.crypto.symbols);
       uint32_t perSymbolSec = config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5;
-      if (!isSoloMode && (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL)))
+      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
+      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs))
         advance = true;
     } else if (currentMod == MODULE_STOCKS) {
       if (stockEngine) stockEngine->loop();
-      size_t symbolCount = (config.stock.symbols.length() > 0) ? 1 : 1;
+      size_t symbolCount = countSymbols(config.stock.symbols);
       uint32_t perSymbolSec = config.stock.duration_sec > 0 ? config.stock.duration_sec : 5;
-      if (!isSoloMode && (now - moduleStartTime >= (perSymbolSec * symbolCount * 1000UL)))
+      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
+      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs))
         advance = true;
     } else if (currentMod == MODULE_TEMP) {
       if (tempEngine) tempEngine->loop();

@@ -320,6 +320,114 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     return true;
 }
 
+String ConfigLoader::serializeToString() const {
+    String out = "";
+
+    out += "[WIFI]\n";
+    out += "SSID=" + wifi.ssid + "\n";
+    out += "PASSWORD=" + wifi.password + "\n";
+    out += "HOSTNAME=" + wifi.hostname + "\n\n";
+
+    out += "[MATRIX]\n";
+    out += "WIDTH=" + String(matrix.width) + "\n";
+    out += "HEIGHT=" + String(matrix.height) + "\n";
+    out += "PANEL_TYPE=" + matrix.panelType + "\n";
+    out += "CHAIN=" + String(matrix.chainLength) + "\n";
+    out += "BRIGHTNESS_LIMIT=" + String(matrix.powerLimitPercent) + "\n";
+    out += "PWM_BITS=" + String(matrix.pwmBits) + "\n";
+    out += "FORCE_SINGLE_BUFFER=" + String(matrix.forceSingleBuffer ? "true" : "false") + "\n";
+    out += "RGB_SEQUENCE=" + matrix.rgbSequence + "\n";
+    out += "LIMIT_REFRESH_RATE_HZ=" + String(matrix.limitRefreshRateHz) + "\n";
+    out += "DRIVER_CHIP=" + matrix.driverChip + "\n\n";
+
+    out += "[MQTT]\n";
+    out += "ENABLED=" + String(mqtt.enabled ? "true" : "false") + "\n";
+    out += "BROKER=" + mqtt.broker + "\n";
+    out += "PORT=" + String(mqtt.port) + "\n";
+    out += "USER=" + mqtt.user + "\n";
+    out += "PASS=" + mqtt.pass + "\n";
+    out += "DEVICE_NAME=" + mqtt.deviceName + "\n";
+    out += "TOPIC_BATOCERA=" + mqtt.topic_batocera + "\n";
+    out += "TOPIC_RECALBOX=" + mqtt.topic_recalbox + "\n\n";
+
+    out += "[TIME]\n";
+    out += "NTP_SERVER=" + time.ntpServer + "\n";
+    out += "TIMEZONE=" + time.timezone + "\n";
+    out += "FORMAT_24H=" + String(time.format24h ? "true" : "false") + "\n";
+    out += "CLOCK_FONT=" + String(time.clock_font) + "\n";
+    out += "CLOCK_SIZE=" + String(time.clock_size) + "\n";
+    out += "CLOCK_THEME=" + String(time.clock_theme) + "\n";
+    out += "CLOCK_OFFSET_X=" + String(time.clock_offset_x) + "\n";
+    out += "CLOCK_OFFSET_Y=" + String(time.clock_offset_y) + "\n";
+    out += "CLOCK_COLOR_1=" + time.clock_color_1 + "\n";
+    out += "CLOCK_COLOR_2=" + time.clock_color_2 + "\n";
+    out += "CLOCK_FONT_PATH=" + time.clock_font_path + "\n\n";
+
+    out += "[IDLE]\n";
+    out += "ROTATION=" + idle.rotation + "\n";
+    out += "CLOCK_DURATION_SEC=" + String(idle.clock_duration_sec) + "\n";
+    out += "DATE_DURATION_SEC=" + String(idle.date_duration_sec) + "\n";
+    out += "WEATHER_DURATION_SEC=" + String(idle.weather_duration_sec) + "\n";
+    out += "TEMP_DURATION_SEC=" + String(idle.temp_duration_sec) + "\n";
+    out += "DECIBEL_DURATION_SEC=" + String(idle.decibel_duration_sec) + "\n";
+    out += "GIFS_COUNT=" + String(idle.gifs_count) + "\n";
+    out += "FIGHTER_ENABLED=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
+    out += "FIGHTER_INTERVAL_SEC=" + String(idle.fighter_interval_sec) + "\n\n";
+
+    out += "[ENVIRONMENT]\n";
+    out += "UNIT=" + env.unit + "\n";
+    out += "TEMP_OFFSET=" + String(env.temp_offset, 2) + "\n\n";
+
+    out += "[AUDIO]\n";
+    out += "VISUALIZER_ENABLED=" + String(audio.visualizer_enabled ? "true" : "false") + "\n";
+    out += "VISUALIZER_MODE=" + audio.visualizer_mode + "\n";
+    out += "MIC_GAIN=" + String(audio.mic_gain, 2) + "\n";
+    out += "DB_CALIBRATION=" + String(audio.db_calibration, 2) + "\n\n";
+
+    out += "[DATE]\n";
+    out += "THEME=" + String(dateSettings.theme) + "\n";
+    out += "BACKGROUND_SPRITE=" + dateSettings.background_sprite + "\n";
+    out += "FORMAT=" + dateSettings.format + "\n";
+    out += "DATE_FONT=" + String(dateSettings.date_font) + "\n";
+    out += "DATE_SIZE=" + String(dateSettings.date_size) + "\n";
+    out += "DATE_OFFSET_X=" + String(dateSettings.date_offset_x) + "\n";
+    out += "DATE_OFFSET_Y=" + String(dateSettings.date_offset_y) + "\n";
+    out += "DATE_COLOR_1=" + dateSettings.date_color_1 + "\n";
+    out += "DATE_COLOR_2=" + dateSettings.date_color_2 + "\n";
+    out += "DATE_FONT_PATH=" + dateSettings.date_font_path + "\n\n";
+
+    out += "[WEATHER]\n";
+    out += "API_KEY=" + weather.api_key + "\n";
+    out += "CITY=" + weather.city + "\n";
+    out += "LANG=" + weather.lang + "\n";
+    out += "WEATHER_OFFSET_X=" + String(weather.weather_offset_x) + "\n";
+    out += "WEATHER_OFFSET_Y=" + String(weather.weather_offset_y) + "\n\n";
+
+    out += "[STANDBY]\n";
+    out += "NIGHT_MODE_ENABLED=" + String(standby.night_mode_enabled ? "true" : "false") + "\n";
+    out += "TURN_OFF_AT=" + standby.turn_off_at + "\n";
+    out += "WAKE_UP_AT=" + standby.wake_up_at + "\n";
+    out += "NIGHT_BRIGHTNESS=" + String(standby.night_brightness) + "\n\n";
+
+    out += "[FONTS]\n";
+    out += "CUSTOM_FONT_PATH=" + fonts.custom_font_path + "\n\n";
+
+    out += "[CRYPTO]\n";
+    out += "ENABLED=" + String(crypto.enabled ? "true" : "false") + "\n";
+    out += "SYMBOLS=" + crypto.symbols + "\n";
+    out += "DURATION_SEC=" + String(crypto.duration_sec) + "\n";
+    out += "CACHE_TTL_MIN=" + String(crypto.cache_ttl_min) + "\n";
+    out += "CURRENCY=" + crypto.currency + "\n\n";
+
+    out += "[STOCK]\n";
+    out += "ENABLED=" + String(stock.enabled ? "true" : "false") + "\n";
+    out += "SYMBOLS=" + stock.symbols + "\n";
+    out += "DURATION_SEC=" + String(stock.duration_sec) + "\n";
+    out += "CACHE_TTL_MIN=" + String(stock.cache_ttl_min) + "\n\n";
+
+    return out;
+}
+
 bool ConfigLoader::saveToSD(const char* filepath) {
     if (sd.exists(filepath)) {
         sd.remove(filepath);
@@ -331,108 +439,8 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         return false;
     }
 
-    file.println("[WIFI]");
-    file.printf("SSID=%s\n", wifi.ssid.c_str());
-    file.printf("PASSWORD=%s\n", wifi.password.c_str());
-    file.printf("HOSTNAME=%s\n\n", wifi.hostname.c_str());
-
-    file.println("[MATRIX]");
-    file.printf("WIDTH=%d\n", matrix.width);
-    file.printf("HEIGHT=%d\n", matrix.height);
-    file.printf("PANEL_TYPE=%s\n", matrix.panelType.c_str());
-    file.printf("CHAIN=%d\n", matrix.chainLength);
-    file.printf("BRIGHTNESS_LIMIT=%d\n", matrix.powerLimitPercent);
-    file.printf("PWM_BITS=%d\n", matrix.pwmBits);
-    file.printf("FORCE_SINGLE_BUFFER=%s\n", matrix.forceSingleBuffer ? "true" : "false");
-    file.printf("RGB_SEQUENCE=%s\n", matrix.rgbSequence.c_str());
-    file.printf("LIMIT_REFRESH_RATE_HZ=%d\n", matrix.limitRefreshRateHz);
-    file.printf("DRIVER_CHIP=%s\n\n", matrix.driverChip.c_str());
-
-    file.println("[MQTT]");
-    file.printf("ENABLED=%s\n", mqtt.enabled ? "true" : "false");
-    file.printf("BROKER=%s\n", mqtt.broker.c_str());
-    file.printf("PORT=%d\n", mqtt.port);
-    file.printf("USER=%s\n", mqtt.user.c_str());
-    file.printf("PASS=%s\n", mqtt.pass.c_str());
-    file.printf("DEVICE_NAME=%s\n", mqtt.deviceName.c_str());
-    file.printf("TOPIC_BATOCERA=%s\n", mqtt.topic_batocera.c_str());
-    file.printf("TOPIC_RECALBOX=%s\n\n", mqtt.topic_recalbox.c_str());
-
-    file.println("[TIME]");
-    file.printf("NTP_SERVER=%s\n", time.ntpServer.c_str());
-    file.printf("TIMEZONE=%s\n", time.timezone.c_str());
-    file.printf("FORMAT_24H=%s\n", time.format24h ? "true" : "false");
-    file.printf("CLOCK_FONT=%d\n", time.clock_font);
-    file.printf("CLOCK_SIZE=%d\n", time.clock_size);
-    file.printf("CLOCK_THEME=%d\n", time.clock_theme);
-    file.printf("CLOCK_OFFSET_X=%d\n", time.clock_offset_x);
-    file.printf("CLOCK_OFFSET_Y=%d\n", time.clock_offset_y);
-    file.printf("CLOCK_COLOR_1=%s\n", time.clock_color_1.c_str());
-    file.printf("CLOCK_COLOR_2=%s\n", time.clock_color_2.c_str());
-    file.printf("CLOCK_FONT_PATH=%s\n\n", time.clock_font_path.c_str());
-
-    file.println("[IDLE]");
-    file.printf("ROTATION=%s\n", idle.rotation.c_str());
-    file.printf("CLOCK_DURATION_SEC=%d\n", idle.clock_duration_sec);
-    file.printf("DATE_DURATION_SEC=%d\n", idle.date_duration_sec);
-    file.printf("WEATHER_DURATION_SEC=%d\n", idle.weather_duration_sec);
-    file.printf("TEMP_DURATION_SEC=%d\n", idle.temp_duration_sec);
-    file.printf("DECIBEL_DURATION_SEC=%d\n", idle.decibel_duration_sec);
-    file.printf("GIFS_COUNT=%d\n", idle.gifs_count);
-    file.printf("FIGHTER_ENABLED=%s\n", idle.fighter_enabled ? "true" : "false");
-    file.printf("FIGHTER_INTERVAL_SEC=%d\n\n", idle.fighter_interval_sec);
-
-    file.println("[ENVIRONMENT]");
-    file.printf("UNIT=%s\n", env.unit.c_str());
-    file.printf("TEMP_OFFSET=%.2f\n\n", env.temp_offset);
-
-    file.println("[AUDIO]");
-    file.printf("VISUALIZER_ENABLED=%s\n", audio.visualizer_enabled ? "true" : "false");
-    file.printf("VISUALIZER_MODE=%s\n", audio.visualizer_mode.c_str());
-    file.printf("MIC_GAIN=%.2f\n", audio.mic_gain);
-    file.printf("DB_CALIBRATION=%.2f\n\n", audio.db_calibration);
-
-    file.println("[DATE]");
-    file.printf("THEME=%d\n", dateSettings.theme);
-    file.printf("BACKGROUND_SPRITE=%s\n", dateSettings.background_sprite.c_str());
-    file.printf("FORMAT=%s\n", dateSettings.format.c_str());
-    file.printf("DATE_FONT=%d\n", dateSettings.date_font);
-    file.printf("DATE_SIZE=%d\n", dateSettings.date_size);
-    file.printf("DATE_OFFSET_X=%d\n", dateSettings.date_offset_x);
-    file.printf("DATE_OFFSET_Y=%d\n", dateSettings.date_offset_y);
-    file.printf("DATE_COLOR_1=%s\n", dateSettings.date_color_1.c_str());
-    file.printf("DATE_COLOR_2=%s\n", dateSettings.date_color_2.c_str());
-    file.printf("DATE_FONT_PATH=%s\n\n", dateSettings.date_font_path.c_str());
-
-    file.println("[WEATHER]");
-    file.printf("API_KEY=%s\n", weather.api_key.c_str());
-    file.printf("CITY=%s\n", weather.city.c_str());
-    file.printf("LANG=%s\n", weather.lang.c_str());
-    file.printf("WEATHER_OFFSET_X=%d\n", weather.weather_offset_x);
-    file.printf("WEATHER_OFFSET_Y=%d\n\n", weather.weather_offset_y);
-
-    file.println("[STANDBY]");
-    file.printf("NIGHT_MODE_ENABLED=%s\n", standby.night_mode_enabled ? "true" : "false");
-    file.printf("TURN_OFF_AT=%s\n", standby.turn_off_at.c_str());
-    file.printf("WAKE_UP_AT=%s\n", standby.wake_up_at.c_str());
-    file.printf("NIGHT_BRIGHTNESS=%d\n\n", standby.night_brightness);
-
-    file.println("[FONTS]");
-    file.printf("CUSTOM_FONT_PATH=%s\n\n", fonts.custom_font_path.c_str());
-
-    file.println("[CRYPTO]");
-    file.printf("ENABLED=%s\n", crypto.enabled ? "true" : "false");
-    file.printf("SYMBOLS=%s\n", crypto.symbols.c_str());
-    file.printf("DURATION_SEC=%d\n", crypto.duration_sec);
-    file.printf("CACHE_TTL_MIN=%d\n", crypto.cache_ttl_min);
-    file.printf("CURRENCY=%s\n\n", crypto.currency.c_str());
-
-    file.println("[STOCK]");
-    file.printf("ENABLED=%s\n", stock.enabled ? "true" : "false");
-    file.printf("SYMBOLS=%s\n", stock.symbols.c_str());
-    file.printf("DURATION_SEC=%d\n", stock.duration_sec);
-    file.printf("CACHE_TTL_MIN=%d\n\n", stock.cache_ttl_min);
-
+    String data = serializeToString();
+    file.print(data);
     file.close();
     return true;
 }

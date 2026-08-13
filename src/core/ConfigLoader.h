@@ -211,6 +211,7 @@ public:
      * @return true on success.
      */
     bool saveToSD(const char* filepath);
+    String serializeToString() const;
 
     /**
      * @brief Cleanly strip comments from an INI line without destroying hex colors (#FF0000).

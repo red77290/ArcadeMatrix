@@ -59,8 +59,8 @@ graph TD
 
 1. **Standalone Engines (`src/ClockEngine.cpp`, `src/DateEngine.cpp`, `src/CryptoEngine.cpp`, `src/StockEngine.cpp`, etc.)**: Each engine is a closed system. It manages its own state and contains its own logic to draw directly to the matrix hardware.
 2. **Crypto & Stock Engines**: Real-time asset market quote tickers. Features multi-API fallback strategy (CoinGecko Primary, CoinGecko Simple ID, Binance Fallback, Yahoo v8 Chart API), per-symbol configurable TTL caching, and prominent multi-row layout for 64px panels.
-2. **Specialized Clocks**: For complex themes (e.g., Pong, PacMan), the logic is encapsulated into separate C++ classes (`PongClock.cpp`), but they still receive a pointer to the matrix hardware and draw their own pixels. There is no separation between "Renderer" and "Clock" here.
-3. **Fighter Engine (SD Card Streaming)**: The ESP32 does not have enough memory to load an entire MUGEN sprite sheet. Instead, the `FighterEngine` uses a custom streaming format (`.fgt`) and reads binary sprite frames directly from the SD card buffer frame-by-frame, drawing them over the active engine.
+3. **Specialized Clocks**: For complex themes (e.g., Pong, PacMan), the logic is encapsulated into separate C++ classes (`PongClock.cpp`), but they still receive a pointer to the matrix hardware and draw their own pixels. There is no separation between "Renderer" and "Clock" here.
+4. **Fighter Engine (SD Card Streaming)**: The ESP32 does not have enough memory to load an entire MUGEN sprite sheet. Instead, the `FighterEngine` uses a custom streaming format (`.fgt`) and reads binary sprite frames directly from the SD card buffer frame-by-frame, drawing them over the active engine.
 
 ---
 
@@ -83,62 +83,49 @@ Because this separation of concerns is handled automatically by `ESPAsyncWebServ
 
 ---
 
-## 4. Fonts and SD Card
+## 4. Hardware Abstraction Layer & Sensor/Audio Coordination
 
-- **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.fgt`
-  fighters) must be stored on an external SD card connected via SPI.
-- **Image/Animation Formats (`GifEngine`):** Three file types are supported side-by-side in the same
-  playlist directories, distinguished purely by extension:
-  - **`.gif`** — animated GIFs, decoded frame-by-frame via `AnimatedGIF` (bitbank2), looping
-    indefinitely until the playlist advances.
-  - **`.raw`** — a project-specific raw RGB565 pixel sequence (little-endian, row-major, one full
-    frame after another, no header), the same convention used by `MarqueeEngine` and
-    `tools/mugen_extractor`. Played back at a fixed ~20 FPS. Useful for pre-rendered "stop motion"
-    style clips that don't compress well as GIF.
-  - **`.png`** — a **static** image, decoded once via `PNGdec` (bitbank2, same author/API shape as
-    `AnimatedGIF`) directly onto the matrix, then held on screen for ~5 seconds before the playlist
-    advances (or looped in place for single-file playback). PNG has no animation concept here —
-    for animated content use `.gif`. Any bit depth/color type PNG (palette, greyscale, RGBA, etc.) is
-    accepted: `PNGdec::getLineAsRGB565()` normalizes everything to RGB565 during decode.
-  - **Resizing is intentionally NOT done on-device** for any of these formats — pre-scale images to
-    the target panel resolution (128x32 or 256x64) offline before copying them to the SD card. Runtime
-    resizing is CPU-expensive on both ESP32 and ESP32-S3 and is out of scope.
-- **Font Rendering:** Most themes/clocks use `Adafruit GFX` bitmap fonts compiled directly into the
-  firmware (`src/engines/fonts/`, currently 7 fonts across 3 arcade publisher styles) — this remains
-  the default and recommended path since it costs zero SD access at runtime. In addition,
-  `BitmapFontLoader` (`src/core/BitmapFontLoader.h`/`.cpp`) can load a **custom** bitmap font from
-  the SD card at boot into a heap-allocated `GFXfont`-compatible structure, currently wired into
-  `MessageEngine` (the `/api/message` scrolling banner) via `conf.ini`'s `[fonts] custom_font_path`.
-  Source fonts must first be converted from BDF (the same bitmap font format the Raspberry Pi
-  version already ships in `fonts/*.bdf`) to ArcadeMatrix's compact `.amf` binary format using
-  `tools/bdf_to_amfont/bdf_to_amfont.py` — see `docs/DEVELOPER.md` for the full workflow. There is
-  still no on-device `.ttf`/vector font rendering or BDF parsing (out of scope for a microcontroller
-  with no font-rasterization library); `.amf` is purely a pre-converted bitmap glyph table.
+`HardwareHAL` acts as a centralized physical hardware wrapper managing peripheral buses and sensor availability:
+
+```text
+                    ┌───────────────────┐
+                    │   HardwareHAL     │
+                    └─────────┬─────────┘
+                              │
+             ┌────────────────┼────────────────┐
+             │                │                │
+             ▼                ▼                ▼
+          HUB75             I2C             I2S
+          Matrix            SHTC3           ES7210
+             │                │                │
+             ▼                ▼                ▼
+        Renderer         TempEngine      Audio sampling
+                                             │
+                                  ┌──────────┴─────────┐
+                                  ▼                    ▼
+                            DecibelEngine       VisualizerEngine
+
+RotationManager
+      │
+      ├── TEMP ──► requires SHTC3 sensor (skips if missing)
+      └── DECIBEL ─► requires audio sampling (skips if missing)
+```
+
+### Sensor & Audio Lifecycle Coordination
+- **I2C Temperature & Humidity (SHTC3):** `HardwareHAL` initializes the I2C bus and probes the SHTC3 sensor at boot. If absent, `isTempSensorAvailable()` returns `false`, enabling `RotationManager` to automatically skip `MODULE_TEMP` without hanging or throwing errors.
+- **I2S Audio Input (ES7210 ADC / Microphone):** Audio sampling is shared between `DecibelEngine` and `VisualizerEngine`. `HardwareHAL` tracks active sampling state (`startAudioSampling()` / `stopAudioSampling()`). The engines coordinate lifecycle start/stop signals.
+- **Visualizer Pseudo-Spectrum Model:** `VisualizerEngine` processes time-domain audio samples into amplitude/energy band approximations ("pseudo-spectrum") tailored for high-FPS LED matrix visual effects.
+- **Decibel Meter Model:** `DecibelEngine` computes RMS amplitude values converted to a calibratable relative sound-level indicator.
 
 ---
 
-## 5. Reliability: Watchdog and OTA Updates
+## 5. Fonts and SD Card
 
-- **Hardware Watchdog:** `main.cpp` initializes the ESP-IDF task watchdog (`esp_task_wdt_init`,
-  30s timeout) as the very first step of `setup()`, before touching the SD card or the matrix. If
-  `setup()` or `loop()` ever hangs longer than that (SD mount failure, matrix DMA init failure,
-  an unexpected infinite loop, WiFi driver lockup, ...) the ESP32 self-reboots instead of staying
-  bricked until someone finds and power-cycles it. The two existing `while (1) { delay(100); }`
-  critical-failure loops (SD mount failed / matrix init failed) are intentionally **not** fed, so
-  they still trigger a watchdog reboot (retry loop) rather than hanging forever silently.
-- **OTA Updates (`/api/ota` via `Update.h`):** writes the new firmware image to the *inactive* OTA
-  partition slot and reboots into it immediately once the upload completes without error.
-  **Important limitation:** this project uses the stock Arduino-ESP32 build (no custom `sdkconfig`),
-  which does **not** enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. This means there is currently
-  **no automatic rollback** if a bad OTA image boots into a crash loop — unlike ESP-IDF's native
-  app-rollback feature (which requires explicitly calling `esp_ota_mark_app_valid_cancel_rollback()`
-  after a successful boot, plus a bootloader built with rollback support). Recovery from a bad OTA
-  update today requires either a serial/USB reflash, or flashing a known-good image again over OTA
-  if the device is still reachable on Wi-Fi. Enabling true rollback would require moving off the
-  default Arduino-ESP32 build toward a custom `sdkconfig.defaults` (PlatformIO's `espidf` framework,
-  or `board_build.embed_txtfiles`-based sdkconfig overrides) — flagged as a future hardening task,
-  not implemented in this pass to avoid an unverified bootloader-level change.
+- **SD Card Dependency:** Because the ESP32 has limited flash memory, all assets (GIFs, `.fgt` fighters) must be stored on an external SD card connected via SPI.
+- **Image/Animation Formats (`GifEngine`):** Three file types are supported side-by-side: `.gif`, `.raw`, and `.png`.
+- **Font Rendering:** Native firmware bitmap fonts (`Adafruit GFX`) and custom `.amf` binary fonts loaded from SD card via `BitmapFontLoader`.
 
+---
 
-## Dependency Injection & Providers
+## 6. Dependency Injection & Providers
 The project uses a Dependency Injection (DI) architecture for its API-driven engines (Crypto, Stock, Weather). Engines are decoupled from HTTP logic via interfaces (`IProvider` in C++, `traits` in Rust). This allows fallback mechanisms across multiple providers and enables comprehensive unit testing via Mocks.

@@ -37,6 +37,9 @@ public:
     const std::vector<RotationModule>& getSequence() const { return sequence; }
     RotationModule getCurrentModule() const { return sequence.empty() ? MODULE_CLOCK : sequence[currentIndex]; }
 
+    // Helper: count valid non-empty comma-separated symbols
+    static size_t countSymbols(const String& symbols);
+
 private:
     ClockEngine* clockEngine;
     DateEngine* dateEngine;
@@ -48,11 +51,12 @@ private:
     TempEngine* tempEngine;
     DecibelEngine* decibelEngine;
     
+    ConfigLoader config;
     std::vector<RotationModule> sequence;
-    int currentIndex;
-    
+    size_t currentIndex;
     uint32_t moduleStartTime;
-    
+    uint8_t switchDepth;
+
     void switchToModule(int index);
     void updateBackgroundSprites();
 };
