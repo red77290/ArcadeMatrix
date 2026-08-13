@@ -217,7 +217,7 @@ bool RotationManager::loop() {
     if (!gifEngine->isActive()) {
       advance = true;
     }
-    if (advance && !isSoloMode) {
+    if (advance) {
       currentIndex = (currentIndex + 1) % sequence.size();
       switchToModule(currentIndex);
     }
