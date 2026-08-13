@@ -228,12 +228,17 @@ void HardwareHAL::startAudioSampling() {
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = 4,
         .dma_buf_len = BUFFER_SIZE,
-        .use_apll = false,
+        .use_apll = true,
         .tx_desc_auto_clear = false,
         .fixed_mclk = 0
     };
 
     i2s_pin_config_t pin_config = {
+#if defined(I2S_MCLK_PIN)
+        .mck_io_num = I2S_MCLK_PIN,
+#else
+        .mck_io_num = I2S_PIN_NO_CHANGE,
+#endif
         .bck_io_num = I2S_SCLK_PIN,
         .ws_io_num = I2S_LRCK_PIN,
         .data_out_num = I2S_PIN_NO_CHANGE,
@@ -244,7 +249,15 @@ void HardwareHAL::startAudioSampling() {
         i2s_set_pin(I2S_PORT, &pin_config);
         i2s_start(I2S_PORT);
         audioActive = true;
-        LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED.");
+        LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED (MCLK Output Active).");
+
+#if defined(ES7210_I2C_ADDR)
+        // Ensure ES7210 ADC is started after MCLK clock is running
+        Wire.beginTransmission(ES7210_I2C_ADDR);
+        Wire.write(0x00);
+        Wire.write(0x01); // Start ADC
+        Wire.endTransmission();
+#endif
     } else {
         LOGE("HardwareHAL", "Failed to install I2S driver!");
     }
@@ -269,20 +282,34 @@ float HardwareHAL::getDecibels(float dbCalibration) {
     esp_err_t err = i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead, pdMS_TO_TICKS(50));
 
     if (err != ESP_OK || bytesRead == 0) {
-        return 35.0f + dbCalibration; // Silence / fallback minimum
+        return 30.0f + dbCalibration; // Silence / fallback minimum
     }
 
     size_t samplesCount = bytesRead / sizeof(int16_t);
+    if (samplesCount == 0) return 30.0f + dbCalibration;
+
     double sumSquares = 0.0;
+    int16_t maxPeak = 0;
+
     for (size_t i = 0; i < samplesCount; i++) {
-        float sample = (float)sampleBuf[i] * micGain;
-        sumSquares += (sample * sample);
+        int16_t sVal = sampleBuf[i];
+        int16_t absVal = (sVal < 0) ? -sVal : sVal;
+        if (absVal > maxPeak) {
+            maxPeak = absVal;
+        }
+        float sample = (float)sVal * micGain;
+        sumSquares += ((double)sample * (double)sample);
     }
 
-    float rms = sqrtf(sumSquares / (float)samplesCount);
+    float rms = sqrtf((float)(sumSquares / (double)samplesCount));
 
-    // Convert RMS to dB SPL with calibration offset
-    float db = 20.0f * log10f(rms + 1.0f) + 15.0f + dbCalibration;
+    // Combine 60% RMS + 40% Peak for instant hand-clap responsiveness
+    float peakRatio = (float)maxPeak / 32768.0f;
+    float rmsRatio = rms / 32768.0f;
+    float combinedRatio = (rmsRatio * 0.6f) + (peakRatio * 0.4f);
+
+    // Convert combined amplitude ratio to calibrated dB SPL range
+    float db = 20.0f * log10f(1500.0f * combinedRatio + 1.0f) + 30.0f + dbCalibration;
 
     if (db < 30.0f) db = 30.0f;
     if (db > 110.0f) db = 110.0f;
