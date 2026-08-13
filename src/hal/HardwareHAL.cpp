@@ -189,31 +189,46 @@ EnvironmentData HardwareHAL::readEnvironment(float tempOffset) {
 
 bool HardwareHAL::probeES7210() {
 #if defined(ES7210_I2C_ADDR)
+    // 1. Soft Reset
     Wire.beginTransmission(ES7210_I2C_ADDR);
-    if (Wire.endTransmission() == 0) {
-        // Initialize ES7210 registers for 2-channel ADC I2S output
-        uint8_t initCmds[][2] = {
-            {0x01, 0x41}, // Reset
-            {0x01, 0x00},
-            {0x02, 0xC0}, // Power up ANALOG & ADC
-            {0x06, 0x04}, // MCLK/SCLK ratio
-            {0x07, 0x00},
-            {0x08, 0x00}, // I2S format 16-bit
-            {0x09, 0x02},
-            {0x41, 0x70}, // PGA gain +30dB for MIC1/MIC2
-            {0x42, 0x70},
-            {0x00, 0x01}  // Start ADC
-        };
-        for (size_t i = 0; i < sizeof(initCmds)/sizeof(initCmds[0]); i++) {
-            Wire.beginTransmission(ES7210_I2C_ADDR);
-            Wire.write(initCmds[i][0]);
-            Wire.write(initCmds[i][1]);
-            Wire.endTransmission();
+    Wire.write(0x01);
+    Wire.write(0x41);
+    Wire.endTransmission();
+    delay(5);
+
+    Wire.beginTransmission(ES7210_I2C_ADDR);
+    Wire.write(0x01);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    delay(5);
+
+    // 2. Register configuration for ES7210 2-channel ADC (Power Up & Gain +30dB)
+    uint8_t initCmds[][2] = {
+        {0x02, 0xC0}, // Power up ANALOG & ADC
+        {0x06, 0x04}, // MCLK/SCLK ratio
+        {0x07, 0x00},
+        {0x08, 0x00}, // I2S format 16-bit
+        {0x09, 0x02}, // I2S mode
+        {0x41, 0x70}, // PGA gain +30dB for MIC1/MIC2
+        {0x42, 0x70}, // PGA gain +30dB
+        {0x43, 0x1E}, // Digital Volume
+        {0x44, 0x1E},
+        {0x00, 0x01}  // Start ADC conversion
+    };
+
+    bool success = true;
+    for (size_t i = 0; i < sizeof(initCmds)/sizeof(initCmds[0]); i++) {
+        Wire.beginTransmission(ES7210_I2C_ADDR);
+        Wire.write(initCmds[i][0]);
+        Wire.write(initCmds[i][1]);
+        if (Wire.endTransmission() != 0) {
+            success = false;
         }
-        return true;
     }
-#endif
+    return success;
+#else
     return false;
+#endif
 }
 
 void HardwareHAL::startAudioSampling() {
@@ -251,12 +266,16 @@ void HardwareHAL::startAudioSampling() {
         audioActive = true;
         LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED (MCLK Output Active).");
 
-#if defined(ES7210_I2C_ADDR)
-        // Ensure ES7210 ADC is started after MCLK clock is running
-        Wire.beginTransmission(ES7210_I2C_ADDR);
-        Wire.write(0x00);
-        Wire.write(0x01); // Start ADC
-        Wire.endTransmission();
+        // Wait 10ms for MCLK clock signal to stabilize on ES7210 hardware pins
+        delay(10);
+
+        // Configure & Power up ES7210 ADC registers NOW while MCLK is active!
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        if (probeES7210()) {
+            LOGI("HardwareHAL", "ES7210 Microphone ADC configured and powered up successfully.");
+        } else {
+            LOGW("HardwareHAL", "ES7210 I2C config failed, running generic I2S audio mode.");
+        }
 #endif
     } else {
         LOGE("HardwareHAL", "Failed to install I2S driver!");
