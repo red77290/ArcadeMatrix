@@ -71,14 +71,40 @@ uint16_t DecibelEngine::getLevelColor(NoiseStatusLevel level) {
 }
 
 const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
-    switch (level) {
-        case NOISE_CALM:     return "SILENCE";
-        case NOISE_NORMAL:   return "PAISIBLE";
-        case NOISE_MODERATE: return "TOLERABLE";
-        case NOISE_VIGILANCE:return "FATIGANT";
-        case NOISE_LIMIT:    return "DANGEREUX";
-        case NOISE_ALERT:
-        default:             return "DOULOUREUX";
+    String lang = config.weather.lang;
+    lang.toLowerCase();
+
+    if (lang == "fr") {
+        switch (level) {
+            case NOISE_CALM:     return "SILENCE";
+            case NOISE_NORMAL:   return "PAISIBLE";
+            case NOISE_MODERATE: return "MODERE";
+            case NOISE_VIGILANCE:return "ELEVE";
+            case NOISE_LIMIT:    return "BRUYANT";
+            case NOISE_ALERT:
+            default:             return "ALERTE";
+        }
+    } else if (lang == "es") {
+        switch (level) {
+            case NOISE_CALM:     return "SILENCIO";
+            case NOISE_NORMAL:   return "TRANQUIL";
+            case NOISE_MODERATE: return "MODERADO";
+            case NOISE_VIGILANCE:return "ELEVADO";
+            case NOISE_LIMIT:    return "RUIDOSO";
+            case NOISE_ALERT:
+            default:             return "ALERTA";
+        }
+    } else {
+        // English default
+        switch (level) {
+            case NOISE_CALM:     return "SILENT";
+            case NOISE_NORMAL:   return "QUIET";
+            case NOISE_MODERATE: return "MODERATE";
+            case NOISE_VIGILANCE:return "ELEVATED";
+            case NOISE_LIMIT:    return "LOUD";
+            case NOISE_ALERT:
+            default:             return "ALERT";
+        }
     }
 }
 
@@ -171,10 +197,18 @@ bool DecibelEngine::loop() {
     if (!matrix) return false;
 
     matrix->fillScreen(0);
+    matrix->setTextWrap(false); // CRITICAL: Prevent text wrapping to avoid overlapping lines!
 
     hardwareHAL.setMicGain(config.audio.mic_gain);
     float rawDb = hardwareHAL.getDecibels(config.audio.db_calibration);
-    currentDb = rawDb;
+
+    // Fast Attack (0.75), Smooth Decay (0.15) for immediate clap response and fluid movement
+    if (rawDb > currentDb) {
+        currentDb = currentDb * 0.25f + rawDb * 0.75f;
+    } else {
+        currentDb = currentDb * 0.85f + rawDb * 0.15f;
+    }
+
     updateStatusLevel(currentDb);
 
     int width = matrix->width();
@@ -189,7 +223,7 @@ bool DecibelEngine::loop() {
     matrix->setFont(nullptr);
 
     char dbBuf[16];
-    snprintf(dbBuf, sizeof(dbBuf), "%.0fdB", currentDb);
+    snprintf(dbBuf, sizeof(dbBuf), "%.0f dB", currentDb);
 
     if (width >= 128) {
         // Wide display layout (128x32, 256x64, etc.)
@@ -221,25 +255,25 @@ bool DecibelEngine::loop() {
         // Standard 64x32 display layout
         matrix->setTextSize(1);
 
-        // Draw Smiley Icon on Left (Matching gauge color & level)
-        drawSmileyIcon(2, topOffset + ((height - topOffset) / 2) - 7, currentLevel);
+        // Draw Smiley Icon on Left (14x14 pixels, centered vertically)
+        drawSmileyIcon(1, 10, currentLevel);
 
-        // Top Right: dB Numeric Value
+        // Top Right: dB Numeric Value (y = 5..11)
         matrix->setTextColor(levelCol);
-        matrix->setCursor(18, topOffset + 2);
+        matrix->setCursor(16, 5);
         matrix->print(dbBuf);
 
-        // Bottom Right: Status String ("SILENCE", "PAISIBLE", "TOLERABLE", "FATIGANT", "DANGEREUX", "DOULOUREUX")
-        matrix->setTextColor(matrix->color565(200, 200, 200));
-        matrix->setCursor(18, topOffset + 14);
+        // Bottom Right: Status String in FR / EN / ES (y = 16..22)
+        matrix->setTextColor(matrix->color565(180, 185, 200));
+        matrix->setCursor(16, 16);
         matrix->print(getLevelText(currentLevel));
 
-        // Right-hand side mini LED Level Indicator bar
-        int availableH = height - topOffset - 4;
-        int barHeight = (int)(((currentDb - 30.0f) / 70.0f) * (float)availableH);
+        // Right-hand side mini LED Level Indicator bar (x = 62..63, y = 5..28)
+        int availableH = height - 7;
+        int barHeight = (int)(((currentDb - 30.0f) / 80.0f) * (float)availableH);
         if (barHeight < 0) barHeight = 0;
         if (barHeight > availableH) barHeight = availableH;
-        matrix->fillRect(width - 3, height - 2 - barHeight, 2, barHeight, levelCol);
+        matrix->fillRect(width - 2, height - 2 - barHeight, 2, barHeight, levelCol);
     }
 
     return true;
