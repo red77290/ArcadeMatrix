@@ -253,19 +253,21 @@ bool DecibelEngine::loop() {
         matrix->fillRect(4, height - 4, filledWidth, 3, levelCol);
     } else {
         // Standard 64x32 display layout
+        matrix->setFont(NULL);
         matrix->setTextSize(1);
+        matrix->setTextWrap(false);
 
-        // Draw Smiley Icon on Left (14x14 pixels, centered vertically)
+        // Draw Smiley Icon on Left (14x14 pixels, centered vertically at y=10)
         drawSmileyIcon(1, 10, currentLevel);
 
         // Top Right: dB Numeric Value (y = 5..11)
         matrix->setTextColor(levelCol);
-        matrix->setCursor(16, 5);
+        matrix->setCursor(17, 5);
         matrix->print(dbBuf);
 
-        // Bottom Right: Status String in FR / EN / ES (y = 16..22)
+        // Bottom Right: Status String in FR / EN / ES (y = 19..25)
         matrix->setTextColor(matrix->color565(180, 185, 200));
-        matrix->setCursor(16, 16);
+        matrix->setCursor(17, 19);
         matrix->print(getLevelText(currentLevel));
 
         // Right-hand side mini LED Level Indicator bar (x = 62..63, y = 5..28)
