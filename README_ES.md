@@ -133,6 +133,20 @@ pio run -e esp32dev
 - [Guía para desarrolladores](docs/DEVELOPER_ES.md)
 - [Arquitectura](docs/ARCHITECTURE_ES.md)
 
+## 🙏 Agradecimientos
+
+Un enorme agradecimiento a la comunidad de código abierto y a los creadores de las increíbles bibliotecas que impulsan este proyecto:
+- **[ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-DMA)** por mrfaptastic
+- **[AnimatedGIF](https://github.com/bitbank2/AnimatedGIF)** & **[PNGdec](https://github.com/bitbank2/PNGdec)** por bitbank2
+- **[ESPAsyncWebServer](https://github.com/mathieucarbou/ESPAsyncWebServer)** por mathieucarbou
+- **[ArduinoJson](https://github.com/bblanchon/ArduinoJson)** por bblanchon
+- **[PubSubClient](https://github.com/knolleary/pubsubclient)** por knolleary
+- **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** por mlesniew
+- **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** por Adafruit
+- **[SdFat](https://github.com/greiman/SdFat)** por greiman
+
+¡Un agradecimiento especial al **RPiTeam** por el increíble pack de 600 GIFs!
+
 ## 📜 Licencia
 Este proyecto está licenciado bajo la **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 

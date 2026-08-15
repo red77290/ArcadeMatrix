@@ -137,6 +137,20 @@ pio run -e esp32s3_waveshare
 - [Developer Guide](docs/DEVELOPER.md)
 - [Architecture](docs/ARCHITECTURE.md)
 
+## 🙏 Acknowledgments
+
+A huge thanks to the open-source community and the creators of the incredible libraries that power this project:
+- **[ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-DMA)** by mrfaptastic
+- **[AnimatedGIF](https://github.com/bitbank2/AnimatedGIF)** & **[PNGdec](https://github.com/bitbank2/PNGdec)** by bitbank2
+- **[ESPAsyncWebServer](https://github.com/mathieucarbou/ESPAsyncWebServer)** by mathieucarbou
+- **[ArduinoJson](https://github.com/bblanchon/ArduinoJson)** by bblanchon
+- **[PubSubClient](https://github.com/knolleary/pubsubclient)** by knolleary
+- **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** by mlesniew
+- **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** by Adafruit
+- **[SdFat](https://github.com/greiman/SdFat)** by greiman
+
+Special thanks to the **RPiTeam** for the awesome pack of 600 GIFs!
+
 ## 📜 License
 This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
