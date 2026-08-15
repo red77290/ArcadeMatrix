@@ -201,9 +201,22 @@ void RotationManager::switchToModule(int index) {
   switchDepth = 0;
 }
 
+void RotationManager::setSuspended(bool susp) {
+    if (susp == suspended) return;
+    suspended = susp;
+    if (suspended) {
+        if (gifEngine && gifEngine->isActive()) gifEngine->stop();
+        if (decibelEngine && decibelEngine->isActive()) decibelEngine->onDeactivate();
+        LOGI("RotationManager", "Rotation Manager SUSPENDED.");
+    } else {
+        LOGI("RotationManager", "Rotation Manager RESUMED.");
+        resetRotation();
+    }
+}
+
 bool RotationManager::loop() {
-  if (sequence.empty())
-    return true;
+    if (suspended || sequence.empty())
+        return true;
 
   uint32_t now = millis();
   RotationModule currentMod = sequence[currentIndex];

@@ -22,6 +22,7 @@ public:
     RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine = nullptr);
     void begin();
     bool loop();
+    void stop();
 
 private:
     MqttConfig& mqttConfig;
@@ -34,6 +35,8 @@ private:
 
     unsigned long lastReconnectAttempt;
     uint32_t currentRequestId = 0;
+    bool isGamePlaying = false;
+    bool waitingDisplayed = false;
 
     void reconnect();
     static void callback(char* topic, byte* payload, unsigned int length);

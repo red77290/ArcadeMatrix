@@ -230,18 +230,32 @@ bool DecibelEngine::loop() {
         int textSize = (width >= 256 && height >= 64) ? 2 : 1;
         matrix->setTextSize(textSize);
 
-        // Draw Smiley Icon (Matching gauge color & level)
-        drawSmileyIcon(4, topOffset + ((height - topOffset) / 2) - 8, currentLevel);
+        // Draw Smiley Icon on Left
+        int smileySize = (textSize == 2) ? 28 : 14;
+        int smileyY = topOffset + ((height - topOffset - smileySize) / 2);
+        drawSmileyIcon(6, smileyY, currentLevel);
 
-        // dB Numeric Text
-        matrix->setTextColor(levelCol);
-        matrix->setCursor(22, topOffset + ((height - topOffset) / 2) - (textSize * 4));
-        matrix->print(dbBuf);
+        int textX = (textSize == 2) ? 42 : 22;
 
-        // Status Label Text
-        matrix->setCursor(64, topOffset + ((height - topOffset) / 2) - (textSize * 4));
-        matrix->setTextColor(matrix->color565(200, 200, 200));
-        matrix->print(getLevelText(currentLevel));
+        if (textSize == 2) {
+            // 256x64 Large Matrix Display: Print dB on top line (y=12) and Status text on bottom line (y=36)
+            matrix->setTextColor(levelCol);
+            matrix->setCursor(textX, 12);
+            matrix->print(dbBuf);
+
+            matrix->setTextColor(matrix->color565(180, 185, 200));
+            matrix->setCursor(textX, 36);
+            matrix->print(getLevelText(currentLevel));
+        } else {
+            // 128x32 Medium Matrix Display
+            matrix->setTextColor(levelCol);
+            matrix->setCursor(textX, 5);
+            matrix->print(dbBuf);
+
+            matrix->setTextColor(matrix->color565(180, 185, 200));
+            matrix->setCursor(textX, 18);
+            matrix->print(getLevelText(currentLevel));
+        }
 
         // Horizontal Segmented VU Meter on bottom
         int vuWidth = width - 8;

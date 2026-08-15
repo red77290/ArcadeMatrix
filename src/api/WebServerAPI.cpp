@@ -542,6 +542,28 @@ void WebServerAPI::setupRoutes() {
             }
         }
 
+        // Audio / Visualizer
+        if (!doc["visualizer_enabled"].isNull()) {
+            config.audio.visualizer_enabled = doc["visualizer_enabled"].as<bool>();
+            extern VisualizerEngine* visualizerEngine;
+            if (visualizerEngine) {
+                if (config.audio.visualizer_enabled) visualizerEngine->start();
+                else visualizerEngine->stop();
+            }
+        }
+        if (!doc["visualizer_mode"].isNull()) {
+            config.audio.visualizer_mode = doc["visualizer_mode"].as<String>();
+            extern VisualizerEngine* visualizerEngine;
+            if (visualizerEngine) visualizerEngine->setMode(config.audio.visualizer_mode);
+        }
+        if (!doc["mic_gain"].isNull()) {
+            config.audio.mic_gain = doc["mic_gain"].as<float>();
+            hardwareHAL.setMicGain(config.audio.mic_gain);
+        }
+        if (!doc["db_calibration"].isNull()) {
+            config.audio.db_calibration = doc["db_calibration"].as<float>();
+        }
+
         // Time / NTP
         if (!doc["ntp_server"].isNull()) config.time.ntpServer = doc["ntp_server"].as<String>();
         if (!doc["timezone"].isNull()) config.time.timezone = doc["timezone"].as<String>();
@@ -562,7 +584,14 @@ void WebServerAPI::setupRoutes() {
         if (!doc["wifi_pass"].isNull() && doc["wifi_pass"].as<String>() != "") config.wifi.password = doc["wifi_pass"].as<String>();
 
         // MQTT
-        if (!doc["mqtt_enable"].isNull()) config.mqtt.enabled = doc["mqtt_enable"].as<bool>();
+        bool mqttStateChanged = false;
+        if (!doc["mqtt_enable"].isNull()) {
+            bool newMqttState = doc["mqtt_enable"].as<bool>();
+            if (newMqttState != config.mqtt.enabled) {
+                mqttStateChanged = true;
+            }
+            config.mqtt.enabled = newMqttState;
+        }
         if (!doc["mqtt_broker"].isNull()) {
             config.mqtt.broker = doc["mqtt_broker"].as<String>();
             LOGI("WebAPI", "Received MQTT Broker IP from WebUI: '%s'", config.mqtt.broker.c_str());
@@ -571,8 +600,16 @@ void WebServerAPI::setupRoutes() {
         if (!doc["mqtt_user"].isNull()) config.mqtt.user = doc["mqtt_user"].as<String>();
         if (!doc["mqtt_pass"].isNull() && doc["mqtt_pass"].as<String>() != "") config.mqtt.pass = doc["mqtt_pass"].as<String>();
 
-        // Save to SD immediately
-        bool saved = config.saveToSD("/conf.ini");
+        // Save to SD immediately with mutex lock to prevent SD MMC bus collision
+        bool saved = false;
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            saved = config.saveToSD("/conf.ini");
+            xSemaphoreGive(sdMutex);
+        }
+
+        if (mqttStateChanged) {
+            willReboot = true;
+        }
 
         if (rotationChanged && !willReboot) {
             extern RotationManager* rotationManager;
@@ -585,7 +622,7 @@ void WebServerAPI::setupRoutes() {
         }
 
         // If reboot requested, save and restart
-        if (!doc["reboot"].isNull() && doc["reboot"].as<bool>()) {
+        if (willReboot) {
             request->send(200, "application/json", "{\"success\":true}");
             delay(500);
             ESP.restart();

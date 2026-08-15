@@ -97,6 +97,7 @@ private:
 
     bool probeSHTC3();
     bool probeES7210();
+    bool configureES7210();
     bool readSHTC3Raw(float& tempC, float& hum);
     static uint8_t calcSensirionCRC8(const uint8_t* data, uint8_t len);
 };
