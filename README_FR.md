@@ -28,6 +28,9 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 ## Fonctionnalités
 - **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** et **Versus (Mugen)** !
+- **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST  pour remonter les données dans Home Assistant !
+- **🔊 Sonomètre & Décibelomètre (Usage Salle d'Arcade / Gaming Room :) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨). **Parfait pour surveiller l'ambiance sonore dans une salle d'arcade bruyante, une gaming room ou une soirée rétro gaming !**
+- **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
 - **Tickers Crypto & Bourse en temps réel :** cotations en direct et badges % sur 24h depuis CoinGecko, Binance et Yahoo Finance avec cache configurable.
 - **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
 - **Moteur de combat MUGEN :** simule nativement des jeux de combat 2D sur la matrice à l'aide de sprites extraits avec un alignement parfait sur le sol virtuel.
@@ -121,6 +124,20 @@ pio run -e esp32dev
 - [Guide de configuration](docs/CONFIGURATION_FR.md)
 - [Guide développeur](docs/DEVELOPER_FR.md)
 - [Architecture](docs/ARCHITECTURE_FR.md)
+
+## 🙏 Remerciements
+
+Un immense merci à la communauté open source et aux créateurs des formidables bibliothèques qui font tourner ce projet :
+- **[ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-DMA)** par mrfaptastic
+- **[AnimatedGIF](https://github.com/bitbank2/AnimatedGIF)** & **[PNGdec](https://github.com/bitbank2/PNGdec)** par bitbank2
+- **[ESPAsyncWebServer](https://github.com/mathieucarbou/ESPAsyncWebServer)** par mathieucarbou
+- **[ArduinoJson](https://github.com/bblanchon/ArduinoJson)** par bblanchon
+- **[PubSubClient](https://github.com/knolleary/pubsubclient)** par knolleary
+- **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** par mlesniew
+- **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** par Adafruit
+- **[SdFat](https://github.com/greiman/SdFat)** par greiman
+
+Un grand merci à la **RPiTeam** pour le super pack de 600 GIFs !
 
 ## 📜 Licence
 Ce projet est publié sous la **[PolyForm Noncommercial License 1.0.0](LICENSE)**.

@@ -14,6 +14,8 @@
 #include "../engines/MessageEngine.h"
 #include "../engines/ClockEngine.h"
 #include "../engines/MarqueeEngine.h"
+#include "../engines/VisualizerEngine.h"
+#include "../hal/HardwareHAL.h"
 
 /**
  * @class WebServerAPI
@@ -31,10 +33,14 @@ public:
     WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine);
     
     /**
-     * @brief Attach the MarqueeEngine used by the /api/marquee route. Optional: if never called,
-     * /api/marquee responds with 503 instead of crashing on a null pointer.
+     * @brief Attach the MarqueeEngine used by the /api/marquee route.
      */
     void setMarqueeEngine(MarqueeEngine* engine);
+
+    /**
+     * @brief Attach the VisualizerEngine used by the /api/visualizer route.
+     */
+    void setVisualizerEngine(VisualizerEngine* engine);
 
     /**
      * @brief Initialize the web server, register routes, and start listening.
@@ -45,7 +51,8 @@ private:
     AsyncWebServer server; ///< Underlying ESPAsyncWebServer instance
     MessageEngine* msg;    ///< Reference to the MessageEngine
     ClockEngine* clock;    ///< Reference to the ClockEngine
-    MarqueeEngine* marquee = nullptr; ///< Reference to the MarqueeEngine (set via setMarqueeEngine)
+    MarqueeEngine* marquee = nullptr; ///< Reference to the MarqueeEngine
+    VisualizerEngine* visualizer = nullptr; ///< Reference to the VisualizerEngine
     
     /**
      * @brief Setup all REST API and Static File routes.
@@ -60,4 +67,3 @@ private:
      */
     void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
 };
-

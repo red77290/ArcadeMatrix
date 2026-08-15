@@ -50,6 +50,15 @@ void test_parse_empty_fallback(void) {
     TEST_ASSERT_EQUAL_INT(MODULE_CLOCK, seq[0]);
 }
 
+void test_count_symbols(void) {
+    TEST_ASSERT_EQUAL_UINT(1, RotationManager::countSymbols("BTC"));
+    TEST_ASSERT_EQUAL_UINT(2, RotationManager::countSymbols("BTC,ETH"));
+    TEST_ASSERT_EQUAL_UINT(3, RotationManager::countSymbols("BTC, ETH, SOL"));
+    TEST_ASSERT_EQUAL_UINT(3, RotationManager::countSymbols("BTC, ETH,,SOL,"));
+    TEST_ASSERT_EQUAL_UINT(0, RotationManager::countSymbols(""));
+    TEST_ASSERT_EQUAL_UINT(0, RotationManager::countSymbols("  ,  "));
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
@@ -57,6 +66,7 @@ void setup() {
     RUN_TEST(test_parse_rotation_spaces_and_case);
     RUN_TEST(test_parse_invalid_module);
     RUN_TEST(test_parse_empty_fallback);
+    RUN_TEST(test_count_symbols);
     UNITY_END();
 }
 

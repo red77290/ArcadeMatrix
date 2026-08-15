@@ -25,6 +25,30 @@
     #define SD_MMC_CMD_PIN 44
     #define SD_MMC_CLK_PIN 1
 
+    // Bus I2C pour Capteur SHTC3 & Codec Audio ES7210
+    #ifndef I2C_SDA_PIN
+    #define I2C_SDA_PIN 47
+    #endif
+    #ifndef I2C_SCL_PIN
+    #define I2C_SCL_PIN 48
+    #endif
+    #define SHTC3_I2C_ADDR 0x70
+    #define ES7210_I2C_ADDR 0x40
+
+    // Bus I2S pour Audio / Microphone (Cablage reel Waveshare ESP32-S3 RGB Matrix)
+    #ifndef I2S_MCLK_PIN
+    #define I2S_MCLK_PIN 12
+    #endif
+    #ifndef I2S_SCLK_PIN
+    #define I2S_SCLK_PIN 43
+    #endif
+    #ifndef I2S_LRCK_PIN
+    #define I2S_LRCK_PIN 38
+    #endif
+    #ifndef I2S_ASDOUT_PIN
+    #define I2S_ASDOUT_PIN 39
+    #endif
+
 #else
 
     // Profil par défaut : ESP32 Standard (Retro_Pixel_LED_4_0_0)
@@ -49,5 +73,25 @@
     #define VSPI_SCK 18
     #define VSPI_MISO 19
     #define VSPI_MOSI 23
+
+    // Bus I2C par défaut (ESP32 Standard)
+    #ifndef I2C_SDA_PIN
+    #define I2C_SDA_PIN 21
+    #endif
+    #ifndef I2C_SCL_PIN
+    #define I2C_SCL_PIN 22
+    #endif
+    #define SHTC3_I2C_ADDR 0x70
+
+    // Bus I2S par défaut (Microphone I2S standard ex: INMP441)
+    #ifndef I2S_SCLK_PIN
+    #define I2S_SCLK_PIN 14
+    #endif
+    #ifndef I2S_LRCK_PIN
+    #define I2S_LRCK_PIN 15
+    #endif
+    #ifndef I2S_ASDOUT_PIN
+    #define I2S_ASDOUT_PIN 32
+    #endif
 
 #endif

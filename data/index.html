@@ -651,6 +651,8 @@ body {
           <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
           <button class="tab-btn" onclick="switchDisplayTab('crypto')">📈 Crypto</button>
           <button class="tab-btn" onclick="switchDisplayTab('stock')">📊 Stocks</button>
+          <button class="tab-btn" onclick="switchDisplayTab('temp')">🌡️ Temp & Hum</button>
+          <button class="tab-btn" onclick="switchDisplayTab('audio')">🎵 Music & Decibel</button>
         </div>
         
         <div id="tab-idle" class="tab-pane active">
@@ -665,6 +667,8 @@ body {
               <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
               <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
               <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
+              <label class="toggle-btn" id="lbl-rot-temp"><input type="checkbox" value="temp" id="rot-temp" style="display:none;"> <span class="toggle-label">🌡️ Temp</span></label>
+              <label class="toggle-btn" id="lbl-rot-decibel"><input type="checkbox" value="decibel" id="rot-decibel" style="display:none;"> <span class="toggle-label">🔊 Decibel</span></label>
             </div>
             <input type="hidden" id="cfg-rotation">
           </div>
@@ -685,18 +689,26 @@ body {
               <input type="number" id="cfg-fighter-int" class="input" min="1">
             </div>
           </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
+          <div class="form-grid col-5" style="margin-top: 1rem;">
             <div class="form-group">
-              <label>Clock Duration (s)</label>
+              <label>Clock (s)</label>
               <input type="number" id="cfg-dur-clock" class="input" min="1">
             </div>
             <div class="form-group">
-              <label>Date Duration (s)</label>
+              <label>Date (s)</label>
               <input type="number" id="cfg-dur-date" class="input" min="1">
             </div>
             <div class="form-group">
-              <label>Weather Duration (s)</label>
+              <label>Weather (s)</label>
               <input type="number" id="cfg-dur-weather" class="input" min="1">
+            </div>
+            <div class="form-group">
+              <label>Temp (s)</label>
+              <input type="number" id="cfg-dur-temp" class="input" min="3" value="8">
+            </div>
+            <div class="form-group">
+              <label>Decibel (s)</label>
+              <input type="number" id="cfg-dur-decibel" class="input" min="3" value="10">
             </div>
           </div>
           <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 1.5rem 0;">
@@ -974,6 +986,63 @@ body {
           <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
         </div>
         </div>
+        <div id="tab-temp" class="tab-pane">
+          <div class="card glass shadow">
+            <h3>🌡️ Indoor Temperature & Humidity Settings</h3>
+            <div id="badge-temp-status" class="badge badge-accent" style="margin-bottom: 1rem;">Sensor Status: Checking...</div>
+            <div class="form-grid col-2">
+              <div class="form-group">
+                <label>Temperature Unit</label>
+                <select id="cfg-temp-unit" class="input">
+                  <option value="C">Celsius (°C)</option>
+                  <option value="F">Fahrenheit (°F)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Temperature Offset (°C)</label>
+                <input type="number" step="0.1" id="cfg-temp-offset" class="input" value="0.0">
+              </div>
+            </div>
+            <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Temperature Settings</button>
+          </div>
+        </div>
+
+        <div id="tab-audio" class="tab-pane">
+          <div class="card glass shadow">
+            <h3>🎵 Rhythmic Music Visualizer & Decibel Meter</h3>
+            <div id="badge-audio-status" class="badge badge-accent" style="margin-bottom: 1rem;">Audio Status: Checking...</div>
+            <div class="form-grid col-2">
+              <div class="form-group">
+                <label>Priority Music Visualizer</label>
+                <select id="cfg-visualizer-enabled" class="input">
+                  <option value="false">OFF (Standard Rotation)</option>
+                  <option value="true">ON (Display Override)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Visualizer Display Mode</label>
+                <select id="cfg-visualizer-mode" class="input">
+                  <option value="spectrum">📊 Equalizer Spectrum Bars</option>
+                  <option value="waveform">〰️ Oscilloscope Waveform</option>
+                  <option value="radial">⭕ Concentric Pulse Circles</option>
+                  <option value="neon_fire">🔥 Matrix Neon Rain / Fire</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-grid col-2" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Microphone Gain Multiplier</label>
+                <input type="number" step="0.1" id="cfg-mic-gain" class="input" value="1.0" min="0.1" max="10.0">
+              </div>
+              <div class="form-group">
+                <label>Decibel Calibration Offset (dB)</label>
+                <input type="number" step="0.5" id="cfg-db-calibration" class="input" value="0.0">
+              </div>
+            </div>
+            <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Audio & Visualizer Settings</button>
+          </div>
+        </div>
+
       </section>
 
       <!-- Media Page -->
@@ -1734,7 +1803,8 @@ function initNetworkSettings() {
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
         await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, reboot: true });
-        window.showToast('MQTT Settings Saved!', 'success');
+        window.showToast('MQTT Settings Saved! Rebooting...', 'success');
+        setTimeout(() => window.location.reload(), 3000);
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
       }
@@ -1860,6 +1930,68 @@ async function initSettings() {
     document.getElementById('cfg-dur-clock').value = s.clock_duration_sec;
     document.getElementById('cfg-dur-date').value = s.date_duration_sec;
     document.getElementById('cfg-dur-weather').value = s.weather_duration_sec;
+    if (document.getElementById('cfg-dur-temp')) document.getElementById('cfg-dur-temp').value = s.temp_duration_sec || 8;
+    if (document.getElementById('cfg-dur-decibel')) document.getElementById('cfg-dur-decibel').value = s.decibel_duration_sec || 10;
+    if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').value = s.temp_unit || 'C';
+    if (document.getElementById('cfg-temp-offset')) document.getElementById('cfg-temp-offset').value = s.temp_offset || 0.0;
+    if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').value = s.visualizer_enabled ? 'true' : 'false';
+    if (document.getElementById('cfg-visualizer-mode')) document.getElementById('cfg-visualizer-mode').value = s.visualizer_mode || 'spectrum';
+    if (document.getElementById('cfg-mic-gain')) document.getElementById('cfg-mic-gain').value = s.mic_gain || 1.0;
+    if (document.getElementById('cfg-db-calibration')) document.getElementById('cfg-db-calibration').value = s.db_calibration || 0.0;
+
+    // Gray out options if hardware is missing
+    const badgeTemp = document.getElementById('badge-temp-status');
+    if (badgeTemp) {
+      if (s.sensor_available) {
+        badgeTemp.textContent = '✅ Temp/Humidity Sensor DETECTED (SHTC3)';
+        badgeTemp.className = 'badge badge-accent';
+      } else {
+        badgeTemp.textContent = '⚠️ Temp/Humidity Sensor NOT DETECTED';
+        badgeTemp.className = 'badge';
+        badgeTemp.style.background = '#64748b';
+        if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').disabled = true;
+        if (document.getElementById('cfg-temp-offset')) document.getElementById('cfg-temp-offset').disabled = true;
+        if (document.getElementById('cfg-dur-temp')) document.getElementById('cfg-dur-temp').disabled = true;
+        const cbTemp = document.getElementById('rot-temp');
+        if (cbTemp) {
+          cbTemp.disabled = true;
+          cbTemp.checked = false;
+          const lblTemp = document.getElementById('lbl-rot-temp');
+          if (lblTemp) {
+            lblTemp.style.opacity = '0.5';
+            lblTemp.style.cursor = 'not-allowed';
+            lblTemp.title = "Sensor not detected";
+          }
+        }
+      }
+    }
+    const badgeAudio = document.getElementById('badge-audio-status');
+    if (badgeAudio) {
+      if (s.audio_available) {
+        badgeAudio.textContent = '✅ Microphone / Audio Hardware DETECTED';
+        badgeAudio.className = 'badge badge-accent';
+      } else {
+        badgeAudio.textContent = '⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)';
+        badgeAudio.className = 'badge';
+        badgeAudio.style.background = '#64748b';
+        if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').disabled = true;
+        if (document.getElementById('cfg-visualizer-mode')) document.getElementById('cfg-visualizer-mode').disabled = true;
+        if (document.getElementById('cfg-mic-gain')) document.getElementById('cfg-mic-gain').disabled = true;
+        if (document.getElementById('cfg-db-calibration')) document.getElementById('cfg-db-calibration').disabled = true;
+        if (document.getElementById('cfg-dur-decibel')) document.getElementById('cfg-dur-decibel').disabled = true;
+        const cbDecibel = document.getElementById('rot-decibel');
+        if (cbDecibel) {
+          cbDecibel.disabled = true;
+          cbDecibel.checked = false;
+          const lblDecibel = document.getElementById('lbl-rot-decibel');
+          if (lblDecibel) {
+            lblDecibel.style.opacity = '0.5';
+            lblDecibel.style.cursor = 'not-allowed';
+            lblDecibel.title = "Microphone not detected";
+          }
+        }
+      }
+    }
     document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
     let sprite_on = (s.sprite_count !== undefined) ? (s.sprite_count > 0) : s.fighter_enabled;
     document.getElementById('cfg-sprite-enable').value = sprite_on ? 'true' : 'false';
@@ -1910,6 +2042,7 @@ async function initSettings() {
             weather_lang: document.getElementById('cfg-weather-lang').value,
             weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
             weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
+            temp_offset: parseFloat(document.getElementById('cfg-temp-offset')?.value) || 0.0,
 
             crypto_symbols: document.getElementById('cfg-crypto-symbols') ? document.getElementById('cfg-crypto-symbols').value : 'BTC,ETH,SOL,DOGE',
             crypto_duration_sec: parseInt(document.getElementById('cfg-dur-crypto')?.value) || 5,
@@ -1925,6 +2058,11 @@ async function initSettings() {
             gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
             fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
             fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
+
+            visualizer_enabled: document.getElementById('cfg-visualizer-enabled')?.value === 'true',
+            visualizer_mode: document.getElementById('cfg-visualizer-mode')?.value || 'spectrum',
+            mic_gain: parseFloat(document.getElementById('cfg-mic-gain')?.value) || 1.0,
+            db_calibration: parseFloat(document.getElementById('cfg-db-calibration')?.value) || 0.0,
 
             night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
             turn_off_at: document.getElementById('cfg-night-off').value,

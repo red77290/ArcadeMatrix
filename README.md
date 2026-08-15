@@ -28,6 +28,9 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 ## Features
 - **Massive Clock Selection:** Animated clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain**, and **Versus (Mugen)**!
+- **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and  REST endpoint for Home Assistant integration!
+- **🔊 Decibel & Sound Level Meter (Arcade Room / Gaming Room Use-Case :) :** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨). **Ideal for monitoring ambient noise levels in a loud arcade room, gaming room, or retro gaming party!**
+- **🎵 Rhythmic Music Visualizer:** 4 priority display modes (Spectrum Equalizer with peak hold, Oscilloscope Waveform, Radial Circles, and Neon Fire).
 - **Real-Time Crypto & Stock Market Tickers:** Live price quotes & 24h % badges from CoinGecko, Binance, and Yahoo Finance with configurable TTL cache.
 - **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs and change settings live!
 - **MUGEN Fighting Engine:** Natively simulates 2D fighting games on the matrix using extracted sprites with perfect virtual-ground alignment.
@@ -133,6 +136,20 @@ pio run -e esp32s3_waveshare
 - [Configuration Guide](docs/CONFIGURATION.md)
 - [Developer Guide](docs/DEVELOPER.md)
 - [Architecture](docs/ARCHITECTURE.md)
+
+## 🙏 Acknowledgments
+
+A huge thanks to the open-source community and the creators of the incredible libraries that power this project:
+- **[ESP32-HUB75-MatrixPanel-DMA](https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-DMA)** by mrfaptastic
+- **[AnimatedGIF](https://github.com/bitbank2/AnimatedGIF)** & **[PNGdec](https://github.com/bitbank2/PNGdec)** by bitbank2
+- **[ESPAsyncWebServer](https://github.com/mathieucarbou/ESPAsyncWebServer)** by mathieucarbou
+- **[ArduinoJson](https://github.com/bblanchon/ArduinoJson)** by bblanchon
+- **[PubSubClient](https://github.com/knolleary/pubsubclient)** by knolleary
+- **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** by mlesniew
+- **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** by Adafruit
+- **[SdFat](https://github.com/greiman/SdFat)** by greiman
+
+Special thanks to the **RPiTeam** for the awesome pack of 600 GIFs!
 
 ## 📜 License
 This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.

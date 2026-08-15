@@ -41,6 +41,10 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "api/BinanceProvider.h"
 #include "api/OpenWeatherMapProvider.h"
 #include "api/YahooFinanceProvider.h"
+#include "hal/HardwareHAL.h"
+#include "engines/TempEngine.h"
+#include "engines/VisualizerEngine.h"
+#include "engines/DecibelEngine.h"
 
 // Pins definition moved to HardwareProfile.h
 
@@ -56,6 +60,9 @@ WeatherEngine* weatherEngine = nullptr;
 FighterEngine* fighterEngine = nullptr;
 CryptoEngine cryptoEngine;
 StockEngine stockEngine;
+TempEngine* tempEngine = nullptr;
+VisualizerEngine* visualizerEngine = nullptr;
+DecibelEngine* decibelEngine = nullptr;
 RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
@@ -129,6 +136,9 @@ void setup() {
 #endif
 
     esp_task_wdt_add(NULL);
+
+    // Initialize Hardware Abstraction Layer & Sensors
+    hardwareHAL.begin();
 
     sdMutex = xSemaphoreCreateMutex();
 
@@ -261,7 +271,11 @@ void setup() {
     stockEngine.begin(matrixEngine.getDisplay());
     stockEngine.addProvider(new YahooFinanceProvider());
     
-    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine);
+    tempEngine = new TempEngine(matrixEngine.getDisplay());
+    visualizerEngine = new VisualizerEngine(matrixEngine.getDisplay());
+    decibelEngine = new DecibelEngine(matrixEngine.getDisplay());
+
+    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine, tempEngine, decibelEngine);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
@@ -330,6 +344,7 @@ void setup() {
             LOGI("System", "Free Heap before Web Server start: %d bytes", ESP.getFreeHeap());
             webServer = new WebServerAPI(80, messageEngine, clockEngine);
             webServer->begin();
+            webServer->setVisualizerEngine(visualizerEngine);
             marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
             webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
@@ -436,31 +451,29 @@ void loop() {
         matrixEngine.getDisplay()->fillScreen(0);
     }
 
-    // Handle Idle Rotation Logic
-    // Marquee (live box-art/frontend push) takes priority over everything else while active,
-    // matching the RPi's behavior where a marquee push interrupts whatever the idle rotation
-    // was showing.
+    // Handle Idle Rotation Logic & Priority Display Overrides
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        if (marqueeEngine && marqueeEngine->isActive()) {
+        if (rotationManager) {
+            rotationManager->setSuspended(config.mqtt.enabled);
+        }
+
+        // Synchronize Music Visualizer active state with config setting
+        if (visualizerEngine) {
+            if (config.audio.visualizer_enabled && !visualizerEngine->isActive()) {
+                visualizerEngine->start();
+            } else if (!config.audio.visualizer_enabled && visualizerEngine->isActive()) {
+                visualizerEngine->stop();
+            }
+        }
+
+        if (visualizerEngine && visualizerEngine->isActive()) {
+            shouldFlip = visualizerEngine->loop();
+        } else if (marqueeEngine && marqueeEngine->isActive()) {
             shouldFlip = marqueeEngine->loop();
         } else if (messageEngine && messageEngine->isActive()) {
             shouldFlip = messageEngine->loop();
         } else if (gifEngine.isActive() && rotationManager->getCurrentModule() != MODULE_GIFS) {
             shouldFlip = gifEngine.loop();
-        } else if (config.mqtt.enabled) {
-            if (gifEngine.isActive()) {
-                shouldFlip = gifEngine.loop();
-            } else {
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->setTextSize(1);
-                matrixEngine.getDisplay()->setTextColor(matrixEngine.getDisplay()->color565(128, 128, 128));
-                int yPos = (config.matrix.height / 2) - 8;
-                matrixEngine.getDisplay()->setCursor(4, yPos);
-                matrixEngine.getDisplay()->print("Waiting for");
-                matrixEngine.getDisplay()->setCursor(14, yPos + 10);
-                matrixEngine.getDisplay()->print("Marquee...");
-                shouldFlip = true;
-            }
         } else {
             shouldFlip = rotationManager->loop();
         }

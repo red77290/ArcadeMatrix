@@ -17,7 +17,7 @@ ArcadeMatrix is fully configurable without recompiling C++ code. All parameters 
 | | `HEIGHT` | `matrix_rows` | int | `32` | `64` | DMA Matrix | Yes | **Yes** | Total matrix height in pixels |
 | | `CHAIN` | `matrix_chain` | int | `1` | `2` | Panels | Yes | **Yes** | Number of chained panels |
 | | `BRIGHTNESS_LIMIT`|`brightness_limit`| int | `100` | `80` | **Live** | Yes | No | Brightness limit (0-100%) |
-| | `COLOR_DEPTH` | `color_depth` | int | `8` | `8` | Depth | Yes | **Yes** | Color channel bit depth (8 default) |
+| | `PWM_BITS` | `pwm_bits` | int | `8` | `8` | Depth | Yes | **Yes** | Color channel bit depth (8 default) |
 | | `DRIVER_CHIP` | `matrix_driver_chip`| string | `"SHIFTREG"` | `"FM6126A"` | Driver IC | Yes | **Yes** | Driver IC chip (`SHIFTREG`, `FM6126A`, `ICN2038S`, `SM16208`) |
 | | `FORCE_SINGLE_BUFFER`| `force_single_buffer`| bool | `false` | `true` | RAM Memory | Yes | **Yes** | Force single buffering to save RAM |
 | **[TIME]** | `NTP_SERVER` | `ntp_server` | string | `"pool.ntp.org"` | `"time.google.com"` | NTP Sync | Yes | No | NTP Time Server URL |
@@ -27,7 +27,7 @@ ArcadeMatrix is fully configurable without recompiling C++ code. All parameters 
 | | `CLOCK_COLOR_1` | `clock_color_1` | string | `"#ffffff"` | `"#FF0000"` | **Live** | Yes | No | Hex color string for gradient start |
 | | `CLOCK_COLOR_2` | `clock_color_2` | string | `"#ffffff"` | `"#00FF00"` | **Live** | Yes | No | Hex color string for gradient end |
 | | `CLOCK_FONT_PATH`| `clock_font_path`| string | `""` | `"/fonts/my.amf"`| **Live** | Yes | No | Path to custom `.amf` font on SD |
-| **[IDLE]** | `ROTATION` | `rotation` | string | `"clock,date,weather,gifs"` | `"clock,gifs"` | **Live** | Yes | No | Active modules (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`) |
+| **[IDLE]** | `ROTATION` | `rotation` | string | `"clock,date,weather,gifs,temp,decibel"` | `"clock,gifs"` | **Live** | Yes | No | Active modules (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`, `temp`, `decibel`) |
 | | `CLOCK_DURATION_SEC`|`clock_duration_sec`| int | `60` | `30` | **Live** | Yes | No | Clock display duration in seconds |
 | | `GIFS_COUNT` | `gifs_count` | int | `3` | `5` | **Live** | Yes | No | Number of GIFs played per cycle |
 | | `FIGHTER_ENABLED`| `fighter_enabled` | bool | `true` | `false` | **Live** | Yes | No | Enable MUGEN battle overlay |
@@ -42,10 +42,17 @@ ArcadeMatrix is fully configurable without recompiling C++ code. All parameters 
 | **[STOCK]** | `ENABLED` | `stock_enabled` | bool | `true` | `false` | **Live** | Yes | No | Enable stock ticker |
 | | `SYMBOLS` | `stock_symbols` | string | `"AAPL,NVDA,TSLA,MSFT"` | `"AAPL"` | **Live** | Yes | No | Comma-separated stock tickers |
 | | `DURATION_SEC` | `stock_duration_sec` | int | `5` | `10` | **Live** | Yes | No | Display duration per stock in seconds |
+| **[AUDIO]** | `VISUALIZER_ENABLED` | `visualizer_enabled` | bool | `false` | `true` | **Live** | Yes | No | Enable audio visualizer mode |
+| | `VISUALIZER_MODE` | `visualizer_mode` | string | `"spectrum"` | `"waveform"` | **Live** | Yes | No | Visualizer pattern (`spectrum`, `waveform`, `radial`, `neon_fire`) |
+| | `MIC_GAIN` | `mic_gain` | float | `1.0` | `1.5` | **Live** | Yes | No | Microphone pre-gain multiplier |
+| | `DB_CALIBRATION` | `db_calibration` | float | `0.0` | `2.5` | **Live** | Yes | No | Relative sound-level offset calibration |
 
 ---
 
 ## 📌 Important Notes
 
-- **`ROTATION`**: The `ROTATION` string controls autonomous display modules (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`). **Note: `sprites` is NOT a rotation module**. MUGEN fighters are rendered dynamically as an overlay by `FighterEngine` via `FIGHTER_ENABLED`.
-- **Reboot Requirement**: Hardware geometry changes (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `COLOR_DEPTH`) and Wi-Fi credentials require a system reboot (`POST /api/system/reboot` or the *Reboot System* button in the Web UI). All visual parameters (themes, colors, durations, brightness) update live on the fly.
+- **`ROTATION`**: The `ROTATION` string controls autonomous display modules (`clock`, `date`, `weather`, `gifs`, `crypto`, `stocks`, `temp`, `decibel`). **Note: `sprites` is NOT a rotation module**. MUGEN fighters are rendered dynamically as an overlay by `FighterEngine` via `FIGHTER_ENABLED`.
+- **Audio Visualizer & Sound Level Precision**:
+  - `VisualizerEngine` processes audio samples into an amplitude/energy band approximation (**pseudo-spectrum**) optimized for high-FPS LED matrix rendering rather than a physical DSP FFT analyzer.
+  - `DecibelEngine` computes a **calibratable relative sound-level indicator** derived from microphone RMS energy.
+- **Reboot Requirement**: Hardware geometry changes (`WIDTH`, `HEIGHT`, `DRIVER_CHIP`, `CHAIN`, `PWM_BITS`) and Wi-Fi credentials require a system reboot (`POST /api/system/reboot` or the *Reboot System* button in the Web UI). All visual parameters (themes, colors, durations, brightness) update live on the fly.
