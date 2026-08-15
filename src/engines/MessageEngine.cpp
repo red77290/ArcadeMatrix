@@ -56,17 +56,17 @@ bool MessageEngine::loop() {
         return true;
     }
 
+    matrix->clearScreen(); // Ensure black background for message priority overlay
+    
+    matrix->setFont(customFont); // nullptr falls back to the default 5x7 font
+    matrix->setTextSize(currentMsg.size);
+    matrix->setTextColor(currentMsg.color);
+    matrix->setCursor(cursorX, cursorY);
+    matrix->print(currentMsg.text);
+
     // Scroll logic based on speed (ms per pixel update)
     if (millis() - lastUpdate > currentMsg.speed) {
         lastUpdate = millis();
-
-        matrix->clearScreen(); // Ensure black background for message priority overlay
-        
-        matrix->setFont(customFont); // nullptr falls back to the default 5x7 font
-        matrix->setTextSize(currentMsg.size);
-        matrix->setTextColor(currentMsg.color);
-        matrix->setCursor(cursorX, cursorY);
-        matrix->print(currentMsg.text);
 
         // Update coordinates
         if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
