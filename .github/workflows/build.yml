@@ -33,6 +33,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate documentation & SD configuration
+        run: python3 scripts/validate_docs.py
+
+      - name: Validate WebInstaller manifest
+        run: python3 scripts/validate_webinstaller.py
+
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
 

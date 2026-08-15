@@ -488,10 +488,13 @@ bool FighterEngine::loop() {
         }
         
         // Collision detection (simple distance using origins)
-        int p1_world_origin = p1.x + p1.origin_x;
-        int p2_world_origin = p2.x + (p2.width_px - p2.origin_x);
+        int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+        int p1_world_origin = p1.x + (p1.origin_x * scale);
+        int p2_world_origin = p2.x + ((p2.width_px - p2.origin_x) * scale);
         int dist = p2_world_origin - p1_world_origin;
-        int engage_dist = (int)(matrix->width() * 0.4f);
+        
+        // Engaging distance based on sprite size, not screen width
+        int engage_dist = 18 * scale;
         
         if (dist <= engage_dist) {
             // Fight! Random winner
@@ -549,7 +552,7 @@ bool FighterEngine::loop() {
     return true;
 }
 
-void FighterEngine::drawPlayer(FighterPlayer& p) {
+void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     FgtAnimation* anim = nullptr;
     if (p.state == FIGHTER_WALK) anim = &p.animWalk;
     else if (p.state == FIGHTER_ATTACK) anim = &p.animAttack;
@@ -586,9 +589,6 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
     
     bool invert = (p.state == FIGHTER_SUPER && p.currentFrame < 2);
     
-    int offsetY = 0;
-    if (shakeRemainingFrames > 0) offsetY = random(-2, 3);
-    
     int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
     
     for (int y = 0; y < anim->height; y++) {
@@ -622,14 +622,18 @@ void FighterEngine::drawPlayer(FighterPlayer& p) {
 void FighterEngine::draw() {
     if (!active) return;
     
-    if (shakeRemainingFrames > 0) shakeRemainingFrames--;
+    int globalOffsetY = 0;
+    if (shakeRemainingFrames > 0) {
+        globalOffsetY = random(-2, 3);
+        shakeRemainingFrames--;
+    }
     
     // Draw the dead player first (background), then the winner (foreground)
     if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL || p1.isDead) {
-        drawPlayer(p1);
-        drawPlayer(p2);
+        drawPlayer(p1, globalOffsetY);
+        drawPlayer(p2, globalOffsetY);
     } else {
-        drawPlayer(p2);
-        drawPlayer(p1);
+        drawPlayer(p2, globalOffsetY);
+        drawPlayer(p1, globalOffsetY);
     }
 }

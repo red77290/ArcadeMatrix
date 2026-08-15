@@ -69,6 +69,10 @@ void WebServerAPI::setMarqueeEngine(MarqueeEngine* engine) {
     marquee = engine;
 }
 
+void WebServerAPI::setVisualizerEngine(VisualizerEngine* engine) {
+    visualizer = engine;
+}
+
 
 extern String getPosixTimezone(String tz);
 
@@ -163,6 +167,50 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"version\":\"2.0.0\", \"arch\":\"esp32s3\"}");
     });
 
+    // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)
+    server.on("/api/sensor", HTTP_GET, [](AsyncWebServerRequest *request){
+        extern ConfigLoader config;
+        EnvironmentData data = hardwareHAL.readEnvironment();
+        DynamicJsonDocument doc(256);
+        doc["available"] = data.available;
+        doc["temperature_c"] = data.temperatureC;
+        doc["temperature_f"] = data.temperatureF;
+        doc["humidity"] = data.humidity;
+        doc["unit"] = config.env.unit;
+        doc["status"] = data.available ? "ok" : "not_detected";
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: Music Visualizer Control (Priority Display Override)
+    AsyncCallbackJsonWebHandler* visHandler = new AsyncCallbackJsonWebHandler("/api/visualizer", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject doc = json.as<JsonObject>();
+        extern ConfigLoader config;
+        if (!doc["enabled"].isNull()) {
+            config.audio.visualizer_enabled = doc["enabled"].as<bool>();
+            if (visualizer) {
+                if (config.audio.visualizer_enabled) visualizer->start();
+                else visualizer->stop();
+            }
+        }
+        if (!doc["mode"].isNull()) {
+            config.audio.visualizer_mode = doc["mode"].as<String>();
+            if (visualizer) visualizer->setMode(config.audio.visualizer_mode);
+        }
+        if (!doc["gain"].isNull()) {
+            config.audio.mic_gain = doc["gain"].as<float>();
+            hardwareHAL.setMicGain(config.audio.mic_gain);
+        }
+        config.saveToSD("/conf.ini");
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+    server.addHandler(visHandler);
+
     // API: List GIF Playlists (Reads playlists.json first, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
         String content = "";
@@ -252,7 +300,7 @@ void WebServerAPI::setupRoutes() {
 
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
-        doc["color_depth"] = config.matrix.colorDepth;
+        doc["pwm_bits"] = config.matrix.pwmBits;
         doc["matrix_chain"] = config.matrix.chainLength;
         doc["matrix_rows"] = config.matrix.height;
         doc["matrix_cols"] = config.matrix.width;
@@ -278,9 +326,21 @@ void WebServerAPI::setupRoutes() {
         doc["clock_duration_sec"] = config.idle.clock_duration_sec;
         doc["date_duration_sec"] = config.idle.date_duration_sec;
         doc["weather_duration_sec"] = config.idle.weather_duration_sec;
+        doc["temp_duration_sec"] = config.idle.temp_duration_sec;
+        doc["decibel_duration_sec"] = config.idle.decibel_duration_sec;
         doc["gifs_count"] = config.idle.gifs_count;
         doc["fighter_enabled"] = config.idle.fighter_enabled;
         doc["fighter_interval_sec"] = config.idle.fighter_interval_sec;
+
+        // Environment & Audio
+        doc["temp_unit"] = config.env.unit;
+        doc["temp_offset"] = config.env.temp_offset;
+        doc["visualizer_enabled"] = config.audio.visualizer_enabled;
+        doc["visualizer_mode"] = config.audio.visualizer_mode;
+        doc["mic_gain"] = config.audio.mic_gain;
+        doc["db_calibration"] = config.audio.db_calibration;
+        doc["sensor_available"] = hardwareHAL.isTempSensorAvailable();
+        doc["audio_available"] = hardwareHAL.isAudioAvailable();
 
         // Clock
         doc["clock_font"] = config.time.clock_font;
@@ -343,7 +403,7 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: Settings (POST) — saves immediately to SD
-    AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [](AsyncWebServerRequest *request, JsonVariant &json) {
+    AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [this](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -358,7 +418,7 @@ void WebServerAPI::setupRoutes() {
             extern MatrixEngine matrixEngine;
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
-        if (!doc["color_depth"].isNull()) config.matrix.colorDepth = doc["color_depth"].as<int>();
+        if (!doc["pwm_bits"].isNull()) config.matrix.pwmBits = doc["pwm_bits"].as<int>();
         if (!doc["matrix_chain"].isNull()) config.matrix.chainLength = doc["matrix_chain"].as<int>();
         if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
         if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
@@ -386,9 +446,31 @@ void WebServerAPI::setupRoutes() {
         if (!doc["clock_duration_sec"].isNull()) config.idle.clock_duration_sec = doc["clock_duration_sec"].as<int>();
         if (!doc["date_duration_sec"].isNull()) config.idle.date_duration_sec = doc["date_duration_sec"].as<int>();
         if (!doc["weather_duration_sec"].isNull()) config.idle.weather_duration_sec = doc["weather_duration_sec"].as<int>();
+        if (!doc["temp_duration_sec"].isNull()) config.idle.temp_duration_sec = doc["temp_duration_sec"].as<int>();
+        if (!doc["decibel_duration_sec"].isNull()) config.idle.decibel_duration_sec = doc["decibel_duration_sec"].as<int>();
         if (!doc["gifs_count"].isNull()) config.idle.gifs_count = doc["gifs_count"].as<int>();
         if (!doc["fighter_enabled"].isNull()) config.idle.fighter_enabled = doc["fighter_enabled"].as<bool>();
         if (!doc["fighter_interval_sec"].isNull()) config.idle.fighter_interval_sec = doc["fighter_interval_sec"].as<int>();
+
+        // Environment & Audio settings
+        if (!doc["temp_unit"].isNull()) config.env.unit = doc["temp_unit"].as<String>();
+        if (!doc["temp_offset"].isNull()) config.env.temp_offset = doc["temp_offset"].as<float>();
+        if (!doc["visualizer_enabled"].isNull()) {
+            config.audio.visualizer_enabled = doc["visualizer_enabled"].as<bool>();
+            if (visualizer) {
+                if (config.audio.visualizer_enabled) visualizer->start();
+                else visualizer->stop();
+            }
+        }
+        if (!doc["visualizer_mode"].isNull()) {
+            config.audio.visualizer_mode = doc["visualizer_mode"].as<String>();
+            if (visualizer) visualizer->setMode(config.audio.visualizer_mode);
+        }
+        if (!doc["mic_gain"].isNull()) {
+            config.audio.mic_gain = doc["mic_gain"].as<float>();
+            hardwareHAL.setMicGain(config.audio.mic_gain);
+        }
+        if (!doc["db_calibration"].isNull()) config.audio.db_calibration = doc["db_calibration"].as<float>();
         
         // Clock
         bool clockChanged = false;
@@ -460,6 +542,28 @@ void WebServerAPI::setupRoutes() {
             }
         }
 
+        // Audio / Visualizer
+        if (!doc["visualizer_enabled"].isNull()) {
+            config.audio.visualizer_enabled = doc["visualizer_enabled"].as<bool>();
+            extern VisualizerEngine* visualizerEngine;
+            if (visualizerEngine) {
+                if (config.audio.visualizer_enabled) visualizerEngine->start();
+                else visualizerEngine->stop();
+            }
+        }
+        if (!doc["visualizer_mode"].isNull()) {
+            config.audio.visualizer_mode = doc["visualizer_mode"].as<String>();
+            extern VisualizerEngine* visualizerEngine;
+            if (visualizerEngine) visualizerEngine->setMode(config.audio.visualizer_mode);
+        }
+        if (!doc["mic_gain"].isNull()) {
+            config.audio.mic_gain = doc["mic_gain"].as<float>();
+            hardwareHAL.setMicGain(config.audio.mic_gain);
+        }
+        if (!doc["db_calibration"].isNull()) {
+            config.audio.db_calibration = doc["db_calibration"].as<float>();
+        }
+
         // Time / NTP
         if (!doc["ntp_server"].isNull()) config.time.ntpServer = doc["ntp_server"].as<String>();
         if (!doc["timezone"].isNull()) config.time.timezone = doc["timezone"].as<String>();
@@ -480,7 +584,14 @@ void WebServerAPI::setupRoutes() {
         if (!doc["wifi_pass"].isNull() && doc["wifi_pass"].as<String>() != "") config.wifi.password = doc["wifi_pass"].as<String>();
 
         // MQTT
-        if (!doc["mqtt_enable"].isNull()) config.mqtt.enabled = doc["mqtt_enable"].as<bool>();
+        bool mqttStateChanged = false;
+        if (!doc["mqtt_enable"].isNull()) {
+            bool newMqttState = doc["mqtt_enable"].as<bool>();
+            if (newMqttState != config.mqtt.enabled) {
+                mqttStateChanged = true;
+            }
+            config.mqtt.enabled = newMqttState;
+        }
         if (!doc["mqtt_broker"].isNull()) {
             config.mqtt.broker = doc["mqtt_broker"].as<String>();
             LOGI("WebAPI", "Received MQTT Broker IP from WebUI: '%s'", config.mqtt.broker.c_str());
@@ -489,8 +600,16 @@ void WebServerAPI::setupRoutes() {
         if (!doc["mqtt_user"].isNull()) config.mqtt.user = doc["mqtt_user"].as<String>();
         if (!doc["mqtt_pass"].isNull() && doc["mqtt_pass"].as<String>() != "") config.mqtt.pass = doc["mqtt_pass"].as<String>();
 
-        // Save to SD immediately
-        bool saved = config.saveToSD("/conf.ini");
+        // Save to SD immediately with mutex lock to prevent SD MMC bus collision
+        bool saved = false;
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            saved = config.saveToSD("/conf.ini");
+            xSemaphoreGive(sdMutex);
+        }
+
+        if (mqttStateChanged) {
+            willReboot = true;
+        }
 
         if (rotationChanged && !willReboot) {
             extern RotationManager* rotationManager;
@@ -503,7 +622,7 @@ void WebServerAPI::setupRoutes() {
         }
 
         // If reboot requested, save and restart
-        if (!doc["reboot"].isNull() && doc["reboot"].as<bool>()) {
+        if (willReboot) {
             request->send(200, "application/json", "{\"success\":true}");
             delay(500);
             ESP.restart();

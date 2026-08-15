@@ -15,7 +15,7 @@ void ConfigLoader::setDefaults() {
     matrix.chainLength = 1;
     matrix.powerLimitPercent = 100;
     matrix.forceSingleBuffer = false;
-    matrix.colorDepth = 8;
+    matrix.pwmBits = 8;
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 0;
     matrix.driverChip = "SHIFTREG";
@@ -48,20 +48,38 @@ void ConfigLoader::setDefaults() {
     time.clock_color_2 = "#ffffff";
     time.clock_font_path = "";
 
-    idle.rotation = "clock,date,weather,gifs";
+    idle.rotation = "clock,date,weather,gifs,temp,decibel";
     idle.clock_duration_sec = 60;
     idle.date_duration_sec = 10;
     idle.weather_duration_sec = 15;
+    idle.temp_duration_sec = 8;
+    idle.decibel_duration_sec = 10;
     idle.gifs_count = 3;
     idle.fighter_enabled = true;
     idle.fighter_interval_sec = 10;
-    
-    idle.mode = "gifs_then_clock";
-    idle.gifs_before_clock = 10;
+
+    env.unit = "C";
+    env.temp_offset = 0.0f;
+
+    audio.visualizer_enabled = false;
+    audio.visualizer_mode = "spectrum";
+    audio.mic_gain = 1.0f;
+    audio.db_calibration = 0.0f;
+
+    dateSettings.theme = 0;
+    dateSettings.format = "DD/MM";
+    dateSettings.date_font = 0;
+    dateSettings.date_size = 1;
+    dateSettings.date_offset_x = 0;
+    dateSettings.date_offset_y = 0;
+    dateSettings.background_sprite = "";
+    dateSettings.date_color_1 = "#ffffff";
+    dateSettings.date_color_2 = "#ffffff";
+    dateSettings.date_font_path = "";
 
     weather.api_key = "";
     weather.city = "";
-    weather.lang = "";
+    weather.lang = "en";
     weather.weather_offset_x = 0;
     weather.weather_offset_y = 0;
 
@@ -69,18 +87,6 @@ void ConfigLoader::setDefaults() {
     standby.turn_off_at = "23:00";
     standby.wake_up_at = "07:00";
     standby.night_brightness = 10;
-    standby.matrix_power = true;
-
-    dateSettings.theme = 0;
-    dateSettings.background_sprite = "";
-    dateSettings.format = "DD/MM";
-    dateSettings.date_font = 0;
-    dateSettings.date_size = 1;
-    dateSettings.date_offset_x = 0;
-    dateSettings.date_offset_y = 0;
-    dateSettings.date_color_1 = "#ffffff";
-    dateSettings.date_color_2 = "#ffffff";
-    dateSettings.date_font_path = "";
 
     fonts.custom_font_path = "";
 
@@ -94,6 +100,26 @@ void ConfigLoader::setDefaults() {
     stock.symbols = "AAPL,NVDA,TSLA,MSFT";
     stock.duration_sec = 5;
     stock.cache_ttl_min = 1;
+}
+
+String ConfigLoader::stripComments(String line) {
+    line.trim();
+    if (line.startsWith("#") || line.startsWith(";")) {
+        return "";
+    }
+
+    int semiPos = line.indexOf(';');
+    if (semiPos != -1) {
+        line = line.substring(0, semiPos);
+    }
+
+    int spaceHashPos = line.indexOf(" #");
+    if (spaceHashPos != -1) {
+        line = line.substring(0, spaceHashPos);
+    }
+
+    line.trim();
+    return line;
 }
 
 String ConfigLoader::extractValue(String line) {
@@ -110,11 +136,7 @@ String ConfigLoader::extractValue(String line) {
 }
 
 void ConfigLoader::parseLine(String line, String& currentSection) {
-    int commentPos = line.indexOf('#');
-    if (commentPos == -1) commentPos = line.indexOf(';');
-    if (commentPos != -1) line = line.substring(0, commentPos);
-    line.trim();
-    
+    line = stripComments(line);
     if (line.length() == 0) return;
 
     if (line.startsWith("[") && line.endsWith("]")) {
@@ -139,7 +161,7 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "PANEL_TYPE") matrix.panelType = value;
         else if (key == "CHAIN") matrix.chainLength = value.toInt();
         else if (key == "BRIGHTNESS_LIMIT" || key == "BRIGHTNESS") matrix.powerLimitPercent = value.toInt();
-        else if (key == "COLOR_DEPTH") matrix.colorDepth = value.toInt();
+        else if (key == "PWM_BITS" || key == "COLOR_DEPTH") matrix.pwmBits = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
         else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
         else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
@@ -159,9 +181,9 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "DEVICE_NAME" || key == "DEVICENAME") mqtt.deviceName = value;
     }
     else if (currentSection == "TIME") {
-        if (key == "NTP_SERVER") time.ntpServer = value;
+        if (key == "NTP_SERVER" || key == "NTPSERVER") time.ntpServer = value;
         else if (key == "TIMEZONE") time.timezone = value;
-        else if (key == "FORMAT_24H") time.format24h = (value == "true" || value == "1");
+        else if (key == "FORMAT_24H" || key == "FORMAT24H") time.format24h = (value == "true" || value == "1");
         else if (key == "CLOCK_FONT") time.clock_font = value.toInt();
         else if (key == "CLOCK_SIZE") time.clock_size = value.toInt();
         else if (key == "CLOCK_THEME") time.clock_theme = value.toInt();
@@ -176,12 +198,24 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "CLOCK_DURATION_SEC") idle.clock_duration_sec = value.toInt();
         else if (key == "DATE_DURATION_SEC") idle.date_duration_sec = value.toInt();
         else if (key == "WEATHER_DURATION_SEC") idle.weather_duration_sec = value.toInt();
+        else if (key == "TEMP_DURATION_SEC") idle.temp_duration_sec = value.toInt();
+        else if (key == "DECIBEL_DURATION_SEC" || key == "DB_DURATION_SEC") idle.decibel_duration_sec = value.toInt();
         else if (key == "GIFS_COUNT") idle.gifs_count = value.toInt();
         else if (key == "FIGHTER_ENABLED") idle.fighter_enabled = (value == "true" || value == "1");
         else if (key == "FIGHTER_INTERVAL_SEC") idle.fighter_interval_sec = value.toInt();
         
         else if (key == "MODE") idle.mode = value; // Legacy
         else if (key == "GIFS_BEFORE_CLOCK") idle.gifs_before_clock = value.toInt(); // Legacy
+    }
+    else if (currentSection == "ENVIRONMENT" || currentSection == "TEMP") {
+        if (key == "UNIT" || key == "TEMP_UNIT") env.unit = value;
+        else if (key == "TEMP_OFFSET") env.temp_offset = value.toFloat();
+    }
+    else if (currentSection == "AUDIO" || currentSection == "SOUND") {
+        if (key == "VISUALIZER_ENABLED") audio.visualizer_enabled = (value == "true" || value == "1");
+        else if (key == "VISUALIZER_MODE") audio.visualizer_mode = value;
+        else if (key == "MIC_GAIN") audio.mic_gain = value.toFloat();
+        else if (key == "DB_CALIBRATION") audio.db_calibration = value.toFloat();
     }
     else if (currentSection == "WEATHER") {
         if (key == "API_KEY") weather.api_key = value;
@@ -276,12 +310,9 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
         DeserializationError error = deserializeJson(doc, playlistFile);
         if (!error) {
             JsonArray playlistsArray = doc["playlists"].as<JsonArray>();
-            std::vector<String> paths;
-            for (JsonVariant v : playlistsArray) {
-                paths.push_back(v.as<String>());
+            if (playlistsArray.size() > 0) {
+                // Playlists are handled by GifEngine dynamically
             }
-            extern GifEngine gifEngine;
-            gifEngine.setDefaultPlaylists(paths);
         }
         playlistFile.close();
     }
@@ -289,158 +320,127 @@ bool ConfigLoader::parseFromSD(const char* filepath) {
     return true;
 }
 
-bool ConfigLoader::saveToSD(const char* filepath) {
-    // The SD card on this project shares timing-sensitive SPI access with a lot of other
-    // activity (HUB75 DMA output, GIF/font reads, ...). Transient "Wait Failed"/"Select Failed"
-    // glitches from the SD driver are common and usually resolve themselves a few milliseconds
-    // later - so a single failed SD.open()/write here shouldn't silently discard the user's
-    // settings. Retry a few times before giving up.
-    const int MAX_ATTEMPTS = 3;
-    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        if (writeConfigFile(filepath)) {
-            return true;
-        }
-        LOGW("ConfigLoader", "saveToSD: attempt %d/%d failed, retrying...", attempt, MAX_ATTEMPTS);
-        delay(50);
-    }
-    LOGE("ConfigLoader", "saveToSD: all attempts failed - settings were NOT persisted to SD!");
-    return false;
-}
-
-String ConfigLoader::serializeToString() {
+String ConfigLoader::serializeToString() const {
     String out = "";
-    out += "# ==========================================\n";
-    out += "# ArcadeMatrix - Configuration File\n";
-    out += "# ==========================================\n\n";
 
-    out += "[wifi]\n";
-    out += "ssid=" + wifi.ssid + "\n";
-    out += "password=" + wifi.password + "\n";
-    out += "hostname=" + wifi.hostname + "\n\n";
+    out += "[WIFI]\n";
+    out += "SSID=" + wifi.ssid + "\n";
+    out += "PASSWORD=" + wifi.password + "\n";
+    out += "HOSTNAME=" + wifi.hostname + "\n\n";
 
-    out += "[time]\n";
-    out += "ntp_server=" + time.ntpServer + "\n";
-    out += "timezone=" + time.timezone + "\n";
-    out += "format_24h=" + String(time.format24h ? "1" : "0") + "\n";
-    out += "clock_font=" + String(time.clock_font) + "\n";
-    out += "clock_size=" + String(time.clock_size) + "\n";
-    out += "clock_offset_x=" + String(time.clock_offset_x) + "\n";
-    out += "clock_offset_y=" + String(time.clock_offset_y) + "\n";
-    out += "clock_theme=" + String(time.clock_theme) + "\n";
-    out += "clock_color_1=" + time.clock_color_1 + "\n";
-    out += "clock_color_2=" + time.clock_color_2 + "\n";
-    out += "clock_font_path=" + time.clock_font_path + "\n\n";
+    out += "[MATRIX]\n";
+    out += "WIDTH=" + String(matrix.width) + "\n";
+    out += "HEIGHT=" + String(matrix.height) + "\n";
+    out += "PANEL_TYPE=" + matrix.panelType + "\n";
+    out += "CHAIN=" + String(matrix.chainLength) + "\n";
+    out += "BRIGHTNESS_LIMIT=" + String(matrix.powerLimitPercent) + "\n";
+    out += "PWM_BITS=" + String(matrix.pwmBits) + "\n";
+    out += "FORCE_SINGLE_BUFFER=" + String(matrix.forceSingleBuffer ? "true" : "false") + "\n";
+    out += "RGB_SEQUENCE=" + matrix.rgbSequence + "\n";
+    out += "LIMIT_REFRESH_RATE_HZ=" + String(matrix.limitRefreshRateHz) + "\n";
+    out += "DRIVER_CHIP=" + matrix.driverChip + "\n\n";
 
-    out += "[matrix]\n";
-    out += "width=" + String(matrix.width) + "\n";
-    out += "height=" + String(matrix.height) + "\n";
-    out += "panel_type=" + matrix.panelType + "\n";
-    out += "chain=" + String(matrix.chainLength) + "\n";
-    out += "brightness_limit=" + String(matrix.powerLimitPercent) + "\n";
-    out += "color_depth=" + String(matrix.colorDepth) + "\n";
-    out += "force_single_buffer=" + String(matrix.forceSingleBuffer ? "1" : "0") + "\n";
-    out += "rgb_sequence=" + matrix.rgbSequence + "\n";
-    out += "limit_refresh_rate_hz=" + String(matrix.limitRefreshRateHz) + "\n";
-    out += "driver_chip=" + matrix.driverChip + "\n";
-    out += "clk_phase=" + String(matrix.clkPhase ? "1" : "0") + "\n";
-    out += "latch_blanking=" + String(matrix.latchBlanking) + "\n";
-    out += "row_address_mode=" + String(matrix.rowAddressMode) + "\n\n";
+    out += "[MQTT]\n";
+    out += "ENABLED=" + String(mqtt.enabled ? "true" : "false") + "\n";
+    out += "BROKER=" + mqtt.broker + "\n";
+    out += "PORT=" + String(mqtt.port) + "\n";
+    out += "USER=" + mqtt.user + "\n";
+    out += "PASS=" + mqtt.pass + "\n";
+    out += "DEVICE_NAME=" + mqtt.deviceName + "\n";
+    out += "TOPIC_BATOCERA=" + mqtt.topic_batocera + "\n";
+    out += "TOPIC_RECALBOX=" + mqtt.topic_recalbox + "\n\n";
 
-    out += "[mqtt]\n";
-    out += "enabled=" + String(mqtt.enabled ? "1" : "0") + "\n";
-    out += "broker=" + mqtt.broker + "\n";
-    out += "port=" + String(mqtt.port) + "\n";
-    out += "user=" + mqtt.user + "\n";
-    out += "pass=" + mqtt.pass + "\n";
-    out += "topic_batocera=" + mqtt.topic_batocera + "\n";
-    out += "topic_recalbox=" + mqtt.topic_recalbox + "\n";
-    out += "device_name=" + mqtt.deviceName + "\n\n";
+    out += "[TIME]\n";
+    out += "NTP_SERVER=" + time.ntpServer + "\n";
+    out += "TIMEZONE=" + time.timezone + "\n";
+    out += "FORMAT_24H=" + String(time.format24h ? "true" : "false") + "\n";
+    out += "CLOCK_FONT=" + String(time.clock_font) + "\n";
+    out += "CLOCK_SIZE=" + String(time.clock_size) + "\n";
+    out += "CLOCK_THEME=" + String(time.clock_theme) + "\n";
+    out += "CLOCK_OFFSET_X=" + String(time.clock_offset_x) + "\n";
+    out += "CLOCK_OFFSET_Y=" + String(time.clock_offset_y) + "\n";
+    out += "CLOCK_COLOR_1=" + time.clock_color_1 + "\n";
+    out += "CLOCK_COLOR_2=" + time.clock_color_2 + "\n";
+    out += "CLOCK_FONT_PATH=" + time.clock_font_path + "\n\n";
 
-    out += "[idle]\n";
-    out += "rotation=" + idle.rotation + "\n";
-    out += "clock_duration_sec=" + String(idle.clock_duration_sec) + "\n";
-    out += "date_duration_sec=" + String(idle.date_duration_sec) + "\n";
-    out += "weather_duration_sec=" + String(idle.weather_duration_sec) + "\n";
-    out += "gifs_count=" + String(idle.gifs_count) + "\n";
-    out += "fighter_enabled=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
-    out += "fighter_interval_sec=" + String(idle.fighter_interval_sec) + "\n";
-    out += "mode=" + idle.mode + "\n";
-    out += "gifs_before_clock=" + String(idle.gifs_before_clock) + "\n\n";
+    out += "[IDLE]\n";
+    out += "ROTATION=" + idle.rotation + "\n";
+    out += "CLOCK_DURATION_SEC=" + String(idle.clock_duration_sec) + "\n";
+    out += "DATE_DURATION_SEC=" + String(idle.date_duration_sec) + "\n";
+    out += "WEATHER_DURATION_SEC=" + String(idle.weather_duration_sec) + "\n";
+    out += "TEMP_DURATION_SEC=" + String(idle.temp_duration_sec) + "\n";
+    out += "DECIBEL_DURATION_SEC=" + String(idle.decibel_duration_sec) + "\n";
+    out += "GIFS_COUNT=" + String(idle.gifs_count) + "\n";
+    out += "FIGHTER_ENABLED=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
+    out += "FIGHTER_INTERVAL_SEC=" + String(idle.fighter_interval_sec) + "\n\n";
 
-    out += "[weather]\n";
-    out += "api_key=" + weather.api_key + "\n";
-    out += "city=" + weather.city + "\n";
-    out += "lang=" + weather.lang + "\n";
-    out += "weather_offset_x=" + String(weather.weather_offset_x) + "\n";
-    out += "weather_offset_y=" + String(weather.weather_offset_y) + "\n\n";
+    out += "[ENVIRONMENT]\n";
+    out += "UNIT=" + env.unit + "\n";
+    out += "TEMP_OFFSET=" + String(env.temp_offset, 2) + "\n\n";
 
-    out += "[standby]\n";
-    out += "night_mode_enabled=" + String(standby.night_mode_enabled ? "1" : "0") + "\n";
-    out += "turn_off_at=" + standby.turn_off_at + "\n";
-    out += "wake_up_at=" + standby.wake_up_at + "\n";
-    out += "night_brightness=" + String(standby.night_brightness) + "\n\n";
+    out += "[AUDIO]\n";
+    out += "VISUALIZER_ENABLED=" + String(audio.visualizer_enabled ? "true" : "false") + "\n";
+    out += "VISUALIZER_MODE=" + audio.visualizer_mode + "\n";
+    out += "MIC_GAIN=" + String(audio.mic_gain, 2) + "\n";
+    out += "DB_CALIBRATION=" + String(audio.db_calibration, 2) + "\n\n";
 
-    out += "[date]\n";
-    out += "theme=" + String(dateSettings.theme) + "\n";
-    out += "background_sprite=" + dateSettings.background_sprite + "\n";
-    out += "format=" + dateSettings.format + "\n";
-    out += "date_font=" + String(dateSettings.date_font) + "\n";
-    out += "date_size=" + String(dateSettings.date_size) + "\n";
-    out += "date_offset_x=" + String(dateSettings.date_offset_x) + "\n";
-    out += "date_offset_y=" + String(dateSettings.date_offset_y) + "\n";
-    out += "date_color_1=" + dateSettings.date_color_1 + "\n";
-    out += "date_color_2=" + dateSettings.date_color_2 + "\n";
-    out += "date_font_path=" + dateSettings.date_font_path + "\n\n";
+    out += "[DATE]\n";
+    out += "THEME=" + String(dateSettings.theme) + "\n";
+    out += "BACKGROUND_SPRITE=" + dateSettings.background_sprite + "\n";
+    out += "FORMAT=" + dateSettings.format + "\n";
+    out += "DATE_FONT=" + String(dateSettings.date_font) + "\n";
+    out += "DATE_SIZE=" + String(dateSettings.date_size) + "\n";
+    out += "DATE_OFFSET_X=" + String(dateSettings.date_offset_x) + "\n";
+    out += "DATE_OFFSET_Y=" + String(dateSettings.date_offset_y) + "\n";
+    out += "DATE_COLOR_1=" + dateSettings.date_color_1 + "\n";
+    out += "DATE_COLOR_2=" + dateSettings.date_color_2 + "\n";
+    out += "DATE_FONT_PATH=" + dateSettings.date_font_path + "\n\n";
 
-    out += "[fonts]\n";
-    out += "custom_font_path=" + fonts.custom_font_path + "\n\n";
+    out += "[WEATHER]\n";
+    out += "API_KEY=" + weather.api_key + "\n";
+    out += "CITY=" + weather.city + "\n";
+    out += "LANG=" + weather.lang + "\n";
+    out += "WEATHER_OFFSET_X=" + String(weather.weather_offset_x) + "\n";
+    out += "WEATHER_OFFSET_Y=" + String(weather.weather_offset_y) + "\n\n";
 
-    out += "[crypto]\n";
-    out += "enabled=" + String(crypto.enabled ? "1" : "0") + "\n";
-    out += "symbols=" + crypto.symbols + "\n";
-    out += "duration_sec=" + String(crypto.duration_sec) + "\n";
-    out += "cache_ttl_min=" + String(crypto.cache_ttl_min) + "\n";
-    out += "currency=" + crypto.currency + "\n\n";
+    out += "[STANDBY]\n";
+    out += "NIGHT_MODE_ENABLED=" + String(standby.night_mode_enabled ? "true" : "false") + "\n";
+    out += "TURN_OFF_AT=" + standby.turn_off_at + "\n";
+    out += "WAKE_UP_AT=" + standby.wake_up_at + "\n";
+    out += "NIGHT_BRIGHTNESS=" + String(standby.night_brightness) + "\n\n";
 
-    out += "[stock]\n";
-    out += "enabled=" + String(stock.enabled ? "1" : "0") + "\n";
-    out += "symbols=" + stock.symbols + "\n";
-    out += "duration_sec=" + String(stock.duration_sec) + "\n";
-    out += "cache_ttl_min=" + String(stock.cache_ttl_min) + "\n\n";
+    out += "[FONTS]\n";
+    out += "CUSTOM_FONT_PATH=" + fonts.custom_font_path + "\n\n";
+
+    out += "[CRYPTO]\n";
+    out += "ENABLED=" + String(crypto.enabled ? "true" : "false") + "\n";
+    out += "SYMBOLS=" + crypto.symbols + "\n";
+    out += "DURATION_SEC=" + String(crypto.duration_sec) + "\n";
+    out += "CACHE_TTL_MIN=" + String(crypto.cache_ttl_min) + "\n";
+    out += "CURRENCY=" + crypto.currency + "\n\n";
+
+    out += "[STOCK]\n";
+    out += "ENABLED=" + String(stock.enabled ? "true" : "false") + "\n";
+    out += "SYMBOLS=" + stock.symbols + "\n";
+    out += "DURATION_SEC=" + String(stock.duration_sec) + "\n";
+    out += "CACHE_TTL_MIN=" + String(stock.cache_ttl_min) + "\n\n";
 
     return out;
 }
 
-bool ConfigLoader::writeConfigFile(const char* filepath) {
-    // Some ESP32 cores append to the file if it exists, so we must remove it first to overwrite cleanly
+bool ConfigLoader::saveToSD(const char* filepath) {
     if (sd.exists(filepath)) {
         sd.remove(filepath);
     }
-    
+
     FsFile file = sd.open(filepath, FILE_OPEN_WRITE);
     if (!file) {
-        LOGE("ConfigLoader", "Failed to open config file for writing");
+        LOGE("ConfigLoader", "Failed to open %s for writing", filepath);
         return false;
     }
-    
-    String content = serializeToString();
-    file.print(content);
+
+    String data = serializeToString();
+    file.print(data);
     file.close();
-
-    // Sanity check: an SD glitch mid-write can leave a truncated/empty file even though close()
-    // didn't report an error. A full conf.ini is always several hundred bytes, so treat anything
-    // implausibly small as a failed write (triggers a retry in saveToSD()).
-    FsFile check = sd.open(filepath, FILE_OPEN_READ);
-    if (!check) {
-        LOGE("ConfigLoader", "conf.ini could not be reopened after writing - treating as failed write.");
-        return false;
-    }
-    size_t writtenSize = check.size();
-    check.close();
-    if (writtenSize < 100) {
-        LOGE("ConfigLoader", "conf.ini looks truncated after writing (%u bytes) - treating as failed write.", (unsigned)writtenSize);
-        return false;
-    }
-
     return true;
 }

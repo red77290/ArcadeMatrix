@@ -152,7 +152,7 @@ private:
     void freeAnim(FgtAnimation& anim);
     
     void setPlayerState(FighterPlayer& p, FighterState newState);
-    void drawPlayer(FighterPlayer& p);
+    void drawPlayer(FighterPlayer& p, int offsetY = 0);
     
     uint32_t fightStartTime;        ///< Timestamp when the fight began
     uint32_t fightEndTime = 0;      ///< Timestamp when the fight concludes
