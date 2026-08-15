@@ -35,18 +35,18 @@
     #define SHTC3_I2C_ADDR 0x70
     #define ES7210_I2C_ADDR 0x40
 
-    // Bus I2S pour Audio / Microphone
+    // Bus I2S pour Audio / Microphone (Cablage reel Waveshare ESP32-S3 RGB Matrix)
+    #ifndef I2S_MCLK_PIN
+    #define I2S_MCLK_PIN 12
+    #endif
     #ifndef I2S_SCLK_PIN
-    #define I2S_SCLK_PIN 13
+    #define I2S_SCLK_PIN 43
     #endif
     #ifndef I2S_LRCK_PIN
-    #define I2S_LRCK_PIN 12
+    #define I2S_LRCK_PIN 38
     #endif
     #ifndef I2S_ASDOUT_PIN
-    #define I2S_ASDOUT_PIN 11
-    #endif
-    #ifndef I2S_MCLK_PIN
-    #define I2S_MCLK_PIN 14
+    #define I2S_ASDOUT_PIN 39
     #endif
 
 #else

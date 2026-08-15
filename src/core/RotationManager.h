@@ -36,6 +36,8 @@ public:
     void parseRotationString(const String& rotStr);
     const std::vector<RotationModule>& getSequence() const { return sequence; }
     RotationModule getCurrentModule() const { return sequence.empty() ? MODULE_CLOCK : sequence[currentIndex]; }
+    void setSuspended(bool suspended);
+    bool isSuspended() const { return suspended; }
 
     // Helper: count valid non-empty comma-separated symbols
     static size_t countSymbols(const String& symbols);
@@ -56,6 +58,7 @@ private:
     size_t currentIndex;
     uint32_t moduleStartTime;
     uint8_t switchDepth;
+    bool suspended = false;
 
     void switchToModule(int index);
     void updateBackgroundSprites();
