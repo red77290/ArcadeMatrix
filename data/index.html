@@ -1949,6 +1949,20 @@ async function initSettings() {
         badgeTemp.textContent = '⚠️ Temp/Humidity Sensor NOT DETECTED';
         badgeTemp.className = 'badge';
         badgeTemp.style.background = '#64748b';
+        if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').disabled = true;
+        if (document.getElementById('cfg-temp-offset')) document.getElementById('cfg-temp-offset').disabled = true;
+        if (document.getElementById('cfg-dur-temp')) document.getElementById('cfg-dur-temp').disabled = true;
+        const cbTemp = document.getElementById('rot-temp');
+        if (cbTemp) {
+          cbTemp.disabled = true;
+          cbTemp.checked = false;
+          const lblTemp = document.getElementById('lbl-rot-temp');
+          if (lblTemp) {
+            lblTemp.style.opacity = '0.5';
+            lblTemp.style.cursor = 'not-allowed';
+            lblTemp.title = "Sensor not detected";
+          }
+        }
       }
     }
     const badgeAudio = document.getElementById('badge-audio-status');
@@ -1961,6 +1975,21 @@ async function initSettings() {
         badgeAudio.className = 'badge';
         badgeAudio.style.background = '#64748b';
         if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').disabled = true;
+        if (document.getElementById('cfg-visualizer-mode')) document.getElementById('cfg-visualizer-mode').disabled = true;
+        if (document.getElementById('cfg-mic-gain')) document.getElementById('cfg-mic-gain').disabled = true;
+        if (document.getElementById('cfg-db-calibration')) document.getElementById('cfg-db-calibration').disabled = true;
+        if (document.getElementById('cfg-dur-decibel')) document.getElementById('cfg-dur-decibel').disabled = true;
+        const cbDecibel = document.getElementById('rot-decibel');
+        if (cbDecibel) {
+          cbDecibel.disabled = true;
+          cbDecibel.checked = false;
+          const lblDecibel = document.getElementById('lbl-rot-decibel');
+          if (lblDecibel) {
+            lblDecibel.style.opacity = '0.5';
+            lblDecibel.style.cursor = 'not-allowed';
+            lblDecibel.title = "Microphone not detected";
+          }
+        }
       }
     }
     document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
