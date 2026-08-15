@@ -1802,8 +1802,9 @@ function initNetworkSettings() {
       const mqtt_user = document.getElementById('hw-mqtt-user').value;
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
-        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
-        window.showToast('MQTT Settings Saved!', 'success');
+        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, reboot: true });
+        window.showToast('MQTT Settings Saved! Rebooting...', 'success');
+        setTimeout(() => window.location.reload(), 3000);
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
       }
