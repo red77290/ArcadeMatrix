@@ -1802,7 +1802,7 @@ function initNetworkSettings() {
       const mqtt_user = document.getElementById('hw-mqtt-user').value;
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
-        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, reboot: true });
+        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
         window.showToast('MQTT Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
@@ -2012,6 +2012,7 @@ async function initSettings() {
             weather_lang: document.getElementById('cfg-weather-lang').value,
             weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
             weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
+            temp_offset: parseFloat(document.getElementById('cfg-temp-offset')?.value) || 0.0,
 
             crypto_symbols: document.getElementById('cfg-crypto-symbols') ? document.getElementById('cfg-crypto-symbols').value : 'BTC,ETH,SOL,DOGE',
             crypto_duration_sec: parseInt(document.getElementById('cfg-dur-crypto')?.value) || 5,
@@ -2027,6 +2028,11 @@ async function initSettings() {
             gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
             fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
             fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
+
+            visualizer_enabled: document.getElementById('cfg-visualizer-enabled')?.value === 'true',
+            visualizer_mode: document.getElementById('cfg-visualizer-mode')?.value || 'spectrum',
+            mic_gain: parseFloat(document.getElementById('cfg-mic-gain')?.value) || 1.0,
+            db_calibration: parseFloat(document.getElementById('cfg-db-calibration')?.value) || 0.0,
 
             night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
             turn_off_at: document.getElementById('cfg-night-off').value,
