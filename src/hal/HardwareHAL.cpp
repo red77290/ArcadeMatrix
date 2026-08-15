@@ -176,24 +176,27 @@ EnvironmentData HardwareHAL::readEnvironment(float tempOffset) {
         return cachedEnvData;
     }
 
-    // Cache reading for 2 seconds to prevent excessive I2C traffic
-    if (lastTempReadTime > 0 && (millis() - lastTempReadTime < 2000)) {
-        cachedEnvData.temperatureC += tempOffset;
-        cachedEnvData.temperatureF = (cachedEnvData.temperatureC * 9.0f / 5.0f) + 32.0f;
-        return cachedEnvData;
+    // Rate-limit physical I2C reads to once every 2 seconds to avoid self-heating
+    if (lastTempReadTime == 0 || (millis() - lastTempReadTime >= 2000)) {
+        float t = 0.0f, h = 0.0f;
+        if (readSHTC3Raw(t, h)) {
+            cachedEnvData.available = true;
+            cachedEnvData.temperatureC = t; // Store raw temperature
+            cachedEnvData.humidity = h;
+            lastTempReadTime = millis();
+        } else {
+            cachedEnvData.available = false;
+        }
     }
 
-    float t = 0.0f, h = 0.0f;
-    if (readSHTC3Raw(t, h)) {
-        cachedEnvData.available = true;
-        cachedEnvData.temperatureC = t + tempOffset;
-        cachedEnvData.temperatureF = (cachedEnvData.temperatureC * 9.0f / 5.0f) + 32.0f;
-        cachedEnvData.humidity = h;
-        lastTempReadTime = millis();
-    } else {
-        cachedEnvData.available = false;
+    // Apply offset on a copy to prevent cumulative drifting in cache
+    EnvironmentData result = cachedEnvData;
+    if (result.available) {
+        result.temperatureC += tempOffset;
+        result.temperatureF = (result.temperatureC * 9.0f / 5.0f) + 32.0f;
     }
-    return cachedEnvData;
+    return result;
+
 }
 
 bool HardwareHAL::probeES7210() {
@@ -364,8 +367,11 @@ void HardwareHAL::startAudioSampling() {
         i2s_zero_dma_buffer(I2S_PORT);
         i2s_start(I2S_PORT);
         audioActive = true;
+#if defined(I2S_MCLK_PIN)
         LOGI("HardwareHAL", "I2S DMA Audio STARTED (Full-Duplex TX+RX, APLL, MCLK on GPIO %d).", I2S_MCLK_PIN);
-
+#else
+        LOGI("HardwareHAL", "I2S DMA Audio STARTED (Full-Duplex TX+RX, APLL).");
+#endif
         // Wait for MCLK to stabilize
         delay(50);
 
