@@ -44,16 +44,28 @@ void RetroFrontendListener::begin() {
     }
 }
 
+void RetroFrontendListener::stop() {
+    isGamePlaying = false;
+    waitingDisplayed = false;
+    if (gif) gif->stop();
+    if (message) message->stop();
+    LOGI("RetroFrontend", "MQTT Listener stopped.");
+}
+
 bool RetroFrontendListener::loop() {
-    if (!mqttConfig.enabled) return true;
+    if (!mqttConfig.enabled) {
+        if (waitingDisplayed) {
+            waitingDisplayed = false;
+            if (message) message->stop();
+        }
+        return true;
+    }
     
     if (internalBroker) {
         internalBroker->loop();
     } else {
         if (!mqttClient.connected()) {
             long now = millis();
-            // Increase reconnect delay to 30 seconds (30000ms) to avoid lagging the main matrix
-            // loop every 5 seconds if the MQTT broker is offline or unreachable.
             if (now - lastReconnectAttempt > 30000) {
                 lastReconnectAttempt = now;
                 reconnect();
@@ -67,6 +79,11 @@ bool RetroFrontendListener::loop() {
         hasPendingEvent = false;
         uint32_t reqId = currentRequestId;
         handleGameEvent(pendingPayload, reqId);
+    } else if (!isGamePlaying && !waitingDisplayed && message && millis() > 12000) {
+        waitingDisplayed = true;
+        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
+        message->displayMessage(cfg);
+        LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }
     
     return true;
@@ -113,9 +130,11 @@ void RetroFrontendListener::callback(char* topic, byte* payload, unsigned int le
 // member `MessageEngine* message` (see header), and shadowing it with a String parameter here would
 // be a foot-gun for anyone adding code that needs the MessageEngine pointer inside this function.
 void RetroFrontendListener::handleMessage(String topic, String msg) {
-    LOGI("RetroFrontend", "Frontend Event: [%s] %s", topic.c_str(), msg.c_str());
+    LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
     
-    if (topic == mqttConfig.topic_recalbox || topic == mqttConfig.topic_batocera) {
+    if (topic == mqttConfig.topic_recalbox || topic == mqttConfig.topic_batocera ||
+        topic.startsWith("recalbox/system/playing") || topic.startsWith("batocera/system/playing")) {
+        LOGI("RetroFrontend", "Matched Recalbox/Batocera playing topic, queueing game event.");
         pendingPayload = msg;
         hasPendingEvent = true;
         currentRequestId++;
@@ -124,14 +143,14 @@ void RetroFrontendListener::handleMessage(String topic, String msg) {
     
     if (topic == "/Recalbox/EmulationStation/Event") {
         if (msg == "stop" || msg == "stopgame") {
-            LOGI("RetroFrontend", "Received native EmulationStation stop event, stopping current art.");
+            LOGI("RetroFrontend", "Received native EmulationStation stop event, returning to idle rotation.");
             if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
                 gif->stop();
                 xSemaphoreGive(sdMutex);
             }
             hasPendingEvent = false;
         } else if (msg == "rungame") {
-            // generic placeholder
+            LOGI("RetroFrontend", "Received native EmulationStation rungame event.");
             if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
                 gif->playGif("/gifs/recalbox_generic.raw");
                 xSemaphoreGive(sdMutex);
@@ -154,14 +173,21 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
     const char* systemRaw = doc["system"] | "";
 
     if (strcmp(status, "stopped") == 0 || strlen(gameRaw) == 0) {
-        LOGI("RetroFrontend", "Received stopped/empty event, stopping current art.");
+        LOGI("RetroFrontend", "Received stopped/empty event, returning to WAITING FOR MARQUEE.");
+        isGamePlaying = false;
+        waitingDisplayed = false;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            gif->stop();
+            if (gif) gif->stop();
+            if (message) message->stop();
             xSemaphoreGive(sdMutex);
         }
         hasPendingEvent = false;
         return;
     }
+
+    isGamePlaying = true;
+    waitingDisplayed = false;
+    if (message) message->stop();
 
     String game = String(gameRaw);
     String folder = mapSystemToPixelcadeFolder(String(systemRaw));

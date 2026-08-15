@@ -50,8 +50,8 @@ void MessageEngine::stop() {
 bool MessageEngine::loop() {
     if (!active) return true;
 
-    // Check timeout priority
-    if (millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
+    // Check timeout priority (0 means infinite)
+    if (currentMsg.timeoutSeconds > 0 && millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
         stop();
         return true;
     }

@@ -36,9 +36,18 @@ uint8_t HardwareHAL::calcSensirionCRC8(const uint8_t* data, uint8_t len) {
 void HardwareHAL::begin() {
     LOGI("HardwareHAL", "Initializing Hardware Abstraction Layer...");
 
-    // 1. Initialize I2C Bus
+    // 1. Initialize I2C Bus & Scan Devices
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000); // 100kHz standard I2C speed
+
+    String i2cLog = "I2C Bus Scan: ";
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            i2cLog += "0x" + String(addr, HEX) + " ";
+        }
+    }
+    LOGI("HardwareHAL", "%s", i2cLog.c_str());
 
     // 2. Probe Temperature & Humidity Sensor (SHTC3)
     tempSensorDetected = probeSHTC3();
@@ -189,40 +198,115 @@ EnvironmentData HardwareHAL::readEnvironment(float tempOffset) {
 
 bool HardwareHAL::probeES7210() {
 #if defined(ES7210_I2C_ADDR)
-    // 1. Soft Reset
     Wire.beginTransmission(ES7210_I2C_ADDR);
-    Wire.write(0x01);
-    Wire.write(0x41);
-    Wire.endTransmission();
-    delay(5);
+    return (Wire.endTransmission() == 0);
+#else
+    return false;
+#endif
+}
 
+bool HardwareHAL::configureES7210() {
+#if defined(ES7210_I2C_ADDR)
+    // 0. If ES8311 DAC is present at I2C address 0x18, power up its I2S clock interface to release shared bus
+    Wire.beginTransmission(0x18);
+    if (Wire.endTransmission() == 0) {
+        LOGI("HardwareHAL", "ES8311 DAC detected on I2C address 0x18; powering up shared clock bus...");
+        Wire.beginTransmission(0x18);
+        Wire.write(0x00);
+        Wire.write(0x80); // Reset ES8311
+        Wire.endTransmission();
+        delay(5);
+        Wire.beginTransmission(0x18);
+        Wire.write(0x00);
+        Wire.write(0x00); // Exit Reset & Power Up ES8311 shared clocks
+        Wire.endTransmission();
+        delay(5);
+    }
+
+    // 1. Soft Reset ES7210
     Wire.beginTransmission(ES7210_I2C_ADDR);
-    Wire.write(0x01);
     Wire.write(0x00);
+    Wire.write(0xFF);
     Wire.endTransmission();
-    delay(5);
+    delay(10);
 
-    // 2. Register configuration for ES7210 2-channel ADC (Power Up & Gain +30dB)
+    Wire.beginTransmission(ES7210_I2C_ADDR);
+    Wire.write(0x00);
+    Wire.write(0x32);
+    Wire.endTransmission();
+    delay(10);
+
+    // 2. Official esp_codec_dev ES7210 Register sequence for 16kHz, 16-bit, I2S Master/Slave
     uint8_t initCmds[][2] = {
-        {0x02, 0xC0}, // Power up ANALOG & ADC
-        {0x06, 0x04}, // MCLK/SCLK ratio
-        {0x07, 0x00},
-        {0x08, 0x00}, // I2S format 16-bit
-        {0x09, 0x02}, // I2S mode
-        {0x41, 0x70}, // PGA gain +30dB for MIC1/MIC2
-        {0x42, 0x70}, // PGA gain +30dB
-        {0x43, 0x1E}, // Digital Volume
-        {0x44, 0x1E},
-        {0x00, 0x01}  // Start ADC conversion
+        // Initialization time
+        {0x09, 0x30}, // TIME_CONTROL0
+        {0x0A, 0x30}, // TIME_CONTROL1
+        
+        // HPF Configuration
+        {0x23, 0x2A}, // ADC12_HPF1
+        {0x22, 0x0A}, // ADC12_HPF2
+        {0x21, 0x2A}, // ADC34_HPF1
+        {0x20, 0x0A}, // ADC34_HPF2
+        
+        // I2S format (16-bit, standard, TDM disabled)
+        {0x11, 0x62}, // 0x60 (16-bit) | 0x02 (Standard I2S)
+        {0x12, 0x00}, // TDM disabled
+        
+        // Analog power and VMID voltage
+        {0x40, 0xC3},
+        
+        // MIC bias 2.87V
+        {0x41, 0x70},
+        {0x42, 0x70},
+        
+        // MIC gain 30dB (0x0A | 0x10 = 0x1A)
+        {0x43, 0x1A},
+        {0x44, 0x1A},
+        {0x45, 0x1A},
+        {0x46, 0x1A},
+        
+        // Power on MIC1-4
+        {0x47, 0x08},
+        {0x48, 0x08},
+        {0x49, 0x08},
+        {0x4A, 0x08},
+        
+        // Set ADC sample rate (16kHz, mclk=16000*256=4096000)
+        // From es7210 coeff div table: osr=0x20, adc_div=1, doubler=1, dll=1, lrck_h=1, lrck_l=0
+        {0x07, 0x20}, // OSR
+        {0x02, 0xC1}, // MAINCLK: adc_div(1) | doubler(1<<6) | dll(1<<7) = 0xC1
+        {0x04, 0x01}, // LRCK_DIVH
+        {0x05, 0x00}, // LRCK_DIVL
+        
+        // Power down DLL
+        {0x06, 0x04},
+        
+        // Power on MIC1-4 bias & ADC1-4 & PGA1-4 Power
+        {0x4B, 0x0F},
+        {0x4C, 0x0F},
+        
+        // Volume 0dB (191 = 0xBF)
+        {0x1B, 0xBF},
+        {0x1C, 0xBF},
+        {0x1D, 0xBF},
+        {0x1E, 0xBF},
+        
+        // Enable device
+        {0x00, 0x71},
+        {0x00, 0x41}
     };
 
     bool success = true;
     for (size_t i = 0; i < sizeof(initCmds)/sizeof(initCmds[0]); i++) {
+        uint8_t reg = initCmds[i][0];
+        uint8_t val = initCmds[i][1];
+
         Wire.beginTransmission(ES7210_I2C_ADDR);
-        Wire.write(initCmds[i][0]);
-        Wire.write(initCmds[i][1]);
+        Wire.write(reg);
+        Wire.write(val);
         if (Wire.endTransmission() != 0) {
             success = false;
+            LOGE("HardwareHAL", "ES7210 Reg 0x%02X write FAIL!", reg);
         }
     }
     return success;
@@ -234,51 +318,74 @@ bool HardwareHAL::probeES7210() {
 void HardwareHAL::startAudioSampling() {
     if (audioActive || !audioDetected) return;
 
+    // 0. Enable Power Amplifier circuit on GPIO 11 (shared audio power rail on Waveshare board)
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    pinMode(11, OUTPUT);
+    digitalWrite(11, HIGH);
+    delay(10);
+    LOGI("HardwareHAL", "Audio PA enabled on GPIO 11.");
+#endif
+
+    // 1. Full-duplex I2S config (TX+RX) - matches official Waveshare BSP
+    //    The ES7210 (ADC) and ES8311 (DAC) share the same I2S bus.
+    //    Both channels must be active for proper clock generation.
     i2s_config_t i2s_config = {
-        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-        .sample_rate = SAMPLE_RATE,
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX),
+        .sample_rate = 16000,  // Match BSP default: 16kHz
         .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = 4,
         .dma_buf_len = BUFFER_SIZE,
-        .use_apll = true,
-        .tx_desc_auto_clear = false,
-        .fixed_mclk = 0
+        .use_apll = true,       // APLL for precise MCLK generation
+        .tx_desc_auto_clear = true,
+        .fixed_mclk = 16000 * 256  // 4.096 MHz MCLK
     };
 
     i2s_pin_config_t pin_config = {
 #if defined(I2S_MCLK_PIN)
-        .mck_io_num = I2S_MCLK_PIN,
+        .mck_io_num = I2S_MCLK_PIN,     // GPIO 12
 #else
         .mck_io_num = I2S_PIN_NO_CHANGE,
 #endif
-        .bck_io_num = I2S_SCLK_PIN,
-        .ws_io_num = I2S_LRCK_PIN,
-        .data_out_num = I2S_PIN_NO_CHANGE,
-        .data_in_num = I2S_ASDOUT_PIN
+        .bck_io_num = I2S_SCLK_PIN,     // GPIO 43
+        .ws_io_num = I2S_LRCK_PIN,      // GPIO 38
+        .data_out_num = 21,              // GPIO 21 - ES8311 DAC data (BSP_I2S_DOUT)
+        .data_in_num = I2S_ASDOUT_PIN   // GPIO 39 - ES7210 ADC data (BSP_I2S_DSIN)
     };
 
-    if (i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL) == ESP_OK) {
-        i2s_set_pin(I2S_PORT, &pin_config);
+    esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+    if (err == ESP_OK) {
+        err = i2s_set_pin(I2S_PORT, &pin_config);
+        if (err != ESP_OK) {
+            LOGE("HardwareHAL", "i2s_set_pin failed: %d", err);
+        }
+        i2s_zero_dma_buffer(I2S_PORT);
         i2s_start(I2S_PORT);
         audioActive = true;
-        LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED (MCLK Output Active).");
+        LOGI("HardwareHAL", "I2S DMA Audio STARTED (Full-Duplex TX+RX, APLL, MCLK on GPIO %d).", I2S_MCLK_PIN);
 
-        // Wait 10ms for MCLK clock signal to stabilize on ES7210 hardware pins
-        delay(10);
+        // Wait for MCLK to stabilize
+        delay(50);
 
         // Configure & Power up ES7210 ADC registers NOW while MCLK is active!
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-        if (probeES7210()) {
+        if (configureES7210()) {
             LOGI("HardwareHAL", "ES7210 Microphone ADC configured and powered up successfully.");
         } else {
             LOGW("HardwareHAL", "ES7210 I2C config failed, running generic I2S audio mode.");
         }
 #endif
+        // Flush initial stale DMA data
+        int16_t dummyBuf[BUFFER_SIZE];
+        size_t dummyRead = 0;
+        for (int i = 0; i < 8; i++) {
+            i2s_read(I2S_PORT, (void*)dummyBuf, sizeof(dummyBuf), &dummyRead, pdMS_TO_TICKS(20));
+        }
+        LOGI("HardwareHAL", "I2S DMA buffer flushed (%d dummy reads).", 8);
     } else {
-        LOGE("HardwareHAL", "Failed to install I2S driver!");
+        LOGE("HardwareHAL", "Failed to install I2S driver! err=%d", err);
     }
 }
 
@@ -298,40 +405,67 @@ float HardwareHAL::getDecibels(float dbCalibration) {
 
     int16_t sampleBuf[BUFFER_SIZE];
     size_t bytesRead = 0;
-    esp_err_t err = i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead, pdMS_TO_TICKS(50));
+    i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead, pdMS_TO_TICKS(50));
 
-    if (err != ESP_OK || bytesRead == 0) {
-        return 30.0f + dbCalibration; // Silence / fallback minimum
+    if (bytesRead == 0) {
+        return 30.0f + dbCalibration; // Silence / fallback minimum when no bytes read
     }
 
     size_t samplesCount = bytesRead / sizeof(int16_t);
     if (samplesCount == 0) return 30.0f + dbCalibration;
-
+    double sum = 0.0;
     double sumSquares = 0.0;
     int16_t maxPeak = 0;
 
+    // First pass: find DC offset (mean)
     for (size_t i = 0; i < samplesCount; i++) {
-        int16_t sVal = sampleBuf[i];
-        int16_t absVal = (sVal < 0) ? -sVal : sVal;
+        sum += sampleBuf[i];
+    }
+    float dcOffset = sum / samplesCount;
+
+    // Second pass: remove DC offset, compute RMS and maxPeak
+    for (size_t i = 0; i < samplesCount; i++) {
+        float sample = ((float)sampleBuf[i] - dcOffset) * micGain;
+        float absVal = fabsf(sample);
+        
         if (absVal > maxPeak) {
-            maxPeak = absVal;
+            maxPeak = (int16_t)absVal;
         }
-        float sample = (float)sVal * micGain;
-        sumSquares += ((double)sample * (double)sample);
+        sumSquares += (sample * sample);
+    }
+
+    static int warmupFrames = 0;
+    if (warmupFrames < 4) {
+        warmupFrames++;
+        return 30.0f + dbCalibration;
     }
 
     float rms = sqrtf((float)(sumSquares / (double)samplesCount));
 
-    // Combine 60% RMS + 40% Peak for instant hand-clap responsiveness
-    float peakRatio = (float)maxPeak / 32768.0f;
-    float rmsRatio = rms / 32768.0f;
-    float combinedRatio = (rmsRatio * 0.6f) + (peakRatio * 0.4f);
+    // True decibel conversion relative to 16-bit Full Scale (32768)
+    // 20 * log10(RMS / 32768) gives a range from -90 dB (silence) to 0 dB (clipping)
+    // We shift this so that clipping is around 120 dB SPL.
+    float db = 30.0f; // default silence
+    if (rms > 1.0f) {
+        // Offset of 120dB for Full Scale
+        db = 20.0f * log10f(rms / 32768.0f) + 120.0f;
+    }
+    
+    // Apply user calibration
+    db += dbCalibration;
 
-    // Convert combined amplitude ratio to calibrated dB SPL range
-    float db = 20.0f * log10f(1500.0f * combinedRatio + 1.0f) + 30.0f + dbCalibration;
-
+    // Floor the output to 30dB (absolute silence in a quiet room)
     if (db < 30.0f) db = 30.0f;
     if (db > 110.0f) db = 110.0f;
+
+    static unsigned long lastAudioLog = 0;
+    if (millis() - lastAudioLog > 1000) {
+        lastAudioLog = millis();
+        LOGI("HardwareHAL", "I2S Audio Debug: bytesRead=%d, maxPeak=%d, rms=%.1f, calcDb=%.1f dB | PCM: [%d, %d, %d, %d, %d, %d, %d, %d]",
+             (int)bytesRead, (int)maxPeak, rms, db,
+             sampleBuf[0], sampleBuf[1], sampleBuf[2], sampleBuf[3],
+             sampleBuf[4], sampleBuf[5], sampleBuf[6], sampleBuf[7]);
+    }
 
     return db;
 }
@@ -353,6 +487,13 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
         return false;
     }
 
+    // First pass: find DC offset
+    double sum = 0.0;
+    for (size_t i = 0; i < samplesCount; i++) {
+        sum += sampleBuf[i];
+    }
+    float dcOffset = sum / samplesCount;
+
     // Partition samples into frequency bands using energy distribution
     size_t samplesPerBand = samplesCount / numBands;
     if (samplesPerBand < 1) samplesPerBand = 1;
@@ -364,13 +505,13 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
         if (end > samplesCount) end = samplesCount;
 
         for (size_t i = start; i < end; i++) {
-            float val = fabsf((float)sampleBuf[i]) * micGain;
+            float val = fabsf((float)sampleBuf[i] - dcOffset) * micGain;
             bandEnergy += val;
         }
 
         float avgEnergy = (end > start) ? (float)(bandEnergy / (end - start)) : 0.0f;
-        // Normalized amplitude (0.0 to 1.0)
-        float norm = avgEnergy / 4000.0f;
+        // Dynamic amplitude normalization (0.0 to 1.0)
+        float norm = avgEnergy / 1500.0f;
         if (norm > 1.0f) norm = 1.0f;
         bands[b] = norm;
     }
