@@ -4,66 +4,261 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ArcadeMatrix Web Installer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
   <style>
+    :root {
+      --bg-color: #05050a;
+      --text-main: #ffffff;
+      --text-muted: #9ba1a6;
+      --accent-cyan: #00f0ff;
+      --accent-magenta: #ff0055;
+      --glass-bg: rgba(20, 20, 25, 0.4);
+      --glass-border: rgba(255, 255, 255, 0.08);
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      max-width: 720px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(0, 240, 255, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 85% 30%, rgba(255, 0, 85, 0.08) 0%, transparent 50%);
+      background-attachment: fixed;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 90%;
       margin: 2rem auto;
-      padding: 0 1rem;
-      line-height: 1.5;
-      color: #222;
+      padding: 2.5rem;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 20px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      text-align: center;
     }
-    h1 { font-size: 1.6rem; }
-    .board {
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin: 1rem 0;
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-top: 0;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #fff 0%, #a0a0a0 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
     }
-    .board h2 { margin-top: 0; font-size: 1.1rem; }
-    .board p { color: #555; font-size: 0.95rem; }
-    code { background: #f4f4f4; padding: 0.1rem 0.35rem; border-radius: 4px; }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin-bottom: 2.5rem;
+      line-height: 1.6;
+    }
+
+    .subtitle a {
+      color: var(--accent-cyan);
+      text-decoration: none;
+      font-weight: 500;
+      transition: text-shadow 0.3s ease;
+    }
+
+    .subtitle a:hover {
+      text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+    }
+
     .warn {
-      background: #fff8e1;
-      border: 1px solid #ffe082;
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
-      font-size: 0.9rem;
+      background: rgba(255, 170, 0, 0.1);
+      border: 1px solid rgba(255, 170, 0, 0.3);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      font-size: 0.95rem;
+      color: #ffb74d;
+      margin-bottom: 2.5rem;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
-    footer { margin-top: 2rem; font-size: 0.85rem; color: #777; }
-    a { color: #0969da; }
+
+    .warn-icon {
+      font-size: 1.5rem;
+    }
+
+    .boards-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .boards-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .board {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      text-align: center;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .board::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: var(--glass-border);
+      transition: background 0.4s ease;
+    }
+
+    .board:nth-child(1):hover::before { background: var(--accent-cyan); }
+    .board:nth-child(1):hover {
+      transform: translateY(-8px);
+      border-color: rgba(0, 240, 255, 0.3);
+      box-shadow: 0 15px 30px rgba(0, 240, 255, 0.1);
+    }
+
+    .board:nth-child(2):hover::before { background: var(--accent-magenta); }
+    .board:nth-child(2):hover {
+      transform: translateY(-8px);
+      border-color: rgba(255, 0, 85, 0.3);
+      box-shadow: 0 15px 30px rgba(255, 0, 85, 0.1);
+    }
+
+    .board-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.8;
+    }
+
+    .board h2 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .board p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      margin: 0 0 1.5rem 0;
+      flex-grow: 1;
+    }
+
+    /* Style the shadow DOM of esp-web-install-button */
+    esp-web-install-button::part(button) {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 0.75rem 1.5rem;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      width: 100%;
+    }
+
+    .board:nth-child(1) esp-web-install-button::part(button):hover {
+      background: var(--accent-cyan);
+      border-color: var(--accent-cyan);
+      color: #000;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
+    }
+
+    .board:nth-child(2) esp-web-install-button::part(button):hover {
+      background: var(--accent-magenta);
+      border-color: var(--accent-magenta);
+      color: #fff;
+      box-shadow: 0 0 15px rgba(255, 0, 85, 0.5);
+    }
+
+    footer {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding-bottom: 2rem;
+    }
+
+    footer code {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      color: #ccc;
+    }
+
+    footer a {
+      color: var(--text-muted);
+      text-decoration: underline;
+    }
+    
+    footer a:hover {
+      color: #fff;
+    }
   </style>
 </head>
 <body>
-  <h1>ArcadeMatrix Web Installer</h1>
-  <p>
-    Flash ArcadeMatrix directly from Chrome or Edge over USB - no PlatformIO, no command line.
-    Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>
-    (uses the WebSerial API, so it only works in Chromium-based browsers, on desktop).
-  </p>
+  
+  <div class="container">
+    <h1>ArcadeMatrix Web Installer</h1>
+    <div class="subtitle">
+      Flash ArcadeMatrix directly from Chrome or Edge over USB.<br>
+      Powered by <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>.
+    </div>
 
-  <div class="warn">
-    ⚠️ Pick the board that matches your hardware. Flashing the wrong image can boot-loop the
-    board (it won't damage it, but you'll need to re-flash with the correct one). See
-    <a href="../docs/HARDWARE.md">docs/HARDWARE.md</a> if you're not sure which chip you have.
-  </div>
+    <div class="warn">
+      <div class="warn-icon">⚠️</div>
+      <div>
+        Pick the board that matches your hardware. Flashing the wrong image can boot-loop the board. See
+        <a href="../docs/HARDWARE.md" style="color: inherit; text-decoration: underline;">docs/HARDWARE.md</a> if you're not sure which chip you have.
+      </div>
+    </div>
 
-  <div class="board">
-    <h2>Standard ESP32 (WROOM/DevKit) - up to 128x32 panels</h2>
-    <p>No PSRAM required. This is the common/cheap ESP32 dev board.</p>
-    <esp-web-install-button manifest="manifest-esp32dev.json"></esp-web-install-button>
-  </div>
+    <div class="boards-grid">
+      <div class="board">
+        <div class="board-icon">🟦</div>
+        <h2>Standard ESP32</h2>
+        <p>No PSRAM required. For WROOM/DevKit modules.<br>Supports up to 128x32 panels.</p>
+        <esp-web-install-button manifest="manifest-esp32dev.json"></esp-web-install-button>
+      </div>
 
-  <div class="board">
-    <h2>ESP32-S3 (with PSRAM) - up to 256x64 panels</h2>
-    <p>Requires a PSRAM-equipped S3 board (e.g. ESP32-S3-DevKitC-1 N8R8/N16R8).</p>
-    <esp-web-install-button manifest="manifest-esp32s3_waveshare.json"></esp-web-install-button>
+      <div class="board">
+        <div class="board-icon">🟪</div>
+        <h2>ESP32-S3 (PSRAM)</h2>
+        <p>Requires a PSRAM-equipped S3 board (e.g. N8R8).<br>Supports up to 256x64 panels.</p>
+        <esp-web-install-button manifest="manifest-esp32s3_waveshare.json"></esp-web-install-button>
+      </div>
+    </div>
   </div>
 
   <footer>
-    Binaries are rebuilt automatically from the latest <code>main</code> branch by CI.
+    Binaries are rebuilt automatically from the latest <code>main</code> branch by CI.<br>
     See <a href="README.md">README.md</a> in this folder for how this page is generated and hosted.
   </footer>
+
 </body>
 </html>
