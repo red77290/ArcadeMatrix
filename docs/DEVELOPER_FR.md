@@ -266,3 +266,62 @@ Une fois cela fait, un simple `pio run -e mon_nouvel_esp` compilera le code enti
 - **Réseau Synchrone dans les Providers** : Bien que le serveur HTTP `AsyncWebServer` soit asynchrone, les rafraîchissements réseau des providers (`CryptoEngine`, `StockEngine`, `WeatherEngine`) s'exécutent de manière synchrone avec mise en cache locale. En cas de perte de connexion, le dernier état en cache est conservé sans bloquer la boucle d'affichage principale.
 - **Carte SD requise pour GIF et MUGEN** : Les animations GIF et les sprites MUGEN nécessitent impérativement une carte SD installée et formatée en FAT32 ou exFAT.
 
+---
+
+## 6. Tutoriel : Ajouter un nouveau module de rotation (ex: Pager/News)
+
+Si vous souhaitez ajouter un nouveau module d'affichage (ex: "Pager" pour afficher des actualités) à la boucle de rotation, suivez ces étapes depuis l'UI jusqu'au backend.
+
+### Étape 1 : L'interface Web
+Les boutons de rotation sont définis dans `api/www/index.html`. Ajoutez votre nouveau module sous forme de case à cocher :
+```html
+<label class="toggle-checkbox">
+  <input type="checkbox" value="pager">
+  <span class="toggle-label">Pager</span>
+</label>
+```
+Le JS intégré (`app.js`) analyse automatiquement toutes les cases cochées et les envoie sous forme de chaîne de caractères (ex: `rotation: "clock,gifs,pager"`) au point d'accès `/api/settings`.
+
+### Étape 2 : La configuration (`conf.ini`)
+Dans `src/core/ConfigLoader.cpp`, la chaîne est lue et sauvegardée sur la carte SD :
+```cpp
+// Dans ConfigLoader::parseConfig() sous "[IDLE]"
+if (key == "ROTATION") idle.rotation = value;
+
+// Et pour la sauvegarder dans ConfigLoader::saveConfig()
+out += "ROTATION=" + idle.rotation + "\n";
+```
+*Note : Comme elle est stockée en tant que chaîne, `idle.rotation` stockera nativement `"clock,gifs,pager"` sans nécessiter de modification du parseur.*
+
+### Étape 3 : Le moteur d'affichage (Engine)
+Créez un nouveau moteur (ex: `src/engines/PagerEngine.h`) implémentant les méthodes de base :
+```cpp
+#pragma once
+#include "core/Matrix.h"
+
+class PagerEngine {
+public:
+    void init() {
+        // Configurer le client HTTP pour récupérer les actus
+    }
+    
+    void draw() {
+        matrix->clearScreen();
+        // Dessiner l'UI avec matrix->setCursor() et matrix->print()
+    }
+    
+    void stop() {
+        // Libérer la mémoire
+    }
+};
+```
+
+### Étape 4 : La boucle de rotation
+Dans `src/core/RotationManager.cpp` (ou `main.cpp`), la chaîne de rotation est découpée. Quand c'est au tour du pager de jouer :
+```cpp
+if (currentModule == "pager") {
+    pagerEngine->init();
+    // Dans la boucle main loop()
+    pagerEngine->draw();
+}
+```

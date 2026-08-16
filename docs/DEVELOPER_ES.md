@@ -216,3 +216,62 @@ Adafruit a las fuentes compiladas, no una limitación nueva.
 - **Consultas de Red Sincrónicas en los Providers**: Aunque `AsyncWebServer` procesa las peticiones HTTP de forma asíncrona, las actualizaciones de cotizaciones de los proveedores (`CryptoEngine`, `StockEngine`, `WeatherEngine`) realizan peticiones de red de forma sincrónica con caché local en memoria. En caso de fallo de red, se conserva el último valor en caché sin bloquear el bucle principal de pantalla.
 - **Tarjeta SD Requerida para GIF y MUGEN**: La reproducción de GIFs animados y sprites MUGEN requiere estrictamente una tarjeta microSD formateada en FAT32 o exFAT.
 
+---
+
+## 5. Tutorial: Añadir un Nuevo Módulo de Rotación (ej. Pager/Noticias)
+
+Si deseas añadir un nuevo módulo de visualización (por ejemplo, "Pager" para noticias) al bucle de rotación, sigue estos pasos desde la UI hasta el backend.
+
+### Paso 1: La Interfaz Web
+Los selectores de rotación se definen en `api/www/index.html`. Añade tu nuevo módulo como una casilla de verificación:
+```html
+<label class="toggle-checkbox">
+  <input type="checkbox" value="pager">
+  <span class="toggle-label">Pager</span>
+</label>
+```
+El JS (`app.js`) lee automáticamente todas las casillas marcadas y las envía como una cadena (ej. `rotation: "clock,gifs,pager"`) al endpoint `/api/settings`.
+
+### Paso 2: La Configuración (`conf.ini`)
+En `src/core/ConfigLoader.cpp`, la cadena se lee y se guarda en la tarjeta SD:
+```cpp
+// En ConfigLoader::parseConfig() bajo "[IDLE]"
+if (key == "ROTATION") idle.rotation = value;
+
+// Y para guardarla en ConfigLoader::saveConfig()
+out += "ROTATION=" + idle.rotation + "\n";
+```
+*Nota: Al almacenarse como cadena, `idle.rotation` guardará nativamente `"clock,gifs,pager"` sin necesidad de modificar el analizador.*
+
+### Paso 3: El Motor (Engine)
+Crea un nuevo motor (ej. `src/engines/PagerEngine.h`).
+```cpp
+#pragma once
+#include "core/Matrix.h"
+
+class PagerEngine {
+public:
+    void init() {
+        // Configurar cliente HTTP para obtener noticias
+    }
+    
+    void draw() {
+        matrix->clearScreen();
+        // Dibujar UI usando matrix->setCursor() y matrix->print()
+    }
+    
+    void stop() {
+        // Liberar memoria
+    }
+};
+```
+
+### Paso 4: El Bucle de Rotación
+En `src/core/RotationManager.cpp` (o `main.cpp`), la cadena de rotación se divide. Cuando le toca reproducirse al pager:
+```cpp
+if (currentModule == "pager") {
+    pagerEngine->init();
+    // En el main loop()
+    pagerEngine->draw();
+}
+```
