@@ -215,3 +215,62 @@ bitmap data (`GFXglyph.bitmapOffset` is a `uint16_t`) — the same ceiling Adafr
 - **Synchronous Network Fetching in Providers**: While `AsyncWebServer` provides non-blocking HTTP handling, provider quote refreshes (`CryptoEngine`, `StockEngine`, `WeatherEngine`) execute network requests synchronously with local in-memory caching. In case of network failure, the last cached values are preserved without blocking the main display loop.
 - **SD Card Required for GIF and MUGEN**: Playing animated GIFs or MUGEN fighters strictly requires a FAT32 or exFAT formatted microSD card.
 
+---
+
+## 5. Tutorial: Adding a New Rotation Module (e.g., Pager/News)
+
+If you want to add a new display module (e.g., "Pager" for retro news) to the idle rotation loop, follow these steps from the UI down to the backend.
+
+### Step 1: The Web UI
+The rotation toggles are defined in `api/www/index.html`. Add your new module as a checkbox:
+```html
+<label class="toggle-checkbox">
+  <input type="checkbox" value="pager">
+  <span class="toggle-label">Pager</span>
+</label>
+```
+The bundled JS (`app.js`) automatically parses all checked checkboxes inside `.rotation-toggles` and sends them as a comma-separated string to `/api/settings` (e.g., `rotation: "clock,gifs,pager"`).
+
+### Step 2: The Configuration (`conf.ini`)
+In `src/core/ConfigLoader.cpp`, the string is parsed and saved to the SD card:
+```cpp
+// In ConfigLoader::parseConfig() under "[IDLE]"
+if (key == "ROTATION") idle.rotation = value;
+
+// And to save it in ConfigLoader::saveConfig()
+out += "ROTATION=" + idle.rotation + "\n";
+```
+*Note: Since it's stored as a string, `idle.rotation` will natively store `"clock,gifs,pager"` without needing extra parser modifications.*
+
+### Step 3: The Engine
+Create a new engine (e.g., `src/engines/PagerEngine.h`). It must implement the base drawing methods.
+```cpp
+#pragma once
+#include "core/Matrix.h"
+
+class PagerEngine {
+public:
+    void init() {
+        // Setup HTTP client to fetch news here
+    }
+    
+    void draw() {
+        matrix->clearScreen();
+        // Draw the pager UI using matrix->setCursor() and matrix->print()
+    }
+    
+    void stop() {
+        // Clean up memory
+    }
+};
+```
+
+### Step 4: The Rotation Loop
+In `src/core/RotationManager.cpp` (or `main.cpp` depending on the loop architecture), the rotation string is split into an array. When it is the pager's turn to play:
+```cpp
+if (currentModule == "pager") {
+    pagerEngine->init();
+    // In the main loop()
+    pagerEngine->draw();
+}
+```

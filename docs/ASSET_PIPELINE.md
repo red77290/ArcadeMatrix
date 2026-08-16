@@ -25,7 +25,6 @@ The Python script `tools/mugen_extractor/mugen_extractor.py` converts MUGEN char
 # Example conversion for 64px panels at scale 0.5:
 python3 tools/mugen_extractor/mugen_extractor.py --src /path/to/mugen/chars --dest /Volumes/SDCARD/fighters_64 --scale 0.5
 ```
-
 ---
 
 ## 🔤 2. Custom Bitmap Fonts (`.amf`)
