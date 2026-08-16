@@ -10,7 +10,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 > ### ⚡ Installation Rapide via Navigateur Web (Web Installer)
 > Flashez votre carte ESP32 directement depuis votre navigateur (Chrome / Edge / Opera) en un clic sans aucun logiciel à installer !
 > 
-> 👉 **[🚀 Lancer ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/webinstaller/)**
+> 👉 **[🚀 Lancer ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/)**
 > 
 > | Version Firmware | Carte Matérielle Compatible | Bouton Web Installer |
 > | :--- | :--- | :--- |

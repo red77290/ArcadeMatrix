@@ -10,7 +10,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 > ### ⚡ One-Click Web Installer (Browser Flash)
 > Flash your ESP32 board directly from your web browser (Chrome / Edge / Opera) in one click with zero software to install!
 > 
-> 👉 **[🚀 Launch ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/webinstaller/)**
+> 👉 **[🚀 Launch ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/)**
 > 
 > | Firmware Version | Compatible Hardware Board | Web Installer Button |
 > | :--- | :--- | :--- |
