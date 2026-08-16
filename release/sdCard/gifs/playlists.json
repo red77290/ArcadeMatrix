@@ -1,3 +1,46 @@
 {
-
+  "XMAS": {
+    "path": "/gifs/XMAS",
+    "count": 5
+  },
+  "Computers": {
+    "path": "/gifs/Computers",
+    "count": 60
+  },
+  "test_folder": {
+    "path": "/gifs/test_folder",
+    "count": 1
+  },
+  "Pinball_Short": {
+    "path": "/gifs/Pinball_Short",
+    "count": 20
+  },
+  "Halloween": {
+    "path": "/gifs/Halloween",
+    "count": 20
+  },
+  "Arcade": {
+    "path": "/gifs/Arcade",
+    "count": 190
+  },
+  "Other": {
+    "path": "/gifs/Other",
+    "count": 45
+  },
+  "Pinball_Story": {
+    "path": "/gifs/Pinball_Story",
+    "count": 19
+  },
+  "Logo": {
+    "path": "/gifs/Logo",
+    "count": 57
+  },
+  "Consoles": {
+    "path": "/gifs/Consoles",
+    "count": 180
+  },
+  "Test_Suite": {
+    "path": "/gifs/Test_Suite",
+    "count": 1
+  }
 }
