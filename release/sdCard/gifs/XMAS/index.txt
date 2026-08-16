@@ -1,0 +1,5 @@
+XMAS_ARCADE_MetalSlug03_RattenJager.gif
+XMAS_GBA_Gremlins02_RattenJager.gif
+XMAS_LOGO_RPI2DMD_Christmas01_RattenJager.gif
+XMAS_SNES_Anthrox_ChristmasDemo02.gif
+XMAS_SNES_SMW2Hack_AXmasWalk01.gif
