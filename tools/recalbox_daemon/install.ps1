@@ -121,7 +121,12 @@ try {
 
         Write-Host "Uploading daemon..."
         Copy-ToRemote $daemonLocal "/recalbox/share/arcadematrix_daemon.py"
-        Copy-ToRemote (Join-Path $ScriptDir "arcadematrix_launcher(permanent).sh") "$TargetDir/arcadematrix_launcher(permanent).sh"
+        
+        $launcherSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_launcher(permanent).sh") -Raw
+        $launcherLocal = Join-Path $TmpDir "arcadematrix_launcher(permanent).sh"
+        [System.IO.File]::WriteAllText($launcherLocal, $launcherSrc.Replace("`r`n", "`n"))
+        Copy-ToRemote $launcherLocal "$TargetDir/arcadematrix_launcher(permanent).sh"
+        
         Invoke-RemoteCommand "chmod +x '$TargetDir/arcadematrix_launcher(permanent).sh'" | Out-Null
     } else {
         $TargetDir = "/userdata/system/scripts"
