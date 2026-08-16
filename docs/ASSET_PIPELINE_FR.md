@@ -25,7 +25,6 @@ Le script Python `tools/mugen_extractor/mugen_extractor.py` convertit les person
 # Exemple de conversion pour dalles 64px avec scaling 0.5 :
 python3 tools/mugen_extractor/mugen_extractor.py --src /chemin/mugen/chars --dest /Volumes/SDCARD/fighters_64 --scale 0.5
 ```
-
 ---
 
 ## 🔤 2. Polices Bitmap Custom (`.amf`)

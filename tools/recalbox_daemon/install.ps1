@@ -35,12 +35,24 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
 }
 
 $TargetIp = Read-Host "IP address of your Recalbox/Batocera device"
-$BrokerIp = Read-Host "IP address of your ArcadeMatrix device (ESP32 or Raspberry Pi)"
+$Action = Read-Host "Action (1: Install Daemon, 2: Check Logs) [1]"
+if ([string]::IsNullOrWhiteSpace($Action)) { $Action = "1" }
 
-if ([string]::IsNullOrWhiteSpace($TargetIp) -or [string]::IsNullOrWhiteSpace($BrokerIp)) {
-    Write-Error "Both IP addresses are required. Aborting."
+if ($Action -eq "1") {
+    $BrokerIp = Read-Host "IP address of your ArcadeMatrix device (ESP32 or Raspberry Pi)"
+    if ([string]::IsNullOrWhiteSpace($BrokerIp)) {
+        Write-Error "Broker IP address is required for installation. Aborting."
+        exit 1
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($TargetIp)) {
+    Write-Error "Target IP address is required. Aborting."
     exit 1
 }
+
+$CustomUser = Read-Host "Custom SSH Username (leave blank for 'root')"
+if ([string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser = "root" }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SshOpts = @("-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=5")
@@ -52,13 +64,13 @@ function Invoke-RemoteCommand {
     # about the exit code here; ssh's interactive password prompt still goes to the real console
     # (TTY), unaffected by this stdout redirect.
     param([string]$Command)
-    & ssh @SshOpts "root@$TargetIp" $Command | Out-Null
+    & ssh @SshOpts "${CustomUser}@${TargetIp}" $Command | Out-Null
     return $LASTEXITCODE
 }
 
 function Copy-ToRemote {
     param([string]$LocalPath, [string]$RemotePath)
-    & scp @SshOpts $LocalPath "root@${TargetIp}:$RemotePath"
+    & scp @SshOpts $LocalPath "${CustomUser}@${TargetIp}:${RemotePath}"
     if ($LASTEXITCODE -ne 0) { throw "scp failed uploading $LocalPath" }
 }
 
@@ -79,6 +91,16 @@ if ($system -eq "unknown") {
 }
 
 Write-Host "Detected: $system"
+
+if ($Action -eq "2") {
+    $LogPath = if ($system -eq "recalbox") { "/recalbox/share/userscripts/daemon.log" } else { "/userdata/system/scripts/daemon.log" }
+    Write-Host ""
+    Write-Host "=============================================="
+    Write-Host " Fetching logs from $LogPath..."
+    Write-Host "=============================================="
+    & ssh @SshOpts "${CustomUser}@${TargetIp}" "tail -n 100 $LogPath || echo 'Log file not found or empty'"
+    exit 0
+}
 
 $TmpDir = Join-Path $env:TEMP "arcadematrix_installer_$(Get-Random)"
 New-Item -ItemType Directory -Path $TmpDir | Out-Null

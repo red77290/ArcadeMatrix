@@ -25,7 +25,6 @@ El script en Python `tools/mugen_extractor/mugen_extractor.py` convierte los arc
 # Ejemplo de conversión para paneles de 64px a escala 0.5:
 python3 tools/mugen_extractor/mugen_extractor.py --src /ruta/mugen/chars --dest /Volumes/SDCARD/fighters_64 --scale 0.5
 ```
-
 ---
 
 ## 🔤 2. Fuentes Bitmap Personalizadas (`.amf`)
