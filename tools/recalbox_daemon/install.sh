@@ -26,12 +26,26 @@ echo "=============================================="
 echo
 
 read -rp "IP address of your Recalbox/Batocera device: " TARGET_IP
-read -rp "IP address of your ArcadeMatrix device (ESP32 or Raspberry Pi): " BROKER_IP
 
-if [ -z "$TARGET_IP" ] || [ -z "$BROKER_IP" ]; then
-    echo "Both IP addresses are required. Aborting." >&2
+read -rp "Action (1: Install Daemon, 2: Check Logs) [1]: " ACTION
+ACTION=${ACTION:-1}
+
+if [ "$ACTION" = "1" ]; then
+    read -rp "IP address of your ArcadeMatrix device (ESP32 or Raspberry Pi): " BROKER_IP
+    if [ -z "$BROKER_IP" ]; then
+        echo "Broker IP is required for installation. Aborting." >&2
+        exit 1
+    fi
+fi
+
+if [ -z "$TARGET_IP" ]; then
+    echo "Target IP address is required. Aborting." >&2
     exit 1
 fi
+
+read -rp "Custom SSH Username (leave blank for 'root'): " SSH_USER
+SSH_USER=${SSH_USER:-root}
+read -rp "Custom SSH Password (leave blank for defaults 'recalboxroot' or 'linux'): " CUSTOM_PASS
 
 have_sshpass=0
 if command -v sshpass >/dev/null 2>&1; then
@@ -74,14 +88,20 @@ detect_system() {
     fi
 }
 
-echo "Trying Recalbox (password: $RECALBOX_PASS)..."
-SYSTEM=$(detect_system "$RECALBOX_PASS" || true)
-PASSWORD="$RECALBOX_PASS"
+if [ -n "$CUSTOM_PASS" ]; then
+    echo "Trying Custom Credentials as $SSH_USER (password provided)..."
+    SYSTEM=$(detect_system "$CUSTOM_PASS" || true)
+    PASSWORD="$CUSTOM_PASS"
+else
+    echo "Trying Recalbox (password: $RECALBOX_PASS)..."
+    SYSTEM=$(detect_system "$RECALBOX_PASS" || true)
+    PASSWORD="$RECALBOX_PASS"
 
-if [ "$SYSTEM" != "recalbox" ] && [ "$SYSTEM" != "batocera" ]; then
-    echo "Not Recalbox, trying Batocera (password: $BATOCERA_PASS)..."
-    PASSWORD="$BATOCERA_PASS"
-    SYSTEM=$(detect_system "$BATOCERA_PASS" || true)
+    if [ "$SYSTEM" != "recalbox" ] && [ "$SYSTEM" != "batocera" ]; then
+        echo "Not Recalbox, trying Batocera (password: $BATOCERA_PASS)..."
+        PASSWORD="$BATOCERA_PASS"
+        SYSTEM=$(detect_system "$BATOCERA_PASS" || true)
+    fi
 fi
 
 if [ "$SYSTEM" != "recalbox" ] && [ "$SYSTEM" != "batocera" ]; then
@@ -95,6 +115,19 @@ echo "Detected: $SYSTEM"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+if [ "$ACTION" = "2" ]; then
+    if [ "$SYSTEM" = "recalbox" ]; then
+        LOG_PATH="/recalbox/share/userscripts/daemon.log"
+    else
+        LOG_PATH="/userdata/system/scripts/daemon.log"
+    fi
+    echo "=============================================="
+    echo " Fetching logs from $LOG_PATH..."
+    echo "=============================================="
+    ssh_run "$PASSWORD" "tail -n 100 $LOG_PATH || echo 'Log file not found or empty'"
+    exit 0
+fi
 
 if [ "$SYSTEM" = "recalbox" ]; then
     TARGET_DIR="/recalbox/share/userscripts"
