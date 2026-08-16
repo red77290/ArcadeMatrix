@@ -125,7 +125,7 @@ try {
         $launcherSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_launcher(permanent).sh") -Raw
         $launcherLocal = Join-Path $TmpDir "arcadematrix_launcher(permanent).sh"
         [System.IO.File]::WriteAllText($launcherLocal, $launcherSrc.Replace("`r`n", "`n"))
-        Copy-ToRemote $launcherLocal "$TargetDir/arcadematrix_launcher(permanent).sh"
+        Copy-ToRemote $launcherLocal "'$TargetDir/arcadematrix_launcher(permanent).sh'"
         
         Invoke-RemoteCommand "chmod +x '$TargetDir/arcadematrix_launcher(permanent).sh'" | Out-Null
     } else {
