@@ -10,7 +10,7 @@
 > ### ⚡ Instalación Rápida por Navegador Web (Web Installer)
 > ¡Flashea tu placa ESP32 directamente desde tu navegador (Chrome / Edge / Opera) en un solo clic sin necesidad de instalar ningún software!
 > 
-> 👉 **[🚀 Iniciar ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/webinstaller/)**
+> 👉 **[🚀 Iniciar ArcadeMatrix Web Installer](https://red77290.github.io/ArcadeMatrix/)**
 > 
 > | Versión de Firmware | Placa de Hardware Compatible | Botón Web Installer |
 > | :--- | :--- | :--- |
