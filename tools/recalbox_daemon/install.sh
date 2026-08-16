@@ -139,7 +139,7 @@ if [ "$SYSTEM" = "recalbox" ]; then
 
     echo "Uploading daemon..."
     scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/recalbox/share/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
-    scp_run "$PASSWORD" "$SCRIPT_DIR/arcadematrix_launcher(permanent).sh" "$TARGET_DIR/arcadematrix_launcher(permanent).sh" || { echo "SCP failed!"; exit 1; }
+    scp_run "$PASSWORD" "$SCRIPT_DIR/arcadematrix_launcher(permanent).sh" "'$TARGET_DIR/arcadematrix_launcher(permanent).sh'" || { echo "SCP failed!"; exit 1; }
     ssh_run "$PASSWORD" "chmod +x '$TARGET_DIR/arcadematrix_launcher(permanent).sh'" || true
 else
     TARGET_DIR="/userdata/system/scripts"
