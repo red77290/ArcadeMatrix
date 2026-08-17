@@ -130,18 +130,20 @@ try {
         Invoke-RemoteCommand "chmod +x '$TargetDir/arcadematrix_launcher(permanent).sh'" | Out-Null
     } else {
         $TargetDir = "/userdata/system/scripts"
-        $hookSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_mqtt_batocera.sh") -Raw
-        $hookSrc = $hookSrc.Replace("{{BROKER}}", $BrokerIp)
-        $hookLocal = Join-Path $TmpDir "arcadematrix_mqtt.sh"
-        [System.IO.File]::WriteAllText($hookLocal, $hookSrc.Replace("`r`n", "`n"))
+        $daemonSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_daemon.py") -Raw
+        $daemonSrc = $daemonSrc.Replace("{{BROKER}}", $BrokerIp)
+        $daemonLocal = Join-Path $TmpDir "arcadematrix_daemon.py"
+        [System.IO.File]::WriteAllText($daemonLocal, $daemonSrc.Replace("`r`n", "`n"))
 
         Write-Host "Cleaning up any previous install..."
-        Invoke-RemoteCommand "pkill -f arcadematrix_mqtt.sh || true" | Out-Null
+        Invoke-RemoteCommand "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
         Invoke-RemoteCommand "mkdir -p $TargetDir" | Out-Null
 
-        Write-Host "Uploading hook script..."
-        Copy-ToRemote $hookLocal "$TargetDir/arcadematrix_mqtt.sh"
-        Invoke-RemoteCommand "chmod +x $TargetDir/arcadematrix_mqtt.sh" | Out-Null
+        Write-Host "Uploading daemon..."
+        Copy-ToRemote $daemonLocal "/userdata/system/arcadematrix_daemon.py"
+
+        $cmd = 'if [ ! -f /userdata/system/custom.sh ]; then echo "#!/bin/sh" > /userdata/system/custom.sh; echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; chmod +x /userdata/system/custom.sh; else if ! grep -q "arcadematrix_daemon.py" /userdata/system/custom.sh; then echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; fi; fi'
+        Invoke-RemoteCommand $cmd | Out-Null
     }
 
     Write-Host "Rebooting $TargetIp to apply changes..."
