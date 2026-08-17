@@ -5,18 +5,18 @@
 
 /**
  * @struct EnvironmentData
- * @brief Structure contenant les données environnementales (température et humidité).
+ * @brief Structure containing environmental data (temperature and humidity).
  */
 struct EnvironmentData {
-    bool available;      ///< Vrai si le capteur physique a répondu avec succès
-    float temperatureC;  ///< Température en degrés Celsius
-    float temperatureF;  ///< Température en degrés Fahrenheit
-    float humidity;      ///< Humidité relative en pourcentage (0-100%)
+    bool available;      ///< True if physical sensor responded successfully
+    float temperatureC;  ///< Temperature in degrees Celsius
+    float temperatureF;  ///< Temperature in degrees Fahrenheit
+    float humidity;      ///< Relative humidity in percentage (0-100%)
 };
 
 /**
  * @class HardwareHAL
- * @brief Couche d'abstraction matérielle (HAL) pour les capteurs et l'audio d'ArcadeMatrix.
+ * @brief Hardware Abstraction Layer (HAL) for sensors and audio on ArcadeMatrix.
  */
 class HardwareHAL {
 public:
@@ -24,65 +24,65 @@ public:
     ~HardwareHAL();
 
     /**
-     * @brief Initialise les bus I2C et I2S, et effectue l'auto-détection du matériel.
+     * @brief Initializes I2C and I2S buses and performs hardware auto-detection.
      */
     void begin();
 
-    // --- Capteur Environnemental (Température / Humidité) ---
+    // --- Environmental Sensor (Temperature / Humidity) ---
     /**
-     * @brief Indique si un capteur environnemental valide a été détecté sur le bus I2C.
+     * @brief Indicates whether a valid environmental sensor was detected on the I2C bus.
      */
     bool isTempSensorAvailable() const { return tempSensorDetected; }
 
     /**
-     * @brief Lit les données environnementales (Celsius, Fahrenheit, Humidité).
-     * @param tempOffset Offset de calibration en °C
-     * @return EnvironmentData contenant les valeurs et le statut.
+     * @brief Reads environmental data (Celsius, Fahrenheit, Humidity).
+     * @param tempOffset Calibration offset in °C
+     * @return EnvironmentData structure containing values and status.
      */
     EnvironmentData readEnvironment(float tempOffset = 0.0f);
 
-    // --- Microphone & Entrée Audio (I2S DMA) ---
+    // --- Microphone & Audio Input (I2S DMA) ---
     /**
-     * @brief Indique si le périphérique audio / microphone est disponible et fonctionnel.
+     * @brief Indicates whether the audio / microphone peripheral is available and functional.
      */
     bool isAudioAvailable() const { return audioDetected; }
 
     /**
-     * @brief Active l'échantillonnage audio I2S DMA à la demande (Lazy Sampling).
+     * @brief Enables on-demand I2S DMA audio sampling (Lazy Sampling).
      */
     void startAudioSampling();
 
     /**
-     * @brief Désactive l'échantillonnage audio I2S DMA pour libérer le CPU/DMA.
+     * @brief Disables I2S DMA audio sampling to release CPU/DMA resources.
      */
     void stopAudioSampling();
 
     /**
-     * @brief Indique si l'échantillonnage audio I2S est en cours.
+     * @brief Indicates whether I2S audio sampling is currently active.
      */
     bool isAudioSamplingActive() const { return audioActive; }
 
     /**
-     * @brief Calcule et retourne le niveau sonore actuel en décibels (dB SPL).
-     * @param dbCalibration Offset de calibration en dB
+     * @brief Calculates and returns the current sound level in decibels (dB SPL).
+     * @param dbCalibration Calibration offset in dB
      */
     float getDecibels(float dbCalibration = 0.0f);
 
     /**
-     * @brief Remplit un tableau d'amplitudes de bandes de fréquence FFT (Visualiseur).
-     * @param bands Tableau cible de taille numBands
-     * @param numBands Nombre de bandes souhaité (ex: 16, 32, 64)
-     * @return true si les bandes ont été remplies avec succès
+     * @brief Fills an array with FFT frequency band amplitudes (Visualizer).
+     * @param bands Target array of size numBands
+     * @param numBands Desired number of bands (e.g., 16, 32, 64)
+     * @return true if bands were filled successfully
      */
     bool getAudioSpectrum(float* bands, size_t numBands);
 
     /**
-     * @brief Définit le gain du microphone.
+     * @brief Sets microphone gain.
      */
     void setMicGain(float gain) { micGain = (gain > 0.0f) ? gain : 1.0f; }
 
     /**
-     * @brief Retourne le gain actuel du microphone.
+     * @brief Returns current microphone gain.
      */
     float getMicGain() const { return micGain; }
 
@@ -103,3 +103,4 @@ private:
 };
 
 extern HardwareHAL hardwareHAL;
+

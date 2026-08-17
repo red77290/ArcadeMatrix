@@ -253,6 +253,12 @@ void DateEngine::applyThemeSettings() {
             shadowColor = matrix->color565(0, 0, 0);
             selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
             break;
+
+        case THEME_MATRIX_RAIN:
+            textColor = matrix->color565(0, 140, 0);
+            shadowColor = matrix->color565(0, 0, 0);
+            selectedFont = nullptr;
+            break;
             
         case THEME_FLIP:
             textColor = matrix->color565(255, 255, 255);

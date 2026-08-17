@@ -5,7 +5,7 @@
 
 /**
  * @class TempEngine
- * @brief Moteur d'affichage dynamique et adaptatif pour la Température & Humidité.
+ * @brief Dynamic and adaptive rendering engine for Temperature & Humidity display.
  */
 class TempEngine {
 public:
@@ -13,13 +13,13 @@ public:
     ~TempEngine();
 
     /**
-     * @brief Effectue le rendu d'une frame de Température/Humidité sur la matrice.
-     * @return true si l'affichage a pu être effectué
+     * @brief Renders a single Temperature/Humidity frame onto the matrix.
+     * @return true if the frame was drawn
      */
     bool loop();
 
     /**
-     * @brief Force l'unité de température ('C' ou 'F').
+     * @brief Forces the temperature unit ('C' or 'F').
      */
     void setUnit(const String& unitStr) {
         useFahrenheit = (unitStr.equalsIgnoreCase("F"));
@@ -33,3 +33,4 @@ private:
     void drawWaterDropIcon(int x, int y, uint16_t color);
     uint16_t getTemperatureColor(float tempC);
 };
+

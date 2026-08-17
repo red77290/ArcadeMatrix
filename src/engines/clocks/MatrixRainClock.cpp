@@ -55,7 +55,7 @@ void MatrixRainClock::drawTime() {
     matrix->setCursor(x, y - 1); matrix->print(timeStr);
     matrix->setCursor(x, y + 1); matrix->print(timeStr);
 
-    matrix->setTextColor(matrix->color565(255, 255, 255)); // Bright white text
+    matrix->setTextColor(matrix->color565(0, 140, 0)); // Dark green text (Vert foncé)
     matrix->setCursor(x, y);
     matrix->print(timeStr);
 }
@@ -72,7 +72,7 @@ void MatrixRainClock::update() {
 
         for (int c = 0; c < numColumns; c++) {
             colHead[c] = -(rand() % 6);
-            colSpeedDivider[c] = 1 + (rand() % 2);
+            colSpeedDivider[c] = 3 + (rand() % 3);
             colTick[c] = 0;
             for (int r = 0; r < rows; r++) {
                 colGlyphs[c][r] = randomGlyph();
@@ -90,14 +90,14 @@ void MatrixRainClock::update() {
         if (colTick[c] >= colSpeedDivider[c]) {
             colTick[c] = 0;
             colHead[c]++;
-            // Occasionally mutate a glyph in the trail for a bit of extra "flicker".
-            if (colHead[c] >= 0 && colHead[c] < rows && (rand() % 3) == 0) {
+            // Occasionally mutate a glyph in the trail for classic Matrix code morphing
+            if (colHead[c] >= 0 && colHead[c] < rows && (rand() % 10) == 0) {
                 colGlyphs[c][colHead[c]] = randomGlyph();
             }
             if (colHead[c] - rows > 2) {
                 // Immediately respawn near the top to maintain continuous rain
                 colHead[c] = -(rand() % 4);
-                colSpeedDivider[c] = 1 + (rand() % 2);
+                colSpeedDivider[c] = 3 + (rand() % 3);
                 for (int r = 0; r < rows; r++) {
                     colGlyphs[c][r] = randomGlyph();
                 }

@@ -4,17 +4,17 @@
 #include "../hal/HardwareHAL.h"
 
 enum NoiseStatusLevel {
-    NOISE_CALM,       ///< < 45 dB (😊 Calme)
+    NOISE_CALM,       ///< < 45 dB (😊 Calm)
     NOISE_NORMAL,     ///< 45-65 dB (🙂 Normal)
-    NOISE_MODERATE,   ///< 65-75 dB (😐 Modéré)
-    NOISE_VIGILANCE,  ///< 75-83 dB (⚠️ Vigilance)
-    NOISE_LIMIT,      ///< 83-88 dB (🙁 Limite)
-    NOISE_ALERT       ///< > 88 dB (🚨 Alerte)
+    NOISE_MODERATE,   ///< 65-75 dB (😐 Moderate)
+    NOISE_VIGILANCE,  ///< 75-83 dB (⚠️ Caution)
+    NOISE_LIMIT,      ///< 83-88 dB (🙁 High)
+    NOISE_ALERT       ///< > 88 dB (🚨 Alert)
 };
 
 /**
  * @class DecibelEngine
- * @brief Moteur du décibelmètre avec smileys Pixel Art, jauge VS Fighting et activation à la demande.
+ * @brief Decibel meter engine with Pixel Art smileys, VS Fighting health gauge, and on-demand sampling.
  */
 class DecibelEngine {
 public:
@@ -22,23 +22,23 @@ public:
     ~DecibelEngine();
 
     /**
-     * @brief Appelé lorsque le module devient actif dans la roue (Lazy Sampling).
+     * @brief Called when the engine becomes active in the rotation loop (Lazy Sampling).
      */
     void onActivate();
 
     /**
-     * @brief Appelé lorsque le module quitte l'écran.
+     * @brief Called when the engine leaves the screen.
      */
     void onDeactivate();
 
     /**
-     * @brief Indique si le module est actif.
+     * @brief Indicates whether the module is currently active.
      */
     bool isActive() const { return active; }
 
     /**
-     * @brief Effectue le rendu d'une frame du décibelmètre.
-     * @return true si l'affichage a été fait
+     * @brief Renders a single frame of the decibel meter.
+     * @return true if the frame was drawn
      */
     bool loop();
 
@@ -56,3 +56,4 @@ private:
     uint16_t getLevelColor(NoiseStatusLevel level);
     const char* getLevelText(NoiseStatusLevel level);
 };
+
