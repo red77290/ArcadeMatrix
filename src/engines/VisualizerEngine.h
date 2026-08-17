@@ -12,7 +12,7 @@ enum VisualizerMode {
 
 /**
  * @class VisualizerEngine
- * @brief Moteur du visualiseur de musique rhythmique (prioritaire sur la roue de rotation).
+ * @brief Rhythmic music visualizer engine (takes priority over the rotation loop).
  */
 class VisualizerEngine {
 public:
@@ -20,28 +20,28 @@ public:
     ~VisualizerEngine();
 
     /**
-     * @brief Démarre l'échantillonnage audio et active le visualiseur.
+     * @brief Starts audio sampling and activates the visualizer.
      */
     void start();
 
     /**
-     * @brief Arrête le visualiseur et suspend l'échantillonnage I2S.
+     * @brief Stops the visualizer and suspends I2S sampling.
      */
     void stop();
 
     /**
-     * @brief Indique si le visualiseur est actuellement actif.
+     * @brief Indicates whether the visualizer is currently active.
      */
     bool isActive() const { return active; }
 
     /**
-     * @brief Définit le mode d'affichage visuel ("spectrum", "waveform", "radial", "neon_fire").
+     * @brief Sets the visual display mode ("spectrum", "waveform", "radial", "neon_fire").
      */
     void setMode(const String& modeStr);
 
     /**
-     * @brief Effectue le rendu d'une frame du visualiseur.
-     * @return true si la frame a été dessinée
+     * @brief Renders a single frame of the visualizer.
+     * @return true if the frame was drawn
      */
     bool loop();
 
@@ -60,3 +60,4 @@ private:
 
     uint16_t getSpectrumColor(int heightIndex, int maxHeight);
 };
+
