@@ -171,9 +171,10 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
     const char* status = doc["status"] | "";
     const char* gameRaw = doc["game"] | "";
     const char* systemRaw = doc["system"] | "";
+    const char* typeRaw = doc["type"] | "";
 
-    if (strcmp(status, "stopped") == 0 || strlen(gameRaw) == 0) {
-        LOGI("RetroFrontend", "Received stopped/empty event, returning to WAITING FOR MARQUEE.");
+    if (strcmp(status, "stopped") == 0) {
+        LOGI("RetroFrontend", "Received stopped event, returning to WAITING FOR MARQUEE.");
         isGamePlaying = false;
         waitingDisplayed = false;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
@@ -182,6 +183,16 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
             xSemaphoreGive(sdMutex);
         }
         hasPendingEvent = false;
+        return;
+    }
+
+    if (strcmp(typeRaw, "system") == 0 || (strlen(gameRaw) == 0 && strlen(systemRaw) > 0)) {
+        handleSystemEvent(String(systemRaw), reqId);
+        return;
+    }
+
+    if (strlen(gameRaw) == 0) {
+        LOGI("RetroFrontend", "Received empty game event, ignored.");
         return;
     }
 
@@ -277,6 +288,178 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
             message->displayMessage(emptyCfg);
         }
     }
+}
+
+void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t reqId) {
+    isGamePlaying = true;
+    waitingDisplayed = false;
+    if (message) message->stop();
+
+    std::vector<SystemVariant> variants = getSystemNameVariants(systemId);
+
+    String foundArtPath = "";
+    bool exists = false;
+
+    bool lockAcquired = (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)));
+
+    for (const auto& v : variants) {
+        String basePath = "/pixelcade/" + v.folder + "/" + v.name;
+        if (sd.exists(basePath + ".png")) {
+            foundArtPath = basePath + ".png";
+            exists = true;
+            break;
+        }
+        if (sd.exists(basePath + ".gif")) {
+            foundArtPath = basePath + ".gif";
+            exists = true;
+            break;
+        }
+    }
+
+    if (lockAcquired) {
+        xSemaphoreGive(sdMutex);
+    }
+
+    if (reqId != currentRequestId) return;
+
+    if (exists && foundArtPath.length() > 0) {
+        LOGI("RetroFrontend", "Playing cached Pixelcade system art: %s", foundArtPath.c_str());
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            gif->playGif(foundArtPath.c_str());
+            xSemaphoreGive(sdMutex);
+        }
+        return;
+    }
+
+    LOGI("RetroFrontend", "No cached artwork for system %s, displaying text title and downloading...", systemId.c_str());
+    if (message) {
+        String clean = systemId;
+        clean.replace("-", " ");
+        clean.replace("_", " ");
+        clean.toUpperCase();
+        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 30 };
+        message->displayMessage(cfg);
+    }
+
+    String downloadedPath = "";
+    bool downloaded = false;
+    for (const auto& v : variants) {
+        if (downloadPixelcadeArt(v.folder, v.name + ".png", downloadedPath, reqId)) {
+            downloaded = true;
+            break;
+        }
+        if (reqId != currentRequestId) return;
+
+        if (downloadPixelcadeArt(v.folder, v.name + ".gif", downloadedPath, reqId)) {
+            downloaded = true;
+            break;
+        }
+        if (reqId != currentRequestId) return;
+    }
+
+    if (reqId != currentRequestId) return;
+
+    if (downloaded && downloadedPath.length() > 0) {
+        LOGI("RetroFrontend", "Playing downloaded Pixelcade system art: %s", downloadedPath.c_str());
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            gif->playGif(downloadedPath.c_str());
+            xSemaphoreGive(sdMutex);
+        }
+        if (message) {
+            MessageConfig emptyCfg = { "", 0x0000, 1, "none", 0, 0 };
+            message->displayMessage(emptyCfg);
+        }
+    }
+}
+
+std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSystemNameVariants(const String& systemId) {
+    std::vector<String> names;
+    String sysLower = systemId;
+    sysLower.toLowerCase();
+    String sysUpper = systemId;
+    sysUpper.toUpperCase();
+    String sysSpace = systemId;
+    sysSpace.replace("_", " ");
+
+    names.push_back(systemId);
+    if (sysLower != systemId) names.push_back(sysLower);
+    if (sysUpper != systemId && sysUpper != sysLower) names.push_back(sysUpper);
+    if (sysSpace != systemId && sysSpace != sysLower && sysSpace != sysUpper) names.push_back(sysSpace);
+
+    if (sysLower == "snes" || sysLower == "supernintendo") {
+        names.push_back("Super Nintendo");
+        names.push_back("Super Nintendo Entertainment System");
+        names.push_back("- Super Nintendo");
+    } else if (sysLower == "nes" || sysLower == "famicom") {
+        names.push_back("Nintendo Entertainment System");
+        names.push_back("3dnes");
+    } else if (sysLower == "megadrive" || sysLower == "genesis") {
+        names.push_back("genesis");
+        names.push_back("Genesis");
+        names.push_back("Mega Drive");
+        names.push_back("SEGA Genesis");
+        names.push_back("- Genesis");
+    } else if (sysLower == "mame" || sysLower == "arcade" || sysLower == "fbneo" || sysLower == "fba") {
+        names.push_back("arcade");
+        names.push_back("Arcade");
+        names.push_back("- Arcade");
+        names.push_back("MAME");
+        names.push_back("mame");
+    } else if (sysLower == "n64") {
+        names.push_back("Nintendo 64");
+    } else if (sysLower == "gb" || sysLower == "gameboy") {
+        names.push_back("Game Boy");
+    } else if (sysLower == "gba") {
+        names.push_back("Game Boy Advance");
+    } else if (sysLower == "gbc") {
+        names.push_back("Game Boy Color");
+    } else if (sysLower == "psx" || sysLower == "ps1") {
+        names.push_back("PlayStation");
+        names.push_back("Sony PlayStation");
+    } else if (sysLower == "dreamcast") {
+        names.push_back("Dreamcast");
+        names.push_back("SEGA Dreamcast");
+    } else if (sysLower == "neogeo") {
+        names.push_back("Neo Geo");
+        names.push_back("SNK Neo Geo");
+    } else if (sysLower == "atari2600") {
+        names.push_back("Atari_2600");
+        names.push_back("Atari 2600");
+    } else if (sysLower == "mastersystem") {
+        names.push_back("Master System");
+        names.push_back("SEGA Master System");
+    } else if (sysLower == "gamegear") {
+        names.push_back("Game Gear");
+        names.push_back("SEGA Game Gear");
+    } else if (sysLower == "pcengine" || sysLower == "tg16") {
+        names.push_back("NEC PC Engine");
+        names.push_back("PC Engine");
+    } else if (sysLower == "amiga") {
+        names.push_back("Commodore Amiga");
+        names.push_back("Amiga");
+    } else if (sysLower == "c64") {
+        names.push_back("COMMODORE_64");
+        names.push_back("Commodore 64");
+    }
+
+    std::vector<String> uniqueNames;
+    for (const auto& n : names) {
+        bool found = false;
+        for (const auto& un : uniqueNames) {
+            if (un == n) { found = true; break; }
+        }
+        if (!found) uniqueNames.push_back(n);
+    }
+
+    std::vector<SystemVariant> list;
+    const char* folders[] = { "system", "console" };
+    for (const char* f : folders) {
+        for (const auto& n : uniqueNames) {
+            list.push_back({ String(f), n });
+        }
+    }
+
+    return list;
 }
 
 String RetroFrontendListener::mapSystemToPixelcadeFolder(const String& systemId) {

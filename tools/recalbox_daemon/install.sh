@@ -143,15 +143,27 @@ if [ "$SYSTEM" = "recalbox" ]; then
     ssh_run "$PASSWORD" "chmod +x '$TARGET_DIR/arcadematrix_launcher(permanent).sh'" || true
 else
     TARGET_DIR="/userdata/system/scripts"
-    sed "s/{{BROKER}}/$BROKER_IP/g" "$SCRIPT_DIR/arcadematrix_mqtt_batocera.sh" > "$TMP_DIR/arcadematrix_mqtt.sh"
+    sed "s/{{BROKER}}/$BROKER_IP/g" "$SCRIPT_DIR/arcadematrix_daemon.py" > "$TMP_DIR/arcadematrix_daemon.py"
 
     echo "Cleaning up any previous install..."
-    ssh_run "$PASSWORD" "pkill -f arcadematrix_mqtt.sh || true" || true
+    ssh_run "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh || true" || true
     ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR" || true
 
-    echo "Uploading hook script..."
-    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh" || { echo "SCP failed!"; exit 1; }
-    ssh_run "$PASSWORD" "chmod +x $TARGET_DIR/arcadematrix_mqtt.sh" || true
+    echo "Uploading daemon..."
+    scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/userdata/system/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
+
+    echo "Configuring custom.sh for startup..."
+    ssh_run "$PASSWORD" "
+    if [ ! -f /userdata/system/custom.sh ]; then
+        echo '#!/bin/sh' > /userdata/system/custom.sh
+        echo '[ \"\$1\" = \"start\" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &' >> /userdata/system/custom.sh
+        chmod +x /userdata/system/custom.sh
+    else
+        if ! grep -q 'arcadematrix_daemon.py' /userdata/system/custom.sh; then
+            echo '[ \"\$1\" = \"start\" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &' >> /userdata/system/custom.sh
+        fi
+    fi
+    " || true
 fi
 
 echo "Rebooting $TARGET_IP to apply changes..."

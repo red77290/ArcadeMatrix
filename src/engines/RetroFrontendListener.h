@@ -24,6 +24,12 @@ public:
     bool loop();
     void stop();
 
+    struct SystemVariant {
+        String folder;
+        String name;
+    };
+    static std::vector<SystemVariant> getSystemNameVariants(const String& systemId);
+
 private:
     MqttConfig& mqttConfig;
     GifEngine* gif;
@@ -51,6 +57,9 @@ private:
     // published by tools/recalbox_daemon/arcadematrix_daemon.py) and either displays the matching
     // SD-cached Pixelcade artwork, falls back to scrolling text, or stops playback on "stopped".
     void handleGameEvent(const String& jsonPayload, uint32_t reqId);
+    void handleSystemEvent(const String& systemId, uint32_t reqId);
+
+
 
     // Maps a Recalbox/Batocera SystemId (e.g. "snes", "fbneo") to the folder name used by the
     // Pixelcade repository (e.g. "snes", "mame") - mirrors ArcadeMatrix_RPi's core/dmd_cache.py
