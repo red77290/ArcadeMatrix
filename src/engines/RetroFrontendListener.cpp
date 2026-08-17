@@ -381,9 +381,24 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     String sysSpace = systemId;
     sysSpace.replace("_", " ");
 
+    String sysTitle = systemId;
+    bool newWord = true;
+    for (size_t i = 0; i < sysTitle.length(); i++) {
+        if (sysTitle[i] == '_' || sysTitle[i] == ' ') {
+            sysTitle[i] = ' ';
+            newWord = true;
+        } else if (newWord) {
+            sysTitle[i] = toupper(sysTitle[i]);
+            newWord = false;
+        } else {
+            sysTitle[i] = tolower(sysTitle[i]);
+        }
+    }
+
     names.push_back(systemId);
     if (sysLower != systemId) names.push_back(sysLower);
     if (sysUpper != systemId && sysUpper != sysLower) names.push_back(sysUpper);
+    if (sysTitle != systemId && sysTitle != sysLower && sysTitle != sysUpper) names.push_back(sysTitle);
     if (sysSpace != systemId && sysSpace != sysLower && sysSpace != sysUpper) names.push_back(sysSpace);
 
     if (sysLower == "snes" || sysLower == "supernintendo") {
