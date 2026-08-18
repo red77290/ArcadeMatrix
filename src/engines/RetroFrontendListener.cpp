@@ -333,7 +333,7 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
 
     LOGI("RetroFrontend", "No cached artwork for system %s, displaying text title and downloading...", systemId.c_str());
     if (message) {
-        String clean = systemId;
+        String clean = cleanSystemName(systemId);
         clean.replace("-", " ");
         clean.replace("_", " ");
         clean.toUpperCase();
@@ -372,16 +372,38 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
     }
 }
 
-std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSystemNameVariants(const String& systemId) {
-    std::vector<String> names;
-    String sysLower = systemId;
+String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
+    String s = rawSystem;
+    s.trim();
+    
+    const char* prefixes[] = {
+        "Arcade manufacturer ", "arcade manufacturer ", "ARCADE MANUFACTURER ",
+        "Arcade System ", "arcade system ", "ARCADE SYSTEM ",
+        "Manufacturer ", "manufacturer ", "MANUFACTURER ",
+        "System ", "system ", "SYSTEM "
+    };
+    
+    for (const char* prefix : prefixes) {
+        if (s.startsWith(prefix)) {
+            s = s.substring(strlen(prefix));
+            s.trim();
+            break;
+        }
+    }
+    return s;
+}
+
+std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSystemNameVariants(const String& rawSystem) {
+    String clean = cleanSystemName(rawSystem);
+    std::vector<String> baseNames;
+    String sysLower = clean;
     sysLower.toLowerCase();
-    String sysUpper = systemId;
+    String sysUpper = clean;
     sysUpper.toUpperCase();
-    String sysSpace = systemId;
+    String sysSpace = clean;
     sysSpace.replace("_", " ");
 
-    String sysTitle = systemId;
+    String sysTitle = clean;
     bool newWord = true;
     for (size_t i = 0; i < sysTitle.length(); i++) {
         if (sysTitle[i] == '_' || sysTitle[i] == ' ') {
@@ -395,81 +417,101 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
         }
     }
 
-    names.push_back(systemId);
-    if (sysLower != systemId) names.push_back(sysLower);
-    if (sysUpper != systemId && sysUpper != sysLower) names.push_back(sysUpper);
-    if (sysTitle != systemId && sysTitle != sysLower && sysTitle != sysUpper) names.push_back(sysTitle);
-    if (sysSpace != systemId && sysSpace != sysLower && sysSpace != sysUpper) names.push_back(sysSpace);
+    baseNames.push_back(clean);
+    if (sysLower != clean) baseNames.push_back(sysLower);
+    if (sysUpper != clean && sysUpper != sysLower) baseNames.push_back(sysUpper);
+    if (sysTitle != clean && sysTitle != sysLower && sysTitle != sysUpper) baseNames.push_back(sysTitle);
+    if (sysSpace != clean && sysSpace != sysLower && sysSpace != sysUpper) baseNames.push_back(sysSpace);
 
     if (sysLower == "snes" || sysLower == "supernintendo") {
-        names.push_back("Super Nintendo");
-        names.push_back("Super Nintendo Entertainment System");
-        names.push_back("- Super Nintendo");
+        baseNames.push_back("Super Nintendo");
+        baseNames.push_back("Super Nintendo Entertainment System");
+        baseNames.push_back("- Super Nintendo");
     } else if (sysLower == "nes" || sysLower == "famicom") {
-        names.push_back("Nintendo Entertainment System");
-        names.push_back("3dnes");
+        baseNames.push_back("Nintendo Entertainment System");
+        baseNames.push_back("3dnes");
     } else if (sysLower == "megadrive" || sysLower == "genesis") {
-        names.push_back("genesis");
-        names.push_back("Genesis");
-        names.push_back("Mega Drive");
-        names.push_back("SEGA Genesis");
-        names.push_back("- Genesis");
+        baseNames.push_back("genesis");
+        baseNames.push_back("Genesis");
+        baseNames.push_back("Mega Drive");
+        baseNames.push_back("SEGA Genesis");
+        baseNames.push_back("- Genesis");
     } else if (sysLower == "mame" || sysLower == "arcade" || sysLower == "fbneo" || sysLower == "fba") {
-        names.push_back("arcade");
-        names.push_back("Arcade");
-        names.push_back("- Arcade");
-        names.push_back("MAME");
-        names.push_back("mame");
+        baseNames.push_back("arcade");
+        baseNames.push_back("Arcade");
+        baseNames.push_back("- Arcade");
+        baseNames.push_back("MAME");
+        baseNames.push_back("mame");
     } else if (sysLower == "n64") {
-        names.push_back("Nintendo 64");
+        baseNames.push_back("Nintendo 64");
     } else if (sysLower == "gb" || sysLower == "gameboy") {
-        names.push_back("Game Boy");
+        baseNames.push_back("Game Boy");
     } else if (sysLower == "gba") {
-        names.push_back("Game Boy Advance");
+        baseNames.push_back("Game Boy Advance");
     } else if (sysLower == "gbc") {
-        names.push_back("Game Boy Color");
+        baseNames.push_back("Game Boy Color");
     } else if (sysLower == "psx" || sysLower == "ps1") {
-        names.push_back("PlayStation");
-        names.push_back("Sony PlayStation");
+        baseNames.push_back("PlayStation");
+        baseNames.push_back("Sony PlayStation");
     } else if (sysLower == "dreamcast") {
-        names.push_back("Dreamcast");
-        names.push_back("SEGA Dreamcast");
+        baseNames.push_back("Dreamcast");
+        baseNames.push_back("SEGA Dreamcast");
     } else if (sysLower == "neogeo") {
-        names.push_back("Neo Geo");
-        names.push_back("SNK Neo Geo");
+        baseNames.push_back("Neo Geo");
+        baseNames.push_back("SNK Neo Geo");
     } else if (sysLower == "atari2600") {
-        names.push_back("Atari_2600");
-        names.push_back("Atari 2600");
+        baseNames.push_back("Atari_2600");
+        baseNames.push_back("Atari 2600");
     } else if (sysLower == "mastersystem") {
-        names.push_back("Master System");
-        names.push_back("SEGA Master System");
+        baseNames.push_back("Master System");
+        baseNames.push_back("SEGA Master System");
     } else if (sysLower == "gamegear") {
-        names.push_back("Game Gear");
-        names.push_back("SEGA Game Gear");
+        baseNames.push_back("Game Gear");
+        baseNames.push_back("SEGA Game Gear");
     } else if (sysLower == "pcengine" || sysLower == "tg16") {
-        names.push_back("NEC PC Engine");
-        names.push_back("PC Engine");
+        baseNames.push_back("NEC PC Engine");
+        baseNames.push_back("PC Engine");
     } else if (sysLower == "amiga") {
-        names.push_back("Commodore Amiga");
-        names.push_back("Amiga");
+        baseNames.push_back("Commodore Amiga");
+        baseNames.push_back("Amiga");
     } else if (sysLower == "c64") {
-        names.push_back("COMMODORE_64");
-        names.push_back("Commodore 64");
+        baseNames.push_back("COMMODORE_64");
+        baseNames.push_back("Commodore 64");
     }
 
-    std::vector<String> uniqueNames;
-    for (const auto& n : names) {
+    std::vector<String> uniqueBase;
+    for (const auto& n : baseNames) {
         bool found = false;
-        for (const auto& un : uniqueNames) {
+        for (const auto& un : uniqueBase) {
             if (un == n) { found = true; break; }
         }
-        if (!found) uniqueNames.push_back(n);
+        if (!found) uniqueBase.push_back(n);
+    }
+
+    std::vector<String> nameVariants;
+    for (const auto& b : uniqueBase) {
+        nameVariants.push_back("default-" + b);
+    }
+    for (const auto& b : uniqueBase) {
+        nameVariants.push_back("default-_" + b);
+    }
+    for (const auto& b : uniqueBase) {
+        nameVariants.push_back(b);
+    }
+
+    std::vector<String> finalNames;
+    for (const auto& n : nameVariants) {
+        bool found = false;
+        for (const auto& fn : finalNames) {
+            if (fn == n) { found = true; break; }
+        }
+        if (!found) finalNames.push_back(n);
     }
 
     std::vector<SystemVariant> list;
-    const char* folders[] = { "system", "console" };
+    const char* folders[] = { "console", "system" };
     for (const char* f : folders) {
-        for (const auto& n : uniqueNames) {
+        for (const auto& n : finalNames) {
             list.push_back({ String(f), n });
         }
     }
