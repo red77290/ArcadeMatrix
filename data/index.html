@@ -1185,15 +1185,18 @@ body {
                   <option value="BGR">BGR</option>
                 </select>
               </div>
+              <div class="form-group">
+                <label>Force Single Buffer <span class="tooltip-icon" data-tooltip="Halves DMA memory usage. Unchecking restores double buffering for smoother animations.">?</span></label>
+                <select id="hw-force-single-buffer" class="input">
+                  <option value="true">Enabled (Single Buffer)</option>
+                  <option value="false">Disabled (Double Buffering)</option>
+                </select>
+              </div>
             </div>
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
                 <label>Color Depth (Bits/canal) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
                 <input type="number" id="hw-color-depth" class="input" value="8" min="2" max="8">
-              </div>
-              <div class="form-group">
-                <label>PWM Bits <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_bits">?</span></label>
-                <input type="number" id="hw-pwm-bits" class="input" value="11" min="8" max="14">
               </div>
               <div class="form-group">
                 <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
@@ -1414,6 +1417,14 @@ const translations = {
     tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
     tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
     tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
+    badge_temp_ok: "✅ Temp/Humidity Sensor DETECTED (SHTC3)",
+    badge_temp_err: "⚠️ Temp/Humidity Sensor NOT DETECTED",
+    badge_mic_ok: "✅ Microphone / Audio Hardware DETECTED",
+    badge_mic_err: "⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)",
+    req_sensor: "(Requires Sensor)",
+    badge_psram_ok: "✅ PSRAM DETECTED",
+    badge_psram_err: "⚠️ PSRAM NOT DETECTED (Crypto & Stock disabled)",
+    req_psram: "(Requires PSRAM)"
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -1435,6 +1446,14 @@ const translations = {
     tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
     tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
     tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
+    badge_temp_ok: "✅ Capteur Temp/Humidité DÉTECTÉ (SHTC3)",
+    badge_temp_err: "⚠️ Capteur Temp/Humidité NON DÉTECTÉ",
+    badge_mic_ok: "✅ Microphone / Audio DÉTECTÉ",
+    badge_mic_err: "⚠️ Microphone NON DÉTECTÉ (Visualiseur & dB désactivés)",
+    req_sensor: "(Nécessite le capteur)",
+    badge_psram_ok: "✅ PSRAM DÉTECTÉE",
+    badge_psram_err: "⚠️ PSRAM NON DÉTECTÉE (Crypto & Bourse désactivés)",
+    req_psram: "(Nécessite la PSRAM)"
   },
   es: {
     nav_dashboard: "Panel",
@@ -1456,11 +1475,22 @@ const translations = {
     tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
     tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
     tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
+    badge_temp_ok: "✅ Sensor Temp/Humedad DETECTADO (SHTC3)",
+    badge_temp_err: "⚠️ Sensor Temp/Humedad NO DETECTADO",
+    badge_mic_ok: "✅ Micrófono / Audio DETECTADO",
+    badge_mic_err: "⚠️ Micrófono NO DETECTADO (Visualizador y dB desactivados)",
+    req_sensor: "(Requiere Sensor)",
+    badge_psram_ok: "✅ PSRAM DETECTADA",
+    badge_psram_err: "⚠️ PSRAM NO DETECTADA (Cripto y Bolsa desactivados)",
+    req_psram: "(Requiere PSRAM)"
   }
 };
 
+let currentLang = 'en';
 function setLanguage(lang) {
+  currentLang = lang;
   const dict = translations[lang] || translations.en;
+  window.i18n = (key) => dict[key] || translations.en[key] || key;
   
   // Text content translation
   document.querySelectorAll('[data-i18n]').forEach(el => {
@@ -1867,6 +1897,7 @@ async function initSettings() {
     document.getElementById('hw-cols').value = s.matrix_cols;
     document.getElementById('hw-chain').value = s.matrix_chain;
     document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
+    if (document.getElementById('hw-force-single-buffer')) document.getElementById('hw-force-single-buffer').value = s.matrix_force_single_buffer ? 'true' : 'false';
     document.getElementById('hw-color-depth').value = s.color_depth || 8;
                     document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
     
@@ -1943,10 +1974,10 @@ async function initSettings() {
     const badgeTemp = document.getElementById('badge-temp-status');
     if (badgeTemp) {
       if (s.sensor_available) {
-        badgeTemp.textContent = '✅ Temp/Humidity Sensor DETECTED (SHTC3)';
+        badgeTemp.textContent = window.i18n ? window.i18n('badge_temp_ok') : '✅ Temp/Humidity Sensor DETECTED (SHTC3)';
         badgeTemp.className = 'badge badge-accent';
       } else {
-        badgeTemp.textContent = '⚠️ Temp/Humidity Sensor NOT DETECTED';
+        badgeTemp.textContent = window.i18n ? window.i18n('badge_temp_err') : '⚠️ Temp/Humidity Sensor NOT DETECTED';
         badgeTemp.className = 'badge';
         badgeTemp.style.background = '#64748b';
         if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').disabled = true;
@@ -1960,7 +1991,10 @@ async function initSettings() {
           if (lblTemp) {
             lblTemp.style.opacity = '0.5';
             lblTemp.style.cursor = 'not-allowed';
-            lblTemp.title = "Sensor not detected";
+            lblTemp.title = window.i18n ? window.i18n('badge_temp_err') : "Sensor not detected";
+            if (!lblTemp.innerHTML.includes('<i>')) {
+              lblTemp.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_sensor') : "(Requires Sensor)") + "</i>";
+            }
           }
         }
       }
@@ -1968,10 +2002,10 @@ async function initSettings() {
     const badgeAudio = document.getElementById('badge-audio-status');
     if (badgeAudio) {
       if (s.audio_available) {
-        badgeAudio.textContent = '✅ Microphone / Audio Hardware DETECTED';
+        badgeAudio.textContent = window.i18n ? window.i18n('badge_mic_ok') : '✅ Microphone / Audio Hardware DETECTED';
         badgeAudio.className = 'badge badge-accent';
       } else {
-        badgeAudio.textContent = '⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)';
+        badgeAudio.textContent = window.i18n ? window.i18n('badge_mic_err') : '⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)';
         badgeAudio.className = 'badge';
         badgeAudio.style.background = '#64748b';
         if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').disabled = true;
@@ -1987,11 +2021,40 @@ async function initSettings() {
           if (lblDecibel) {
             lblDecibel.style.opacity = '0.5';
             lblDecibel.style.cursor = 'not-allowed';
-            lblDecibel.title = "Microphone not detected";
+            lblDecibel.title = window.i18n ? window.i18n('badge_mic_err') : "Microphone not detected";
+            if (!lblDecibel.innerHTML.includes('<i>')) {
+              lblDecibel.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_sensor') : "(Requires Sensor)") + "</i>";
+            }
           }
         }
       }
     }
+
+    if (s.psram_available === false) {
+      const inputsToDisable = [
+        'cfg-crypto-symbols', 'cfg-dur-crypto', 'cfg-cache-crypto', 'rot-crypto',
+        'cfg-stock-symbols', 'cfg-dur-stock', 'cfg-cache-stock', 'rot-stock'
+      ];
+      inputsToDisable.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          if (el.type === 'checkbox') el.checked = false;
+          el.disabled = true;
+        }
+      });
+      ['lbl-rot-crypto', 'lbl-rot-stock'].forEach(id => {
+        const lbl = document.getElementById(id);
+        if (lbl) {
+          lbl.style.opacity = '0.5';
+          lbl.style.cursor = 'not-allowed';
+          lbl.title = window.i18n ? window.i18n('badge_psram_err') : "PSRAM not detected";
+          if (!lbl.innerHTML.includes('<i>')) {
+            lbl.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_psram') : "(Requires PSRAM)") + "</i>";
+          }
+        }
+      });
+    }
+
     document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
     let sprite_on = (s.sprite_count !== undefined) ? (s.sprite_count > 0) : s.fighter_enabled;
     document.getElementById('cfg-sprite-enable').value = sprite_on ? 'true' : 'false';
@@ -2141,6 +2204,7 @@ async function initSettings() {
           matrix_cols: cols,
           matrix_chain: chain,
           matrix_rgb_sequence: rgb,
+          matrix_force_single_buffer: document.getElementById('hw-force-single-buffer') ? document.getElementById('hw-force-single-buffer').value === 'true' : false,
           color_depth: colorDepth,
           matrix_limit_refresh_rate_hz: limitRefresh,
           matrix_driver_chip: driverChip,

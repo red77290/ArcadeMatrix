@@ -15,7 +15,7 @@ void test_default_values(void) {
     TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.panelType.c_str());
     TEST_ASSERT_EQUAL_INT(1, config.matrix.chainLength);
     TEST_ASSERT_EQUAL_INT(100, config.matrix.powerLimitPercent);
-    TEST_ASSERT_EQUAL_INT(8, config.matrix.pwmBits);
+    TEST_ASSERT_EQUAL_INT(128, config.matrix.width);
     TEST_ASSERT_EQUAL_STRING("SHIFTREG", config.matrix.driverChip.c_str());
     TEST_ASSERT_FALSE(config.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING("pool.ntp.org", config.time.ntpServer.c_str());
@@ -91,7 +91,7 @@ void test_parse_valid_ini(void) {
     TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.panelType.c_str());
     TEST_ASSERT_EQUAL_INT(2, config.matrix.chainLength);
     TEST_ASSERT_EQUAL_INT(40, config.matrix.powerLimitPercent);
-    TEST_ASSERT_EQUAL_INT(16, config.matrix.pwmBits);
+    TEST_ASSERT_EQUAL_INT(256, config.matrix.width);
     TEST_ASSERT_TRUE(config.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING("FM6126A", config.matrix.driverChip.c_str());
 
@@ -164,7 +164,7 @@ void test_round_trip_in_memory(void) {
     original.matrix.panelType = "ICN2038S";
     original.matrix.chainLength = 3;
     original.matrix.powerLimitPercent = 85;
-    original.matrix.pwmBits = 11;
+    original.matrix.width = 128;
     original.matrix.forceSingleBuffer = true;
     original.matrix.rgbSequence = "BGR";
     original.matrix.limitRefreshRateHz = 120;
@@ -273,7 +273,7 @@ void test_round_trip_in_memory(void) {
     TEST_ASSERT_EQUAL_STRING(original.matrix.panelType.c_str(), reloaded.matrix.panelType.c_str());
     TEST_ASSERT_EQUAL_INT(original.matrix.chainLength, reloaded.matrix.chainLength);
     TEST_ASSERT_EQUAL_INT(original.matrix.powerLimitPercent, reloaded.matrix.powerLimitPercent);
-    TEST_ASSERT_EQUAL_INT(original.matrix.pwmBits, reloaded.matrix.pwmBits);
+    TEST_ASSERT_EQUAL_INT(original.matrix.width, reloaded.matrix.width);
     TEST_ASSERT_EQUAL(original.matrix.forceSingleBuffer, reloaded.matrix.forceSingleBuffer);
     TEST_ASSERT_EQUAL_STRING(original.matrix.rgbSequence.c_str(), reloaded.matrix.rgbSequence.c_str());
     TEST_ASSERT_EQUAL_INT(original.matrix.limitRefreshRateHz, reloaded.matrix.limitRefreshRateHz);

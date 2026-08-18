@@ -116,6 +116,23 @@ El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personali
 
 Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 
+## ⚡ Compatibilidad de Hardware y Funcionalidades
+
+| Funcionalidad | ESP32-S3 (Placa Waveshare) | ESP32 Clásico (DevKit) |
+| :--- | :---: | :---: |
+| Tamaño de matriz | Hasta 256x64 (True Matrix) | Hasta 128x32 |
+| Double Buffering | ✅ Sí (Fluido) | ✅ Sí (Fluido) |
+| Animaciones (GIFs) | ✅ Sí | ✅ Sí |
+| Motor MUGEN | ✅ Sí | ✅ Sí |
+| Interfaz Web & Wi-Fi | ✅ Sí | ✅ Sí |
+| **Criptomonedas en Tiempo Real** | ✅ Sí | ❌ No (Falta RAM para SSL) |
+| **Bolsa de Valores** | ✅ Sí | ❌ No (Falta RAM para SSL) |
+| **Medidor de Decibelios** | ✅ Sí (Micrófono Integrado) | ❌ No (Requiere micro I2S externo y código personalizado) |
+| **Temperatura Interior (SHTC3)** | ✅ Sí (Sensor Integrado) | ❌ No (Requiere SHTC3 I2C externo y código personalizado) |
+
+- **Placa ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)**: **100% Compatible con todas las características.** Altamente recomendada. Necesaria para paneles grandes **256x64 True Matrix**, módulos que consumen mucha RAM (Criptomonedas, Bolsa) y utiliza los sensores integrados (Decibelios, Temperatura) directamente de fábrica.
+- **ESP32 Clásico (WROOM-32 / `esp32dev`)**: Procesador de doble núcleo Tensilica Xtensa LX6 @ 240MHz. Soporta animaciones principales, interfaz web y MUGEN para paneles **128x32 / 64x32**. No soporta funciones pesadas en RAM como HTTPS/SSL (Cripto/Bolsa). Los sensores integrados tampoco están presentes en un DevKit estándar.
+
 ## Compilación
 Para compilar el firmware por tu cuenta, debes usar **PlatformIO**.
 - Para 128x32: un ESP32 WROOM estándar es suficiente.
