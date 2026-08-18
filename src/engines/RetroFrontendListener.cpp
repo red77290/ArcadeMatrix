@@ -79,7 +79,7 @@ bool RetroFrontendListener::loop() {
         hasPendingEvent = false;
         uint32_t reqId = currentRequestId;
         handleGameEvent(pendingPayload, reqId);
-    } else if (!isGamePlaying && !waitingDisplayed && message && millis() > 12000) {
+    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message && millis() > 12000) {
         waitingDisplayed = true;
         MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
         message->displayMessage(cfg);
@@ -173,15 +173,10 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
     const char* systemRaw = doc["system"] | "";
     const char* typeRaw = doc["type"] | "";
 
+    hasReceivedAnyEvent = true;
+
     if (strcmp(status, "stopped") == 0) {
-        LOGI("RetroFrontend", "Received stopped event, returning to WAITING FOR MARQUEE.");
-        isGamePlaying = false;
-        waitingDisplayed = false;
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            if (gif) gif->stop();
-            if (message) message->stop();
-            xSemaphoreGive(sdMutex);
-        }
+        LOGI("RetroFrontend", "Received stopped event, keeping last marquee displayed.");
         hasPendingEvent = false;
         return;
     }
@@ -255,7 +250,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
         String clean = game;
         clean.replace("-", " ");
         clean.replace("_", " ");
-        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 30 };
+        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
         message->displayMessage(cfg);
     }
     
@@ -337,7 +332,7 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
         clean.replace("-", " ");
         clean.replace("_", " ");
         clean.toUpperCase();
-        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 30 };
+        MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
         message->displayMessage(cfg);
     }
 

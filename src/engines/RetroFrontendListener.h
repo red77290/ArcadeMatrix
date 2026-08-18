@@ -44,6 +44,7 @@ private:
     uint32_t currentRequestId = 0;
     bool isGamePlaying = false;
     bool waitingDisplayed = false;
+    bool hasReceivedAnyEvent = false;
 
     void reconnect();
     static void callback(char* topic, byte* payload, unsigned int length);
