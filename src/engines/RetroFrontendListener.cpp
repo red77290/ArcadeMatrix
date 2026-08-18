@@ -370,16 +370,22 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
 String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
     String s = rawSystem;
     s.trim();
+    String sLower = s;
+    sLower.toLowerCase();
     
     const char* prefixes[] = {
-        "Arcade manufacturer ", "arcade manufacturer ", "ARCADE MANUFACTURER ",
-        "Arcade System ", "arcade system ", "ARCADE SYSTEM ",
-        "Manufacturer ", "manufacturer ", "MANUFACTURER ",
-        "System ", "system ", "SYSTEM "
+        "arcade manufacturer ",
+        "arcade system ",
+        "arcade genre ",
+        "arcade collection ",
+        "manufacturer ",
+        "system ",
+        "genre ",
+        "collection "
     };
     
     for (const char* prefix : prefixes) {
-        if (s.startsWith(prefix)) {
+        if (sLower.startsWith(prefix)) {
             s = s.substring(strlen(prefix));
             s.trim();
             break;
