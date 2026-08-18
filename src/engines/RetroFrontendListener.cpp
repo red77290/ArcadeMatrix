@@ -412,8 +412,15 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
         }
     }
 
+    String sysNospace = sysLower;
+    sysNospace.replace(" ", "");
+    String sysUnderscore = sysLower;
+    sysUnderscore.replace(" ", "_");
+
     baseNames.push_back(clean);
     if (sysLower != clean) baseNames.push_back(sysLower);
+    if (sysNospace != clean && sysNospace != sysLower) baseNames.push_back(sysNospace);
+    if (sysUnderscore != clean && sysUnderscore != sysLower && sysUnderscore != sysNospace) baseNames.push_back(sysUnderscore);
     if (sysUpper != clean && sysUpper != sysLower) baseNames.push_back(sysUpper);
     if (sysTitle != clean && sysTitle != sysLower && sysTitle != sysUpper) baseNames.push_back(sysTitle);
     if (sysSpace != clean && sysSpace != sysLower && sysSpace != sysUpper) baseNames.push_back(sysSpace);
@@ -486,18 +493,32 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     std::vector<String> nameVariants;
     String cleanLower = clean;
     cleanLower.toLowerCase();
+    String cleanNospace = cleanLower;
+    cleanNospace.replace(" ", "");
 
     nameVariants.push_back("default-" + clean);
     nameVariants.push_back("default-_" + clean);
     nameVariants.push_back("default-z" + cleanLower);
+    nameVariants.push_back("default-z" + cleanNospace);
     nameVariants.push_back("z" + cleanLower);
+    nameVariants.push_back("z" + cleanNospace);
 
     for (const auto& b : uniqueBase) {
         String bLower = b;
         bLower.toLowerCase();
+        String bNospace = bLower;
+        bNospace.replace(" ", "");
+        String bUnderscore = bLower;
+        bUnderscore.replace(" ", "_");
+
         nameVariants.push_back("default-" + b);
         nameVariants.push_back("default-_" + b);
         nameVariants.push_back("default-z" + bLower);
+        nameVariants.push_back("default-z" + bNospace);
+        nameVariants.push_back("default-arcade_" + bUnderscore + "_classics");
+        nameVariants.push_back("default-arcade" + bNospace + "classics");
+        nameVariants.push_back("default-manufacture_" + bUnderscore);
+        nameVariants.push_back("default-manufacture_" + bLower);
     }
     for (const auto& b : uniqueBase) {
         nameVariants.push_back(b);
