@@ -28,6 +28,7 @@ public:
         String folder;
         String name;
     };
+    static String cleanSystemName(const String& rawSystem);
     static std::vector<SystemVariant> getSystemNameVariants(const String& systemId);
 
 private:
