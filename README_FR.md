@@ -2,6 +2,8 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
 
+📺 **Démo Vidéo / Présentation :** https://youtu.be/2sA5wLVozRQ?si=T1gn6MYDwpq2-54c
+
 Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED HUB75 ! Ce projet vous permet d'afficher des horloges Arcade, des GIF animés, la météo, et même des **sprites de jeux de combat MUGEN** simulés directement sur une vraie matrice LED.
 
 ---
