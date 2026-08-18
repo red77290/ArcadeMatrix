@@ -489,10 +489,11 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     }
 
     std::vector<String> nameVariants;
+    nameVariants.push_back("default-" + clean);
+    nameVariants.push_back("default-_" + clean);
+
     for (const auto& b : uniqueBase) {
         nameVariants.push_back("default-" + b);
-    }
-    for (const auto& b : uniqueBase) {
         nameVariants.push_back("default-_" + b);
     }
     for (const auto& b : uniqueBase) {
