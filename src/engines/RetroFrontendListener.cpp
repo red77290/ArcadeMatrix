@@ -247,7 +247,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
 
     LOGI("RetroFrontend", "No cached artwork for %s, displaying text title and downloading...", game.c_str());
     if (message) {
-        String clean = game;
+        String clean = cleanSystemName(game);
         clean.replace("-", " ");
         clean.replace("_", " ");
         MessageConfig cfg = { clean, 0x07FF, 1, clean.length() > 8 ? "rtl" : "none", 40, 0 };
@@ -467,9 +467,13 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     } else if (sysLower == "neogeo") {
         baseNames.push_back("Neo Geo");
         baseNames.push_back("SNK Neo Geo");
-    } else if (sysLower == "atari2600") {
+    } else if (sysLower == "atari" || sysLower == "atari2600" || sysLower == "atari7800" || sysLower == "atari5200" || sysLower == "atari800" || sysLower == "atarilynx" || sysLower == "atarijaguar" || sysLower == "atarist") {
+        baseNames.push_back("atari");
+        baseNames.push_back("Atari");
         baseNames.push_back("Atari_2600");
         baseNames.push_back("Atari 2600");
+        baseNames.push_back("Atari_7800");
+        baseNames.push_back("Atari 7800");
     } else if (sysLower == "mastersystem") {
         baseNames.push_back("Master System");
         baseNames.push_back("SEGA Master System");
