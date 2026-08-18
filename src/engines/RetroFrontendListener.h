@@ -8,7 +8,7 @@
 #include "GifEngine.h"
 #include "ClockEngine.h"
 #include "MessageEngine.h"
-#include <unordered_map>
+#include <map>
 
 // Listens for game-launch/stop events from Recalbox/Batocera over MQTT and displays the
 // corresponding Pixelcade-style marquee artwork directly from the SD card (see
@@ -30,6 +30,8 @@ public:
     };
     static String cleanSystemName(const String& rawSystem);
     static std::vector<SystemVariant> getSystemNameVariants(const String& systemId);
+    static std::vector<SystemVariant> getSystemNameVariantsMapped(const std::map<String, std::vector<String>>& mappings, const String& systemId);
+    static std::map<String, std::vector<String>> loadMappingsFromSD();
 
 private:
     MqttConfig& mqttConfig;
@@ -39,6 +41,7 @@ private:
     WiFiClient espClient;
     PubSubClient mqttClient;
     PicoMQTT::Server* internalBroker = nullptr;
+    std::map<String, std::vector<String>> systemMappings;
 
     unsigned long lastReconnectAttempt;
     uint32_t currentRequestId = 0;

@@ -46,7 +46,7 @@ def clean_system_name(s):
     if not s:
         return ""
     s_clean = str(s).strip()
-    s_lower = s_clean.lower()
+    s_lower = s_clean.lower().replace("_", " ").replace("-", " ")
     prefixes = [
         "arcade manufacturer ",
         "arcade system ",
@@ -59,7 +59,10 @@ def clean_system_name(s):
     ]
     for p in prefixes:
         if s_lower.startswith(p):
-            return s_clean[len(p):].strip()
+            remainder = s_clean[len(p):]
+            if remainder.startswith("_") or remainder.startswith("-"):
+                remainder = remainder[1:]
+            return remainder.strip()
     return s_clean
 
 

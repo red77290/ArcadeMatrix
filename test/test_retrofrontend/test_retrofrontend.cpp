@@ -7,6 +7,7 @@ void tearDown(void) {}
 
 void test_clean_system_name(void) {
     TEST_ASSERT_EQUAL_STRING("Toaplan", RetroFrontendListener::cleanSystemName("Arcade manufacturer Toaplan").c_str());
+    TEST_ASSERT_EQUAL_STRING("Atari", RetroFrontendListener::cleanSystemName("Arcade Manufacturer Atari").c_str());
     TEST_ASSERT_EQUAL_STRING("NeoGeo", RetroFrontendListener::cleanSystemName("Arcade manufacturer NeoGeo").c_str());
     TEST_ASSERT_EQUAL_STRING("CPS1", RetroFrontendListener::cleanSystemName("Arcade System CPS1").c_str());
 }
@@ -39,6 +40,16 @@ void test_arcade_manufacturer_cleaning(void) {
     }
     TEST_ASSERT_TRUE(foundDefaultToaplan);
     TEST_ASSERT_TRUE(foundToaplan);
+
+    std::vector<RetroFrontendListener::SystemVariant> atariVariants = RetroFrontendListener::getSystemNameVariants("Arcade Manufacturer Atari");
+    bool foundDefaultZatari = false;
+    bool foundDirectAtari = false;
+    for (const auto& v : atariVariants) {
+        if (v.folder == "console" && v.name == "default-zatari") foundDefaultZatari = true;
+        if (v.folder == "console" && v.name == "atari") foundDirectAtari = true;
+    }
+    TEST_ASSERT_TRUE(foundDefaultZatari);
+    TEST_ASSERT_TRUE(foundDirectAtari);
 }
 
 void setup() {
