@@ -388,8 +388,11 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
 String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
     String s = rawSystem;
     s.trim();
-    String sLower = s;
-    sLower.toLowerCase();
+    
+    String sNorm = s;
+    sNorm.toLowerCase();
+    sNorm.replace("_", " ");
+    sNorm.replace("-", " ");
     
     const char* prefixes[] = {
         "arcade manufacturer ",
@@ -402,11 +405,17 @@ String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
         "collection "
     };
     
-    for (const char* prefix : prefixes) {
-        if (sLower.startsWith(prefix)) {
-            s = s.substring(strlen(prefix));
-            s.trim();
-            break;
+    for (const char* p : prefixes) {
+        if (sNorm.startsWith(p)) {
+            int len = strlen(p);
+            if (len <= s.length()) {
+                String remainder = s.substring(len);
+                if (remainder.startsWith("_") || remainder.startsWith("-")) {
+                    remainder = remainder.substring(1);
+                }
+                remainder.trim();
+                return remainder;
+            }
         }
     }
     return s;

@@ -60,11 +60,13 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     );
     
     // Use configured per-channel color depth (2 to 8, default 8)
-    int depth = config.pwmBits;
+    int depth = config.colorDepth;
     if (depth <= 0) {
         depth = 8; // Default fallback
     } else if (depth > 8) {
-        depth = depth / 3; // Convert total bits to per-channel if > 8
+        // Clamp to 8 (max supported color depth bits per channel by the library).
+        // A value of 11 (legacy PWM bits) should map to 8 bits color depth, not 3.
+        depth = 8;
     }
     if (depth < 2 || depth > 8) {
         depth = 8; // Safe fallback if invalid range

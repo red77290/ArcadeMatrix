@@ -12,7 +12,7 @@ struct MatrixConfig {
     int chainLength;        ///< Number of daisy-chained panels (default 1)
     int powerLimitPercent;  ///< Maximum brightness percentage (0-100)
     bool forceSingleBuffer; ///< Force single buffer mode to save RAM
-    int pwmBits;         ///< Color depth in bits per channel (e.g. 8 for 24-bit RGB)
+    int colorDepth;         ///< Color depth in bits per channel (e.g. 8 for 24-bit RGB)
     String rgbSequence;     ///< RGB sequence mapping (e.g. "RGB", "RBG", "BGR")
     int limitRefreshRateHz; ///< Optional refresh rate limiter in Hz (0 = unlimited)
     String driverChip;      ///< Driver chip implementation ("SHIFTREG", "FM6126A")

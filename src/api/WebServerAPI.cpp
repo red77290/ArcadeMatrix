@@ -300,11 +300,12 @@ void WebServerAPI::setupRoutes() {
 
         // Matrix
         doc["brightness_limit"] = config.matrix.powerLimitPercent;
-        doc["pwm_bits"] = config.matrix.pwmBits;
+        doc["color_depth"] = config.matrix.colorDepth;
         doc["matrix_chain"] = config.matrix.chainLength;
         doc["matrix_rows"] = config.matrix.height;
         doc["matrix_cols"] = config.matrix.width;
         doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
+        doc["matrix_force_single_buffer"] = config.matrix.forceSingleBuffer;
         doc["matrix_driver_chip"] = config.matrix.driverChip;
         doc["matrix_clk_phase"] = config.matrix.clkPhase;
         doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
@@ -341,6 +342,7 @@ void WebServerAPI::setupRoutes() {
         doc["db_calibration"] = config.audio.db_calibration;
         doc["sensor_available"] = hardwareHAL.isTempSensorAvailable();
         doc["audio_available"] = hardwareHAL.isAudioAvailable();
+        doc["psram_available"] = (ESP.getPsramSize() > 0);
 
         // Clock
         doc["clock_font"] = config.time.clock_font;
@@ -418,11 +420,12 @@ void WebServerAPI::setupRoutes() {
             extern MatrixEngine matrixEngine;
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
         }
-        if (!doc["pwm_bits"].isNull()) config.matrix.pwmBits = doc["pwm_bits"].as<int>();
+        if (!doc["color_depth"].isNull()) config.matrix.colorDepth = doc["color_depth"].as<int>();
         if (!doc["matrix_chain"].isNull()) config.matrix.chainLength = doc["matrix_chain"].as<int>();
         if (!doc["matrix_rows"].isNull()) config.matrix.height = doc["matrix_rows"].as<int>();
         if (!doc["matrix_cols"].isNull()) config.matrix.width = doc["matrix_cols"].as<int>();
         if (!doc["matrix_rgb_sequence"].isNull()) config.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
+        if (!doc["matrix_force_single_buffer"].isNull()) config.matrix.forceSingleBuffer = doc["matrix_force_single_buffer"].as<bool>();
         if (!doc["matrix_limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
         if (!doc["matrix_driver_chip"].isNull()) config.matrix.driverChip = doc["matrix_driver_chip"].as<String>();
         if (!doc["matrix_clk_phase"].isNull()) config.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();

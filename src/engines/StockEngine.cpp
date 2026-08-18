@@ -58,8 +58,15 @@ void StockEngine::onDisplayStart() {
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
-    activeSymbol = symbol;
-    activeSymbol = symbol;
+    if (ESP.getPsramSize() == 0) {
+        LOGW("StockEngine", "PSRAM required for HTTPS Stock fetches. Skipping.");
+        activeSymbol = "N/A";
+        currentPrice = 0.0f;
+        changePercent24h = 0.0f;
+        fetchSuccess = false;
+        return;
+    }
+    
     fetchSuccess = false;
     
     uint32_t now = millis();

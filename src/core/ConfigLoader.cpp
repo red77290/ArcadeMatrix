@@ -14,8 +14,15 @@ void ConfigLoader::setDefaults() {
     matrix.panelType = "FM6126A";
     matrix.chainLength = 1;
     matrix.powerLimitPercent = 100;
+#ifdef HARDWARE_PROFILE_WAVESHARE_S3
     matrix.forceSingleBuffer = false;
-    matrix.pwmBits = 8;
+#else
+    // On standard ESP32 without PSRAM, 128x32 double buffering uses too much DMA memory.
+    // The library silently drops color depth to fit it, resulting in wrong/neon colors.
+    // Defaulting to single buffer fixes this and preserves true colors.
+    matrix.forceSingleBuffer = true; 
+#endif
+    matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 0;
     matrix.driverChip = "SHIFTREG";
@@ -160,8 +167,8 @@ void ConfigLoader::parseLine(String line, String& currentSection) {
         else if (key == "HEIGHT") matrix.height = value.toInt();
         else if (key == "PANEL_TYPE") matrix.panelType = value;
         else if (key == "CHAIN") matrix.chainLength = value.toInt();
-        else if (key == "BRIGHTNESS_LIMIT" || key == "BRIGHTNESS") matrix.powerLimitPercent = value.toInt();
-        else if (key == "PWM_BITS" || key == "COLOR_DEPTH") matrix.pwmBits = value.toInt();
+        else if (key == "POWER_LIMIT_PERCENT" || key == "BRIGHTNESS_LIMIT") matrix.powerLimitPercent = value.toInt();
+        else if (key == "COLOR_DEPTH" || key == "PWM_BITS") matrix.colorDepth = value.toInt();
         else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
         else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
         else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
@@ -334,7 +341,7 @@ String ConfigLoader::serializeToString() const {
     out += "PANEL_TYPE=" + matrix.panelType + "\n";
     out += "CHAIN=" + String(matrix.chainLength) + "\n";
     out += "BRIGHTNESS_LIMIT=" + String(matrix.powerLimitPercent) + "\n";
-    out += "PWM_BITS=" + String(matrix.pwmBits) + "\n";
+    out += "COLOR_DEPTH=" + String(matrix.colorDepth) + "\n";
     out += "FORCE_SINGLE_BUFFER=" + String(matrix.forceSingleBuffer ? "true" : "false") + "\n";
     out += "RGB_SEQUENCE=" + matrix.rgbSequence + "\n";
     out += "LIMIT_REFRESH_RATE_HZ=" + String(matrix.limitRefreshRateHz) + "\n";

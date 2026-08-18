@@ -116,9 +116,22 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 
 For full details, check `tools/bdf_to_amfont/README.md`.
 
-## ⚡ Hardware Compatibility
-- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Fully supports all features (Real-Time Crypto, Stock Market, MUGEN, Weather, Web UI) for **128x32 / 64x32 matrix panels** (internal 320KB SRAM is sufficient for double-buffered DMA).
-- **ESP32-S3 with PSRAM (`esp32s3_waveshare`)**: Required for large **256x64 True Matrix panels** which require PSRAM for 256KB DMA double-buffering.
+## ⚡ Hardware Compatibility & Features
+
+| Feature | ESP32-S3 (Waveshare Board) | ESP32 Classic (DevKit) |
+| :--- | :---: | :---: |
+| Matrix Support | Up to 256x64 (True Matrix) | Up to 128x32 |
+| Double Buffering | ✅ Yes (Smooth) | ✅ Yes (Smooth) |
+| Animations (GIFs) | ✅ Yes | ✅ Yes |
+| MUGEN Engine | ✅ Yes | ✅ Yes |
+| Web UI & Wi-Fi | ✅ Yes | ✅ Yes |
+| **Real-Time Crypto** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
+| **Stock Market** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
+| **Decibel Meter** | ✅ Yes (Built-in Mic) | ❌ No (Requires external I2S Mic & custom code) |
+| **Indoor Temp (SHTC3)** | ✅ Yes (Built-in Sensor) | ❌ No (Requires external I2C SHTC3 & custom code) |
+
+- **ESP32-S3 Waveshare RGB Matrix Board (`esp32s3_waveshare`)**: **100% Compatible with all features.** Highly recommended. Required for large **256x64 True Matrix panels**, RAM-heavy modules (Crypto, Stock), and leverages built-in hardware sensors (Decibel, Temp) out of the box.
+- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Supports core animations, Web UI, and MUGEN for **128x32 / 64x32 matrix panels**. Does not support RAM-heavy features like HTTPS/SSL (Crypto/Stock). Built-in sensors (Mic/Temp) are also absent from standard DevKits.
 
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.

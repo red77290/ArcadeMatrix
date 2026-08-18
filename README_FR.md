@@ -108,6 +108,23 @@ L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap p
 
 Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 
+## ⚡ Compatibilité Matérielle & Fonctionnalités
+
+| Fonctionnalité | ESP32-S3 (Carte Waveshare) | ESP32 Classique (DevKit) |
+| :--- | :---: | :---: |
+| Taille de matrice | Jusqu'à 256x64 (Vraie Matrice) | Jusqu'à 128x32 |
+| Double Buffering | ✅ Oui (Fluide) | ✅ Oui (Fluide) |
+| Animations (GIFs) | ✅ Oui | ✅ Oui |
+| Moteur MUGEN | ✅ Oui | ✅ Oui |
+| Interface Web & Wi-Fi | ✅ Oui | ✅ Oui |
+| **Crypto en Temps Réel** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
+| **Bourse** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
+| **Décibelmètre** | ✅ Oui (Micro Intégré) | ❌ Non (Nécessite un micro I2S externe & du code personnalisé) |
+| **Température Intérieure** | ✅ Oui (Capteur Intégré) | ❌ Non (Nécessite un SHTC3 I2C externe & du code personnalisé) |
+
+- **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, les modules gourmands en RAM (Crypto, Bourse), et exploite les capteurs matériels intégrés (Décibelmètre, Température) directement.
+- **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte les animations de base, l'interface Web et MUGEN pour les matrices **128x32 / 64x32**. Ne supporte pas les fonctionnalités lourdes en RAM (HTTPS/SSL). Les capteurs intégrés sont également absents.
+
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
 - Pour 128x32 : un ESP32 WROOM standard suffit.
