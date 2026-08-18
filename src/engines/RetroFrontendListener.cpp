@@ -489,12 +489,20 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     }
 
     std::vector<String> nameVariants;
+    String cleanLower = clean;
+    cleanLower.toLowerCase();
+
     nameVariants.push_back("default-" + clean);
     nameVariants.push_back("default-_" + clean);
+    nameVariants.push_back("default-z" + cleanLower);
+    nameVariants.push_back("z" + cleanLower);
 
     for (const auto& b : uniqueBase) {
+        String bLower = b;
+        bLower.toLowerCase();
         nameVariants.push_back("default-" + b);
         nameVariants.push_back("default-_" + b);
+        nameVariants.push_back("default-z" + bLower);
     }
     for (const auto& b : uniqueBase) {
         nameVariants.push_back(b);
