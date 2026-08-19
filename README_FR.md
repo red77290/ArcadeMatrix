@@ -31,7 +31,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 ## Fonctionnalités
 - **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** et **Versus (Mugen)** !
 - **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST  pour remonter les données dans Home Assistant !
-- **🔊 Sonomètre & Décibelomètre (Usage Salle d'Arcade / Gaming Room :) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨). **Parfait pour surveiller l'ambiance sonore dans une salle d'arcade bruyante, une gaming room ou une soirée rétro gaming !**
+- **🔊 Sonomètre & Décibelomètre (Usage Salle d'Arcade / Gaming Room :) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et un Visualiseur Audio. **Parfait pour surveiller l'ambiance sonore dans une salle d'arcade bruyante, une gaming room ou une soirée rétro gaming !** ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
 - **Tickers Crypto & Bourse en temps réel :** cotations en direct et badges % sur 24h depuis CoinGecko, Binance et Yahoo Finance avec cache configurable.
 - **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
