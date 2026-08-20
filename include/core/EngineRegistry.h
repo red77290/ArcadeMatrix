@@ -22,3 +22,4 @@ private:
     static EngineDescriptor _engines[MAX_ENGINES];
     static size_t _engineCount;
 };
+
