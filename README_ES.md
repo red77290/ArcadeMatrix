@@ -17,7 +17,7 @@
 > | Versión de Firmware | Placa de Hardware Compatible | Botón Web Installer |
 > | :--- | :--- | :--- |
 > | **ESP32-DevKit (Clásico)** | ESP32-DevKitC, NodeMCU-32S, WROOM-32 (4MB Flash) | Selecciona **ESP32 (Estándar)** |
-> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (8MB Flash + PSRAM) | Selecciona **ESP32-S3 (Waveshare)** |
+> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (32MB Flash + 16MB PSRAM (N32R16)) | Selecciona **ESP32-S3 (Waveshare)** |
 
 ---
 

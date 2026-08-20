@@ -54,7 +54,7 @@ dedicada de 5V/3A+ que alimente tanto el panel como el ESP32).
 
 ## Cableado ESP32-S3 Waveshare (100% probado y validado en hardware real)
 
-La placa **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) integra su propio cableado HUB75 e interfaz SD_MMC de 1 bit. El perfil dedicado `HARDWARE_PROFILE_WAVESHARE_S3` en `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remapea automáticamente todos los pines para **evitar por completo el rango GPIO 33-37 reservado a la PSRAM Octal**.
+La placa **Waveshare ESP32-S3 Matrix Board** (32MB Flash + 16MB PSRAM (N32R16)) integra su propio cableado HUB75 e interfaz SD_MMC de 1 bit. El perfil dedicado `HARDWARE_PROFILE_WAVESHARE_S3` en `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remapea automáticamente todos los pines para **evitar por completo el rango GPIO 33-37 reservado a la PSRAM Octal**.
 
 **Esta configuración está 100% probada y verificada físicamente en hardware real con un funcionamiento fluido.**
 

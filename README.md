@@ -17,7 +17,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 > | Firmware Version | Compatible Hardware Board | Web Installer Button |
 > | :--- | :--- | :--- |
 > | **ESP32-DevKit (Classic)** | ESP32-DevKitC, NodeMCU-32S, WROOM-32 (4MB Flash) | Select **ESP32 (Standard)** |
-> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (8MB Flash + PSRAM) | Select **ESP32-S3 (Waveshare)** |
+> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (32MB Flash + 16MB PSRAM (N32R16)) | Select **ESP32-S3 (Waveshare)** |
 
 ---
 

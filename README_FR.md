@@ -17,7 +17,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 > | Version Firmware | Carte Matérielle Compatible | Bouton Web Installer |
 > | :--- | :--- | :--- |
 > | **ESP32-DevKit (Classique)** | ESP32-DevKitC, NodeMCU-32S, WROOM-32 (4MB Flash) | Sélectionnez **ESP32 (Standard)** |
-> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (8MB Flash + PSRAM) | Sélectionnez **ESP32-S3 (Waveshare)** |
+> | **ESP32-S3 Waveshare** | Waveshare ESP32-S3 Matrix Board (32MB Flash + 16MB PSRAM (N32R16)) | Sélectionnez **ESP32-S3 (Waveshare)** |
 
 ---
 

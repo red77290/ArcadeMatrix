@@ -37,7 +37,7 @@ cd ArcadeMatrix
 
 No `pio project init` needed - `platformio.ini` already exists at the repo root and defines both
 supported boards as separate build environments: `esp32dev` (classic ESP32, 4MB flash) and
-`esp32s3` (ESP32-S3, 8MB flash + optional PSRAM). See `docs/HARDWARE.md` for which one matches
+`esp32s3` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16)). See `docs/HARDWARE.md` for which one matches
 your board and its specific GPIO/resolution limits.
 
 ## 3. Build the firmware
