@@ -8,6 +8,7 @@
 #include "WeatherEngine.h"
 #include "FighterEngine.h"
 #include "GifEngine.h"
+#include "DummyEngine.h"
 #include "CryptoEngine.h"
 #include "StockEngine.h"
 #include "TempEngine.h"
@@ -75,6 +76,14 @@ void EngineRegistrar::registerAll() {
     desc_gifs.capabilities.needs_network = false;
     desc_gifs.factory = []() { return std::unique_ptr<IEngine>(new GifEngine()); };
     EngineRegistry::registerEngine(desc_gifs);
+
+    EngineDescriptor desc_dummy;
+    desc_dummy.metadata = {"dummy", "Dummy Test", "test", "1.0.0"};
+    desc_dummy.capabilities.needs_audio = false;
+    desc_dummy.capabilities.needs_network = false;
+    desc_dummy.factory = []() { return std::unique_ptr<IEngine>(new DummyEngine()); };
+    EngineRegistry::registerEngine(desc_dummy);
+    
     EngineDescriptor desc_crypto;
     desc_crypto.metadata = {"crypto", "Crypto Ticker", "finance", "1.0.0"};
     desc_crypto.capabilities.needs_audio = false;
