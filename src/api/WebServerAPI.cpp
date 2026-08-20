@@ -10,6 +10,8 @@
 #include "../core/Globals.h"
 #include "../core/Logger.h"
 
+extern RotationManager* rotationManager;
+
 // Helper class to stream large files from SdFat to ESPAsyncWebServer
 class AsyncSdFatResponse : public AsyncAbstractResponse {
 private:
@@ -557,12 +559,18 @@ void WebServerAPI::setupRoutes() {
             dateChanged = true;
         }
         if (dateChanged && !willReboot) {
-            extern DateEngine* dateEngine;
-            if (dateEngine) {
-                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                    dateEngine->reloadCustomFont();
-                    dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
-                    xSemaphoreGive(sdMutex);
+            if (rotationManager) {
+                for (const auto& inst : config.instances) {
+                    if (inst.engine_id == "date") {
+                        auto engine = rotationManager->getActiveEngine(inst.instance_id);
+                        if (engine) {
+                            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                                ((DateEngine*)engine)->reloadCustomFont();
+                                ((DateEngine*)engine)->setTheme((PublisherTheme)config.dateSettings.theme);
+                                xSemaphoreGive(sdMutex);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -655,7 +663,7 @@ void WebServerAPI::setupRoutes() {
         }
 
         if (rotationChanged && !willReboot) {
-            extern RotationManager* rotationManager;
+            
             if (rotationManager) {
                 if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
                     rotationManager->begin(config);

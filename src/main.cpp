@@ -1,3 +1,4 @@
+#include "core/AppEngineContext.h"
 #include <FS.h>
 #include <Arduino.h>
 #include <SPI.h>
@@ -45,6 +46,9 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "engines/TempEngine.h"
 #include "engines/VisualizerEngine.h"
 #include "engines/DecibelEngine.h"
+#include "engines/EngineRegistrar.h"
+
+#include "core/DisplayArbiter.h"
 
 // Pins definition moved to HardwareProfile.h
 
@@ -55,7 +59,6 @@ MatrixEngine matrixEngine;
 GifEngine gifEngine;
 
 ClockEngine* clockEngine = nullptr;
-DateEngine* dateEngine = nullptr;
 WeatherEngine* weatherEngine = nullptr;
 FighterEngine* fighterEngine = nullptr;
 CryptoEngine cryptoEngine;
@@ -69,6 +72,7 @@ MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
 BitmapFontLoader customFontLoader;
+DisplayArbiter displayArbiter;
 
 #if !USE_SD_MMC
 SdFs sd;
@@ -76,7 +80,7 @@ SdFs sd;
 
 unsigned long lastTick = 0;
 uint8_t currentMinute = 42;
-#ifndef UNIT_TEST
+#ifndef PIO_UNIT_TESTING
 
 
 String getPosixTimezone(String tz) {
@@ -95,6 +99,14 @@ String getPosixTimezone(String tz) {
 void setup() {
     Serial.begin(115200);
     delay(1000);
+    
+    // 1. Initialize HAL first so auto-detection can be used by the Registrar
+    hardwareHAL.begin();
+    
+    // Register all dynamic engines & wrappers (uses HAL info)
+    EngineRegistrar::registerAll();
+    
+    
     randomSeed(esp_random());
     LOGI("System", "Starting ArcadeMatrix Firmware...");
 
@@ -254,9 +266,6 @@ void setup() {
 
     clockEngine = new ClockEngine(matrixEngine.getDisplay());
     clockEngine->setTheme(static_cast<PublisherTheme>(config.time.clock_theme));
-    dateEngine = new DateEngine(matrixEngine.getDisplay());
-    dateEngine->setResolution(matrixEngine.getDisplay()->width(), matrixEngine.getDisplay()->height());
-    dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
     
     weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
     weatherEngine->addProvider(new OpenWeatherMapProvider());
@@ -275,7 +284,9 @@ void setup() {
     visualizerEngine = new VisualizerEngine(matrixEngine.getDisplay());
     decibelEngine = new DecibelEngine(matrixEngine.getDisplay());
 
-    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine, tempEngine, decibelEngine);
+    rotationManager = new RotationManager(clockEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine, tempEngine, decibelEngine);
+    AppEngineContext* appCtx = new AppEngineContext(matrixEngine.getDisplay(), frontendListener);
+    rotationManager->setEngineContext(appCtx);
     messageEngine = new MessageEngine(matrixEngine.getDisplay());
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
@@ -461,18 +472,43 @@ void loop() {
         if (visualizerEngine) {
             if (config.audio.visualizer_enabled && !visualizerEngine->isActive()) {
                 visualizerEngine->start();
+                DisplayRequest req;
+                req.source = "VISUALIZER";
+                req.priority = DisplayPriority::VISUALIZER;
+                req.lifecycle = RequestLifecycle::UNTIL_CANCELLED;
+                req.preemptive = true;
+                req.timeout_ms = 0;
+                displayArbiter.submitRequest(req);
             } else if (!config.audio.visualizer_enabled && visualizerEngine->isActive()) {
                 visualizerEngine->stop();
+                displayArbiter.cancelRequest("VISUALIZER");
             }
         }
 
-        if (visualizerEngine && visualizerEngine->isActive()) {
+        displayArbiter.clearExpired();
+        
+        if (marqueeEngine && marqueeEngine->isActive()) {
+            DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
+            displayArbiter.submitRequest(req);
+        }
+        if (messageEngine && messageEngine->isActive()) {
+            DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
+            displayArbiter.submitRequest(req);
+        }
+        if (gifEngine.isActive() && rotationManager->getCurrentInstanceId() != "gifs") {
+            DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
+            displayArbiter.submitRequest(req);
+        }
+
+        DisplayRequest winner = displayArbiter.evaluate();
+        
+        if (winner.source == "VISUALIZER") {
             shouldFlip = visualizerEngine->loop();
-        } else if (marqueeEngine && marqueeEngine->isActive()) {
+        } else if (winner.source == "MARQUEE") {
             shouldFlip = marqueeEngine->loop();
-        } else if (messageEngine && messageEngine->isActive()) {
+        } else if (winner.source == "MESSAGE") {
             shouldFlip = messageEngine->loop();
-        } else if (gifEngine.isActive() && rotationManager->getCurrentModule() != MODULE_GIFS) {
+        } else if (winner.source == "GIF") {
             shouldFlip = gifEngine.loop();
         } else {
             shouldFlip = rotationManager->loop();
@@ -518,7 +554,14 @@ void loop() {
                 lastDay = timeinfo.tm_mday;
                 if ((int)config.dateSettings.theme == 99 || config.dateSettings.theme == THEME_NONE) {
                     PublisherTheme randomTheme = static_cast<PublisherTheme>(random(0, 20));
-                    dateEngine->setTheme(randomTheme);
+                    for (const auto& inst : config.instances) {
+                        if (inst.engine_id == "date") {
+                            auto engine = rotationManager->getActiveEngine(inst.instance_id);
+                            if (engine) {
+                                ((DateEngine*)engine)->setTheme(randomTheme);
+                            }
+                        }
+                    }
                     LOGI("DateEngine", "New day detected (%02d)! Selected dynamic Date theme: %d", lastDay, (int)randomTheme);
                 }
             }
@@ -576,9 +619,15 @@ void loop() {
 
             dateRes.replace("DDDD", d_long[timeinfo.tm_wday]); dateRes.replace("%A", d_long[timeinfo.tm_wday]);
             dateRes.replace("DDD", d_short[timeinfo.tm_wday]); dateRes.replace("%a", d_short[timeinfo.tm_wday]);
-
-            dateEngine->setDateData({(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)});
-            dateEngine->setDate(dateRes.c_str());
+            for (const auto& inst : config.instances) {
+                if (inst.engine_id == "date") {
+                    auto engine = rotationManager->getActiveEngine(inst.instance_id);
+                    if (engine) {
+                        ((DateEngine*)engine)->setDateData({(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)});
+                        ((DateEngine*)engine)->setDate(dateRes.c_str());
+                    }
+                }
+            }
         }
     }
     

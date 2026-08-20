@@ -451,3 +451,332 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     file.close();
     return true;
 }
+String ConfigLoader::serializeToJson() const {
+    DynamicJsonDocument doc(16384);
+
+    JsonObject matrixObj = doc.createNestedObject("MATRIX");
+    matrixObj["width"] = matrix.width;
+    matrixObj["height"] = matrix.height;
+    matrixObj["panelType"] = matrix.panelType;
+    matrixObj["chainLength"] = matrix.chainLength;
+    matrixObj["powerLimitPercent"] = matrix.powerLimitPercent;
+    matrixObj["colorDepth"] = matrix.colorDepth;
+    matrixObj["forceSingleBuffer"] = matrix.forceSingleBuffer;
+    matrixObj["rgbSequence"] = matrix.rgbSequence;
+    matrixObj["limitRefreshRateHz"] = matrix.limitRefreshRateHz;
+    matrixObj["driverChip"] = matrix.driverChip;
+    matrixObj["clkPhase"] = matrix.clkPhase;
+    matrixObj["latchBlanking"] = matrix.latchBlanking;
+    matrixObj["rowAddressMode"] = matrix.rowAddressMode;
+
+    JsonObject wifiObj = doc.createNestedObject("WIFI");
+    wifiObj["ssid"] = wifi.ssid;
+    wifiObj["password"] = wifi.password;
+    wifiObj["hostname"] = wifi.hostname;
+
+    JsonObject mqttObj = doc.createNestedObject("MQTT");
+    mqttObj["enabled"] = mqtt.enabled;
+    mqttObj["broker"] = mqtt.broker;
+    mqttObj["port"] = mqtt.port;
+    mqttObj["user"] = mqtt.user;
+    mqttObj["pass"] = mqtt.pass;
+    mqttObj["deviceName"] = mqtt.deviceName;
+    mqttObj["topic_batocera"] = mqtt.topic_batocera;
+    mqttObj["topic_recalbox"] = mqtt.topic_recalbox;
+
+    JsonObject timeObj = doc.createNestedObject("TIME");
+    timeObj["ntpServer"] = time.ntpServer;
+    timeObj["timezone"] = time.timezone;
+    timeObj["format24h"] = time.format24h;
+    timeObj["clock_font"] = time.clock_font;
+    timeObj["clock_size"] = time.clock_size;
+    timeObj["clock_theme"] = time.clock_theme;
+    timeObj["clock_offset_x"] = time.clock_offset_x;
+    timeObj["clock_offset_y"] = time.clock_offset_y;
+    timeObj["clock_color_1"] = time.clock_color_1;
+    timeObj["clock_color_2"] = time.clock_color_2;
+    timeObj["clock_font_path"] = time.clock_font_path;
+
+    JsonObject dateSettingsObj = doc.createNestedObject("DATE");
+    dateSettingsObj["theme"] = dateSettings.theme;
+    dateSettingsObj["format"] = dateSettings.format;
+    dateSettingsObj["date_font"] = dateSettings.date_font;
+    dateSettingsObj["date_size"] = dateSettings.date_size;
+    dateSettingsObj["date_offset_x"] = dateSettings.date_offset_x;
+    dateSettingsObj["date_offset_y"] = dateSettings.date_offset_y;
+    dateSettingsObj["background_sprite"] = dateSettings.background_sprite;
+    dateSettingsObj["date_color_1"] = dateSettings.date_color_1;
+    dateSettingsObj["date_color_2"] = dateSettings.date_color_2;
+    dateSettingsObj["date_font_path"] = dateSettings.date_font_path;
+
+    JsonObject idleObj = doc.createNestedObject("IDLE");
+    idleObj["rotation"] = idle.rotation;
+    idleObj["clock_duration_sec"] = idle.clock_duration_sec;
+    idleObj["date_duration_sec"] = idle.date_duration_sec;
+    idleObj["weather_duration_sec"] = idle.weather_duration_sec;
+    idleObj["temp_duration_sec"] = idle.temp_duration_sec;
+    idleObj["decibel_duration_sec"] = idle.decibel_duration_sec;
+    idleObj["gifs_count"] = idle.gifs_count;
+    idleObj["fighter_enabled"] = idle.fighter_enabled;
+    idleObj["fighter_interval_sec"] = idle.fighter_interval_sec;
+
+    JsonObject envObj = doc.createNestedObject("ENVIRONMENT");
+    envObj["unit"] = env.unit;
+    envObj["temp_offset"] = env.temp_offset;
+
+    JsonObject audioObj = doc.createNestedObject("AUDIO");
+    audioObj["visualizer_enabled"] = audio.visualizer_enabled;
+    audioObj["visualizer_mode"] = audio.visualizer_mode;
+    audioObj["mic_gain"] = audio.mic_gain;
+    audioObj["db_calibration"] = audio.db_calibration;
+
+    JsonObject weatherObj = doc.createNestedObject("WEATHER");
+    weatherObj["api_key"] = weather.api_key;
+    weatherObj["city"] = weather.city;
+    weatherObj["lang"] = weather.lang;
+    weatherObj["weather_offset_x"] = weather.weather_offset_x;
+    weatherObj["weather_offset_y"] = weather.weather_offset_y;
+
+    JsonObject standbyObj = doc.createNestedObject("STANDBY");
+    standbyObj["night_mode_enabled"] = standby.night_mode_enabled;
+    standbyObj["turn_off_at"] = standby.turn_off_at;
+    standbyObj["wake_up_at"] = standby.wake_up_at;
+    standbyObj["night_brightness"] = standby.night_brightness;
+
+    JsonObject fontsObj = doc.createNestedObject("FONTS");
+    fontsObj["custom_font_path"] = fonts.custom_font_path;
+
+    JsonObject cryptoObj = doc.createNestedObject("CRYPTO");
+    cryptoObj["enabled"] = crypto.enabled;
+    cryptoObj["symbols"] = crypto.symbols;
+    cryptoObj["duration_sec"] = crypto.duration_sec;
+    cryptoObj["cache_ttl_min"] = crypto.cache_ttl_min;
+    cryptoObj["currency"] = crypto.currency;
+
+    JsonObject stockObj = doc.createNestedObject("STOCK");
+    stockObj["enabled"] = stock.enabled;
+    stockObj["symbols"] = stock.symbols;
+    stockObj["duration_sec"] = stock.duration_sec;
+    stockObj["cache_ttl_min"] = stock.cache_ttl_min;
+
+    JsonArray instancesArr = doc.createNestedArray("INSTANCES");
+    for (const auto& inst : instances) {
+        JsonObject iObj = instancesArr.createNestedObject();
+        iObj["instance_id"] = inst.instance_id;
+        iObj["engine_id"] = inst.engine_id;
+    }
+
+    JsonArray rotArr = doc.createNestedArray("ROTATION_LIST");
+    for (const auto& rot : rotation) {
+        JsonObject rObj = rotArr.createNestedObject();
+        rObj["instance_id"] = rot.instance_id;
+        rObj["duration_sec"] = rot.duration_sec;
+    }
+
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+
+bool ConfigLoader::parseFromJson(const char* jsonContent) {
+    DynamicJsonDocument doc(16384);
+    DeserializationError error = deserializeJson(doc, jsonContent);
+    if (error) {
+        LOGE("ConfigLoader", "JSON parse failed: %s", error.c_str());
+        return false;
+    }
+
+    if (doc.containsKey("MATRIX")) {
+        JsonObject matrixObj = doc["MATRIX"];
+        if (matrixObj.containsKey("width")) matrix.width = matrixObj["width"].as<int>();
+        if (matrixObj.containsKey("height")) matrix.height = matrixObj["height"].as<int>();
+        if (matrixObj.containsKey("panelType")) matrix.panelType = matrixObj["panelType"].as<const char*>();
+        if (matrixObj.containsKey("chainLength")) matrix.chainLength = matrixObj["chainLength"].as<int>();
+        if (matrixObj.containsKey("powerLimitPercent")) matrix.powerLimitPercent = matrixObj["powerLimitPercent"].as<int>();
+        if (matrixObj.containsKey("colorDepth")) matrix.colorDepth = matrixObj["colorDepth"].as<int>();
+        if (matrixObj.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = matrixObj["forceSingleBuffer"].as<bool>();
+        if (matrixObj.containsKey("rgbSequence")) matrix.rgbSequence = matrixObj["rgbSequence"].as<const char*>();
+        if (matrixObj.containsKey("limitRefreshRateHz")) matrix.limitRefreshRateHz = matrixObj["limitRefreshRateHz"].as<int>();
+        if (matrixObj.containsKey("driverChip")) matrix.driverChip = matrixObj["driverChip"].as<const char*>();
+        if (matrixObj.containsKey("clkPhase")) matrix.clkPhase = matrixObj["clkPhase"].as<bool>();
+        if (matrixObj.containsKey("latchBlanking")) matrix.latchBlanking = matrixObj["latchBlanking"].as<int>();
+        if (matrixObj.containsKey("rowAddressMode")) matrix.rowAddressMode = matrixObj["rowAddressMode"].as<int>();
+    }
+
+    if (doc.containsKey("WIFI")) {
+        JsonObject wifiObj = doc["WIFI"];
+        if (wifiObj.containsKey("ssid")) wifi.ssid = wifiObj["ssid"].as<const char*>();
+        if (wifiObj.containsKey("password")) wifi.password = wifiObj["password"].as<const char*>();
+        if (wifiObj.containsKey("hostname")) wifi.hostname = wifiObj["hostname"].as<const char*>();
+    }
+
+    if (doc.containsKey("MQTT")) {
+        JsonObject mqttObj = doc["MQTT"];
+        if (mqttObj.containsKey("enabled")) mqtt.enabled = mqttObj["enabled"].as<bool>();
+        if (mqttObj.containsKey("broker")) mqtt.broker = mqttObj["broker"].as<const char*>();
+        if (mqttObj.containsKey("port")) mqtt.port = mqttObj["port"].as<int>();
+        if (mqttObj.containsKey("user")) mqtt.user = mqttObj["user"].as<const char*>();
+        if (mqttObj.containsKey("pass")) mqtt.pass = mqttObj["pass"].as<const char*>();
+        if (mqttObj.containsKey("deviceName")) mqtt.deviceName = mqttObj["deviceName"].as<const char*>();
+        if (mqttObj.containsKey("topic_batocera")) mqtt.topic_batocera = mqttObj["topic_batocera"].as<const char*>();
+        if (mqttObj.containsKey("topic_recalbox")) mqtt.topic_recalbox = mqttObj["topic_recalbox"].as<const char*>();
+    }
+
+    if (doc.containsKey("TIME")) {
+        JsonObject timeObj = doc["TIME"];
+        if (timeObj.containsKey("ntpServer")) time.ntpServer = timeObj["ntpServer"].as<const char*>();
+        if (timeObj.containsKey("timezone")) time.timezone = timeObj["timezone"].as<const char*>();
+        if (timeObj.containsKey("format24h")) time.format24h = timeObj["format24h"].as<bool>();
+        if (timeObj.containsKey("clock_font")) time.clock_font = timeObj["clock_font"].as<int>();
+        if (timeObj.containsKey("clock_size")) time.clock_size = timeObj["clock_size"].as<int>();
+        if (timeObj.containsKey("clock_theme")) time.clock_theme = timeObj["clock_theme"].as<int>();
+        if (timeObj.containsKey("clock_offset_x")) time.clock_offset_x = timeObj["clock_offset_x"].as<int>();
+        if (timeObj.containsKey("clock_offset_y")) time.clock_offset_y = timeObj["clock_offset_y"].as<int>();
+        if (timeObj.containsKey("clock_color_1")) time.clock_color_1 = timeObj["clock_color_1"].as<const char*>();
+        if (timeObj.containsKey("clock_color_2")) time.clock_color_2 = timeObj["clock_color_2"].as<const char*>();
+        if (timeObj.containsKey("clock_font_path")) time.clock_font_path = timeObj["clock_font_path"].as<const char*>();
+    }
+
+    if (doc.containsKey("DATE")) {
+        JsonObject dateSettingsObj = doc["DATE"];
+        if (dateSettingsObj.containsKey("theme")) dateSettings.theme = dateSettingsObj["theme"].as<int>();
+        if (dateSettingsObj.containsKey("format")) dateSettings.format = dateSettingsObj["format"].as<const char*>();
+        if (dateSettingsObj.containsKey("date_font")) dateSettings.date_font = dateSettingsObj["date_font"].as<int>();
+        if (dateSettingsObj.containsKey("date_size")) dateSettings.date_size = dateSettingsObj["date_size"].as<int>();
+        if (dateSettingsObj.containsKey("date_offset_x")) dateSettings.date_offset_x = dateSettingsObj["date_offset_x"].as<int>();
+        if (dateSettingsObj.containsKey("date_offset_y")) dateSettings.date_offset_y = dateSettingsObj["date_offset_y"].as<int>();
+        if (dateSettingsObj.containsKey("background_sprite")) dateSettings.background_sprite = dateSettingsObj["background_sprite"].as<const char*>();
+        if (dateSettingsObj.containsKey("date_color_1")) dateSettings.date_color_1 = dateSettingsObj["date_color_1"].as<const char*>();
+        if (dateSettingsObj.containsKey("date_color_2")) dateSettings.date_color_2 = dateSettingsObj["date_color_2"].as<const char*>();
+        if (dateSettingsObj.containsKey("date_font_path")) dateSettings.date_font_path = dateSettingsObj["date_font_path"].as<const char*>();
+    }
+
+    if (doc.containsKey("IDLE")) {
+        JsonObject idleObj = doc["IDLE"];
+        if (idleObj.containsKey("rotation")) idle.rotation = idleObj["rotation"].as<const char*>();
+        if (idleObj.containsKey("clock_duration_sec")) idle.clock_duration_sec = idleObj["clock_duration_sec"].as<int>();
+        if (idleObj.containsKey("date_duration_sec")) idle.date_duration_sec = idleObj["date_duration_sec"].as<int>();
+        if (idleObj.containsKey("weather_duration_sec")) idle.weather_duration_sec = idleObj["weather_duration_sec"].as<int>();
+        if (idleObj.containsKey("temp_duration_sec")) idle.temp_duration_sec = idleObj["temp_duration_sec"].as<int>();
+        if (idleObj.containsKey("decibel_duration_sec")) idle.decibel_duration_sec = idleObj["decibel_duration_sec"].as<int>();
+        if (idleObj.containsKey("gifs_count")) idle.gifs_count = idleObj["gifs_count"].as<int>();
+        if (idleObj.containsKey("fighter_enabled")) idle.fighter_enabled = idleObj["fighter_enabled"].as<bool>();
+        if (idleObj.containsKey("fighter_interval_sec")) idle.fighter_interval_sec = idleObj["fighter_interval_sec"].as<int>();
+    }
+
+    if (doc.containsKey("ENVIRONMENT")) {
+        JsonObject envObj = doc["ENVIRONMENT"];
+        if (envObj.containsKey("unit")) env.unit = envObj["unit"].as<const char*>();
+        if (envObj.containsKey("temp_offset")) env.temp_offset = envObj["temp_offset"].as<float>();
+    }
+
+    if (doc.containsKey("AUDIO")) {
+        JsonObject audioObj = doc["AUDIO"];
+        if (audioObj.containsKey("visualizer_enabled")) audio.visualizer_enabled = audioObj["visualizer_enabled"].as<bool>();
+        if (audioObj.containsKey("visualizer_mode")) audio.visualizer_mode = audioObj["visualizer_mode"].as<const char*>();
+        if (audioObj.containsKey("mic_gain")) audio.mic_gain = audioObj["mic_gain"].as<float>();
+        if (audioObj.containsKey("db_calibration")) audio.db_calibration = audioObj["db_calibration"].as<float>();
+    }
+
+    if (doc.containsKey("WEATHER")) {
+        JsonObject weatherObj = doc["WEATHER"];
+        if (weatherObj.containsKey("api_key")) weather.api_key = weatherObj["api_key"].as<const char*>();
+        if (weatherObj.containsKey("city")) weather.city = weatherObj["city"].as<const char*>();
+        if (weatherObj.containsKey("lang")) weather.lang = weatherObj["lang"].as<const char*>();
+        if (weatherObj.containsKey("weather_offset_x")) weather.weather_offset_x = weatherObj["weather_offset_x"].as<int>();
+        if (weatherObj.containsKey("weather_offset_y")) weather.weather_offset_y = weatherObj["weather_offset_y"].as<int>();
+    }
+
+    if (doc.containsKey("STANDBY")) {
+        JsonObject standbyObj = doc["STANDBY"];
+        if (standbyObj.containsKey("night_mode_enabled")) standby.night_mode_enabled = standbyObj["night_mode_enabled"].as<bool>();
+        if (standbyObj.containsKey("turn_off_at")) standby.turn_off_at = standbyObj["turn_off_at"].as<const char*>();
+        if (standbyObj.containsKey("wake_up_at")) standby.wake_up_at = standbyObj["wake_up_at"].as<const char*>();
+        if (standbyObj.containsKey("night_brightness")) standby.night_brightness = standbyObj["night_brightness"].as<int>();
+    }
+
+    if (doc.containsKey("FONTS")) {
+        JsonObject fontsObj = doc["FONTS"];
+        if (fontsObj.containsKey("custom_font_path")) fonts.custom_font_path = fontsObj["custom_font_path"].as<const char*>();
+    }
+
+    if (doc.containsKey("CRYPTO")) {
+        JsonObject cryptoObj = doc["CRYPTO"];
+        if (cryptoObj.containsKey("enabled")) crypto.enabled = cryptoObj["enabled"].as<bool>();
+        if (cryptoObj.containsKey("symbols")) crypto.symbols = cryptoObj["symbols"].as<const char*>();
+        if (cryptoObj.containsKey("duration_sec")) crypto.duration_sec = cryptoObj["duration_sec"].as<int>();
+        if (cryptoObj.containsKey("cache_ttl_min")) crypto.cache_ttl_min = cryptoObj["cache_ttl_min"].as<int>();
+        if (cryptoObj.containsKey("currency")) crypto.currency = cryptoObj["currency"].as<const char*>();
+    }
+
+    if (doc.containsKey("STOCK")) {
+        JsonObject stockObj = doc["STOCK"];
+        if (stockObj.containsKey("enabled")) stock.enabled = stockObj["enabled"].as<bool>();
+        if (stockObj.containsKey("symbols")) stock.symbols = stockObj["symbols"].as<const char*>();
+        if (stockObj.containsKey("duration_sec")) stock.duration_sec = stockObj["duration_sec"].as<int>();
+        if (stockObj.containsKey("cache_ttl_min")) stock.cache_ttl_min = stockObj["cache_ttl_min"].as<int>();
+    }
+
+    if (doc.containsKey("INSTANCES")) {
+        instances.clear();
+        JsonArray arr = doc["INSTANCES"].as<JsonArray>();
+        for (JsonVariant v : arr) {
+            JsonObject o = v.as<JsonObject>();
+            EngineInstance i;
+            i.instance_id = o["instance_id"].as<const char*>();
+            i.engine_id = o["engine_id"].as<const char*>();
+            instances.push_back(i);
+        }
+    }
+
+    if (doc.containsKey("ROTATION_LIST")) {
+        rotation.clear();
+        JsonArray arr = doc["ROTATION_LIST"].as<JsonArray>();
+        for (JsonVariant v : arr) {
+            JsonObject o = v.as<JsonObject>();
+            RotationEntry r;
+            r.instance_id = o["instance_id"].as<const char*>();
+            r.duration_sec = o["duration_sec"].as<int>();
+            rotation.push_back(r);
+        }
+    }
+
+    return true;
+}
+
+
+void ConfigLoader::migrateLegacyRotation() {
+    if (!instances.empty() || !rotation.empty()) return;
+    
+    // Add default instances for engines used in conf.ini
+    instances.push_back({"default_clock", "clock"});
+    instances.push_back({"default_date", "date"});
+    instances.push_back({"default_weather", "weather"});
+    instances.push_back({"gifs", "gifs"});
+    instances.push_back({"default_temp", "temp"});
+    instances.push_back({"default_decibel", "decibel"});
+    instances.push_back({"default_network", "network"});
+    
+    String legacy = idle.rotation;
+    int start = 0;
+    while (start < legacy.length()) {
+        int end = legacy.indexOf(',', start);
+        if (end == -1) end = legacy.length();
+        String t = legacy.substring(start, end);
+        t.trim();
+        if (t.length() > 0) {
+            RotationEntry r;
+            if (t == "clock") { r.instance_id = "default_clock"; r.duration_sec = idle.clock_duration_sec; }
+            else if (t == "date") { r.instance_id = "default_date"; r.duration_sec = idle.date_duration_sec; }
+            else if (t == "weather") { r.instance_id = "default_weather"; r.duration_sec = idle.weather_duration_sec; }
+            else if (t == "temp") { r.instance_id = "default_temp"; r.duration_sec = idle.temp_duration_sec; }
+            else if (t == "decibel") { r.instance_id = "default_decibel"; r.duration_sec = idle.decibel_duration_sec; }
+            else if (t == "gifs") { r.instance_id = "gifs"; r.duration_sec = 0; } // Gifs rely on loops/counts normally
+            else if (t == "network") { r.instance_id = "default_network"; r.duration_sec = 10; }
+            else { r.instance_id = t; r.duration_sec = 10; }
+            rotation.push_back(r);
+        }
+        start = end + 1;
+    }
+}
