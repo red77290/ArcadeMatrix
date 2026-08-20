@@ -3,6 +3,7 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <vector>
 #include <map>
+#include "../../include/core/EngineContract.h"
 #include "../core/ConfigLoader.h"
 #include "../api/ICryptoProvider.h"
 #include "icons/CryptoStockIcons.h"
@@ -26,18 +27,20 @@ struct AssetQuoteCache {
  * @class CryptoEngine
  * @brief Displays real-time crypto prices, 24h % change badges, and pixel-art logos.
  */
-class CryptoEngine {
+class CryptoEngine : public IEngine {
 public:
     CryptoEngine();
     
-    void begin(MatrixPanel_I2S_DMA* display);
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
+
     void addProvider(ICryptoProvider* provider);
-    void updateConfig(const CryptoConfig& cfg);
-    void onDisplayStart();
-    bool loop();
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
     CryptoConfig config;
     
     std::vector<String> symbolList;
@@ -64,5 +67,5 @@ private:
     
     void parseSymbols();
     void fetchQuote(const String& symbol);
-    void renderQuote();
+    void renderQuote(EngineContext* context);
 };

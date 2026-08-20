@@ -4,13 +4,17 @@
 
 extern ConfigLoader config;
 
-TempEngine::TempEngine(MatrixPanel_I2S_DMA* display) 
-    : matrix(display), useFahrenheit(false) {}
+TempEngine::TempEngine() 
+    : useFahrenheit(false) {}
 
 TempEngine::~TempEngine() {}
 
-uint16_t TempEngine::getTemperatureColor(float tempC) {
-    if (!matrix) return 0xFFFF;
+EngineError TempEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
+}
+
+uint16_t TempEngine::getTemperatureColor(MatrixPanel_I2S_DMA* matrix, float tempC) {
     if (tempC < 18.0f) {
         return matrix->color565(0, 180, 255); // Blue / Cyan (Cold)
     } else if (tempC <= 24.0f) {
@@ -22,8 +26,7 @@ uint16_t TempEngine::getTemperatureColor(float tempC) {
     }
 }
 
-void TempEngine::drawThermometerIcon(int x, int y, uint16_t color) {
-    if (!matrix) return;
+void TempEngine::drawThermometerIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color) {
     uint16_t bg = matrix->color565(200, 200, 200);
     // Outer tube
     matrix->drawRect(x + 5, y + 2, 4, 10, bg);
@@ -33,8 +36,7 @@ void TempEngine::drawThermometerIcon(int x, int y, uint16_t color) {
     matrix->fillRect(x + 6, y + 5, 2, 7, color);
 }
 
-void TempEngine::drawWaterDropIcon(int x, int y, uint16_t color) {
-    if (!matrix) return;
+void TempEngine::drawWaterDropIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color) {
     // Water drop shape
     matrix->drawPixel(x + 6, y + 2, color);
     matrix->drawLine(x + 5, y + 3, x + 7, y + 3, color);
@@ -42,26 +44,32 @@ void TempEngine::drawWaterDropIcon(int x, int y, uint16_t color) {
     matrix->fillCircle(x + 6, y + 8, 3, color);
 }
 
-bool TempEngine::loop() {
-    if (!matrix) return false;
+void TempEngine::update(EngineContext* context) {
+}
+
+void TempEngine::activate() {}
+void TempEngine::deactivate() {}
+void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    setUnit(config.env.unit);
+}
+
+void TempEngine::render(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    if (!matrix) return;
 
     matrix->fillScreen(0);
-
-    // Check config for unit
-    setUnit(config.env.unit);
 
     EnvironmentData envData = hardwareHAL.readEnvironment(config.env.temp_offset);
     if (!envData.available) {
         // Fallback or warning if sensor not detected
         matrix->setTextSize(1);
         matrix->setTextColor(matrix->color565(150, 150, 150));
-        matrix->setCursor(4, (matrix->height() / 2) - 4);
         matrix->print("Sensor N/A");
-        return true;
+        return;
     }
 
     float displayTemp = useFahrenheit ? envData.temperatureF : envData.temperatureC;
-    uint16_t tempColor = getTemperatureColor(envData.temperatureC);
+    uint16_t tempColor = getTemperatureColor(matrix, envData.temperatureC);
     uint16_t humColor = matrix->color565(0, 200, 255);
 
     int width = matrix->width();
@@ -81,14 +89,14 @@ bool TempEngine::loop() {
         matrix->setTextSize(textSize);
 
         // Draw Thermometer + Temp on Left
-        drawThermometerIcon(4, (height / 2) - 8, tempColor);
+        drawThermometerIcon(matrix, 4, (height / 2) - 8, tempColor);
         matrix->setTextColor(tempColor);
         matrix->setCursor(20, (height / 2) - (textSize * 4));
         matrix->print(tempBuf);
 
         // Draw Water Drop + Humidity on Right
         int rightStartX = (width / 2) + 10;
-        drawWaterDropIcon(rightStartX, (height / 2) - 8, humColor);
+        drawWaterDropIcon(matrix, rightStartX, (height / 2) - 8, humColor);
         matrix->setTextColor(humColor);
         matrix->setCursor(rightStartX + 16, (height / 2) - (textSize * 4));
         matrix->print(humBuf);
@@ -97,7 +105,7 @@ bool TempEngine::loop() {
         matrix->setTextSize(1);
 
         // Draw Thermometer Icon on top-left
-        drawThermometerIcon(2, 2, tempColor);
+        drawThermometerIcon(matrix, 2, 2, tempColor);
 
         // Temp text top-right
         matrix->setTextColor(tempColor);
@@ -105,13 +113,13 @@ bool TempEngine::loop() {
         matrix->print(tempBuf);
 
         // Draw Water Drop Icon on bottom-left
-        drawWaterDropIcon(2, 16, humColor);
+        drawWaterDropIcon(matrix, 2, 16, humColor);
 
         // Humidity text bottom-right
         matrix->setTextColor(humColor);
         matrix->setCursor(18, 19);
         matrix->print(humBuf);
     }
-
-    return true;
 }
+
+

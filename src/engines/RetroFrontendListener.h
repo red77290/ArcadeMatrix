@@ -6,7 +6,7 @@
 #include <HTTPClient.h>
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
-#include "ClockEngine.h"
+
 #include "MessageEngine.h"
 #include <map>
 
@@ -19,7 +19,7 @@
 // MessageEngine) if no matching artwork is found on the SD card.
 class RetroFrontendListener {
 public:
-    RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine = nullptr);
+    RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine = nullptr);
     void begin();
     bool loop();
     void stop();
@@ -36,8 +36,7 @@ public:
 private:
     MqttConfig& mqttConfig;
     GifEngine* gif;
-    ClockEngine* clock;
-    MessageEngine* message;
+        MessageEngine* message;
     WiFiClient espClient;
     PubSubClient mqttClient;
     PicoMQTT::Server* internalBroker = nullptr;

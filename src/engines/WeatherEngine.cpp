@@ -8,17 +8,44 @@ extern ConfigLoader config;
 
 
 
-WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+#include "../api/OpenWeatherMapProvider.h"
+
+WeatherEngine::WeatherEngine() : matrix(nullptr) {
     validData = false;
     lastFetchTime = 0;
-    textColor = matrix->color565(255, 255, 255);
-    shadowColor = matrix->color565(0, 0, 0);
     numForecasts = 0;
     activeSlide = 0;
     lastSlideChange = 0;
 }
 
-WeatherEngine::~WeatherEngine() {}
+WeatherEngine::~WeatherEngine() {
+    for (auto* provider : providers) {
+        delete provider;
+    }
+}
+
+EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context->getMatrix();
+    textColor = matrix->color565(255, 255, 255);
+    shadowColor = matrix->color565(0, 0, 0);
+    
+    // Add default provider
+    addProvider(new OpenWeatherMapProvider());
+    
+    return EngineError::OK;
+}
+
+void WeatherEngine::activate() {}
+
+void WeatherEngine::update(EngineContext* context) {
+    loop();
+}
+
+void WeatherEngine::render(EngineContext* context) {}
+
+void WeatherEngine::deactivate() {}
+
+void WeatherEngine::onConfigChanged(const EngineConfig* config) {}
 
 void WeatherEngine::addProvider(IWeatherProvider* provider) {
     if (provider) {
@@ -45,8 +72,8 @@ void WeatherEngine::setCharacter(int characterId) {
     }
 }
 
-void WeatherEngine::update(const String& apiKey, const String& city) {
-    if (apiKey.length() == 0 || city.length() == 0) {
+void WeatherEngine::updateWeather(const String& apiKey, const String& city) {
+    if (apiKey.isEmpty() || city.isEmpty()) {
         static unsigned long lastWarn = 0;
         if (millis() - lastWarn > 10000) {
             LOGW("WeatherEngine", "Cannot fetch weather: API Key ('%s') or City ('%s') is missing!", apiKey.c_str(), city.c_str());

@@ -15,6 +15,10 @@ public:
         return m_eventBus;
     }
 
+    void getSystemTime(struct tm* timeinfo) override {
+        getLocalTime(timeinfo);
+    }
+
 private:
     MatrixPanel_I2S_DMA* m_matrix;
     RetroFrontendListener* m_eventBus;

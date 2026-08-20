@@ -1,28 +1,25 @@
 #include "CryptoEngine.h"
 #include "../core/Logger.h"
 #include <HTTPClient.h>
+#include "../core/LegacyConfigAdapter.h"
 
 CryptoEngine* CryptoEngine::instance = nullptr;
 
 CryptoEngine::CryptoEngine() 
-    : matrix(nullptr), currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
+    : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
 }
 
-void CryptoEngine::begin(MatrixPanel_I2S_DMA* display) {
-    matrix = display;
+EngineError CryptoEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
 }
 
 void CryptoEngine::addProvider(ICryptoProvider* provider) {
     if (provider) {
         providers.push_back(provider);
     }
-}
-
-void CryptoEngine::updateConfig(const CryptoConfig& cfg) {
-    config = cfg;
-    parseSymbols();
 }
 
 void CryptoEngine::parseSymbols() {
@@ -50,7 +47,7 @@ void CryptoEngine::parseSymbols() {
     }
 }
 
-void CryptoEngine::onDisplayStart() {
+void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
     if (!symbolList.empty()) {
         fetchQuote(symbolList[currentSymbolIndex % symbolList.size()]);
@@ -201,8 +198,8 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
     return 1;
 }
 
-bool CryptoEngine::loop() {
-    if (!matrix || symbolList.empty()) return false;
+void CryptoEngine::update(EngineContext* context) {
+    if (symbolList.empty() || !config.enabled) return;
     
     uint32_t durationMs = (config.duration_sec > 0 ? config.duration_sec : 5) * 1000;
     if (millis() - lastItemSwitchTime > durationMs) {
@@ -210,12 +207,25 @@ bool CryptoEngine::loop() {
         currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
         fetchQuote(symbolList[currentSymbolIndex]);
     }
-    
-    renderQuote();
-    return true;
 }
 
-void CryptoEngine::renderQuote() {
+void CryptoEngine::render(EngineContext* context) {
+    if (symbolList.empty() || !config.enabled) return;
+    renderQuote(context);
+}
+
+void CryptoEngine::deactivate() {
+}
+
+extern ConfigLoader config;
+
+void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    this->config = ::config.crypto;
+    parseSymbols();
+}
+
+void CryptoEngine::renderQuote(EngineContext* context) {
+    auto* matrix = context->getMatrix();
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();

@@ -90,7 +90,7 @@ bool ClockEngine::loop() {
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
     legacy_matrix = context->getMatrix();
     // Example: parse theme from config
-    int theme = config->getInt("theme", 0);
+    int theme = config->getInt("clock_theme", 0);
     setTheme(static_cast<PublisherTheme>(theme), true);
     return EngineError::OK;
 }
@@ -100,6 +100,13 @@ void ClockEngine::activate() {
 }
 
 void ClockEngine::update(EngineContext* context) {
+    if (context) {
+        struct tm timeinfo;
+        context->getSystemTime(&timeinfo);
+        currentTime.hours = timeinfo.tm_hour;
+        currentTime.minutes = timeinfo.tm_min;
+        currentTime.seconds = timeinfo.tm_sec;
+    }
     if (activeFace) {
         activeFace->update();
     }
@@ -113,4 +120,11 @@ void ClockEngine::render(EngineContext* context) {
 
 void ClockEngine::deactivate() {
     // Cleanup if needed
+}
+
+void ClockEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) {
+        int theme = config->getInt("clock_theme", 0);
+        setTheme(static_cast<PublisherTheme>(theme), false); // setTheme already prevents recreation if theme == currentTheme
+    }
 }
