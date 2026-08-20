@@ -6,7 +6,7 @@
 #include <memory>
 
 // Forward declarations to avoid heavy includes in the contract
-class RGBMatrixWrapper;
+class MatrixPanel_I2S_DMA;
 class RetroFrontendListener; // Represents EventBus/MQTT currently
 // class Logger; // Could be added later
 
@@ -105,7 +105,7 @@ public:
     virtual ~EngineContext() = default;
 
     // Core matrix wrapper for drawing operations
-    virtual RGBMatrixWrapper* getMatrix() = 0;
+    virtual MatrixPanel_I2S_DMA* getMatrix() = 0;
     
     // Optional Event Bus (MQTT / Batocera events)
     virtual RetroFrontendListener* getEventBus() = 0;
