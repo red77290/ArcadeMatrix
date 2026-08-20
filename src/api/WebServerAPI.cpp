@@ -1,4 +1,6 @@
 #include "WebServerAPI.h"
+#include <core/EngineRegistry.h>
+#include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include <Update.h>
 #include "../core/MatrixEngine.h"
@@ -110,6 +112,44 @@ void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument
 }
 
 void WebServerAPI::setupRoutes() {
+
+    server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
+        size_t count = 0;
+        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+        
+        DynamicJsonDocument doc(4096);
+        JsonArray array = doc.to<JsonArray>();
+        for (size_t i = 0; i < count; i++) {
+            JsonObject obj = array.createNestedObject();
+            obj["metadata"]["id"] = descriptors[i].metadata.id;
+            obj["metadata"]["name"] = descriptors[i].metadata.name;
+            obj["metadata"]["category"] = descriptors[i].metadata.category;
+            obj["metadata"]["version"] = descriptors[i].metadata.version;
+            
+            JsonObject caps = obj.createNestedObject("capabilities");
+            caps["supports_128x32"] = descriptors[i].capabilities.supports_128x32;
+            caps["supports_256x64"] = descriptors[i].capabilities.supports_256x64;
+            caps["realtime"] = descriptors[i].capabilities.realtime;
+            caps["interruptible"] = descriptors[i].capabilities.interruptible;
+            
+            JsonArray schema = obj.createNestedArray("schema");
+            for (const auto& field : descriptors[i].schema.fields) {
+                JsonObject fieldObj = schema.createNestedObject();
+                fieldObj["id"] = field.id;
+                fieldObj["field_type"] = (int)field.type;
+                fieldObj["label"] = field.label;
+                fieldObj["description"] = field.description;
+                fieldObj["default_value"] = field.default_value;
+                if (field.type == ConfigType::ENUM || field.type == ConfigType::LIST) {
+                    fieldObj["options"] = field.options;
+                }
+            }
+        }
+        
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
 
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
