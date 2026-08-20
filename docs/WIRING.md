@@ -55,7 +55,7 @@ fully wired panel - use a dedicated 5V/3A+ supply feeding both the panel and the
 
 ## ESP32-S3 Waveshare Wiring (100% Tested & Physical Hardware Validated)
 
-The **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) integrates its own onboard HUB75 wiring and 1-bit SD_MMC bus. The dedicated profile `HARDWARE_PROFILE_WAVESHARE_S3` in `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) automatically remaps all pins to **completely bypass the GPIO 33-37 range reserved for Octal PSRAM**.
+The **Waveshare ESP32-S3 Matrix Board** (32MB Flash + 16MB PSRAM (N32R16)) integrates its own onboard HUB75 wiring and 1-bit SD_MMC bus. The dedicated profile `HARDWARE_PROFILE_WAVESHARE_S3` in `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) automatically remaps all pins to **completely bypass the GPIO 33-37 range reserved for Octal PSRAM**.
 
 **This configuration is 100% tested and physically verified on real hardware with smooth operation.**
 

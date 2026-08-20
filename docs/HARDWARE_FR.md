@@ -16,7 +16,7 @@ Le firmware ArcadeMatrix prend en charge les cartes ESP32 standard, mais les exi
 - **Pourquoi ?** Un affichage 256x64 requiert ~98KB par frame. Le double buffering demande ~200KB de RAM DMA contiguë, ce que l'ESP32 standard ne peut pas fournir de manière fiable tout en maintenant le Wi-Fi et le serveur Web. L'ESP32-S3 déporte cela de manière transparente vers la PSRAM ou dispose de suffisamment de blocs contigus pour éviter les crashs OOM (Out Of Memory).
 
 ### ESP32-S3 Waveshare (Support 100% testé et validé sur matériel réel)
-La carte **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) est **100% prise en charge et validée physiquement sur du matériel réel**. 
+La carte **Waveshare ESP32-S3 Matrix Board** (32MB Flash + 16MB PSRAM (N32R16)) est **100% prise en charge et validée physiquement sur du matériel réel**. 
 Le profil dédié `HARDWARE_PROFILE_WAVESHARE_S3` (`pio run -e esp32s3_waveshare`) remappe les broches HUB75 sur des GPIO libres (A=18, B=8, C=3, D=42, E=9) et utilise l'interface SD_MMC 1-bit rapide (CMD=44, CLK=1, D0=17), éliminant tout conflit avec la PSRAM octal. Tout fonctionne impeccablement sans aucun conflit. Voir [WIRING_FR.md](WIRING_FR.md) pour le tableau de brochage complet.
 
 ---

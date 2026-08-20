@@ -16,7 +16,7 @@ El firmware ArcadeMatrix es compatible con placas ESP32 estándar, pero los requ
 - **¿Por qué?** Una pantalla 256x64 requiere ~98KB por frame. El doble búfer necesita ~200KB de RAM DMA contigua, algo que el ESP32 estándar no puede proporcionar de forma fiable mientras mantiene el Wi-Fi y el servidor web. El ESP32-S3 descarga esto de forma transparente a la PSRAM o dispone de suficientes bloques contiguos para evitar cuelgues OOM (Out Of Memory).
 
 ### ESP32-S3 Waveshare (Soporte 100% probado y validado en hardware real)
-La placa **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) es **100% compatible y verificada físicamente en hardware real**. 
+La placa **Waveshare ESP32-S3 Matrix Board** (32MB Flash + 16MB PSRAM (N32R16)) es **100% compatible y verificada físicamente en hardware real**. 
 El perfil dedicado `HARDWARE_PROFILE_WAVESHARE_S3` (`pio run -e esp32s3_waveshare`) remapea los pines HUB75 a GPIOs libres (A=18, B=8, C=3, D=42, E=9) y utiliza la interfaz SD_MMC de 1 bit de alta velocidad (CMD=44, CLK=1, D0=17), eliminando cualquier conflicto con la PSRAM octal. Todo funciona de forma impecable sin ningún conflicto de GPIO. Consulta [WIRING_ES.md](WIRING_ES.md) para ver la tabla completa de pines.
 
 ## Múltiples paneles: encadenado vs verdaderas rejillas/muros 2D (runtime vs compile-time)

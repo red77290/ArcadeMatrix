@@ -29,7 +29,7 @@ git clone <this-repo-url>
 cd ArcadeMatrix
 ```
 
-Aucun `pio project init` n'est nécessaire - `platformio.ini` existe déjà à la racine du dépôt et définit les deux cartes prises en charge comme environnements de build séparés : `esp32dev` (ESP32 classique, 4MB flash) et `esp32s3` (ESP32-S3, 8MB flash + PSRAM optionnelle). Voir `docs/HARDWARE_FR.md` pour savoir lequel correspond à votre carte et connaître ses limites spécifiques de GPIO / résolution.
+Aucun `pio project init` n'est nécessaire - `platformio.ini` existe déjà à la racine du dépôt et définit les deux cartes prises en charge comme environnements de build séparés : `esp32dev` (ESP32 classique, 4MB flash) et `esp32s3` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16) optionnelle). Voir `docs/HARDWARE_FR.md` pour savoir lequel correspond à votre carte et connaître ses limites spécifiques de GPIO / résolution.
 
 ## 3. Compiler le firmware
 

@@ -54,7 +54,7 @@ câblé - utilisez une alimentation 5V/3A+ dédiée alimentant à la fois le pan
 
 ## Câblage ESP32-S3 Waveshare (100% Testé & Validé sur Matériel Réel)
 
-La carte **Waveshare ESP32-S3 Matrix Board** (8MB Flash + PSRAM) intègre son propre câblage HUB75 et son bus SD_MMC 1-bit. Le profil dédié `HARDWARE_PROFILE_WAVESHARE_S3` dans `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remappe automatiquement toutes les broches pour **contourner complètement la plage GPIO 33-37 réservée à la PSRAM Octal**.
+La carte **Waveshare ESP32-S3 Matrix Board** (32MB Flash + 16MB PSRAM (N32R16)) intègre son propre câblage HUB75 et son bus SD_MMC 1-bit. Le profil dédié `HARDWARE_PROFILE_WAVESHARE_S3` dans `include/HardwareProfile.h` (`pio run -e esp32s3_waveshare`) remappe automatiquement toutes les broches pour **contourner complètement la plage GPIO 33-37 réservée à la PSRAM Octal**.
 
 **Cette configuration est 100% testée et validée physiquement sur du matériel réel avec un fonctionnement fluide.**
 
