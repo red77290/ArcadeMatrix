@@ -49,6 +49,7 @@ void CryptoEngine::parseSymbols() {
 
 void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
+    symbolsShownThisCycle = 0;
     if (!symbolList.empty()) {
         fetchQuote(symbolList[currentSymbolIndex % symbolList.size()]);
     }
@@ -201,12 +202,19 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config.enabled) return;
     
+    uint32_t now = millis();
     uint32_t durationMs = (config.duration_sec > 0 ? config.duration_sec : 5) * 1000;
-    if (millis() - lastItemSwitchTime > durationMs) {
-        lastItemSwitchTime = millis();
+    if (now - lastItemSwitchTime > durationMs) {
+        lastItemSwitchTime = now;
+        symbolsShownThisCycle++;
         currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
         fetchQuote(symbolList[currentSymbolIndex]);
     }
+}
+
+bool CryptoEngine::isFinished() const {
+    if (symbolList.empty()) return true;
+    return (symbolsShownThisCycle >= symbolList.size());
 }
 
 void CryptoEngine::render(EngineContext* context) {

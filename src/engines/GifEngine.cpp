@@ -39,6 +39,9 @@ void GifEngine::deactivate() {
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {}
 
+bool GifEngine::isFinished() const {
+    return !isPlaying;
+}
 
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
     if (!display) return false;
