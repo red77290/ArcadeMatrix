@@ -9,8 +9,32 @@ extern SemaphoreHandle_t sdMutex;
 
 #define MAX_FIGHTER_FRAME_SIZE 98304
 
-FighterEngine::FighterEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+FighterEngine::FighterEngine() : matrix(nullptr) {}
+
+EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context->getMatrix();
+    initialize();
+    return EngineError::OK;
 }
+
+void FighterEngine::activate() {
+    startFight();
+}
+
+void FighterEngine::update(EngineContext* context) {
+    loop();
+}
+
+void FighterEngine::render(EngineContext* context) {
+    draw();
+}
+
+void FighterEngine::deactivate() {
+    stop();
+}
+
+void FighterEngine::onConfigChanged(const EngineConfig* config) {}
+
 
 FighterEngine::~FighterEngine() {
     if (fighterOffsets) free(fighterOffsets);

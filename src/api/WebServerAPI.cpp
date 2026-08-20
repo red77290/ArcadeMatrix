@@ -67,7 +67,7 @@ public:
 };
 
 
-WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine) : server(port), msg(msgEngine), clock(clkEngine) {}
+WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine) : server(port), msg(msgEngine) {}
 
 void WebServerAPI::setMarqueeEngine(MarqueeEngine* engine) {
     marquee = engine;
@@ -236,13 +236,15 @@ void WebServerAPI::setupRoutes() {
         if (!doc["enabled"].isNull()) {
             config.audio.visualizer_enabled = doc["enabled"].as<bool>();
             if (visualizer) {
-                if (config.audio.visualizer_enabled) visualizer->start();
-                else visualizer->stop();
+                if (config.audio.visualizer_enabled) visualizer->activate();
+                else visualizer->deactivate();
             }
         }
         if (!doc["mode"].isNull()) {
             config.audio.visualizer_mode = doc["mode"].as<String>();
-            if (visualizer) visualizer->setMode(config.audio.visualizer_mode);
+            if (visualizer) {
+                visualizer->onConfigChanged(nullptr);
+            }
         }
         if (!doc["gain"].isNull()) {
             config.audio.mic_gain = doc["gain"].as<float>();
@@ -321,8 +323,8 @@ void WebServerAPI::setupRoutes() {
             paths.push_back(v.as<String>());
         }
         
-        extern GifEngine gifEngine;
-        gifEngine.playPlaylists(paths);
+        extern GifEngine* gifEngine;
+        if (gifEngine) gifEngine->playPlaylists(paths);
         
         request->send(200, "application/json", "{\"success\":true}");
     }, 4096);
@@ -503,13 +505,15 @@ void WebServerAPI::setupRoutes() {
         if (!doc["visualizer_enabled"].isNull()) {
             config.audio.visualizer_enabled = doc["visualizer_enabled"].as<bool>();
             if (visualizer) {
-                if (config.audio.visualizer_enabled) visualizer->start();
-                else visualizer->stop();
+                if (config.audio.visualizer_enabled) visualizer->activate();
+                else visualizer->deactivate();
             }
         }
         if (!doc["visualizer_mode"].isNull()) {
             config.audio.visualizer_mode = doc["visualizer_mode"].as<String>();
-            if (visualizer) visualizer->setMode(config.audio.visualizer_mode);
+            if (visualizer) {
+                visualizer->onConfigChanged(nullptr);
+            }
         }
         if (!doc["mic_gain"].isNull()) {
             config.audio.mic_gain = doc["mic_gain"].as<float>();
@@ -532,13 +536,6 @@ void WebServerAPI::setupRoutes() {
         // To be safe against race conditions, we will just apply it if NOT rebooting.
         bool willReboot = (!doc["reboot"].isNull() && doc["reboot"].as<bool>());
         if (clockChanged && !willReboot) {
-            extern ClockEngine* clockEngine;
-            if (clockEngine) {
-                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                    clockEngine->setTheme((PublisherTheme)config.time.clock_theme, true);
-                    xSemaphoreGive(sdMutex);
-                }
-            }
         }
         // Date
         bool dateChanged = false;
@@ -565,8 +562,9 @@ void WebServerAPI::setupRoutes() {
                         auto engine = rotationManager->getActiveEngine(inst.instance_id);
                         if (engine) {
                             if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                                ((DateEngine*)engine)->reloadCustomFont();
-                                ((DateEngine*)engine)->setTheme((PublisherTheme)config.dateSettings.theme);
+                                if (rotationManager) {
+                                    rotationManager->notifyConfigChanged("date");
+                                }
                                 xSemaphoreGive(sdMutex);
                             }
                         }
@@ -584,12 +582,8 @@ void WebServerAPI::setupRoutes() {
         if (!doc["weather_offset_y"].isNull()) config.weather.weather_offset_y = doc["weather_offset_y"].as<int>();
 
         if (weatherChanged && !willReboot) {
-            extern WeatherEngine* weatherEngine;
-            if (weatherEngine) {
-                if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                    weatherEngine->forceUpdate();
-                    xSemaphoreGive(sdMutex);
-                }
+            if (rotationManager) {
+                rotationManager->notifyConfigChanged("weather");
             }
         }
 
@@ -598,14 +592,16 @@ void WebServerAPI::setupRoutes() {
             config.audio.visualizer_enabled = doc["visualizer_enabled"].as<bool>();
             extern VisualizerEngine* visualizerEngine;
             if (visualizerEngine) {
-                if (config.audio.visualizer_enabled) visualizerEngine->start();
-                else visualizerEngine->stop();
+                if (config.audio.visualizer_enabled) visualizerEngine->activate();
+                else visualizerEngine->deactivate();
             }
         }
         if (!doc["visualizer_mode"].isNull()) {
             config.audio.visualizer_mode = doc["visualizer_mode"].as<String>();
             extern VisualizerEngine* visualizerEngine;
-            if (visualizerEngine) visualizerEngine->setMode(config.audio.visualizer_mode);
+            if (visualizerEngine) {
+                visualizerEngine->onConfigChanged(nullptr);
+            }
         }
         if (!doc["mic_gain"].isNull()) {
             config.audio.mic_gain = doc["mic_gain"].as<float>();
@@ -728,8 +724,8 @@ void WebServerAPI::setupRoutes() {
         }
         
         // Apply immediately
-        extern GifEngine gifEngine;
-        gifEngine.setDefaultPlaylists(paths);
+        extern GifEngine* gifEngine;
+        if (gifEngine) gifEngine->setDefaultPlaylists(paths);
 
         // Write directly to SD (no async flag — prevents data loss on reboot)
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
@@ -798,17 +794,17 @@ void WebServerAPI::setupRoutes() {
         }
         JsonObject doc = json.as<JsonObject>();
         
-        if (clock) {
-            int themeId = doc["clock_theme"] | doc["characterId"] | 0;
-            clock->setTheme(static_cast<PublisherTheme>(themeId));
-            extern ConfigLoader config;
-            config.time.clock_theme = themeId;
+        int themeId = doc["clock_theme"] | doc["characterId"] | 0;
+        extern ConfigLoader config;
+        config.time.clock_theme = themeId;
+        if (rotationManager) {
+            rotationManager->notifyConfigChanged("clock");
+        }
             bool saved = config.saveToSD("/conf.ini");
             if (!saved) {
                 request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Theme applied but could not be saved to the SD card - it will revert on reboot.\"}");
                 return;
             }
-        }
         request->send(200, "application/json", "{\"success\":true}");
     });
     server.addHandler(clockHandler);
@@ -870,8 +866,8 @@ void WebServerAPI::setupRoutes() {
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
             LOGI("OTA", "Update Start: %s", filename.c_str());
-            extern GifEngine gifEngine;
-            gifEngine.stop();
+            extern GifEngine* gifEngine;
+            if (gifEngine) gifEngine->stop();
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
                 Update.printError(Serial);
             }

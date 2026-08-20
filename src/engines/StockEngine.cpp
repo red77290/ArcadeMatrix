@@ -5,13 +5,14 @@
 StockEngine* StockEngine::instance = nullptr;
 
 StockEngine::StockEngine() 
-    : matrix(nullptr), currentSymbolIndex(0), lastItemSwitchTime(0),
+    : currentSymbolIndex(0), lastItemSwitchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
 }
 
-void StockEngine::begin(MatrixPanel_I2S_DMA* display) {
-    matrix = display;
+EngineError StockEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
 }
 
 void StockEngine::addProvider(IStockProvider* provider) {
@@ -20,8 +21,10 @@ void StockEngine::addProvider(IStockProvider* provider) {
     }
 }
 
-void StockEngine::updateConfig(const StockConfig& cfg) {
-    config = cfg;
+extern ConfigLoader config;
+
+void StockEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    this->config = ::config.stock;
     parseSymbols();
 }
 
@@ -50,11 +53,14 @@ void StockEngine::parseSymbols() {
     }
 }
 
-void StockEngine::onDisplayStart() {
+void StockEngine::activate() {
     lastItemSwitchTime = millis();
     if (!symbolList.empty()) {
         fetchQuote(symbolList[currentSymbolIndex % symbolList.size()]);
     }
+}
+
+void StockEngine::deactivate() {
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
@@ -197,8 +203,8 @@ int StockEngine::pngDraw(PNGDRAW *pDraw) {
     return 1;
 }
 
-bool StockEngine::loop() {
-    if (!matrix || symbolList.empty()) return false;
+void StockEngine::update(EngineContext* context) {
+    if (symbolList.empty() || !config.enabled) return;
     
     uint32_t durationMs = (config.duration_sec > 0 ? config.duration_sec : 5) * 1000;
     if (millis() - lastItemSwitchTime > durationMs) {
@@ -206,12 +212,15 @@ bool StockEngine::loop() {
         currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
         fetchQuote(symbolList[currentSymbolIndex]);
     }
-    
-    renderQuote();
-    return true;
 }
 
-void StockEngine::renderQuote() {
+void StockEngine::render(EngineContext* context) {
+    if (symbolList.empty() || !config.enabled) return;
+    renderQuote(context);
+}
+
+void StockEngine::renderQuote(EngineContext* context) {
+    auto* matrix = context->getMatrix();
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();

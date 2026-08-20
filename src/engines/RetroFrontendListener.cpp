@@ -7,8 +7,8 @@
 
 RetroFrontendListener* RetroFrontendListener::instance = nullptr;
 
-RetroFrontendListener::RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine)
-    : mqttConfig(config), gif(gifEngine), clock(clockEngine), message(messageEngine), mqttClient(espClient) {
+RetroFrontendListener::RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine)
+    : mqttConfig(config), gif(gifEngine), message(messageEngine), mqttClient(espClient) {
     instance = this;
     lastReconnectAttempt = 0;
 }
@@ -49,7 +49,7 @@ void RetroFrontendListener::stop() {
     isGamePlaying = false;
     waitingDisplayed = false;
     if (gif) gif->stop();
-    if (message) message->stop();
+    if (message) message->deactivate();
     LOGI("RetroFrontend", "MQTT Listener stopped.");
 }
 
@@ -57,7 +57,7 @@ bool RetroFrontendListener::loop() {
     if (!mqttConfig.enabled) {
         if (waitingDisplayed) {
             waitingDisplayed = false;
-            if (message) message->stop();
+            if (message) message->deactivate();
         }
         return true;
     }
@@ -192,7 +192,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
 
     isGamePlaying = true;
     waitingDisplayed = false;
-    if (message) message->stop();
+    if (message) message->deactivate();
 
     String game = String(gameRaw);
     String folder = mapSystemToPixelcadeFolder(cleanSystem);
@@ -298,7 +298,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
 void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t reqId) {
     isGamePlaying = true;
     waitingDisplayed = false;
-    if (message) message->stop();
+    if (message) message->deactivate();
 
     std::vector<SystemVariant> variants = getSystemNameVariantsMapped(systemMappings, systemId);
 

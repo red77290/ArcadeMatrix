@@ -4,19 +4,25 @@
 #include <vector>
 #include "../api/IWeatherProvider.h"
 
-class WeatherEngine {
+#include "../../include/core/EngineContract.h"
+#include "../core/AppEngineContext.h"
+
+class WeatherEngine : public IEngine {
 public:
     static const int MAX_FORECAST_DAYS = 3;
 
-    WeatherEngine(MatrixPanel_I2S_DMA* display);
+    WeatherEngine();
     ~WeatherEngine();
     
-    void addProvider(IWeatherProvider* provider);
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
 
-    // Fetch a new 3-day forecast if the cache interval has passed. Mirrors the RPi's
-    // WeatherEngine._fetch_weather(): uses OpenWeatherMap's free /forecast endpoint (3-hour steps
-    // over 5 days) and samples index 0 (now), 8 (~+24h) and 16 (~+48h) as Today/Tomorrow/Day3.
-    void update(const String& apiKey, const String& city);
+    void addProvider(IWeatherProvider* provider);
+    void updateWeather(const String& apiKey, const String& city);
     
     bool loop();
     void setCharacter(int characterId);

@@ -10,7 +10,6 @@
 #include "core/ConfigLoader.h"
 #include "core/MatrixEngine.h"
 #include "engines/GifEngine.h"
-#include "engines/ClockEngine.h"
 #include "engines/clocks/ArcadeClock.h"
 #include "engines/MessageEngine.h"
 #include "api/WebServerAPI.h"
@@ -31,7 +30,6 @@ void time_sync_notification_cb(struct timeval *tv) {
 
 #include "engines/RetroFrontendListener.h"
 #include "engines/DateEngine.h"
-#include "engines/WeatherEngine.h"
 #include "engines/FighterEngine.h"
 #include "engines/MarqueeEngine.h"
 #include "engines/CryptoEngine.h"
@@ -45,6 +43,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "hal/HardwareHAL.h"
 #include "engines/TempEngine.h"
 #include "engines/VisualizerEngine.h"
+#include "../include/core/EngineRegistry.h"
 #include "engines/DecibelEngine.h"
 #include "engines/EngineRegistrar.h"
 
@@ -56,21 +55,15 @@ SemaphoreHandle_t sdMutex;
 
 ConfigLoader config;
 MatrixEngine matrixEngine;
-GifEngine gifEngine;
+GifEngine* gifEngine = nullptr;
 
-ClockEngine* clockEngine = nullptr;
-WeatherEngine* weatherEngine = nullptr;
-FighterEngine* fighterEngine = nullptr;
-CryptoEngine cryptoEngine;
-StockEngine stockEngine;
-TempEngine* tempEngine = nullptr;
 VisualizerEngine* visualizerEngine = nullptr;
-DecibelEngine* decibelEngine = nullptr;
 RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
 RetroFrontendListener* frontendListener = nullptr;
+AppEngineContext* appCtx = nullptr;
 BitmapFontLoader customFontLoader;
 DisplayArbiter displayArbiter;
 
@@ -202,7 +195,7 @@ void setup() {
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
     // 4. Initialize Engines
-    gifEngine.begin(matrixEngine.getDisplay());
+    // GifEngine initialization deferred to EngineRegistry
 
     // Load saved GIF playlists from SD, fallback to all available playlists
     {
@@ -220,7 +213,7 @@ void setup() {
                 std::vector<String> paths;
                 for (JsonVariant v : arr) paths.push_back(v.as<String>());
                 if (!paths.empty()) {
-                    gifEngine.setDefaultPlaylists(paths);
+                if (gifEngine) gifEngine->setDefaultPlaylists(paths);
                     selectedLoaded = true;
                     LOGI("GIF", "Loaded %d GIF playlists from playlists_selected.json", paths.size());
                 }
@@ -247,7 +240,7 @@ void setup() {
                 paths.push_back("/gifs");
             }
             
-            gifEngine.setDefaultPlaylists(paths);
+            if (gifEngine) gifEngine->setDefaultPlaylists(paths);
             LOGI("GIF", "Defaulted to %d GIF playlists.", paths.size());
 
             // Save default selection to /playlists_selected.json so it persists immediately
@@ -263,31 +256,37 @@ void setup() {
             }
         }
     }
-
-    clockEngine = new ClockEngine(matrixEngine.getDisplay());
-    clockEngine->setTheme(static_cast<PublisherTheme>(config.time.clock_theme));
     
-    weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
-    weatherEngine->addProvider(new OpenWeatherMapProvider());
+    // CryptoEngine is now created by IEngine factory.
     
-    fighterEngine = new FighterEngine(matrixEngine.getDisplay());
-    fighterEngine->initialize();
+    // StockEngine is now created by IEngine factory.
     
-    cryptoEngine.begin(matrixEngine.getDisplay());
-    cryptoEngine.addProvider(new CoinGeckoProvider());
-    cryptoEngine.addProvider(new BinanceProvider());
-    
-    stockEngine.begin(matrixEngine.getDisplay());
-    stockEngine.addProvider(new YahooFinanceProvider());
-    
-    tempEngine = new TempEngine(matrixEngine.getDisplay());
-    visualizerEngine = new VisualizerEngine(matrixEngine.getDisplay());
-    decibelEngine = new DecibelEngine(matrixEngine.getDisplay());
-
-    rotationManager = new RotationManager(clockEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine, tempEngine, decibelEngine);
-    AppEngineContext* appCtx = new AppEngineContext(matrixEngine.getDisplay(), frontendListener);
+    // TempEngine is now created by IEngine factory.
+    // DecibelEngine is now created by IEngine factory.
+    rotationManager = new RotationManager();
+    appCtx = new AppEngineContext(matrixEngine.getDisplay(), frontendListener);
     rotationManager->setEngineContext(appCtx);
-    messageEngine = new MessageEngine(matrixEngine.getDisplay());
+    
+    auto desc = EngineRegistry::getDescriptor("visualizer");
+    if (desc && desc->factory) {
+        auto visPtr = desc->factory();
+        visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
+        visualizerEngine->initialize(appCtx, nullptr);
+    }
+
+    auto msgDesc = EngineRegistry::getDescriptor("message");
+    if (msgDesc && msgDesc->factory) {
+        auto msgPtr = msgDesc->factory();
+        messageEngine = static_cast<MessageEngine*>(msgPtr.release());
+        messageEngine->initialize(appCtx, nullptr);
+    }
+
+    auto gifDesc = EngineRegistry::getDescriptor("gifs");
+    if (gifDesc && gifDesc->factory) {
+        auto gifPtr = gifDesc->factory();
+        gifEngine = static_cast<GifEngine*>(gifPtr.release());
+        gifEngine->initialize(appCtx, nullptr);
+    }
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
     // 4b. Optional SD-loadable custom bitmap font (see docs/DEVELOPER.md, tools/bdf_to_amfont)
@@ -332,7 +331,8 @@ void setup() {
             delay(500);
             Serial.print(".");
             matrixEngine.getDisplay()->fillScreen(0);
-            messageEngine->loop();
+            messageEngine->update(appCtx);
+            messageEngine->render(appCtx);
             matrixEngine.getDisplay()->flipDMABuffer();
             attempts++;
         }
@@ -353,15 +353,20 @@ void setup() {
             LOGI("NTP", "NTP Time Sync initiated.");
             
             LOGI("System", "Free Heap before Web Server start: %d bytes", ESP.getFreeHeap());
-            webServer = new WebServerAPI(80, messageEngine, clockEngine);
+            webServer = new WebServerAPI(80, messageEngine);
             webServer->begin();
             webServer->setVisualizerEngine(visualizerEngine);
-            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+            auto msgDesc = EngineRegistry::getDescriptor("marquee");
+            if (msgDesc && msgDesc->factory) {
+                auto msgPtr = msgDesc->factory();
+                marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+                marqueeEngine->initialize(appCtx, nullptr);
+            }
             webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
             
             if (config.mqtt.enabled) {
-                frontendListener = new RetroFrontendListener(config.mqtt, &gifEngine, clockEngine, messageEngine);
+                frontendListener = new RetroFrontendListener(config.mqtt, gifEngine, messageEngine);
                 frontendListener->begin();
             }
         } else {
@@ -373,9 +378,14 @@ void setup() {
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
             messageEngine->displayMessage(failConfig);
             
-            webServer = new WebServerAPI(80, messageEngine, clockEngine);
+            webServer = new WebServerAPI(80, messageEngine);
             webServer->begin();
-            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+            auto msgDesc = EngineRegistry::getDescriptor("marquee");
+            if (msgDesc && msgDesc->factory) {
+                auto msgPtr = msgDesc->factory();
+                marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+                marqueeEngine->initialize(appCtx, nullptr);
+            }
             webServer->setMarqueeEngine(marqueeEngine);
         }
     } else {
@@ -387,9 +397,14 @@ void setup() {
         MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
         messageEngine->displayMessage(failConfig);
         
-        webServer = new WebServerAPI(80, messageEngine, clockEngine);
+        webServer = new WebServerAPI(80, messageEngine);
         webServer->begin();
-        marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+        auto msgDesc = EngineRegistry::getDescriptor("marquee");
+        if (msgDesc && msgDesc->factory) {
+            auto msgPtr = msgDesc->factory();
+            marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+            marqueeEngine->initialize(appCtx, nullptr);
+        }
         webServer->setMarqueeEngine(marqueeEngine);
     }
     
@@ -399,12 +414,13 @@ void setup() {
     unsigned long startWait = millis();
     while (messageEngine->isActive()) {
         matrixEngine.getDisplay()->fillScreen(0);
-        messageEngine->loop();
+        messageEngine->update(appCtx);
+        messageEngine->render(appCtx);
         matrixEngine.getDisplay()->flipDMABuffer();
         delay(5);
         if (millis() - startWait > 5000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
-            messageEngine->stop();
+            messageEngine->deactivate();
             break;
         }
     }
@@ -415,7 +431,6 @@ void setup() {
     LOGD("System", "rotationManager started.");
     
     TimeData initialTime = {10, 42, 0};
-    clockEngine->updateTime(initialTime);
     LOGI("System", "Setup complete. Entering loop().");
 }
 
@@ -453,7 +468,7 @@ void loop() {
     }
 
     bool shouldClear = true;
-    if (gifEngine.isActive()) {
+    if (gifEngine && gifEngine->isActive()) {
         shouldClear = false; // AnimatedGIF needs previous frame in buffer
     }
 
@@ -471,7 +486,7 @@ void loop() {
         // Synchronize Music Visualizer active state with config setting
         if (visualizerEngine) {
             if (config.audio.visualizer_enabled && !visualizerEngine->isActive()) {
-                visualizerEngine->start();
+                visualizerEngine->activate();
                 DisplayRequest req;
                 req.source = "VISUALIZER";
                 req.priority = DisplayPriority::VISUALIZER;
@@ -480,7 +495,7 @@ void loop() {
                 req.timeout_ms = 0;
                 displayArbiter.submitRequest(req);
             } else if (!config.audio.visualizer_enabled && visualizerEngine->isActive()) {
-                visualizerEngine->stop();
+                visualizerEngine->deactivate();
                 displayArbiter.cancelRequest("VISUALIZER");
             }
         }
@@ -494,8 +509,7 @@ void loop() {
         if (messageEngine && messageEngine->isActive()) {
             DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
             displayArbiter.submitRequest(req);
-        }
-        if (gifEngine.isActive() && rotationManager->getCurrentInstanceId() != "gifs") {
+        } else if (gifEngine && gifEngine->isActive() && rotationManager->getCurrentInstanceId() != "gifs") {
             DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
             displayArbiter.submitRequest(req);
         }
@@ -503,13 +517,23 @@ void loop() {
         DisplayRequest winner = displayArbiter.evaluate();
         
         if (winner.source == "VISUALIZER") {
-            shouldFlip = visualizerEngine->loop();
+            visualizerEngine->update(appCtx);
+            visualizerEngine->render(appCtx);
+            shouldFlip = true;
         } else if (winner.source == "MARQUEE") {
-            shouldFlip = marqueeEngine->loop();
+            marqueeEngine->update(appCtx);
+            marqueeEngine->render(appCtx);
+            shouldFlip = true;
         } else if (winner.source == "MESSAGE") {
-            shouldFlip = messageEngine->loop();
+            messageEngine->update(appCtx);
+            messageEngine->render(appCtx);
+            shouldFlip = true;
         } else if (winner.source == "GIF") {
-            shouldFlip = gifEngine.loop();
+            if (gifEngine) {
+                gifEngine->update(appCtx);
+                gifEngine->render(appCtx);
+                shouldFlip = true;
+            }
         } else {
             shouldFlip = rotationManager->loop();
         }
@@ -567,7 +591,6 @@ void loop() {
             }
             
             TimeData realTime = {(uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec};
-            clockEngine->updateTime(realTime);
             
             static const char* fr_months_short[] = {"Janv", "Fevr", "Mars", "Avr", "Mai", "Juin", "Juil", "Aout", "Sept", "Oct", "Nov", "Dece"};
             static const char* fr_months_long[]  = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};

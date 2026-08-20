@@ -16,44 +16,33 @@ enum NoiseStatusLevel {
  * @class DecibelEngine
  * @brief Decibel meter engine with Pixel Art smileys, VS Fighting health gauge, and on-demand sampling.
  */
-class DecibelEngine {
+#include "../../include/core/EngineContract.h"
+
+class DecibelEngine : public IEngine {
 public:
-    explicit DecibelEngine(MatrixPanel_I2S_DMA* display);
+    DecibelEngine();
     ~DecibelEngine();
 
-    /**
-     * @brief Called when the engine becomes active in the rotation loop (Lazy Sampling).
-     */
-    void onActivate();
+    EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void activate() override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* engineConfig) override;
 
-    /**
-     * @brief Called when the engine leaves the screen.
-     */
-    void onDeactivate();
-
-    /**
-     * @brief Indicates whether the module is currently active.
-     */
-    bool isActive() const { return active; }
-
-    /**
-     * @brief Renders a single frame of the decibel meter.
-     * @return true if the frame was drawn
-     */
-    bool loop();
+    // Removed onActivate, onDeactivate, isActive, loop
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
     bool active;
 
     float currentDb;
     NoiseStatusLevel currentLevel;
 
     void updateStatusLevel(float db);
-    void drawSmileyIcon(int x, int y, NoiseStatusLevel level);
-    void drawVsGauge(float db);
-    uint16_t getGaugeColorForDb(float dbVal);
-    uint16_t getLevelColor(NoiseStatusLevel level);
+    void drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, NoiseStatusLevel level);
+    void drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db);
+    uint16_t getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float dbVal);
+    uint16_t getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLevel level);
     const char* getLevelText(NoiseStatusLevel level);
 };
 

@@ -3,6 +3,7 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <vector>
 #include <map>
+#include "../../include/core/EngineContract.h"
 #include "../core/ConfigLoader.h"
 #include "../api/IStockProvider.h"
 #include "icons/CryptoStockIcons.h"
@@ -26,18 +27,20 @@ struct AssetQuoteCache {
  * @class StockEngine
  * @brief Displays real-time stock market quotes, % change badges, and company logos.
  */
-class StockEngine {
+class StockEngine : public IEngine {
 public:
     StockEngine();
     
-    void begin(MatrixPanel_I2S_DMA* display);
+    EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void activate() override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* engineConfig) override;
+
     void addProvider(IStockProvider* provider);
-    void updateConfig(const StockConfig& cfg);
-    void onDisplayStart();
-    bool loop();
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
     StockConfig config;
     
     std::vector<String> symbolList;
@@ -62,5 +65,5 @@ private:
     
     void parseSymbols();
     void fetchQuote(const String& symbol);
-    void renderQuote();
+    void renderQuote(EngineContext* context);
 };

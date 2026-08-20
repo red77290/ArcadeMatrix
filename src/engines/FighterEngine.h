@@ -91,14 +91,20 @@ struct FighterPlayer {
  * Manages loading fighters, pacing the fight sequence, and rendering pixels
  * to the display while managing memory efficiently.
  */
-class FighterEngine {
+#include "../../include/core/EngineContract.h"
+#include "../core/AppEngineContext.h"
+
+class FighterEngine : public IEngine {
 public:
-    /**
-     * @brief Construct a new Fighter Engine object.
-     * @param display Pointer to the DMA Matrix Engine.
-     */
-    FighterEngine(MatrixPanel_I2S_DMA* display);
+    FighterEngine();
     ~FighterEngine();
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
 
     /**
      * @brief Initialize the engine (e.g. read the SD card index).

@@ -2,16 +2,11 @@
 #include <Arduino.h>
 #include <vector>
 #include "ConfigLoader.h"
-#include "../engines/ClockEngine.h"
 #include "../engines/DateEngine.h"
-#include "../engines/WeatherEngine.h"
 #include "../engines/GifEngine.h"
 #include "../engines/FighterEngine.h"
 
-#include "../engines/CryptoEngine.h"
-#include "../engines/StockEngine.h"
-#include "../engines/TempEngine.h"
-#include "../engines/DecibelEngine.h"
+
 #include "AppEngineContext.h"
 #include <map>
 #include <memory>
@@ -19,9 +14,10 @@
 
 class RotationManager {
 public:
-    RotationManager(ClockEngine* c, WeatherEngine* w, GifEngine* g, FighterEngine* f, CryptoEngine* cr = nullptr, StockEngine* st = nullptr, TempEngine* t = nullptr, DecibelEngine* db = nullptr);
+    RotationManager();
     
     void begin(const ConfigLoader& cfg);
+    void notifyConfigChanged(const String& instanceId);
     bool loop();
     
     // Reset to start of rotation (e.g. after manual interruption)
@@ -40,14 +36,7 @@ public:
     static size_t countSymbols(const String& symbols);
 
 private:
-    ClockEngine* clockEngine;
-    WeatherEngine* weatherEngine;
-    GifEngine* gifEngine;
-    FighterEngine* fighterEngine;
-    CryptoEngine* cryptoEngine;
-    StockEngine* stockEngine;
-    TempEngine* tempEngine;
-    DecibelEngine* decibelEngine;
+
     
     AppEngineContext* m_ctx = nullptr;
     std::map<String, std::unique_ptr<IEngine>> activeEngines;

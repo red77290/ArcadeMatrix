@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
+#include "../core/ConfigLoader.h"
 
 GifEngine* GifEngine::instance = nullptr;
 
@@ -13,6 +14,31 @@ GifEngine::~GifEngine() {
     stop();
     delete png;
 }
+
+EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    if (!context->getMatrix()) return EngineError::InitializationFailed;
+    return begin(context->getMatrix()) ? EngineError::OK : EngineError::InitializationFailed;
+}
+
+void GifEngine::activate() {
+    extern class ConfigLoader config;
+    if (config.idle.gifs_count > 0 && hasDefaultPlaylists()) {
+        playDefaultPlaylists(config.idle.gifs_count);
+    }
+}
+
+void GifEngine::update(EngineContext* context) {
+    loop();
+}
+
+void GifEngine::render(EngineContext* context) {}
+
+void GifEngine::deactivate() {
+    stop();
+}
+
+void GifEngine::onConfigChanged(const EngineConfig* config) {}
+
 
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
     if (!display) return false;

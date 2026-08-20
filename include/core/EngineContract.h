@@ -4,6 +4,7 @@
 #include <vector>
 #include <functional>
 #include <memory>
+#include <time.h>
 
 // Forward declarations to avoid heavy includes in the contract
 class MatrixPanel_I2S_DMA;
@@ -110,7 +111,9 @@ public:
     // Optional Event Bus (MQTT / Batocera events)
     virtual RetroFrontendListener* getEventBus() = 0;
 
-    // We can add getLogger(), getClock(), getAudio() here later in Sprint 2
+    // Time services
+    // Fetches the current local system time
+    virtual void getSystemTime(struct tm* timeinfo) = 0;
 };
 
 // =======================================================
@@ -127,6 +130,9 @@ public:
     virtual void update(EngineContext* context) = 0;
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
+    
+    // Dynamic Configuration
+    virtual void onConfigChanged(const EngineConfig* config) {}
 };
 
 // =======================================================

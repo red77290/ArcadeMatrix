@@ -12,14 +12,22 @@ struct MessageConfig {
     unsigned long timeoutSeconds; // 30 by default
 };
 
-class MessageEngine {
+#include "../../include/core/EngineContract.h"
+
+class MessageEngine : public IEngine {
 public:
-    MessageEngine(MatrixPanel_I2S_DMA* display);
+    MessageEngine();
+    ~MessageEngine() override = default;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void activate() override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* engineConfig) override;
     
     void displayMessage(const MessageConfig& config);
-    bool isActive();
-    bool loop();
-    void stop();
+    bool isActive() const { return active; }
 
     /// Sets an optional custom GFXfont (e.g. from BitmapFontLoader, loaded from SD) to use
     /// instead of the default 5x7 font for subsequent displayMessage() calls. Pass nullptr to
@@ -27,7 +35,7 @@ public:
     void setCustomFont(GFXfont* font);
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+
     MessageConfig currentMsg;
     bool active;
     GFXfont* customFont;

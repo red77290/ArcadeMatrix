@@ -19,9 +19,19 @@
  * @class GifEngine
  * @brief Orchestrates GIF decoding, file streaming, and matrix rendering.
  */
-class GifEngine {
+#include "../../include/core/EngineContract.h"
+#include "../core/AppEngineContext.h"
+
+class GifEngine : public IEngine {
 public:
     GifEngine();
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
+
     ~GifEngine();
 
     /**
