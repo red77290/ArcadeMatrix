@@ -1,6 +1,19 @@
 #pragma once
 #include <Arduino.h>
 
+#include <vector>
+
+struct EngineInstance {
+    String instance_id;
+    String engine_id;
+};
+
+struct RotationEntry {
+    String instance_id;
+    int duration_sec;
+};
+
+
 /**
  * @struct MatrixConfig
  * @brief Configuration settings for the LED Matrix panel hardware.
@@ -211,12 +224,18 @@ public:
      * @return true on success.
      */
     bool saveToSD(const char* filepath);
+    String serializeToJson() const;
+    bool parseFromJson(const char* jsonContent);
+    void migrateLegacyRotation();
     String serializeToString() const;
 
     /**
      * @brief Cleanly strip comments from an INI line without destroying hex colors (#FF0000).
      */
     static String stripComments(String line);
+
+    std::vector<EngineInstance> instances;
+    std::vector<RotationEntry> rotation;
 
     MatrixConfig matrix;
     WifiConfig wifi;

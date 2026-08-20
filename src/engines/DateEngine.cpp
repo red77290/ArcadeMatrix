@@ -29,20 +29,53 @@ static DateDrop dateDrops[NUM_DROPS];
 static bool dateDropsInit = false;
 static unsigned long dateLastFrameTime = 0;
 
-DateEngine::DateEngine(MatrixPanel_I2S_DMA* display) : matrix(display), activeFace(nullptr) {
+DateEngine::DateEngine() : matrix(nullptr), activeFace(nullptr) {
     strcpy(currentDate, "01 Jan");
     currentDateData = {1, 1, 26};
-    textColor = matrix->color565(255, 255, 255);
-    shadowColor = matrix->color565(0, 0, 0);
+    textColor = 0xFFFF;
+    shadowColor = 0;
     currentTheme = THEME_NONE;
+    matrixW = 64;
+    matrixH = 64;
+}
+
+EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context->getMatrix();
     matrixW = matrix->width();
     matrixH = matrix->height();
-    if (config.dateSettings.date_font_path.length() > 0) {
-        if (!customFont.loadFromSD(config.dateSettings.date_font_path.c_str())) {
+    
+    textColor = matrix->color565(255, 255, 255);
+    shadowColor = matrix->color565(0, 0, 0);
+
+    m_config.theme = config->getInt("theme", 0);
+    m_config.date_font = config->getInt("date_font", 0);
+    m_config.date_size = config->getInt("date_size", 1);
+    m_config.date_offset_x = config->getInt("date_offset_x", 0);
+    m_config.date_offset_y = config->getInt("date_offset_y", 0);
+    m_config.date_font_path = config->getString("date_font_path", "");
+    
+    if (m_config.date_font_path.length() > 0) {
+        if (!customFont.loadFromSD(m_config.date_font_path.c_str())) {
             LOGW("DateEngine", "date_font_path set but failed to load; using compiled-in font.");
         }
     }
+    
+    setTheme(static_cast<PublisherTheme>(m_config.theme));
+    return EngineError::OK;
 }
+
+void DateEngine::activate() {}
+
+void DateEngine::update(EngineContext* context) {
+    // For now, DateEngine doesn't fetch time itself. The rotation loop updates it.
+    // Ideally TimeFetcher would be injected here.
+}
+
+void DateEngine::render(EngineContext* context) {
+    loop(); // reuse the old loop code which does the actual drawing
+}
+
+void DateEngine::deactivate() {};
 
 DateEngine::~DateEngine() {
     if (activeFace) delete activeFace;
