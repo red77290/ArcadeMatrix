@@ -37,6 +37,7 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    bool isFinished() const override;
 
     void addProvider(ICryptoProvider* provider);
 
@@ -45,6 +46,7 @@ private:
     
     std::vector<String> symbolList;
     size_t currentSymbolIndex;
+    size_t symbolsShownThisCycle = 0;
     uint32_t lastItemSwitchTime;
     uint32_t lastFetchTime;
     

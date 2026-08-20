@@ -37,6 +37,7 @@ public:
     void activate() override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* engineConfig) override;
+    bool isFinished() const override;
 
     void addProvider(IStockProvider* provider);
 
@@ -45,6 +46,7 @@ private:
     
     std::vector<String> symbolList;
     size_t currentSymbolIndex;
+    size_t symbolsShownThisCycle = 0;
     uint32_t lastItemSwitchTime;
     
     std::vector<IStockProvider*> providers;

@@ -31,6 +31,7 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    bool isFinished() const override;
 
     ~GifEngine();
 

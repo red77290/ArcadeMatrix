@@ -133,6 +133,9 @@ public:
     
     // Dynamic Configuration
     virtual void onConfigChanged(const EngineConfig* config) {}
+    
+    // Intrinsic sequence completion signaling (not tied to Rotation duration)
+    virtual bool isFinished() const { return false; }
 };
 
 // =======================================================

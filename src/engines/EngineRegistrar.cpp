@@ -8,7 +8,6 @@
 #include "WeatherEngine.h"
 #include "FighterEngine.h"
 #include "GifEngine.h"
-#include "DummyEngine.h"
 #include "CryptoEngine.h"
 #include "StockEngine.h"
 #include "TempEngine.h"
@@ -19,28 +18,6 @@
 #include "DecibelEngine.h"
 #include "MessageEngine.h"
 #include "MarqueeEngine.h"
-
-// Generic wrapper class for engines that take NO arguments
-template <typename T>
-class EmptyEngineWrapper : public IEngine {
-public:
-    EmptyEngineWrapper() : instance(nullptr) {}
-    ~EmptyEngineWrapper() override { if (instance) delete instance; }
-    
-    EngineError initialize(EngineContext* context, const EngineConfig* config) override {
-        instance = new T();
-        // Some engines need begin(matrix)
-        // We will ignore for now as they are still initialized globally in main.cpp for the moment
-        return EngineError::OK;
-    }
-    void activate() override {}
-    void update(EngineContext* context) override {}
-    void render(EngineContext* context) override {}
-    void deactivate() override {}
-    T* get() { return instance; }
-private:
-    T* instance;
-};
 
 void EngineRegistrar::registerAll() {
     LOGI("Registrar", "Registering dynamic engines...");
@@ -76,13 +53,6 @@ void EngineRegistrar::registerAll() {
     desc_gifs.capabilities.needs_network = false;
     desc_gifs.factory = []() { return std::unique_ptr<IEngine>(new GifEngine()); };
     EngineRegistry::registerEngine(desc_gifs);
-
-    EngineDescriptor desc_dummy;
-    desc_dummy.metadata = {"dummy", "Dummy Test", "test", "1.0.0"};
-    desc_dummy.capabilities.needs_audio = false;
-    desc_dummy.capabilities.needs_network = false;
-    desc_dummy.factory = []() { return std::unique_ptr<IEngine>(new DummyEngine()); };
-    EngineRegistry::registerEngine(desc_dummy);
     
     EngineDescriptor desc_crypto;
     desc_crypto.metadata = {"crypto", "Crypto Ticker", "finance", "1.0.0"};

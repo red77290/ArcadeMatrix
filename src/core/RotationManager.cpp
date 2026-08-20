@@ -147,70 +147,24 @@ bool RotationManager::loop() {
   String inst_id = config.rotation[currentIndex].instance_id;
   uint32_t dur = config.rotation[currentIndex].duration_sec;
   
-  String mod = inst_id;
-  for (const auto& inst : config.instances) {
-      if (inst.instance_id == inst_id) {
-          mod = inst.engine_id;
-          break;
-      }
-  }
-
   bool advance = false;
   bool isSoloMode = (config.rotation.size() == 1);
 
-  if (mod == "gifs") {
-    // TODO(Architecture): GifEngine loop handled by IEngine update/render.
-    bool drewFrame = false;
-    IEngine* activeEngine = getActiveEngine(inst_id);
-    if (activeEngine) {
+  IEngine* activeEngine = getActiveEngine(inst_id);
+  if (activeEngine) {
       activeEngine->update(m_ctx);
       activeEngine->render(m_ctx);
-      drewFrame = true; // Assume drew frame for now
-    }
-    
-    // Auto-advance is handled by GIF engine completion logic (TODO)
-    if (advance) {
-      currentIndex = (currentIndex + 1) % config.rotation.size();
-      switchToModule(currentIndex);
-    }
-    return drewFrame;
+      
+      if (!isSoloMode) {
+          if (activeEngine->isFinished() || (now - moduleStartTime >= dur * 1000UL)) {
+              advance = true;
+          }
+      }
   } else {
-    IEngine* activeEngine = getActiveEngine(inst_id);
-    if (activeEngine) {
-        activeEngine->update(m_ctx);
-        activeEngine->render(m_ctx);
-        if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    } else if (mod == "clock") {
-      // Fallback if not instantiated
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    } else if (mod == "date") {
-      // Fallback if not instantiated
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;    } else if (mod == "weather") {
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    } else if (mod == "crypto") {
-      // TODO(Architecture): Dynamic duration logic for Crypto/Stock was here.
-      size_t symbolCount = countSymbols(config.crypto.symbols);
-      uint32_t perSymbolSec = config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5;
-      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
-      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs)) advance = true;
-    } else if (mod == "stock" || mod == "stocks") {
-      // TODO(Architecture): Dynamic duration logic for Stock was here.
-      size_t symbolCount = countSymbols(config.stock.symbols);
-      uint32_t perSymbolSec = config.stock.duration_sec > 0 ? config.stock.duration_sec : 5;
-      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
-      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs)) advance = true;
-    } else if (mod == "temp") {
-      // Logic handled via IEngine
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    } else if (mod == "decibel") {
-      // Handled via IEngine
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    } else {
-      // Fallback for unknown engine ids mapped to a rotation entry
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) advance = true;
-    }
-
-    // TODO(Architecture): Fighter engine background sprites draw call was here.
+      // Fallback if engine fails to load or id is invalid
+      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) {
+          advance = true;
+      }
   }
 
   if (advance && !isSoloMode) {
