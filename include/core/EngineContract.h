@@ -8,7 +8,7 @@
 
 // Forward declarations to avoid heavy includes in the contract
 class MatrixPanel_I2S_DMA;
-class RetroFrontendListener; // Represents EventBus/MQTT currently
+class FrontendSyncEngine; // Represents EventBus/MQTT currently
 // class Logger; // Could be added later
 
 // =======================================================
@@ -97,6 +97,7 @@ public:
     virtual ~EngineConfig() = default;
     virtual String getString(const char* key, const char* default_val = "") const = 0;
     virtual int getInt(const char* key, int default_val = 0) const = 0;
+    virtual float getFloat(const char* key, float default_val = 0.0f) const = 0;
     virtual bool getBool(const char* key, bool default_val = false) const = 0;
 };
 
@@ -109,7 +110,7 @@ public:
     virtual MatrixPanel_I2S_DMA* getMatrix() = 0;
     
     // Optional Event Bus (MQTT / Batocera events)
-    virtual RetroFrontendListener* getEventBus() = 0;
+    virtual FrontendSyncEngine* getEventBus() = 0;
 
     // Time services
     // Fetches the current local system time

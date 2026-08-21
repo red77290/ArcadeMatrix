@@ -4,7 +4,7 @@
 
 This guide is for developers who have never used [PlatformIO](https://platformio.org/) before and
 want to build, flash, and debug the ArcadeMatrix firmware locally. For hardware wiring, see
-`docs/HARDWARE.md`/`docs/WIRING.md`; for `conf.ini` options, see `docs/CONFIGURATION.md`; for the
+`docs/HARDWARE.md`/`docs/WIRING.md`; for `config.json` options, see `docs/CONFIGURATION.md`; for the
 codebase architecture, see `docs/ARCHITECTURE.md`; for contribution workflows (adding clocks,
 REST endpoints, custom fonts), see `docs/DEVELOPER.md`.
 
@@ -112,7 +112,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 
 The firmware needs an external SD card (wired per `docs/WIRING.md`, chip-select on GPIO 5 by
 default - see `SD_CS_PIN` in `src/main.cpp`) for:
-- `/conf.ini` — your Wi-Fi/matrix/theme settings (auto-generated with defaults on first boot if
+- `/config.json` — your Wi-Fi/matrix/theme settings (auto-generated with defaults on first boot if
   missing; edit it directly on the card, or via the web UI's `/api/settings` once Wi-Fi is up).
 - `/gifs/`, playlists of `.gif`/`.raw`/`.png` assets (see `docs/ARCHITECTURE.md` §4 for the format
   differences between the three).

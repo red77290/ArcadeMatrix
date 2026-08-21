@@ -1,8 +1,8 @@
-# Guía de Configuración (`conf.ini` y API)
+# Guía de Configuración (`config.json` y API)
 
 🇬🇧 [English](CONFIGURATION.md) | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 Español
 
-ArcadeMatrix es totalmente configurable sin recompilar. Todos los parámetros se pueden gestionar desde la Web UI (`http://arcadematrix.local`), la API REST o en el archivo `conf.ini` de la tarjeta SD.
+ArcadeMatrix es totalmente configurable sin recompilar. Todos los parámetros se pueden gestionar desde la Web UI (`http://arcadematrix.local`), la API REST o en el archivo `config.json` de la tarjeta SD.
 
 ---
 

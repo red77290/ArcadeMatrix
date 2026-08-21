@@ -21,13 +21,13 @@ run from your own PC** (Windows/macOS/Linux), not from the ESP32 or from Emulati
 
 Once installed, every time you launch/browse/stop a game, the device publishes a small JSON
 message over MQTT (topic `recalbox/system/playing`, matching `ArcadeMatrix_RPi`'s
-`core/config.py` default and ArcadeMatrix's `conf.ini` `[MQTT] TOPIC_RECALBOX` default):
+`core/config.py` default and ArcadeMatrix's `config.json` `[MQTT] TOPIC_RECALBOX` default):
 
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}
 ```
 
-`src/engines/RetroFrontendListener.cpp` (firmware) receives this, looks for
+`src/engines/FrontendSyncEngine.cpp` (firmware) receives this, looks for
 `/pixelcade/mame/pacman.png` on the SD card (see `../pixelcade_sync/` for how to populate that
 folder ahead of time), and displays it immediately - falling back to scrolling the game name as
 text if no matching artwork is cached.

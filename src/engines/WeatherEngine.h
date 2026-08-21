@@ -22,6 +22,13 @@ public:
     void onConfigChanged(const EngineConfig* config) override;
 
     void addProvider(IWeatherProvider* provider);
+    
+    String config_api_key;
+    String config_city;
+    String config_lang;
+    int config_offset_x = 0;
+    int config_offset_y = 0;
+    
     void updateWeather(const String& apiKey, const String& city);
     
     bool loop();

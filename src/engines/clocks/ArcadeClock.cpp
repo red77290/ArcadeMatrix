@@ -2,15 +2,14 @@
 #include "../../core/ConfigLoader.h"
 #include "../fonts/ArcadeFonts.h"
 
-ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
+ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     lastMinute = 255;
     isAnimating = false;
     animationFrame = 0;
     lastFrameTime = 0;
-    extern ConfigLoader config;
-    currentTheme = static_cast<PublisherTheme>(config.time.clock_theme);
-    if (config.time.clock_font_path.length() > 0) {
-        if (!customFont.loadFromSD(config.time.clock_font_path.c_str())) {
+    currentTheme = static_cast<PublisherTheme>((engineConfig ? engineConfig->getInt("clock_theme", 0) : 0));
+    if ((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")).length() > 0) {
+        if (!customFont.loadFromSD((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")).c_str())) {
             Serial.println("ArcadeClock: clock_font_path set but failed to load; using compiled-in font.");
         }
     }
@@ -32,12 +31,11 @@ void ArcadeClock::draw(const TimeData& t) {
 }
 
 void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
-    extern ConfigLoader config;
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
 
     int currentScale = max(1, scale);
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
     int effectDepth = (logicalSize >= 5) ? 2 : 1;
 
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
@@ -82,8 +80,7 @@ void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t 
 }
 
 void ArcadeClock::drawStaticTime() {
-    extern ConfigLoader config;
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
     
     const GFXfont* font9pt = nullptr;
     const GFXfont* font12pt = nullptr;
@@ -97,7 +94,7 @@ void ArcadeClock::drawStaticTime() {
         default: font9pt = nullptr; font12pt = nullptr; break;
     }
     
-    // A user-supplied SD font (config.time.clock_font_path, converted via tools/bdf_to_amfont)
+    // A user-supplied SD font ((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")), converted via tools/bdf_to_amfont)
     // always takes priority over the compiled-in font families above.
     GFXfont* loadedCustomFont = customFont.getFont();
     if (loadedCustomFont) {
@@ -173,7 +170,7 @@ void ArcadeClock::drawStaticTime() {
         matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
     }
     
-    logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
     int effectDepth = (logicalSize >= 5) ? 2 : 1;
     
     int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
@@ -190,8 +187,8 @@ void ArcadeClock::drawStaticTime() {
     int fullW = leftExtra + bw + rightExtra;
     int fullH = topExtra + bh + bottomExtra;
     
-    int x = (matrix->width() - fullW) / 2 + leftExtra + config.time.clock_offset_x - bx;
-    int y = (matrix->height() - fullH) / 2 + topExtra - by + config.time.clock_offset_y;
+    int x = (matrix->width() - fullW) / 2 + leftExtra + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - bx;
+    int y = (matrix->height() - fullH) / 2 + topExtra - by + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
     uint16_t textColor = matrix->color565(255, 255, 255);
     uint16_t shadowColor = matrix->color565(0, 0, 0);
@@ -290,16 +287,16 @@ void ArcadeClock::drawStaticTime() {
         case THEME_CUSTOM_GRADIENT: {
             uint16_t defaultC1 = matrix->color565(0, 255, 255);  // Cyan
             uint16_t defaultC2 = matrix->color565(255, 0, 255);  // Magenta
-            if (config.time.clock_color_1.length() > 0) {
-                const char* hex1 = config.time.clock_color_1.c_str();
+            if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String("")).length() > 0) {
+                const char* hex1 = (engineConfig ? engineConfig->getString("clock_color_1", "") : String("")).c_str();
                 if (hex1[0] == '#') hex1++;
                 if (strlen(hex1) >= 6) {
                     long val1 = strtol(hex1, NULL, 16);
                     defaultC1 = matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF);
                 }
             }
-            if (config.time.clock_color_2.length() > 0) {
-                const char* hex2 = config.time.clock_color_2.c_str();
+            if ((engineConfig ? engineConfig->getString("clock_color_2", "") : String("")).length() > 0) {
+                const char* hex2 = (engineConfig ? engineConfig->getString("clock_color_2", "") : String("")).c_str();
                 if (hex2[0] == '#') hex2++;
                 if (strlen(hex2) >= 6) {
                     long val2 = strtol(hex2, NULL, 16);

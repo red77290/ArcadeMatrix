@@ -50,7 +50,7 @@ void TempEngine::update(EngineContext* context) {
 void TempEngine::activate() {}
 void TempEngine::deactivate() {}
 void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
-    setUnit(config.env.unit);
+    setUnit(config.system.unit);
 }
 
 void TempEngine::render(EngineContext* context) {
@@ -59,7 +59,7 @@ void TempEngine::render(EngineContext* context) {
 
     matrix->fillScreen(0);
 
-    EnvironmentData envData = hardwareHAL.readEnvironment(config.env.temp_offset);
+    EnvironmentData envData = hardwareHAL.readEnvironment(config.system.temp_offset);
     if (!envData.available) {
         // Fallback or warning if sensor not detected
         matrix->setTextSize(1);

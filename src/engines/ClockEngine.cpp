@@ -23,7 +23,7 @@ ClockEngine::~ClockEngine() {
     if (activeFace) delete activeFace;
 }
 
-void ClockEngine::setTheme(PublisherTheme theme, bool forceReload) {
+void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineConfig* config) {
     if (!forceReload && currentTheme == theme && activeFace != nullptr) {
         return;
     }
@@ -36,30 +36,29 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload) {
     currentTheme = theme;
     
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(legacy_matrix);
+        activeFace = new CyberpunkClock(legacy_matrix, config);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(legacy_matrix);
+        activeFace = new FlipClock(legacy_matrix, config);
     } else if (theme == 22) {
-        activeFace = new PongClock(legacy_matrix);
+        activeFace = new PongClock(legacy_matrix, config);
     } else if (theme == 23) {
-        activeFace = new TetrisClock(legacy_matrix, false); // Normal Tetris
+        activeFace = new TetrisClock(legacy_matrix, false, config); // Normal Tetris
     } else if (theme == 29) {
-        activeFace = new TetrisClock(legacy_matrix, true); // Gameboy Tetris
+        activeFace = new TetrisClock(legacy_matrix, true, config); // Gameboy Tetris
     } else if (theme == 24) {
-        activeFace = new WordClock(legacy_matrix);
+        activeFace = new WordClock(legacy_matrix, config);
     } else if (theme == 25) {
-        activeFace = new BinaryClock(legacy_matrix);
+        activeFace = new BinaryClock(legacy_matrix, config);
     } else if (theme == 26) {
-        activeFace = new PacmanClock(legacy_matrix);
+        activeFace = new PacmanClock(legacy_matrix, config);
     } else if (theme == 27) {
-        activeFace = new VersusClock(legacy_matrix);
+        activeFace = new VersusClock(legacy_matrix, config);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(legacy_matrix);
+        activeFace = new MatrixRainClock(legacy_matrix, config);
     } else if (theme == 28) {
-        activeFace = new SlotMachineClock(legacy_matrix);
+        activeFace = new SlotMachineClock(legacy_matrix, config);
     } else {
-        // Theme 0-17 (Publisher + Characters) are handled by ArcadeClock
-        ArcadeClock* arcade = new ArcadeClock(legacy_matrix);
+        ArcadeClock* arcade = new ArcadeClock(legacy_matrix, config);
         arcade->setTheme(theme);
         activeFace = arcade;
     }
@@ -89,9 +88,9 @@ bool ClockEngine::loop() {
 
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
     legacy_matrix = context->getMatrix();
-    // Example: parse theme from config
-    int theme = config->getInt("clock_theme", 0);
-    setTheme(static_cast<PublisherTheme>(theme), true);
+    currentConfig = config;
+    int theme = config ? config->getInt("clock_theme", 0) : 0;
+    setTheme(static_cast<PublisherTheme>(theme), true, config);
     return EngineError::OK;
 }
 
@@ -124,7 +123,8 @@ void ClockEngine::deactivate() {
 
 void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
+        currentConfig = config;
         int theme = config->getInt("clock_theme", 0);
-        setTheme(static_cast<PublisherTheme>(theme), false); // setTheme already prevents recreation if theme == currentTheme
+        setTheme(static_cast<PublisherTheme>(theme), false, config); // setTheme already prevents recreation if theme == currentTheme
     }
 }

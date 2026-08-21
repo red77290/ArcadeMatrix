@@ -4,14 +4,14 @@
 // Concrete implementation of EngineContext for the main application
 class AppEngineContext : public EngineContext {
 public:
-    AppEngineContext(MatrixPanel_I2S_DMA* matrix, RetroFrontendListener* eventBus)
+    AppEngineContext(MatrixPanel_I2S_DMA* matrix, FrontendSyncEngine* eventBus)
         : m_matrix(matrix), m_eventBus(eventBus) {}
 
     MatrixPanel_I2S_DMA* getMatrix() override {
         return m_matrix;
     }
 
-    RetroFrontendListener* getEventBus() override {
+    FrontendSyncEngine* getEventBus() override {
         return m_eventBus;
     }
 
@@ -21,5 +21,5 @@ public:
 
 private:
     MatrixPanel_I2S_DMA* m_matrix;
-    RetroFrontendListener* m_eventBus;
+    FrontendSyncEngine* m_eventBus;
 };

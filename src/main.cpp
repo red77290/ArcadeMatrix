@@ -28,7 +28,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 }
 #endif
 
-#include "engines/RetroFrontendListener.h"
+#include "engines/FrontendSyncEngine.h"
 #include "engines/DateEngine.h"
 #include "engines/FighterEngine.h"
 #include "engines/MarqueeEngine.h"
@@ -62,7 +62,7 @@ RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
-RetroFrontendListener* frontendListener = nullptr;
+FrontendSyncEngine* frontendListener = nullptr;
 AppEngineContext* appCtx = nullptr;
 BitmapFontLoader customFontLoader;
 DisplayArbiter displayArbiter;
@@ -179,10 +179,10 @@ void setup() {
     LOGI("SD", "SD Card mounted successfully.");
 
     // 2. Load Configuration from SD
-    if (!config.parseFromSD("/conf.ini")) {
-        LOGW("Config", "/conf.ini not found or failed to parse. Using defaults.");
+    if (!config.loadFromSD("/config.json")) {
+        LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
     } else {
-        LOGI("Config", "Configuration loaded from /conf.ini.");
+        LOGI("Config", "Configuration loaded from /config.json.");
     }
 
     // 3. Initialize Matrix
@@ -290,8 +290,9 @@ void setup() {
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
     // 4b. Optional SD-loadable custom bitmap font (see docs/DEVELOPER.md, tools/bdf_to_amfont)
-    if (config.fonts.custom_font_path.length() > 0) {
-        if (customFontLoader.loadFromSD(config.fonts.custom_font_path.c_str())) {
+    String fontPath = config.getInstance("clock_main") ? config.getInstance("clock_main")->config.getString("clock_font_path") : "";
+    if (fontPath.length() > 0) {
+        if (customFontLoader.loadFromSD(fontPath.c_str())) {
             messageEngine->setCustomFont(customFontLoader.getFont());
             Serial.println("Custom font applied to MessageEngine.");
         } else {
@@ -349,7 +350,7 @@ void setup() {
                 LOGI("WiFi", "mDNS responder started: http://%s.local", config.wifi.hostname.c_str());
             }
             
-            configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
+            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
             LOGI("NTP", "NTP Time Sync initiated.");
             
             LOGI("System", "Free Heap before Web Server start: %d bytes", ESP.getFreeHeap());
@@ -366,7 +367,7 @@ void setup() {
             MDNS.addService("http", "tcp", 80);
             
             if (config.mqtt.enabled) {
-                frontendListener = new RetroFrontendListener(config.mqtt, gifEngine, messageEngine);
+                frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
                 frontendListener->begin();
             }
         } else {
@@ -447,7 +448,7 @@ void loop() {
     static bool wasPoweredOn = true;
 
     // 1. Manual Power Toggle
-    if (!config.standby.matrix_power) {
+    if (!config.matrix.matrix_power) {
         if (wasPoweredOn) {
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.getDisplay()->flipDMABuffer();
@@ -485,7 +486,7 @@ void loop() {
 
         // Synchronize Music Visualizer active state with config setting
         if (visualizerEngine) {
-            if (config.audio.visualizer_enabled && !visualizerEngine->isActive()) {
+            if ((config.getInstance("visualizer_main") && config.getInstance("visualizer_main")->config.getBool("enabled")) && !visualizerEngine->isActive()) {
                 visualizerEngine->activate();
                 DisplayRequest req;
                 req.source = "VISUALIZER";
@@ -494,7 +495,7 @@ void loop() {
                 req.preemptive = true;
                 req.timeout_ms = 0;
                 displayArbiter.submitRequest(req);
-            } else if (!config.audio.visualizer_enabled && visualizerEngine->isActive()) {
+            } else if (!(config.getInstance("visualizer_main") && config.getInstance("visualizer_main")->config.getBool("enabled")) && visualizerEngine->isActive()) {
                 visualizerEngine->deactivate();
                 displayArbiter.cancelRequest("VISUALIZER");
             }
@@ -546,10 +547,10 @@ void loop() {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
         bool is_night = false;
-        if (config.standby.night_mode_enabled) {
+        if (config.system.night_mode_enabled) {
             int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-            int off_min = config.standby.turn_off_at.substring(0, 2).toInt() * 60 + config.standby.turn_off_at.substring(3).toInt();
-            int wake_min = config.standby.wake_up_at.substring(0, 2).toInt() * 60 + config.standby.wake_up_at.substring(3).toInt();
+            int off_min = config.system.turn_off_at.substring(0, 2).toInt() * 60 + config.system.turn_off_at.substring(3).toInt();
+            int wake_min = config.system.wake_up_at.substring(0, 2).toInt() * 60 + config.system.wake_up_at.substring(3).toInt();
             if (off_min > wake_min) {
                 is_night = (now_min >= off_min || now_min < wake_min);
             } else {
@@ -558,13 +559,13 @@ void loop() {
         }
         
         if (is_night) {
-            if (config.standby.night_brightness == 0) {
+            if (config.system.night_brightness == 0) {
                 matrixEngine.getDisplay()->fillScreen(0);
                 matrixEngine.getDisplay()->flipDMABuffer();
                 delay(1000);
                 return;
             } else {
-                matrixEngine.setBrightness(config.standby.night_brightness);
+                matrixEngine.setBrightness(config.system.night_brightness);
             }
         } else {
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
@@ -576,7 +577,7 @@ void loop() {
             static int lastDay = -1;
             if (timeinfo.tm_mday != lastDay) {
                 lastDay = timeinfo.tm_mday;
-                if ((int)config.dateSettings.theme == 99 || config.dateSettings.theme == THEME_NONE) {
+                if ((int)(config.getInstance("date_main") ? config.getInstance("date_main")->config.getInt("theme") : 0) == 99 || (config.getInstance("date_main") ? config.getInstance("date_main")->config.getInt("theme") : 0) == THEME_NONE) {
                     PublisherTheme randomTheme = static_cast<PublisherTheme>(random(0, 20));
                     for (const auto& inst : config.instances) {
                         if (inst.engine_id == "date") {
@@ -612,7 +613,7 @@ void loop() {
             const char** d_short = en_days_short;
             const char** d_long  = en_days_long;
 
-            String lang = config.weather.lang;
+            String lang = (config.getInstance("weather_main") ? config.getInstance("weather_main")->config.getString("lang") : "en");
             if (lang.equalsIgnoreCase("fr")) {
                 m_short = fr_months_short; m_long = fr_months_long;
                 d_short = fr_days_short;   d_long = fr_days_long;
@@ -621,7 +622,7 @@ void loop() {
                 d_short = es_days_short;   d_long = es_days_long;
             }
 
-            String dateRes = config.dateSettings.format;
+            String dateRes = (config.getInstance("date_main") ? config.getInstance("date_main")->config.getString("format") : "DD-MM-YYYY");
             if (dateRes.length() == 0) dateRes = "DD/MM";
 
             char numBuf[16];

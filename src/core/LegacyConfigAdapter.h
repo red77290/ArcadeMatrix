@@ -48,6 +48,10 @@ public:
         return default_val;
     }
 
+    float getFloat(const char* key, float default_val = 0.0f) const override {
+        return default_val; // For now legacy adapter doesn't need to serve float
+    }
+
     bool getBool(const char* key, bool default_val = false) const override {
         String k = String(key);
         if (m_engineType == "clock") {

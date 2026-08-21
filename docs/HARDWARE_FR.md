@@ -41,11 +41,11 @@ Le build RPi (`ArcadeMatrix_RPi`) utilise la bibliothèque `rpi-rgb-led-matrix`,
 `--led-parallel` et `--led-rows` comme options **entièrement configurables à l'exécution** — un Raspberry Pi dispose de 2 à 3 connecteurs GPIO HUB75 indépendants, donc construire un mur 2D de panneaux (par ex. 2 rangées x 2 colonnes) n'est qu'un changement de config, sans recompilation.
 
 Les cartes ESP32 n'exposent qu'une **seule** sortie HUB75. Ce firmware prend déjà en charge `CHAIN=N` dans
-`conf.ini` (`ConfigLoader::matrix.chainLength`) pour chaîner des panneaux **sur une seule ligne** à l'exécution
+`config.json` (`ConfigLoader::matrix.chainLength`) pour chaîner des panneaux **sur une seule ligne** à l'exécution
 (par ex. `CHAIN=4` pour un ruban 512x32) — cela fonctionne aujourd'hui et ne nécessite aucun changement de firmware.
 
 **Les vraies grilles/murs 2D (plusieurs rangées de panneaux chaînés, par ex. un mur 2x2) ne sont PAS actuellement intégrés à ce firmware.** La bibliothèque sous-jacente `ESP32-HUB75-MatrixPanel-I2S-DMA` fournit bien un helper
-`VirtualMatrixPanel_T` qui remappe des coordonnées virtuelles (x,y) sur un chaînage serpentin / zig-zag de panneaux pour construire un tel mur, mais c'est une **classe template C++** — sa forme de chaînage et son type de scan sont des paramètres **au moment de la compilation**, pas quelque شيء qui peut être lu depuis `conf.ini` au boot comme tous les autres réglages de ce projet.
+`VirtualMatrixPanel_T` qui remappe des coordonnées virtuelles (x,y) sur un chaînage serpentin / zig-zag de panneaux pour construire un tel mur, mais c'est une **classe template C++** — sa forme de chaînage et son type de scan sont des paramètres **au moment de la compilation**, pas quelque شيء qui peut être lu depuis `config.json` au boot comme tous les autres réglages de ce projet.
 
 ---
 

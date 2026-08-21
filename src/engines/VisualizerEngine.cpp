@@ -203,8 +203,8 @@ void VisualizerEngine::drawNeonFire(MatrixPanel_I2S_DMA* matrix) {
 }
 
 void VisualizerEngine::update(EngineContext* context) {
-    hardwareHAL.setMicGain(config.audio.mic_gain);
-    setMode(config.audio.visualizer_mode);
+    auto inst = config.getInstance("visualizer_main"); if (inst) hardwareHAL.setMicGain(inst->config.getFloat("gain", 1.0f));
+    auto inst2 = config.getInstance("visualizer_main"); if (inst2) setMode(inst2->config.getString("mode", "frequency"));
 }
 
 void VisualizerEngine::render(EngineContext* context) {

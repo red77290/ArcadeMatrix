@@ -9,7 +9,7 @@
 // "Matrix" look, with the current time overlaid in the center.
 class MatrixRainClock : public ClockFace {
 public:
-    MatrixRainClock(MatrixPanel_I2S_DMA* display);
+    MatrixRainClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 

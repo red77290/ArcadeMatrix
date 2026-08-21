@@ -37,6 +37,7 @@ private:
 
     float currentDb;
     NoiseStatusLevel currentLevel;
+    bool config_visualizer_enabled = false;
 
     void updateStatusLevel(float db);
     void drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, NoiseStatusLevel level);

@@ -22,8 +22,8 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
 
 void GifEngine::activate() {
     extern class ConfigLoader config;
-    if (config.idle.gifs_count > 0 && hasDefaultPlaylists()) {
-        playDefaultPlaylists(config.idle.gifs_count);
+    if ((config.getInstance("gifs_main") ? config.getInstance("gifs_main")->config.getInt("gifs_count", 0) : 0) > 0 && hasDefaultPlaylists()) {
+        playDefaultPlaylists((config.getInstance("gifs_main") ? config.getInstance("gifs_main")->config.getInt("gifs_count", 0) : 0));
     }
 }
 
