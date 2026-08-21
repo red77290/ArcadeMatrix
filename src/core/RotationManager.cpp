@@ -1,5 +1,4 @@
 #include "../../include/core/EngineRegistry.h"
-#include "LegacyConfigAdapter.h"
 #include "RotationManager.h"
 #include "ConfigLoader.h"
 #include "Logger.h"
@@ -36,44 +35,46 @@ size_t RotationManager::countSymbols(const String& symbols) {
 
 
 void RotationManager::begin(const ConfigLoader &cfg) {
-  config = cfg;
   activeEngines.clear();
-  
-  for (const auto& inst : config.instances) {
-      if (inst.engine_id == "date" || inst.engine_id == "clock" || inst.engine_id == "weather") { // We are migrating DateEngine and clock engine
-          auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
-          std::unique_ptr<IEngine> engine = nullptr;
-          if (desc && desc->factory) {
-              engine = desc->factory();
-          }
-          if (engine) {
-              LegacyConfigAdapter adapter(config, inst.engine_id);
-              engine->initialize(m_ctx, &adapter);
-              activeEngines[inst.instance_id] = std::move(engine);
-          }
-      }
-  }
+  currentActiveInstanceId = "";
   resetRotation();
 }
 
 void RotationManager::notifyConfigChanged(const String& instanceId) {
+    extern ConfigLoader config;
     auto it = activeEngines.find(instanceId);
     if (it != activeEngines.end()) {
-        for (const auto& inst : config.instances) {
+        for (auto& inst : config.instances) {
             if (inst.instance_id == instanceId) {
-                LegacyConfigAdapter adapter(config, inst.engine_id);
-                it->second->onConfigChanged(&adapter);
+                it->second->onConfigChanged(&inst.config);
                 break;
             }
         }
     }
 }
-
 IEngine* RotationManager::getActiveEngine(const String& instanceId) {
     auto it = activeEngines.find(instanceId);
     if (it != activeEngines.end()) {
         return it->second.get();
     }
+    
+    // Lazy initialization
+    extern ConfigLoader config;
+    for (const auto& inst : config.instances) {
+        if (inst.instance_id == instanceId) {
+            auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+            if (desc && desc->factory) {
+                auto engine = desc->factory();
+                if (engine) {
+                    engine->initialize(m_ctx, &inst.config);
+                    IEngine* ptr = engine.get();
+                    activeEngines[instanceId] = std::move(engine);
+                    return ptr;
+                }
+            }
+        }
+    }
+    
     return nullptr;
 }
 
@@ -98,44 +99,59 @@ void RotationManager::switchToModule(int index) {
   switchDepth++;
 
   moduleStartTime = millis();
-  String inst_id = config.rotation[index].instance_id;
-  String mod = inst_id; // Default to instance_id for legacy compatibility
+  String newInstanceId = config.rotation[index].instance_id;
+  
+  String mod = newInstanceId; // Default to instance_id for legacy compatibility
   for (const auto& inst : config.instances) {
-      if (inst.instance_id == inst_id) {
+      if (inst.instance_id == newInstanceId) {
           mod = inst.engine_id;
           break;
       }
   }
 
-  // Deactivate Decibel audio sampling if leaving Decibel mode
-  // Handled via IEngine deactivate()
-
-  // Stop any playing GIFs if leaving GIF mode (Handled by IEngine deactivate)
-  if (mod == "stock" || mod == "stocks") {
-      // Logic handled via IEngine
-  } else if (mod == "temp") {
-      // Handled via IEngine
-  } else if (mod == "decibel") {
-      // Logic handled via IEngine
+  // Deactivate old engine
+  if (currentActiveInstanceId != "" && currentActiveInstanceId != newInstanceId) {
+      IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+      if (oldEngine) {
+          oldEngine->deactivate();
+      }
   }
+
+  // Activate new engine
+  IEngine* newEngine = getActiveEngine(newInstanceId);
+  if (newEngine && currentActiveInstanceId != newInstanceId) {
+      newEngine->activate();
+  }
+  
+  currentActiveInstanceId = newInstanceId;
 
   if (mod == "clock" || mod == "date" || mod == "weather" || mod == "temp") {
     updateBackgroundSprites();
   }
   
-  LOGI("RotationManager", "Switched to engine %s", mod.c_str());
+  LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
+      mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
   switchDepth = 0;
 }
 
 void RotationManager::setSuspended(bool susp) {
     if (susp == suspended) return;
     suspended = susp;
+    
     if (suspended) {
-        // (GifEngine suspend handled by IEngine deactivate or architecture update needed)
+        if (currentActiveInstanceId != "") {
+            IEngine* engine = getActiveEngine(currentActiveInstanceId);
+            if (engine) engine->deactivate();
+        }
         LOGI("RotationManager", "Rotation Manager SUSPENDED.");
     } else {
         LOGI("RotationManager", "Rotation Manager RESUMED.");
-        resetRotation();
+        if (currentActiveInstanceId != "") {
+            IEngine* engine = getActiveEngine(currentActiveInstanceId);
+            if (engine) engine->activate();
+        } else {
+            resetRotation();
+        }
     }
 }
 
@@ -172,4 +188,9 @@ bool RotationManager::loop() {
     switchToModule(currentIndex);
   }
   return true;
+}
+
+String RotationManager::getCurrentInstanceId() const {
+    extern ConfigLoader config;
+    return config.rotation.empty() ? "" : config.rotation[currentIndex].instance_id;
 }

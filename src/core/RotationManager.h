@@ -24,7 +24,7 @@ public:
     void resetRotation();
     
     
-    String getCurrentInstanceId() const { return config.rotation.empty() ? "" : config.rotation[currentIndex].instance_id; }
+    String getCurrentInstanceId() const;
     void setSuspended(bool suspended);
     bool isSuspended() const { return suspended; }
     
@@ -41,12 +41,13 @@ private:
     AppEngineContext* m_ctx = nullptr;
     std::map<String, std::unique_ptr<IEngine>> activeEngines;
     
-    ConfigLoader config;
+    
     
     size_t currentIndex;
     uint32_t moduleStartTime;
     uint8_t switchDepth;
     bool suspended = false;
+    String currentActiveInstanceId = "";
 
     void switchToModule(int index);
     void updateBackgroundSprites();
