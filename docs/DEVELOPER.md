@@ -107,7 +107,7 @@ If your new clock requires new user settings (e.g., `snake_speed`), you must mod
      `if (doc.containsKey("snake_speed")) config.snake_speed = doc["snake_speed"].as<int>();`
 
 3. **Update the File System Loader (`src/core/ConfigLoader.cpp`)**:
-   Ensure your new variable is read from and saved to the SD card's `conf.ini` file to survive reboots.
+   Ensure your new variable is read from and saved to the SD card's `config.json` file to survive reboots.
 
 4. **Update the Web UI (`src/api/WebUI.h`, generated from the Vue frontend - see `scripts/build_webui.py`)**:
    - Add the HTML inputs for your setting.
@@ -118,7 +118,7 @@ If your new clock requires new user settings (e.g., `snake_speed`), you must mod
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/status` | GET | Uptime, free/min-free heap, PSRAM stats. |
-| `/api/settings` | GET/POST | Full config read/write (persists to `conf.ini`). |
+| `/api/settings` | GET/POST | Full config read/write (persists to `config.json`). |
 | `/api/wifi` | POST | `{ssid, password}` - saves credentials and attempts an immediate reconnect, reporting success/failure synchronously (does not require a reboot). |
 | `/api/marquee` | POST | Raw RGB565 image body (little-endian, row-major, exactly `width*height*2` bytes matching the configured panel resolution - see `tools/mugen_extractor` for the same wire format convention). Displays it immediately for ~8s, interrupting the idle rotation, then resumes. There is no on-device image decoder, so any bridge/frontend integration must pre-convert artwork (PNG/JPEG/box-art) to this raw format before POSTing. |
 | `/api/update` | POST | OTA firmware upload (`Update.h`), writes to the inactive OTA partition slot. |
@@ -143,7 +143,7 @@ runtime is just a fast local file lookup - no network involved at all when a gam
 3. At runtime, the daemon publishes `{"status": "playing"|"browsing"|"stopped", "game": "<rom
    basename>", "system": "<SystemId>"}` over MQTT on `recalbox/system/playing` (or
    `batocera/system/playing`) whenever the selected/playing game changes.
-4. `RetroFrontendListener::handleGameEvent()` (firmware) parses this, maps the `SystemId` to a
+4. `FrontendSyncEngine::handleGameEvent()` (firmware) parses this, maps the `SystemId` to a
    Pixelcade folder name (`mapSystemToPixelcadeFolder()` - kept in sync with the RPi's
    `dmd_cache.py` `SYSTEM_MAP`), and checks `/pixelcade/<folder>/<game>.png` on the SD card:
    - If found: displays it immediately via `gif->playGif()` (GifEngine's PNG decoder, added
@@ -182,7 +182,7 @@ without a firmware rebuild:
    By default this covers printable ASCII (`0x20`-`0x7E`); pass `--first`/`--last` to cover a
    different codepoint range if the BDF font has one (e.g. extended Latin-1).
 3. Copy `myfont.amf` to the SD card, e.g. `/fonts/myfont.amf`.
-4. Set `custom_font_path=/fonts/myfont.amf` under `[fonts]` in `conf.ini` (or via `/api/settings`).
+4. Set `custom_font_path=/fonts/myfont.amf` under `[fonts]` in `config.json` (or via `/api/settings`).
 5. Reboot. `BitmapFontLoader::loadFromSD()` parses the file into a heap-allocated `GFXfont`-
    compatible structure at boot and hands it to `MessageEngine` for the `/api/message` banner (the
    default 5x7 font is used as a silent fallback if the file is missing/corrupt).
@@ -231,7 +231,7 @@ The rotation toggles are defined in `api/www/index.html`. Add your new module as
 ```
 The bundled JS (`app.js`) automatically parses all checked checkboxes inside `.rotation-toggles` and sends them as a comma-separated string to `/api/settings` (e.g., `rotation: "clock,gifs,pager"`).
 
-### Step 2: The Configuration (`conf.ini`)
+### Step 2: The Configuration (`config.json`)
 In `src/core/ConfigLoader.cpp`, the string is parsed and saved to the SD card:
 ```cpp
 // In ConfigLoader::parseConfig() under "[IDLE]"
@@ -274,3 +274,13 @@ if (currentModule == "pager") {
     pagerEngine->draw();
 }
 ```
+
+
+## Modern Engine Lifecycle (Lazy-Once)
+As of the S13 Architecture Parity refactor, ArcadeMatrix uses a strict Lazy-Once lifecycle for engines across both ESP32 and RPi platforms:
+- **`initialize(context, config)`**: Called **exactly once** the first time the engine is selected by the rotation manager. Do heavy memory allocations here.
+- **`activate()`**: Called every time the engine rotates into view.
+- **`update(context) / render(context)`**: Called at 60 FPS. **Must not allocate memory**.
+- **`deactivate()`**: Called when rotating away to another engine.
+- **`on_config_changed(config)`**: Called when the user changes settings via the Web UI while the engine is already initialized.
+- **`is_finished()`**: Used by rotation to conditionally skip engines if they have no work left.

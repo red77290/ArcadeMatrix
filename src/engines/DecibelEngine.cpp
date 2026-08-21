@@ -2,7 +2,7 @@
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
 
-extern ConfigLoader config;
+
 
 DecibelEngine::DecibelEngine() 
     : active(false), currentDb(40.0f), currentLevel(NOISE_CALM) {}
@@ -23,13 +23,17 @@ void DecibelEngine::activate() {
 void DecibelEngine::deactivate() {
     active = false;
     // Only stop audio sampling if Visualizer is NOT running
-    if (!config.audio.visualizer_enabled) {
+    if (!config_visualizer_enabled) {
         hardwareHAL.stopAudioSampling();
     }
     LOGI("DecibelEngine", "DecibelEngine DEACTIVATED (Lazy Audio Sampling stopped).");
 }
 
-void DecibelEngine::onConfigChanged(const EngineConfig* engineConfig) {}
+void DecibelEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (engineConfig) {
+        config_visualizer_enabled = engineConfig->getBool("visualizer_enabled", false);
+    }
+}
 
 void DecibelEngine::updateStatusLevel(float db) {
     if (db < 20.0f) {
@@ -78,7 +82,8 @@ uint16_t DecibelEngine::getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLe
 }
 
 const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
-    String lang = config.weather.lang;
+    extern ConfigLoader config;
+    String lang = config.getInstance("weather_main") ? config.getInstance("weather_main")->config.getString("lang") : "en";
     lang.toLowerCase();
 
     if (lang == "fr") {
@@ -201,8 +206,10 @@ void DecibelEngine::drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, No
 }
 
 void DecibelEngine::update(EngineContext* context) {
-    hardwareHAL.setMicGain(config.audio.mic_gain);
-    float rawDb = hardwareHAL.getDecibels(config.audio.db_calibration);
+    extern ConfigLoader config;
+    auto inst = config.getInstance("decibel_main"); if (inst) hardwareHAL.setMicGain(inst->config.getFloat("gain", 1.0f));
+    auto vis = config.getInstance("visualizer_main");
+    float rawDb = hardwareHAL.getDecibels(vis ? vis->config.getFloat("db_calibration", 0.0f) : 0.0f);
 
     // Fast Attack (0.75), Smooth Decay (0.15) for immediate clap response and fluid movement
     if (rawDb > currentDb) {

@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
-extern ConfigLoader config;
+
 
 
 
@@ -45,7 +45,14 @@ void WeatherEngine::render(EngineContext* context) {}
 
 void WeatherEngine::deactivate() {}
 
-void WeatherEngine::onConfigChanged(const EngineConfig* config) {}
+void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (!engineConfig) return;
+    config_api_key = engineConfig->getString("api_key", "");
+    config_city = engineConfig->getString("city", "");
+    config_lang = engineConfig->getString("lang", "fr");
+    config_offset_x = engineConfig->getInt("weather_offset_x", 0);
+    config_offset_y = engineConfig->getInt("weather_offset_y", 0);
+}
 
 void WeatherEngine::addProvider(IWeatherProvider* provider) {
     if (provider) {
@@ -97,7 +104,7 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city) {
     // Set lastFetchTime immediately so we don't spam the API on failure
     lastFetchTime = millis();
 
-    String reqLang = config.weather.lang;
+    String reqLang = config_lang;
     if (reqLang.length() == 0) reqLang = "fr";
     
     bool fetched = false;
@@ -166,6 +173,8 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
 }
 
 bool WeatherEngine::loop() {
+    updateWeather(config_api_key, config_city);
+
     if (!validData || numForecasts == 0) return true;
 
     // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
@@ -205,19 +214,19 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
     int iconHeight = 24;
     
     int totalWidth = iconWidth + 4 + textWidth;
-    int startX = (matrix->width() - totalWidth) / 2 + config.weather.weather_offset_x;
+    int startX = (matrix->width() - totalWidth) / 2 + config_offset_x;
     
     int iconX = startX;
     int textX = startX + iconWidth + 4;
-    int y = (matrix->height() - charHeight) / 2 + config.weather.weather_offset_y;
-    int iconY = (matrix->height() - iconHeight) / 2 + config.weather.weather_offset_y;
+    int y = (matrix->height() - charHeight) / 2 + config_offset_y;
+    int iconY = (matrix->height() - iconHeight) / 2 + config_offset_y;
     
     // If it doesn't fit horizontally (e.g. 64x64), stack vertically
     if (totalWidth > matrix->width() && matrix->height() >= 64) {
-        iconX = (matrix->width() - iconWidth) / 2 + config.weather.weather_offset_x;
-        textX = (matrix->width() - textWidth) / 2 + config.weather.weather_offset_x;
-        iconY = (matrix->height() / 2 - iconHeight) / 2 + config.weather.weather_offset_y;
-        y = matrix->height() / 2 + (matrix->height() / 2 - charHeight) / 2 + config.weather.weather_offset_y;
+        iconX = (matrix->width() - iconWidth) / 2 + config_offset_x;
+        textX = (matrix->width() - textWidth) / 2 + config_offset_x;
+        iconY = (matrix->height() / 2 - iconHeight) / 2 + config_offset_y;
+        y = matrix->height() / 2 + (matrix->height() / 2 - charHeight) / 2 + config_offset_y;
     }
     
     // Draw icon

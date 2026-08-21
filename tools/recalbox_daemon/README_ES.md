@@ -19,13 +19,13 @@ firmware ESP32 no dispone de esa interfaz en el host frontend, así que esto es 
 
 Una vez instalado, cada vez que lanzas / navegas / detienes un juego, el dispositivo publica un pequeño mensaje
 JSON por MQTT (topic `recalbox/system/playing`, igual al valor por defecto de `core/config.py` en
-`ArcadeMatrix_RPi` y de `TOPIC_RECALBOX` en la sección `[MQTT]` de `conf.ini`):
+`ArcadeMatrix_RPi` y de `TOPIC_RECALBOX` en la sección `[MQTT]` de `config.json`):
 
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}
 ```
 
-`src/engines/RetroFrontendListener.cpp` (firmware) lo recibe, busca
+`src/engines/FrontendSyncEngine.cpp` (firmware) lo recibe, busca
 `/pixelcade/mame/pacman.png` en la tarjeta SD (consulta `../pixelcade_sync/README_ES.md` para ver cómo rellenar esa
 carpeta por adelantado) y lo muestra inmediatamente, con fallback a texto desplazable con el nombre del juego si no hay artwork correspondiente cacheado.
 

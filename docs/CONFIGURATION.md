@@ -1,14 +1,14 @@
-# Configuration Guide (`conf.ini` & API)
+# Configuration Guide (`config.json` & API)
 
 🇬🇧 English | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 [Español](CONFIGURATION_ES.md)
 
-ArcadeMatrix is fully configurable without recompiling C++ code. All parameters can be managed via the Web UI (at `http://arcadematrix.local`), via the REST API, or directly in the `conf.ini` file on the SD card root.
+ArcadeMatrix is fully configurable without recompiling C++ code. All parameters can be managed via the Web UI (at `http://arcadematrix.local`), via the REST API, or directly in the `config.json` file on the SD card root.
 
 ---
 
 ## 📊 Comprehensive Parameter Reference Matrix
 
-| Section | `conf.ini` Key | REST API Key | Type | Default | Example | Runtime Effect | Persisted? | Reboot Required? | Description |
+| Section | `config.json` Key | REST API Key | Type | Default | Example | Runtime Effect | Persisted? | Reboot Required? | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **[WIFI]** | `SSID` | `wifi_ssid` | string | `""` | `"HomeWiFi"` | Boot connection | Yes | **Yes** | 2.4GHz Wi-Fi Network Name |
 | | `PASSWORD` | `wifi_password` | string | `""` | `"secret"` | Boot connection | Yes | **Yes** | WPA2 Password |

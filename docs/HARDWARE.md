@@ -26,14 +26,14 @@ independent HUB75 GPIO headers, so building a 2D wall of panels (e.g. 2 rows x 2
 config change, no rebuild required.
 
 ESP32 boards only expose a **single** HUB75 output. This firmware already supports `CHAIN=N` in
-`conf.ini` (`ConfigLoader::matrix.chainLength`) for daisy-chaining panels **in a single row** at
+`config.json` (`ConfigLoader::matrix.chainLength`) for daisy-chaining panels **in a single row** at
 runtime (e.g. `CHAIN=4` for a 512x32 ribbon) — this works today and needs no firmware changes.
 
 **True 2D grids/walls (multiple rows of chained panels, e.g. a 2x2 wall) are NOT currently wired into
 this firmware.** The underlying `ESP32-HUB75-MatrixPanel-I2S-DMA` library does ship a
 `VirtualMatrixPanel_T` helper that remaps virtual (x,y) coordinates onto a serpentine/zig-zag chain of
 panels to build such a wall, but it is a **C++ template class** — its chain shape and scan-type are
-**compile-time** parameters, not something that can be read from `conf.ini` at boot like every other
+**compile-time** parameters, not something that can be read from `config.json` at boot like every other
 setting in this project. Wiring it in properly would require either:
 1. A dedicated PlatformIO build flag/environment per wall layout (recompile+reflash to change layout), or
 2. Refactoring every engine (~46 call sites) from the concrete `MatrixPanel_I2S_DMA*` type to a common
@@ -45,7 +45,7 @@ remains the supported way to build a larger display today.
 
 ### Flash Usage
 The firmware never uses SPIFFS/LittleFS — all runtime assets (GIFs, fighter sprites, playlists,
-`conf.ini`) live on the external SD card. Because of this, `esp32dev`'s PlatformIO environment uses
+`config.json`) live on the external SD card. Because of this, `esp32dev`'s PlatformIO environment uses
 `board_build.partitions = min_spiffs.csv` instead of the Arduino-ESP32 default partition table: this
 keeps the same dual-bank OTA layout (two app slots, so `/api/update` keeps working) but grows each
 app slot from 1.25MB to ~1.875MB by reclaiming the otherwise-wasted ~900KB SPIFFS partition. As of

@@ -5,7 +5,7 @@
 
 class SlotMachineClock : public ClockFace {
 public:
-    SlotMachineClock(MatrixPanel_I2S_DMA* display);
+    SlotMachineClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 

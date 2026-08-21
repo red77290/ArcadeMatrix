@@ -12,7 +12,7 @@ Par défaut, toutes les polices utilisées par le firmware ESP32 sont compilées
 qu'ajouter ou modifier une police exige une recompilation complète du firmware et un reflash.
 
 `BitmapFontLoader` comble ce manque en chargeant une police depuis la carte SD au démarrage — aucune recompilation
-nécessaire, il suffit de copier un fichier et de pointer `conf.ini` dessus. Mais l'ESP32 n'a ni parseur BDF ni moteur
+nécessaire, il suffit de copier un fichier et de pointer `config.json` dessus. Mais l'ESP32 n'a ni parseur BDF ni moteur
 de rasterisation de polices embarqué (cela coûterait de la flash / RAM / CPU que nous n'avons pas en réserve), donc les polices doivent être
 **préconverties hors ligne** vers un format binaire compact que le firmware peut `malloc()` et lire
  directement. C'est exactement ce que fait ce script.
@@ -43,7 +43,7 @@ Copiez ensuite le fichier `.amf` obtenu dans le dossier `/fonts` de la carte SD 
 `/fonts/myfont.amf`). Il devient immédiatement sélectionnable dans l'interface Web, page Settings,
 dans le menu déroulant "Font" de l'Horloge ou de la Date (chacun peuplé en direct via
 `GET /api/fonts`, qui liste tous les fichiers `.amf` trouvés dans `/fonts`) - sans éditer
-`conf.ini` manuellement. Vous pouvez aussi le définir directement via `conf.ini`
+`config.json` manuellement. Vous pouvez aussi le définir directement via `config.json`
 (`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` sous `[time]` / `[date]`,
 ou `custom_font_path=/fonts/myfont.amf` sous `[fonts]` pour le texte défilant
 `MessageEngine`/`/api/message`). Voir `docs/DEVELOPER_FR.md` pour le workflow complet.

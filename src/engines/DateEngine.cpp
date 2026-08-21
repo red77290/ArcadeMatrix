@@ -16,7 +16,6 @@
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 
-extern ConfigLoader config;
 
 #define NUM_DROPS 8
 struct DateDrop {
@@ -158,8 +157,8 @@ void DateEngine::setTheme(PublisherTheme theme) {
 }
 
 void DateEngine::reloadCustomFont() {
-    if (config.dateSettings.date_font_path.length() > 0) {
-        if (!customFont.loadFromSD(config.dateSettings.date_font_path.c_str())) {
+    if (m_config.date_font_path.length() > 0) {
+        if (!customFont.loadFromSD(m_config.date_font_path.c_str())) {
             Serial.println("DateEngine: date_font_path set but failed to load; using compiled-in font.");
         }
     } else {
@@ -302,16 +301,16 @@ void DateEngine::applyThemeSettings() {
         case THEME_CUSTOM_GRADIENT: {
             uint16_t defaultC1 = matrix->color565(0, 255, 255);  // Cyan
             uint16_t defaultC2 = matrix->color565(255, 0, 255);  // Magenta
-            if (config.dateSettings.date_color_1.length() > 0) {
-                const char* hex1 = config.dateSettings.date_color_1.c_str();
+            if (m_config.date_color_1.length() > 0) {
+                const char* hex1 = m_config.date_color_1.c_str();
                 if (hex1[0] == '#') hex1++;
                 if (strlen(hex1) >= 6) {
                     long val1 = strtol(hex1, NULL, 16);
                     defaultC1 = matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF);
                 }
             }
-            if (config.dateSettings.date_color_2.length() > 0) {
-                const char* hex2 = config.dateSettings.date_color_2.c_str();
+            if (m_config.date_color_2.length() > 0) {
+                const char* hex2 = m_config.date_color_2.c_str();
                 if (hex2[0] == '#') hex2++;
                 if (strlen(hex2) >= 6) {
                     long val2 = strtol(hex2, NULL, 16);
@@ -336,8 +335,8 @@ void DateEngine::applyThemeSettings() {
     GFXfont* loadedCustomFont = customFont.getFont();
     if (loadedCustomFont) {
         selectedFont = loadedCustomFont;
-    } else if (config.dateSettings.date_font != THEME_NONE && config.dateSettings.date_font != 0) {
-        switch (config.dateSettings.date_font) {
+    } else if (m_config.date_font != THEME_NONE && m_config.date_font != 0) {
+        switch (m_config.date_font) {
             case THEME_NINTENDO:
             case THEME_HUDSON:
                 selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b; break;
@@ -362,7 +361,7 @@ void DateEngine::applyThemeSettings() {
     matrix->setFont(selectedFont);
 
     // Apply user-configured date size directly
-    int targetSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
+    int targetSize = m_config.date_size > 0 ? m_config.date_size : 1;
     matrix->setTextSize(targetSize);
 
     // Check bounds at targetSize
@@ -438,8 +437,7 @@ bool DateEngine::loop() {
     uint16_t w, h;
     matrix->getTextBounds(currentDate, 0, 0, &x1, &y1, &w, &h);
     
-    extern ConfigLoader config;
-    int logicalSize = config.dateSettings.date_size > 0 ? config.dateSettings.date_size : 1;
+        int logicalSize = m_config.date_size > 0 ? m_config.date_size : 1;
     int effectDepth = (logicalSize >= 5) ? 2 : 1;
     
     int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
@@ -456,8 +454,8 @@ bool DateEngine::loop() {
     int fullW = leftExtra + w + rightExtra;
     int fullH = topExtra + h + bottomExtra;
     
-    int x = (matrixW - fullW) / 2 + leftExtra + config.dateSettings.date_offset_x - x1;
-    int y = (matrixH - fullH) / 2 + topExtra + config.dateSettings.date_offset_y - y1;
+    int x = (matrixW - fullW) / 2 + leftExtra + m_config.date_offset_x - x1;
+    int y = (matrixH - fullH) / 2 + topExtra + m_config.date_offset_y - y1;
 
     // Draw shadow/outline. Mirrors ArcadeClock::drawTextWithShadow()
     matrix->setTextColor(shadowColor);

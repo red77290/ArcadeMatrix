@@ -21,16 +21,17 @@ void StockEngine::addProvider(IStockProvider* provider) {
     }
 }
 
-extern ConfigLoader config;
-
 void StockEngine::onConfigChanged(const EngineConfig* engineConfig) {
-    this->config = ::config.stock;
-    parseSymbols();
+    if (!engineConfig) return;
+    config_enabled = engineConfig->getBool("enabled", true);
+    config_duration_sec = engineConfig->getInt("duration_sec", 5);
+    config_cache_ttl_min = engineConfig->getInt("cache_ttl_min", 15);
+    String syms = engineConfig->getString("symbols", "AAPL,NVDA,TSLA,MSFT");
+    parseSymbols(syms);
 }
 
-void StockEngine::parseSymbols() {
+void StockEngine::parseSymbols(const String& syms) {
     symbolList.clear();
-    String syms = config.symbols;
     int start = 0;
     int comma = 0;
     while ((comma = syms.indexOf(',', start)) != -1) {
@@ -79,9 +80,9 @@ void StockEngine::fetchQuote(const String& symbol) {
     uint32_t now = millis();
     AssetQuoteCache& cache = quoteCache[symbol];
     
-    uint32_t ttlMs = (config.cache_ttl_min > 0 ? config.cache_ttl_min : 1) * 60 * 1000;
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
     
-    // 1. Check if cache is fresh (< config.cache_ttl_min minutes old)
+    // 1. Check if cache is fresh (< config_cache_ttl_min minutes old)
     if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
@@ -205,10 +206,10 @@ int StockEngine::pngDraw(PNGDRAW *pDraw) {
 }
 
 void StockEngine::update(EngineContext* context) {
-    if (symbolList.empty() || !config.enabled) return;
+    if (symbolList.empty() || !config_enabled) return;
     
     uint32_t now = millis();
-    uint32_t durationMs = (config.duration_sec > 0 ? config.duration_sec : 5) * 1000;
+    uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
         symbolsShownThisCycle++;
@@ -224,7 +225,7 @@ bool StockEngine::isFinished() const {
 }
 
 void StockEngine::render(EngineContext* context) {
-    if (symbolList.empty() || !config.enabled) return;
+    if (symbolList.empty() || !config_enabled) return;
     renderQuote(context);
 }
 

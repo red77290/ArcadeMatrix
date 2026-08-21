@@ -42,7 +42,9 @@ public:
     void addProvider(ICryptoProvider* provider);
 
 private:
-    CryptoConfig config;
+    int config_duration_sec = 5;
+    bool config_enabled = true;
+    int config_cache_ttl_min = 15;
     
     std::vector<String> symbolList;
     size_t currentSymbolIndex;
@@ -67,7 +69,7 @@ private:
     static int pngDraw(PNGDRAW *pDraw);
     static CryptoEngine* instance;
     
-    void parseSymbols();
+    void parseSymbols(const String& syms);
     void fetchQuote(const String& symbol);
     void renderQuote(EngineContext* context);
 };

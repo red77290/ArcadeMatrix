@@ -12,7 +12,7 @@ y lo organiza listo para copiarlo a tu tarjeta SD de ArcadeMatrix, para que el E
 - No hay presupuesto sobrante de flash / RAM para un cliente HTTPS+TLS que obtenga imágenes en mitad de una partida, junto al driver DMA de la matriz.
 - No hay caché de sistema de archivos lo bastante grande para crecer sin límite, ni lógica de expulsión de caché que merezca esa complejidad en un microcontrolador.
 
-En su lugar, `RetroFrontendListener` en el ESP32 espera que el artwork ya esté presente en
+En su lugar, `FrontendSyncEngine` en el ESP32 espera que el artwork ya esté presente en
 `/pixelcade/<system>/<game>.png` dentro de la tarjeta SD. Este script rellena esa carpeta una vez (offline,
 en un PC real), tú la copias a la tarjeta SD y el firmware simplemente hace un `SD.exists()` rápido +
 `gif->playGif()` en tiempo de ejecución. Ningún viaje de red cuando arranca un juego.
@@ -68,7 +68,7 @@ con rutas como:
 ```
 
 Los nombres de carpeta de sistema (`mame`, `snes`, `nes`, ...) coinciden con la estructura del propio repositorio Pixelcade, y
-`RetroFrontendListener::mapSystemToPixelcadeFolder()` (lado firmware) mapea los valores `SystemId` de Recalbox/Batocera
+`FrontendSyncEngine::mapSystemToPixelcadeFolder()` (lado firmware) mapea los valores `SystemId` de Recalbox/Batocera
 (por ejemplo `fbneo`, `megadrive`) a esos mismos nombres de carpeta, mantenidos en sincronía con el `SYSTEM_MAP` de
 `ArcadeMatrix_RPi/core/dmd_cache.py`. Si añades un sistema allí, refleja el cambio en ambos lugares.
 

@@ -13,7 +13,8 @@
 // Abstract base class for all clock faces
 class ClockFace {
 public:
-    ClockFace(MatrixPanel_I2S_DMA* display) : matrix(display) {}
+    ClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr) : matrix(display), engineConfig(config) {}
+    const EngineConfig* engineConfig;
     virtual ~ClockFace() = default;
 
     virtual void draw(const TimeData& t) = 0;
@@ -32,7 +33,7 @@ public:
     ~ClockEngine() override;
 
     // Legacy methods
-    void setTheme(PublisherTheme theme, bool forceReload = false);
+    void setTheme(PublisherTheme theme, bool forceReload = false, const EngineConfig* config = nullptr);
     void updateTime(const TimeData& t);
     bool loop(); 
 
@@ -48,6 +49,7 @@ private:
     ClockFace* activeFace;
     PublisherTheme currentTheme;
     TimeData currentTime;
+    const EngineConfig* currentConfig = nullptr;
     
     // Kept for legacy setup until full migration
     MatrixPanel_I2S_DMA* legacy_matrix;

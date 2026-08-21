@@ -24,13 +24,13 @@ El build RPi (`ArcadeMatrix_RPi`) usa la biblioteca `rpi-rgb-led-matrix`, que ex
 `--led-parallel` y `--led-rows` como flags **totalmente configurables en tiempo de ejecución**. Una Raspberry Pi tiene 2-3 cabeceras GPIO HUB75 independientes, así que construir un muro 2D de paneles (por ejemplo 2 filas x 2 columnas) es solo un cambio de configuración, sin recompilar.
 
 Las placas ESP32 solo exponen una **única** salida HUB75. Este firmware ya admite `CHAIN=N` en
-`conf.ini` (`ConfigLoader::matrix.chainLength`) para encadenar paneles **en una sola fila** en tiempo de ejecución
+`config.json` (`ConfigLoader::matrix.chainLength`) para encadenar paneles **en una sola fila** en tiempo de ejecución
 (por ejemplo `CHAIN=4` para una cinta 512x32). Esto funciona hoy y no requiere cambios de firmware.
 
 **Las verdaderas rejillas/muros 2D (múltiples filas de paneles encadenados, por ejemplo un muro 2x2) NO están actualmente integrados en este firmware.** La biblioteca subyacente `ESP32-HUB75-MatrixPanel-I2S-DMA` sí incluye un helper
 `VirtualMatrixPanel_T` que remapea coordenadas virtuales (x,y) sobre un encadenado serpentino/zig-zag de paneles para
 construir ese tipo de muro, pero es una **clase template de C++**: su forma de cadena y su tipo de escaneo son
-parámetros **de compilación**, no algo que pueda leerse desde `conf.ini` al arrancar como el resto de ajustes del
+parámetros **de compilación**, no algo que pueda leerse desde `config.json` al arrancar como el resto de ajustes del
 proyecto. Integrarlo correctamente requeriría:
 1. Un flag / entorno PlatformIO dedicado por layout de muro (recompilar + reflashear para cambiar el layout), o
 2. Refactorizar todos los motores (~46 call sites) desde el tipo concreto `MatrixPanel_I2S_DMA*` hacia una interfaz común basada en `Adafruit_GFX*`, para poder sustituir una instancia `VirtualMatrixPanel_T`.
@@ -39,7 +39,7 @@ Ambas opciones son nada triviales y representan un hueco arquitectónico real fr
 
 ### Uso de la flash
 El firmware nunca usa SPIFFS/LittleFS: todos los assets de runtime (GIF, sprites de luchadores, playlists,
-`conf.ini`) viven en la tarjeta SD externa. Por eso el entorno PlatformIO `esp32dev` usa
+`config.json`) viven en la tarjeta SD externa. Por eso el entorno PlatformIO `esp32dev` usa
 `board_build.partitions = min_spiffs.csv` en lugar de la tabla de particiones predeterminada de Arduino-ESP32. Esto
 mantiene el mismo layout OTA de doble banco (dos slots de app, así que `/api/update` sigue funcionando) pero
 amplía cada slot de app de 1.25MB a ~1.875MB recuperando la partición SPIFFS de ~900KB, que si no quedaría desperdiciada. En el momento de escribir esto, el firmware `esp32dev` usa ~66 % de su slot de app (frente al 98 %+ antes de este cambio), un margen cómodo para las próximas funciones de PNG / iconos meteorológicos.

@@ -24,7 +24,7 @@ MatrixEngine::~MatrixEngine() {
  * Automatically adjusts color depth and double-buffering based on the total 
  * physical pixel count to prevent ESP32 memory limits from being exceeded.
  * 
- * @param config The MatrixConfig loaded from conf.ini
+ * @param config The MatrixConfig loaded from config.json
  * @return true if DMA allocation and initialization succeeded.
  * @return false if out of memory or initialization failed.
  */

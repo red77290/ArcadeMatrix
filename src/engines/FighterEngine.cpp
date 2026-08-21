@@ -33,7 +33,11 @@ void FighterEngine::deactivate() {
     stop();
 }
 
-void FighterEngine::onConfigChanged(const EngineConfig* config) {}
+void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (engineConfig) {
+        config_fighter_interval_sec = engineConfig->getInt("fighter_interval_sec", 15);
+    }
+}
 
 
 FighterEngine::~FighterEngine() {
@@ -564,9 +568,8 @@ bool FighterEngine::loop() {
     }
     
     if (fightEndTime > 0 && now - fightEndTime > 2000) {
-        extern ConfigLoader config;
         active = false;
-        retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
+        retryDelayEnd = now + (config_fighter_interval_sec * 1000);
         if (matrix) {
             int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
             matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);

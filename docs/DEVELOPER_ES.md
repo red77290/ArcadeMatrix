@@ -107,7 +107,7 @@ Si tu nuevo reloj necesita nuevos ajustes de usuario (por ejemplo, `snake_speed`
      `if (doc.containsKey("snake_speed")) config.snake_speed = doc["snake_speed"].as<int>();`
 
 3. **Actualiza el cargador del sistema de archivos (`src/core/ConfigLoader.cpp`):**
-   Asegúrate de que tu nueva variable se lea del archivo `conf.ini` de la tarjeta SD y se guarde allí para sobrevivir a los reinicios.
+   Asegúrate de que tu nueva variable se lea del archivo `config.json` de la tarjeta SD y se guarde allí para sobrevivir a los reinicios.
 
 4. **Actualiza la interfaz web (`src/api/WebUI.h`, generada desde el frontend Vue; consulta `scripts/build_webui.py`):**
    - Añade los inputs HTML para tu ajuste.
@@ -118,7 +118,7 @@ Si tu nuevo reloj necesita nuevos ajustes de usuario (por ejemplo, `snake_speed`
 | Endpoint | Método | Propósito |
 |----------|--------|-----------|
 | `/api/status` | GET | Uptime, heap libre / mínimo libre, estadísticas de PSRAM. |
-| `/api/settings` | GET/POST | Lectura/escritura completa de la configuración (persiste en `conf.ini`). |
+| `/api/settings` | GET/POST | Lectura/escritura completa de la configuración (persiste en `config.json`). |
 | `/api/wifi` | POST | `{ssid, password}` - guarda las credenciales e intenta una reconexión inmediata, informando sincrónicamente del éxito o fallo (no requiere reinicio). |
 | `/api/marquee` | POST | Cuerpo de imagen RGB565 bruto (little-endian, row-major, exactamente `width*height*2` bytes que deben coincidir con la resolución configurada del panel; consulta `tools/mugen_extractor` para la misma convención de formato). Lo muestra inmediatamente durante ~8 s, interrumpiendo la rotación en reposo, y luego la reanuda. No hay decodificador de imágenes en el dispositivo, así que cualquier integración bridge/frontend debe preconvertir el artwork (PNG/JPEG/box-art) a este formato bruto antes de hacer el POST. |
 | `/api/update` | POST | Subida OTA del firmware (`Update.h`), escribe en el slot de partición OTA inactivo. |
@@ -145,7 +145,7 @@ se lanza un juego:
 3. En tiempo de ejecución, el daemon publica `{"status": "playing"|"browsing"|"stopped", "game": "<rom
    basename>", "system": "<SystemId>"}` por MQTT en `recalbox/system/playing` (o
    `batocera/system/playing`) cada vez que cambia el juego seleccionado/en ejecución.
-4. `RetroFrontendListener::handleGameEvent()` (firmware) lo analiza, mapea el `SystemId` a un nombre de
+4. `FrontendSyncEngine::handleGameEvent()` (firmware) lo analiza, mapea el `SystemId` a un nombre de
    carpeta Pixelcade (`mapSystemToPixelcadeFolder()`, mantenido en sincronía con el `SYSTEM_MAP` de
    `dmd_cache.py` en la RPi), y comprueba `/pixelcade/<folder>/<game>.png` en la tarjeta SD:
    - Si existe: lo muestra inmediatamente mediante `gif->playGif()` (decodificador PNG de GifEngine, añadido
@@ -183,7 +183,7 @@ fuente personalizada sin recompilar el firmware:
    Por defecto cubre el ASCII imprimible (`0x20`-`0x7E`); pasa `--first`/`--last` para cubrir un
    rango distinto de codepoints si la fuente BDF lo tiene (por ejemplo, Latin-1 extendido).
 3. Copia `myfont.amf` a la tarjeta SD, por ejemplo `/fonts/myfont.amf`.
-4. Establece `custom_font_path=/fonts/myfont.amf` bajo `[fonts]` en `conf.ini` (o mediante `/api/settings`).
+4. Establece `custom_font_path=/fonts/myfont.amf` bajo `[fonts]` en `config.json` (o mediante `/api/settings`).
 5. Reinicia. `BitmapFontLoader::loadFromSD()` analiza el archivo al arrancar en una estructura compatible
    con `GFXfont` asignada en heap y se la entrega a `MessageEngine` para el banner `/api/message`
    (la fuente 5x7 predeterminada se usa silenciosamente como fallback si el archivo falta o está corrupto).
@@ -232,7 +232,7 @@ Los selectores de rotación se definen en `api/www/index.html`. Añade tu nuevo 
 ```
 El JS (`app.js`) lee automáticamente todas las casillas marcadas y las envía como una cadena (ej. `rotation: "clock,gifs,pager"`) al endpoint `/api/settings`.
 
-### Paso 2: La Configuración (`conf.ini`)
+### Paso 2: La Configuración (`config.json`)
 En `src/core/ConfigLoader.cpp`, la cadena se lee y se guarda en la tarjeta SD:
 ```cpp
 // En ConfigLoader::parseConfig() bajo "[IDLE]"
@@ -275,3 +275,13 @@ if (currentModule == "pager") {
     pagerEngine->draw();
 }
 ```
+
+
+## Ciclo de vida moderno de los motores (Lazy-Once)
+A partir de la refactorización de Paridad de Arquitectura S13, ArcadeMatrix utiliza un ciclo de vida "Lazy-Once" estricto para los motores tanto en ESP32 como en RPi:
+- **`initialize(context, config)`**: Se llama **exactamente una vez** la primera vez que el administrador de rotación selecciona el motor. Haga las asignaciones de memoria importantes aquí.
+- **`activate()`**: Se llama cada vez que el motor gira a la vista.
+- **`update(context) / render(context)`**: Se llama a 60 FPS. **No debe asignar memoria**.
+- **`deactivate()`**: Se llama cuando se gira hacia otro motor.
+- **`on_config_changed(config)`**: Se llama cuando el usuario cambia la configuración a través de la interfaz de usuario web mientras el motor ya está inicializado.
+- **`is_finished()`**: Usado por la rotación para omitir condicionalmente motores si no tienen trabajo pendiente.
