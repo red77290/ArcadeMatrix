@@ -1,5 +1,6 @@
 #pragma once
 #include "core/EngineContract.h"
+#include "../hal/HardwareHAL.h"
 
 // Concrete implementation of EngineContext for the main application
 class AppEngineContext : public EngineContext {
@@ -17,6 +18,10 @@ public:
 
     void getSystemTime(struct tm* timeinfo) override {
         getLocalTime(timeinfo);
+    }
+
+    bool hasPsram() const override {
+        return hardwareHAL.capabilities().hasPsram;
     }
 
 private:
