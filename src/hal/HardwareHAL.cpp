@@ -10,7 +10,7 @@ HardwareHAL hardwareHAL;
 #define BUFFER_SIZE 512
 
 HardwareHAL::HardwareHAL() 
-    : tempSensorDetected(false), audioDetected(false), audioActive(false), 
+    : audioActive(false), 
       micGain(1.0f), lastTempReadTime(0) {
     cachedEnvData = {false, 0.0f, 32.0f, 0.0f};
 }
@@ -50,8 +50,8 @@ void HardwareHAL::begin() {
     LOGI("HardwareHAL", "%s", i2cLog.c_str());
 
     // 2. Probe Temperature & Humidity Sensor (SHTC3)
-    tempSensorDetected = probeSHTC3();
-    if (tempSensorDetected) {
+    _capabilities.hasTempSensor = probeSHTC3();
+    if (_capabilities.hasTempSensor) {
         LOGI("HardwareHAL", "SHTC3 Temp/Humidity Sensor DETECTED on I2C address 0x70.");
         readEnvironment(); // Initial reading
     } else {
@@ -60,20 +60,39 @@ void HardwareHAL::begin() {
 
     // 3. Probe Audio Codec / I2S Hardware
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    audioDetected = probeES7210();
-    if (audioDetected) {
+    _capabilities.hasMicrophone = probeES7210();
+    if (_capabilities.hasMicrophone) {
         LOGI("HardwareHAL", "Waveshare ES7210 Microphone Codec DETECTED on I2C address 0x40.");
     } else {
         LOGW("HardwareHAL", "ES7210 Codec not found; checking generic I2S microphone capability...");
-        audioDetected = true; // Fallback to generic I2S mic
+        _capabilities.hasMicrophone = true; // Fallback to generic I2S mic
     }
 #else
-    audioDetected = true; // Default ESP32 generic I2S mic profile
+    _capabilities.hasMicrophone = true; // Default ESP32 generic I2S mic profile
 #endif
 
     LOGI("HardwareHAL", "HAL Init complete. Temp Sensor: %s, Audio Hardware: %s",
-         tempSensorDetected ? "AVAILABLE" : "NOT DETECTED",
-         audioDetected ? "AVAILABLE" : "NOT DETECTED");
+         _capabilities.hasTempSensor ? "AVAILABLE" : "NOT DETECTED",
+         _capabilities.hasMicrophone ? "AVAILABLE" : "NOT DETECTED");
+
+    // Populate Capabilities Snapshot
+    _capabilities.hasTempSensor = _capabilities.hasTempSensor;
+    _capabilities.hasMicrophone = _capabilities.hasMicrophone;
+    _capabilities.hasGyroscope = false;
+
+    if (psramFound()) {
+        _capabilities.hasPsram = true;
+        _capabilities.psramBytes = ESP.getPsramSize();
+    } else {
+        _capabilities.hasPsram = false;
+        _capabilities.psramBytes = 0;
+    }
+
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    _capabilities.profile = HwProfile::WAVESHARE_S3;
+#else
+    _capabilities.profile = HwProfile::ESP32_STD;
+#endif
 }
 
 bool HardwareHAL::probeSHTC3() {
@@ -171,7 +190,7 @@ bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
 }
 
 EnvironmentData HardwareHAL::readEnvironment(float tempOffset) {
-    if (!tempSensorDetected) {
+    if (!_capabilities.hasTempSensor) {
         cachedEnvData.available = false;
         return cachedEnvData;
     }
@@ -319,7 +338,7 @@ bool HardwareHAL::configureES7210() {
 }
 
 void HardwareHAL::startAudioSampling() {
-    if (audioActive || !audioDetected) return;
+    if (audioActive || !_capabilities.hasMicrophone) return;
 
     // 0. Enable Power Amplifier circuit on GPIO 11 (shared audio power rail on Waveshare board)
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)

@@ -8,6 +8,10 @@ class DictionaryEngineConfig : public EngineConfig {
 public:
     virtual ~DictionaryEngineConfig() = default;
 
+    bool hasKey(const char* key) const {
+        return dict.find(String(key)) != dict.end();
+    }
+
     String getString(const char* key, const char* default_val = "") const override {
         auto it = dict.find(String(key));
         if (it != dict.end()) {

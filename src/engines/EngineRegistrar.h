@@ -22,4 +22,5 @@ class MarqueeEngine;
 class EngineRegistrar {
 public:
     static void registerAll();
+    static bool meetsRequirements(const EngineRequirements& req);
 };
