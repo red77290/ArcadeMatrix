@@ -353,7 +353,7 @@ void WebServerAPI::setupRoutes() {
     // API: Return version with Git commit and build timestamp
     server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(256);
-        doc["version"] = "2.0.0";
+        doc["version"] = FIRMWARE_VERSION;
         doc["git_commit"] = BUILD_GIT_COMMIT;
         doc["build_timestamp"] = BUILD_TIMESTAMP;
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
