@@ -9,6 +9,8 @@
 #include "WebUI.h"
 #include "../core/Globals.h"
 #include "../core/Logger.h"
+#include "../core/BuildInfo.h"
+#include "../core/ConfigSanitizer.h"
 
 extern RotationManager* rotationManager;
 
@@ -37,13 +39,15 @@ public:
     }
     size_t _fillBuffer(uint8_t *buf, size_t maxLen) override {
         size_t bytesRead = 0;
-        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            if (_content) {
-                // Guarantee the bounce buffer is strictly DMA capable
-                uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(512, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+            if (_content && _content.available()) {
+                // SdSpiConfig and DMA SPI transfers expect 32-bit aligned memory located in internal RAM.
+                // The buffer passed by ESPAsyncWebServer (`buf`) is sometimes allocated dynamically by AsyncTCP
+                // on PSRAM or non-word-aligned boundaries, causing SdFat SPI read to crash with a LoadProhibited/StoreProhibited panic.
+                // We bounce reads through a dedicated word-aligned heap buffer if direct DMA isn't guaranteed.
+                uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
                 if (bounceBuf) {
-                    size_t toRead = maxLen;
+                    size_t toRead = (maxLen > 4096) ? 4096 : maxLen;
                     size_t offset = 0;
                     while (toRead > 0) {
                         size_t chunk = (toRead > 512) ? 512 : toRead;
@@ -115,11 +119,30 @@ void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument
 
 void WebServerAPI::setupRoutes() {
 
+    // API: GET /api/hardware (Hardware Profile & Runtime Capabilities)
+    server.on("/api/hardware", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(512);
+        const auto& caps = hardwareHAL.capabilities();
+        doc["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
+        JsonObject psramObj = doc.createNestedObject("psram");
+        psramObj["available"] = caps.hasPsram;
+        psramObj["bytes"] = caps.psramBytes;
+        doc["microphone"] = caps.hasMicrophone;
+        doc["temperature_sensor"] = caps.hasTempSensor;
+        doc["gyroscope"] = caps.hasGyroscope;
+        
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: GET /api/engines (Schema-driven engine descriptors)
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
         size_t count = 0;
         const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+        const auto& caps = hardwareHAL.capabilities();
         
-        DynamicJsonDocument doc(4096);
+        DynamicJsonDocument doc(8192);
         JsonArray array = doc.to<JsonArray>();
         for (size_t i = 0; i < count; i++) {
             JsonObject obj = array.createNestedObject();
@@ -128,11 +151,41 @@ void WebServerAPI::setupRoutes() {
             obj["metadata"]["category"] = descriptors[i].metadata.category;
             obj["metadata"]["version"] = descriptors[i].metadata.version;
             
-            JsonObject caps = obj.createNestedObject("capabilities");
-            caps["supports_128x32"] = descriptors[i].capabilities.supports_128x32;
-            caps["supports_256x64"] = descriptors[i].capabilities.supports_256x64;
-            caps["realtime"] = descriptors[i].capabilities.realtime;
-            caps["interruptible"] = descriptors[i].capabilities.interruptible;
+            JsonObject capObj = obj.createNestedObject("capabilities");
+            capObj["supports_128x32"] = descriptors[i].capabilities.supports_128x32;
+            capObj["supports_256x64"] = descriptors[i].capabilities.supports_256x64;
+            capObj["realtime"] = descriptors[i].capabilities.realtime;
+            capObj["interruptible"] = descriptors[i].capabilities.interruptible;
+            capObj["allowsOverlay"] = descriptors[i].capabilities.allowsOverlay;
+            capObj["selfPaced"] = descriptors[i].capabilities.selfPaced;
+
+            JsonObject reqObj = obj.createNestedObject("requirements");
+            reqObj["needs_psram"] = descriptors[i].requirements.needsPsram;
+            reqObj["needs_audio"] = descriptors[i].requirements.needsAudio;
+            reqObj["needs_temp_sensor"] = descriptors[i].requirements.needsTempSensor;
+            reqObj["needs_gyroscope"] = descriptors[i].requirements.needsGyroscope;
+            reqObj["needs_network"] = descriptors[i].requirements.needsNetwork;
+            reqObj["needs_sd"] = descriptors[i].requirements.needsSd;
+
+            bool available = true;
+            String reason = "";
+            if (descriptors[i].requirements.needsPsram && !caps.hasPsram) {
+                available = false;
+                reason = "Requires PSRAM";
+            } else if (descriptors[i].requirements.needsAudio && !caps.hasMicrophone) {
+                available = false;
+                reason = "Requires microphone";
+            } else if (descriptors[i].requirements.needsTempSensor && !caps.hasTempSensor) {
+                available = false;
+                reason = "Requires temperature sensor";
+            } else if (descriptors[i].requirements.needsGyroscope && !caps.hasGyroscope) {
+                available = false;
+                reason = "Requires gyroscope";
+            }
+            obj["available"] = available;
+            if (!available) {
+                obj["reason"] = reason;
+            }
             
             JsonArray schema = obj.createNestedArray("schema");
             for (const auto& field : descriptors[i].schema.fields) {
@@ -145,6 +198,18 @@ void WebServerAPI::setupRoutes() {
                 if (field.type == ConfigType::ENUM || field.type == ConfigType::LIST) {
                     fieldObj["options"] = field.options;
                 }
+                if (strlen(field.options_endpoint) > 0) {
+                    fieldObj["options_endpoint"] = field.options_endpoint;
+                }
+                if (field.multiple) {
+                    fieldObj["multiple"] = true;
+                }
+                if (strlen(field.visible_when) > 0) {
+                    fieldObj["visible_when"] = field.visible_when;
+                }
+                if (strlen(field.min_val) > 0) fieldObj["min_val"] = field.min_val;
+                if (strlen(field.max_val) > 0) fieldObj["max_val"] = field.max_val;
+                if (strlen(field.step) > 0) fieldObj["step"] = field.step;
             }
         }
         
@@ -153,15 +218,99 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
+    // API: GET /api/themes (Dynamic options endpoint for themes)
+    server.on("/api/themes", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(2048);
+        JsonArray arr = doc.to<JsonArray>();
+        struct ThemeItem { int id; const char* name; };
+        static const ThemeItem themes[] = {
+            {0, "Nintendo"}, {1, "Capcom"}, {2, "Taito"}, {3, "Sega"},
+            {4, "Cave"}, {5, "Konami"}, {6, "SNK"}, {7, "Technos"},
+            {8, "IGS"}, {9, "Hudson"}, {10, "Banpresto"}, {11, "Namco"},
+            {12, "Street Fighter (Ryu)"}, {13, "Super Mario"}, {14, "Metal Slug (Marco)"},
+            {15, "Mega Man"}, {16, "Space Invaders"}, {17, "Bubble Bobble (Bub)"},
+            {18, "Cyberpunk"}, {19, "Flip Clock"}, {20, "Custom Gradient"},
+            {21, "Matrix Rain"}, {22, "Pong Clock"}, {23, "Tetris Clock"},
+            {24, "Word Clock"}, {25, "Binary Clock"}, {26, "Pacman Clock"},
+            {27, "Versus Clock"}, {28, "Slot Machine Clock"}, {29, "Tetris Game Boy"}
+        };
+        for (const auto& t : themes) {
+            JsonObject obj = arr.createNestedObject();
+            obj["id"] = t.id;
+            obj["name"] = t.name;
+        }
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: GET /api/instances & POST /api/instances (CRUD instances)
+    server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
+        extern ConfigLoader config;
+        DynamicJsonDocument doc(4096);
+        JsonArray arr = doc.to<JsonArray>();
+        for (const auto& inst : config.instances) {
+            JsonObject obj = arr.createNestedObject();
+            obj["instance_id"] = inst.instance_id;
+            obj["engine_id"] = inst.engine_id;
+            JsonObject cfgObj = obj.createNestedObject("config");
+            for (const auto& kv : inst.config.getDictionary()) {
+                cfgObj[kv.first] = kv.second;
+            }
+        }
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject doc = json.as<JsonObject>();
+        extern ConfigLoader config;
+        extern RotationManager* rotationManager;
+        
+        String instanceId = doc["instance_id"].as<String>();
+        String engineId = doc["engine_id"].as<String>();
+        if (instanceId.isEmpty()) {
+            request->send(400, "application/json", "{\"error\":\"instance_id is required\"}");
+            return;
+        }
+        
+        EngineInstance* inst = config.getInstance(instanceId);
+        if (!inst) {
+            inst = config.addInstance(instanceId, engineId.isEmpty() ? instanceId : engineId);
+        }
+        if (doc.containsKey("engine_id") && !engineId.isEmpty()) {
+            inst->engine_id = engineId;
+        }
+        if (doc.containsKey("config") && doc["config"].is<JsonObject>()) {
+            JsonObject cfg = doc["config"].as<JsonObject>();
+            for (JsonPair kv : cfg) {
+                inst->config.setString(kv.key().c_str(), kv.value().as<String>());
+            }
+        }
+        
+        // Sanitize and save
+        ConfigSanitizer::sanitizeInstances(config);
+        config.saveToSD("/config.json");
+        
+        if (rotationManager) {
+            rotationManager->notifyConfigChanged(instanceId);
+        }
+        
+        request->send(200, "application/json", "{\"success\":true}");
+    }, 4096);
+    server.addHandler(instancesHandler);
+
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(512);
         doc["status"] = "online";
         doc["uptime"] = millis();
         doc["free_heap"] = ESP.getFreeHeap();
-        // Lowest free-heap value ever observed since boot: the single most useful number for
-        // spotting slow memory leaks/fragmentation over days of uptime (a single free_heap
-        // snapshot can look fine while still trending toward an OOM crash).
         doc["min_free_heap"] = ESP.getMinFreeHeap();
         doc["max_alloc_heap"] = ESP.getMaxAllocHeap();
         doc["psram_found"] = hardwareHAL.capabilities().hasPsram;
@@ -171,9 +320,7 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: List custom SD fonts (.amf files converted via tools/bdf_to_amfont, dropped in /fonts)
-    // for the Clock/Date "Font" dropdowns. Falls back to an empty list (dropdown just keeps its
-    // "System/Default" option) if /fonts doesn't exist yet - no error either way.
+    // API: List custom SD fonts (.amf files)
     server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(2048);
         JsonArray arr = doc.to<JsonArray>();
@@ -187,7 +334,6 @@ void WebServerAPI::setupRoutes() {
                 if (!isDirectory(entry)) {
                     String name = getFileName(entry);
                     if (name.endsWith(".amf") || name.endsWith(".AMF")) {
-                        // getName may be relative or absolute depending on core version; normalize to "/fonts/xxx.amf"
                         if (!name.startsWith("/")) name = "/fonts/" + name;
                         arr.add(name);
                     }
@@ -204,9 +350,16 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
-    // API: Return dummy version to prevent UI 404 errors
+    // API: Return version with Git commit and build timestamp
     server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(200, "application/json", "{\"version\":\"2.0.0\", \"arch\":\"esp32s3\"}");
+        DynamicJsonDocument doc(256);
+        doc["version"] = "2.0.0";
+        doc["git_commit"] = BUILD_GIT_COMMIT;
+        doc["build_timestamp"] = BUILD_TIMESTAMP;
+        doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
     });
 
     // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)

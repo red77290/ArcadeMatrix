@@ -1,5 +1,7 @@
 import os
 import sys
+import subprocess
+import time
 
 input_file = "data/index.html"
 output_file = "src/api/WebUI.h"
@@ -29,3 +31,15 @@ with open(output_file, "w") as f:
     f.write("\n")
 
 print(f"Successfully generated {output_file} ({len(data)} bytes).")
+
+# Generate BuildInfo.h
+try:
+    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+except Exception:
+    git_commit = "unknown"
+
+build_timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+with open("src/core/BuildInfo.h", "w") as f:
+    f.write(f'#pragma once\n#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
+print(f"Successfully generated src/core/BuildInfo.h ({git_commit}).")
+

@@ -17,14 +17,21 @@ GifEngine::~GifEngine() {
 }
 
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    if (!context->getMatrix()) return EngineError::InitializationFailed;
+    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    m_instanceConfig = config;
     return begin(context->getMatrix()) ? EngineError::OK : EngineError::InitializationFailed;
 }
 
 void GifEngine::activate() {
-    extern class ConfigLoader config;
-    if ((config.getInstance("gifs_main") ? config.getInstance("gifs_main")->config.getInt("gifs_count", 0) : 0) > 0 && hasDefaultPlaylists()) {
-        playDefaultPlaylists((config.getInstance("gifs_main") ? config.getInstance("gifs_main")->config.getInt("gifs_count", 0) : 0));
+    int count = 1;
+    if (m_rotationBudget > 0) {
+        count = (int)m_rotationBudget;
+    } else if (m_instanceConfig) {
+        int cfgCount = m_instanceConfig->getInt("gifs_count", 0);
+        if (cfgCount > 0) count = cfgCount;
+    }
+    if (hasDefaultPlaylists()) {
+        playDefaultPlaylists(count);
     }
 }
 
@@ -38,10 +45,12 @@ void GifEngine::deactivate() {
     stop();
 }
 
-void GifEngine::onConfigChanged(const EngineConfig* config) {}
+void GifEngine::onConfigChanged(const EngineConfig* config) {
+    m_instanceConfig = config;
+}
 
 bool GifEngine::isFinished() const {
-    return !isPlaying;
+    return !isPlaying && !playlistMode && !hasPendingPlaylists;
 }
 
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {

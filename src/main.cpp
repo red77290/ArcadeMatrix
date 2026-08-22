@@ -67,6 +67,7 @@ FrontendSyncEngine* frontendListener = nullptr;
 AppEngineContext* appCtx = nullptr;
 BitmapFontLoader customFontLoader;
 DisplayArbiter displayArbiter;
+static std::unique_ptr<IEngine> fighterOverlay = nullptr;
 
 #if !USE_SD_MMC
 SdFs sd;
@@ -186,7 +187,7 @@ void setup() {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
 
-    SanitizeResult sanitizeRes = ConfigSanitizer::sanitizeInstances(config, engineRegistry);
+    SanitizeResult sanitizeRes = ConfigSanitizer::sanitizeInstances(config);
     if (sanitizeRes.modified) {
         config.saveToSD("/config.json");
     }
@@ -484,6 +485,7 @@ void loop() {
         matrixEngine.getDisplay()->fillScreen(0);
     }
 
+    DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
         if (rotationManager) {
@@ -521,28 +523,53 @@ void loop() {
             displayArbiter.submitRequest(req);
         }
 
-        DisplayRequest winner = displayArbiter.evaluate();
+        winner = displayArbiter.evaluate();
         
         if (winner.source == "VISUALIZER") {
             visualizerEngine->update(appCtx);
             visualizerEngine->render(appCtx);
             shouldFlip = true;
+            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
         } else if (winner.source == "MARQUEE") {
             marqueeEngine->update(appCtx);
             marqueeEngine->render(appCtx);
             shouldFlip = true;
+            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
         } else if (winner.source == "MESSAGE") {
             messageEngine->update(appCtx);
             messageEngine->render(appCtx);
             shouldFlip = true;
+            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
         } else if (winner.source == "GIF") {
             if (gifEngine) {
                 gifEngine->update(appCtx);
                 gifEngine->render(appCtx);
                 shouldFlip = true;
             }
+            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
         } else {
             shouldFlip = rotationManager->loop();
+
+            // Overlay compositing pass (Fighter)
+            auto fighterInst = config.getInstance("fighter_main");
+            bool fighterEnabled = fighterInst && fighterInst->config.getBool("enabled", false);
+            if (fighterEnabled && rotationManager->allowsCurrentOverlay()) {
+                if (!fighterOverlay) {
+                    auto desc = EngineRegistry::getDescriptor("fighter");
+                    if (desc && desc->factory) {
+                        fighterOverlay = desc->factory();
+                        fighterOverlay->initialize(appCtx, &fighterInst->config);
+                        fighterOverlay->activate();
+                    }
+                }
+                if (fighterOverlay) {
+                    fighterOverlay->update(appCtx);
+                    fighterOverlay->render(appCtx);
+                }
+            } else if (fighterOverlay) {
+                fighterOverlay->deactivate();
+                fighterOverlay.reset();
+            }
         }
         
         xSemaphoreGive(sdMutex);
@@ -599,12 +626,13 @@ void loop() {
         }
     }
 
-    
-    // Stable ~60 FPS frame limiter
+    // Adaptive frame limiter (realtime ~60fps vs static ~20fps to save CPU/power)
     static unsigned long lastLoopTime = 0;
     unsigned long currentLoopTime = millis();
-    if (currentLoopTime - lastLoopTime < 16) {
-        delay(16 - (currentLoopTime - lastLoopTime));
+    bool isRealtime = (winner.source != "" && winner.source != "ROTATION") || (rotationManager && rotationManager->isCurrentRealtime());
+    unsigned long targetInterval = isRealtime ? 16 : 50;
+    if (currentLoopTime - lastLoopTime < targetInterval) {
+        delay(targetInterval - (currentLoopTime - lastLoopTime));
     }
     lastLoopTime = millis();
 }
