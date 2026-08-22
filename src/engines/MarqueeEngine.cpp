@@ -1,4 +1,5 @@
 #include "MarqueeEngine.h"
+#include "../hal/HardwareHAL.h"
 #include <string.h>
 
 MarqueeEngine::MarqueeEngine()
@@ -17,7 +18,7 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     // the ESP32 Arduino allocator when available (256x64 / S3 case); on classic ESP32 at 128x32
     // this is only 8KB, well within the free SRAM budget documented in docs/HARDWARE.md.
     size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
-    if (psramFound()) {
+    if (hardwareHAL.capabilities().hasPsram) {
         buffer = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM);
     } else {
         buffer = (uint16_t*)malloc(bufferSize);
@@ -29,7 +30,7 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
 
 MarqueeEngine::~MarqueeEngine() {
     if (buffer) {
-        if (psramFound()) heap_caps_free(buffer);
+        if (hardwareHAL.capabilities().hasPsram) heap_caps_free(buffer);
         else free(buffer);
     }
 }

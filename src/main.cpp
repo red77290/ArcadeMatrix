@@ -36,6 +36,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "engines/StockEngine.h"
 #include "core/RotationManager.h"
 #include "core/BitmapFontLoader.h"
+#include "core/ConfigSanitizer.h"
 #include "api/CoinGeckoProvider.h"
 #include "api/BinanceProvider.h"
 #include "api/OpenWeatherMapProvider.h"
@@ -151,9 +152,9 @@ void setup() {
     // before the HUB75 matrix or other engines fragment the memory.
     WiFi.mode(WIFI_STA);
 
-    if (psramFound()) {
+    if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
-             ESP.getPsramSize() / (1024 * 1024), ESP.getPsramSize(), ESP.getFreePsram());
+             hardwareHAL.capabilities().psramBytes / (1024 * 1024), hardwareHAL.capabilities().psramBytes, ESP.getFreePsram());
     } else {
         LOGI("System", "No PSRAM detected on hardware.");
     }
@@ -183,6 +184,11 @@ void setup() {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
+    }
+
+    SanitizeResult sanitizeRes = ConfigSanitizer::sanitizeInstances(config, engineRegistry);
+    if (sanitizeRes.modified) {
+        config.saveToSD("/config.json");
     }
 
     // 3. Initialize Matrix

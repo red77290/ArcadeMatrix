@@ -1,4 +1,5 @@
 #include "StockEngine.h"
+#include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include <HTTPClient.h>
 
@@ -66,7 +67,7 @@ void StockEngine::deactivate() {
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
-    if (ESP.getPsramSize() == 0) {
+    if (!hardwareHAL.capabilities().hasPsram) {
         LOGW("StockEngine", "PSRAM required for HTTPS Stock fetches. Skipping.");
         activeSymbol = "N/A";
         currentPrice = 0.0f;
