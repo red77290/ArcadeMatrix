@@ -37,6 +37,12 @@ enum class ConfigType {
     FILE_ASSET
 };
 
+enum class ValidationPolicy {
+    Clamp,
+    FallbackDefault,
+    Ignore
+};
+
 // =======================================================
 // 2. Metadata & Capabilities
 // =======================================================
@@ -51,11 +57,19 @@ struct EngineMetadata {
 struct EngineCapabilities {
     bool supports_128x32 = true;
     bool supports_256x64 = true;
-    bool needs_audio = false;
-    bool needs_network = false;
-    bool needs_sd = false;
     bool realtime = false;
     bool interruptible = true;
+    bool allowsOverlay = true;
+    bool selfPaced = false;
+};
+
+struct EngineRequirements {
+    bool needsPsram = false;
+    bool needsAudio = false;
+    bool needsTempSensor = false;
+    bool needsGyroscope = false;
+    bool needsNetwork = false;
+    bool needsSd = false;
 };
 
 // =======================================================
@@ -80,6 +94,8 @@ struct ConfigField {
     
     // E.g. "mode=custom"
     const char* visible_when = "";
+    
+    ValidationPolicy validation_policy = ValidationPolicy::Clamp;
 };
 
 struct ConfigSchema {
@@ -148,7 +164,7 @@ using EngineFactory = std::function<std::unique_ptr<IEngine>()>;
 struct EngineDescriptor {
     EngineMetadata metadata;
     EngineCapabilities capabilities;
-    EngineCapabilities requirements;
+    EngineRequirements requirements;
     ConfigSchema schema;
     EngineFactory factory;
 };
