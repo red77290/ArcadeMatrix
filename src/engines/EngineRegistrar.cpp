@@ -112,7 +112,7 @@ void EngineRegistrar::registerAll() {
     EngineDescriptor desc_fighter;
     desc_fighter.metadata = {"fighter", "Fighter", "overlay", "3.0.0"};
     desc_fighter.capabilities.realtime = true;
-    desc_fighter.capabilities.allowsOverlay = false;
+    desc_fighter.capabilities.allowsOverlay = true;
     desc_fighter.requirements.needsAudio = false;
     desc_fighter.requirements.needsNetwork = false;
     desc_fighter.schema.fields = {

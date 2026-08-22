@@ -49,6 +49,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "engines/EngineRegistrar.h"
 
 #include "core/DisplayArbiter.h"
+#include "core/OverlayManager.h"
 
 // Pins definition moved to HardwareProfile.h
 
@@ -67,7 +68,7 @@ FrontendSyncEngine* frontendListener = nullptr;
 AppEngineContext* appCtx = nullptr;
 BitmapFontLoader customFontLoader;
 DisplayArbiter displayArbiter;
-static std::unique_ptr<IEngine> fighterOverlay = nullptr;
+OverlayManager overlayManager;
 
 #if !USE_SD_MMC
 SdFs sd;
@@ -270,6 +271,7 @@ void setup() {
     rotationManager = new RotationManager();
     appCtx = new AppEngineContext(matrixEngine.getDisplay(), frontendListener);
     rotationManager->setEngineContext(appCtx);
+    overlayManager.initialize(appCtx, &config);
     
     auto desc = EngineRegistry::getDescriptor("visualizer");
     if (desc && desc->factory) {
@@ -522,47 +524,27 @@ void loop() {
             visualizerEngine->update(appCtx);
             visualizerEngine->render(appCtx);
             shouldFlip = true;
-            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
+            overlayManager.deactivate();
         } else if (winner.source == "MARQUEE") {
             marqueeEngine->update(appCtx);
             marqueeEngine->render(appCtx);
             shouldFlip = true;
-            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
+            overlayManager.deactivate();
         } else if (winner.source == "MESSAGE") {
             messageEngine->update(appCtx);
             messageEngine->render(appCtx);
             shouldFlip = true;
-            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
+            overlayManager.deactivate();
         } else if (winner.source == "GIF") {
             if (gifEngine) {
                 gifEngine->update(appCtx);
                 gifEngine->render(appCtx);
                 shouldFlip = true;
             }
-            if (fighterOverlay) { fighterOverlay->deactivate(); fighterOverlay.reset(); }
+            overlayManager.deactivate();
         } else {
             shouldFlip = rotationManager->loop();
-
-            // Overlay compositing pass (Fighter)
-            auto fighterInst = config.getInstance("fighter_main");
-            bool fighterEnabled = fighterInst && fighterInst->config.getBool("enabled", false);
-            if (fighterEnabled && rotationManager->allowsCurrentOverlay()) {
-                if (!fighterOverlay) {
-                    auto desc = EngineRegistry::getDescriptor("fighter");
-                    if (desc && desc->factory) {
-                        fighterOverlay = desc->factory();
-                        fighterOverlay->initialize(appCtx, &fighterInst->config);
-                        fighterOverlay->activate();
-                    }
-                }
-                if (fighterOverlay) {
-                    fighterOverlay->update(appCtx);
-                    fighterOverlay->render(appCtx);
-                }
-            } else if (fighterOverlay) {
-                fighterOverlay->deactivate();
-                fighterOverlay.reset();
-            }
+            overlayManager.process(rotationManager->allowsCurrentOverlay());
         }
         
         xSemaphoreGive(sdMutex);

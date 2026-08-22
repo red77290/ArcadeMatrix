@@ -2,15 +2,10 @@
 #include "Logger.h"
 
 SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config) {
-    EngineRegistry dummy;
-    return sanitizeInstances(config, dummy);
-}
-
-SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config, const EngineRegistry& registry) {
     SanitizeResult result;
 
     for (auto& inst : config.instances) {
-        const EngineDescriptor* desc = registry.getDescriptor(inst.engine_id.c_str());
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
         if (!desc) {
             LOGW("ConfigSanitizer", "Unknown engine_id '%s' for instance '%s'", inst.engine_id.c_str(), inst.instance_id.c_str());
             result.invalid_instances++;

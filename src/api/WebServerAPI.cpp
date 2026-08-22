@@ -269,9 +269,27 @@ void WebServerAPI::setupRoutes() {
         EngineInstance* inst = config.getInstance(instanceId);
         bool isNew = (inst == nullptr);
         String oldEngineId = isNew ? "" : inst->engine_id;
+        String targetEngineId = engineId.isEmpty() ? (inst ? inst->engine_id : instanceId) : engineId;
+
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(targetEngineId.c_str());
+        if (!desc) {
+            request->send(400, "application/json", "{\"error\":\"Unknown engine_id\"}");
+            return;
+        }
+
+        auto reqCheck = EngineRegistrar::checkRequirements(desc->requirements);
+        if (!reqCheck.satisfied) {
+            DynamicJsonDocument errDoc(256);
+            errDoc["error"] = "engine_unavailable";
+            errDoc["reason"] = reqCheck.reason;
+            String errResp;
+            serializeJson(errDoc, errResp);
+            request->send(400, "application/json", errResp);
+            return;
+        }
         
         if (isNew) {
-            inst = config.addInstance(instanceId, engineId.isEmpty() ? instanceId : engineId);
+            inst = config.addInstance(instanceId, targetEngineId);
         }
         if (doc.containsKey("engine_id") && !engineId.isEmpty()) {
             inst->engine_id = engineId;
