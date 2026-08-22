@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
+#include "../core/ConfigLoader.h"
 
 GifEngine* GifEngine::instance = nullptr;
 
@@ -12,6 +13,44 @@ GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false),
 GifEngine::~GifEngine() {
     stop();
     delete png;
+}
+
+EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    m_instanceConfig = config;
+    m_hasPsram = context->hasPsram();
+    return begin(context->getMatrix()) ? EngineError::OK : EngineError::InitializationFailed;
+}
+
+void GifEngine::activate() {
+    int count = 1;
+    if (m_rotationBudget > 0) {
+        count = (int)m_rotationBudget;
+    } else if (m_instanceConfig) {
+        int cfgCount = m_instanceConfig->getInt("gifs_count", 0);
+        if (cfgCount > 0) count = cfgCount;
+    }
+    if (hasDefaultPlaylists()) {
+        playDefaultPlaylists(count);
+    }
+}
+
+void GifEngine::update(EngineContext* context) {
+    loop();
+}
+
+void GifEngine::render(EngineContext* context) {}
+
+void GifEngine::deactivate() {
+    stop();
+}
+
+void GifEngine::onConfigChanged(const EngineConfig* config) {
+    m_instanceConfig = config;
+}
+
+bool GifEngine::isFinished() const {
+    return !isPlaying && !playlistMode && !hasPendingPlaylists;
 }
 
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
@@ -64,8 +103,7 @@ bool GifEngine::playGif(const char* filepath) {
         }
         return false;
     } else {
-#if defined(BOARD_HAS_PSRAM)
-        if (psramFound()) {
+        if (m_hasPsram) {
             FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
             if (f) {
                 size_t fileSize = f.size();
@@ -105,7 +143,6 @@ bool GifEngine::playGif(const char* filepath) {
                 }
             }
         }
-#endif
         // Fallback to streaming from SD card
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);

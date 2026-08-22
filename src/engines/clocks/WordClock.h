@@ -6,7 +6,7 @@
 
 class WordClock : public ClockFace {
 public:
-    WordClock(MatrixPanel_I2S_DMA* display);
+    WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 

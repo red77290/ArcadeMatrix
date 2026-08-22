@@ -1,5 +1,8 @@
 import os
 import sys
+import subprocess
+import time
+import re
 
 input_file = "data/index.html"
 output_file = "src/api/WebUI.h"
@@ -29,3 +32,48 @@ with open(output_file, "w") as f:
     f.write("\n")
 
 print(f"Successfully generated {output_file} ({len(data)} bytes).")
+
+# Determine Firmware Version dynamically from Git Tag or CI/CD env
+firmware_version = ""
+
+# 1. Check CI/CD environment variable (e.g. GITHUB_REF_NAME when pushed with tag v3.0.0)
+ref_name = os.environ.get("GITHUB_REF_NAME", "")
+if ref_name.startswith("v") and re.match(r"^v\d+\.\d+", ref_name):
+    firmware_version = ref_name.lstrip("v")
+
+# 2. Check Git describe for nearest tag
+if not firmware_version:
+    try:
+        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always']).decode('ascii').strip()
+        if tag_desc.startswith("v"):
+            tag_desc = tag_desc.lstrip("v")
+        # If tag_desc is a semver tag like 3.0.0 or 3.0.0-1-g1234
+        if re.match(r"^\d+\.\d+", tag_desc):
+            firmware_version = tag_desc.split("-")[0]
+    except Exception:
+        pass
+
+# 3. Fallback to VERSION file if present
+if not firmware_version:
+    version_file = "VERSION"
+    if os.path.exists(version_file):
+        with open(version_file, "r") as vf:
+            firmware_version = vf.read().strip().lstrip("v")
+
+# 4. Ultimate fallback
+if not firmware_version:
+    firmware_version = "3.0.0"
+
+# Generate Git commit hash
+try:
+    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+except Exception:
+    git_commit = "unknown"
+
+build_timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+with open("src/core/BuildInfo.h", "w") as f:
+    f.write(f'#pragma once\n'
+            f'#ifndef FIRMWARE_VERSION\n#define FIRMWARE_VERSION "{firmware_version}"\n#endif\n'
+            f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
+            f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
+print(f"Successfully generated src/core/BuildInfo.h (v{firmware_version}, commit {git_commit}).")

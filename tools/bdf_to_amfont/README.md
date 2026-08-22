@@ -12,7 +12,7 @@ By default, all fonts used by the ESP32 firmware are compiled directly into flas
 adding or changing a font requires a full firmware rebuild and reflash.
 
 `BitmapFontLoader` closes that gap by loading a font from the SD card at boot instead - no rebuild
-needed, just copy a file and point `conf.ini` at it. But the ESP32 has no BDF parser or font
+needed, just copy a file and point `config.json` at it. But the ESP32 has no BDF parser or font
 rasterizer on-device (that would cost flash/RAM/CPU we don't have to spare), so fonts must be
 **pre-converted offline** into a compact binary format the firmware can `malloc()` and read
 directly. That's exactly what this script does.
@@ -46,8 +46,8 @@ python3 bdf_to_amfont.py input.bdf output.amf [--first 0x20] [--last 0x7E]
 Then copy the resulting `.amf` file to the SD card's `/fonts` folder (e.g. `/fonts/myfont.amf`).
 It becomes immediately selectable in the Web UI's Settings page, in the "Font" dropdown for either
 the Clock or the Date (each populated live from `GET /api/fonts`, which lists every `.amf` file
-found in `/fonts`) - no manual `conf.ini` editing needed. You can also set it directly via
-`conf.ini` (`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` under `[time]`
+found in `/fonts`) - no manual `config.json` editing needed. You can also set it directly via
+`config.json` (`clock_font_path=/fonts/myfont.amf` / `date_font_path=/fonts/myfont.amf` under `[time]`
 / `[date]`, or `custom_font_path=/fonts/myfont.amf` under `[fonts]` for the scrolling
 `MessageEngine`/`/api/message`). See `docs/DEVELOPER.md` for the full end-to-end workflow.
 

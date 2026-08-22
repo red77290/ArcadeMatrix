@@ -400,6 +400,23 @@ body {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   color: #fff;
+  font-family: inherit;
+}
+
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(255,255,255,0.7)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 0.9rem;
+  padding-right: 2rem;
+  cursor: pointer;
+}
+
+select.input option {
+  background: #181824;
+  color: #fff;
 }
 
 .badge {
@@ -537,6 +554,9 @@ body {
   <style>
     .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
     .form-grid.col-4 { grid-template-columns: repeat(4, 1fr); }
+    @media (max-width: 768px) {
+      .form-grid.col-3, .form-grid.col-4 { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -548,7 +568,7 @@ body {
     <nav id="sidebar">
       <div class="logo">
         <h2>🎮 ArcadeMatrix</h2>
-        <span id="version-tag" class="version-badge">v1.0.0</span>
+        <span id="version-tag" class="version-badge">v3.0.0</span>
       </div>
       <ul class="nav-links">
         <li class="nav-item active" data-page="dashboard">
@@ -629,6 +649,7 @@ body {
             <h3>System Control</h3>
             <div class="action-buttons">
               <button id="btn-reboot" class="btn btn-warning">Reboot System</button>
+              <button id="btn-restart-app" class="btn btn-primary" style="margin-left: 0.5rem;">Restart App</button>
               <button id="btn-shutdown" class="btn btn-danger">Shutdown</button>
             </div>
           </div>
@@ -645,100 +666,21 @@ body {
         </header>
 
         <div class="tabs">
-          <button class="tab-btn active" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
-          <button class="tab-btn" onclick="switchDisplayTab('clock')">🕒 Clock</button>
+          <button class="tab-btn active" onclick="switchDisplayTab('clock')">🕒 Clock</button>
           <button class="tab-btn" onclick="switchDisplayTab('date')">📅 Date</button>
           <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
           <button class="tab-btn" onclick="switchDisplayTab('crypto')">📈 Crypto</button>
           <button class="tab-btn" onclick="switchDisplayTab('stock')">📊 Stocks</button>
-          <button class="tab-btn" onclick="switchDisplayTab('temp')">🌡️ Temp & Hum</button>
-          <button class="tab-btn" onclick="switchDisplayTab('audio')">🎵 Music & Decibel</button>
+          <button class="tab-btn" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
+          <button class="tab-btn" onclick="switchDisplayTab('dynamic')">🧩 Engines (Dynamic)</button>
         </div>
         
-        <div id="tab-idle" class="tab-pane active">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>🔄 Idle Rotation & Night Mode</h3>
-          <div class="form-group">
-            <label>Active Screens in Rotation</label>
-            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
-              <label class="toggle-btn" id="lbl-rot-temp"><input type="checkbox" value="temp" id="rot-temp" style="display:none;"> <span class="toggle-label">🌡️ Temp</span></label>
-              <label class="toggle-btn" id="lbl-rot-decibel"><input type="checkbox" value="decibel" id="rot-decibel" style="display:none;"> <span class="toggle-label">🔊 Decibel</span></label>
-            </div>
-            <input type="hidden" id="cfg-rotation">
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>GIFs per cycle</label>
-              <input type="number" id="cfg-dur-gifs" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Sprites on screen</label>
-              <select id="cfg-sprite-enable" class="input">
-                <option value="true">ON</option>
-                <option value="false">OFF</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Fighter Interval (s)</label>
-              <input type="number" id="cfg-fighter-int" class="input" min="1">
-            </div>
-          </div>
-          <div class="form-grid col-5" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Clock (s)</label>
-              <input type="number" id="cfg-dur-clock" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Date (s)</label>
-              <input type="number" id="cfg-dur-date" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Weather (s)</label>
-              <input type="number" id="cfg-dur-weather" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Temp (s)</label>
-              <input type="number" id="cfg-dur-temp" class="input" min="3" value="8">
-            </div>
-            <div class="form-group">
-              <label>Decibel (s)</label>
-              <input type="number" id="cfg-dur-decibel" class="input" min="3" value="10">
-            </div>
-          </div>
-          <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 1.5rem 0;">
-          <h4>🌙 Night Mode</h4>
-          <div class="form-grid col-4" style="margin-top: 0.5rem;">
-            <div class="form-group">
-              <label>Enable Night Mode</label>
-              <select id="cfg-night-enable" class="input">
-                <option value="true">YES</option>
-                <option value="false">NO</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Turn OFF at</label>
-              <input type="time" id="cfg-night-off" class="input" value="23:00">
-            </div>
-            <div class="form-group">
-              <label>Wake UP at</label>
-              <input type="time" id="cfg-night-on" class="input" value="07:00">
-            </div>
-            <div class="form-group">
-              <label>Night Brightness (%)</label>
-              <input type="number" id="cfg-night-bright" class="input" value="0" min="0" max="100">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
+        <div id="tab-dynamic" class="tab-pane">
+          <!-- Dynamic forms will be generated here by app.js -->
+          <div id="dynamic-engines-container"></div>
         </div>
-        </div>
-
-        <div id="tab-clock" class="tab-pane">
+        
+        <div id="tab-clock" class="tab-pane active">
           <div class="card glass shadow">
             <h3>🕒 Clock Settings</h3>
           <div class="form-grid">
@@ -986,63 +928,81 @@ body {
           <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
         </div>
         </div>
-        <div id="tab-temp" class="tab-pane">
-          <div class="card glass shadow">
-            <h3>🌡️ Indoor Temperature & Humidity Settings</h3>
-            <div id="badge-temp-status" class="badge badge-accent" style="margin-bottom: 1rem;">Sensor Status: Checking...</div>
-            <div class="form-grid col-2">
-              <div class="form-group">
-                <label>Temperature Unit</label>
-                <select id="cfg-temp-unit" class="input">
-                  <option value="C">Celsius (°C)</option>
-                  <option value="F">Fahrenheit (°F)</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Temperature Offset (°C)</label>
-                <input type="number" step="0.1" id="cfg-temp-offset" class="input" value="0.0">
-              </div>
-            </div>
-            <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Temperature Settings</button>
-          </div>
-        </div>
 
-        <div id="tab-audio" class="tab-pane">
-          <div class="card glass shadow">
-            <h3>🎵 Rhythmic Music Visualizer & Decibel Meter</h3>
-            <div id="badge-audio-status" class="badge badge-accent" style="margin-bottom: 1rem;">Audio Status: Checking...</div>
-            <div class="form-grid col-2">
-              <div class="form-group">
-                <label>Priority Music Visualizer</label>
-                <select id="cfg-visualizer-enabled" class="input">
-                  <option value="false">OFF (Standard Rotation)</option>
-                  <option value="true">ON (Display Override)</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>Visualizer Display Mode</label>
-                <select id="cfg-visualizer-mode" class="input">
-                  <option value="spectrum">📊 Equalizer Spectrum Bars</option>
-                  <option value="waveform">〰️ Oscilloscope Waveform</option>
-                  <option value="radial">⭕ Concentric Pulse Circles</option>
-                  <option value="neon_fire">🔥 Matrix Neon Rain / Fire</option>
-                </select>
-              </div>
+        <div id="tab-idle" class="tab-pane">
+        <div class="card glass shadow" style="margin-top: 2rem;">
+          <h3>🔄 Idle Rotation & Night Mode</h3>
+          <div class="form-group">
+            <label>Active Screens in Rotation</label>
+            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
+              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
             </div>
-            <div class="form-grid col-2" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>Microphone Gain Multiplier</label>
-                <input type="number" step="0.1" id="cfg-mic-gain" class="input" value="1.0" min="0.1" max="10.0">
-              </div>
-              <div class="form-group">
-                <label>Decibel Calibration Offset (dB)</label>
-                <input type="number" step="0.5" id="cfg-db-calibration" class="input" value="0.0">
-              </div>
-            </div>
-            <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Audio & Visualizer Settings</button>
+            <input type="hidden" id="cfg-rotation">
           </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>GIFs per cycle</label>
+              <input type="number" id="cfg-dur-gifs" class="input" min="1">
+            </div>
+            <div class="form-group">
+              <label>Sprites on screen</label>
+              <select id="cfg-sprite-enable" class="input">
+                <option value="true">ON</option>
+                <option value="false">OFF</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Fighter Interval (s)</label>
+              <input type="number" id="cfg-fighter-int" class="input" min="1">
+            </div>
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Clock Duration (s)</label>
+              <input type="number" id="cfg-dur-clock" class="input" min="5">
+            </div>
+            <div class="form-group">
+              <label>Date Duration (s)</label>
+              <input type="number" id="cfg-dur-date" class="input" min="5">
+            </div>
+            <div class="form-group">
+              <label>Weather Duration (s)</label>
+              <input type="number" id="cfg-dur-weather" class="input" min="5">
+            </div>
+          </div>
+          <hr style="margin: 1.5rem 0; border-color: rgba(255,255,255,0.1);">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Night Mode</label>
+              <select id="cfg-night-enable" class="input">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Turn Off At (HH:MM)</label>
+              <input type="text" id="cfg-night-off" class="input" placeholder="23:00">
+            </div>
+            <div class="form-group">
+              <label>Wake Up At (HH:MM)</label>
+              <input type="text" id="cfg-night-on" class="input" placeholder="07:00">
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="display: flex; justify-content: space-between;">
+                <span>Night Brightness</span>
+                <span id="night-brightness-val" class="badge">10%</span>
+              </label>
+              <input type="range" id="cfg-night-brightness" min="0" max="100" step="1" value="10" style="width: 100%; cursor: pointer;">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
         </div>
-
+        </div>
       </section>
 
       <!-- Media Page -->
@@ -1128,13 +1088,43 @@ body {
 
         <div class="tabs" style="margin-bottom: 1.5rem;">
           <button class="tab-btn active" onclick="switchSystemTab('hardware')">⚙️ Hardware</button>
-          
+          <button class="tab-btn" onclick="switchSystemTab('network')">🌐 Network</button>
           <button class="tab-btn" onclick="switchSystemTab('mqtt')">🔄 MQTT & API</button>
           <button class="tab-btn" onclick="switchSystemTab('ota')">🚀 Updates</button>
         </div>
         
         <!-- Hardware Settings -->
         <div id="sys-tab-hardware" class="tab-pane active">
+          <div class="card glass shadow" style="margin-bottom: 1.5rem;">
+            <h3>🖥️ Hardware Profile & Capabilities</h3>
+            <div class="form-grid col-3" id="hw-caps-grid" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Hardware Profile</label>
+                <div id="hw-cap-profile" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label>PSRAM</label>
+                <div id="hw-cap-psram" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label>Microphone (Audio)</label>
+                <div id="hw-cap-mic" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label>Temperature Sensor</label>
+                <div id="hw-cap-temp" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label>Gyroscope (Motion)</label>
+                <div id="hw-cap-gyro" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label>Free Heap / Free PSRAM</label>
+                <div id="hw-cap-heap" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">-</div>
+              </div>
+            </div>
+          </div>
+
           <div class="card glass shadow">
             <h3>Matrix Hardware Configuration</h3>
             <div class="form-grid col-4">
@@ -1150,29 +1140,31 @@ body {
                 <label>Chain Length <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
                 <input type="number" id="hw-chain" class="input" value="1">
               </div>
-              
+              <div class="form-group">
+                <label>Parallel Chains <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
+                <input type="number" id="hw-parallel" class="input" value="1">
+              </div>
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
                 <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 high-density, ICN2038S, SM16208)">?</span></label>
                 <select id="hw-driver-chip" class="input">
-                  <option value="SHIFTREG">SHIFTREG (Standard P4/P5)</option>
-                  <option value="FM6124">FM6124 (P2 High Density)</option>
-                  <option value="FM6126A">FM6126A (P2.5 High Density)</option>
+                  <option value="SHIFTREG">Standard (SHIFTREG)</option>
+                  <option value="FM6126A">FM6124 / FM6126A</option>
                   <option value="ICN2038S">ICN2038S</option>
+                  <option value="MBI5124">MBI5124</option>
                   <option value="SM16208">SM16208</option>
                 </select>
               </div>
               <div class="form-group">
-                <label>Clock Phase <span class="tooltip-icon" data-tooltip="Invert CLK signal phase to prevent edge pixel glitches">?</span></label>
-                <select id="hw-clk-phase" class="input">
-                  <option value="false">Normal (False)</option>
-                  <option value="true">Inverted (True)</option>
+                <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
+                <select id="hw-mapping" class="input">
+                  <option value="regular">Regular</option>
+                  <option value="regular-pi1">Regular Pi1</option>
+                  <option value="adafruit-hat">Adafruit HAT</option>
+                  <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
+                  <option value="compute-module">Compute Module</option>
                 </select>
-              </div>
-              <div class="form-group">
-                <label>Latch Blanking <span class="tooltip-icon" data-tooltip="Cycles of blanking during LATCH to eliminate ghosting">?</span></label>
-                <input type="number" id="hw-latch-blanking" class="input" value="8" min="1" max="32">
               </div>
               <div class="form-group">
                 <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
@@ -1186,24 +1178,62 @@ body {
                 </select>
               </div>
               <div class="form-group">
-                <label>Force Single Buffer <span class="tooltip-icon" data-tooltip="Halves DMA memory usage. Unchecking restores double buffering for smoother animations.">?</span></label>
-                <select id="hw-force-single-buffer" class="input">
-                  <option value="true">Enabled (Single Buffer)</option>
-                  <option value="false">Disabled (Double Buffering)</option>
-                </select>
+                <label>Row Addr Type <span class="tooltip-icon" data-tooltip="Default 0. Set to 1 for AB, 2 for direct, 3 for ABC, 4 for ShiftReg. Used for complex P2 panels.">?</span></label>
+                <input type="number" id="hw-row-addr-type" class="input" value="0" min="0" max="4">
+              </div>
+              <div class="form-group">
+                <label>Multiplexing <span class="tooltip-icon" data-tooltip="Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.">?</span></label>
+                <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
               </div>
             </div>
-            <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Color Depth (Bits/canal) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
-                <input type="number" id="hw-color-depth" class="input" value="8" min="2" max="8">
+                <label>Slowdown <span class="tooltip-icon" data-i18n-tooltip="tt_hw_slowdown">?</span></label>
+                <input type="number" id="hw-slowdown" class="input" value="2">
+              </div>
+            </div>
+            <div class="form-grid col-4" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>PWM Bits <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_bits">?</span></label>
+                <input type="number" id="hw-pwm-bits" class="input" value="11" min="1" max="11">
+              </div>
+              <div class="form-group">
+                <label>PWM LSB (ns) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_lsb">?</span></label>
+                <input type="number" id="hw-pwm-lsb" class="input" value="130">
               </div>
               <div class="form-group">
                 <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
                 <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
               </div>
+              <div class="form-group">
+                <label>Disable Hardware Pulsing <span class="tooltip-icon" data-i18n-tooltip="tt_hw_disable_pulsing">?</span></label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="hw-disable-pulsing">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
             </div>
             <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save Hardware Settings</button>
+          </div>
+        </div>
+
+        <!-- Network -->
+        <div id="sys-tab-network" class="tab-pane">
+          <div class="card glass shadow">
+            <h3>Wi-Fi Configuration</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>SSID (Network Name)</label>
+                <input type="text" id="hw-wifi-ssid" class="input" placeholder="Your Network">
+              </div>
+              <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="hw-wifi-pass" class="input" placeholder="••••••••">
+              </div>
+            </div>
+            <button id="btn-save-wifi" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Connect Wi-Fi</button>
           </div>
         </div>
 
@@ -1239,6 +1269,38 @@ body {
               </div>
             </div>
             <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save MQTT Settings</button>
+            
+            <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
+            
+            <h4 style="margin-top: 1.5rem;">Recalbox / Batocera Sync</h4>
+            <p class="text-muted" style="font-size: 0.9em;">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="toggle-btn" style="display:inline-flex; align-items:center; cursor:pointer;">
+                <input type="checkbox" id="hw-mqtt-custom-auth" style="margin-right:0.5rem; accent-color:var(--primary);">
+                <span>Use custom SSH credentials (Default: root / recalboxroot)</span>
+              </label>
+            </div>
+            <div id="mqtt-custom-auth-fields" class="form-grid" style="display: none; margin-top: 0.5rem; margin-bottom: 1rem;">
+              <div class="form-group">
+                <label>SSH Username</label>
+                <input type="text" id="hw-mqtt-ssh-user" class="input" placeholder="root" value="root">
+              </div>
+              <div class="form-group">
+                <label>SSH Password</label>
+                <input type="password" id="hw-mqtt-ssh-pass" class="input" placeholder="recalboxroot">
+              </div>
+            </div>
+            <div class="form-grid" style="align-items: end;">
+              <div class="form-group">
+                <label>Console IP Address</label>
+                <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
+              </div>
+              <div class="form-group" style="display: flex; gap: 0.5rem;">
+                <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;">Install via SSH</button>
+                <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;">Check Logs</button>
+              </div>
+            </div>
+            <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
           </div>
           
           <div class="card glass shadow">
@@ -1270,7 +1332,7 @@ body {
             <p class="text-muted">Update the ArcadeMatrix daemon binary without re-flashing your SD card image.</p>
 
             <div class="ota-info-box">
-              <div>Current Version: <strong id="ota-current-version">v1.0.0</strong></div>
+              <div>Current Version: <strong id="ota-current-version">v3.0.0</strong></div>
               <div>Target Architecture: <strong id="ota-current-arch">aarch64</strong></div>
             </div>
 
@@ -1407,7 +1469,6 @@ const translations = {
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
     // Tooltips
-    tt_hw_color_depth: "Color depth in bits per channel (R, G, B), from 2 to 8. 8 = RGB 24-bit (real colors). Lowering this value (e.g. 5 or 6) increases brightness and animation smoothness.",
     tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
     tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
     tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
@@ -1417,14 +1478,6 @@ const translations = {
     tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
     tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
     tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
-    badge_temp_ok: "✅ Temp/Humidity Sensor DETECTED (SHTC3)",
-    badge_temp_err: "⚠️ Temp/Humidity Sensor NOT DETECTED",
-    badge_mic_ok: "✅ Microphone / Audio Hardware DETECTED",
-    badge_mic_err: "⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)",
-    req_sensor: "(Requires Sensor)",
-    badge_psram_ok: "✅ PSRAM DETECTED",
-    badge_psram_err: "⚠️ PSRAM NOT DETECTED (Crypto & Stock disabled)",
-    req_psram: "(Requires PSRAM)"
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -1436,7 +1489,6 @@ const translations = {
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
     // Tooltips
-    tt_hw_color_depth: "Profondeur de couleur en bits par canal (R, G, B), de 2 à 8. 8 = RGB 24-bit (couleurs réelles). Baisser cette valeur (ex: 5 ou 6) augmente la luminosité et la fluidité.",
     tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
     tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
     tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
@@ -1446,14 +1498,6 @@ const translations = {
     tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
     tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
     tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
-    badge_temp_ok: "✅ Capteur Temp/Humidité DÉTECTÉ (SHTC3)",
-    badge_temp_err: "⚠️ Capteur Temp/Humidité NON DÉTECTÉ",
-    badge_mic_ok: "✅ Microphone / Audio DÉTECTÉ",
-    badge_mic_err: "⚠️ Microphone NON DÉTECTÉ (Visualiseur & dB désactivés)",
-    req_sensor: "(Nécessite le capteur)",
-    badge_psram_ok: "✅ PSRAM DÉTECTÉE",
-    badge_psram_err: "⚠️ PSRAM NON DÉTECTÉE (Crypto & Bourse désactivés)",
-    req_psram: "(Nécessite la PSRAM)"
   },
   es: {
     nav_dashboard: "Panel",
@@ -1465,7 +1509,6 @@ const translations = {
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
     // Tooltips
-    tt_hw_color_depth: "Profundidad de color en bits por canal (R, G, B), de 2 a 8. 8 = RGB 24-bit (colores reales). Bajar este valor (ej: 5 o 6) aumenta el brillo y la fluidez.",
     tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
     tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
     tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
@@ -1475,22 +1518,11 @@ const translations = {
     tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
     tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
     tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
-    badge_temp_ok: "✅ Sensor Temp/Humedad DETECTADO (SHTC3)",
-    badge_temp_err: "⚠️ Sensor Temp/Humedad NO DETECTADO",
-    badge_mic_ok: "✅ Micrófono / Audio DETECTADO",
-    badge_mic_err: "⚠️ Micrófono NO DETECTADO (Visualizador y dB desactivados)",
-    req_sensor: "(Requiere Sensor)",
-    badge_psram_ok: "✅ PSRAM DETECTADA",
-    badge_psram_err: "⚠️ PSRAM NO DETECTADA (Cripto y Bolsa desactivados)",
-    req_psram: "(Requiere PSRAM)"
   }
 };
 
-let currentLang = 'en';
 function setLanguage(lang) {
-  currentLang = lang;
   const dict = translations[lang] || translations.en;
-  window.i18n = (key) => dict[key] || translations.en[key] || key;
   
   // Text content translation
   document.querySelectorAll('[data-i18n]').forEach(el => {
@@ -1529,6 +1561,354 @@ function pubFn() {
       toast.remove();
     }, 3500);
   };
+}
+
+
+// --- js/dynamic_engines.js ---
+
+// --- js/dynamic_engines.js ---
+
+async function initHardwareCapabilities() {
+  try {
+    const [hw, status] = await Promise.all([
+      API.get('/api/hardware').catch(() => null),
+      API.get('/api/status').catch(() => null)
+    ]);
+    
+    if (hw) {
+      const elProf = document.getElementById('hw-cap-profile');
+      if (elProf) {
+        elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';
+        elProf.style.color = 'var(--accent-info)';
+      }
+      
+      const elPsram = document.getElementById('hw-cap-psram');
+      if (elPsram) {
+        if (hw.psram && hw.psram.available) {
+          const mb = (hw.psram.bytes / (1024 * 1024)).toFixed(0);
+          elPsram.textContent = `Available (${mb} MB)`;
+          elPsram.style.color = 'var(--accent-success)';
+        } else {
+          elPsram.textContent = 'Not Available (Internal SRAM only)';
+          elPsram.style.color = 'var(--accent-warning)';
+        }
+      }
+      
+      const elMic = document.getElementById('hw-cap-mic');
+      if (elMic) {
+        elMic.textContent = hw.microphone ? 'Detected (I2S Audio)' : 'Not Detected';
+        elMic.style.color = hw.microphone ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+      
+      const elTemp = document.getElementById('hw-cap-temp');
+      if (elTemp) {
+        elTemp.textContent = hw.temperature_sensor ? 'Detected (SHTC3 I2C)' : 'Not Detected';
+        elTemp.style.color = hw.temperature_sensor ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+      
+      const elGyro = document.getElementById('hw-cap-gyro');
+      if (elGyro) {
+        elGyro.textContent = hw.gyroscope ? 'Detected' : 'Not Detected (I2C 0x68/0x69)';
+        elGyro.style.color = hw.gyroscope ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+    }
+    
+    if (status) {
+      const elHeap = document.getElementById('hw-cap-heap');
+      if (elHeap) {
+        const freeKb = (status.free_heap / 1024).toFixed(1);
+        let txt = `Heap: ${freeKb} KB`;
+        if (status.free_psram) {
+          const psramMb = (status.free_psram / (1024 * 1024)).toFixed(2);
+          txt += ` | PSRAM: ${psramMb} MB`;
+        }
+        elHeap.textContent = txt;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load hardware capabilities:', err);
+  }
+}
+
+async function initDynamicEngines() {
+  const container = document.getElementById('dynamic-engines-container');
+  const tabsContainer = document.querySelector('.tabs');
+  
+  if (!container || !tabsContainer) return;
+  
+  try {
+    const [engines, instances] = await Promise.all([
+      API.get('/api/engines'),
+      API.get('/api/instances').catch(() => [])
+    ]);
+    
+    // Clear dynamic container
+    container.innerHTML = '';
+    
+    const instanceMap = {};
+    if (Array.isArray(instances)) {
+      instances.forEach(inst => {
+        instanceMap[inst.engine_id] = inst.config || {};
+        instanceMap[inst.instance_id] = inst.config || {};
+      });
+    }
+
+    const engineMap = {};
+    engines.forEach(e => { engineMap[e.metadata.id] = e; });
+
+    // 1. Update Hardware Awareness on Standard Display Tabs (clock, date, weather, crypto, stock)
+    const standardTabEngineMap = {
+      'crypto': 'crypto',
+      'stock': 'stock',
+      'weather': 'weather',
+      'clock': 'clock',
+      'date': 'date'
+    };
+
+    Object.entries(standardTabEngineMap).forEach(([tabKey, engineId]) => {
+      const eng = engineMap[engineId];
+      if (eng && eng.available === false) {
+        // Find tab button
+        document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
+          if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(tabKey)) {
+            if (!btn.innerHTML.includes('(Unavailable)')) {
+              btn.innerHTML += ` <span style="font-size:0.7em;color:var(--accent-danger);font-weight:bold;">(N/A)</span>`;
+            }
+          }
+        });
+        
+        // Inject banner into tab pane
+        const pane = document.getElementById(`tab-${tabKey}`);
+        if (pane) {
+          const card = pane.querySelector('.card');
+          if (card && !card.querySelector('.hw-unavail-banner')) {
+            const banner = document.createElement('div');
+            banner.className = 'hw-unavail-banner';
+            banner.style = 'background: rgba(239, 68, 68, 0.15); border: 1px solid var(--accent-danger); border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin-bottom: 1rem; color: #fca5a5;';
+            banner.innerHTML = `⚠️ <strong>Unavailable on this device:</strong> ${eng.reason || 'Hardware requirements not met'}`;
+            card.prepend(banner);
+            card.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
+          }
+        }
+      }
+    });
+    
+    // 2. Generate Dynamic Tabs for all engines
+    for (const engine of engines) {
+      const tabId = `tab-dyn-${engine.metadata.id.replace(/\./g, '-')}`;
+      
+      const tabBtn = document.createElement('button');
+      tabBtn.className = 'tab-btn';
+      tabBtn.innerHTML = `🧩 ${engine.metadata.name}`;
+      if (engine.available === false) {
+        tabBtn.innerHTML += ` <span style="font-size:0.7em;opacity:0.7;color:var(--accent-warning);">(N/A)</span>`;
+      }
+      tabBtn.onclick = (e) => {
+        document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+      };
+      
+      tabsContainer.appendChild(tabBtn);
+      
+      // Create Tab Pane
+      const tabPane = document.createElement('div');
+      tabPane.id = tabId;
+      tabPane.className = 'tab-pane';
+      
+      const card = document.createElement('div');
+      card.className = 'card glass shadow';
+      card.style.marginTop = '2rem';
+      
+      const title = document.createElement('h3');
+      title.innerText = `⚙️ ${engine.metadata.name} Settings`;
+      card.appendChild(title);
+      
+      if (engine.available === false) {
+        const unavailBanner = document.createElement('div');
+        unavailBanner.style = 'background: rgba(239, 68, 68, 0.15); border: 1px solid var(--accent-danger); border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin: 0.75rem 0; color: #fca5a5;';
+        unavailBanner.innerHTML = `⚠️ <strong>Unavailable on this hardware:</strong> ${engine.reason || 'Hardware requirements not met'}`;
+        card.appendChild(unavailBanner);
+      } else {
+        const desc = document.createElement('p');
+        desc.className = 'text-muted';
+        desc.innerText = `${engine.metadata.category || 'Engine'} • v${engine.metadata.version || '3.0.0'}`;
+        card.appendChild(desc);
+      }
+      
+      const formGrid = document.createElement('div');
+      formGrid.className = 'form-grid';
+      
+      const currentInstCfg = instanceMap[engine.metadata.id] || instanceMap[`${engine.metadata.id}_main`] || {};
+      
+      // Helper function to update visible_when conditional fields
+      const updateVisibility = () => {
+        if (!engine.schema) return;
+        engine.schema.forEach(f => {
+          if (f.visible_when) {
+            const parts = f.visible_when.split('=');
+            if (parts.length === 2) {
+              const targetId = parts[0].trim();
+              const targetVal = parts[1].trim();
+              const targetEl = document.getElementById(`cfg-dyn-${engine.metadata.id}-${targetId}`);
+              const grp = document.getElementById(`group-dyn-${engine.metadata.id}-${f.id}`);
+              if (targetEl && grp) {
+                const isMatch = String(targetEl.value).toLowerCase() === String(targetVal).toLowerCase();
+                grp.style.display = isMatch ? 'flex' : 'none';
+              }
+            }
+          }
+        });
+      };
+      
+      // Generate fields from schema
+      if (engine.schema && engine.schema.length > 0) {
+        for (const field of engine.schema) {
+          const formGroup = document.createElement('div');
+          formGroup.className = 'form-group';
+          formGroup.id = `group-dyn-${engine.metadata.id}-${field.id}`;
+          formGroup.style.display = 'flex';
+          formGroup.style.flexDirection = 'column';
+          
+          const label = document.createElement('label');
+          label.innerText = field.label || field.id;
+          if (field.description) {
+            label.title = field.description;
+            label.style.cursor = 'help';
+            label.innerHTML += ' ℹ️';
+          }
+          formGroup.appendChild(label);
+          
+          let input = null;
+          const currentVal = (currentInstCfg[field.id] !== undefined) ? currentInstCfg[field.id] : field.default_value;
+          
+          if (field.field_type === 4 || field.field_type === 7 || field.options_endpoint) { // ENUM, LIST or dynamic endpoint
+             input = document.createElement('select');
+             input.className = 'input';
+             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
+             if (field.multiple) input.multiple = true;
+             
+             if (field.options_endpoint) {
+               try {
+                 const optData = await API.get(field.options_endpoint);
+                 const optList = Array.isArray(optData) ? optData : (optData.playlists || optData.options || optData.fonts || []);
+                 optList.forEach(opt => {
+                   const option = document.createElement('option');
+                   if (typeof opt === 'object') {
+                     option.value = (opt.id !== undefined) ? opt.id : opt.value;
+                     option.innerText = opt.name || opt.label || option.value;
+                   } else {
+                     option.value = opt;
+                     option.innerText = opt;
+                   }
+                   input.appendChild(option);
+                 });
+               } catch (err) {
+                 console.warn('Failed to load dynamic options from', field.options_endpoint, err);
+               }
+             } else if (field.options) {
+               const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
+               optsArray.forEach(opt => {
+                 const option = document.createElement('option');
+                 if (typeof opt === 'object') {
+                   option.value = opt.value;
+                   option.innerText = opt.label;
+                 } else {
+                   const clean = String(opt).trim();
+                   option.value = clean;
+                   option.innerText = clean;
+                 }
+                 input.appendChild(option);
+               });
+             }
+          } else if (field.field_type === 0) { // BOOLEAN
+             input = document.createElement('select');
+             input.className = 'input';
+             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
+             input.innerHTML = `<option value="true">Enabled</option><option value="false">Disabled</option>`;
+          } else if (field.field_type === 5) { // COLOR
+             input = document.createElement('input');
+             input.type = 'color';
+             input.className = 'input';
+             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
+          } else { // STRING, INTEGER, FLOAT
+             input = document.createElement('input');
+             input.type = (field.field_type === 1 || field.field_type === 2) ? 'number' : 'text';
+             if (field.min_val) input.min = field.min_val;
+             if (field.max_val) input.max = field.max_val;
+             if (field.step) input.step = field.step;
+             input.className = 'input';
+             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
+          }
+          
+          if (input) {
+            if (currentVal !== undefined && currentVal !== null) {
+                input.value = currentVal;
+            }
+            if (engine.available === false) {
+                input.disabled = true;
+            }
+            input.addEventListener('change', updateVisibility);
+            input.addEventListener('input', updateVisibility);
+            formGroup.appendChild(input);
+          }
+          
+          formGrid.appendChild(formGroup);
+        }
+      } else {
+         const noSettings = document.createElement('p');
+         noSettings.innerText = 'No configuration available for this engine.';
+         formGrid.appendChild(noSettings);
+      }
+      
+      card.appendChild(formGrid);
+      
+      if (engine.available !== false) {
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn btn-primary';
+        saveBtn.style = 'margin-top: 1rem; width: 100%;';
+        saveBtn.innerText = `Save ${engine.metadata.name} Configuration`;
+        saveBtn.onclick = async () => {
+           const payload = {};
+           if (engine.schema) {
+             engine.schema.forEach(field => {
+                const el = document.getElementById(`cfg-dyn-${engine.metadata.id}-${field.id}`);
+                if (el) {
+                   if (el.multiple) {
+                     payload[field.id] = Array.from(el.selectedOptions).map(o => o.value).join(',');
+                   } else {
+                     payload[field.id] = el.value;
+                   }
+                }
+             });
+           }
+           try {
+               await API.post('/api/instances', {
+                   instance_id: `${engine.metadata.id}_main`,
+                   engine_id: engine.metadata.id,
+                   config: payload
+               });
+               window.showToast(`${engine.metadata.name} configuration saved live!`, 'info');
+           } catch(e) {
+               console.error('API Error:', e);
+               window.showToast('Failed to save engine config', 'warning');
+           }
+        };
+        card.appendChild(saveBtn);
+      }
+      
+      tabPane.appendChild(card);
+      container.appendChild(tabPane);
+      
+      // Initial visibility calculation for visible_when fields
+      updateVisibility();
+    }
+    
+  } catch (e) {
+    console.error('Failed to load dynamic engines:', e);
+  }
 }
 
 
@@ -1573,6 +1953,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initNetworkSettings();
   initSettings();
   initPlaylists();
+  initDynamicEngines();
+  initHardwareCapabilities();
 });
 
 function initNavigation() {
@@ -1649,7 +2031,7 @@ function initDashboard() {
     btnRestartApp.addEventListener('click', async () => {
       if (confirm('Are you sure you want to soft restart the application? (Hardware config will be reapplied)')) {
         try {
-          await API.post('/api/system/reboot');
+          await API.post('/api/system/restart_app');
           window.showToast('Restarting application...', 'info');
           setTimeout(() => location.reload(), 2000);
         } catch (e) {
@@ -1822,19 +2204,97 @@ function initNetworkSettings() {
     });
   }
 
+  const btnInstallMqtt = document.getElementById('btn-install-mqtt');
+  if (btnInstallMqtt) {
+    const cbCustomAuth = document.getElementById('hw-mqtt-custom-auth');
+    const authFields = document.getElementById('mqtt-custom-auth-fields');
+    if (cbCustomAuth && authFields) {
+      cbCustomAuth.addEventListener('change', () => {
+        authFields.style.display = cbCustomAuth.checked ? 'grid' : 'none';
+      });
+    }
+
+    btnInstallMqtt.addEventListener('click', async () => {
+      const ip = document.getElementById('hw-mqtt-ip').value;
+      if (!ip) {
+        window.showToast('Please enter Console IP Address', 'error');
+        return;
+      }
+      
+      let user = null;
+      let pass = null;
+      if (cbCustomAuth && cbCustomAuth.checked) {
+        user = document.getElementById('hw-mqtt-ssh-user').value || 'root';
+        pass = document.getElementById('hw-mqtt-ssh-pass').value;
+      }
+
+      btnInstallMqtt.disabled = true;
+      btnInstallMqtt.textContent = 'Installing...';
+      try {
+        await API.postAuth('/api/mqtt/install', { ip, user, pass });
+        window.showToast('MQTT Sync Script Installed!', 'success');
+      } catch (e) {
+        window.showToast('Failed to install script', 'error');
+      } finally {
+        btnInstallMqtt.disabled = false;
+        btnInstallMqtt.textContent = 'Install via SSH';
+      }
+    });
+
+    const btnCheckLogs = document.getElementById('btn-check-logs');
+    if (btnCheckLogs) {
+      btnCheckLogs.addEventListener('click', async () => {
+        const ip = document.getElementById('hw-mqtt-ip').value;
+        if (!ip) {
+          window.showToast('Please enter Console IP Address', 'error');
+          return;
+        }
+
+        let user = null;
+        let pass = null;
+        if (cbCustomAuth && cbCustomAuth.checked) {
+          user = document.getElementById('hw-mqtt-ssh-user').value || 'root';
+          pass = document.getElementById('hw-mqtt-ssh-pass').value;
+        }
+
+        btnCheckLogs.disabled = true;
+        btnCheckLogs.textContent = 'Checking...';
+        const logOutput = document.getElementById('ssh-log-output');
+        if (logOutput) {
+          logOutput.style.display = 'block';
+          logOutput.textContent = 'Fetching logs from ' + ip + '...';
+        }
+        
+        try {
+          const res = await API.postAuth('/api/mqtt/logs', { ip, user, pass });
+          if (logOutput) {
+            logOutput.textContent = res.logs || 'No logs returned.';
+          }
+          window.showToast('Logs retrieved!', 'success');
+        } catch (e) {
+          if (logOutput) {
+            logOutput.textContent = 'Failed to fetch logs: ' + (e.message || e.status || '');
+          }
+          window.showToast('Failed to fetch logs', 'error');
+        } finally {
+          btnCheckLogs.disabled = false;
+          btnCheckLogs.textContent = 'Check Logs';
+        }
+      });
+    }
+  }
+
   const btnSaveMqtt = document.getElementById('btn-save-mqtt');
   if (btnSaveMqtt) {
     btnSaveMqtt.addEventListener('click', async () => {
       const mqtt_enable = document.getElementById('hw-mqtt-enable').value === '1';
       const mqtt_broker = document.getElementById('hw-mqtt-broker').value;
-      console.log("SENDING MQTT BROKER:", mqtt_broker);
       const mqtt_port = parseInt(document.getElementById('hw-mqtt-port').value, 10);
       const mqtt_user = document.getElementById('hw-mqtt-user').value;
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
-        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass, reboot: true });
-        window.showToast('MQTT Settings Saved! Rebooting...', 'success');
-        setTimeout(() => window.location.reload(), 3000);
+        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
+        window.showToast('MQTT Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
       }
@@ -1863,8 +2323,6 @@ async function initSettings() {
     const clockFontSel = document.getElementById('cfg-clock-font');
     const dateFontSel = document.getElementById('cfg-date-font');
     if (clockFontSel && dateFontSel) {
-      clockFontSel.add(new Option("Default Theme Font", ""));
-      dateFontSel.add(new Option("Default Theme Font", ""));
       fonts.forEach(f => {
         clockFontSel.add(new Option(f, f));
         dateFontSel.add(new Option(f, f));
@@ -1892,14 +2350,28 @@ async function initSettings() {
       });
     }
 
+    const sliderNightBright = document.getElementById('cfg-night-brightness');
+    if (sliderNightBright) {
+      sliderNightBright.addEventListener('input', (e) => {
+        document.getElementById('night-brightness-val').textContent = e.target.value + '%';
+      });
+    }
+
     // Hardware
     document.getElementById('hw-rows').value = s.matrix_rows;
     document.getElementById('hw-cols').value = s.matrix_cols;
     document.getElementById('hw-chain').value = s.matrix_chain;
+    document.getElementById('hw-parallel').value = s.matrix_parallel;
+    if (document.getElementById('hw-driver-chip')) document.getElementById('hw-driver-chip').value = s.matrix_driver_chip || 'SHIFTREG';
+    if (document.getElementById('hw-row-addr-type')) document.getElementById('hw-row-addr-type').value = s.matrix_row_addr_type || 0;
+    if (document.getElementById('hw-multiplexing')) document.getElementById('hw-multiplexing').value = s.matrix_multiplexing || 0;
+    document.getElementById('hw-mapping').value = s.matrix_mapping || 'regular';
     document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
-    if (document.getElementById('hw-force-single-buffer')) document.getElementById('hw-force-single-buffer').value = s.matrix_force_single_buffer ? 'true' : 'false';
-    document.getElementById('hw-color-depth').value = s.color_depth || 8;
-                    document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
+    document.getElementById('hw-slowdown').value = s.matrix_slowdown;
+    document.getElementById('hw-pwm-bits').value = s.matrix_pwm_bits;
+    document.getElementById('hw-pwm-lsb').value = s.matrix_pwm_lsb_nanoseconds;
+    document.getElementById('hw-disable-pulsing').checked = s.matrix_disable_hardware_pulsing;
+    document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
     
     // MQTT
     document.getElementById('hw-mqtt-enable').value = s.mqtt_enabled ? '1' : '0';
@@ -1914,9 +2386,9 @@ async function initSettings() {
 
     // Clock
     document.getElementById('cfg-clock-theme').value = s.clock_theme;
-    document.getElementById('cfg-clock-font').value = s.clock_font_path || '';
-    document.getElementById('cfg-clock-format').value = s.time_format || '';
-    document.getElementById('cfg-clock-size').value = s.clock_size || 2;
+    document.getElementById('cfg-clock-font').value = s.clock_font;
+    document.getElementById('cfg-clock-format').value = s.time_format;
+    document.getElementById('cfg-clock-size').value = s.time_size || 2;
     document.getElementById('cfg-ntp-server').value = s.ntp_server || 'pool.ntp.org';
     document.getElementById('cfg-timezone').value = s.timezone || 'Europe/Paris';
     document.getElementById('cfg-clock-color1').value = s.clock_color_1.toLowerCase();
@@ -1926,7 +2398,7 @@ async function initSettings() {
 
     // Date
     document.getElementById('cfg-date-theme').value = s.date_theme;
-    document.getElementById('cfg-date-font').value = s.date_font_path || '';
+    document.getElementById('cfg-date-font').value = s.date_font;
     document.getElementById('cfg-date-format').value = s.date_format;
     document.getElementById('cfg-date-size').value = s.date_size || 1;
     document.getElementById('cfg-date-color1').value = s.date_color_1.toLowerCase();
@@ -1948,9 +2420,6 @@ async function initSettings() {
     if (document.getElementById('cfg-stock-symbols')) document.getElementById('cfg-stock-symbols').value = s.stock_symbols || 'AAPL,NVDA,TSLA,MSFT';
     if (document.getElementById('cfg-dur-stock')) document.getElementById('cfg-dur-stock').value = s.stock_duration_sec || 5;
     if (document.getElementById('cfg-cache-stock')) document.getElementById('cfg-cache-stock').value = s.stock_cache_ttl_min || 1;
-    if (document.getElementById('hw-driver-chip')) document.getElementById('hw-driver-chip').value = s.matrix_driver_chip || 'SHIFTREG';
-    if (document.getElementById('hw-clk-phase')) document.getElementById('hw-clk-phase').value = s.matrix_clk_phase ? 'true' : 'false';
-    if (document.getElementById('hw-latch-blanking')) document.getElementById('hw-latch-blanking').value = s.matrix_latch_blanking || 8;
 
     // Rotation
     document.getElementById('cfg-rotation').value = s.rotation;
@@ -1961,109 +2430,16 @@ async function initSettings() {
     document.getElementById('cfg-dur-clock').value = s.clock_duration_sec;
     document.getElementById('cfg-dur-date').value = s.date_duration_sec;
     document.getElementById('cfg-dur-weather').value = s.weather_duration_sec;
-    if (document.getElementById('cfg-dur-temp')) document.getElementById('cfg-dur-temp').value = s.temp_duration_sec || 8;
-    if (document.getElementById('cfg-dur-decibel')) document.getElementById('cfg-dur-decibel').value = s.decibel_duration_sec || 10;
-    if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').value = s.temp_unit || 'C';
-    if (document.getElementById('cfg-temp-offset')) document.getElementById('cfg-temp-offset').value = s.temp_offset || 0.0;
-    if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').value = s.visualizer_enabled ? 'true' : 'false';
-    if (document.getElementById('cfg-visualizer-mode')) document.getElementById('cfg-visualizer-mode').value = s.visualizer_mode || 'spectrum';
-    if (document.getElementById('cfg-mic-gain')) document.getElementById('cfg-mic-gain').value = s.mic_gain || 1.0;
-    if (document.getElementById('cfg-db-calibration')) document.getElementById('cfg-db-calibration').value = s.db_calibration || 0.0;
-
-    // Gray out options if hardware is missing
-    const badgeTemp = document.getElementById('badge-temp-status');
-    if (badgeTemp) {
-      if (s.sensor_available) {
-        badgeTemp.textContent = window.i18n ? window.i18n('badge_temp_ok') : '✅ Temp/Humidity Sensor DETECTED (SHTC3)';
-        badgeTemp.className = 'badge badge-accent';
-      } else {
-        badgeTemp.textContent = window.i18n ? window.i18n('badge_temp_err') : '⚠️ Temp/Humidity Sensor NOT DETECTED';
-        badgeTemp.className = 'badge';
-        badgeTemp.style.background = '#64748b';
-        if (document.getElementById('cfg-temp-unit')) document.getElementById('cfg-temp-unit').disabled = true;
-        if (document.getElementById('cfg-temp-offset')) document.getElementById('cfg-temp-offset').disabled = true;
-        if (document.getElementById('cfg-dur-temp')) document.getElementById('cfg-dur-temp').disabled = true;
-        const cbTemp = document.getElementById('rot-temp');
-        if (cbTemp) {
-          cbTemp.disabled = true;
-          cbTemp.checked = false;
-          const lblTemp = document.getElementById('lbl-rot-temp');
-          if (lblTemp) {
-            lblTemp.style.opacity = '0.5';
-            lblTemp.style.cursor = 'not-allowed';
-            lblTemp.title = window.i18n ? window.i18n('badge_temp_err') : "Sensor not detected";
-            if (!lblTemp.innerHTML.includes('<i>')) {
-              lblTemp.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_sensor') : "(Requires Sensor)") + "</i>";
-            }
-          }
-        }
-      }
-    }
-    const badgeAudio = document.getElementById('badge-audio-status');
-    if (badgeAudio) {
-      if (s.audio_available) {
-        badgeAudio.textContent = window.i18n ? window.i18n('badge_mic_ok') : '✅ Microphone / Audio Hardware DETECTED';
-        badgeAudio.className = 'badge badge-accent';
-      } else {
-        badgeAudio.textContent = window.i18n ? window.i18n('badge_mic_err') : '⚠️ Microphone NOT DETECTED (Visualizer & dB disabled)';
-        badgeAudio.className = 'badge';
-        badgeAudio.style.background = '#64748b';
-        if (document.getElementById('cfg-visualizer-enabled')) document.getElementById('cfg-visualizer-enabled').disabled = true;
-        if (document.getElementById('cfg-visualizer-mode')) document.getElementById('cfg-visualizer-mode').disabled = true;
-        if (document.getElementById('cfg-mic-gain')) document.getElementById('cfg-mic-gain').disabled = true;
-        if (document.getElementById('cfg-db-calibration')) document.getElementById('cfg-db-calibration').disabled = true;
-        if (document.getElementById('cfg-dur-decibel')) document.getElementById('cfg-dur-decibel').disabled = true;
-        const cbDecibel = document.getElementById('rot-decibel');
-        if (cbDecibel) {
-          cbDecibel.disabled = true;
-          cbDecibel.checked = false;
-          const lblDecibel = document.getElementById('lbl-rot-decibel');
-          if (lblDecibel) {
-            lblDecibel.style.opacity = '0.5';
-            lblDecibel.style.cursor = 'not-allowed';
-            lblDecibel.title = window.i18n ? window.i18n('badge_mic_err') : "Microphone not detected";
-            if (!lblDecibel.innerHTML.includes('<i>')) {
-              lblDecibel.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_sensor') : "(Requires Sensor)") + "</i>";
-            }
-          }
-        }
-      }
-    }
-
-    if (s.psram_available === false) {
-      const inputsToDisable = [
-        'cfg-crypto-symbols', 'cfg-dur-crypto', 'cfg-cache-crypto', 'rot-crypto',
-        'cfg-stock-symbols', 'cfg-dur-stock', 'cfg-cache-stock', 'rot-stock'
-      ];
-      inputsToDisable.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          if (el.type === 'checkbox') el.checked = false;
-          el.disabled = true;
-        }
-      });
-      ['lbl-rot-crypto', 'lbl-rot-stock'].forEach(id => {
-        const lbl = document.getElementById(id);
-        if (lbl) {
-          lbl.style.opacity = '0.5';
-          lbl.style.cursor = 'not-allowed';
-          lbl.title = window.i18n ? window.i18n('badge_psram_err') : "PSRAM not detected";
-          if (!lbl.innerHTML.includes('<i>')) {
-            lbl.innerHTML += " <i style='font-size: 0.8em; opacity: 0.8'>" + (window.i18n ? window.i18n('req_psram') : "(Requires PSRAM)") + "</i>";
-          }
-        }
-      });
-    }
-
     document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
-    let sprite_on = (s.sprite_count !== undefined) ? (s.sprite_count > 0) : s.fighter_enabled;
-    document.getElementById('cfg-sprite-enable').value = sprite_on ? 'true' : 'false';
+    document.getElementById('cfg-sprite-enable').value = s.fighter_enabled === 'true' ? 'true' : 'false';
     document.getElementById('cfg-fighter-int').value = s.fighter_interval_sec || 5;
 
     // Night Mode
     document.getElementById('cfg-night-enable').value = s.night_mode_enabled ? 'true' : 'false';
     document.getElementById('cfg-night-off').value = s.turn_off_at;
     document.getElementById('cfg-night-on').value = s.wake_up_at;
+    document.getElementById('cfg-night-brightness').value = s.night_brightness !== undefined ? s.night_brightness : 10;
+    document.getElementById('night-brightness-val').textContent = document.getElementById('cfg-night-brightness').value + '%';
 
   } catch (e) {
     console.error('Failed to load settings', e);
@@ -2081,9 +2457,9 @@ async function initSettings() {
 
           const payload = {
             clock_theme: parseInt(document.getElementById('cfg-clock-theme').value),
-            clock_font_path: document.getElementById('cfg-clock-font').value,
+            clock_font: document.getElementById('cfg-clock-font').value,
             time_format: document.getElementById('cfg-clock-format').value,
-            clock_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
+            time_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
             ntp_server: document.getElementById('cfg-ntp-server').value,
             timezone: document.getElementById('cfg-timezone').value,
             clock_color_1: document.getElementById('cfg-clock-color1').value,
@@ -2092,7 +2468,7 @@ async function initSettings() {
             clock_offset_y: parseInt(document.getElementById('cfg-clock-y').value) || 0,
 
             date_theme: parseInt(document.getElementById('cfg-date-theme').value),
-            date_font_path: document.getElementById('cfg-date-font').value,
+            date_font: document.getElementById('cfg-date-font').value,
             date_format: document.getElementById('cfg-date-format').value,
             date_size: parseInt(document.getElementById('cfg-date-size').value) || 1,
             date_color_1: document.getElementById('cfg-date-color1').value,
@@ -2105,7 +2481,6 @@ async function initSettings() {
             weather_lang: document.getElementById('cfg-weather-lang').value,
             weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
             weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
-            temp_offset: parseFloat(document.getElementById('cfg-temp-offset')?.value) || 0.0,
 
             crypto_symbols: document.getElementById('cfg-crypto-symbols') ? document.getElementById('cfg-crypto-symbols').value : 'BTC,ETH,SOL,DOGE',
             crypto_duration_sec: parseInt(document.getElementById('cfg-dur-crypto')?.value) || 5,
@@ -2116,72 +2491,27 @@ async function initSettings() {
 
             rotation: selectedRotations,
             clock_duration_sec: parseInt(document.getElementById('cfg-dur-clock').value) || 10,
-            date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
-            weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
-            gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
-            fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
-            fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
+          date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
+          weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
+          gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
+          fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
+          fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
 
-            visualizer_enabled: document.getElementById('cfg-visualizer-enabled')?.value === 'true',
-            visualizer_mode: document.getElementById('cfg-visualizer-mode')?.value || 'spectrum',
-            mic_gain: parseFloat(document.getElementById('cfg-mic-gain')?.value) || 1.0,
-            db_calibration: parseFloat(document.getElementById('cfg-db-calibration')?.value) || 0.0,
-
-            night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
-            turn_off_at: document.getElementById('cfg-night-off').value,
-            wake_up_at: document.getElementById('cfg-night-on').value,
-            night_brightness: parseInt(document.getElementById('cfg-night-bright')?.value) || 0,
-          };
-          await API.post('/api/settings', payload);
-          window.showToast('Display settings saved!', 'success');
-        } catch (e) {
-          window.showToast('Failed to save settings', 'error');
-        } finally {
-          btnSaveDisplay.disabled = false;
-          btnSaveDisplay.textContent = 'Save Display Settings';
-        }
-      });
+          night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
+          turn_off_at: document.getElementById('cfg-night-off').value,
+          wake_up_at: document.getElementById('cfg-night-on').value,
+          night_brightness: parseInt(document.getElementById('cfg-night-brightness').value, 10),
+        };
+        await API.post('/api/settings', payload);
+        window.showToast('Display settings saved!', 'success');
+      } catch (e) {
+        window.showToast('Failed to save settings', 'error');
+      } finally {
+        btnSaveDisplay.disabled = false;
+        btnSaveDisplay.textContent = 'Save Display Settings';
+      }
     });
-
-    const cryptoSearch = document.getElementById('crypto-search-input');
-    if (cryptoSearch) {
-      cryptoSearch.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const sym = cryptoSearch.value.trim().toUpperCase();
-          if (sym) {
-            const input = document.getElementById('cfg-crypto-symbols');
-            let current = input.value.split(',').map(s => s.trim()).filter(Boolean);
-            if (!current.includes(sym)) {
-              current.push(sym);
-              input.value = current.join(',');
-              window.showToast(`Added ${sym} to Crypto list`, 'info');
-            }
-            cryptoSearch.value = '';
-          }
-        }
-      });
-    }
-
-    const stockSearch = document.getElementById('stock-search-input');
-    if (stockSearch) {
-      stockSearch.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const sym = stockSearch.value.trim().toUpperCase();
-          if (sym) {
-            const input = document.getElementById('cfg-stock-symbols');
-            let current = input.value.split(',').map(s => s.trim()).filter(Boolean);
-            if (!current.includes(sym)) {
-              current.push(sym);
-              input.value = current.join(',');
-              window.showToast(`Added ${sym} to Stock list`, 'info');
-            }
-            stockSearch.value = '';
-          }
-        }
-      });
-    }
+  });
 
   // Save HW settings
   const btnSaveHw = document.getElementById('btn-save-hw');
@@ -2190,30 +2520,38 @@ async function initSettings() {
       const rows = parseInt(document.getElementById('hw-rows').value) || 32;
       const cols = parseInt(document.getElementById('hw-cols').value) || 64;
       const chain = parseInt(document.getElementById('hw-chain').value) || 1;
-      const rgb = document.getElementById('hw-rgb').value || 'RGB';
-      const colorDepth = parseInt(document.getElementById('hw-color-depth').value) || 8;
-      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
-      
+      const parallel = parseInt(document.getElementById('hw-parallel').value) || 1;
       const driverChip = document.getElementById('hw-driver-chip')?.value || 'SHIFTREG';
-      const clkPhase = document.getElementById('hw-clk-phase')?.value === 'true';
-      const latchBlanking = parseInt(document.getElementById('hw-latch-blanking')?.value) || 8;
+      const rowAddrType = parseInt(document.getElementById('hw-row-addr-type')?.value) || 0;
+      const multiplexing = parseInt(document.getElementById('hw-multiplexing')?.value) || 0;
+      const mapping = document.getElementById('hw-mapping').value || 'regular';
+      const rgb = document.getElementById('hw-rgb').value || 'RGB';
+      const slowdown = parseInt(document.getElementById('hw-slowdown').value) || 2;
+      const pwmBits = parseInt(document.getElementById('hw-pwm-bits').value) || 11;
+      const pwmLsb = parseInt(document.getElementById('hw-pwm-lsb').value) || 130;
+      const disablePulsing = document.getElementById('hw-disable-pulsing').checked;
+      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
       
       try {
         await API.post('/api/settings', { 
           matrix_rows: rows,
           matrix_cols: cols,
           matrix_chain: chain,
-          matrix_rgb_sequence: rgb,
-          matrix_force_single_buffer: document.getElementById('hw-force-single-buffer') ? document.getElementById('hw-force-single-buffer').value === 'true' : false,
-          color_depth: colorDepth,
-          matrix_limit_refresh_rate_hz: limitRefresh,
+          matrix_parallel: parallel,
           matrix_driver_chip: driverChip,
-          matrix_clk_phase: clkPhase,
-          matrix_latch_blanking: latchBlanking
+          matrix_row_addr_type: rowAddrType,
+          matrix_multiplexing: multiplexing,
+          matrix_mapping: mapping,
+          matrix_rgb_sequence: rgb,
+          matrix_slowdown: slowdown,
+          matrix_pwm_bits: pwmBits,
+          matrix_pwm_lsb_nanoseconds: pwmLsb,
+          matrix_disable_hardware_pulsing: disablePulsing,
+          matrix_limit_refresh_rate_hz: limitRefresh
         });
         window.showToast('Hardware settings saved! Restarting app...', 'success');
         setTimeout(async () => {
-          await API.post('/api/system/reboot');
+          await API.post('/api/system/restart_app');
         }, 1500);
       } catch (e) {
         window.showToast('Failed to save HW settings', 'error');
@@ -2268,34 +2606,20 @@ async function initPlaylists() {
       console.warn('Could not fetch selected playlists', e);
     }
     
-    const allPaths = Object.values(allPlaylists).map(p => p.path);
-    // Default to selecting ALL playlists if no custom selection saved yet
-    if (selectedPaths.length === 0) {
-      selectedPaths = [...allPaths];
-    }
-    
-    let html = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-        <button id="btn-select-all" class="btn btn-secondary" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Select All</button>
-        <button id="btn-deselect-all" class="btn btn-secondary" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Deselect All</button>
-      </div>
-    `;
-    
+    let html = '';
     for (const [name, info] of Object.entries(allPlaylists)) {
-      const isChecked = selectedPaths.includes(info.path);
-      const checkedAttr = isChecked ? 'checked' : '';
+      const isChecked = selectedPaths.includes(info.path) ? 'checked' : '';
       const count = info.count || (info.files ? info.files.length : 0);
-      const activeStyle = isChecked ? 'border-color:var(--primary); background:rgba(99,102,241,0.1);' : '';
       
       html += `
-        <div class="playlist-item" style="display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px; transition:all 0.2s; ${activeStyle}">
+        <div class="playlist-item">
           <div class="info">
-            <h4 style="margin:0 0 0.2rem 0; font-size:1.05rem;">${name}</h4>
-            <span style="font-size:0.85rem; opacity:0.8;">${count} GIFs found</span>
+            <h4>${name}</h4>
+            <span>${count} GIFs found</span>
           </div>
           <div class="action">
-            <label style="display:flex; align-items:center; cursor:pointer; font-weight:600; font-size:0.95rem;">
-              <input type="checkbox" class="playlist-cb" value="${info.path}" ${checkedAttr} style="width:22px; height:22px; margin-right:8px; accent-color:var(--primary); cursor:pointer;">
+            <label style="display:flex; align-items:center; cursor:pointer;">
+              <input type="checkbox" class="playlist-cb" value="${info.path}" ${isChecked} style="width:20px;height:20px;margin-right:10px;accent-color:var(--primary);">
               Include
             </label>
           </div>
@@ -2306,39 +2630,10 @@ async function initPlaylists() {
     if (Object.keys(allPlaylists).length === 0) {
       html = `<div style="padding:1rem;text-align:center;">No GIF folders found. Check your data/gifs directory.</div>`;
     } else {
-      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%; font-weight:bold; padding:0.75rem;">Save GIF Playlists</button>`;
+      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%;">Save GIF Playlists</button>`;
     }
     
     container.innerHTML = html;
-    
-    // Select All / Deselect All Handlers
-    document.getElementById('btn-select-all')?.addEventListener('click', () => {
-      document.querySelectorAll('.playlist-cb').forEach(cb => {
-        cb.checked = true;
-        const item = cb.closest('.playlist-item');
-        if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--primary); border-radius:8px; background:rgba(99,102,241,0.1);';
-      });
-    });
-    
-    document.getElementById('btn-deselect-all')?.addEventListener('click', () => {
-      document.querySelectorAll('.playlist-cb').forEach(cb => {
-        cb.checked = false;
-        const item = cb.closest('.playlist-item');
-        if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px;';
-      });
-    });
-
-    // Checkbox toggle visual feedback
-    document.querySelectorAll('.playlist-cb').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const item = cb.closest('.playlist-item');
-        if (cb.checked) {
-          if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--primary); border-radius:8px; background:rgba(99,102,241,0.1);';
-        } else {
-          if (item) item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:0.8rem 1rem; margin-bottom:0.5rem; border:2px solid var(--border-color); border-radius:8px;';
-        }
-      });
-    });
     
     const btnSave = document.getElementById('btn-save-playlists');
     if (btnSave) {

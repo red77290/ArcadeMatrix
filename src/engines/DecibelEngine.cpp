@@ -2,26 +2,37 @@
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
 
-extern ConfigLoader config;
 
-DecibelEngine::DecibelEngine(MatrixPanel_I2S_DMA* display) 
-    : matrix(display), active(false), currentDb(40.0f), currentLevel(NOISE_CALM) {}
+
+DecibelEngine::DecibelEngine() 
+    : active(false), currentDb(40.0f), currentLevel(NOISE_CALM) {}
 
 DecibelEngine::~DecibelEngine() {}
 
-void DecibelEngine::onActivate() {
+EngineError DecibelEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
+}
+
+void DecibelEngine::activate() {
     active = true;
     hardwareHAL.startAudioSampling();
     LOGI("DecibelEngine", "DecibelEngine ACTIVATED (Lazy Audio Sampling started).");
 }
 
-void DecibelEngine::onDeactivate() {
+void DecibelEngine::deactivate() {
     active = false;
     // Only stop audio sampling if Visualizer is NOT running
-    if (!config.audio.visualizer_enabled) {
+    if (!config_visualizer_enabled) {
         hardwareHAL.stopAudioSampling();
     }
     LOGI("DecibelEngine", "DecibelEngine DEACTIVATED (Lazy Audio Sampling stopped).");
+}
+
+void DecibelEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (engineConfig) {
+        config_visualizer_enabled = engineConfig->getBool("visualizer_enabled", false);
+    }
 }
 
 void DecibelEngine::updateStatusLevel(float db) {
@@ -40,7 +51,7 @@ void DecibelEngine::updateStatusLevel(float db) {
     }
 }
 
-uint16_t DecibelEngine::getGaugeColorForDb(float dbVal) {
+uint16_t DecibelEngine::getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float dbVal) {
     if (!matrix) return 0xFFFF;
     if (dbVal < 20.0f) {
         return matrix->color565(0, 140, 255);   // 🟦 Bleu (0-20 dB) — Calme / Silence
@@ -57,7 +68,7 @@ uint16_t DecibelEngine::getGaugeColorForDb(float dbVal) {
     }
 }
 
-uint16_t DecibelEngine::getLevelColor(NoiseStatusLevel level) {
+uint16_t DecibelEngine::getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLevel level) {
     if (!matrix) return 0xFFFF;
     switch (level) {
         case NOISE_CALM:     return matrix->color565(0, 140, 255);  // 🟦 Bleu (0-20 dB)
@@ -71,7 +82,8 @@ uint16_t DecibelEngine::getLevelColor(NoiseStatusLevel level) {
 }
 
 const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
-    String lang = config.weather.lang;
+    extern ConfigLoader config;
+    String lang = config.getInstance("weather_main") ? config.getInstance("weather_main")->config.getString("lang") : "en";
     lang.toLowerCase();
 
     if (lang == "fr") {
@@ -108,7 +120,7 @@ const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
     }
 }
 
-void DecibelEngine::drawVsGauge(float db) {
+void DecibelEngine::drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db) {
     if (!matrix) return;
     int width = matrix->width();
     int height = matrix->height();
@@ -127,7 +139,7 @@ void DecibelEngine::drawVsGauge(float db) {
     // Draw multi-color scale per column
     for (int x = 0; x < filledWidth; x++) {
         float dbAtCol = ((float)x / (float)width) * 110.0f;
-        uint16_t col = getGaugeColorForDb(dbAtCol);
+        uint16_t col = getGaugeColorForDb(matrix, dbAtCol);
         matrix->fillRect(x, 0, 1, gaugeHeight, col);
     }
 
@@ -140,9 +152,9 @@ void DecibelEngine::drawVsGauge(float db) {
     matrix->drawFastHLine(0, gaugeHeight, width, matrix->color565(70, 70, 85));
 }
 
-void DecibelEngine::drawSmileyIcon(int x, int y, NoiseStatusLevel level) {
+void DecibelEngine::drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, NoiseStatusLevel level) {
     if (!matrix) return;
-    uint16_t color = getLevelColor(level);
+    uint16_t color = getLevelColor(matrix, level);
     uint16_t eyeColor = (level == NOISE_ALERT || level == NOISE_LIMIT) ? matrix->color565(255, 255, 255) : matrix->color565(0, 0, 0);
     uint16_t faceBg = (level == NOISE_ALERT) ? matrix->color565(180, 0, 255) : color;
 
@@ -193,14 +205,11 @@ void DecibelEngine::drawSmileyIcon(int x, int y, NoiseStatusLevel level) {
     }
 }
 
-bool DecibelEngine::loop() {
-    if (!matrix) return false;
-
-    matrix->fillScreen(0);
-    matrix->setTextWrap(false); // CRITICAL: Prevent text wrapping to avoid overlapping lines!
-
-    hardwareHAL.setMicGain(config.audio.mic_gain);
-    float rawDb = hardwareHAL.getDecibels(config.audio.db_calibration);
+void DecibelEngine::update(EngineContext* context) {
+    extern ConfigLoader config;
+    auto inst = config.getInstance("decibel_main"); if (inst) hardwareHAL.setMicGain(inst->config.getFloat("gain", 1.0f));
+    auto vis = config.getInstance("visualizer_main");
+    float rawDb = hardwareHAL.getDecibels(vis ? vis->config.getFloat("db_calibration", 0.0f) : 0.0f);
 
     // Fast Attack (0.75), Smooth Decay (0.15) for immediate clap response and fluid movement
     if (rawDb > currentDb) {
@@ -210,13 +219,21 @@ bool DecibelEngine::loop() {
     }
 
     updateStatusLevel(currentDb);
+}
+
+void DecibelEngine::render(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    if (!matrix) return;
+
+    matrix->fillScreen(0);
+    matrix->setTextWrap(false); // CRITICAL: Prevent text wrapping to avoid overlapping lines!
 
     int width = matrix->width();
     int height = matrix->height();
-    uint16_t levelCol = getLevelColor(currentLevel);
+    uint16_t levelCol = getLevelColor(matrix, currentLevel);
 
     // 1. Draw VS Fighting Healthbar Gauge on top of display (y = 0)
-    drawVsGauge(currentDb);
+    drawVsGauge(matrix, currentDb);
 
     int topOffset = (height >= 64) ? 5 : 4; // Start content below top VS gauge
 
@@ -233,7 +250,7 @@ bool DecibelEngine::loop() {
         // Draw Smiley Icon on Left
         int smileySize = (textSize == 2) ? 28 : 14;
         int smileyY = topOffset + ((height - topOffset - smileySize) / 2);
-        drawSmileyIcon(6, smileyY, currentLevel);
+        drawSmileyIcon(matrix, 6, smileyY, currentLevel);
 
         int textX = (textSize == 2) ? 42 : 22;
 
@@ -272,7 +289,7 @@ bool DecibelEngine::loop() {
         matrix->setTextWrap(false);
 
         // Draw Smiley Icon on Left (14x14 pixels, centered vertically at y=10)
-        drawSmileyIcon(1, 10, currentLevel);
+        drawSmileyIcon(matrix, 1, 10, currentLevel);
 
         // Top Right: dB Numeric Value (y = 5..11)
         matrix->setTextColor(levelCol);
@@ -291,6 +308,6 @@ bool DecibelEngine::loop() {
         if (barHeight > availableH) barHeight = availableH;
         matrix->fillRect(width - 2, height - 2 - barHeight, 2, barHeight, levelCol);
     }
-
-    return true;
 }
+
+

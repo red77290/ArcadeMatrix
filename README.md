@@ -25,7 +25,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 **[⬇️ Download Latest Pre-built Release & SD Card Kit](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Firmware Bundles**: Pick `ArcadeMatrix-esp32dev.zip` or `ArcadeMatrix-esp32s3_waveshare.zip` depending on your board (contains `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin`, and `boot_app0.bin` for manual `esptool.py` flashing - see [Getting Started](docs/GETTING_STARTED.md#flashing-a-pre-built-release)).
-- **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: Ready-to-copy root folder structure containing `conf.ini`, GIF/MUGEN asset folders, and playlist indexing scripts.
+- **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: Ready-to-copy root folder structure containing `config.json`, GIF/MUGEN asset folders, and playlist indexing scripts.
 
 
 ## Features
@@ -46,7 +46,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 Format your SD card to **FAT32** or **exFAT**. Your SD card should look like this:
 ```
 SD:/
-  ├─ conf.ini
+  ├─ config.json
   ├─ gifs/
   │  │   └─ mario.gif
   └─ fighters_32/
@@ -60,9 +60,9 @@ SD:/
 ```
 *Note: The `www/` folder is no longer required on the SD card as the Web UI is now baked directly into the ESP32 firmware!*
 
-## Configuration (`conf.ini`)
-The `conf.ini` file located at the root of your SD card is exhaustive. It contains parameters for the Matrix size, color depth, clock themes, idle rotation order, and MUGEN sprite backgrounds.
-Open the `conf.ini` provided in the `release/sdCard/` folder to see all possible values.
+## Configuration (`config.json`)
+The `config.json` file located at the root of your SD card is exhaustive. It contains parameters for the Matrix size, color depth, clock themes, idle rotation order, and MUGEN sprite backgrounds.
+Open the `config.json` provided in the `release/sdCard/` folder to see all possible values.
 
 ## MUGEN Sprite Extraction (The `mugen_extractor.py` Script)
 To display fighters in the `SPRITES` module, the ESP32 expects `.fgt` raw files. Since the ESP32 is not powerful enough to decode complex MUGEN character formats natively, we provide a custom Python script to convert them and generate an `index.txt` manifest containing perfect bounding boxes and virtual ground values.
@@ -83,7 +83,7 @@ For full details, please read the documentation inside `tools/mugen_extractor/RE
 
 ### Sprite Backgrounds
 Fighters need an arena! You can define the background they fight on by placing a raw image file (e.g., `stage1.raw`) in `SD:/fighters_32/backgrounds/`.
-Then, link this background in your `conf.ini` under the `[DATE]` section (backgrounds are used to spice up the date module!):
+Then, link this background in your `config.json` under the `[DATE]` section (backgrounds are used to spice up the date module!):
 ```ini
 BACKGROUND_SPRITE=stage1.raw
 ```

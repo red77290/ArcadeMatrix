@@ -2,9 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <string.h>
 
-extern ConfigLoader config;
-
-WordClock::WordClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
+WordClock::WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     storedTime = {0, 0, 0};
 }
 
@@ -15,10 +13,10 @@ void WordClock::draw(const TimeData& t) {
 void WordClock::update() {
     matrix->fillScreen(0);
     
-    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
     if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
     
-    String lang = config.weather.lang;
+    String lang = (engineConfig ? engineConfig->getString("lang", "fr") : String("fr"));
     lang.toLowerCase();
     
     if (lang == "fr") {
@@ -48,7 +46,7 @@ void WordClock::drawLines(const std::vector<String>& lines, int gfxSize) {
     }
     if (totalH > 0) totalH -= lineSpacing;
     
-    int y = (matrix->height() - totalH) / 2 + config.time.clock_offset_y;
+    int y = (matrix->height() - totalH) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
     uint16_t color1 = matrix->color565(0, 220, 255);
     uint16_t color2 = matrix->color565(255, 120, 0);
@@ -57,7 +55,7 @@ void WordClock::drawLines(const std::vector<String>& lines, int gfxSize) {
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(lines[i], 0, 0, &bx, &by, &bw, &bh);
-        int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
+        int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0);
         
         uint16_t color = (i % 2 == 0) ? color1 : color2;
         matrix->setTextColor(color);

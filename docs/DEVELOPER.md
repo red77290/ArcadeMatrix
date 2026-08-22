@@ -1,276 +1,505 @@
-# Developer Guide (ESP32)
-
 🇬🇧 English | 🇫🇷 [Français](DEVELOPER_FR.md) | 🇪🇸 [Español](DEVELOPER_ES.md)
 
-Welcome to the ArcadeMatrix ESP32 development guide. This document explains how to extend the C++ project, specifically how to add a new Clock and how to expose it to the Web API.
+# Developer Guide (ESP32 — C++)
+
+This is the **complete, exhaustive** guide to extending ArcadeMatrix on ESP32 (written in **C++**). It explains the `IEngine` contract in full, the entire `ConfigField` schema (including **dynamic/custom option lists**, multiselect, conditional visibility and self-healing validation policies), hardware capability gating, and walks through building a new engine end-to-end.
+
+> For the *why* behind the architecture (Registry, Lazy-Once, DisplayArbiter, FreeRTOS threading, overlay compositing), read [ARCHITECTURE.md](ARCHITECTURE.md). This guide is the practical *how-to*.
 
 ---
 
-## 1. Adding a New Specialized Clock
+## Table of Contents
 
-Thanks to ArcadeMatrix's hardware-coupled modular embedded architecture, adding a new clock means creating a dedicated display class under `src/engines/clocks/` that handles its own logic and direct rendering.
-
-### Clock Theme Compatibility Matrix (IDs 0 to 29)
-
-| ID | Theme / Clock | Class / File | 128x32 | 256x64 | Custom Font (.amf) | Custom Colors | Hardware Status |
-|---|---|---|:---:|:---:|:---:|:---:|:---:|
-| 0 | Nintendo | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 1 | Capcom | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 2 | Taito | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 3 | Sega | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 4 | Cave | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 5 | Konami | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 6 | SNK | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 7 | Technos | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 8 | IGS | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 9 | Hudson | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 10 | Banpresto | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 11 | Namco | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 12 | Ryu | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 13 | Mario | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 14 | Marco | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 15 | Megaman | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 16 | Bub | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 17 | Space Invaders | `ArcadeClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 18 | Cyberpunk | `CyberpunkClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 19 | FlipClock | `FlipClock` | ✓ | ✓ | — | — | Hardware Validated |
-| **20** | **Custom Gradient** | `ClockEngine` | **✓** | **✓** | **✓** | **✓** | **Hardware Validated** |
-| 21 | PongClock | `PongClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 22 | TetrisClock | `TetrisClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 23 | TetrisGameboy | `TetrisGameboyClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 24 | PacmanClock | `PacmanClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 25 | WordClock | `WordClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 26 | BinaryClock | `BinaryClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 27 | VersusClock | `VersusClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 28 | SlotMachineClock | `SlotMachineClock` | ✓ | ✓ | — | — | Hardware Validated |
-| 29 | MatrixRainClock | `MatrixRainClock` | ✓ | ✓ | — | — | Hardware Validated |
+1. [Mental Model](#1-mental-model)
+2. [The IEngine Contract in Full](#2-the-iengine-contract-in-full)
+3. [The Lifecycle & Golden Rules](#3-the-lifecycle--golden-rules)
+4. [Capabilities & Hardware Requirements](#4-capabilities--hardware-requirements)
+5. [The ConfigSchema & ConfigField Reference](#5-the-configschema--configfield-reference)
+6. [Custom / Dynamic Option Lists (`options_endpoint`)](#6-custom--dynamic-option-lists-options_endpoint)
+7. [Multiselect Fields](#7-multiselect-fields)
+8. [Conditional Fields (`visible_when`)](#8-conditional-fields-visible_when)
+9. [Self-Healing Validation Policies](#9-self-healing-validation-policies)
+10. [Tutorial: Create a New Engine Step-by-Step](#10-tutorial-create-a-new-engine-step-by-step)
+11. [Tutorial: Add a Custom-List Endpoint](#11-tutorial-add-a-custom-list-endpoint)
+12. [Tutorial: Add a New Clock Face / Theme Step-by-Step](#12-tutorial-add-a-new-clock-face--theme-step-by-step)
+13. [Reading Config in an Engine](#13-reading-config-in-an-engine)
+14. [Rendering into the LED Matrix](#14-rendering-into-the-led-matrix)
+15. [Testing & Local Compilation](#15-testing--local-compilation)
+16. [Developer Checklist](#16-developer-checklist)
 
 ---
 
-### Step-by-Step
+## 1. Mental Model
 
-1. **Create the Header (`src/engines/clocks/MyClock.h`)**:
-   ```cpp
-   #pragma once
-   #include <Arduino.h>
-   #include "ESP32-HUB75-MatrixPanel-I2S-DMA.h"
-   #include "core/ConfigLoader.h"
+ArcadeMatrix has **no hardcoded list of display features** in `main.cpp`. Each engine is a decoupled plugin registered at startup in the central `EngineRegistry`.
 
-   class MyClock {
-   public:
-       MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config);
-       void loop(); // Called every frame
-   private:
-       MatrixPanel_I2S_DMA* _display;
-       ConfigLoader* _config;
-   };
-   ```
-
-2. **Create the Implementation (`src/engines/clocks/MyClock.cpp`)**:
-   ```cpp
-   #include "MyClock.h"
-
-   MyClock::MyClock(MatrixPanel_I2S_DMA* display, ConfigLoader* config) : _display(display), _config(config) {}
-
-   void MyClock::loop() {
-       if (!_display) return;
-       _display->fillScreen(0);
-       _display->drawPixel(10, 10, _display->color565(255, 0, 0));
-   }
-   ```
-
-3. **Register the Clock in `ClockEngine.cpp`**:
-   - Include your header at the top of `src/engines/ClockEngine.cpp`.
-   - Instantiate your clock based on `clock_theme` selected by the user.
-   - Dispatch the loop call inside `ClockEngine::loop()`.
-
----
-
-## 2. Modifying the Web API & Configuration
-
-If your new clock requires new user settings (e.g., `snake_speed`), you must modify the configuration pipeline from the frontend all the way to the struct.
-
-1. **Update the Struct (`src/core/ConfigLoader.h`)**:
-   Add your new variable to the main `Config` struct.
-   ```cpp
-   struct Config {
-       // ... existing fields
-       int snake_speed = 5;
-   };
-   ```
-
-2. **Update the JSON Parser & Generator (`src/api/WebServerAPI.cpp`)**:
-   The API communicates via JSON (`ArduinoJson`). 
-   - Find the method that serializes the config to send to the browser and add: 
-     `doc["snake_speed"] = config.snake_speed;`
-   - Find the method that parses incoming JSON from the browser and add:
-     `if (doc.containsKey("snake_speed")) config.snake_speed = doc["snake_speed"].as<int>();`
-
-3. **Update the File System Loader (`src/core/ConfigLoader.cpp`)**:
-   Ensure your new variable is read from and saved to the SD card's `conf.ini` file to survive reboots.
-
-4. **Update the Web UI (`src/api/WebUI.h`, generated from the Vue frontend - see `scripts/build_webui.py`)**:
-   - Add the HTML inputs for your setting.
-   - Update the frontend JS to send your new variable in the JSON payload when the user clicks "Save".
-
-### Notable REST endpoints (non-exhaustive)
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/status` | GET | Uptime, free/min-free heap, PSRAM stats. |
-| `/api/settings` | GET/POST | Full config read/write (persists to `conf.ini`). |
-| `/api/wifi` | POST | `{ssid, password}` - saves credentials and attempts an immediate reconnect, reporting success/failure synchronously (does not require a reboot). |
-| `/api/marquee` | POST | Raw RGB565 image body (little-endian, row-major, exactly `width*height*2` bytes matching the configured panel resolution - see `tools/mugen_extractor` for the same wire format convention). Displays it immediately for ~8s, interrupting the idle rotation, then resumes. There is no on-device image decoder, so any bridge/frontend integration must pre-convert artwork (PNG/JPEG/box-art) to this raw format before POSTing. |
-| `/api/update` | POST | OTA firmware upload (`Update.h`), writes to the inactive OTA partition slot. |
-
-### Pixelcade-style marquee/box-art integration (arcade cabinet frontends)
-
-Unlike `ArcadeMatrix_RPi` (which downloads Pixelcade marquee artwork live from GitHub on demand,
-see its `core/dmd_cache.py`), the ESP32 has no spare flash/RAM/CPU budget for an HTTPS client
-fetching images mid-game, and no unbounded disk cache to grow over time. The recommended
-architecture instead pre-caches all artwork **on the SD card ahead of time**, so displaying it at
-runtime is just a fast local file lookup - no network involved at all when a game launches:
-
-1. **One-time setup**: run `tools/pixelcade_sync/pixelcade_sync.sh` (macOS/Linux) or
-   `pixelcade_sync.ps1` (Windows) on your PC (not the ESP32) to
-   download Pixelcade's artwork repository and lay it out as `/pixelcade/<system>/<game>.png`.
-   Copy the result to your SD card. See that tool's README for filtering to just the systems you
-   use (the full repository is several hundred MB).
-2. **One-time setup**: run `tools/recalbox_daemon/install.sh` (macOS/Linux) or `install.ps1`
-   (Windows) from your PC to install a small event daemon on your Recalbox/Batocera device over
-   SSH - prompts for both IPs, no manual SSH session needed. This is the *same* daemon protocol
-   `ArcadeMatrix_RPi` uses (`core/ssh_installer.py`), so one install serves both projects.
-3. At runtime, the daemon publishes `{"status": "playing"|"browsing"|"stopped", "game": "<rom
-   basename>", "system": "<SystemId>"}` over MQTT on `recalbox/system/playing` (or
-   `batocera/system/playing`) whenever the selected/playing game changes.
-4. `RetroFrontendListener::handleGameEvent()` (firmware) parses this, maps the `SystemId` to a
-   Pixelcade folder name (`mapSystemToPixelcadeFolder()` - kept in sync with the RPi's
-   `dmd_cache.py` `SYSTEM_MAP`), and checks `/pixelcade/<folder>/<game>.png` on the SD card:
-   - If found: displays it immediately via `gif->playGif()` (GifEngine's PNG decoder, added
-     alongside GIF support - see `esp32-gif-png` in the changelog).
-   - If not found (not yet synced, or Pixelcade has no art for that game): falls back to scrolling
-     the game name as text via `MessageEngine`, matching the RPi's behavior when its cache misses.
-   - On `"status": "stopped"`: calls `gif->stop()`, resuming the idle GIF/clock rotation.
-
-This keeps 100% of image fetching/decoding/resizing off the runtime path entirely (done once,
-offline, on a PC with real bandwidth and no memory constraints), matching the same "pre-convert
-offline" philosophy as `.raw` GifEngine assets and `tools/mugen_extractor`.
-
-**Legacy / alternative paths still supported:**
-- `/api/marquee` (POST, raw RGB565 body) is still available for bridge scripts that want to push
-  an arbitrary, non-Pixelcade image directly (e.g. a custom-generated marquee) rather than relying
-  on the SD-cached Pixelcade lookup above.
-- The native `/Recalbox/EmulationStation/Event` topic (`rungame`/`stop`) is still subscribed to as
-  a basic fallback for setups that don't want to install the custom daemon, though it carries no
-  game/system detail (Recalbox doesn't include it on that topic), so only a generic placeholder can
-  be shown.
-- The plain-text `STOP_GAME`/`START_GAME:<path>` bridge protocol from older setups still works too.
-
----
-
-### Loading a custom bitmap font from SD (BitmapFontLoader)
-
-By default all fonts are compiled into the firmware (`src/engines/fonts/`). To add a custom font
-without a firmware rebuild:
-
-1. Obtain or create a BDF bitmap font. Any of the RPi project's bundled fonts work as a starting
-   point (`ArcadeMatrix_RPi/fonts/*.bdf`), or grab one from an X11/X BDF font archive.
-2. Convert it to ArcadeMatrix's `.amf` format:
-   ```bash
-   python3 tools/bdf_to_amfont/bdf_to_amfont.py myfont.bdf myfont.amf
-   ```
-   By default this covers printable ASCII (`0x20`-`0x7E`); pass `--first`/`--last` to cover a
-   different codepoint range if the BDF font has one (e.g. extended Latin-1).
-3. Copy `myfont.amf` to the SD card, e.g. `/fonts/myfont.amf`.
-4. Set `custom_font_path=/fonts/myfont.amf` under `[fonts]` in `conf.ini` (or via `/api/settings`).
-5. Reboot. `BitmapFontLoader::loadFromSD()` parses the file into a heap-allocated `GFXfont`-
-   compatible structure at boot and hands it to `MessageEngine` for the `/api/message` banner (the
-   default 5x7 font is used as a silent fallback if the file is missing/corrupt).
-
-**Format notes:** `.amf` mirrors Adafruit's own compiled-font layout exactly (byte-aligned
-per-glyph bitmap offsets, MSB-first packed bits) — see the docstring in
-`tools/bdf_to_amfont/bdf_to_amfont.py` for the exact binary layout, and `BitmapFontLoader.cpp`'s
-parser for the corresponding ESP32-side reader. Fonts are limited to 65535 bytes of packed glyph
-bitmap data (`GFXglyph.bitmapOffset` is a `uint16_t`) — the same ceiling Adafruit's own
-`fontconvert` tool imposes on compiled-in fonts, not a new limitation.
-
----
-
-## 3. Important Rules for ESP32 Development
-
-- **Avoid `String` objects**: Use `char` arrays (`char[]`) whenever possible to avoid heap fragmentation, which is fatal on ESP32.
-- **DMA Bounds**: Never draw outside the boundaries of `matrix_width` and `matrix_height`. Adafruit GFX handles most clipping, but direct memory writes will cause kernel panics.
-- **Memory Leaks**: If you dynamically allocate classes (`new MyClock()`), ensure you `delete` them when the theme switches to prevent memory exhaustion.
-
----
-
-## 4. Known Limitations & Security
-
-### Security
-- **Unauthenticated API**: The HTTP REST API and WebUI server execute without authentication on the local network. ArcadeMatrix is designed to run on a trusted private LAN. Do not expose port 80 directly to the public Internet without an authenticating reverse proxy.
-- **CORS**: `Access-Control-Allow-Origin: *` headers are enabled by default for seamless control from local web applications.
-
-### Known Limitations
-- **No Automatic OTA Rollback**: The OTA firmware upload process writes to the secondary flash partition and flips the bootloader flag. If a buggy firmware boots but behaves incorrectly, there is no automatic rollback without physical re-flashing or WebSerial.
-- **Synchronous Network Fetching in Providers**: While `AsyncWebServer` provides non-blocking HTTP handling, provider quote refreshes (`CryptoEngine`, `StockEngine`, `WeatherEngine`) execute network requests synchronously with local in-memory caching. In case of network failure, the last cached values are preserved without blocking the main display loop.
-- **SD Card Required for GIF and MUGEN**: Playing animated GIFs or MUGEN fighters strictly requires a FAT32 or exFAT formatted microSD card.
-
----
-
-## 5. Tutorial: Adding a New Rotation Module (e.g., Pager/News)
-
-If you want to add a new display module (e.g., "Pager" for retro news) to the idle rotation loop, follow these steps from the UI down to the backend.
-
-### Step 1: The Web UI
-The rotation toggles are defined in `api/www/index.html`. Add your new module as a checkbox:
-```html
-<label class="toggle-checkbox">
-  <input type="checkbox" value="pager">
-  <span class="toggle-label">Pager</span>
-</label>
+```mermaid
+flowchart LR
+    DEV["You write src/engines/MyEngine.cpp"] --> REGT["EngineRegistrar::registerAll()"]
+    REGT --> GATING{Meets Hardware Requirements?}
+    GATING -->|"Yes"| REG["EngineRegistry (Active Factory)"]
+    GATING -->|"No"| REG2["EngineRegistry (Available: false + Reason)"]
+    REG --> API["GET /api/engines"]
+    API --> UI["Dynamic Web UI (Auto-Form)"]
+    REG --> RM["RotationManager (Lazy-Once)"]
+    RM --> SCREEN["HUB75 LED Matrix (DMA)"]
 ```
-The bundled JS (`app.js`) automatically parses all checked checkboxes inside `.rotation-toggles` and sends them as a comma-separated string to `/api/settings` (e.g., `rotation: "clock,gifs,pager"`).
 
-### Step 2: The Configuration (`conf.ini`)
-In `src/core/ConfigLoader.cpp`, the string is parsed and saved to the SD card:
+Adding an engine requires **two steps**:
+1. Implement your engine class (`IEngine`) in `src/engines/`.
+2. Declare its descriptor (metadata, schema, factory) in `src/engines/EngineRegistrar.cpp`.
+**`main.cpp` and WebUI HTML files are never edited.**
+
+---
+
+## 2. The IEngine Contract in Full
+
+Every engine implements the `IEngine` interface (`include/core/EngineContract.h`):
+
 ```cpp
-// In ConfigLoader::parseConfig() under "[IDLE]"
-if (key == "ROTATION") idle.rotation = value;
-
-// And to save it in ConfigLoader::saveConfig()
-out += "ROTATION=" + idle.rotation + "\n";
-```
-*Note: Since it's stored as a string, `idle.rotation` will natively store `"clock,gifs,pager"` without needing extra parser modifications.*
-
-### Step 3: The Engine
-Create a new engine (e.g., `src/engines/PagerEngine.h`). It must implement the base drawing methods.
-```cpp
-#pragma once
-#include "core/Matrix.h"
-
-class PagerEngine {
+class IEngine {
 public:
-    void init() {
-        // Setup HTTP client to fetch news here
-    }
-    
-    void draw() {
-        matrix->clearScreen();
-        // Draw the pager UI using matrix->setCursor() and matrix->print()
-    }
-    
-    void stop() {
-        // Clean up memory
-    }
+    virtual ~IEngine() = default;
+
+    // --- Mandatory lifecycle ---
+    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
+    virtual void activate() = 0;
+    virtual void update(EngineContext* context) = 0;
+    virtual void render(EngineContext* context) = 0;
+    virtual void deactivate() = 0;
+
+    // --- Optional (safe defaults provided) ---
+    virtual void onConfigChanged(const EngineConfig* config) {}
+    virtual bool isFinished() const { return false; }
+    virtual bool isRealtime() const { return true; }
+    virtual void setRotationBudget(uint32_t budget) {}
+    virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
-### Step 4: The Rotation Loop
-In `src/core/RotationManager.cpp` (or `main.cpp` depending on the loop architecture), the rotation string is split into an array. When it is the pager's turn to play:
+| Method | Default | When to Override |
+| :-- | :-- | :-- |
+| `initialize()` | — | **Always.** Pre-allocate buffers, decode static bitmaps, load fonts. |
+| `activate()` | — | **Always.** Cheap reset of transient state (chronometers, frame index). |
+| `update()` | — | **Always.** Business and animation logic each frame. |
+| `render()` | — | **Always.** Draw pixels into `context->getMatrix()`. |
+| `deactivate()` | — | **Always.** Stop audio/network, close file handles. |
+| `onConfigChanged()` | no-op | **If engine has settings.** Re-read values in place without recreation. |
+| `isFinished()` | `false` | If engine has an intrinsic end (e.g. cycle completed) to advance rotation early. |
+| `isRealtime()` | `true` | Return `true` for 60 FPS animations; return `false` for static 20 FPS displays. |
+| `setRotationBudget()`| no-op | If count-based (e.g. play N GIFs). Receives the rotation entry count. |
+| `selfPaced()` | `false` | If true, duration timer does not force-advance; engine drives advance via `isFinished()`. |
+| `allowsOverlay()` | `true` | Return `false` if full-screen engines (GIF player) must not have Fighter overlays. |
+
+---
+
+## 3. The Lifecycle & Golden Rules
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initialized : factory() + initialize() (Once on first display)
+    Initialized --> Active : activate()
+    Active --> Active : update() + render() (60 FPS Hot Loop)
+    Active --> Active : onConfigChanged() (Live WebUI edit)
+    Active --> Standby : deactivate()
+    Standby --> Active : activate()
+    Active --> [*] : isFinished() / timeout advances rotation
+```
+
+### Golden Rules for Embedded C++
+
+1. **Golden Rule #1 — Zero Heap Allocation in Hot Loop:**
+   Never instantiate `String`, `std::vector`, or call `malloc`/`new` inside `update()` or `render()`. Pre-allocate all buffers in `initialize()` and mutate in place.
+2. **Golden Rule #2 — In-Place Hot Reload:**
+   In `onConfigChanged()`, update internal variables directly. The instance is **not** destroyed or recreated.
+3. **Golden Rule #3 — Respect Bus Locks:**
+   SD card access must be protected with `sdMutex` when reading streaming assets.
+
+---
+
+## 4. Capabilities & Hardware Requirements
+
+Declared in the descriptor, these static hints tell the runtime and UI what the engine can do and what physical hardware it requires:
+
 ```cpp
-if (currentModule == "pager") {
-    pagerEngine->init();
-    // In the main loop()
-    pagerEngine->draw();
+struct EngineCapabilities {
+    bool supports_128x32 = true;
+    bool supports_256x64 = true;
+    bool realtime = true;
+    bool interruptible = true;
+    bool allowsOverlay = true;
+    bool selfPaced = false;
+};
+
+struct EngineRequirements {
+    bool needsPsram = false;      // e.g. Crypto/Stock quote history caches
+    bool needsAudio = false;      // e.g. Visualizer requiring ES7210/I2S mic
+    bool needsTempSensor = false; // e.g. Indoor environment sensor
+    bool needsGyroscope = false;  // Reserved for orientation
+    bool needsNetwork = false;    // Weather, NTP, MQTT
+    bool needsSd = false;         // GIF playback, MUGEN sprites
+};
+```
+
+`EngineRegistrar::registerAll()` evaluates `HardwareHAL::capabilities()` at boot. If a requirement is not met, the engine is cleanly skipped with an explanatory reason (`reason = "Requires PSRAM"`), preventing Out-Of-Memory panics.
+
+---
+
+## 5. The ConfigSchema & ConfigField Reference
+
+The schema is the **single source of truth** for both the WebUI form generator and the `ConfigSanitizer`:
+
+```cpp
+struct ConfigField {
+    String id;                          // Key in config.json
+    ConfigType type;                    // BOOLEAN, INTEGER, FLOAT, STRING, ENUM, COLOR, LIST
+    String label;                       // WebUI label
+    String description;                 // Tooltip text
+    String default_value;               // Injected by sanitizer if missing
+    bool required = false;
+    String min_val = "";                // Numeric lower bound
+    String max_val = "";                // Numeric upper bound
+    String step = "";                   // UI stepper granularity
+    String options = "";                // Comma-separated static choices
+    String visible_when = "";           // Conditional visibility rule
+    String options_endpoint = "";       // Dynamic choices endpoint
+    bool multiple = false;              // Multiselect flag
+    ValidationPolicy validation_policy; // Clamp, FallbackDefault, Reject, Accept
+};
+```
+
+---
+
+## 6. Custom / Dynamic Option Lists (`options_endpoint`)
+
+When an engine's selectable options are generated dynamically (e.g. clock themes, SD fonts, GIF playlists), set `options_endpoint`:
+
+```cpp
+{
+    .id = "theme",
+    .type = ConfigType::ENUM,
+    .label = "Clock Theme",
+    .description = "Select pixel-art background theme",
+    .default_value = "12",
+    .options_endpoint = "/api/themes"
 }
 ```
+
+The WebUI queries `GET /api/themes` asynchronously and populates the `<select>` dropdown.
+
+---
+
+## 7. Multiselect Fields
+
+To allow users to select multiple options (stored as a comma-separated string):
+
+```cpp
+{
+    .id = "playlists",
+    .type = ConfigType::LIST,
+    .label = "Active Playlists",
+    .description = "Select GIF folders to cycle through",
+    .default_value = "arcade,retro",
+    .options_endpoint = "/api/playlists",
+    .multiple = true
+}
+```
+
+---
+
+## 8. Conditional Fields (`visible_when`)
+
+Hide or show fields depending on another field's value:
+
+```cpp
+{
+    .id = "custom_color",
+    .type = ConfigType::COLOR,
+    .label = "Custom Accent Color",
+    .default_value = "#ff0055",
+    .visible_when = "theme=20" // Only visible when Custom Gradient theme (20) is selected
+}
+```
+
+---
+
+## 9. Self-Healing Validation Policies
+
+| Policy | Behavior on Out-of-Bounds Value |
+| :-- | :-- |
+| `ValidationPolicy::Clamp` | Restricts value to `[min_val, max_val]`. |
+| `ValidationPolicy::FallbackDefault` | Resets invalid value to `default_value`. |
+| `ValidationPolicy::Accept` | Accepts value as-is. |
+| `ValidationPolicy::Reject` | Leaves field unmodified. |
+
+---
+
+## 10. Tutorial: Create a New Engine Step-by-Step
+
+### Step 1: Create Header `src/engines/MatrixRainEngine.h`
+
+```cpp
+#pragma once
+#include "../../include/core/EngineContract.h"
+#include <Arduino.h>
+
+class MatrixRainEngine : public IEngine {
+public:
+    MatrixRainEngine();
+    ~MatrixRainEngine() override = default;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
+    bool isRealtime() const override { return true; }
+
+private:
+    MatrixPanel_I2S_DMA* matrix = nullptr;
+    int speed = 2;
+    int dropY[128];
+};
+```
+
+### Step 2: Implement Logic `src/engines/MatrixRainEngine.cpp`
+
+```cpp
+#include "MatrixRainEngine.h"
+
+MatrixRainEngine::MatrixRainEngine() {
+    memset(dropY, 0, sizeof(dropY));
+}
+
+EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    matrix = context->getMatrix();
+    if (config) speed = config->getInt("speed", 2);
+    return EngineError::OK;
+}
+
+void MatrixRainEngine::activate() {
+    for (int i = 0; i < 128; i++) dropY[i] = random(-32, 0);
+}
+
+void MatrixRainEngine::update(EngineContext* context) {
+    if (!matrix) return;
+    for (int x = 0; x < matrix->width(); x += 4) {
+        dropY[x] += speed;
+        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
+    }
+}
+
+void MatrixRainEngine::render(EngineContext* context) {
+    if (!matrix) return;
+    matrix->fillScreen(0);
+    for (int x = 0; x < matrix->width(); x += 4) {
+        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
+    }
+}
+
+void MatrixRainEngine::deactivate() {}
+
+void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) speed = config->getInt("speed", 2);
+}
+```
+
+### Step 3: Register in `src/engines/EngineRegistrar.cpp`
+
+```cpp
+#include "MatrixRainEngine.h"
+
+void EngineRegistrar::registerAll() {
+    // ...
+    EngineDescriptor desc;
+    desc.metadata = { .id = "matrix_rain", .name = "Matrix Digital Rain", .category = "animations", .version = "3.0.0" };
+    desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+    desc.requirements = { .needsPsram = false, .needsAudio = false };
+    desc.schema.fields = {
+        {
+            .id = "speed",
+            .type = ConfigType::INTEGER,
+            .label = "Fall Speed",
+            .default_value = "2",
+            .min_val = "1",
+            .max_val = "5",
+            .step = "1",
+            .validation_policy = ValidationPolicy::Clamp
+        }
+    };
+    desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
+    tryRegister(desc);
+}
+```
+
+---
+
+## 11. Tutorial: Add a Custom-List Endpoint
+
+To serve dynamic options to the WebUI, register a route in `src/api/WebServerAPI.cpp`:
+
+```cpp
+server.on("/api/my_options", HTTP_GET, [](AsyncWebServerRequest *request){
+    DynamicJsonDocument doc(512);
+    JsonArray arr = doc.to<JsonArray>();
+    
+    JsonObject opt1 = arr.createNestedObject();
+    opt1["id"] = "opt_a";
+    opt1["name"] = "Option Alpha";
+    
+    JsonObject opt2 = arr.createNestedObject();
+    opt2["id"] = "opt_b";
+    opt2["name"] = "Option Beta";
+
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+});
+```
+
+---
+
+## 12. Tutorial: Add a New Clock Face / Theme Step-by-Step
+
+Clocks in ArcadeMatrix are organized into modular `ClockFace` implementations managed by the core `ClockEngine`. To add a new visual theme or clock animation (e.g. *SpaceInvadersClock*):
+
+### Step 1: Create `src/engines/clocks/SpaceInvadersClock.h` & `.cpp`
+
+Inherit from the `ClockFace` base class (`src/engines/ClockEngine.h`):
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.h
+#pragma once
+#include "../ClockEngine.h"
+
+class SpaceInvadersClock : public ClockFace {
+public:
+    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    void draw(const TimeData& t) override;
+    void update() override;
+
+private:
+    int invaderFrame = 0;
+    unsigned long lastAnimMs = 0;
+};
+```
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.cpp
+#include "SpaceInvadersClock.h"
+
+SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+    : ClockFace(display, config) {}
+
+void SpaceInvadersClock::update() {
+    if (millis() - lastAnimMs > 500) {
+        invaderFrame = (invaderFrame + 1) % 2;
+        lastAnimMs = millis();
+    }
+}
+
+void SpaceInvadersClock::draw(const TimeData& t) {
+    if (!matrix) return;
+    matrix->fillScreen(0);
+    // Draw animated invaders & formatted time digits
+    matrix->setTextSize(1);
+    matrix->setTextColor(matrix->color565(0, 255, 100));
+    matrix->setCursor(24, 12);
+    matrix->printf("%02d:%02d:%02d", t.hour, t.minute, t.second);
+}
+```
+
+### Step 2: Add Theme Enum ID in `src/engines/DateEngine.h`
+
+Add your new theme identifier to `PublisherTheme`:
+
+```cpp
+enum PublisherTheme {
+    // ... existing themes (0 to 24)
+    THEME_SPACE_INVADERS = 25
+};
+```
+
+### Step 3: Wire into `ClockEngine::setTheme()` in `src/engines/ClockEngine.cpp`
+
+Include your header and instantiate your `ClockFace`:
+
+```cpp
+#include "clocks/SpaceInvadersClock.h"
+
+// In ClockEngine::setTheme():
+case THEME_SPACE_INVADERS:
+    activeFace = new SpaceInvadersClock(legacy_matrix, config);
+    break;
+```
+
+### Step 4: Expose in `/api/themes` in `src/api/WebServerAPI.cpp`
+
+Add your theme to the `themes` table so it automatically populates the WebUI dropdown:
+
+```cpp
+static const ThemeItem themes[] = {
+    // ...
+    { 25, "Space Invaders Clock" }
+};
+```
+
+The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, persist it in `config.json`, and apply it live via hot reload.
+
+---
+
+## 13. Reading Config in an Engine
+
+Engines receive an `EngineConfig` proxy:
+
+```cpp
+int speed = config->getInt("speed", 2);
+String text = config->getString("title", "Arcade");
+bool enabled = config->getBool("enabled", true);
+float offset = config->getFloat("temp_offset", 0.0f);
+```
+
+---
+
+## 14. Rendering into the LED Matrix
+
+Always obtain the matrix pointer via `context->getMatrix()`:
+
+```cpp
+MatrixPanel_I2S_DMA* matrix = context->getMatrix();
+matrix->drawPixel(x, y, matrix->color565(r, g, b));
+matrix->fillRect(x, y, w, h, color);
+matrix->setCursor(x, y);
+matrix->print("TEXT");
+```
+*Never call `flipDMABuffer()` inside an engine — the main display loop handles flipping centrally.*
+
+---
+
+## 15. Testing & Local Compilation
+
+Compile both board targets locally:
+
+```bash
+# Standard ESP32
+pio run -e esp32dev
+
+# Waveshare ESP32-S3
+pio run -e esp32s3_waveshare
+
+# Run Unit Tests
+pio test -e esp32dev --without-uploading --without-testing
+```
+
+---
+
+## 16. Developer Checklist
+
+- [ ] `initialize()` allocates all memory; hot loop (`update`/`render`) has **zero dynamic allocations**.
+- [ ] `onConfigChanged()` updates state in place without destroying the instance.
+- [ ] Hardware requirements (`needsPsram`, `needsAudio`, `needsTempSensor`) are correctly declared.
+- [ ] `options_endpoint` is provided for dynamic options.
+- [ ] Code compiles cleanly on both `esp32dev` and `esp32s3_waveshare`.

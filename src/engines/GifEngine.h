@@ -9,8 +9,20 @@
 #pragma once
 #include <Arduino.h>
 #include <AnimatedGIF.h>
+#ifdef INTELSHORT
+#undef INTELSHORT
+#endif
+#ifdef INTELLONG
+#undef INTELLONG
+#endif
 #include <PNGdec.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#ifdef FILE_READ
+#undef FILE_READ
+#endif
+#ifdef FILE_WRITE
+#undef FILE_WRITE
+#endif
 #include <FS.h>
 #include "core/SDUtils.h"
 #include <vector>
@@ -19,9 +31,24 @@
  * @class GifEngine
  * @brief Orchestrates GIF decoding, file streaming, and matrix rendering.
  */
-class GifEngine {
+#include "../../include/core/EngineContract.h"
+#include "../core/AppEngineContext.h"
+
+class GifEngine : public IEngine {
 public:
     GifEngine();
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
+    bool isFinished() const override;
+    bool isRealtime() const override { return true; }
+    bool selfPaced() const override { return true; }
+    void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
+    bool allowsOverlay() const override { return false; }
+
     ~GifEngine();
 
     /**
@@ -108,6 +135,8 @@ private:
     
     int remainingGifsToPlay;         ///< Counter for rotation limits
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
+    uint32_t m_rotationBudget = 0;
+    const EngineConfig* m_instanceConfig = nullptr;
     
     void loadNextFileInPlaylist();
     bool playRawFrame();
@@ -143,4 +172,6 @@ private:
     static int32_t PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen);
     static int32_t PNGSeekFile(PNGFILE *pFile, int32_t iPosition);
     static int PNGDrawCallback(PNGDRAW *pDraw);
+
+    bool m_hasPsram = false;
 };

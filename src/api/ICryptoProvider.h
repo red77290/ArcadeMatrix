@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "Timeframe.h"
 
 class ICryptoProvider {
 public:
@@ -14,4 +15,12 @@ public:
      * @return true if successful, false otherwise.
      */
     virtual bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) = 0;
+
+    /**
+     * @brief Fetches historical price series for sparkline chart rendering.
+     */
+    virtual bool fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
+        (void)symbol; (void)tf; (void)outPoints; (void)maxPoints; (void)outCount; (void)outMin; (void)outMax;
+        return false;
+    }
 };

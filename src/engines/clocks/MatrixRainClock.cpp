@@ -3,14 +3,11 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-extern ConfigLoader config;
-
 static uint8_t randomGlyph() {
     return rand() % MATRIX_RAIN_NUM_GLYPHS;
 }
 
-MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display)
-    : ClockFace(display), numColumns(0), initialized(false), lastFrameTime(0) {
+MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), numColumns(0), initialized(false), lastFrameTime(0) {
     storedTime = {0, 0, 0};
 }
 
@@ -34,7 +31,7 @@ void MatrixRainClock::drawTime() {
     int sMax = min(maxScaleW, maxScaleH);
     if (sMax < 1) sMax = 1;
 
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
     int gfxSize = 1;
     if (logicalSize >= 5) gfxSize = sMax + 1;
     else if (logicalSize == 4) gfxSize = sMax;
@@ -45,8 +42,8 @@ void MatrixRainClock::drawTime() {
     matrix->setTextSize(gfxSize);
     matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
 
-    int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
-    int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - bx;
+    int y = (matrix->height() - bh) / 2 - by + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
 
     // Black outline so time remains readable over the rain without blocking background kanjis
     matrix->setTextColor(matrix->color565(0, 0, 0));

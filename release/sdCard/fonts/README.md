@@ -23,6 +23,6 @@ of the ~6 fonts compiled into the firmware.
 
 - **Web UI (recommended)**: Settings > Clock or Date > "Font" dropdown. It's populated live from
   `GET /api/fonts`, which lists every `.amf` file found here - no reboot needed.
-- **`conf.ini`**: set `CLOCK_FONT_PATH=/fonts/myfont.amf` under `[TIME]` and/or
+- **`config.json`**: set `CLOCK_FONT_PATH=/fonts/myfont.amf` under `[TIME]` and/or
   `DATE_FONT_PATH=/fonts/myfont.amf` under `[DATE]`, or `CUSTOM_FONT_PATH=/fonts/myfont.amf` under
   `[FONTS]` for the scrolling Message engine.

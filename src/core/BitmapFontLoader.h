@@ -15,7 +15,7 @@
  *
  * Unlike the project's ~7 compiled-in fonts (baked into flash at build time via
  * Adafruit's fontconvert tool), this lets end users add/change fonts by copying a
- * single file to the SD card and pointing conf.ini at it - no firmware rebuild.
+ * single file to the SD card and pointing config.json at it - no firmware rebuild.
  *
  * The loaded GFXfont's bitmap/glyph arrays live in heap RAM (not PROGMEM/flash),
  * built to the exact same byte layout Adafruit's own fontconvert produces, so

@@ -1,17 +1,19 @@
 #include "CryptoEngine.h"
+#include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include <HTTPClient.h>
 
 CryptoEngine* CryptoEngine::instance = nullptr;
 
 CryptoEngine::CryptoEngine() 
-    : matrix(nullptr), currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
+    : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
 }
 
-void CryptoEngine::begin(MatrixPanel_I2S_DMA* display) {
-    matrix = display;
+EngineError CryptoEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
 }
 
 void CryptoEngine::addProvider(ICryptoProvider* provider) {
@@ -20,14 +22,8 @@ void CryptoEngine::addProvider(ICryptoProvider* provider) {
     }
 }
 
-void CryptoEngine::updateConfig(const CryptoConfig& cfg) {
-    config = cfg;
-    parseSymbols();
-}
-
-void CryptoEngine::parseSymbols() {
+void CryptoEngine::parseSymbols(const String& syms) {
     symbolList.clear();
-    String syms = config.symbols;
     int start = 0;
     int comma = 0;
     while ((comma = syms.indexOf(',', start)) != -1) {
@@ -50,32 +46,24 @@ void CryptoEngine::parseSymbols() {
     }
 }
 
-void CryptoEngine::onDisplayStart() {
+void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
+    symbolsShownThisCycle = 0;
     if (!symbolList.empty()) {
         fetchQuote(symbolList[currentSymbolIndex % symbolList.size()]);
     }
 }
 
 void CryptoEngine::fetchQuote(const String& symbol) {
-    if (ESP.getPsramSize() == 0) {
-        LOGW("CryptoEngine", "PSRAM required for HTTPS Crypto fetches. Skipping.");
-        activeSymbol = "N/A";
-        currentPrice = 0.0f;
-        changePercent24h = 0.0f;
-        fetchSuccess = false;
-        return;
-    }
-    
     activeSymbol = symbol;
     fetchSuccess = false;
     
     uint32_t now = millis();
     AssetQuoteCache& cache = quoteCache[symbol];
     
-    uint32_t ttlMs = (config.cache_ttl_min > 0 ? config.cache_ttl_min : 1) * 60 * 1000;
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
     
-    // 1. Check if cache is fresh (< config.cache_ttl_min minutes old)
+    // 1. Check if cache is fresh (< config_cache_ttl_min minutes old)
     if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
@@ -201,21 +189,190 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
     return 1;
 }
 
-bool CryptoEngine::loop() {
-    if (!matrix || symbolList.empty()) return false;
-    
-    uint32_t durationMs = (config.duration_sec > 0 ? config.duration_sec : 5) * 1000;
-    if (millis() - lastItemSwitchTime > durationMs) {
-        lastItemSwitchTime = millis();
-        currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
-        fetchQuote(symbolList[currentSymbolIndex]);
+void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
+    uint32_t now = millis();
+    AssetHistoryCache& cache = historyCache[symbol];
+
+    uint32_t ttlMs = 5 * 60 * 1000;
+    switch (tf) {
+        case Timeframe::Hourly: ttlMs = 60 * 1000; break;
+        case Timeframe::Daily: ttlMs = 5 * 60 * 1000; break;
+        case Timeframe::Weekly: ttlMs = 30 * 60 * 1000; break;
+        case Timeframe::Monthly: ttlMs = 120 * 60 * 1000; break;
     }
-    
-    renderQuote();
-    return true;
+
+    if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
+        return;
+    }
+
+    float points[64];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+
+    for (ICryptoProvider* provider : providers) {
+        if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
+            memcpy(cache.points, points, count * sizeof(float));
+            cache.count = count;
+            cache.minPrice = minP;
+            cache.maxPrice = maxP;
+            cache.lastFetchTime = now;
+            cache.hasData = true;
+            LOGI("CryptoEngine", "[History Success] Fetched %d points for %s (%s)", (int)count, symbol.c_str(), timeframeLabel(tf));
+            return;
+        }
+    }
 }
 
-void CryptoEngine::renderQuote() {
+void CryptoEngine::update(EngineContext* context) {
+    if (symbolList.empty() || !config_enabled) return;
+    
+    uint32_t now = millis();
+    uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
+    if (now - lastItemSwitchTime > durationMs) {
+        lastItemSwitchTime = now;
+        if (config_show_chart) {
+            if (currentPage == DisplayPage::Info) {
+                currentPage = DisplayPage::Chart;
+                fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
+            } else {
+                currentPage = DisplayPage::Info;
+                symbolsShownThisCycle++;
+                currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+                fetchQuote(symbolList[currentSymbolIndex]);
+            }
+        } else {
+            currentPage = DisplayPage::Info;
+            symbolsShownThisCycle++;
+            currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+            fetchQuote(symbolList[currentSymbolIndex]);
+        }
+    }
+}
+
+bool CryptoEngine::isFinished() const {
+    if (symbolList.empty()) return true;
+    return (symbolsShownThisCycle >= symbolList.size());
+}
+
+void CryptoEngine::render(EngineContext* context) {
+    if (symbolList.empty() || !config_enabled) return;
+    if (currentPage == DisplayPage::Info) {
+        renderQuote(context);
+    } else {
+        renderChart(context);
+    }
+}
+
+void CryptoEngine::deactivate() {
+}
+
+void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (!engineConfig) return;
+    config_enabled = engineConfig->getBool("enabled", true);
+    config_duration_sec = engineConfig->getInt("duration_sec", 5);
+    config_cache_ttl_min = engineConfig->getInt("cache_ttl_min", 15);
+    config_show_chart = engineConfig->getBool("show_chart", true);
+    config_chart_timeframe = timeframeFromString(engineConfig->getString("chart_timeframe", "daily"));
+    String syms = engineConfig->getString("symbols", "BTC,ETH,SOL");
+    parseSymbols(syms);
+}
+
+void CryptoEngine::renderChart(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    matrix->fillScreen(0);
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    char priceBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "Loading...");
+    } else if (currentPrice >= 1000.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.0f", currentPrice);
+    } else if (currentPrice >= 1.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.4f", currentPrice);
+    }
+
+    char pctBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(pctBuf, sizeof(pctBuf), "--");
+    } else {
+        snprintf(pctBuf, sizeof(pctBuf), "%s%.2f%%", changePercent24h >= 0 ? "+" : "", changePercent24h);
+    }
+    uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
+
+    const char* tfLabel = timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hist = historyCache[activeSymbol];
+
+    if (mH >= 64) {
+        // Header
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(6, 4);
+        matrix->printf("%s (%s)", activeSymbol.c_str(), tfLabel);
+
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        int priceX = mW - (strlen(priceBuf) * 6 + 6);
+        if (priceX < 6 + (int)(activeSymbol.length() + 5) * 6) priceX = 6 + (activeSymbol.length() + 5) * 6;
+        matrix->setCursor(priceX, 4);
+        matrix->print(priceBuf);
+
+        // Subheader % change
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(6, 14);
+        matrix->print(pctBuf);
+
+        // Sparkline
+        int sparkX = 4;
+        int sparkY = 25;
+        int sparkW = mW - 8;
+        int sparkH = 35;
+
+        if (hist.hasData && hist.count > 1) {
+            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
+            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+        } else {
+            matrix->setTextColor(matrix->color565(120, 120, 120));
+            matrix->setCursor(6, sparkY + 10);
+            matrix->print("Loading chart...");
+        }
+    } else {
+        // 32px height panel
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(2, 1);
+        matrix->printf("%s %s", activeSymbol.c_str(), tfLabel);
+
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        int priceX = mW - (strlen(priceBuf) * 6 + 2);
+        if (priceX < 2 + (int)(activeSymbol.length() + 4) * 6) priceX = 2 + (activeSymbol.length() + 4) * 6;
+        matrix->setCursor(priceX, 1);
+        matrix->print(priceBuf);
+
+        int sparkX = 2;
+        int sparkY = 12;
+        int sparkW = mW - 4;
+        int sparkH = 19;
+
+        if (hist.hasData && hist.count > 1) {
+            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
+            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+        } else {
+            matrix->setTextColor(matrix->color565(120, 120, 120));
+            matrix->setCursor(4, sparkY + 4);
+            matrix->print("Loading...");
+        }
+    }
+}
+
+void CryptoEngine::renderQuote(EngineContext* context) {
+    auto* matrix = context->getMatrix();
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();

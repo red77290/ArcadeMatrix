@@ -2,9 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-extern ConfigLoader config;
-
-PongClock::PongClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastMinute(-1), forceMiss(false), lastFrameTime(0) {
+PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), forceMiss(false), lastFrameTime(0) {
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));
@@ -35,7 +33,7 @@ void PongClock::draw(const TimeData& t) {
 
 void PongClock::drawScores() {
     matrix->setFont(NULL);
-    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
     if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
     matrix->setTextSize(gfxSize);
     

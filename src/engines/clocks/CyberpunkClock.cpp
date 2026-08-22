@@ -14,13 +14,11 @@ struct Drop {
 static Drop drops[NUM_DROPS];
 static bool dropsInit = false;
 
-CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lineY(0), lastFrameTime(0) {}
+CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lineY(0), lastFrameTime(0) {}
 
 void CyberpunkClock::draw(const TimeData& t) {
     storedTime = t;
 }
-
-extern ConfigLoader config;
 
 void CyberpunkClock::drawTime() {
     matrix->setFont(NULL);
@@ -38,7 +36,7 @@ void CyberpunkClock::drawTime() {
     int sMax = min(maxScaleW, maxScaleH);
     if (sMax < 1) sMax = 1;
     
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
     int gfxSize = 1;
     if (logicalSize >= 5) gfxSize = sMax + 1;
     else if (logicalSize == 4) gfxSize = sMax;
@@ -49,11 +47,18 @@ void CyberpunkClock::drawTime() {
     matrix->setTextSize(gfxSize);
     matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
     
-    int x = (matrix->width() - bw) / 2 + config.time.clock_offset_x - bx;
-    int y = (matrix->height() - bh) / 2 - by + config.time.clock_offset_y;
+    int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - bx;
+    int y = (matrix->height() - bh) / 2 - by + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
-    // Matrix Green Time
-    matrix->setTextColor(matrix->color565(200, 255, 200)); // Bright core
+    // Black outline so time remains readable over rain
+    matrix->setTextColor(matrix->color565(0, 0, 0));
+    matrix->setCursor(x - 1, y); matrix->print(timeStr);
+    matrix->setCursor(x + 1, y); matrix->print(timeStr);
+    matrix->setCursor(x, y - 1); matrix->print(timeStr);
+    matrix->setCursor(x, y + 1); matrix->print(timeStr);
+
+    // Dark Green Time (Vert foncé True Matrix)
+    matrix->setTextColor(matrix->color565(0, 140, 0));
     matrix->setCursor(x, y);
     matrix->print(timeStr);
 }

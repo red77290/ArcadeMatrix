@@ -1,0 +1,31 @@
+#pragma once
+#include "core/EngineContract.h"
+
+// Forward declarations for legacy engines
+class ClockEngine;
+class DateEngine;
+class WeatherEngine;
+class FighterEngine;
+class GifEngine;
+class CryptoEngine;
+class StockEngine;
+class TempEngine;
+class VisualizerEngine;
+class DecibelEngine;
+class MessageEngine;
+class MarqueeEngine;
+
+struct RequirementCheckResult {
+    bool satisfied;
+    String reason;
+};
+
+/**
+ * @brief Registers all engines into the global EngineRegistry with complete schemas and requirement gating.
+ */
+class EngineRegistrar {
+public:
+    static void registerAll();
+    static RequirementCheckResult checkRequirements(const EngineRequirements& req);
+    static bool meetsRequirements(const EngineRequirements& req);
+};

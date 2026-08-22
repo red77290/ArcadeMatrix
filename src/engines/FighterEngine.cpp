@@ -7,10 +7,37 @@
 
 extern SemaphoreHandle_t sdMutex;
 
-#define MAX_FIGHTER_FRAME_SIZE 98304
+FighterEngine::FighterEngine() : matrix(nullptr) {}
 
-FighterEngine::FighterEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context ? context->getMatrix() : nullptr;
+    m_hasPsram = context ? context->hasPsram() : false;
+    initialize();
+    return EngineError::OK;
 }
+
+void FighterEngine::activate() {
+    startFight();
+}
+
+void FighterEngine::update(EngineContext* context) {
+    loop();
+}
+
+void FighterEngine::render(EngineContext* context) {
+    draw();
+}
+
+void FighterEngine::deactivate() {
+    stop();
+}
+
+void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (engineConfig) {
+        config_fighter_interval_sec = engineConfig->getInt("fighter_interval_sec", 15);
+    }
+}
+
 
 FighterEngine::~FighterEngine() {
     if (fighterOffsets) free(fighterOffsets);
@@ -23,8 +50,8 @@ void FighterEngine::initialize() {
 }
 
 String FighterEngine::getFightersDir() {
-    if (matrix->height() <= 32) return "/fighters_32";
-    if (!psramFound()) {
+    if (matrix && matrix->height() <= 32) return "/fighters_32";
+    if (!m_hasPsram) {
         Serial.println("FighterEngine: No PSRAM found. Forcing /fighters_32 to avoid OOM!");
         return "/fighters_32";
     }
@@ -144,7 +171,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
-    int maxFrameSize = psramFound() ? (2 * 1024 * 1024) : 98304;
+    int maxFrameSize = m_hasPsram ? (2 * 1024 * 1024) : 32768;
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
@@ -152,7 +179,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         return false;
     }
     
-    if (psramFound()) {
+    if (m_hasPsram) {
         size_t freePsram = ESP.getFreePsram();
         size_t safetyHeadroom = 1048576; // 1 MB safety reserve
         if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
@@ -200,7 +227,7 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) p.activeFile.close();
     if (p.currentFrameBuffer) {
-        if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+        if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
         else free(p.currentFrameBuffer);
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
@@ -394,10 +421,10 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
             if (p.currentFrameBuffer) {
-                if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+                if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
                 else free(p.currentFrameBuffer);
             }
-            if (psramFound()) {
+            if (m_hasPsram) {
                 p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
             } else {
                 p.currentFrameBuffer = (uint8_t*)malloc(newSize);
@@ -540,9 +567,8 @@ bool FighterEngine::loop() {
     }
     
     if (fightEndTime > 0 && now - fightEndTime > 2000) {
-        extern ConfigLoader config;
         active = false;
-        retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
+        retryDelayEnd = now + (config_fighter_interval_sec * 1000);
         if (matrix) {
             int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
             matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);

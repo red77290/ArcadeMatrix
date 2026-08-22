@@ -2,7 +2,7 @@
 
 🇬🇧 [English](GETTING_STARTED.md) | 🇫🇷 [Français](GETTING_STARTED_FR.md) | 🇪🇸 Español
 
-Esta guía está pensada para desarrolladores que nunca han usado [PlatformIO](https://platformio.org/) y quieren compilar, flashear y depurar el firmware ArcadeMatrix en local. Para el cableado de hardware, consulta `docs/HARDWARE_ES.md`/`docs/WIRING_ES.md`; para las opciones de `conf.ini`, consulta `docs/CONFIGURATION_ES.md`; para la arquitectura del codebase, consulta `docs/ARCHITECTURE_ES.md`; para los flujos de contribución (añadir relojes, endpoints REST, fuentes personalizadas), consulta `docs/DEVELOPER_ES.md`.
+Esta guía está pensada para desarrolladores que nunca han usado [PlatformIO](https://platformio.org/) y quieren compilar, flashear y depurar el firmware ArcadeMatrix en local. Para el cableado de hardware, consulta `docs/HARDWARE_ES.md`/`docs/WIRING_ES.md`; para las opciones de `config.json`, consulta `docs/CONFIGURATION_ES.md`; para la arquitectura del codebase, consulta `docs/ARCHITECTURE_ES.md`; para los flujos de contribución (añadir relojes, endpoints REST, fuentes personalizadas), consulta `docs/DEVELOPER_ES.md`.
 
 ## 1. Instalar PlatformIO
 
@@ -93,7 +93,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 
 El firmware necesita una tarjeta SD externa (cableada según `docs/WIRING_ES.md`, chip-select en GPIO 5 por
 defecto; consulta `SD_CS_PIN` en `src/main.cpp`) para:
-- `/conf.ini` — tus ajustes de Wi-Fi/matriz/temas (se genera automáticamente con valores predeterminados en el primer arranque si falta; edítalo directamente en la tarjeta, o mediante `/api/settings` desde la interfaz web una vez que el Wi-Fi esté activo).
+- `/config.json` — tus ajustes de Wi-Fi/matriz/temas (se genera automáticamente con valores predeterminados en el primer arranque si falta; edítalo directamente en la tarjeta, o mediante `/api/settings` desde la interfaz web una vez que el Wi-Fi esté activo).
 - `/gifs/`, playlists de assets `.gif`/`.raw`/`.png` (consulta §4 de `docs/ARCHITECTURE_ES.md` para ver las diferencias de formato entre los tres).
 - `/fighters_32/` o `/fighters_64/` — hojas de sprites `.fgt` derivadas de MUGEN (consulta `tools/mugen_extractor/README_ES.md` para generar las tuyas a partir de archivos de personajes MUGEN).
 - Opcionalmente `/fonts/*.amf` — fuentes bitmap personalizadas cargables desde la SD (consulta la sección «Cargar una fuente bitmap personalizada desde la SD» de `docs/DEVELOPER_ES.md` y `tools/bdf_to_amfont/`).
