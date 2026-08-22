@@ -537,6 +537,9 @@ body {
   <style>
     .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
     .form-grid.col-4 { grid-template-columns: repeat(4, 1fr); }
+    @media (max-width: 768px) {
+      .form-grid.col-3, .form-grid.col-4 { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
