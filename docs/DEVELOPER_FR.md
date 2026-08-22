@@ -1,210 +1,219 @@
-🇬🇧 [English](DEVELOPER.md) | 🇫🇷 Français | 🇪🇸 [Español](DEVELOPER_ES.md)
+[English](DEVELOPER.md) | 🇫🇷 Français | 🇪🇸 [Español](DEVELOPER_ES.md)
 
-# Guide développeur (ESP32 - C++)
+# Guide Développeur (ESP32 — C++)
 
-Bienvenue dans le guide de développement d'ArcadeMatrix pour ESP32. Ce document explique la marche à suivre pour étendre l'architecture et créer de nouveaux moteurs (Engines) en C++.
+Bienvenue dans le guide développeur d'ArcadeMatrix pour ESP32. Ce document explique comment créer de nouveaux moteurs, déclarer des schémas de configuration, définir les prérequis matériels et s'intégrer proprement à l'interface Web dynamique.
 
 ---
 
-## 1. Comprendre l'Architecture : Engines, Registry et Lifecycle
+## 1. Architecture des Moteurs & Cycle de Vie Strict
 
-ArcadeMatrix ne possède plus de liste codée en dur de ses fonctionnalités. Le système repose sur un **Registry** qui découvre les moteurs au démarrage.
-
-### 1.1 Le Cycle de Vie Strict (Lazy-Once)
-
-L'ESP32 possède une Heap extrêmement réduite (env. 320 Ko). Pour éviter les crashs (Kernel Panics) dus à la fragmentation de la mémoire, ArcadeMatrix impose un cycle de vie strict pour chaque `IEngine`.
+ArcadeMatrix repose sur une architecture découplée :
+1. **`IEngine`** : Contrat d'interface abstrait pour tous les modules d'affichage.
+2. **`EngineRegistry`** : Registre centralisé stockant les descripteurs et fabriques.
+3. **`EngineRegistrar`** : Point unique de gating évaluant les capacités réelles du `HardwareHAL`.
+4. **`ConfigSanitizer`** : Validation déclarative et injection des valeurs par défaut.
+5. **`RotationManager`** : Instanciation paresseuse (lazy) et boucle de rotation.
 
 ```text
-initialize()
-    │
-    ├── allocation via 'new' ou 'std::vector'
-    ├── chargement assets (images SD)
-    ├── préparation cache
-    └── initialisation lourde
-          ↓
-activate()
-    │
-    └── préparation d'état temporaire (réinitialisation chrono, etc.)
-          ↓
-update()
-    │
-    └── logique temps réel (60 FPS) - **AUCUNE ALLOCATION DYNAMIQUE INUTILE**
-          ↓
-render()
-    │
-    └── rendu temps réel (60 FPS) - **AUCUNE ALLOCATION DYNAMIQUE INUTILE**
-          ↓
-deactivate()
-    │
-    └── libération de ressources externes ou arrêt des écouteurs
+initialize() [Init unique & allocation mémoire]
+      ↓
+activate() [Reset temporisateurs / état au switch]
+      ↓
+update() [Calcul logique - 60 FPS - ZÉRO allocation heap]
+      ↓
+render() [Dessin des pixels sur MatrixPanel_I2S_DMA]
+      ↓
+deactivate() [Mise en veille / fermeture fichiers / stop audio]
 ```
 
-- **Règle d'or :** Ne créez jamais de nouveaux `String`, `std::vector` ou n'utilisez jamais `malloc`/`new` dans `update()` ou `render()`. Pré-allouez vos tampons dans `initialize()` et mutez-les en place.
-- **`onConfigChanged()` :** Permet au moteur de mettre à jour son état interne lorsque l'utilisateur change les réglages via l'interface Web (asynchrone sur le Core 0).
-- **`isFinished()` :** Utile pour signaler au `RotationManager` qu'un moteur a terminé sa tâche pour forcer le passage au moteur suivant sans attendre la fin du temps imparti.
+### Règles Fondamentales
+- **Zéro allocation dans la boucle active** : Ne jamais instancier de `String`, `std::vector`, ou faire de `malloc`/`new` dans `update()` ou `render()`. Pré-allouez vos tampons dans `initialize()`.
+- **Hot Reload Live** : Implémentez `onConfigChanged(const EngineConfig* config)` pour répercuter les réglages utilisateur sans aucun redémarrage.
+- **Isolation Matérielle** : Ne mettez jamais d'appels `psramFound()` ou `#ifdef BOARD_HAS_PSRAM` dans votre moteur. Déclarez vos besoins dans `requirements.needsPsram`.
 
 ---
 
-## 2. Tutoriel : Créer un Nouveau Moteur (Engine)
+## 2. Tutoriel : Créer un Nouveau Moteur
 
-Pour créer un nouveau moteur, vous devez implémenter l'interface `IEngine` et fournir un `EngineDescriptor` via le `EngineRegistry`.
-
-### Étape 1 : Créer le header (`src/engines/MyEngine.h`)
+### Étape 1 : Déclarer la classe (`src/engines/MyEngine.h`)
 
 ```cpp
 #pragma once
-#include "core/engine_contract.h"
+#include "../../include/core/EngineContract.h"
 #include <Arduino.h>
 
 class MyEngine : public IEngine {
 public:
     MyEngine();
-    virtual ~MyEngine() = default;
+    ~MyEngine() override = default;
 
-    void initialize(ApplicationContext* context, DictionaryEngineConfig* config) override;
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
-    void update(ApplicationContext* context) override;
-    void render(ApplicationContext* context) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
     void deactivate() override;
-    void onConfigChanged(DictionaryEngineConfig* config) override;
-    bool isFinished() const override;
+    void onConfigChanged(const EngineConfig* config) override;
+    
+    // Méthodes optionnelles (valeurs sûres par défaut fournies) :
+    bool isFinished() const override { return false; }
+    bool isRealtime() const override { return true; }
+    bool selfPaced() const override { return false; }
+    bool allowsOverlay() const override { return true; }
 
 private:
-    String mySetting;
-    int counter;
+    MatrixPanel_I2S_DMA* matrix = nullptr;
+    int speed = 1;
+    String text = "Hello";
+    int posX = 0;
 };
 ```
 
-### Étape 2 : Implémenter le cycle de vie (`src/engines/MyEngine.cpp`)
-
-Implémentez le comportement de votre moteur, en respectant la contrainte d'allocation.
+### Étape 2 : Implémenter le comportement (`src/engines/MyEngine.cpp`)
 
 ```cpp
 #include "MyEngine.h"
-#include "core/EngineRegistry.h"
+#include "../core/Logger.h"
 
-MyEngine::MyEngine() : counter(0) {}
+MyEngine::MyEngine() {}
 
-void MyEngine::initialize(ApplicationContext* context, DictionaryEngineConfig* config) {
-    // Allocation mémoire, lecture des réglages
-    mySetting = config->getString("my_setting", "default");
-    Serial.println("MyEngine initialisé !");
+EngineError MyEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    matrix = context->getMatrix();
+
+    if (config) {
+        speed = config->getInt("speed", 1);
+        text = config->getString("text", "Hello");
+    }
+    LOGI("MyEngine", "Initialisé avec succès");
+    return EngineError::OK;
 }
 
 void MyEngine::activate() {
-    counter = 0; // Réinitialisation rapide
+    posX = 0;
 }
 
-void MyEngine::update(ApplicationContext* context) {
-    // Logique métier rapide, aucune allocation
-    counter++;
+void MyEngine::update(EngineContext* context) {
+    posX += speed;
+    if (matrix && posX > matrix->width()) {
+        posX = -50;
+    }
 }
 
-void MyEngine::render(ApplicationContext* context) {
-    // Rendu matériel via context->display
-    context->display->fillScreen(0);
-    context->display->setCursor(0, 0);
-    context->display->print(mySetting.c_str()); // Pas de construction de String ici !
+void MyEngine::render(EngineContext* context) {
+    if (!matrix) return;
+    matrix->fillScreen(0);
+    matrix->setCursor(posX, 10);
+    matrix->print(text);
 }
 
 void MyEngine::deactivate() {
+    // Nettoyage des ressources temporaires
 }
 
-void MyEngine::onConfigChanged(DictionaryEngineConfig* config) {
-    mySetting = config->getString("my_setting", "default");
-}
-
-bool MyEngine::isFinished() const {
-    return false;
+void MyEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) {
+        speed = config->getInt("speed", 1);
+        text = config->getString("text", "Hello");
+    }
 }
 ```
 
-### Étape 3 : Enregistrer le Moteur au démarrage
+### Étape 3 : Enregistrer le moteur dans `src/engines/EngineRegistrar.cpp`
 
-Ouvrez le fichier `src/main.cpp` (ou l'endroit centralisé d'initialisation du Registry) et ajoutez votre descripteur pour exposer les champs de configuration à la Web UI :
+Ajoutez votre descripteur dans `EngineRegistrar::registerAll()` :
 
 ```cpp
-#include "engines/MyEngine.h"
+#include "MyEngine.h"
 
-// Dans setup()
-EngineDescriptor myDesc;
-myDesc.id = "my_engine";
-myDesc.name = "Mon Moteur Custom";
-myDesc.category = "divers";
-myDesc.version = "1.0";
+void EngineRegistrar::registerAll() {
+    // ...
+    EngineDescriptor desc;
+    desc.metadata = {
+        .id = "my_engine",
+        .name = "Mon Moteur Personnalisé",
+        .category = "custom",
+        .version = "1.0.0"
+    };
+    desc.capabilities = {
+        .supports_128x32 = true,
+        .supports_256x64 = true,
+        .realtime = true,
+        .interruptible = true,
+        .allowsOverlay = true,
+        .selfPaced = false
+    };
+    desc.requirements = {
+        .needsPsram = false,
+        .needsAudio = false,
+        .needsTempSensor = false,
+        .needsGyroscope = false,
+        .needsNetwork = false,
+        .needsSd = false
+    };
+    desc.schema.fields = {
+        {
+            .id = "speed",
+            .type = ConfigType::INTEGER,
+            .label = "Vitesse de défilement",
+            .description = "Pixels par frame",
+            .default_value = "1",
+            .required = false,
+            .min_val = "1",
+            .max_val = "10",
+            .step = "1",
+            .validation_policy = ValidationPolicy::Clamp
+        },
+        {
+            .id = "text",
+            .type = ConfigType::STRING,
+            .label = "Texte affiché",
+            .description = "Message à faire défiler",
+            .default_value = "Bonjour le monde",
+            .required = false
+        }
+    };
+    desc.factory = []() {
+        return std::unique_ptr<IEngine>(new MyEngine());
+    };
 
-ConfigField field;
-field.id = "my_setting";
-field.type = ConfigType::String;
-field.label = "Mon Réglage";
-field.description = "Saisissez un mot à afficher";
-myDesc.schema.fields.push_back(field);
-
-myDesc.factory = []() -> std::unique_ptr<IEngine> {
-    return std::unique_ptr<IEngine>(new MyEngine());
-};
-
-EngineRegistry::registerEngine(myDesc);
+    tryRegister(desc);
+}
 ```
-
-C'est tout ! **Aucun code du RotationManager n'a besoin d'être modifié**. Le moteur sera automatiquement listé dans l'API Web, et sa configuration `config.json` sera gérée de manière isolée via le `ConfigSchema`.
 
 ---
 
-## 3. Limites Connues & Sécurité
+## 3. Types de Champs & Options Dynamiques
 
-### Sécurité
-- **API non authentifiée** : L'API REST HTTP s'exécute sans authentification sur le réseau local. Ne pas exposer directement le port 80 à Internet.
+| `ConfigType` | Rendu dans l'UI Web | Attributs Supportés |
+|---|---|---|
+| `BOOLEAN` | Menu déroulant (Activé / Désactivé) | `default_value` |
+| `INTEGER` | Champ numérique borné | `min_val`, `max_val`, `step`, `validation_policy` |
+| `FLOAT` | Champ décimal | `min_val`, `max_val`, `step`, `validation_policy` |
+| `STRING` | Champ texte | `default_value` |
+| `ENUM` | Menu déroulant | `options="opt1,opt2"`, `options_endpoint` |
+| `COLOR` | Sélecteur de couleur HTML5 | `default_value="#ffffff"` |
+| `LIST` | Sélection multiple | `options_endpoint="/api/playlists"`, `multiple=true` |
 
-### Limites Connues
-- **Pas de rollback OTA automatique** : En cas de flashage d'un firmware avec un boot-loop, la restauration nécessite un re-flashage physique.
-- **Réseau Synchrone dans les Providers** : Les clients HTTP externes peuvent être bloquants. Bien que gérés, il est conseillé de limiter les appels réseau agressifs.
-- **Carte SD requise pour les assets lourds** : Les animations `.fgt` et polices `.amf` nécessitent impérativement une carte SD installée et formatée.
+### Exemple avec Endpoint d'Options Dynamiques
+```cpp
+{
+    .id = "theme",
+    .type = ConfigType::ENUM,
+    .label = "Thème de l'horloge",
+    .default_value = "0",
+    .options_endpoint = "/api/themes"
+}
+```
 
 ---
 
-## 4. Ajouter une nouvelle cible matérielle (Hardware Profile)
+## 4. Gating des Prérequis Matériels
 
-Bien qu'ArcadeMatrix soit pensé pour optimiser les performances des cartes ESP32 standards, le projet supporte nativement des cartes plus musclées (ex: **ESP32-S3** avec 32 Mo de Flash et 16 Mo de PSRAM).
-
-Si vous souhaitez porter ArcadeMatrix sur une nouvelle carte (avec un brochage différent ou un autre type de mémoire), vous devez créer un nouveau profil matériel. L'injection statique via les flags de compilation est la méthode privilégiée.
-
-### Étape 1 : Définir le profil (`include/HardwareProfile.h`)
-Ajoutez un nouveau bloc pour définir les broches de votre matrice HUB75 et de votre carte SD.
+Si votre moteur nécessite du matériel spécifique (ex: micro ou PSRAM) :
 ```cpp
-#elif defined(HARDWARE_PROFILE_MON_ESP_S3)
-    // Profil : ESP32-S3 avec PSRAM
-    #define MATRIX_R1_PIN 10
-    #define MATRIX_G1_PIN 11
-    // ... définissez toutes les broches de la matrice ...
-    
-    // SD Card
-    #define USE_SD_MMC 1
-    #define SD_MMC_D0_PIN 12
-    #define SD_MMC_CMD_PIN 13
-    #define SD_MMC_CLK_PIN 14
+desc.requirements.needsPsram = true;
+desc.requirements.needsAudio = true;
 ```
 
-### Étape 2 : Créer l'environnement (`platformio.ini`)
-Ajoutez un nouvel environnement pour activer la PSRAM et injecter votre flag :
-```ini
-[env:mon_esp_s3]
-board = esp32-s3-devkitc-1
-build_flags = 
-    -D HARDWARE_PROFILE_MON_ESP_S3
-    -D BOARD_HAS_PSRAM
-    -mfix-esp32-psram-cache-issue
-```
-*Note : Le code C++ allouera alors automatiquement les polices (AMF) ou les buffers mémoire étendus dans la PSRAM via `ps_malloc` lorsque disponible.*
-
-### Tableau de Compatibilité des Moteurs (Matériel)
-
-Tous les moteurs ne peuvent pas tourner sur un ESP32 classique à cause du manque de mémoire RAM. Assurez-vous de documenter ces pré-requis pour les utilisateurs.
-
-| Moteur (`Engine`) | ESP32 (320 Ko) | ESP32-S3 (+PSRAM) | Remarques |
-| :--- | :---: | :---: | :--- |
-| `ClockEngine` | ✅ Oui | ✅ Oui | Logique légère, très peu d'allocations. |
-| `MessageEngine` | ✅ Oui | ✅ Oui | Défilement texte. |
-| `CryptoEngine` | ❌ Non | ✅ Oui | Stocke des graphiques historiques (tableaux de `float`) et analyse d'énormes payloads JSON API nécessitant `ps_malloc`. |
-| `StockEngine` | ❌ Non | ✅ Oui | Pareil que `CryptoEngine`. |
-| `FighterEngine` | ✅ Oui | ✅ Oui | Lit directement la carte SD en flux binaire `.fgt` sans charger l'image entière en RAM. |
+`EngineRegistrar` évalue automatiquement `HardwareHAL::capabilities()`. Si la carte branchée ne dispose pas de ce périphérique, le moteur est ignoré proprement et l'UI affiche un badge explicatif sans aucun crash.
