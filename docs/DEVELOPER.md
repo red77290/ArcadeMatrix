@@ -21,10 +21,11 @@ This is the **complete, exhaustive** guide to extending ArcadeMatrix on ESP32 (w
 9. [Self-Healing Validation Policies](#9-self-healing-validation-policies)
 10. [Tutorial: Create a New Engine Step-by-Step](#10-tutorial-create-a-new-engine-step-by-step)
 11. [Tutorial: Add a Custom-List Endpoint](#11-tutorial-add-a-custom-list-endpoint)
-12. [Reading Config in an Engine](#12-reading-config-in-an-engine)
-13. [Rendering into the LED Matrix](#13-rendering-into-the-led-matrix)
-14. [Testing & Local Compilation](#14-testing--local-compilation)
-15. [Developer Checklist](#15-developer-checklist)
+12. [Tutorial: Add a New Clock Face / Theme Step-by-Step](#12-tutorial-add-a-new-clock-face--theme-step-by-step)
+13. [Reading Config in an Engine](#13-reading-config-in-an-engine)
+14. [Rendering into the LED Matrix](#14-rendering-into-the-led-matrix)
+15. [Testing & Local Compilation](#15-testing--local-compilation)
+16. [Developer Checklist](#16-developer-checklist)
 
 ---
 
@@ -361,7 +362,96 @@ server.on("/api/my_options", HTTP_GET, [](AsyncWebServerRequest *request){
 
 ---
 
-## 12. Reading Config in an Engine
+## 12. Tutorial: Add a New Clock Face / Theme Step-by-Step
+
+Clocks in ArcadeMatrix are organized into modular `ClockFace` implementations managed by the core `ClockEngine`. To add a new visual theme or clock animation (e.g. *SpaceInvadersClock*):
+
+### Step 1: Create `src/engines/clocks/SpaceInvadersClock.h` & `.cpp`
+
+Inherit from the `ClockFace` base class (`src/engines/ClockEngine.h`):
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.h
+#pragma once
+#include "../ClockEngine.h"
+
+class SpaceInvadersClock : public ClockFace {
+public:
+    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    void draw(const TimeData& t) override;
+    void update() override;
+
+private:
+    int invaderFrame = 0;
+    unsigned long lastAnimMs = 0;
+};
+```
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.cpp
+#include "SpaceInvadersClock.h"
+
+SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+    : ClockFace(display, config) {}
+
+void SpaceInvadersClock::update() {
+    if (millis() - lastAnimMs > 500) {
+        invaderFrame = (invaderFrame + 1) % 2;
+        lastAnimMs = millis();
+    }
+}
+
+void SpaceInvadersClock::draw(const TimeData& t) {
+    if (!matrix) return;
+    matrix->fillScreen(0);
+    // Draw animated invaders & formatted time digits
+    matrix->setTextSize(1);
+    matrix->setTextColor(matrix->color565(0, 255, 100));
+    matrix->setCursor(24, 12);
+    matrix->printf("%02d:%02d:%02d", t.hour, t.minute, t.second);
+}
+```
+
+### Step 2: Add Theme Enum ID in `src/engines/DateEngine.h`
+
+Add your new theme identifier to `PublisherTheme`:
+
+```cpp
+enum PublisherTheme {
+    // ... existing themes (0 to 24)
+    THEME_SPACE_INVADERS = 25
+};
+```
+
+### Step 3: Wire into `ClockEngine::setTheme()` in `src/engines/ClockEngine.cpp`
+
+Include your header and instantiate your `ClockFace`:
+
+```cpp
+#include "clocks/SpaceInvadersClock.h"
+
+// In ClockEngine::setTheme():
+case THEME_SPACE_INVADERS:
+    activeFace = new SpaceInvadersClock(legacy_matrix, config);
+    break;
+```
+
+### Step 4: Expose in `/api/themes` in `src/api/WebServerAPI.cpp`
+
+Add your theme to the `themes` table so it automatically populates the WebUI dropdown:
+
+```cpp
+static const ThemeItem themes[] = {
+    // ...
+    { 25, "Space Invaders Clock" }
+};
+```
+
+The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, persist it in `config.json`, and apply it live via hot reload.
+
+---
+
+## 13. Reading Config in an Engine
 
 Engines receive an `EngineConfig` proxy:
 
@@ -374,7 +464,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 13. Rendering into the LED Matrix
+## 14. Rendering into the LED Matrix
 
 Always obtain the matrix pointer via `context->getMatrix()`:
 
@@ -389,7 +479,7 @@ matrix->print("TEXT");
 
 ---
 
-## 14. Testing & Local Compilation
+## 15. Testing & Local Compilation
 
 Compile both board targets locally:
 
@@ -406,7 +496,7 @@ pio test -e esp32dev --without-uploading --without-testing
 
 ---
 
-## 15. Developer Checklist
+## 16. Developer Checklist
 
 - [ ] `initialize()` allocates all memory; hot loop (`update`/`render`) has **zero dynamic allocations**.
 - [ ] `onConfigChanged()` updates state in place without destroying the instance.

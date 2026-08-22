@@ -21,10 +21,11 @@ Esta es la guía **técnica exhaustiva** para extender ArcadeMatrix en ESP32 (de
 9. [Políticas de Validación y Autorreparación](#9-políticas-de-validación-y-autorreparación)
 10. [Tutorial: Crear un Nuevo Motor Paso a Paso](#10-tutorial-crear-un-nuevo-motor-paso-a-paso)
 11. [Tutorial: Añadir un Endpoint de Opciones Dinámicas](#11-tutorial-añadir-un-endpoint-de-opciones-dinámicas)
-12. [Lectura de Configuración en un Motor](#12-lectura-de-configuración-en-un-motor)
-13. [Renderizado en la Matriz LED](#13-renderizado-en-la-matriz-led)
-14. [Pruebas y Compilación Local](#14-pruebas-y-compilación-local)
-15. [Lista de Verificación del Desarrollador](#15-lista-de-verificación-del-desarrollador)
+12. [Tutorial: Añadir una Nueva Esfera / Tema de Reloj (ClockFace)](#12-tutorial-añadir-una-nueva-esfera--tema-de-reloj-clockface)
+13. [Lectura de Configuración en un Motor](#13-lectura-de-configuración-en-un-motor)
+14. [Renderizado en la Matriz LED](#14-renderizado-en-la-matriz-led)
+15. [Pruebas y Compilación Local](#15-pruebas-y-compilación-local)
+16. [Lista de Verificación del Desarrollador](#16-lista-de-verificación-del-desarrollador)
 
 ---
 
@@ -292,7 +293,95 @@ server.on("/api/my_options", HTTP_GET, [](AsyncWebServerRequest *request){
 
 ---
 
-## 12. Lectura de Configuración en un Motor
+## 12. Tutorial: Añadir una Nueva Esfera / Tema de Reloj (ClockFace)
+
+En ArcadeMatrix, la visualización de la hora es gestionada por un motor central (`ClockEngine`) que delega el renderizado visual a módulos especializados que implementan la interfaz `ClockFace`. Para crear un nuevo reloj animado (ej: *SpaceInvadersClock*):
+
+### Paso 1: Crear `src/engines/clocks/SpaceInvadersClock.h` y `.cpp`
+
+Heredar de la clase abstracta `ClockFace` (`src/engines/ClockEngine.h`):
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.h
+#pragma once
+#include "../ClockEngine.h"
+
+class SpaceInvadersClock : public ClockFace {
+public:
+    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    void draw(const TimeData& t) override;
+    void update() override;
+
+private:
+    int invaderFrame = 0;
+    unsigned long lastAnimMs = 0;
+};
+```
+
+```cpp
+// src/engines/clocks/SpaceInvadersClock.cpp
+#include "SpaceInvadersClock.h"
+
+SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+    : ClockFace(display, config) {}
+
+void SpaceInvadersClock::update() {
+    if (millis() - lastAnimMs > 500) {
+        invaderFrame = (invaderFrame + 1) % 2;
+        lastAnimMs = millis();
+    }
+}
+
+void SpaceInvadersClock::draw(const TimeData& t) {
+    if (!matrix) return;
+    matrix->fillScreen(0);
+    matrix->setTextSize(1);
+    matrix->setTextColor(matrix->color565(0, 255, 100));
+    matrix->setCursor(24, 12);
+    matrix->printf("%02d:%02d:%02d", t.hour, t.minute, t.second);
+}
+```
+
+### Paso 2: Declarar el Enum en `src/engines/DateEngine.h`
+
+Añada el identificador del tema en `PublisherTheme`:
+
+```cpp
+enum PublisherTheme {
+    // ... temas existentes
+    THEME_SPACE_INVADERS = 25
+};
+```
+
+### Paso 3: Instanciar en `ClockEngine::setTheme()` (`src/engines/ClockEngine.cpp`)
+
+Incluya la cabecera e instancie su `ClockFace`:
+
+```cpp
+#include "clocks/SpaceInvadersClock.h"
+
+// En ClockEngine::setTheme():
+case THEME_SPACE_INVADERS:
+    activeFace = new SpaceInvadersClock(legacy_matrix, config);
+    break;
+```
+
+### Paso 4: Exponer en `/api/themes` (`src/api/WebServerAPI.cpp`)
+
+Añada el tema en la tabla `themes` para rellenar automáticamente el menú desplegable de la interfaz Web:
+
+```cpp
+static const ThemeItem themes[] = {
+    // ...
+    { 25, "Space Invaders Clock" }
+};
+```
+
+La interfaz Web mostrará automáticamente la nueva opción, la guardará en `config.json` y la recargará en caliente sin reiniciar.
+
+---
+
+## 13. Lectura de Configuración en un Motor
 
 ```cpp
 int speed = config->getInt("speed", 2);
@@ -303,7 +392,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 13. Renderizado en la Matriz LED
+## 14. Renderizado en la Matriz LED
 
 ```cpp
 MatrixPanel_I2S_DMA* matrix = context->getMatrix();
@@ -314,7 +403,7 @@ matrix->fillRect(x, y, w, h, color);
 
 ---
 
-## 14. Pruebas y Compilación Local
+## 15. Pruebas y Compilación Local
 
 ```bash
 # ESP32 Estándar
@@ -326,7 +415,7 @@ pio run -e esp32s3_waveshare
 
 ---
 
-## 15. Lista de Verificación del Desarrollador
+## 16. Lista de Verificación del Desarrollador
 
 - [ ] `initialize()` realiza todas las asignaciones de memoria; el bucle activo (`update`/`render`) tiene **cero asignaciones dinámicas**.
 - [ ] `onConfigChanged()` actualiza el estado sin destruir la instancia.
