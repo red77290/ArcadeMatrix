@@ -66,8 +66,28 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
 void DateEngine::activate() {}
 
 void DateEngine::update(EngineContext* context) {
-    // For now, DateEngine doesn't fetch time itself. The rotation loop updates it.
-    // Ideally TimeFetcher would be injected here.
+    if (context) {
+        struct tm timeinfo;
+        context->getSystemTime(&timeinfo);
+        currentDateData = {(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)};
+        
+        String format = m_config.format;
+        if (format.isEmpty()) format = "%a %d %b";
+        strftime(currentDate, sizeof(currentDate), format.c_str(), &timeinfo);
+        
+        // Handle random theme changes per day if THEME_NONE
+        if (m_config.theme == THEME_NONE) {
+            static int lastDay = -1;
+            if (timeinfo.tm_mday != lastDay) {
+                lastDay = timeinfo.tm_mday;
+                setTheme(THEME_NONE); // Triggers random pick
+            }
+        }
+    }
+    
+    if (activeFace) {
+        activeFace->update();
+    }
 }
 
 void DateEngine::render(EngineContext* context) {
