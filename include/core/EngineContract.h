@@ -60,6 +60,7 @@ struct EngineCapabilities {
     bool realtime = false;
     bool interruptible = true;
     bool allowsOverlay = true;
+    bool isOverlay = false;
     bool selfPaced = false;
 };
 
