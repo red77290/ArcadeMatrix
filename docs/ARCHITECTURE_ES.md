@@ -2,175 +2,312 @@
 
 # Resumen de la Arquitectura (ESP32 — C++)
 
-Este documento proporciona una descripción técnica detallada de la arquitectura de ArcadeMatrix en ESP32 en **C++**. Explica el aislamiento de hardware, el control de capacidades (gating), el ciclo de vida "Lazy-Once" de los motores, el Árbitro de pantalla, las capas superpuestas (overlays) y el flujo de configuración dinámica.
+Este documento es la referencia **técnica exhaustiva** de la arquitectura de ArcadeMatrix en ESP32 (desarrollado en **C++**). Cubre la filosofía de diseño, las estrictas restricciones de hardware embebido, el contrato completo `IEngine`, el `EngineRegistry` de autodescubrimiento, el ciclo de vida "Lazy-Once", el pipeline de autorreparación de configuración, la interfaz de usuario dinámica basada en esquemas (incluyendo **listas de opciones dinámicas y personalizadas**), el `DisplayArbiter`, el compositor de superposiciones (overlays) Fighter, el modelo de subprocesos FreeRTOS de doble núcleo y la capa de aislamiento de hardware.
+
+> Si desea **añadir** un motor o un campo de configuración, consulte [DEVELOPER_ES.md](DEVELOPER_ES.md). Este documento explica **por qué** y **cómo** se comporta el sistema; la guía de desarrollo explica **qué codificar**.
 
 ---
 
-## 1. Arquitectura Global
+## Tabla de Contenidos
 
-ArcadeMatrix mantiene una estricta separación de responsabilidades desde la interfaz web hasta el panel LED físico:
-
-```text
-                    ┌──────────────────────────┐
-                    │         WebUI            │
-                    │ controlada por esquema   │
-                    └────────────┬─────────────┘
-                                 │
-                                 ▼
-                    ┌──────────────────────────┐
-                    │       REST API            │
-                    │ engines / instances /     │
-                    │ hardware / options        │
-                    └────────────┬─────────────┘
-                                 │
-                                 ▼
-                    ┌──────────────────────────┐
-                    │  Capa de Configuración   │
-                    │ ConfigLoader              │
-                    │ ConfigSanitizer           │
-                    │ DictionaryEngineConfig    │
-                    └────────────┬─────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────┐
-              │           Engine Registry            │
-              │                                      │
-              │ EngineDescriptor                     │
-              │ metadata / capabilities /            │
-              │ requirements / schema / factory      │
-              └──────────────────┬───────────────────┘
-                                 │
-                         gating de requisitos
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────┐
-              │         EngineRegistrar              │
-              │                                      │
-              │ HardwareCapabilities                 │
-              │ → meetsRequirements()                │
-              └──────────────────┬───────────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────┐
-              │            HardwareHAL               │
-              │                                      │
-              │ PSRAM / Micrófono / Temp / Giro      │
-              └──────────────────┬───────────────────┘
-                                 │
-                         detección en runtime
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────┐
-              │        HardwareProfile.h             │
-              │                                      │
-              │ ESP32_STD / WAVESHARE_S3             │
-              │ PIN MAP — CONGELADO Y VALIDADO       │
-              └──────────────────────────────────────┘
-```
+1. [Filosofía de Diseño: Restricciones de Hardware y Gestión de Memoria](#1-filosofía-de-diseño-restricciones-de-hardware-y-gestión-de-memoria)
+2. [Mapa de Componentes de Alto Nivel](#2-mapa-de-componentes-de-alto-nivel)
+3. [El Contrato del Motor (Modelo de Clases)](#3-el-contrato-del-motor-modelo-de-clases)
+4. [Autodescubrimiento: Registro, Descriptor y Fábrica](#4-autodescubrimiento-registro-descriptor-y-fábrica)
+5. [El Ciclo de Vida "Lazy-Once"](#5-el-ciclo-de-vida-lazy-once)
+6. [Modelo de Configuración: `config.json` → Instancias](#6-modelo-de-configuración-configjson--instancias)
+7. [Autorreparación: el ConfigSanitizer](#7-autorreparación-el-configsanitizer)
+8. [Propagación de Configuración y Recarga en Caliente](#8-propagación-de-configuración-y-recarga-en-caliente)
+9. [Interfaz Web Dinámica Basada en Esquemas y Listas Dinámicas](#9-interfaz-web-dinámica-basada-en-esquemas-y-listas-dinámicas)
+10. [El Árbitro de Pantalla (Display Arbiter)](#10-el-árbitro-de-pantalla-display-arbiter)
+11. [El Compositor de Superposición Fighter (Overlay)](#11-el-compositor-de-superposición-fighter-overlay)
+12. [Aislamiento en Tiempo de Ejecución y Modelo de Doble Núcleo](#12-aislamiento-en-tiempo-de-ejecución-y-modelo-de-doble-núcleo)
+13. [Cadencia de Renderizado y Limitador Adaptable](#13-cadencia-de-renderizado-y-limitador-adaptable)
+14. [Superficie de la API HTTP](#14-superficie-de-la-api-http)
+15. [Metadatos de Compilación](#15-metadatos-de-compilación)
 
 ---
 
-## 2. Filosofía y Restricciones de Hardware
+## 1. Filosofía de Diseño: Restricciones de Hardware y Gestión de Memoria
 
-A diferencia de las plataformas Linux, el ESP32 es un microcontrolador que se ejecuta en bare metal / FreeRTOS bajo restricciones estrictas:
-- **SRAM interna vs PSRAM**: Las placas ESP32 clásicas tienen ~320 KB de SRAM interna compartida entre Wi-Fi, AsyncTCP y descriptores DMA. La placa Waveshare ESP32-S3 añade 16 MB de PSRAM Octal.
-- **Acceso Directo DMA HUB75**: Los búferes de fotogramas se envían directamente a la memoria DMA I2S sin capas intermedias.
-- **Separación Compile-Time vs Runtime**:
-  - `HardwareProfile.h` fija la identidad de la placa y los pines físicos (estrictamente congelados y probados).
-  - `HardwareHAL` detecta la presencia real de periféricos en tiempo de ejecución (PSRAM, micrófono, sensor de temperatura, giroscopio).
-  - `EngineRegistrar` aplica el filtrado de requisitos (`meetsRequirements`).
+A diferencia de las plataformas Linux (como la Raspberry Pi) que cuentan con cientos de megabytes de memoria, el ESP32 es un microcontrolador que se ejecuta en bare-metal bajo FreeRTOS:
+
+- **SRAM Interna vs. PSRAM Octal:**
+  - **ESP32 Estándar (`esp32dev`):** Cuenta con ~320 KB de SRAM interna compartida entre el kernel de FreeRTOS, la pila Wi-Fi, los búferes de red AsyncTCP y los descriptores DMA HUB75. La memoria dinámica (heap) libre restante suele rondar entre 120 y 180 KB.
+  - **Waveshare ESP32-S3 (`esp32s3_waveshare`):** Dispone de 320 KB de SRAM interna más **16 MB de PSRAM Octal**, lo que permite resoluciones mayores (hasta 256x64), historiales amplios para criptomonedas y bolsa, y sprites animados.
+- **La Fragmentación de la Memoria es el Enemigo Crítico:** En C++, las asignaciones dinámicas periódicas (`malloc`, `new`, concatenaciones `String`, redimensionamientos de `std::vector`) dentro del bucle de visualización fragmentan la memoria y provocan bloqueos irrecuperables (`Guru Meditation Error` o fallos en sockets de red).
+- **Canal Directo DMA HUB75:** Las operaciones de dibujo escriben directamente en la memoria DMA I2S sin capas intermedias.
+
+Reglas esenciales de arquitectura:
+
+1. **Asignar una vez, mutar en el lugar.** Los búferes se preasignan en `initialize()` y se reutilizan en `update()` y `render()`.
+2. **Instanciar bajo demanda (lazy), conservar para siempre.** Un motor se crea solo cuando se programa por primera vez ("Lazy-Once"), manteniendo los módulos inactivos fuera de la memoria RAM.
+3. **Aislar Núcleo 0 y Núcleo 1.** Las tareas de red y la API se ejecutan de forma asíncrona en el Núcleo 0, mientras que el bucle de renderizado a 60 FPS corre ininterrumpidamente en el Núcleo 1.
 
 ---
 
-## 3. Ciclo de Vida "Lazy-Once" de los Motores
-
-Para evitar la fragmentación de memoria y bloqueos por falta de memoria (OOM), los motores se instancian bajo demanda mediante la fábrica del `EngineRegistry`:
+## 2. Mapa de Componentes de Alto Nivel
 
 ```mermaid
-graph TD
-    Registry[Engine Registry] --> Descriptor[EngineDescriptor]
-    Descriptor --> Factory[Lambda Factory]
-    Factory --> Instance["IEngine (std::unique_ptr)"]
-    Instance --> Initialize["initialize() [Asignación única]"]
-    Initialize --> Activate["activate() [Reinicio de estado / temporizadores]"]
-    Activate --> Update["update() [Procesar lógica]"]
-    Update --> Render["render() [Dibujar en matriz]"]
-    Render --> Deactivate["deactivate() [Pausa / liberar estado temporal]"]
+flowchart TD
+    subgraph Boot
+        MAIN["main.cpp"] --> HAL["HardwareHAL.begin()"]
+        HAL --> REG["EngineRegistrar.registerAll() (Gating)"]
+        MAIN --> CFG["ConfigLoader.loadFromSD() + ConfigSanitizer"]
+    end
+
+    subgraph Core0["Núcleo 0 (Pro Core - Red y API)"]
+        API["AsyncWebServer (Puerto 80)"] --> EP["REST endpoints /api/*"]
+        EP --> REGD["EngineRegistry (Descriptores y Esquemas)"]
+        EP --> SAN["ConfigSanitizer"]
+        EP --> SD["config.json (Persistencia SD)"]
+    end
+
+    subgraph Core1["Núcleo 1 (App Core - Renderizado Matriz)"]
+        LOOP["main loop() (Núcleo 1)"] --> ARB["DisplayArbiter.evaluate()"]
+        ARB --> ROT["RotationManager"]
+        ROT --> LAZY["Despachador Lazy Instances"]
+        LAZY --> ENG["IEngine (std::unique_ptr)"]
+        ENG --> MX["MatrixEngine (HUB75 DMA)"]
+        ROT --> OV["Pase Overlay FighterEngine"]
+        OV --> MX
+    end
+
+    Core0 -.->|"sdMutex + onConfigChanged() hot reload"| Core1
 ```
-
-### Métodos del Contrato (`IEngine`):
-
-| Método | Función | Momento de ejecución | Regla de memoria |
-|---|---|---|---|
-| `initialize()` | Configuración inicial y asignación de búferes | Solo en la primera activación | Único lugar permitido para asignaciones pesadas |
-| `activate()` | Preparar el estado del motor | En cada cambio hacia este motor | Sin asignaciones |
-| `update()` | Cálculo lógico y avance de animaciones | En cada fotograma | Cero asignaciones |
-| `render()` | Dibujar píxeles en `MatrixPanel_I2S_DMA` | En cada fotograma | Escritura directa DMA |
-| `deactivate()` | Liberar conexiones / recursos activos | Al cambiar a otro motor | Cerrar archivos / pausar audio |
-| `onConfigChanged()`| Recarga en caliente desde la API | Al modificar ajustes | Actualiza variables en su lugar |
-| `isFinished()` | Señal de finalización de secuencia | Consultado en el bucle de rotación | Devuelve true al terminar animación |
-| `isRealtime()` | Indicación de cadencia dinámica | Limitador de FPS adaptable | True para relojes animados / visualizadores |
-| `selfPaced()` | Modelo de avance autónomo | Gestor de rotación | True para reproductor GIF (cuenta N gifs) |
-| `setRotationBudget()`| Establece presupuesto (ej: N gifs) | Al cambiar de módulo | Usado por motores self-paced |
-| `allowsOverlay()` | Compatibilidad con capas superpuestas | Árbitro de pantalla / bucle | True si admite superposición aditiva |
 
 ---
 
-## 4. Modelo de Capacidades y Filtrado de Hardware
+## 3. El Contrato del Motor (Modelo de Clases)
 
-Los motores declaran sus capacidades (`EngineCapabilities`) y requisitos estrictos (`EngineRequirements`):
+Todos los módulos de visualización implementan la interfaz `IEngine`:
 
-```cpp
-struct EngineRequirements {
-    bool needsPsram = false;
-    bool needsAudio = false;
-    bool needsTempSensor = false;
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
-};
+```mermaid
+classDiagram
+    class IEngine {
+        <<interface>>
+        +initialize(context, config) EngineError
+        +activate() void
+        +update(context) void
+        +render(context) void
+        +deactivate() void
+        +onConfigChanged(config) void
+        +isFinished() bool
+        +isRealtime() bool
+        +setRotationBudget(budget) void
+        +selfPaced() bool
+        +allowsOverlay() bool
+    }
+
+    class EngineDescriptor {
+        +EngineMetadata metadata
+        +EngineCapabilities capabilities
+        +EngineRequirements requirements
+        +ConfigSchema schema
+        +EngineFactory factory
+    }
+
+    class EngineMetadata {
+        +String id
+        +String name
+        +String category
+        +String version
+    }
+
+    class EngineCapabilities {
+        +bool supports_128x32
+        +bool supports_256x64
+        +bool realtime
+        +bool interruptible
+        +bool allowsOverlay
+        +bool selfPaced
+    }
+
+    class EngineRequirements {
+        +bool needsPsram
+        +bool needsAudio
+        +bool needsTempSensor
+        +bool needsGyroscope
+        +bool needsNetwork
+        +bool needsSd
+    }
+
+    class ConfigSchema {
+        +vector~ConfigField~ fields
+    }
+
+    class ConfigField {
+        +String id
+        +ConfigType type
+        +String label
+        +String description
+        +String default_value
+        +bool required
+        +String min_val
+        +String max_val
+        +String step
+        +String options
+        +String visible_when
+        +String options_endpoint
+        +bool multiple
+        +ValidationPolicy validation_policy
+    }
+
+    EngineDescriptor --> EngineMetadata
+    EngineDescriptor --> EngineCapabilities
+    EngineDescriptor --> EngineRequirements
+    EngineDescriptor --> ConfigSchema
+    EngineDescriptor ..> IEngine : construye fábrica
 ```
 
-Al iniciar, `EngineRegistrar::registerAll()` consulta `HardwareHAL::capabilities()`. Si un motor requiere PSRAM o micrófono no disponibles, se omite su registro y se documenta la causa. La interfaz web lo muestra claramente mediante `GET /api/engines` (ej: *No disponible: Requiere PSRAM*).
+### Ciclo de Vida y Responsabilidades
+
+| Método | Momento de llamada | Función | Regla de Memoria |
+| :-- | :-- | :-- | :-- |
+| `initialize()` | Una sola vez en el primer render | Asignación de búferes, carga de fuentes/assets. | **Único** lugar permitido para asignaciones dinámicas pesadas. |
+| `activate()` | En cada cambio hacia este motor | Reinicio de variables temporales y contadores. | Cero asignaciones. |
+| `update()` | En cada fotograma de pantalla | Procesamiento de lógica y avance de estados. | Cero asignaciones. Modificar miembros existentes. |
+| `render()` | En cada fotograma de pantalla | Escritura directa en `MatrixPanel_I2S_DMA`. | Manipulación DMA directa. Cero asignaciones. |
+| `deactivate()` | Al salir de la rotación | Cierre de archivos y pausa de audio/red. | Liberación de recursos activos temporales. |
+| `onConfigChanged()`| En cambios vía API | Aplicación inmediata de ajustes sin recrear instancia. | Cero reasignaciones. |
+| `isFinished()` | Consultado en la rotación | Señala finalización anticipada de secuencia. | Consulta const. |
+| `isRealtime()` | Consultado en el limitador FPS | Indicación de cadencia dinámica (~60 FPS vs ~20 FPS). | Consulta const. |
+| `setRotationBudget()`| Al activar el módulo | Establece presupuesto por unidades (ej: reproducir N GIFs). | Recibe el valor numérico de rotación. |
+| `selfPaced()` | Consultado en la rotación | Si es true, el temporizador no fuerza el avance. | Controlado por `isFinished()`. |
+| `allowsOverlay()` | Consultado por DisplayArbiter | Si es true, el overlay Fighter puede superponerse. | Desactiva superposiciones si es false. |
 
 ---
 
-## 5. Canal de Renderizado y Overlays Aditivos
+## 4. Autodescubrimiento: Registro, Descriptor y Fábrica
 
-El renderizado se gestiona según las prioridades de `DisplayArbiter`:
+### Registro Desacoplado
+En el inicio, `EngineRegistrar::registerAll()` registra los descriptores en `EngineRegistry` sin tipos concretos fijados en `main.cpp`.
 
-```text
-             DisplayArbiter
-                   │
-                   ▼
-        ┌────────────────────┐
-        │ Fuente Principal   │
-        │ MQTT / Marquee /   │
-        │ Message / GIF /    │
-        │ Visualizer /       │
-        │ Rotation           │
-        └─────────┬──────────┘
-                  │
-                  ▼
-             render()
-                  │
-                  ▼
-          ┌───────────────┐
-          │ Pase Overlay  │  (FighterEngine, etc.
-          │               │   si está activo y allowsOverlay == true)
-          └───────┬───────┘
-                  │
-                  ▼
-          matrix.flipDMABuffer()
-```
-
-- **Composición Aditiva**: Los overlays (como `FighterEngine`) dibujan directamente sobre el búfer existente sin llamar a `matrix.fillScreen(0)`.
-- **Supresión Automática**: Si la fuente activa es MQTT, Marquee Batocera o un motor con `allowsOverlay() == false` (ej: `GifEngine`), el overlay se desactiva y descarga automáticamente.
+### Control de Requisitos de Hardware (Gating)
+`EngineRegistrar::meetsRequirements()` compara `EngineRequirements` con `HardwareHAL::capabilities()`. Si falta hardware requerido (PSRAM o micrófono):
+1. Se registra con `available = false` y la causa descriptiva (*"Requiere PSRAM"*).
+2. La fábrica no se invoca en el bucle de rotación.
+3. `GET /api/engines` envía la causa a la interfaz web para desactivar el motor con un mensaje explicativo.
 
 ---
 
-## 6. Configuración y Recarga en Caliente
+## 5. El Ciclo de Vida "Lazy-Once"
 
-1. **`ConfigLoader`**: Carga y analiza `/config.json` desde la tarjeta SD.
-2. **`ConfigSanitizer`**: Valida límites de enteros, flotantes, cadenas booleanas y opciones de enumeración según `ConfigSchema`. Inserta valores por defecto si faltan.
-3. **`onConfigChanged()`**: Cualquier cambio enviado por `POST /api/instances` o `POST /api/settings` se guarda en SD y se aplica al motor activo en vivo sin necesidad de reiniciar.
+```mermaid
+sequenceDiagram
+    participant Loop as Bucle de pantalla
+    participant RM as RotationManager
+    participant Reg as EngineRegistry
+    participant Eng as IEngine
+
+    Loop->>RM: loop()
+    alt instancia no almacenada en caché
+        RM->>Reg: getDescriptor(engine_id)
+        Reg-->>RM: EngineDescriptor
+        RM->>Eng: factory()
+        RM->>Eng: initialize(ctx, config)
+        RM->>RM: Almacena instancia unique_ptr
+    else instancia ya activa
+        alt configuración modificada en API
+            RM->>Eng: onConfigChanged(config)
+        end
+    end
+    RM->>Eng: update(ctx)
+    RM->>Eng: render(ctx)
+```
+
+---
+
+## 6. Modelo de Configuración: `config.json` → Instancias
+
+Toda la configuración se persiste en `/config.json` en la tarjeta microSD:
+
+- **Tipo de Motor (`engine_id`)**: Arquetipo (ej: `clock`), registrado en `EngineRegistry`.
+- **Instancia de Motor (`instance_id`)**: Ocurrencia configurada (ej: `clock_main`, `clock_retro`), en `config.instances`.
+- **Diccionario de Configuración (`DictionaryEngineConfig`)**: Claves y valores aislados entregados al motor.
+
+---
+
+## 7. Autorreparación: el ConfigSanitizer
+
+`ConfigSanitizer::sanitizeInstances()` se ejecuta en el arranque y tras cada escritura en la API:
+- Verifica claves e inserta `default_value` si falta.
+- Ajusta enteros y flotantes (`Clamp`) o aplica el valor por defecto (`FallbackDefault`).
+- Normaliza valores booleanos (`true` / `false`) y valida opciones de enumeración.
+
+---
+
+## 8. Propagación de Configuración y Recarga en Caliente
+
+1. La interfaz web envía JSON a `POST /api/instances`.
+2. `ConfigSanitizer` valida y normaliza según el esquema.
+3. Se guarda en la tarjeta SD.
+4. `rotationManager->notifyConfigChanged(instanceId)` ejecuta `onConfigChanged()` en la instancia activa sin reiniciar la placa.
+
+---
+
+## 9. Interfaz Web Dinámica Basada en Esquemas
+
+La interfaz web (`data/index.html`) es completamente dinámica:
+- **Opciones Dinámicas (`options_endpoint`)**: Menús desplegables para Temas de reloj (`/api/themes`), Fuentes (`/api/fonts`) y Playlists (`/api/playlists`).
+- **Avisos de Hardware**: Muestra advertencias informativas en módulos incompatibles (*"No disponible: Requiere PSRAM"*).
+
+---
+
+## 10. El Árbitro de Pantalla (Display Arbiter)
+
+Jerarquía de prioridades de visualización:
+1. Mensaje MQTT (Prioridad 10)
+2. Marquee Retrogaming (Prioridad 8)
+3. Animación GIF One-Shot (Prioridad 6)
+4. Visualizador de Audio (Prioridad 4)
+5. Bucle de Rotación Principal (Prioridad 0)
+
+---
+
+## 11. El Compositor de Superposición Fighter (Overlay)
+
+El motor `FighterEngine` funciona en **composición aditiva**:
+- Dibuja sobre el búfer del reloj o clima cuando `allowsCurrentOverlay() == true` y `fighter_main.enabled == true`.
+- Nunca limpia la pantalla (`matrix.fillScreen(0)`) para garantizar cero parpadeos.
+- Se desactiva y descarga automáticamente si una fuente prioritaria (MQTT/Marquee/GIF) toma el control.
+
+---
+
+## 12. Aislamiento en Tiempo de Ejecución y Doble Núcleo
+
+- **Núcleo 0**: Wi-Fi, servidor Web asíncrono, API REST y MQTT.
+- **Núcleo 1**: Bucle de renderizado a 60 FPS (`update()` + `render()` + intercambio de búfer DMA).
+- **Protección de buses**: Acceso a tarjeta SD protegido mediante semáforo `sdMutex`.
+
+---
+
+## 13. Cadencia de Renderizado y Limitador Adaptable
+
+- **Motores en Tiempo Real** (`isRealtime() == true`): Relojes animados, GIF, Visualizador, Fighter corren a **~60 FPS** (`16 ms`).
+- **Motores Estáticos** (`isRealtime() == false`): Reloj de texto, reloj binario, clima estático corren a **~20 FPS** (`50 ms`) para optimizar energía y disipación térmica.
+
+---
+
+## 14. Superficie de la API HTTP
+
+| Endpoint | Método | Función |
+|---|---|---|
+| `/api/hardware` | `GET` | Perfil de hardware, memoria PSRAM, estado de micrófono y sensores. |
+| `/api/engines` | `GET` | Lista de descriptores, esquemas, capacidades, requisitos y disponibilidad. |
+| `/api/instances` | `GET`, `POST` | CRUD de instancias con saneamiento y recarga en caliente. |
+| `/api/themes` | `GET` | Lista de 30 temas de reloj y fecha. |
+| `/api/version` | `GET` | Versión (`3.0.0`), commit Git, timestamp de compilación, arquitectura. |
+| `/api/settings` | `GET`, `POST` | Ajustes globales del sistema (matriz, wifi, mqtt, brillo). |
+| `/api/status` | `GET` | Estado de memoria, tiempo activo, margen de heap libre. |
+| `/api/sensor` | `GET` | Lectura en vivo de temperatura y humedad del sensor SHTC3. |
+
+---
+
+## 15. Metadatos de Compilación
+
+El script `scripts/build_webui.py` genera automáticamente `src/core/BuildInfo.h`:
+- `FIRMWARE_VERSION`: Extraído de forma centralizada del archivo `VERSION`.
+- `BUILD_GIT_COMMIT`: Hash corto del commit Git.
+- `BUILD_TIMESTAMP`: Marca de tiempo UTC de compilación.
+Accesible a través de `GET /api/version` y en el pie de página de la interfaz web.

@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ArcadeMatrix Local API
   description: API for controlling and configuring the ArcadeMatrix ESP32 firmware locally over Wi-Fi.
-  version: 1.0.0
+  version: 3.0.0
 servers:
   - url: http://ArcadeMatrix.local
     description: Default local mDNS address (or use the device's assigned IP)
@@ -600,7 +600,7 @@ paths:
                 properties:
                   version:
                     type: string
-                    example: "2.0.0"
+                    example: "3.0.0"
                   git_commit:
                     type: string
                     example: "a63490c"

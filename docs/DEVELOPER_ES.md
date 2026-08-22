@@ -2,51 +2,194 @@
 
 # Guía para Desarrolladores (ESP32 — C++)
 
-Bienvenido a la guía de desarrollo de ArcadeMatrix para ESP32. Este documento explica cómo crear nuevos motores, declarar esquemas de configuración, definir requisitos de hardware e integrarse de manera limpia con la interfaz web dinámica.
+Esta es la guía **técnica exhaustiva** para extender ArcadeMatrix en ESP32 (desarrollado en **C++**). Explica en detalle el contrato `IEngine`, el esquema `ConfigField` completo (incluyendo **listas de opciones dinámicas**, selección múltiple, visibilidad condicional y políticas de autorreparación), el filtrado de capacidades de hardware y la creación de un motor paso a paso.
+
+> Para comprender las decisiones de arquitectura (Registro, Lazy-Once, DisplayArbiter, subprocesos FreeRTOS, overlay), consulte [ARCHITECTURE_ES.md](ARCHITECTURE_ES.md). Esta guía es el manual práctico de implementación.
 
 ---
 
-## 1. Arquitectura de Motores y Ciclo de Vida Estricto
+## Tabla de Contenidos
 
-ArcadeMatrix se basa en una arquitectura desacoplada:
-1. **`IEngine`**: Contrato de interfaz abstracto para todos los módulos de visualización.
-2. **`EngineRegistry`**: Registro centralizado que almacena descriptores y fábricas.
-3. **`EngineRegistrar`**: Punto único de control (gating) que evalúa las capacidades de `HardwareHAL`.
-4. **`ConfigSanitizer`**: Validación declarativa e inyección de valores predeterminados.
-5. **`RotationManager`**: Instanciación bajo demanda (lazy) y gestión del bucle de rotación.
+1. [Modelo Mental](#1-modelo-mental)
+2. [El Contrato IEngine Completo](#2-el-contrato-iengine-completo)
+3. [El Ciclo de Vida y Reglas de Oro](#3-el-ciclo-de-vida-y-reglas-de-oro)
+4. [Capacidades y Requisitos de Hardware](#4-capacidades-y-requisitos-de-hardware)
+5. [Referencia de ConfigSchema y ConfigField](#5-referencia-de-configschema-y-configfield)
+6. [Listas de Opciones Dinámicas (`options_endpoint`)](#6-listas-de-opciones-dinámicas-options_endpoint)
+7. [Campos de Selección Múltiple](#7-campos-de-selección-múltiple)
+8. [Campos Condicionales (`visible_when`)](#8-campos-condicionales-visible_when)
+9. [Políticas de Validación y Autorreparación](#9-políticas-de-validación-y-autorreparación)
+10. [Tutorial: Crear un Nuevo Motor Paso a Paso](#10-tutorial-crear-un-nuevo-motor-paso-a-paso)
+11. [Tutorial: Añadir un Endpoint de Opciones Dinámicas](#11-tutorial-añadir-un-endpoint-de-opciones-dinámicas)
+12. [Lectura de Configuración en un Motor](#12-lectura-de-configuración-en-un-motor)
+13. [Renderizado en la Matriz LED](#13-renderizado-en-la-matriz-led)
+14. [Pruebas y Compilación Local](#14-pruebas-y-compilación-local)
+15. [Lista de Verificación del Desarrollador](#15-lista-de-verificación-del-desarrollador)
 
-```text
-initialize() [Configuración inicial y asignación de memoria]
-      ↓
-activate() [Reinicio de temporizadores / estado al cambiar]
-      ↓
-update() [Cálculo lógico - 60 FPS - CERO asignaciones en heap]
-      ↓
-render() [Dibujo de píxeles en MatrixPanel_I2S_DMA]
-      ↓
-deactivate() [Pausa / liberar archivos / detener audio]
+---
+
+## 1. Modelo Mental
+
+ArcadeMatrix **no tiene ninguna lista de motores prefijada en código** en `main.cpp`. Cada motor se registra al arrancar en `EngineRegistry`.
+
+```mermaid
+flowchart LR
+    DEV["Escribes src/engines/MyEngine.cpp"] --> REGT["EngineRegistrar::registerAll()"]
+    REGT --> GATING{¿Cumple Requisitos de Hardware?}
+    GATING -->|"Sí"| REG["EngineRegistry (Fábrica Activa)"]
+    GATING -->|"No"| REG2["EngineRegistry (Available: false + Causa)"]
+    REG --> API["GET /api/engines"]
+    API --> UI["Interfaz Web Dinámica (Auto-Form)"]
+    REG --> RM["RotationManager (Lazy-Once)"]
+    RM --> SCREEN["Matriz LED HUB75 (DMA)"]
 ```
 
-### Reglas Críticas
-- **Cero Asignaciones en el Bucle Activo**: Nunca instancie `String`, `std::vector` ni use `malloc`/`new` en `update()` o `render()`. Preasigne sus búferes en `initialize()`.
-- **Recarga en Caliente (Hot Reload)**: Implemente `onConfigChanged(const EngineConfig* config)` para aplicar cambios de usuario en vivo sin reiniciar.
-- **Aislamiento de Hardware**: Nunca use `psramFound()` ni `#ifdef BOARD_HAS_PSRAM` dentro del motor. Declare sus necesidades en `requirements.needsPsram`.
+---
+
+## 2. El Contrato IEngine Completo
+
+```cpp
+class IEngine {
+public:
+    virtual ~IEngine() = default;
+
+    // --- Ciclo de vida obligatorio ---
+    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
+    virtual void activate() = 0;
+    virtual void update(EngineContext* context) = 0;
+    virtual void render(EngineContext* context) = 0;
+    virtual void deactivate() = 0;
+
+    // --- Opcionales (con valores seguros por defecto) ---
+    virtual void onConfigChanged(const EngineConfig* config) {}
+    virtual bool isFinished() const { return false; }
+    virtual bool isRealtime() const { return true; }
+    virtual void setRotationBudget(uint32_t budget) {}
+    virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
+};
+```
 
 ---
 
-## 2. Paso a Paso: Creación de un Nuevo Motor
+## 3. El Ciclo de Vida y Reglas de Oro
 
-### Paso 1: Declarar la Clase (`src/engines/MyEngine.h`)
+1. **Regla de Oro #1 — Cero Asignaciones en el Bucle Activo:** Nunca instancie `String`, `std::vector` ni use `malloc`/`new` en `update()` o `render()`. Preasigne todo en `initialize()`.
+2. **Regla de Oro #2 — Recarga en Caliente en el Lugar:** En `onConfigChanged()`, actualice directamente las variables miembro.
+3. **Regla de Oro #3 — Bloqueos de Bus SD:** Las lecturas en la tarjeta SD deben protegerse con `sdMutex`.
 
+---
+
+## 4. Capacidades y Requisitos de Hardware
+
+```cpp
+struct EngineCapabilities {
+    bool supports_128x32 = true;
+    bool supports_256x64 = true;
+    bool realtime = true;
+    bool interruptible = true;
+    bool allowsOverlay = true;
+    bool selfPaced = false;
+};
+
+struct EngineRequirements {
+    bool needsPsram = false;      // ej: Historial Cripto/Bolsa
+    bool needsAudio = false;      // ej: Visualizador micro I2S
+    bool needsTempSensor = false; // ej: Sensor temperatura SHTC3
+    bool needsGyroscope = false;
+    bool needsNetwork = false;
+    bool needsSd = false;
+};
+```
+
+---
+
+## 5. Referencia de ConfigSchema y ConfigField
+
+```cpp
+struct ConfigField {
+    String id;                          // Clave en config.json
+    ConfigType type;                    // BOOLEAN, INTEGER, FLOAT, STRING, ENUM, COLOR, LIST
+    String label;                       // Etiqueta en UI
+    String description;                 // Información emergente
+    String default_value;               // Valor por defecto
+    bool required = false;
+    String min_val = "";                // Límite inferior
+    String max_val = "";                // Límite superior
+    String step = "";                   // Paso numérico
+    String options = "";                // Opciones separadas por coma
+    String visible_when = "";           // Regla de visibilidad condicional
+    String options_endpoint = "";       // Endpoint de opciones dinámicas
+    bool multiple = false;              // Selección múltiple
+    ValidationPolicy validation_policy; // Clamp, FallbackDefault, Reject, Accept
+};
+```
+
+---
+
+## 6. Listas de Opciones Dinámicas (`options_endpoint`)
+
+```cpp
+{
+    .id = "theme",
+    .type = ConfigType::ENUM,
+    .label = "Tema del reloj",
+    .default_value = "12",
+    .options_endpoint = "/api/themes"
+}
+```
+
+---
+
+## 7. Campos de Selección Múltiple
+
+```cpp
+{
+    .id = "playlists",
+    .type = ConfigType::LIST,
+    .label = "Playlists Activas",
+    .default_value = "arcade,retro",
+    .options_endpoint = "/api/playlists",
+    .multiple = true
+}
+```
+
+---
+
+## 8. Campos Condicionales (`visible_when`)
+
+```cpp
+{
+    .id = "custom_color",
+    .type = ConfigType::COLOR,
+    .label = "Color Personalizado",
+    .default_value = "#ff0055",
+    .visible_when = "theme=20"
+}
+```
+
+---
+
+## 9. Políticas de Validación y Autorreparación
+
+- `Clamp`: Ajusta el valor entre `min_val` y `max_val`.
+- `FallbackDefault`: Restablece a `default_value` si el valor es inválido.
+- `Accept`: Acepta el valor tal cual.
+
+---
+
+## 10. Tutorial: Crear un Nuevo Motor Paso a Paso
+
+### Paso 1: Crear `src/engines/MatrixRainEngine.h`
 ```cpp
 #pragma once
 #include "../../include/core/EngineContract.h"
 #include <Arduino.h>
 
-class MyEngine : public IEngine {
+class MatrixRainEngine : public IEngine {
 public:
-    MyEngine();
-    ~MyEngine() override = default;
+    MatrixRainEngine();
+    ~MatrixRainEngine() override = default;
 
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
@@ -54,166 +197,138 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
-    
-    // Métodos opcionales (con comportamientos predeterminados seguros):
-    bool isFinished() const override { return false; }
     bool isRealtime() const override { return true; }
-    bool selfPaced() const override { return false; }
-    bool allowsOverlay() const override { return true; }
 
 private:
     MatrixPanel_I2S_DMA* matrix = nullptr;
-    int speed = 1;
-    String text = "Hola";
-    int posX = 0;
+    int speed = 2;
+    int dropY[128];
 };
 ```
 
-### Paso 2: Implementar el Comportamiento (`src/engines/MyEngine.cpp`)
-
+### Paso 2: Implementar `src/engines/MatrixRainEngine.cpp`
 ```cpp
-#include "MyEngine.h"
-#include "../core/Logger.h"
+#include "MatrixRainEngine.h"
 
-MyEngine::MyEngine() {}
+MatrixRainEngine::MatrixRainEngine() {
+    memset(dropY, 0, sizeof(dropY));
+}
 
-EngineError MyEngine::initialize(EngineContext* context, const EngineConfig* config) {
+EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
     if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
     matrix = context->getMatrix();
-
-    if (config) {
-        speed = config->getInt("speed", 1);
-        text = config->getString("text", "Hola");
-    }
-    LOGI("MyEngine", "Inicializado con éxito");
+    if (config) speed = config->getInt("speed", 2);
     return EngineError::OK;
 }
 
-void MyEngine::activate() {
-    posX = 0;
+void MatrixRainEngine::activate() {
+    for (int i = 0; i < 128; i++) dropY[i] = random(-32, 0);
 }
 
-void MyEngine::update(EngineContext* context) {
-    posX += speed;
-    if (matrix && posX > matrix->width()) {
-        posX = -50;
+void MatrixRainEngine::update(EngineContext* context) {
+    if (!matrix) return;
+    for (int x = 0; x < matrix->width(); x += 4) {
+        dropY[x] += speed;
+        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
     }
 }
 
-void MyEngine::render(EngineContext* context) {
+void MatrixRainEngine::render(EngineContext* context) {
     if (!matrix) return;
     matrix->fillScreen(0);
-    matrix->setCursor(posX, 10);
-    matrix->print(text);
-}
-
-void MyEngine::deactivate() {
-    // Limpieza de recursos temporales
-}
-
-void MyEngine::onConfigChanged(const EngineConfig* config) {
-    if (config) {
-        speed = config->getInt("speed", 1);
-        text = config->getString("text", "Hola");
+    for (int x = 0; x < matrix->width(); x += 4) {
+        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
     }
+}
+
+void MatrixRainEngine::deactivate() {}
+
+void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) speed = config->getInt("speed", 2);
 }
 ```
 
 ### Paso 3: Registrar en `src/engines/EngineRegistrar.cpp`
-
-Añada su descriptor en `EngineRegistrar::registerAll()`:
-
 ```cpp
-#include "MyEngine.h"
+#include "MatrixRainEngine.h"
 
 void EngineRegistrar::registerAll() {
     // ...
     EngineDescriptor desc;
-    desc.metadata = {
-        .id = "my_engine",
-        .name = "Mi Motor Personalizado",
-        .category = "custom",
-        .version = "1.0.0"
-    };
-    desc.capabilities = {
-        .supports_128x32 = true,
-        .supports_256x64 = true,
-        .realtime = true,
-        .interruptible = true,
-        .allowsOverlay = true,
-        .selfPaced = false
-    };
-    desc.requirements = {
-        .needsPsram = false,
-        .needsAudio = false,
-        .needsTempSensor = false,
-        .needsGyroscope = false,
-        .needsNetwork = false,
-        .needsSd = false
-    };
+    desc.metadata = { .id = "matrix_rain", .name = "Matrix Rain", .category = "animations", .version = "3.0.0" };
+    desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+    desc.requirements = { .needsPsram = false, .needsAudio = false };
     desc.schema.fields = {
         {
             .id = "speed",
             .type = ConfigType::INTEGER,
-            .label = "Velocidad de desplazamiento",
-            .description = "Píxeles por fotograma",
-            .default_value = "1",
-            .required = false,
+            .label = "Velocidad",
+            .default_value = "2",
             .min_val = "1",
-            .max_val = "10",
-            .step = "1",
+            .max_val = "5",
             .validation_policy = ValidationPolicy::Clamp
-        },
-        {
-            .id = "text",
-            .type = ConfigType::STRING,
-            .label = "Texto mostrado",
-            .description = "Mensaje a desplazar",
-            .default_value = "Hola Mundo",
-            .required = false
         }
     };
-    desc.factory = []() {
-        return std::unique_ptr<IEngine>(new MyEngine());
-    };
-
+    desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
     tryRegister(desc);
 }
 ```
 
 ---
 
-## 3. Tipos de Datos del Esquema y Opciones Dinámicas
+## 11. Tutorial: Añadir un Endpoint de Opciones Dinámicas
 
-| `ConfigType` | Componente de la UI Web | Atributos Compatibles |
-|---|---|---|
-| `BOOLEAN` | Desplegable (Activado / Desactivado) | `default_value` |
-| `INTEGER` | Campo numérico con límites | `min_val`, `max_val`, `step`, `validation_policy` |
-| `FLOAT` | Campo decimal | `min_val`, `max_val`, `step`, `validation_policy` |
-| `STRING` | Campo de texto | `default_value` |
-| `ENUM` | Menú desplegable | `options="opt1,opt2"`, `options_endpoint` |
-| `COLOR` | Selector de color HTML5 | `default_value="#ffffff"` |
-| `LIST` | Selección múltiple | `options_endpoint="/api/playlists"`, `multiple=true` |
-
-### Ejemplo con Endpoint de Opciones Dinámicas
 ```cpp
-{
-    .id = "theme",
-    .type = ConfigType::ENUM,
-    .label = "Tema del reloj",
-    .default_value = "0",
-    .options_endpoint = "/api/themes"
-}
+server.on("/api/my_options", HTTP_GET, [](AsyncWebServerRequest *request){
+    DynamicJsonDocument doc(512);
+    JsonArray arr = doc.to<JsonArray>();
+    JsonObject o1 = arr.createNestedObject();
+    o1["id"] = "1"; o1["name"] = "Modo A";
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+});
 ```
 
 ---
 
-## 4. Control de Requisitos de Hardware (Gating)
+## 12. Lectura de Configuración en un Motor
 
-Si su motor requiere periféricos específicos (ej: micrófono o PSRAM):
 ```cpp
-desc.requirements.needsPsram = true;
-desc.requirements.needsAudio = true;
+int speed = config->getInt("speed", 2);
+String text = config->getString("title", "Arcade");
+bool enabled = config->getBool("enabled", true);
+float offset = config->getFloat("temp_offset", 0.0f);
 ```
 
-`EngineRegistrar` evalúa automáticamente `HardwareHAL::capabilities()`. Si la placa conectada no dispone del hardware requerido, el motor se omite de forma segura y la interfaz web muestra una advertencia explicativa.
+---
+
+## 13. Renderizado en la Matriz LED
+
+```cpp
+MatrixPanel_I2S_DMA* matrix = context->getMatrix();
+matrix->drawPixel(x, y, matrix->color565(r, g, b));
+matrix->fillRect(x, y, w, h, color);
+```
+*Nunca llame a `flipDMABuffer()` en el motor — el bucle principal lo gestiona de forma centralizada.*
+
+---
+
+## 14. Pruebas y Compilación Local
+
+```bash
+# ESP32 Estándar
+pio run -e esp32dev
+
+# Waveshare ESP32-S3
+pio run -e esp32s3_waveshare
+```
+
+---
+
+## 15. Lista de Verificación del Desarrollador
+
+- [ ] `initialize()` realiza todas las asignaciones de memoria; el bucle activo (`update`/`render`) tiene **cero asignaciones dinámicas**.
+- [ ] `onConfigChanged()` actualiza el estado sin destruir la instancia.
+- [ ] Los requisitos de hardware (`needsPsram`, `needsAudio`, `needsTempSensor`) están declarados.
+- [ ] La compilación se completa sin errores en `esp32dev` y `esp32s3_waveshare`.
