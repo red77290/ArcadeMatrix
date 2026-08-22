@@ -27,6 +27,8 @@ void StockEngine::onConfigChanged(const EngineConfig* engineConfig) {
     config_enabled = engineConfig->getBool("enabled", true);
     config_duration_sec = engineConfig->getInt("duration_sec", 5);
     config_cache_ttl_min = engineConfig->getInt("cache_ttl_min", 15);
+    config_show_chart = engineConfig->getBool("show_chart", true);
+    config_chart_timeframe = timeframeFromString(engineConfig->getString("chart_timeframe", "daily"));
     String syms = engineConfig->getString("symbols", "AAPL,NVDA,TSLA,MSFT");
     parseSymbols(syms);
 }
@@ -198,6 +200,41 @@ int StockEngine::pngDraw(PNGDRAW *pDraw) {
     return 1;
 }
 
+void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
+    uint32_t now = millis();
+    AssetHistoryCache& cache = historyCache[symbol];
+
+    uint32_t ttlMs = 5 * 60 * 1000;
+    switch (tf) {
+        case Timeframe::Hourly: ttlMs = 60 * 1000; break;
+        case Timeframe::Daily: ttlMs = 5 * 60 * 1000; break;
+        case Timeframe::Weekly: ttlMs = 30 * 60 * 1000; break;
+        case Timeframe::Monthly: ttlMs = 120 * 60 * 1000; break;
+    }
+
+    if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
+        return;
+    }
+
+    float points[64];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+
+    for (IStockProvider* provider : providers) {
+        if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
+            memcpy(cache.points, points, count * sizeof(float));
+            cache.count = count;
+            cache.minPrice = minP;
+            cache.maxPrice = maxP;
+            cache.lastFetchTime = now;
+            cache.hasData = true;
+            LOGI("StockEngine", "[History Success] Fetched %d points for %s (%s)", (int)count, symbol.c_str(), timeframeLabel(tf));
+            return;
+        }
+    }
+}
+
 void StockEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
     
@@ -205,10 +242,24 @@ void StockEngine::update(EngineContext* context) {
     uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
-        symbolsShownThisCycle++;
-        currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
-        activeSymbol = symbolList[currentSymbolIndex];
-        fetchQuote(activeSymbol);
+        if (config_show_chart) {
+            if (currentPage == DisplayPage::Info) {
+                currentPage = DisplayPage::Chart;
+                fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
+            } else {
+                currentPage = DisplayPage::Info;
+                symbolsShownThisCycle++;
+                currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+                activeSymbol = symbolList[currentSymbolIndex];
+                fetchQuote(activeSymbol);
+            }
+        } else {
+            currentPage = DisplayPage::Info;
+            symbolsShownThisCycle++;
+            currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+            activeSymbol = symbolList[currentSymbolIndex];
+            fetchQuote(activeSymbol);
+        }
     }
 }
 
@@ -219,7 +270,100 @@ bool StockEngine::isFinished() const {
 
 void StockEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    renderQuote(context);
+    if (currentPage == DisplayPage::Info) {
+        renderQuote(context);
+    } else {
+        renderChart(context);
+    }
+}
+
+void StockEngine::renderChart(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    matrix->fillScreen(0);
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    char priceBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "Loading...");
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
+    }
+
+    char pctBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(pctBuf, sizeof(pctBuf), "--");
+    } else {
+        snprintf(pctBuf, sizeof(pctBuf), "%s%.2f%%", changePercent24h >= 0 ? "+" : "", changePercent24h);
+    }
+    uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
+
+    const char* tfLabel = timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hist = historyCache[activeSymbol];
+
+    if (mH >= 64) {
+        // Header
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(6, 4);
+        matrix->printf("%s (%s)", activeSymbol.c_str(), tfLabel);
+
+        matrix->setTextColor(matrix->color565(0, 220, 255));
+        int priceX = mW - (strlen(priceBuf) * 6 + 6);
+        if (priceX < 6 + (int)(activeSymbol.length() + 5) * 6) priceX = 6 + (activeSymbol.length() + 5) * 6;
+        matrix->setCursor(priceX, 4);
+        matrix->print(priceBuf);
+
+        // Subheader % change
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(6, 14);
+        matrix->print(pctBuf);
+
+        // Sparkline
+        int sparkX = 4;
+        int sparkY = 25;
+        int sparkW = mW - 8;
+        int sparkH = 35;
+
+        if (hist.hasData && hist.count > 1) {
+            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
+            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+        } else {
+            matrix->setTextColor(matrix->color565(120, 120, 120));
+            matrix->setCursor(6, sparkY + 10);
+            matrix->print("Loading chart...");
+        }
+    } else {
+        // 32px height panel
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(2, 1);
+        matrix->printf("%s %s", activeSymbol.c_str(), tfLabel);
+
+        matrix->setTextColor(matrix->color565(0, 220, 255));
+        int priceX = mW - (strlen(priceBuf) * 6 + 2);
+        if (priceX < 2 + (int)(activeSymbol.length() + 4) * 6) priceX = 2 + (activeSymbol.length() + 4) * 6;
+        matrix->setCursor(priceX, 1);
+        matrix->print(priceBuf);
+
+        int sparkX = 2;
+        int sparkY = 12;
+        int sparkW = mW - 4;
+        int sparkH = 19;
+
+        if (hist.hasData && hist.count > 1) {
+            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
+            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+        } else {
+            matrix->setTextColor(matrix->color565(120, 120, 120));
+            matrix->setCursor(4, sparkY + 4);
+            matrix->print("Loading...");
+        }
+    }
 }
 
 void StockEngine::renderQuote(EngineContext* context) {

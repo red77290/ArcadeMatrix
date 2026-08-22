@@ -119,16 +119,69 @@ void test_parse_yahoo_malformed(void) {
     TEST_ASSERT_FALSE(success);
 }
 
+void test_parse_binance_klines(void) {
+    String payload = "[[1499040000000,\"0.01634790\",\"0.80000000\",\"0.01575800\",\"0.01577100\",\"148976.11427815\",1499644799999,\"2434.19055334\",308,\"1756.87402397\",\"28.46690204\",\"0\"],[1499040000000,\"0.01577100\",\"0.02000000\",\"0.01500000\",\"0.01900000\",\"148976.11427815\",1499644799999,\"2434.19055334\",308,\"1756.87402397\",\"28.46690204\",\"0\"]]";
+    float points[10];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+    BinanceProvider provider;
+    bool success = provider.parseKlines(payload, points, 10, count, minP, maxP);
+    TEST_ASSERT_TRUE(success);
+    TEST_ASSERT_EQUAL(2, count);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.015771f, points[0]);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.019000f, points[1]);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.015771f, minP);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.019000f, maxP);
+}
+
+void test_parse_yahoo_chart(void) {
+    String payload = "{\"chart\":{\"result\":[{\"indicators\":{\"quote\":[{\"close\":[150.0, 155.5, null, 160.2]}]}}]}}";
+    float points[10];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+    YahooFinanceProvider provider;
+    bool success = provider.parseChart(payload, points, 10, count, minP, maxP);
+    TEST_ASSERT_TRUE(success);
+    TEST_ASSERT_EQUAL(3, count);
+    TEST_ASSERT_EQUAL_FLOAT(150.0f, points[0]);
+    TEST_ASSERT_EQUAL_FLOAT(155.5f, points[1]);
+    TEST_ASSERT_EQUAL_FLOAT(160.2f, points[2]);
+    TEST_ASSERT_EQUAL_FLOAT(150.0f, minP);
+    TEST_ASSERT_EQUAL_FLOAT(160.2f, maxP);
+}
+
+void test_parse_coingecko_market_chart(void) {
+    String payload = "{\"prices\":[[1600000000000, 100.0], [1600003600000, 105.5], [1600007200000, 98.2]]}";
+    float points[10];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+    CoinGeckoProvider provider;
+    bool success = provider.parseMarketChart(payload, points, 10, count, minP, maxP);
+    TEST_ASSERT_TRUE(success);
+    TEST_ASSERT_EQUAL(3, count);
+    TEST_ASSERT_EQUAL_FLOAT(100.0f, points[0]);
+    TEST_ASSERT_EQUAL_FLOAT(105.5f, points[1]);
+    TEST_ASSERT_EQUAL_FLOAT(98.2f, points[2]);
+    TEST_ASSERT_EQUAL_FLOAT(98.2f, minP);
+    TEST_ASSERT_EQUAL_FLOAT(105.5f, maxP);
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
     RUN_TEST(test_parse_coingecko_primary);
     RUN_TEST(test_parse_coingecko_simple);
     RUN_TEST(test_parse_coingecko_malformed);
+    RUN_TEST(test_parse_coingecko_market_chart);
     RUN_TEST(test_parse_binance);
     RUN_TEST(test_parse_binance_malformed);
+    RUN_TEST(test_parse_binance_klines);
     RUN_TEST(test_parse_yahoo_finance);
     RUN_TEST(test_parse_yahoo_malformed);
+    RUN_TEST(test_parse_yahoo_chart);
     RUN_TEST(test_parse_openweathermap);
     UNITY_END();
 }
