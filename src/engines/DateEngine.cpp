@@ -301,7 +301,7 @@ void DateEngine::applyThemeSettings() {
             break;
             
         case THEME_CYBERPUNK:
-            textColor = matrix->color565(200, 255, 200);
+            textColor = matrix->color565(0, 140, 0);
             shadowColor = matrix->color565(0, 0, 0);
             selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
             break;

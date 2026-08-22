@@ -102,7 +102,7 @@ void PacmanClock::update() {
         animFrame++;
         
         if (transitioning) {
-            float pacSpeed = max(1.5f, 3.0f * matrix->width() / 64.0f);
+            float pacSpeed = max(0.6f, 0.8f * matrix->width() / 64.0f);
             pacX += pacSpeed;
             
             if (pacX >= matrix->width() + pacRadius * 3.0f) {
