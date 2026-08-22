@@ -50,8 +50,15 @@ void CyberpunkClock::drawTime() {
     int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - bx;
     int y = (matrix->height() - bh) / 2 - by + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
-    // Matrix Green Time
-    matrix->setTextColor(matrix->color565(200, 255, 200)); // Bright core
+    // Black outline so time remains readable over rain
+    matrix->setTextColor(matrix->color565(0, 0, 0));
+    matrix->setCursor(x - 1, y); matrix->print(timeStr);
+    matrix->setCursor(x + 1, y); matrix->print(timeStr);
+    matrix->setCursor(x, y - 1); matrix->print(timeStr);
+    matrix->setCursor(x, y + 1); matrix->print(timeStr);
+
+    // Dark Green Time (Vert foncé True Matrix)
+    matrix->setTextColor(matrix->color565(0, 140, 0));
     matrix->setCursor(x, y);
     matrix->print(timeStr);
 }

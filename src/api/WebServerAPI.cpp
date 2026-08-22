@@ -230,8 +230,8 @@ void WebServerAPI::setupRoutes() {
             {12, "Street Fighter (Ryu)"}, {13, "Super Mario"}, {14, "Metal Slug (Marco)"},
             {15, "Mega Man"}, {16, "Space Invaders"}, {17, "Bubble Bobble (Bub)"},
             {18, "Cyberpunk"}, {19, "Flip Clock"}, {20, "Custom Gradient"},
-            {21, "Matrix Rain"}, {22, "Pong Clock"}, {23, "Tetris Clock"},
-            {24, "Word Clock"}, {25, "Binary Clock"}, {26, "Pacman Clock"},
+            {21, "True Matrix"}, {22, "Pong Clock"}, {23, "Tetris Clock"},
+            {24, "Word Clock"}, {25, "Binary Clock"}, {26, "Pac-Man Clock"},
             {27, "Versus Clock"}, {28, "Slot Machine Clock"}, {29, "Tetris Game Boy"}
         };
         for (const auto& t : themes) {
