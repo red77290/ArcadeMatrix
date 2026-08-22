@@ -76,8 +76,6 @@ void HardwareHAL::begin() {
          _capabilities.hasMicrophone ? "AVAILABLE" : "NOT DETECTED");
 
     // Populate Capabilities Snapshot
-    _capabilities.hasTempSensor = _capabilities.hasTempSensor;
-    _capabilities.hasMicrophone = _capabilities.hasMicrophone;
     _capabilities.hasGyroscope = false;
 
     if (psramFound()) {

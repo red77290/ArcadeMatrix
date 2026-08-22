@@ -793,7 +793,15 @@ void WebServerAPI::setupRoutes() {
         if (!doc["mqtt_topic_recal"].isNull()) config.mqtt.topic_recalbox = doc["mqtt_topic_recal"].as<String>();
         if (!doc["mqtt_device"].isNull()) config.mqtt.deviceName = doc["mqtt_device"].as<String>();
 
+        // Sanitize all instances before persisting
+        ConfigSanitizer::sanitizeInstances(config);
         config.saveToSD("/config.json");
+
+        if (rotationManager && !willReboot) {
+            if (cryptoInst) rotationManager->notifyConfigChanged("crypto_main");
+            if (stockInst) rotationManager->notifyConfigChanged("stock_main");
+            if (fighterInst) rotationManager->notifyConfigChanged("fighter_main");
+        }
 
         if (willReboot) {
             request->send(200, "application/json", "{\"status\":\"rebooting\"}");
@@ -915,7 +923,7 @@ void WebServerAPI::setupRoutes() {
         auto clockInst = config.getInstance("clock_main");
         if (clockInst) clockInst->config.setInt("clock_theme", themeId);
         if (rotationManager) {
-            rotationManager->notifyConfigChanged("clock");
+            rotationManager->notifyConfigChanged("clock_main");
         }
             bool saved = config.saveToSD("/config.json");
             if (!saved) {

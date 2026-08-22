@@ -8,8 +8,6 @@
 
 extern SemaphoreHandle_t sdMutex;
 
-#define MAX_FIGHTER_FRAME_SIZE 98304
-
 FighterEngine::FighterEngine() : matrix(nullptr) {}
 
 EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
@@ -173,7 +171,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
-    int maxFrameSize = hardwareHAL.capabilities().hasPsram ? (2 * 1024 * 1024) : 98304;
+    int maxFrameSize = hardwareHAL.capabilities().hasPsram ? (2 * 1024 * 1024) : 32768;
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
