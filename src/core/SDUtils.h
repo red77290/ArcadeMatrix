@@ -9,7 +9,19 @@ typedef fs::File FsFile;
 #define FILE_OPEN_READ "r"
 #define FILE_OPEN_WRITE "w"
 #else
+#ifdef FILE_READ
+#undef FILE_READ
+#endif
+#ifdef FILE_WRITE
+#undef FILE_WRITE
+#endif
 #include <SdFat.h>
+#ifdef FILE_READ
+#undef FILE_READ
+#endif
+#ifdef FILE_WRITE
+#undef FILE_WRITE
+#endif
 extern SdFs sd;
 #define FILE_OPEN_READ O_READ
 #define FILE_OPEN_WRITE (O_WRITE | O_CREAT | O_TRUNC)
