@@ -32,6 +32,10 @@ public:
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
+    bool isRealtime() const override { return true; }
+    bool selfPaced() const override { return true; }
+    void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
+    bool allowsOverlay() const override { return false; }
 
     ~GifEngine();
 
@@ -119,6 +123,8 @@ private:
     
     int remainingGifsToPlay;         ///< Counter for rotation limits
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
+    uint32_t m_rotationBudget = 0;
+    const EngineConfig* m_instanceConfig = nullptr;
     
     void loadNextFileInPlaylist();
     bool playRawFrame();

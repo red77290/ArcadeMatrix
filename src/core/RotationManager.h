@@ -28,6 +28,9 @@ public:
     void setSuspended(bool suspended);
     bool isSuspended() const { return suspended; }
     
+    bool isCurrentRealtime() const;
+    bool allowsCurrentOverlay() const;
+
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
     IEngine* getActiveEngine(const String& instanceId);
@@ -36,12 +39,8 @@ public:
     static size_t countSymbols(const String& symbols);
 
 private:
-
-    
     AppEngineContext* m_ctx = nullptr;
     std::map<String, std::unique_ptr<IEngine>> activeEngines;
-    
-    
     
     size_t currentIndex;
     uint32_t moduleStartTime;
@@ -50,5 +49,4 @@ private:
     String currentActiveInstanceId = "";
 
     void switchToModule(int index);
-    void updateBackgroundSprites();
 };

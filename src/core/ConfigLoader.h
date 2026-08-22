@@ -88,4 +88,21 @@ public:
         }
         return nullptr;
     }
+
+    EngineInstance* addInstance(const String& instanceId, const String& engineId) {
+        EngineInstance* existing = getInstance(instanceId);
+        if (existing) return existing;
+        instances.push_back({instanceId, engineId, {}});
+        return &instances.back();
+    }
+
+    bool removeInstance(const String& instanceId) {
+        for (auto it = instances.begin(); it != instances.end(); ++it) {
+            if (it->instance_id == instanceId) {
+                instances.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
 };

@@ -92,6 +92,10 @@ struct ConfigField {
     // Comma-separated options for ENUM/LIST
     const char* options = "";
     
+    // Dynamic endpoint for options (e.g. "/api/themes", "/api/fonts", "/api/playlists")
+    const char* options_endpoint = "";
+    bool multiple = false;
+    
     // E.g. "mode=custom"
     const char* visible_when = "";
     
@@ -153,6 +157,16 @@ public:
     
     // Intrinsic sequence completion signaling (not tied to Rotation duration)
     virtual bool isFinished() const { return false; }
+
+    // Realtime / dynamic cadence checking (for adaptive framerate)
+    virtual bool isRealtime() const { return false; }
+
+    // Self-paced engines (e.g. GIF player counting N items instead of seconds)
+    virtual bool selfPaced() const { return false; }
+    virtual void setRotationBudget(uint32_t budget) {}
+
+    // Overlay compositing capability query
+    virtual bool allowsOverlay() const { return true; }
 };
 
 // =======================================================

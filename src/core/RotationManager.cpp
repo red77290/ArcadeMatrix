@@ -83,10 +83,6 @@ void RotationManager::resetRotation() {
   switchToModule(currentIndex);
 }
 
-void RotationManager::updateBackgroundSprites() {
-  // TODO(Architecture): Fighter engine background sprites were here but were tightly coupled.
-}
-
 void RotationManager::switchToModule(int index) {
   if (config.rotation.empty())
     return;
@@ -100,6 +96,7 @@ void RotationManager::switchToModule(int index) {
 
   moduleStartTime = millis();
   String newInstanceId = config.rotation[index].instance_id;
+  uint32_t dur = config.rotation[index].duration_sec;
   
   String mod = newInstanceId; // Default to instance_id for legacy compatibility
   for (const auto& inst : config.instances) {
@@ -119,19 +116,38 @@ void RotationManager::switchToModule(int index) {
 
   // Activate new engine
   IEngine* newEngine = getActiveEngine(newInstanceId);
-  if (newEngine && currentActiveInstanceId != newInstanceId) {
-      newEngine->activate();
+  if (newEngine) {
+      if (newEngine->selfPaced()) {
+          newEngine->setRotationBudget(dur);
+      }
+      if (currentActiveInstanceId != newInstanceId) {
+          newEngine->activate();
+      }
   }
   
   currentActiveInstanceId = newInstanceId;
-
-  if (mod == "clock" || mod == "date" || mod == "weather" || mod == "temp") {
-    updateBackgroundSprites();
-  }
   
   LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
       mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
   switchDepth = 0;
+}
+
+bool RotationManager::isCurrentRealtime() const {
+    if (currentActiveInstanceId == "") return false;
+    auto it = activeEngines.find(currentActiveInstanceId);
+    if (it != activeEngines.end()) {
+        return it->second->isRealtime();
+    }
+    return false;
+}
+
+bool RotationManager::allowsCurrentOverlay() const {
+    if (currentActiveInstanceId == "") return false;
+    auto it = activeEngines.find(currentActiveInstanceId);
+    if (it != activeEngines.end()) {
+        return it->second->allowsOverlay();
+    }
+    return true;
 }
 
 void RotationManager::setSuspended(bool susp) {
@@ -172,8 +188,14 @@ bool RotationManager::loop() {
       activeEngine->render(m_ctx);
       
       if (!isSoloMode) {
-          if (activeEngine->isFinished() || (now - moduleStartTime >= dur * 1000UL)) {
-              advance = true;
+          if (activeEngine->selfPaced()) {
+              if (activeEngine->isFinished()) {
+                  advance = true;
+              }
+          } else {
+              if (activeEngine->isFinished() || (now - moduleStartTime >= dur * 1000UL)) {
+                  advance = true;
+              }
           }
       }
   } else {
