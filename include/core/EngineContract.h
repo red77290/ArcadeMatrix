@@ -77,9 +77,9 @@ struct EngineRequirements {
 // =======================================================
 
 struct ConfigField {
-    const char* id;
-    ConfigType type;
-    const char* label;
+    const char* id = "";
+    ConfigType type = ConfigType::STRING;
+    const char* label = "";
     const char* description = "";
     const char* default_value = "";
     bool required = false;
@@ -100,6 +100,16 @@ struct ConfigField {
     const char* visible_when = "";
     
     ValidationPolicy validation_policy = ValidationPolicy::Clamp;
+
+    ConfigField() = default;
+    ConfigField(const char* id_, ConfigType type_, const char* label_, const char* desc_ = "", const char* def_ = "",
+                bool req_ = false, const char* min_ = "", const char* max_ = "", const char* step_ = "",
+                const char* opt_ = "", const char* opt_ep_ = "", bool mult_ = false, const char* vis_ = "",
+                ValidationPolicy val_pol_ = ValidationPolicy::Clamp)
+        : id(id_), type(type_), label(label_), description(desc_), default_value(def_),
+          required(req_), min_val(min_), max_val(max_), step(step_),
+          options(opt_), options_endpoint(opt_ep_), multiple(mult_), visible_when(vis_),
+          validation_policy(val_pol_) {}
 };
 
 struct ConfigSchema {

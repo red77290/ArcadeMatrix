@@ -67,15 +67,7 @@ void StockEngine::deactivate() {
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
-    if (!hardwareHAL.capabilities().hasPsram) {
-        LOGW("StockEngine", "PSRAM required for HTTPS Stock fetches. Skipping.");
-        activeSymbol = "N/A";
-        currentPrice = 0.0f;
-        changePercent24h = 0.0f;
-        fetchSuccess = false;
-        return;
-    }
-    
+    activeSymbol = symbol;
     fetchSuccess = false;
     
     uint32_t now = millis();

@@ -15,12 +15,17 @@ class DecibelEngine;
 class MessageEngine;
 class MarqueeEngine;
 
+struct RequirementCheckResult {
+    bool satisfied;
+    String reason;
+};
+
 /**
- * @brief Registers all engines (including legacy wrappers) into the global EngineRegistry.
- * Call this exactly once during setup().
+ * @brief Registers all engines into the global EngineRegistry with complete schemas and requirement gating.
  */
 class EngineRegistrar {
 public:
     static void registerAll();
+    static RequirementCheckResult checkRequirements(const EngineRequirements& req);
     static bool meetsRequirements(const EngineRequirements& req);
 };

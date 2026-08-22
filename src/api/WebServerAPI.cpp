@@ -11,6 +11,7 @@
 #include "../core/Logger.h"
 #include "../core/BuildInfo.h"
 #include "../core/ConfigSanitizer.h"
+#include "../engines/EngineRegistrar.h"
 
 extern RotationManager* rotationManager;
 
@@ -167,24 +168,10 @@ void WebServerAPI::setupRoutes() {
             reqObj["needs_network"] = descriptors[i].requirements.needsNetwork;
             reqObj["needs_sd"] = descriptors[i].requirements.needsSd;
 
-            bool available = true;
-            String reason = "";
-            if (descriptors[i].requirements.needsPsram && !caps.hasPsram) {
-                available = false;
-                reason = "Requires PSRAM";
-            } else if (descriptors[i].requirements.needsAudio && !caps.hasMicrophone) {
-                available = false;
-                reason = "Requires microphone";
-            } else if (descriptors[i].requirements.needsTempSensor && !caps.hasTempSensor) {
-                available = false;
-                reason = "Requires temperature sensor";
-            } else if (descriptors[i].requirements.needsGyroscope && !caps.hasGyroscope) {
-                available = false;
-                reason = "Requires gyroscope";
-            }
-            obj["available"] = available;
-            if (!available) {
-                obj["reason"] = reason;
+            auto reqCheck = EngineRegistrar::checkRequirements(descriptors[i].requirements);
+            obj["available"] = reqCheck.satisfied;
+            if (!reqCheck.satisfied) {
+                obj["reason"] = reqCheck.reason;
             }
             
             JsonArray schema = obj.createNestedArray("schema");
@@ -280,7 +267,10 @@ void WebServerAPI::setupRoutes() {
         }
         
         EngineInstance* inst = config.getInstance(instanceId);
-        if (!inst) {
+        bool isNew = (inst == nullptr);
+        String oldEngineId = isNew ? "" : inst->engine_id;
+        
+        if (isNew) {
             inst = config.addInstance(instanceId, engineId.isEmpty() ? instanceId : engineId);
         }
         if (doc.containsKey("engine_id") && !engineId.isEmpty()) {
@@ -293,12 +283,19 @@ void WebServerAPI::setupRoutes() {
             }
         }
         
+        bool structuralChange = isNew || (oldEngineId != inst->engine_id);
+
         // Sanitize and save
         ConfigSanitizer::sanitizeInstances(config);
         config.saveToSD("/config.json");
         
         if (rotationManager) {
-            rotationManager->notifyConfigChanged(instanceId);
+            if (structuralChange) {
+                rotationManager->recreateInstance(instanceId);
+                rotationManager->resetRotation();
+            } else {
+                rotationManager->notifyConfigChanged(instanceId);
+            }
         }
         
         request->send(200, "application/json", "{\"success\":true}");

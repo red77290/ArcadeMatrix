@@ -75,6 +75,49 @@ void test_factory_creation(void) {
     TEST_ASSERT_NOT_NULL(instance.get());
 }
 
+void test_schema_and_fields(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "test.schema";
+    desc.schema.fields = {
+        ConfigField("speed", ConfigType::INTEGER, "Speed", "Playback speed", "2", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("theme", ConfigType::ENUM, "Theme", "Visual theme", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault)
+    };
+    EngineRegistry::registerEngine(desc);
+
+    const EngineDescriptor* found = EngineRegistry::getDescriptor("test.schema");
+    TEST_ASSERT_NOT_NULL(found);
+    TEST_ASSERT_EQUAL(2, found->schema.fields.size());
+    TEST_ASSERT_EQUAL_STRING("speed", found->schema.fields[0].id);
+    TEST_ASSERT_EQUAL(ConfigType::INTEGER, found->schema.fields[0].type);
+    TEST_ASSERT_EQUAL_STRING("2", found->schema.fields[0].default_value);
+    TEST_ASSERT_EQUAL_STRING("1", found->schema.fields[0].min_val);
+    TEST_ASSERT_EQUAL_STRING("10", found->schema.fields[0].max_val);
+    TEST_ASSERT_EQUAL(ValidationPolicy::Clamp, found->schema.fields[0].validation_policy);
+
+    TEST_ASSERT_EQUAL_STRING("theme", found->schema.fields[1].id);
+    TEST_ASSERT_EQUAL(ConfigType::ENUM, found->schema.fields[1].type);
+    TEST_ASSERT_EQUAL_STRING("/api/themes", found->schema.fields[1].options_endpoint);
+}
+
+void test_capabilities_and_requirements(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "test.caps";
+    desc.capabilities.realtime = true;
+    desc.capabilities.allowsOverlay = false;
+    desc.capabilities.selfPaced = true;
+    desc.requirements.needsPsram = true;
+    desc.requirements.needsAudio = true;
+    EngineRegistry::registerEngine(desc);
+
+    const EngineDescriptor* found = EngineRegistry::getDescriptor("test.caps");
+    TEST_ASSERT_NOT_NULL(found);
+    TEST_ASSERT_TRUE(found->capabilities.realtime);
+    TEST_ASSERT_FALSE(found->capabilities.allowsOverlay);
+    TEST_ASSERT_TRUE(found->capabilities.selfPaced);
+    TEST_ASSERT_TRUE(found->requirements.needsPsram);
+    TEST_ASSERT_TRUE(found->requirements.needsAudio);
+}
+
 #if defined(ARDUINO)
 #include <Arduino.h>
 void setup() {
@@ -84,6 +127,8 @@ void setup() {
     RUN_TEST(test_duplicate_registration_fails);
     RUN_TEST(test_get_descriptor);
     RUN_TEST(test_factory_creation);
+    RUN_TEST(test_schema_and_fields);
+    RUN_TEST(test_capabilities_and_requirements);
     UNITY_END();
 }
 void loop() {}
@@ -94,6 +139,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_duplicate_registration_fails);
     RUN_TEST(test_get_descriptor);
     RUN_TEST(test_factory_creation);
+    RUN_TEST(test_schema_and_fields);
+    RUN_TEST(test_capabilities_and_requirements);
     return UNITY_END();
 }
 #endif

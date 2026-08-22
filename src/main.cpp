@@ -144,9 +144,6 @@ void setup() {
 
     esp_task_wdt_add(NULL);
 
-    // Initialize Hardware Abstraction Layer & Sensors
-    hardwareHAL.begin();
-
     sdMutex = xSemaphoreCreateMutex();
 
     // 0. Pre-initialize Wi-Fi driver to reserve its internal RAM buffers
@@ -488,10 +485,6 @@ void loop() {
     DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        if (rotationManager) {
-            rotationManager->setSuspended(config.mqtt.enabled);
-        }
-
         // Synchronize Music Visualizer active state with config setting
         if (visualizerEngine) {
             if ((config.getInstance("visualizer_main") && config.getInstance("visualizer_main")->config.getBool("enabled")) && !visualizerEngine->isActive()) {
