@@ -164,8 +164,8 @@ void WebServerAPI::setupRoutes() {
         // snapshot can look fine while still trending toward an OOM crash).
         doc["min_free_heap"] = ESP.getMinFreeHeap();
         doc["max_alloc_heap"] = ESP.getMaxAllocHeap();
-        doc["psram_found"] = psramFound();
-        if (psramFound()) {
+        doc["psram_found"] = hardwareHAL.capabilities().hasPsram;
+        if (hardwareHAL.capabilities().hasPsram) {
             doc["free_psram"] = ESP.getFreePsram();
         }
         sendJsonResponse(request, doc);
@@ -414,7 +414,7 @@ void WebServerAPI::setupRoutes() {
 
         doc["sensor_available"] = hardwareHAL.isTempSensorAvailable();
         doc["audio_available"] = hardwareHAL.isAudioAvailable();
-        doc["psram_available"] = (ESP.getPsramSize() > 0);
+        doc["psram_available"] = hardwareHAL.capabilities().hasPsram;
 
         // Clock
         auto clockInst = getInst("clock_main");
@@ -462,7 +462,7 @@ void WebServerAPI::setupRoutes() {
         doc["night_mode_enabled"] = config.system.night_mode_enabled;
         doc["turn_off_at"] = config.system.turn_off_at;
         doc["wake_up_at"] = config.system.wake_up_at;
-        doc["matrix_brightness_night"] = config.system.night_brightness;
+        doc["night_brightness"] = config.system.night_brightness;
         doc["matrix_power"] = config.matrix.matrix_power;
 
         // WiFi
@@ -625,7 +625,7 @@ void WebServerAPI::setupRoutes() {
         if (!doc["night_mode_enabled"].isNull()) config.system.night_mode_enabled = doc["night_mode_enabled"].as<bool>();
         if (!doc["turn_off_at"].isNull()) config.system.turn_off_at = doc["turn_off_at"].as<String>();
         if (!doc["wake_up_at"].isNull()) config.system.wake_up_at = doc["wake_up_at"].as<String>();
-        if (!doc["matrix_brightness_night"].isNull()) config.system.night_brightness = doc["matrix_brightness_night"].as<int>();
+        if (!doc["night_brightness"].isNull()) config.system.night_brightness = doc["night_brightness"].as<int>();
 
         if (!doc["timezone"].isNull()) config.system.timezone = doc["timezone"].as<String>();
         if (!doc["format_24h"].isNull()) config.system.format24h = doc["format_24h"].as<bool>();

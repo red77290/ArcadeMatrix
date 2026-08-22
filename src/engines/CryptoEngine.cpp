@@ -1,4 +1,5 @@
 #include "CryptoEngine.h"
+#include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include <HTTPClient.h>
 
@@ -54,7 +55,7 @@ void CryptoEngine::activate() {
 }
 
 void CryptoEngine::fetchQuote(const String& symbol) {
-    if (ESP.getPsramSize() == 0) {
+    if (!hardwareHAL.capabilities().hasPsram) {
         LOGW("CryptoEngine", "PSRAM required for HTTPS Crypto fetches. Skipping.");
         activeSymbol = "N/A";
         currentPrice = 0.0f;

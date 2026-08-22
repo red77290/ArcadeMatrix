@@ -1,5 +1,6 @@
 #include "../core/SDUtils.h"
 #include "FighterEngine.h"
+#include "../hal/HardwareHAL.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
@@ -52,7 +53,7 @@ void FighterEngine::initialize() {
 
 String FighterEngine::getFightersDir() {
     if (matrix->height() <= 32) return "/fighters_32";
-    if (!psramFound()) {
+    if (!hardwareHAL.capabilities().hasPsram) {
         Serial.println("FighterEngine: No PSRAM found. Forcing /fighters_32 to avoid OOM!");
         return "/fighters_32";
     }
@@ -172,7 +173,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
-    int maxFrameSize = psramFound() ? (2 * 1024 * 1024) : 98304;
+    int maxFrameSize = hardwareHAL.capabilities().hasPsram ? (2 * 1024 * 1024) : 98304;
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
@@ -180,7 +181,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         return false;
     }
     
-    if (psramFound()) {
+    if (hardwareHAL.capabilities().hasPsram) {
         size_t freePsram = ESP.getFreePsram();
         size_t safetyHeadroom = 1048576; // 1 MB safety reserve
         if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
@@ -228,7 +229,7 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) p.activeFile.close();
     if (p.currentFrameBuffer) {
-        if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+        if (hardwareHAL.capabilities().hasPsram) heap_caps_free(p.currentFrameBuffer);
         else free(p.currentFrameBuffer);
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
@@ -422,10 +423,10 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
             if (p.currentFrameBuffer) {
-                if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+                if (hardwareHAL.capabilities().hasPsram) heap_caps_free(p.currentFrameBuffer);
                 else free(p.currentFrameBuffer);
             }
-            if (psramFound()) {
+            if (hardwareHAL.capabilities().hasPsram) {
                 p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
             } else {
                 p.currentFrameBuffer = (uint8_t*)malloc(newSize);

@@ -1,6 +1,7 @@
 #include "GifEngine.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 
@@ -94,7 +95,7 @@ bool GifEngine::playGif(const char* filepath) {
         return false;
     } else {
 #if defined(BOARD_HAS_PSRAM)
-        if (psramFound()) {
+        if (hardwareHAL.capabilities().hasPsram) {
             FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
             if (f) {
                 size_t fileSize = f.size();
