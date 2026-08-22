@@ -400,6 +400,217 @@ paths:
         '200':
           description: Success
 
+  /api/hardware:
+    get:
+      tags:
+        - System
+      summary: Get hardware profile and runtime capabilities
+      description: Returns the detected board profile (ESP32_STD vs WAVESHARE_S3) and dynamic peripheral presence (PSRAM, microphone, temperature sensor, gyroscope).
+      responses:
+        '200':
+          description: Hardware capabilities snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    type: string
+                    example: "WAVESHARE_S3"
+                  psram:
+                    type: object
+                    properties:
+                      available:
+                        type: boolean
+                      bytes:
+                        type: integer
+                  microphone:
+                    type: boolean
+                  temperature_sensor:
+                    type: boolean
+                  gyroscope:
+                    type: boolean
+
+  /api/themes:
+    get:
+      tags:
+        - Configuration
+      summary: List available clock and date themes
+      description: Dynamic options endpoint returning all 30 built-in publisher pixel-art and animated themes.
+      responses:
+        '200':
+          description: List of themes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+
+  /api/instances:
+    get:
+      tags:
+        - Configuration
+      summary: List all configured engine instances
+      description: Returns instances currently loaded in config.json.
+      responses:
+        '200':
+          description: List of instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    instance_id:
+                      type: string
+                    engine_id:
+                      type: string
+                    config:
+                      type: object
+    post:
+      tags:
+        - Configuration
+      summary: Create or update an engine instance
+      description: Validates against descriptor schema, sanitizes, persists to SD, and dispatches onConfigChanged() hot reload without reboot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instance_id
+                - engine_id
+              properties:
+                instance_id:
+                  type: string
+                engine_id:
+                  type: string
+                config:
+                  type: object
+      responses:
+        '200':
+          description: Configuration updated and hot reloaded.
+
+  /api/engines:
+    get:
+      tags:
+        - Engines
+      summary: List registered engines with schema, capabilities, and availability
+      description: Schema-driven engine discovery endpoint. UI consumes this to render configuration forms, dynamic options dropdowns, and hardware availability banners.
+      responses:
+        '200':
+          description: List of engine descriptors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    metadata:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        category:
+                          type: string
+                        version:
+                          type: string
+                    capabilities:
+                      type: object
+                      properties:
+                        supports_128x32:
+                          type: boolean
+                        supports_256x64:
+                          type: boolean
+                        realtime:
+                          type: boolean
+                        interruptible:
+                          type: boolean
+                        allowsOverlay:
+                          type: boolean
+                        selfPaced:
+                          type: boolean
+                    requirements:
+                      type: object
+                      properties:
+                        needs_psram:
+                          type: boolean
+                        needs_audio:
+                          type: boolean
+                        needs_temp_sensor:
+                          type: boolean
+                        needs_gyroscope:
+                          type: boolean
+                        needs_network:
+                          type: boolean
+                        needs_sd:
+                          type: boolean
+                    available:
+                      type: boolean
+                    reason:
+                      type: string
+                    schema:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          field_type:
+                            type: integer
+                          label:
+                            type: string
+                          description:
+                            type: string
+                          default_value:
+                            type: string
+                          options:
+                            type: string
+                          options_endpoint:
+                            type: string
+                          multiple:
+                            type: boolean
+                          visible_when:
+                            type: string
+
+  /api/version:
+    get:
+      tags:
+        - System
+      summary: Get firmware version and build information
+      description: Returns firmware semantic version, git commit hash, and build timestamp.
+      responses:
+        '200':
+          description: Build version info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: "2.0.0"
+                  git_commit:
+                    type: string
+                    example: "a63490c"
+                  build_timestamp:
+                    type: string
+                    example: "2026-08-22 12:00:00 UTC"
+                  arch:
+                    type: string
+                    example: "esp32s3"
+
   /api/ota:
     post:
       tags:
@@ -422,3 +633,4 @@ paths:
           description: Firmware updated successfully, device will reboot.
         '400':
           description: Update failed or no file provided.
+
