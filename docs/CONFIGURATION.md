@@ -97,3 +97,18 @@ Defines the display order on the screen.
 }
 ```
 The ESP32 will allocate memory (`initialize()`) for `crypto_main` the very first time it encounters it in this rotation loop.
+
+---
+
+## 6. Financial Engines Configuration (`crypto` & `stock`)
+
+Both `crypto` and `stock` engines support interactive multi-page display with real-time quotes and historical sparkline charts:
+
+| Key | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `"BTC,ETH"` / `"AAPL,NVDA"` | Comma-separated | Assets to monitor. |
+| `show_chart` | `bool` | `true` | `true`, `false` | Enables the historical sparkline chart view. |
+| `chart_timeframe` | `String` | `"daily"` | `"hourly"`, `"daily"`, `"weekly"`, `"monthly"` | Timeframe range for historical prices. |
+| `duration_sec` / `page_seconds` | `int` | `5` | `3` to `30` | Seconds to display each view before cycling. |
+| `cache_ttl_min` | `int` | `5` | `1` to `60` | Minutes between fresh API queries. |
+
