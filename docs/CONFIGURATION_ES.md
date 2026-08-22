@@ -97,3 +97,18 @@ Define el orden de visualización en la pantalla.
 }
 ```
 El ESP32 asignará memoria (`initialize()`) para `crypto_main` la primera vez que lo encuentre en este bucle de rotación.
+
+---
+
+## 6. Configuración de motores financieros (`crypto` y `stock`)
+
+Los motores `crypto` y `stock` admiten visualización multipágina interactiva con cotizaciones en tiempo real y gráficos sparklines históricos:
+
+| Clave | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `"BTC,ETH"` / `"AAPL,NVDA"` | Separados por comas | Activos financieros a monitorear. |
+| `show_chart` | `bool` | `true` | `true`, `false` | Activa la pantalla con el gráfico sparkline histórico. |
+| `chart_timeframe` | `String` | `"daily"` | `"hourly"`, `"daily"`, `"weekly"`, `"monthly"` | Intervalo de tiempo para el gráfico de precios. |
+| `duration_sec` / `page_seconds` | `int` | `5` | `3` a `30` | Segundos para mostrar cada vista antes de alternar. |
+| `cache_ttl_min` | `int` | `5` | `1` a `60` | Minutos de retención de caché antes de consultar las API. |
+
