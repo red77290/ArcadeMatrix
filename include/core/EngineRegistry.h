@@ -15,6 +15,9 @@ public:
     // Returns all registered descriptors
     static const EngineDescriptor* getAllDescriptors(size_t& count);
     
+    // Returns number of registered engines
+    static size_t count() { return _engineCount; }
+    
     // Clears the registry (useful for tests)
     static void clear();
 

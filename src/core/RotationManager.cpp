@@ -52,6 +52,17 @@ void RotationManager::notifyConfigChanged(const String& instanceId) {
         }
     }
 }
+
+void RotationManager::recreateInstance(const String& instanceId) {
+    auto it = activeEngines.find(instanceId);
+    if (it != activeEngines.end()) {
+        if (currentActiveInstanceId == instanceId) {
+            it->second->deactivate();
+        }
+        activeEngines.erase(it);
+        LOGI("RotationManager", "Instance %s destroyed for structural re-instantiation", instanceId.c_str());
+    }
+}
 IEngine* RotationManager::getActiveEngine(const String& instanceId) {
     auto it = activeEngines.find(instanceId);
     if (it != activeEngines.end()) {

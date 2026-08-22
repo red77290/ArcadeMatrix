@@ -55,15 +55,6 @@ void CryptoEngine::activate() {
 }
 
 void CryptoEngine::fetchQuote(const String& symbol) {
-    if (!hardwareHAL.capabilities().hasPsram) {
-        LOGW("CryptoEngine", "PSRAM required for HTTPS Crypto fetches. Skipping.");
-        activeSymbol = "N/A";
-        currentPrice = 0.0f;
-        changePercent24h = 0.0f;
-        fetchSuccess = false;
-        return;
-    }
-    
     activeSymbol = symbol;
     fetchSuccess = false;
     

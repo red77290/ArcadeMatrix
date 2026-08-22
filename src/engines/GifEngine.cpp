@@ -103,7 +103,6 @@ bool GifEngine::playGif(const char* filepath) {
         }
         return false;
     } else {
-#if defined(BOARD_HAS_PSRAM)
         if (hardwareHAL.capabilities().hasPsram) {
             FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
             if (f) {
@@ -144,7 +143,6 @@ bool GifEngine::playGif(const char* filepath) {
                 }
             }
         }
-#endif
         // Fallback to streaming from SD card
         if (gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
             LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);

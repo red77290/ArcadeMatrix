@@ -18,6 +18,7 @@ public:
     
     void begin(const ConfigLoader& cfg);
     void notifyConfigChanged(const String& instanceId);
+    void recreateInstance(const String& instanceId);
     bool loop();
     
     // Reset to start of rotation (e.g. after manual interruption)
