@@ -9,8 +9,20 @@
 #pragma once
 #include <Arduino.h>
 #include <AnimatedGIF.h>
+#ifdef INTELSHORT
+#undef INTELSHORT
+#endif
+#ifdef INTELLONG
+#undef INTELLONG
+#endif
 #include <PNGdec.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#ifdef FILE_READ
+#undef FILE_READ
+#endif
+#ifdef FILE_WRITE
+#undef FILE_WRITE
+#endif
 #include <FS.h>
 #include "core/SDUtils.h"
 #include <vector>
