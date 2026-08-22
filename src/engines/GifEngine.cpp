@@ -1,7 +1,6 @@
 #include "GifEngine.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
-#include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 
@@ -19,6 +18,7 @@ GifEngine::~GifEngine() {
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
     if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
     m_instanceConfig = config;
+    m_hasPsram = context->hasPsram();
     return begin(context->getMatrix()) ? EngineError::OK : EngineError::InitializationFailed;
 }
 
@@ -103,7 +103,7 @@ bool GifEngine::playGif(const char* filepath) {
         }
         return false;
     } else {
-        if (hardwareHAL.capabilities().hasPsram) {
+        if (m_hasPsram) {
             FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
             if (f) {
                 size_t fileSize = f.size();

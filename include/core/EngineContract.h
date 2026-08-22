@@ -145,6 +145,9 @@ public:
     // Time services
     // Fetches the current local system time
     virtual void getSystemTime(struct tm* timeinfo) = 0;
+
+    // Hardware runtime services
+    virtual bool hasPsram() const { return false; }
 };
 
 // =======================================================

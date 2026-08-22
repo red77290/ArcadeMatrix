@@ -182,6 +182,7 @@ private:
     };
     LoadState currentLoadState = LOAD_IDLE;
     String loadDir;
+    bool m_hasPsram = false;
     void processLoadState();
 };
 

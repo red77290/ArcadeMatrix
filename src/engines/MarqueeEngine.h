@@ -37,4 +37,5 @@ private:
     bool active;
     unsigned long startTime;
     unsigned long durationMs;
+    bool m_hasPsram = false;
 };

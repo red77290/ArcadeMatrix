@@ -160,4 +160,6 @@ private:
     static int32_t PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen);
     static int32_t PNGSeekFile(PNGFILE *pFile, int32_t iPosition);
     static int PNGDrawCallback(PNGDRAW *pDraw);
+
+    bool m_hasPsram = false;
 };
