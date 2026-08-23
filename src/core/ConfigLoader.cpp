@@ -87,31 +87,62 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     }
 
     if (doc.containsKey("system")) {
-        system.timezone = doc["system"]["timezone"] | system.timezone;
-        system.format24h = doc["system"]["format24h"] | system.format24h;
-        system.lang = doc["system"]["lang"] | system.lang;
-        system.unit = doc["system"]["unit"] | system.unit;
-        system.temp_offset = doc["system"]["temp_offset"] | system.temp_offset;
-        system.night_mode_enabled = doc["system"]["night_mode_enabled"] | system.night_mode_enabled;
-        system.turn_off_at = doc["system"]["turn_off_at"] | system.turn_off_at;
-        system.wake_up_at = doc["system"]["wake_up_at"] | system.wake_up_at;
-        system.night_brightness = doc["system"]["night_brightness"] | system.night_brightness;
+        JsonObject sys = doc["system"];
+        system.timezone = sys["timezone"] | system.timezone;
+        if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
+        else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
+        system.lang = sys["lang"] | system.lang;
+        system.unit = sys["unit"] | system.unit;
+        system.temp_offset = sys["temp_offset"] | system.temp_offset;
+        system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
+        system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;
+        system.wake_up_at = sys["wake_up_at"] | system.wake_up_at;
+        system.night_brightness = sys["night_brightness"] | system.night_brightness;
     }
 
+    JsonObject disp;
     if (doc.containsKey("display")) {
-        matrix.width = doc["display"]["width"] | matrix.width;
-        matrix.height = doc["display"]["height"] | matrix.height;
-        matrix.panelType = doc["display"]["panelType"] | matrix.panelType;
-        matrix.chainLength = doc["display"]["chainLength"] | matrix.chainLength;
-        matrix.powerLimitPercent = doc["display"]["powerLimitPercent"] | matrix.powerLimitPercent;
-        matrix.forceSingleBuffer = doc["display"]["forceSingleBuffer"] | matrix.forceSingleBuffer;
-        matrix.colorDepth = doc["display"]["colorDepth"] | matrix.colorDepth;
-        matrix.rgbSequence = doc["display"]["rgbSequence"] | matrix.rgbSequence;
-        matrix.limitRefreshRateHz = doc["display"]["limitRefreshRateHz"] | matrix.limitRefreshRateHz;
-        matrix.driverChip = doc["display"]["driverChip"] | matrix.driverChip;
-        matrix.clkPhase = doc["display"]["clkPhase"] | matrix.clkPhase;
-        matrix.latchBlanking = doc["display"]["latchBlanking"] | matrix.latchBlanking;
-        matrix.rowAddressMode = doc["display"]["rowAddressMode"] | matrix.rowAddressMode;
+        disp = doc["display"];
+    } else if (doc.containsKey("matrix")) {
+        disp = doc["matrix"];
+    }
+
+    if (!disp.isNull()) {
+        matrix.width = disp["width"] | matrix.width;
+        matrix.height = disp["height"] | matrix.height;
+        if (disp.containsKey("panel_type")) matrix.panelType = disp["panel_type"].as<String>();
+        else if (disp.containsKey("panelType")) matrix.panelType = disp["panelType"].as<String>();
+        
+        if (disp.containsKey("chain_length")) matrix.chainLength = disp["chain_length"].as<int>();
+        else if (disp.containsKey("chainLength")) matrix.chainLength = disp["chainLength"].as<int>();
+        
+        if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"].as<int>();
+        else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"].as<int>();
+        
+        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
+        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
+        
+        if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"].as<int>();
+        else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"].as<int>();
+        else if (disp.containsKey("pwm_bits")) matrix.colorDepth = disp["pwm_bits"].as<int>();
+        
+        if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
+        else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
+        
+        if (disp.containsKey("limit_refresh_rate_hz")) matrix.limitRefreshRateHz = disp["limit_refresh_rate_hz"].as<int>();
+        else if (disp.containsKey("limitRefreshRateHz")) matrix.limitRefreshRateHz = disp["limitRefreshRateHz"].as<int>();
+        
+        if (disp.containsKey("driver_chip")) matrix.driverChip = disp["driver_chip"].as<String>();
+        else if (disp.containsKey("driverChip")) matrix.driverChip = disp["driverChip"].as<String>();
+        
+        if (disp.containsKey("clk_phase")) matrix.clkPhase = disp["clk_phase"].as<bool>();
+        else if (disp.containsKey("clkPhase")) matrix.clkPhase = disp["clkPhase"].as<bool>();
+        
+        if (disp.containsKey("latch_blanking")) matrix.latchBlanking = disp["latch_blanking"].as<int>();
+        else if (disp.containsKey("latchBlanking")) matrix.latchBlanking = disp["latchBlanking"].as<int>();
+        
+        if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"].as<int>();
+        else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"].as<int>();
     }
 
     if (doc.containsKey("wifi")) {
@@ -121,14 +152,16 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     }
 
     if (doc.containsKey("mqtt")) {
-        mqtt.enabled = doc["mqtt"]["enabled"] | mqtt.enabled;
-        mqtt.broker = doc["mqtt"]["broker"] | mqtt.broker;
-        mqtt.port = doc["mqtt"]["port"] | mqtt.port;
-        mqtt.user = doc["mqtt"]["user"] | mqtt.user;
-        mqtt.pass = doc["mqtt"]["pass"] | mqtt.pass;
-        mqtt.deviceName = doc["mqtt"]["deviceName"] | mqtt.deviceName;
-        mqtt.topic_batocera = doc["mqtt"]["topic_batocera"] | mqtt.topic_batocera;
-        mqtt.topic_recalbox = doc["mqtt"]["topic_recalbox"] | mqtt.topic_recalbox;
+        JsonObject m = doc["mqtt"];
+        mqtt.enabled = m["enabled"] | mqtt.enabled;
+        mqtt.broker = m["broker"] | mqtt.broker;
+        mqtt.port = m["port"] | mqtt.port;
+        mqtt.user = m["user"] | mqtt.user;
+        mqtt.pass = m["pass"] | mqtt.pass;
+        if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
+        else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
+        mqtt.topic_batocera = m["topic_batocera"] | mqtt.topic_batocera;
+        mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
     }
 
     instances.clear();
@@ -144,7 +177,29 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         }
     }
 
-    if (doc.containsKey("engines")) {
+    if (doc.containsKey("instances")) {
+        JsonArray instArr = doc["instances"].as<JsonArray>();
+        for (JsonObject instObj : instArr) {
+            EngineInstance inst;
+            inst.instance_id = instObj["instance_id"] | "";
+            inst.engine_id = instObj["engine_id"] | "";
+            if (instObj.containsKey("config")) {
+                JsonObject confObj = instObj["config"];
+                for (JsonPair configPair : confObj) {
+                    if (configPair.value().is<int>()) {
+                        inst.config.setInt(configPair.key().c_str(), configPair.value().as<int>());
+                    } else if (configPair.value().is<float>()) {
+                        inst.config.setString(configPair.key().c_str(), String(configPair.value().as<float>()));
+                    } else if (configPair.value().is<bool>()) {
+                        inst.config.setBool(configPair.key().c_str(), configPair.value().as<bool>());
+                    } else {
+                        inst.config.setString(configPair.key().c_str(), configPair.value().as<String>());
+                    }
+                }
+            }
+            instances.push_back(inst);
+        }
+    } else if (doc.containsKey("engines")) {
         JsonObject engObj = doc["engines"].as<JsonObject>();
         for (JsonPair kv : engObj) {
             String instanceId = kv.key().c_str();
