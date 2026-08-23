@@ -664,345 +664,10 @@ select.input option {
             <h1 data-i18n="nav_display">Display Settings</h1>
           </div>
         </header>
-
         <div class="tabs">
-          <button class="tab-btn active" onclick="switchDisplayTab('clock')">🕒 Clock</button>
-          <button class="tab-btn" onclick="switchDisplayTab('date')">📅 Date</button>
-          <button class="tab-btn" onclick="switchDisplayTab('weather')">☁️ Weather</button>
-          <button class="tab-btn" onclick="switchDisplayTab('crypto')">📈 Crypto</button>
-          <button class="tab-btn" onclick="switchDisplayTab('stock')">📊 Stocks</button>
-          <button class="tab-btn" onclick="switchDisplayTab('idle')">🔄 Idle & Night</button>
-          <button class="tab-btn" onclick="switchDisplayTab('dynamic')">🧩 Engines (Dynamic)</button>
+          <!-- Dynamic instances will generate tabs here -->
         </div>
-        
-        <div id="tab-dynamic" class="tab-pane">
-          <!-- Dynamic forms will be generated here by app.js -->
-          <div id="dynamic-engines-container"></div>
-        </div>
-        
-        <div id="tab-clock" class="tab-pane active">
-          <div class="card glass shadow">
-            <h3>🕒 Clock Settings</h3>
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Theme</label>
-              <select id="cfg-clock-theme" class="input">
-                <optgroup label="Publisher Colors">
-                  <option value="0">Nintendo</option>
-                  <option value="1">Capcom</option>
-                  <option value="2">Taito</option>
-                  <option value="3">Sega</option>
-                  <option value="4">Cave</option>
-                  <option value="5">Konami</option>
-                  <option value="6">SNK</option>
-                  <option value="7">Technos</option>
-                  <option value="8">IGS</option>
-                  <option value="9">Hudson</option>
-                  <option value="10">Banpresto</option>
-                  <option value="11">Namco</option>
-                </optgroup>
-                <optgroup label="Animated Characters">
-                  <option value="12">Ryu</option>
-                  <option value="13">Mario</option>
-                  <option value="14">Marco</option>
-                  <option value="15">Megaman</option>
-                  <option value="16">Space Invader</option>
-                  <option value="17">Bub</option>
-                </optgroup>
-                <optgroup label="Effects & Games">
-                  <option value="18">Cyberpunk</option>
-                  <option value="19">Flip Clock</option>
-                  <option value="20">Custom Gradient</option>
-                  <option value="21">True Matrix</option>
-                  <option value="22">Pong Clock</option>
-                  <option value="23">Tetris Clock</option>
-                  <option value="24">Word Clock</option>
-                  <option value="25">Binary Clock</option>
-                  <option value="26">Pac-Man Clock</option>
-                  <option value="27">Versus Health Bar</option>
-                  <option value="28">Slot Machine</option>
-                  <option value="29">Tetris Gameboy</option>
-                </optgroup>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Font</label>
-              <select id="cfg-clock-font" class="input"></select>
-            </div>
-            <div class="form-group">
-              <label>Format (Chrono strftime)</label>
-              <input type="text" id="cfg-clock-format" class="input" placeholder="%H:%M:%S">
-            </div>
-            <div class="form-group">
-              <label>Size (Scale)</label>
-              <input type="number" id="cfg-clock-size" class="input" value="2">
-            </div>
-          </div>
-          <div class="form-grid col-2" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>NTP Server</label>
-              <input type="text" id="cfg-ntp-server" class="input" placeholder="pool.ntp.org">
-            </div>
-            <div class="form-group">
-              <label>Timezone (e.g. Europe/Paris)</label>
-              <input type="text" id="cfg-timezone" class="input" placeholder="Europe/Paris">
-            </div>
-          </div>
-          <div class="form-grid col-4" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Primary Color</label>
-              <input type="color" id="cfg-clock-color1" class="input" value="#ffffff">
-            </div>
-            <div class="form-group">
-              <label>Secondary Color</label>
-              <input type="color" id="cfg-clock-color2" class="input" value="#000000">
-            </div>
-            <div class="form-group">
-              <label>Offset X</label>
-              <input type="number" id="cfg-clock-x" class="input">
-            </div>
-            <div class="form-group">
-              <label>Offset Y</label>
-              <input type="number" id="cfg-clock-y" class="input">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-date" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>📅 Date Settings</h3>
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Theme</label>
-              <select id="cfg-date-theme" class="input">
-                <optgroup label="Publisher Colors">
-                  <option value="0">Nintendo</option>
-                  <option value="1">Capcom</option>
-                  <option value="2">Taito</option>
-                  <option value="3">Sega</option>
-                  <option value="4">Cave</option>
-                  <option value="5">Konami</option>
-                  <option value="6">SNK</option>
-                  <option value="7">Technos</option>
-                  <option value="8">IGS</option>
-                  <option value="9">Hudson</option>
-                  <option value="10">Banpresto</option>
-                  <option value="11">Namco</option>
-                </optgroup>
-                <optgroup label="Animated Characters">
-                  <option value="12">Ryu</option>
-                  <option value="13">Mario</option>
-                  <option value="14">Marco</option>
-                  <option value="15">Megaman</option>
-                  <option value="16">Space Invader</option>
-                  <option value="17">Bub</option>
-                </optgroup>
-                <optgroup label="Effects & Games">
-                  <option value="18">Cyberpunk</option>
-                  <option value="19">Flip Clock</option>
-                  <option value="20">Custom Gradient</option>
-                  <option value="21">True Matrix</option>
-                </optgroup>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Font</label>
-              <select id="cfg-date-font" class="input"></select>
-            </div>
-            <div class="form-group">
-              <label>Format (Chrono strftime)</label>
-              <input type="text" id="cfg-date-format" class="input" placeholder="%a %d %b">
-            </div>
-            <div class="form-group">
-              <label>Size (Scale)</label>
-              <input type="number" id="cfg-date-size" class="input" value="1">
-            </div>
-          </div>
-          <div class="form-grid col-4" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Primary Color</label>
-              <input type="color" id="cfg-date-color1" class="input" value="#ffffff">
-            </div>
-            <div class="form-group">
-              <label>Secondary Color</label>
-              <input type="color" id="cfg-date-color2" class="input" value="#000000">
-            </div>
-            <div class="form-group">
-              <label>Offset X</label>
-              <input type="number" id="cfg-date-x" class="input">
-            </div>
-            <div class="form-group">
-              <label>Offset Y</label>
-              <input type="number" id="cfg-date-y" class="input">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-weather" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>☁️ Weather Settings (OpenWeatherMap)</h3>
-          <div class="form-grid col-3">
-            <div class="form-group">
-              <label>API Key</label>
-              <input type="text" id="cfg-weather-api" class="input" placeholder="OpenWeatherMap API Key">
-            </div>
-            <div class="form-group">
-              <label>City</label>
-              <input type="text" id="cfg-weather-city" class="input" placeholder="Paris,FR">
-            </div>
-            <div class="form-group">
-              <label>Language</label>
-              <select id="cfg-weather-lang" class="input">
-                <option value="en">EN</option>
-                <option value="fr">FR</option>
-                <option value="es">ES</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-grid col-2" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Offset X</label>
-              <input type="number" id="cfg-weather-x" class="input" value="0">
-            </div>
-            <div class="form-group">
-              <label>Offset Y</label>
-              <input type="number" id="cfg-weather-y" class="input" value="0">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-crypto" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>📈 Real-Time Crypto Ticker</h3>
-          <p class="text-muted">Live quotes fetched directly on display from Binance / CoinGecko.</p>
-          <div class="form-grid col-3">
-            <div class="form-group">
-              <label>Duration per Token (s)</label>
-              <input type="number" id="cfg-dur-crypto" class="input" value="5" min="2" max="60">
-            </div>
-            <div class="form-group">
-              <label>Refresh Rate (Minutes)</label>
-              <input type="number" id="cfg-cache-crypto" class="input" value="1" min="1" max="1440">
-            </div>
-            <div class="form-group">
-              <label>Search Symbols</label>
-              <input type="text" id="crypto-search-input" class="input" placeholder="🔍 Search BTC, ETH, SOL, DOGE, XRP...">
-            </div>
-          </div>
-          <div class="form-group" style="margin-top: 1rem;">
-            <label>Selected Crypto Symbols (Comma Separated)</label>
-            <input type="text" id="cfg-crypto-symbols" class="input" value="BTC,ETH,SOL,DOGE">
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-stock" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>📊 Real-Time Stock Market Ticker</h3>
-          <p class="text-muted">Live stock prices & 24h % changes fetched from Yahoo Finance.</p>
-          <div class="form-grid col-3">
-            <div class="form-group">
-              <label>Duration per Stock (s)</label>
-              <input type="number" id="cfg-dur-stock" class="input" value="5" min="2" max="60">
-            </div>
-            <div class="form-group">
-              <label>Refresh Rate (Minutes)</label>
-              <input type="number" id="cfg-cache-stock" class="input" value="1" min="1" max="1440">
-            </div>
-            <div class="form-group">
-              <label>Search Symbols</label>
-              <input type="text" id="stock-search-input" class="input" placeholder="🔍 Search AAPL, NVDA, TSLA, MSFT, GOOGL...">
-            </div>
-          </div>
-          <div class="form-group" style="margin-top: 1rem;">
-            <label>Selected Stock Tickers (Comma Separated)</label>
-            <input type="text" id="cfg-stock-symbols" class="input" value="AAPL,NVDA,TSLA,MSFT">
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
-
-        <div id="tab-idle" class="tab-pane">
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>🔄 Idle Rotation & Night Mode</h3>
-          <div class="form-group">
-            <label>Active Screens in Rotation</label>
-            <div class="rotation-toggles" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <label class="toggle-btn"><input type="checkbox" value="clock" id="rot-clock" style="display:none;"> <span class="toggle-label">🕒 Clock</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="date" id="rot-date" style="display:none;"> <span class="toggle-label">📅 Date</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="weather" id="rot-weather" style="display:none;"> <span class="toggle-label">☁️ Weather</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="crypto" id="rot-crypto" style="display:none;"> <span class="toggle-label">📈 Crypto</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="stocks" id="rot-stocks" style="display:none;"> <span class="toggle-label">📊 Stocks</span></label>
-              <label class="toggle-btn"><input type="checkbox" value="gifs" id="rot-gifs" style="display:none;"> <span class="toggle-label">🎬 GIFs</span></label>
-            </div>
-            <input type="hidden" id="cfg-rotation">
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>GIFs per cycle</label>
-              <input type="number" id="cfg-dur-gifs" class="input" min="1">
-            </div>
-            <div class="form-group">
-              <label>Sprites on screen</label>
-              <select id="cfg-sprite-enable" class="input">
-                <option value="true">ON</option>
-                <option value="false">OFF</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Fighter Interval (s)</label>
-              <input type="number" id="cfg-fighter-int" class="input" min="1">
-            </div>
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Clock Duration (s)</label>
-              <input type="number" id="cfg-dur-clock" class="input" min="5">
-            </div>
-            <div class="form-group">
-              <label>Date Duration (s)</label>
-              <input type="number" id="cfg-dur-date" class="input" min="5">
-            </div>
-            <div class="form-group">
-              <label>Weather Duration (s)</label>
-              <input type="number" id="cfg-dur-weather" class="input" min="5">
-            </div>
-          </div>
-          <hr style="margin: 1.5rem 0; border-color: rgba(255,255,255,0.1);">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Night Mode</label>
-              <select id="cfg-night-enable" class="input">
-                <option value="false">Disabled</option>
-                <option value="true">Enabled</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Turn Off At (HH:MM)</label>
-              <input type="text" id="cfg-night-off" class="input" placeholder="23:00">
-            </div>
-            <div class="form-group">
-              <label>Wake Up At (HH:MM)</label>
-              <input type="text" id="cfg-night-on" class="input" placeholder="07:00">
-            </div>
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="display: flex; justify-content: space-between;">
-                <span>Night Brightness</span>
-                <span id="night-brightness-val" class="badge">10%</span>
-              </label>
-              <input type="range" id="cfg-night-brightness" min="0" max="100" step="1" value="10" style="width: 100%; cursor: pointer;">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-save-display" style="margin-top: 1rem; width: 100%;">Save Display Settings</button>
-        </div>
-        </div>
+        <div id="dynamic-display-container"></div>
       </section>
 
       <!-- Media Page -->
@@ -1534,7 +1199,46 @@ function pubFn() {
 
 // --- js/dynamic_engines.js ---
 
-// --- js/dynamic_engines.js ---
+const GLOBAL_TIMEZONES = [
+  { value: "Europe/Paris", label: "Europe/Paris (UTC+1/+2)" },
+  { value: "Europe/London", label: "Europe/London (UTC+0/+1)" },
+  { value: "Europe/Berlin", label: "Europe/Berlin (UTC+1/+2)" },
+  { value: "Europe/Madrid", label: "Europe/Madrid (UTC+1/+2)" },
+  { value: "Europe/Rome", label: "Europe/Rome (UTC+1/+2)" },
+  { value: "Europe/Brussels", label: "Europe/Brussels (UTC+1/+2)" },
+  { value: "Europe/Amsterdam", label: "Europe/Amsterdam (UTC+1/+2)" },
+  { value: "Europe/Zurich", label: "Europe/Zurich (UTC+1/+2)" },
+  { value: "Europe/Vienna", label: "Europe/Vienna (UTC+1/+2)" },
+  { value: "Europe/Athens", label: "Europe/Athens (UTC+2/+3)" },
+  { value: "Europe/Helsinki", label: "Europe/Helsinki (UTC+2/+3)" },
+  { value: "Europe/Moscow", label: "Europe/Moscow (UTC+3)" },
+  { value: "America/New_York", label: "America/New_York (EST/EDT, UTC-5/-4)" },
+  { value: "America/Chicago", label: "America/Chicago (CST/CDT, UTC-6/-5)" },
+  { value: "America/Denver", label: "America/Denver (MST/MDT, UTC-7/-6)" },
+  { value: "America/Los_Angeles", label: "America/Los_Angeles (PST/PDT, UTC-8/-7)" },
+  { value: "America/Montreal", label: "America/Montreal (UTC-5/-4)" },
+  { value: "America/Toronto", label: "America/Toronto (UTC-5/-4)" },
+  { value: "America/Vancouver", label: "America/Vancouver (UTC-8/-7)" },
+  { value: "America/Anchorage", label: "America/Anchorage (AKST/AKDT, UTC-9/-8)" },
+  { value: "America/Sao_Paulo", label: "America/Sao_Paulo (BRT, UTC-3)" },
+  { value: "America/Buenos_Aires", label: "America/Buenos_Aires (ART, UTC-3)" },
+  { value: "Pacific/Honolulu", label: "Pacific/Honolulu (HST, UTC-10)" },
+  { value: "Asia/Tokyo", label: "Asia/Tokyo (JST, UTC+9)" },
+  { value: "Asia/Shanghai", label: "Asia/Shanghai (CST, UTC+8)" },
+  { value: "Asia/Hong_Kong", label: "Asia/Hong_Kong (HKT, UTC+8)" },
+  { value: "Asia/Singapore", label: "Asia/Singapore (SGT, UTC+8)" },
+  { value: "Asia/Seoul", label: "Asia/Seoul (KST, UTC+9)" },
+  { value: "Asia/Bangkok", label: "Asia/Bangkok (ICT, UTC+7)" },
+  { value: "Asia/Dubai", label: "Asia/Dubai (GST, UTC+4)" },
+  { value: "Asia/Kolkata", label: "Asia/Kolkata (IST, UTC+5:30)" },
+  { value: "Australia/Sydney", label: "Australia/Sydney (AEST/AEDT, UTC+10/+11)" },
+  { value: "Australia/Melbourne", label: "Australia/Melbourne (AEST/AEDT, UTC+10/+11)" },
+  { value: "Australia/Brisbane", label: "Australia/Brisbane (AEST, UTC+10)" },
+  { value: "Australia/Adelaide", label: "Australia/Adelaide (ACST/ACDT, UTC+9:30/+10:30)" },
+  { value: "Australia/Perth", label: "Australia/Perth (AWST, UTC+8)" },
+  { value: "Pacific/Auckland", label: "Pacific/Auckland (NZST/NZDT, UTC+12/+13)" },
+  { value: "UTC", label: "UTC (Coordinated Universal Time)" }
+];
 
 async function initHardwareCapabilities() {
   try {
@@ -1591,137 +1295,121 @@ async function initHardwareCapabilities() {
           txt += ` | PSRAM: ${psramMb} MB`;
         }
         elHeap.textContent = txt;
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to load hardware capabilities:', err);
-  }
-}
-
-async function initDynamicEngines() {
-  const container = document.getElementById('dynamic-engines-container');
-  const tabsContainer = document.querySelector('.tabs');
+   async function initDynamicEngines() {
+  const container = document.getElementById('page-display');
+  const tabsContainer = document.querySelector('#page-display .tabs');
   
   if (!container || !tabsContainer) return;
   
   try {
-    const [engines, instances] = await Promise.all([
-      API.get('/api/engines'),
-      API.get('/api/instances').catch(() => [])
-    ]);
+    const descriptors = await API.get('/api/engines');
+    const instancesList = await API.get('/api/instances').catch(() => []);
     
-    // Clear dynamic container
-    container.innerHTML = '';
+    // Convert descriptors to map for easy lookup
+    const enginesMap = {};
+    descriptors.forEach(desc => {
+      enginesMap[desc.metadata.id] = desc;
+    });
+
+    // Rotation manager panel (order + duration of instances in the loop).
+    await renderRotationPanel(container, tabsContainer, instancesList, enginesMap);
+
+    // Add New Instance Controls
+    const addContainer = document.createElement('div');
+    addContainer.style = "display: flex; gap: 0.5rem; align-items: center; margin-left: auto;";
     
-    const instanceMap = {};
-    if (Array.isArray(instances)) {
-      instances.forEach(inst => {
-        instanceMap[inst.engine_id] = inst.config || {};
-        instanceMap[inst.instance_id] = inst.config || {};
-      });
-    }
-
-    const engineMap = {};
-    engines.forEach(e => { engineMap[e.metadata.id] = e; });
-
-    // 1. Update Hardware Awareness on Standard Display Tabs (clock, date, weather, crypto, stock)
-    const standardTabEngineMap = {
-      'crypto': 'crypto',
-      'stock': 'stock',
-      'weather': 'weather',
-      'clock': 'clock',
-      'date': 'date'
-    };
-
-    Object.entries(standardTabEngineMap).forEach(([tabKey, engineId]) => {
-      const eng = engineMap[engineId];
-      if (eng && eng.available === false) {
-        // Find tab button
-        document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
-          if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(tabKey)) {
-            if (!btn.innerHTML.includes('(Unavailable)')) {
-              btn.innerHTML += ` <span style="font-size:0.7em;color:var(--accent-danger);font-weight:bold;">(N/A)</span>`;
-            }
-          }
-        });
-        
-        // Inject banner into tab pane
-        const pane = document.getElementById(`tab-${tabKey}`);
-        if (pane) {
-          const card = pane.querySelector('.card');
-          if (card && !card.querySelector('.hw-unavail-banner')) {
-            const banner = document.createElement('div');
-            banner.className = 'hw-unavail-banner';
-            banner.style = 'background: rgba(239, 68, 68, 0.15); border: 1px solid var(--accent-danger); border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin-bottom: 1rem; color: #fca5a5;';
-            banner.innerHTML = `⚠️ <strong>Unavailable on this device:</strong> ${eng.reason || 'Hardware requirements not met'}`;
-            card.prepend(banner);
-            card.querySelectorAll('input, select, button').forEach(el => el.disabled = true);
-          }
-        }
-      }
+    const engineSelect = document.createElement('select');
+    engineSelect.className = 'input';
+    engineSelect.style = "width: auto; padding: 0.2rem 0.5rem;";
+    descriptors.forEach(desc => {
+        const opt = document.createElement('option');
+        opt.value = desc.metadata.id;
+        opt.innerText = desc.metadata.name;
+        engineSelect.appendChild(opt);
     });
     
-    // 2. Generate Dynamic Tabs for all engines
-    for (const engine of engines) {
-      const tabId = `tab-dyn-${engine.metadata.id.replace(/\./g, '-')}`;
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-primary';
+    addBtn.innerHTML = `➕ Add Engine`;
+    addBtn.style = "padding: 0.2rem 0.5rem;";
+    addBtn.onclick = () => {
+       const eng = engineSelect.value;
+       const inst = prompt("Enter a unique name for this instance (e.g. main_" + eng + "):", eng);
+       if (!inst) return;
+       API.post('/api/instances', { instance_id: inst, engine_id: eng, config: {} }).then(() => {
+           window.showToast('Instance created, please refresh', 'success');
+           setTimeout(() => location.reload(), 1000);
+       });
+    };
+    
+    addContainer.appendChild(engineSelect);
+    addContainer.appendChild(addBtn);
+    tabsContainer.appendChild(addContainer);
+
+    instancesList.forEach(async (instance, index) => {
+      const engineDesc = enginesMap[instance.engine_id];
+      if (!engineDesc) return;
       
+      const tabId = `tab-dyn-${instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-')}`;
+      
+      // 1. Create Tab Button
       const tabBtn = document.createElement('button');
-      tabBtn.className = 'tab-btn';
-      tabBtn.innerHTML = `🧩 ${engine.metadata.name}`;
-      if (engine.available === false) {
-        tabBtn.innerHTML += ` <span style="font-size:0.7em;opacity:0.7;color:var(--accent-warning);">(N/A)</span>`;
-      }
+      tabBtn.className = 'tab-btn' + (index === 0 ? ' active' : '');
+      tabBtn.innerHTML = `🧩 ${engineDesc.metadata.name} (${instance.instance_id})`;
       tabBtn.onclick = (e) => {
         document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
         e.currentTarget.classList.add('active');
         
         document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
-        document.getElementById(tabId).classList.add('active');
+        const pane = document.getElementById(tabId);
+        if (pane) pane.classList.add('active');
       };
       
-      tabsContainer.appendChild(tabBtn);
+      tabsContainer.insertBefore(tabBtn, addContainer);
       
-      // Create Tab Pane
+      // 2. Create Tab Pane
       const tabPane = document.createElement('div');
       tabPane.id = tabId;
-      tabPane.className = 'tab-pane';
+      tabPane.className = 'tab-pane' + (index === 0 ? ' active' : '');
       
       const card = document.createElement('div');
       card.className = 'card glass shadow';
       card.style.marginTop = '2rem';
       
       const title = document.createElement('h3');
-      title.innerText = `⚙️ ${engine.metadata.name} Settings`;
-      card.appendChild(title);
+      title.innerText = `⚙️ ${engineDesc.metadata.name} - ${instance.instance_id}`;
       
-      if (engine.available === false) {
-        const unavailBanner = document.createElement('div');
-        unavailBanner.style = 'background: rgba(239, 68, 68, 0.15); border: 1px solid var(--accent-danger); border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin: 0.75rem 0; color: #fca5a5;';
-        unavailBanner.innerHTML = `⚠️ <strong>Unavailable on this hardware:</strong> ${engine.reason || 'Hardware requirements not met'}`;
-        card.appendChild(unavailBanner);
-      } else {
-        const desc = document.createElement('p');
-        desc.className = 'text-muted';
-        desc.innerText = `${engine.metadata.category || 'Engine'} • v${engine.metadata.version || '3.0.0'}`;
-        card.appendChild(desc);
-      }
+      // Delete instance button
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-danger';
+      delBtn.style = "float: right; padding: 0.2rem 0.5rem; font-size: 0.8rem;";
+      delBtn.innerText = '🗑️ Remove';
+      delBtn.onclick = () => {
+          if (confirm('Are you sure you want to remove this instance?')) {
+              API.delete(`/api/instances/${instance.instance_id}`).then(() => {
+                  window.showToast('Instance removed', 'success');
+                  setTimeout(() => location.reload(), 1000);
+              });
+          }
+      };
+      title.appendChild(delBtn);
+      card.appendChild(title);
       
       const formGrid = document.createElement('div');
       formGrid.className = 'form-grid';
       
-      const currentInstCfg = instanceMap[engine.metadata.id] || instanceMap[`${engine.metadata.id}_main`] || {};
+      const fields = (engineDesc.schema && engineDesc.schema.fields) ? engineDesc.schema.fields : (engineDesc.schema || []);
       
       // Helper function to update visible_when conditional fields
       const updateVisibility = () => {
-        if (!engine.schema) return;
-        engine.schema.forEach(f => {
+        fields.forEach(f => {
           if (f.visible_when) {
             const parts = f.visible_when.split('=');
             if (parts.length === 2) {
               const targetId = parts[0].trim();
               const targetVal = parts[1].trim();
-              const targetEl = document.getElementById(`cfg-dyn-${engine.metadata.id}-${targetId}`);
-              const grp = document.getElementById(`group-dyn-${engine.metadata.id}-${f.id}`);
+              const targetEl = document.getElementById(`cfg-dyn-${instance.instance_id}-${targetId}`);
+              const grp = document.getElementById(`group-dyn-${instance.instance_id}-${f.id}`);
               if (targetEl && grp) {
                 const isMatch = String(targetEl.value).toLowerCase() === String(targetVal).toLowerCase();
                 grp.style.display = isMatch ? 'flex' : 'none';
@@ -1732,13 +1420,11 @@ async function initDynamicEngines() {
       };
       
       // Generate fields from schema
-      if (engine.schema && engine.schema.length > 0) {
-        for (const field of engine.schema) {
+      if (fields && fields.length > 0) {
+        for (const field of fields) {
           const formGroup = document.createElement('div');
           formGroup.className = 'form-group';
-          formGroup.id = `group-dyn-${engine.metadata.id}-${field.id}`;
-          formGroup.style.display = 'flex';
-          formGroup.style.flexDirection = 'column';
+          formGroup.id = `group-dyn-${instance.instance_id}-${field.id}`;
           
           const label = document.createElement('label');
           label.innerText = field.label || field.id;
@@ -1750,77 +1436,96 @@ async function initDynamicEngines() {
           formGroup.appendChild(label);
           
           let input = null;
-          const currentVal = (currentInstCfg[field.id] !== undefined) ? currentInstCfg[field.id] : field.default_value;
-          
-          if (field.field_type === 4 || field.field_type === 7 || field.options_endpoint) { // ENUM, LIST or dynamic endpoint
+          const configMap = instance.config || {};
+          const currentVal = configMap[field.id] !== undefined ? configMap[field.id] : field.default_value;
+
+          // 1. Timezone or dynamic options
+          if (field.id === 'timezone' || field.options_endpoint === '/api/timezones') {
+              input = document.createElement('select');
+              input.className = 'input';
+              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+              GLOBAL_TIMEZONES.forEach(opt => {
+                  const option = document.createElement('option');
+                  option.value = opt.value;
+                  option.innerText = opt.label;
+                  if (opt.value === currentVal) option.selected = true;
+                  input.appendChild(option);
+              });
+          } else if (field.options_endpoint) {
+             const data = await API.get(field.options_endpoint).catch(() => []);
+             const optList = Array.isArray(data) ? data : (data.playlists || data.options || data.fonts || []);
+             if (field.multiple) {
+                 input = document.createElement('div');
+                 input.className = 'rotation-toggles';
+                 input.style = 'display: flex; gap: 0.5rem; flex-wrap: wrap;';
+                 const selectedValues = currentVal ? currentVal.split(',') : [];
+                 optList.forEach(opt => {
+                     const val = (typeof opt === 'object') ? (opt.id !== undefined ? opt.id : opt.value) : opt;
+                     const lbl = (typeof opt === 'object') ? (opt.name || opt.label || val) : opt;
+                     const isChecked = selectedValues.includes(String(val));
+                     const l = document.createElement('label');
+                     l.className = 'toggle-btn';
+                     l.innerHTML = `<input type="checkbox" value="${val}" class="multi-cb-${instance.instance_id}-${field.id}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${lbl}</span>`;
+                     input.appendChild(l);
+                 });
+             } else {
+                 input = document.createElement('select');
+                 input.className = 'input';
+                 input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+                 optList.forEach(opt => {
+                     const option = document.createElement('option');
+                     option.value = (typeof opt === 'object') ? (opt.id !== undefined ? opt.id : opt.value) : opt;
+                     option.innerText = (typeof opt === 'object') ? (opt.name || opt.label || option.value) : opt;
+                     if (String(option.value) === String(currentVal)) option.selected = true;
+                     input.appendChild(option);
+                 });
+             }
+          } else if (field.options && (typeof field.options === 'string' || Array.isArray(field.options))) {
              input = document.createElement('select');
              input.className = 'input';
-             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
-             if (field.multiple) input.multiple = true;
-             
-             if (field.options_endpoint) {
-               try {
-                 const optData = await API.get(field.options_endpoint);
-                 const optList = Array.isArray(optData) ? optData : (optData.playlists || optData.options || optData.fonts || []);
-                 optList.forEach(opt => {
-                   const option = document.createElement('option');
-                   if (typeof opt === 'object') {
-                     option.value = (opt.id !== undefined) ? opt.id : opt.value;
-                     option.innerText = opt.name || opt.label || option.value;
-                   } else {
-                     option.value = opt;
-                     option.innerText = opt;
-                   }
-                   input.appendChild(option);
-                 });
-               } catch (err) {
-                 console.warn('Failed to load dynamic options from', field.options_endpoint, err);
-               }
-             } else if (field.options) {
-               const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
-               optsArray.forEach(opt => {
+             input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+             const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
+             optsArray.forEach(opt => {
                  const option = document.createElement('option');
                  if (typeof opt === 'object') {
-                   option.value = opt.value;
-                   option.innerText = opt.label;
+                     option.value = opt.value;
+                     option.innerText = opt.label;
                  } else {
-                   const clean = String(opt).trim();
-                   option.value = clean;
-                   option.innerText = clean;
+                     const clean = String(opt).trim();
+                     option.value = clean;
+                     option.innerText = clean;
                  }
+                 if (String(option.value) === String(currentVal)) option.selected = true;
                  input.appendChild(option);
-               });
-             }
-          } else if (field.field_type === 0) { // BOOLEAN
+             });
+          } else if (field.field_type === 0 || field.field_type === 'Boolean') {
              input = document.createElement('select');
              input.className = 'input';
-             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
-             input.innerHTML = `<option value="true">Enabled</option><option value="false">Disabled</option>`;
-          } else if (field.field_type === 5) { // COLOR
+             input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+             const o1 = document.createElement('option'); o1.value = 'true'; o1.innerText = 'Enabled';
+             const o2 = document.createElement('option'); o2.value = 'false'; o2.innerText = 'Disabled';
+             if (String(currentVal) === 'true') o1.selected = true; else o2.selected = true;
+             input.appendChild(o1); input.appendChild(o2);
+          } else if (field.field_type === 5 || field.field_type === 'Color' || (field.id && field.id.includes('color'))) {
              input = document.createElement('input');
              input.type = 'color';
              input.className = 'input';
-             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
-          } else { // STRING, INTEGER, FLOAT
+             input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+             input.value = currentVal || '#ffffff';
+          } else {
              input = document.createElement('input');
-             input.type = (field.field_type === 1 || field.field_type === 2) ? 'number' : 'text';
-             if (field.min_val) input.min = field.min_val;
-             if (field.max_val) input.max = field.max_val;
-             if (field.step) input.step = field.step;
+             input.type = (field.field_type === 1 || field.field_type === 2 || field.field_type === 'Integer' || field.field_type === 'Float') ? 'number' : 'text';
              input.className = 'input';
-             input.id = `cfg-dyn-${engine.metadata.id}-${field.id}`;
+             input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+             if (field.min_val !== null && field.min_val !== undefined) input.min = field.min_val;
+             if (field.max_val !== null && field.max_val !== undefined) input.max = field.max_val;
+             input.value = (currentVal !== undefined && currentVal !== null) ? currentVal : '';
           }
           
           if (input) {
-            if (currentVal !== undefined && currentVal !== null) {
-                input.value = currentVal;
-            }
-            if (engine.available === false) {
-                input.disabled = true;
-            }
-            input.addEventListener('change', updateVisibility);
-            input.addEventListener('input', updateVisibility);
-            formGroup.appendChild(input);
+             input.addEventListener('change', updateVisibility);
+             input.addEventListener('input', updateVisibility);
+             formGroup.appendChild(input);
           }
           
           formGrid.appendChild(formGroup);
@@ -1833,70 +1538,253 @@ async function initDynamicEngines() {
       
       card.appendChild(formGrid);
       
-      if (engine.available !== false) {
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'btn btn-primary';
-        saveBtn.style = 'margin-top: 1rem; width: 100%;';
-        saveBtn.innerText = `Save ${engine.metadata.name} Configuration`;
-        saveBtn.onclick = async () => {
-           const payload = {};
-           if (engine.schema) {
-             engine.schema.forEach(field => {
-                const el = document.getElementById(`cfg-dyn-${engine.metadata.id}-${field.id}`);
-                if (el) {
-                   if (el.multiple) {
-                     payload[field.id] = Array.from(el.selectedOptions).map(o => o.value).join(',');
-                   } else {
-                     payload[field.id] = el.value;
-                   }
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'btn btn-primary';
+      saveBtn.style = 'margin-top: 1rem; width: 100%;';
+      saveBtn.innerText = 'Save Configuration';
+      saveBtn.onclick = async () => {
+         const payload = {
+             instance_id: instance.instance_id,
+             engine_id: instance.engine_id,
+             config: instance.config || {}
+         };
+         
+         if (fields && fields.length > 0) {
+             fields.forEach(field => {
+                if (field.multiple && field.options_endpoint) {
+                    const checkboxes = document.querySelectorAll(`.multi-cb-${instance.instance_id}-${field.id}:checked`);
+                    const vals = Array.from(checkboxes).map(cb => cb.value);
+                    payload.config[field.id] = vals.join(',');
+                } else {
+                    const el = document.getElementById(`cfg-dyn-${instance.instance_id}-${field.id}`);
+                    if (el) {
+                       payload.config[field.id] = el.value;
+                    }
                 }
              });
-           }
-           try {
-               await API.post('/api/instances', {
-                   instance_id: `${engine.metadata.id}_main`,
-                   engine_id: engine.metadata.id,
-                   config: payload
-               });
-               window.showToast(`${engine.metadata.name} configuration saved live!`, 'info');
-           } catch(e) {
-               console.error('API Error:', e);
-               window.showToast('Failed to save engine config', 'warning');
-           }
-        };
-        card.appendChild(saveBtn);
-      }
+         }
+
+         try {
+             await API.post(`/api/instances`, payload);
+             window.showToast('Engine configuration saved!', 'success');
+         } catch(e) {
+             console.error('API Error:', e);
+             window.showToast('Failed to save engine config', 'warning');
+         }
+      };
+      card.appendChild(saveBtn);
       
       tabPane.appendChild(card);
       container.appendChild(tabPane);
-      
-      // Initial visibility calculation for visible_when fields
       updateVisibility();
-    }
+    });
     
   } catch (e) {
     console.error('Failed to load dynamic engines:', e);
   }
 }
 
+async function renderRotationPanel(container, tabsContainer, instancesList, enginesMap) {
+  const rotation = await API.get('/api/rotation').catch(() => []);
+  let entries = Array.isArray(rotation) ? rotation.slice() : [];
+
+  const nameFor = (instId) => {
+    const inst = instancesList.find(i => i.instance_id === instId);
+    if (!inst) return instId;
+    const eng = enginesMap[inst.engine_id];
+    return `${eng ? eng.metadata.name : inst.engine_id} (${instId})`;
+  };
+
+  const engineIdFor = (instId) => {
+    const inst = instancesList.find(i => i.instance_id === instId);
+    return inst ? inst.engine_id : null;
+  };
+  const isCountBased = (instId) => engineIdFor(instId) === 'gifs';
+
+  const card = document.createElement('div');
+  card.className = 'card glass shadow';
+  card.style = 'margin: 1rem 0; box-sizing: border-box; max-width: 100%; overflow: hidden;';
+
+  const title = document.createElement('h3');
+  title.innerText = '🔁 Rotation';
+  card.appendChild(title);
+
+  const list = document.createElement('div');
+  list.className = 'rotation-list';
+  card.appendChild(list);
+
+  function render() {
+    list.innerHTML = '';
+    entries.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.className = 'rotation-row';
+
+      const header = document.createElement('div');
+      header.className = 'rotation-row-header';
+
+      const titleGroup = document.createElement('div');
+      titleGroup.className = 'rotation-title-group';
+
+      const badge = document.createElement('span');
+      badge.className = 'rotation-order-badge';
+      badge.innerText = `#${idx + 1}`;
+      titleGroup.appendChild(badge);
+
+      const label = document.createElement('span');
+      label.className = 'rotation-title';
+      label.title = nameFor(entry.instance_id);
+      label.innerText = nameFor(entry.instance_id);
+      titleGroup.appendChild(label);
+
+      header.appendChild(titleGroup);
+
+      const actions = document.createElement('div');
+      actions.className = 'rotation-actions';
+
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'btn btn-icon';
+      up.title = 'Move Up';
+      up.innerText = '▲';
+      up.disabled = idx === 0;
+      up.onclick = () => { entries.splice(idx - 1, 0, entries.splice(idx, 1)[0]); render(); };
+      actions.appendChild(up);
+
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'btn btn-icon';
+      down.title = 'Move Down';
+      down.innerText = '▼';
+      down.disabled = idx === entries.length - 1;
+      down.onclick = () => { entries.splice(idx + 1, 0, entries.splice(idx, 1)[0]); render(); };
+      actions.appendChild(down);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn-icon btn-danger';
+      del.title = 'Remove from rotation';
+      del.innerText = '🗑️';
+      del.onclick = () => { entries.splice(idx, 1); render(); };
+      actions.appendChild(del);
+
+      header.appendChild(actions);
+      row.appendChild(header);
+
+      const settingsBar = document.createElement('div');
+      settingsBar.className = 'rotation-settings-bar';
+
+      const countBased = isCountBased(entry.instance_id);
+
+      const durGroup = document.createElement('div');
+      durGroup.className = 'rotation-dur-group';
+      durGroup.title = countBased ? 'Number of GIFs to play before rotating' : 'Duration in seconds';
+
+      const durLbl = document.createElement('span');
+      durLbl.className = 'rotation-dur-label';
+      durLbl.innerText = countBased ? 'Count:' : 'Duration:';
+      durGroup.appendChild(durLbl);
+
+      const dur = document.createElement('input');
+      dur.type = 'number';
+      dur.className = 'input rotation-dur-input';
+      dur.min = '1';
+      dur.value = entry.duration_sec;
+      dur.onchange = () => { entry.duration_sec = parseInt(dur.value) || 1; };
+      durGroup.appendChild(dur);
+
+      const unit = document.createElement('span');
+      unit.className = 'rotation-unit';
+      unit.innerText = countBased ? 'GIFs' : 'sec';
+      durGroup.appendChild(unit);
+
+      settingsBar.appendChild(durGroup);
+
+      const fightLbl = document.createElement('label');
+      fightLbl.className = 'rotation-fighter-lbl';
+      fightLbl.title = 'Show the Fighter overlay on this screen';
+      const fightCb = document.createElement('input');
+      fightCb.type = 'checkbox';
+      fightCb.checked = entry.fighter_overlay !== false;
+      fightCb.onchange = () => { entry.fighter_overlay = fightCb.checked; };
+      fightLbl.appendChild(fightCb);
+      const fightTxt = document.createElement('span');
+      fightTxt.innerText = '🥊 Overlay';
+      fightLbl.appendChild(fightTxt);
+      settingsBar.appendChild(fightLbl);
+
+      row.appendChild(settingsBar);
+      list.appendChild(row);
+    });
+    if (entries.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-muted';
+      empty.style.padding = '0.5rem 0';
+      empty.innerText = 'No instances in rotation. Add one below.';
+      list.appendChild(empty);
+    }
+  }
+
+  const addCard = document.createElement('div');
+  addCard.className = 'rotation-add-card';
+
+  const addTitle = document.createElement('span');
+  addTitle.className = 'rotation-add-title';
+  addTitle.innerText = '➕ Add Instance to Rotation';
+  addCard.appendChild(addTitle);
+
+  const addRow = document.createElement('div');
+  addRow.className = 'rotation-add-row';
+
+  const sel = document.createElement('select');
+  sel.className = 'rotation-select';
+  instancesList.forEach(inst => {
+    const opt = document.createElement('option');
+    opt.value = inst.instance_id;
+    opt.innerText = nameFor(inst.instance_id);
+    sel.appendChild(opt);
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-primary rotation-add-btn';
+  addBtn.innerText = 'Add';
+  addBtn.onclick = () => {
+    if (!sel.value) return;
+    entries.push({ instance_id: sel.value, duration_sec: 30, fighter_overlay: true });
+    render();
+  };
+
+  addRow.appendChild(sel);
+  addRow.appendChild(addBtn);
+  addCard.appendChild(addRow);
+  card.appendChild(addCard);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'btn btn-primary rotation-save-btn';
+  saveBtn.innerText = '💾 Save Rotation';
+  saveBtn.onclick = async () => {
+    const payload = entries.map(e => ({
+      instance_id: e.instance_id,
+      duration_sec: parseInt(e.duration_sec) || 1,
+      fighter_overlay: e.fighter_overlay !== false,
+    }));
+    try {
+      await API.post('/api/rotation', payload);
+      window.showToast('Rotation saved!', 'success');
+    } catch (e) {
+      window.showToast('Failed to save rotation', 'warning');
+    }
+  };
+  card.appendChild(saveBtn);
+
+  render();
+  container.insertBefore(card, tabsContainer);
+}
 
 // --- js/app.js ---
 
 let selectedOtaFile = null;
-
-window.switchDisplayTab = function(tabId) {
-  // Update buttons
-  document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
-    btn.classList.remove('active');
-  });
-  event.currentTarget.classList.add('active');
-
-  // Update panes
-  document.querySelectorAll('#page-display .tab-pane').forEach(pane => {
-    pane.classList.remove('active');
-  });
-  document.getElementById('tab-' + tabId).classList.add('active');
-};
 
 window.switchSystemTab = function(tabId) {
   // Update buttons
@@ -2349,134 +2237,11 @@ async function initSettings() {
     document.getElementById('hw-api-auth').value = s.api_auth_enabled ? 'true' : 'false';
     document.getElementById('hw-api-token').value = s.api_token || '';
 
-    // Clock
-    document.getElementById('cfg-clock-theme').value = s.clock_theme;
-    document.getElementById('cfg-clock-font').value = s.clock_font;
-    document.getElementById('cfg-clock-format').value = s.time_format;
-    document.getElementById('cfg-clock-size').value = s.time_size || 2;
-    document.getElementById('cfg-ntp-server').value = s.ntp_server || 'pool.ntp.org';
-    document.getElementById('cfg-timezone').value = s.timezone || 'Europe/Paris';
-    document.getElementById('cfg-clock-color1').value = s.clock_color_1.toLowerCase();
-    document.getElementById('cfg-clock-color2').value = s.clock_color_2.toLowerCase();
-    document.getElementById('cfg-clock-x').value = s.clock_offset_x;
-    document.getElementById('cfg-clock-y').value = s.clock_offset_y;
-
-    // Date
-    document.getElementById('cfg-date-theme').value = s.date_theme;
-    document.getElementById('cfg-date-font').value = s.date_font;
-    document.getElementById('cfg-date-format').value = s.date_format;
-    document.getElementById('cfg-date-size').value = s.date_size || 1;
-    document.getElementById('cfg-date-color1').value = s.date_color_1.toLowerCase();
-    document.getElementById('cfg-date-color2').value = s.date_color_2.toLowerCase();
-    document.getElementById('cfg-date-x').value = s.date_offset_x;
-    document.getElementById('cfg-date-y').value = s.date_offset_y;
-
-    // Weather
-    document.getElementById('cfg-weather-api').value = s.weather_api_key;
-    document.getElementById('cfg-weather-city').value = s.weather_city;
-    document.getElementById('cfg-weather-lang').value = s.weather_lang;
-    document.getElementById('cfg-weather-x').value = s.weather_offset_x || 0;
-    document.getElementById('cfg-weather-y').value = s.weather_offset_y || 0;
-
-    // Crypto & Stock
-    if (document.getElementById('cfg-crypto-symbols')) document.getElementById('cfg-crypto-symbols').value = s.crypto_symbols || 'BTC,ETH,SOL,DOGE';
-    if (document.getElementById('cfg-dur-crypto')) document.getElementById('cfg-dur-crypto').value = s.crypto_duration_sec || 5;
-    if (document.getElementById('cfg-cache-crypto')) document.getElementById('cfg-cache-crypto').value = s.crypto_cache_ttl_min || 1;
-    if (document.getElementById('cfg-stock-symbols')) document.getElementById('cfg-stock-symbols').value = s.stock_symbols || 'AAPL,NVDA,TSLA,MSFT';
-    if (document.getElementById('cfg-dur-stock')) document.getElementById('cfg-dur-stock').value = s.stock_duration_sec || 5;
-    if (document.getElementById('cfg-cache-stock')) document.getElementById('cfg-cache-stock').value = s.stock_cache_ttl_min || 1;
-
-    // Rotation
-    document.getElementById('cfg-rotation').value = s.rotation;
-    const rotationArr = (s.rotation || '').split(',').map(x => x.trim());
-    document.querySelectorAll('.rotation-toggles input[type="checkbox"]').forEach(cb => {
-      cb.checked = rotationArr.includes(cb.value);
-    });
-    document.getElementById('cfg-dur-clock').value = s.clock_duration_sec;
-    document.getElementById('cfg-dur-date').value = s.date_duration_sec;
-    document.getElementById('cfg-dur-weather').value = s.weather_duration_sec;
-    document.getElementById('cfg-dur-gifs').value = s.gifs_count || 5;
-    document.getElementById('cfg-sprite-enable').value = s.fighter_enabled === 'true' ? 'true' : 'false';
-    document.getElementById('cfg-fighter-int').value = s.fighter_interval_sec || 5;
-
-    // Night Mode
-    document.getElementById('cfg-night-enable').value = s.night_mode_enabled ? 'true' : 'false';
-    document.getElementById('cfg-night-off').value = s.turn_off_at;
-    document.getElementById('cfg-night-on').value = s.wake_up_at;
-    document.getElementById('cfg-night-brightness').value = s.night_brightness !== undefined ? s.night_brightness : 10;
-    document.getElementById('night-brightness-val').textContent = document.getElementById('cfg-night-brightness').value + '%';
-
+    // Hardware, Network, and MQTT settings are loaded above.
+    // Dynamic engines and rotation are loaded by initDynamicEngines().
   } catch (e) {
     console.error('Failed to load settings', e);
   }
-
-  // Save Display Settings
-  const btnSaveDisplayList = document.querySelectorAll('.btn-save-display');
-  btnSaveDisplayList.forEach(btnSaveDisplay => {
-    btnSaveDisplay.addEventListener('click', async () => {
-      btnSaveDisplay.disabled = true;
-      btnSaveDisplay.textContent = 'Saving...';
-      try {
-          const selectedRotations = Array.from(document.querySelectorAll('.rotation-toggles input[type="checkbox"]:checked'))
-            .map(cb => cb.value).join(',');
-
-          const payload = {
-            clock_theme: parseInt(document.getElementById('cfg-clock-theme').value),
-            clock_font: document.getElementById('cfg-clock-font').value,
-            time_format: document.getElementById('cfg-clock-format').value,
-            time_size: parseInt(document.getElementById('cfg-clock-size').value) || 2,
-            ntp_server: document.getElementById('cfg-ntp-server').value,
-            timezone: document.getElementById('cfg-timezone').value,
-            clock_color_1: document.getElementById('cfg-clock-color1').value,
-            clock_color_2: document.getElementById('cfg-clock-color2').value,
-            clock_offset_x: parseInt(document.getElementById('cfg-clock-x').value) || 0,
-            clock_offset_y: parseInt(document.getElementById('cfg-clock-y').value) || 0,
-
-            date_theme: parseInt(document.getElementById('cfg-date-theme').value),
-            date_font: document.getElementById('cfg-date-font').value,
-            date_format: document.getElementById('cfg-date-format').value,
-            date_size: parseInt(document.getElementById('cfg-date-size').value) || 1,
-            date_color_1: document.getElementById('cfg-date-color1').value,
-            date_color_2: document.getElementById('cfg-date-color2').value,
-            date_offset_x: parseInt(document.getElementById('cfg-date-x').value) || 0,
-            date_offset_y: parseInt(document.getElementById('cfg-date-y').value) || 0,
-
-            weather_api_key: document.getElementById('cfg-weather-api').value,
-            weather_city: document.getElementById('cfg-weather-city').value,
-            weather_lang: document.getElementById('cfg-weather-lang').value,
-            weather_offset_x: parseInt(document.getElementById('cfg-weather-x').value) || 0,
-            weather_offset_y: parseInt(document.getElementById('cfg-weather-y').value) || 0,
-
-            crypto_symbols: document.getElementById('cfg-crypto-symbols') ? document.getElementById('cfg-crypto-symbols').value : 'BTC,ETH,SOL,DOGE',
-            crypto_duration_sec: parseInt(document.getElementById('cfg-dur-crypto')?.value) || 5,
-            crypto_cache_ttl_min: parseInt(document.getElementById('cfg-cache-crypto')?.value) || 1,
-            stock_symbols: document.getElementById('cfg-stock-symbols') ? document.getElementById('cfg-stock-symbols').value : 'AAPL,NVDA,TSLA,MSFT',
-            stock_duration_sec: parseInt(document.getElementById('cfg-dur-stock')?.value) || 5,
-            stock_cache_ttl_min: parseInt(document.getElementById('cfg-cache-stock')?.value) || 1,
-
-            rotation: selectedRotations,
-            clock_duration_sec: parseInt(document.getElementById('cfg-dur-clock').value) || 10,
-          date_duration_sec: parseInt(document.getElementById('cfg-dur-date').value) || 10,
-          weather_duration_sec: parseInt(document.getElementById('cfg-dur-weather').value) || 10,
-          gifs_count: parseInt(document.getElementById('cfg-dur-gifs').value) || 5,
-          fighter_enabled: document.getElementById('cfg-sprite-enable').value === 'true',
-          fighter_interval_sec: parseInt(document.getElementById('cfg-fighter-int').value) || 5,
-
-          night_mode_enabled: document.getElementById('cfg-night-enable').value === 'true',
-          turn_off_at: document.getElementById('cfg-night-off').value,
-          wake_up_at: document.getElementById('cfg-night-on').value,
-          night_brightness: parseInt(document.getElementById('cfg-night-brightness').value, 10),
-        };
-        await API.post('/api/settings', payload);
-        window.showToast('Display settings saved!', 'success');
-      } catch (e) {
-        window.showToast('Failed to save settings', 'error');
-      } finally {
-        btnSaveDisplay.disabled = false;
-        btnSaveDisplay.textContent = 'Save Display Settings';
-      }
-    });
-  });
 
   // Save HW settings
   const btnSaveHw = document.getElementById('btn-save-hw');
