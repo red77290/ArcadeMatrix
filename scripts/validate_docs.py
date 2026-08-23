@@ -38,12 +38,11 @@ REQUIRED_DOC_FILES = [
 OBSOLETE_PATTERNS = [
     (re.compile(r'\bNTPSERVER\b'), "Obsolete config key 'NTPSERVER' found (use NTP_SERVER)"),
     (re.compile(r'\bFORMAT24H\b'), "Obsolete config key 'FORMAT24H' found (use FORMAT_24H)"),
-    (re.compile(r'\bCOLOR_DEPTH\b'), "Obsolete config key 'COLOR_DEPTH' found (use PWM_BITS)"),
     (re.compile(r'\bSPRITE_COUNT\b'), "Obsolete config key 'SPRITE_COUNT' found"),
 ]
 
 EXPECTED_CONFIG_SCHEMA = {
-    "matrix": ["width", "height", "chain_length", "pwm_bits"],
+    "matrix": ["width", "height", "chain_length", "color_depth"],
     "system": ["timezone", "format_24h", "night_mode_enabled"],
     "wifi": ["ssid", "password"],
 }
