@@ -375,6 +375,146 @@ void WebServerAPI::setupRoutes() {
     }, 4096);
     server.addHandler(instancesHandler);
 
+    // API: DELETE /api/instances/{id} — Remove an instance by ID
+    server.on("/api/instances", HTTP_DELETE, [](AsyncWebServerRequest *request){
+        // ESPAsyncWebServer doesn't natively support path parameters,
+        // so we look for ?id=xxx or parse the URL path manually.
+        String instanceId = "";
+        
+        // Check query parameter first: DELETE /api/instances?id=xxx
+        if (request->hasParam("id")) {
+            instanceId = request->getParam("id")->value();
+        }
+        
+        // Also support path-style: DELETE /api/instances/xxx (parsed from URL)
+        String url = request->url();
+        if (instanceId.isEmpty() && url.startsWith("/api/instances/")) {
+            instanceId = url.substring(strlen("/api/instances/"));
+            // URL-decode if needed (simple cases)
+            instanceId.trim();
+        }
+        
+        if (instanceId.isEmpty()) {
+            request->send(400, "application/json", "{\"error\":\"instance_id is required (use ?id=xxx or /api/instances/xxx)\"}");
+            return;
+        }
+        
+        extern ConfigLoader config;
+        extern RotationManager* rotationManager;
+        
+        bool removed = config.removeInstance(instanceId);
+        if (!removed) {
+            request->send(404, "application/json", "{\"error\":\"Instance not found\"}");
+            return;
+        }
+        
+        // Also remove from rotation if present
+        for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
+            if (it->instance_id == instanceId) {
+                it = config.rotation.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        ConfigSanitizer::sanitizeInstances(config);
+        config.saveToSD("/config.json");
+        
+        if (rotationManager) {
+            rotationManager->recreateInstance(instanceId);
+            rotationManager->resetRotation();
+        }
+        
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+
+    // Also handle path-style DELETE: /api/instances/xxx (catchall for sub-paths)
+    server.on("/api/instances/*", HTTP_DELETE, [](AsyncWebServerRequest *request){
+        String url = request->url();
+        String instanceId = "";
+        if (url.startsWith("/api/instances/")) {
+            instanceId = url.substring(strlen("/api/instances/"));
+            instanceId.trim();
+        }
+        
+        if (instanceId.isEmpty()) {
+            request->send(400, "application/json", "{\"error\":\"instance_id is required\"}");
+            return;
+        }
+        
+        extern ConfigLoader config;
+        extern RotationManager* rotationManager;
+        
+        bool removed = config.removeInstance(instanceId);
+        if (!removed) {
+            request->send(404, "application/json", "{\"error\":\"Instance not found\"}");
+            return;
+        }
+        
+        for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
+            if (it->instance_id == instanceId) {
+                it = config.rotation.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        ConfigSanitizer::sanitizeInstances(config);
+        config.saveToSD("/config.json");
+        
+        if (rotationManager) {
+            rotationManager->recreateInstance(instanceId);
+            rotationManager->resetRotation();
+        }
+        
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+
+    // API: GET /api/rotation — Return the current rotation list
+    server.on("/api/rotation", HTTP_GET, [](AsyncWebServerRequest *request){
+        extern ConfigLoader config;
+        DynamicJsonDocument doc(2048);
+        JsonArray arr = doc.to<JsonArray>();
+        for (const auto& rot : config.rotation) {
+            JsonObject obj = arr.createNestedObject();
+            obj["instance_id"] = rot.instance_id;
+            obj["duration_sec"] = rot.duration_sec;
+        }
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: POST /api/rotation — Replace the entire rotation list
+    AsyncCallbackJsonWebHandler* rotationHandler = new AsyncCallbackJsonWebHandler("/api/rotation", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonArray>()) {
+            request->send(400, "application/json", "{\"error\":\"Expected a JSON array of rotation entries\"}");
+            return;
+        }
+        JsonArray arr = json.as<JsonArray>();
+        extern ConfigLoader config;
+        extern RotationManager* rotationManager;
+        
+        config.rotation.clear();
+        for (JsonObject entry : arr) {
+            RotationEntry re;
+            re.instance_id = entry["instance_id"].as<String>();
+            re.duration_sec = entry["duration_sec"] | 15;
+            if (!re.instance_id.isEmpty()) {
+                config.rotation.push_back(re);
+            }
+        }
+        
+        config.saveToSD("/config.json");
+        
+        if (rotationManager) {
+            rotationManager->resetRotation();
+        }
+        
+        request->send(200, "application/json", "{\"success\":true}");
+    }, 4096);
+    server.addHandler(rotationHandler);
+
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(512);
