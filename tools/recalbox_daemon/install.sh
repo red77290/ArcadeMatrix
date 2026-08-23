@@ -147,10 +147,40 @@ else
 
     echo "Cleaning up any previous install..."
     ssh_run "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh || true" || true
-    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR" || true
+    ssh_run "$PASSWORD" "mkdir -p $TARGET_DIR /userdata/system/configs/emulationstation/scripts" || true
 
     echo "Uploading daemon..."
     scp_run "$PASSWORD" "$TMP_DIR/arcadematrix_daemon.py" "/userdata/system/arcadematrix_daemon.py" || { echo "SCP failed!"; exit 1; }
+
+    echo "Installing Batocera event hooks..."
+    ssh_run "$PASSWORD" "
+    cat > /userdata/system/scripts/arcadematrix_hook.sh << 'EOF'
+#!/bin/sh
+EVENT=\"\$(basename \"\$0\")\"
+SYSTEM=\"\$1\"
+ROMPATH=\"\$2\"
+GAMENAME=\"\$3\"
+
+case \"\$EVENT\" in
+    game-selected) STATE=\"browsing\" ;;
+    game-start)    STATE=\"playing\" ;;
+    game-end)      STATE=\"stopped\" ;;
+    system-selected) STATE=\"browsing\"; ROMPATH=\"\" ;;
+    *)             STATE=\"browsing\" ;;
+esac
+
+cat > /tmp/es_state.inf << STATEEOF
+SystemId=\$SYSTEM
+GamePath=\$ROMPATH
+State=\$STATE
+STATEEOF
+EOF
+    chmod +x /userdata/system/scripts/arcadematrix_hook.sh
+    for evt in game-selected game-start game-end system-selected; do
+        ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/scripts/\$evt
+        ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/configs/emulationstation/scripts/\$evt
+    done
+    " || true
 
     echo "Configuring custom.sh for startup..."
     ssh_run "$PASSWORD" "
