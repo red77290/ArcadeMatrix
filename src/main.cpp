@@ -80,16 +80,31 @@ uint8_t currentMinute = 42;
 
 
 String getPosixTimezone(String tz) {
-    if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome") return "CET-1CEST,M3.5.0,M10.5.0/3";
-    if (tz == "Europe/London") return "GMT0BST,M3.5.0/1,M10.5.0";
-    if (tz == "America/New_York") return "EST5EDT,M3.2.0,M11.1.0";
-    if (tz == "America/Chicago") return "CST6CDT,M3.2.0,M11.1.0";
-    if (tz == "America/Denver") return "MST7MDT,M3.2.0,M11.1.0";
-    if (tz == "America/Los_Angeles") return "PST8PDT,M3.2.0,M11.1.0";
+    if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome" || tz == "Europe/Brussels" || tz == "Europe/Amsterdam" || tz == "Europe/Vienna") return "CET-1CEST,M3.5.0,M10.5.0/3";
+    if (tz == "Europe/London" || tz == "Europe/Dublin" || tz == "Europe/Lisbon") return "GMT0BST,M3.5.0/1,M10.5.0";
+    if (tz == "Europe/Athens" || tz == "Europe/Helsinki" || tz == "Europe/Bucharest" || tz == "Europe/Kyiv") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
+    if (tz == "Europe/Moscow") return "MSK-3";
+    if (tz == "America/New_York" || tz == "America/Montreal" || tz == "America/Toronto") return "EST5EDT,M3.2.0,M11.1.0";
+    if (tz == "America/Chicago" || tz == "America/Mexico_City") return "CST6CDT,M3.2.0,M11.1.0";
+    if (tz == "America/Denver" || tz == "America/Phoenix") return "MST7MDT,M3.2.0,M11.1.0";
+    if (tz == "America/Los_Angeles" || tz == "America/Vancouver") return "PST8PDT,M3.2.0,M11.1.0";
+    if (tz == "America/Anchorage") return "AKST9AKDT,M3.2.0,M11.1.0";
+    if (tz == "Pacific/Honolulu") return "HST10";
+    if (tz == "America/Sao_Paulo") return "BRT3";
+    if (tz == "America/Buenos_Aires") return "ART3";
     if (tz == "Asia/Tokyo") return "JST-9";
-    if (tz == "Asia/Shanghai") return "CST-8";
-    if (tz == "Australia/Sydney") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
-    return tz; // Fallback to raw string (which could be a POSIX string)
+    if (tz == "Asia/Shanghai" || tz == "Asia/Hong_Kong" || tz == "Asia/Singapore" || tz == "Asia/Taipei") return "CST-8";
+    if (tz == "Asia/Seoul") return "KST-9";
+    if (tz == "Asia/Kolkata") return "IST-5:30";
+    if (tz == "Asia/Dubai") return "GST-4";
+    if (tz == "Asia/Bangkok" || tz == "Asia/Jakarta") return "ICT-7";
+    if (tz == "Australia/Sydney" || tz == "Australia/Melbourne") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+    if (tz == "Australia/Brisbane") return "AEST-10";
+    if (tz == "Australia/Adelaide") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
+    if (tz == "Australia/Perth") return "AWST-8";
+    if (tz == "Pacific/Auckland") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
+    if (tz == "UTC" || tz == "GMT") return "UTC0";
+    return tz; // Fallback to raw string (which could already be any standard POSIX string)
 }
 
 void setup() {
