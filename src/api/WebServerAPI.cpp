@@ -524,6 +524,7 @@ void WebServerAPI::setupRoutes() {
         doc["matrix_clk_phase"] = config.matrix.clkPhase;
         doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
         doc["matrix_row_address_mode"] = config.matrix.rowAddressMode;
+        doc["matrix_limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
 
         auto getInst = [&](const String& id) { return config.getInstance(id); };
         

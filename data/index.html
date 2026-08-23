@@ -1141,32 +1141,6 @@ select.input option {
                 <input type="number" id="hw-chain" class="input" value="1">
               </div>
               <div class="form-group">
-                <label>Parallel Chains <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
-                <input type="number" id="hw-parallel" class="input" value="1">
-              </div>
-            </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 high-density, ICN2038S, SM16208)">?</span></label>
-                <select id="hw-driver-chip" class="input">
-                  <option value="SHIFTREG">Standard (SHIFTREG)</option>
-                  <option value="FM6126A">FM6124 / FM6126A</option>
-                  <option value="ICN2038S">ICN2038S</option>
-                  <option value="MBI5124">MBI5124</option>
-                  <option value="SM16208">SM16208</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
-                <select id="hw-mapping" class="input">
-                  <option value="regular">Regular</option>
-                  <option value="regular-pi1">Regular Pi1</option>
-                  <option value="adafruit-hat">Adafruit HAT</option>
-                  <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
-                  <option value="compute-module">Compute Module</option>
-                </select>
-              </div>
-              <div class="form-group">
                 <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
                 <select id="hw-rgb" class="input">
                   <option value="RGB">RGB</option>
@@ -1177,39 +1151,51 @@ select.input option {
                   <option value="BGR">BGR</option>
                 </select>
               </div>
-              <div class="form-group">
-                <label>Row Addr Type <span class="tooltip-icon" data-tooltip="Default 0. Set to 1 for AB, 2 for direct, 3 for ABC, 4 for ShiftReg. Used for complex P2 panels.">?</span></label>
-                <input type="number" id="hw-row-addr-type" class="input" value="0" min="0" max="4">
-              </div>
-              <div class="form-group">
-                <label>Multiplexing <span class="tooltip-icon" data-tooltip="Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.">?</span></label>
-                <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
-              </div>
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Slowdown <span class="tooltip-icon" data-i18n-tooltip="tt_hw_slowdown">?</span></label>
-                <input type="number" id="hw-slowdown" class="input" value="2">
+                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A, ICN2038S, MBI5124, SM16208)">?</span></label>
+                <select id="hw-driver-chip" class="input">
+                  <option value="SHIFTREG">Standard (SHIFTREG)</option>
+                  <option value="FM6124">FM6124</option>
+                  <option value="FM6126A">FM6126A</option>
+                  <option value="ICN2038S">ICN2038S</option>
+                  <option value="MBI5124">MBI5124</option>
+                  <option value="SM16208">SM16208</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Color Depth <span class="tooltip-icon" data-tooltip="Profondeur de couleur par canal (ex: 8)">?</span></label>
+                <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
+              </div>
+              <div class="form-group">
+                <label>Row Addr Mode <span class="tooltip-icon" data-tooltip="0 = Standard direct, 1 = Shift Register, 2 = Direct 16 lines">?</span></label>
+                <input type="number" id="hw-row-addr-mode" class="input" value="0" min="0" max="4">
+              </div>
+              <div class="form-group">
+                <label>Latch Blanking <span class="tooltip-icon" data-tooltip="Cycles d'extinction OE pendant le verrouillage de ligne (0-4)">?</span></label>
+                <input type="number" id="hw-latch-blanking" class="input" value="0" min="0" max="4">
               </div>
             </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>PWM Bits <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_bits">?</span></label>
-                <input type="number" id="hw-pwm-bits" class="input" value="11" min="1" max="11">
-              </div>
-              <div class="form-group">
-                <label>PWM LSB (ns) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_lsb">?</span></label>
-                <input type="number" id="hw-pwm-lsb" class="input" value="130">
-              </div>
+            <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
                 <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
-                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
+                <input type="number" id="hw-limit-refresh" class="input" value="90" min="0" max="300">
               </div>
               <div class="form-group">
-                <label>Disable Hardware Pulsing <span class="tooltip-icon" data-i18n-tooltip="tt_hw_disable_pulsing">?</span></label>
+                <label>Clock Phase (Invert) <span class="tooltip-icon" data-tooltip="Inverser la phase d'horloge pour réduire les bruits de pixels">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
-                    <input type="checkbox" id="hw-disable-pulsing">
+                    <input type="checkbox" id="hw-clk-phase">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Force Single Buffer <span class="tooltip-icon" data-tooltip="Réduit l'usage RAM si la PSRAM n'est pas disponible">?</span></label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="hw-force-single-buffer">
                     <span class="slider"></span>
                   </label>
                 </div>
@@ -1470,14 +1456,8 @@ const translations = {
     
     // Tooltips
     tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
-    tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
-    tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
     tt_hw_rgb: "Change this if your colors appear swapped (e.g., Red looks Blue).",
-    tt_hw_slowdown: "GPIO Slowdown. Crucial for modern Raspberry Pis to prevent flickering (Pi 3 = 1-2, Pi 4 = 2-3, Pi 5 = 4).",
-    tt_hw_pwm_bits: "Lowering this increases refresh rate but reduces color depth. 11 is default.",
-    tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
-    tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
-    tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
+    tt_hw_limit_refresh: "Refresh rate limit in Hz (default 90Hz to optimize DMA and CPU load).",
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -1490,14 +1470,8 @@ const translations = {
     
     // Tooltips
     tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
-    tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
-    tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
     tt_hw_rgb: "Modifiez ceci si vos couleurs sont inversées (ex: le rouge apparait bleu).",
-    tt_hw_slowdown: "Ralentissement GPIO. Indispensable pour éviter le clignotement sur les Pi récents (Pi 3 = 1-2, Pi 4 = 2-3).",
-    tt_hw_pwm_bits: "Baisser cette valeur augmente la fluidité mais réduit les nuances de couleurs. 11 par défaut.",
-    tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
-    tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
-    tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
+    tt_hw_limit_refresh: "Limite de rafraîchissement en Hz (90Hz par défaut pour optimiser le DMA).",
   },
   es: {
     nav_dashboard: "Panel",
@@ -1510,14 +1484,8 @@ const translations = {
     
     // Tooltips
     tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
-    tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
-    tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
     tt_hw_rgb: "Cambia esto si tus colores aparecen intercambiados (ej: rojo se ve azul).",
-    tt_hw_slowdown: "Ralentización GPIO. Crucial para evitar parpadeos en Pi recientes (Pi 3 = 1-2, Pi 4 = 2-3).",
-    tt_hw_pwm_bits: "Bajar este valor aumenta la tasa de refresco pero reduce la profundidad de color. 11 por defecto.",
-    tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
-    tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
-    tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
+    tt_hw_limit_refresh: "Límite de refresco en Hz (90Hz por defecto para optimizar DMA).",
   }
 };
 
@@ -2358,20 +2326,17 @@ async function initSettings() {
     }
 
     // Hardware
-    document.getElementById('hw-rows').value = s.matrix_rows;
-    document.getElementById('hw-cols').value = s.matrix_cols;
-    document.getElementById('hw-chain').value = s.matrix_chain;
-    document.getElementById('hw-parallel').value = s.matrix_parallel;
+    if (document.getElementById('hw-rows')) document.getElementById('hw-rows').value = s.matrix_rows || 32;
+    if (document.getElementById('hw-cols')) document.getElementById('hw-cols').value = s.matrix_cols || 64;
+    if (document.getElementById('hw-chain')) document.getElementById('hw-chain').value = s.matrix_chain || 1;
     if (document.getElementById('hw-driver-chip')) document.getElementById('hw-driver-chip').value = s.matrix_driver_chip || 'SHIFTREG';
-    if (document.getElementById('hw-row-addr-type')) document.getElementById('hw-row-addr-type').value = s.matrix_row_addr_type || 0;
-    if (document.getElementById('hw-multiplexing')) document.getElementById('hw-multiplexing').value = s.matrix_multiplexing || 0;
-    document.getElementById('hw-mapping').value = s.matrix_mapping || 'regular';
-    document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
-    document.getElementById('hw-slowdown').value = s.matrix_slowdown;
-    document.getElementById('hw-pwm-bits').value = s.matrix_pwm_bits;
-    document.getElementById('hw-pwm-lsb').value = s.matrix_pwm_lsb_nanoseconds;
-    document.getElementById('hw-disable-pulsing').checked = s.matrix_disable_hardware_pulsing;
-    document.getElementById('hw-limit-refresh').value = s.matrix_limit_refresh_rate_hz;
+    if (document.getElementById('hw-color-depth')) document.getElementById('hw-color-depth').value = s.color_depth || 8;
+    if (document.getElementById('hw-row-addr-mode')) document.getElementById('hw-row-addr-mode').value = (s.matrix_row_address_mode !== undefined) ? s.matrix_row_address_mode : 0;
+    if (document.getElementById('hw-latch-blanking')) document.getElementById('hw-latch-blanking').value = (s.matrix_latch_blanking !== undefined) ? s.matrix_latch_blanking : 0;
+    if (document.getElementById('hw-clk-phase')) document.getElementById('hw-clk-phase').checked = !!s.matrix_clk_phase;
+    if (document.getElementById('hw-force-single-buffer')) document.getElementById('hw-force-single-buffer').checked = !!s.matrix_force_single_buffer;
+    if (document.getElementById('hw-rgb')) document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
+    if (document.getElementById('hw-limit-refresh')) document.getElementById('hw-limit-refresh').value = (s.matrix_limit_refresh_rate_hz !== undefined) ? s.matrix_limit_refresh_rate_hz : 90;
     
     // MQTT
     document.getElementById('hw-mqtt-enable').value = s.mqtt_enabled ? '1' : '0';
@@ -2520,33 +2485,27 @@ async function initSettings() {
       const rows = parseInt(document.getElementById('hw-rows').value) || 32;
       const cols = parseInt(document.getElementById('hw-cols').value) || 64;
       const chain = parseInt(document.getElementById('hw-chain').value) || 1;
-      const parallel = parseInt(document.getElementById('hw-parallel').value) || 1;
       const driverChip = document.getElementById('hw-driver-chip')?.value || 'SHIFTREG';
-      const rowAddrType = parseInt(document.getElementById('hw-row-addr-type')?.value) || 0;
-      const multiplexing = parseInt(document.getElementById('hw-multiplexing')?.value) || 0;
-      const mapping = document.getElementById('hw-mapping').value || 'regular';
-      const rgb = document.getElementById('hw-rgb').value || 'RGB';
-      const slowdown = parseInt(document.getElementById('hw-slowdown').value) || 2;
-      const pwmBits = parseInt(document.getElementById('hw-pwm-bits').value) || 11;
-      const pwmLsb = parseInt(document.getElementById('hw-pwm-lsb').value) || 130;
-      const disablePulsing = document.getElementById('hw-disable-pulsing').checked;
-      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh').value) || 120;
+      const colorDepth = parseInt(document.getElementById('hw-color-depth')?.value) || 8;
+      const rowAddrMode = parseInt(document.getElementById('hw-row-addr-mode')?.value) || 0;
+      const latchBlanking = parseInt(document.getElementById('hw-latch-blanking')?.value) || 0;
+      const clkPhase = document.getElementById('hw-clk-phase')?.checked || false;
+      const forceSingleBuffer = document.getElementById('hw-force-single-buffer')?.checked || false;
+      const rgb = document.getElementById('hw-rgb')?.value || 'RGB';
+      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh')?.value) || 90;
       
       try {
         await API.post('/api/settings', { 
           matrix_rows: rows,
           matrix_cols: cols,
           matrix_chain: chain,
-          matrix_parallel: parallel,
           matrix_driver_chip: driverChip,
-          matrix_row_addr_type: rowAddrType,
-          matrix_multiplexing: multiplexing,
-          matrix_mapping: mapping,
+          color_depth: colorDepth,
+          matrix_row_address_mode: rowAddrMode,
+          matrix_latch_blanking: latchBlanking,
+          matrix_clk_phase: clkPhase,
+          matrix_force_single_buffer: forceSingleBuffer,
           matrix_rgb_sequence: rgb,
-          matrix_slowdown: slowdown,
-          matrix_pwm_bits: pwmBits,
-          matrix_pwm_lsb_nanoseconds: pwmLsb,
-          matrix_disable_hardware_pulsing: disablePulsing,
           matrix_limit_refresh_rate_hz: limitRefresh
         });
         window.showToast('Hardware settings saved! Restarting app...', 'success');
