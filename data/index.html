@@ -1048,6 +1048,15 @@ const API = {
     return await res.json();
   },
 
+  async delete(url) {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    return await res.json();
+  },
+
   async uploadMarquee(file) {
     const formData = new FormData();
     formData.append('image', file);
@@ -1295,7 +1304,14 @@ async function initHardwareCapabilities() {
           txt += ` | PSRAM: ${psramMb} MB`;
         }
         elHeap.textContent = txt;
-   async function initDynamicEngines() {
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load hardware capabilities:', e);
+  }
+}
+
+async function initDynamicEngines() {
   const container = document.getElementById('page-display');
   const tabsContainer = document.querySelector('#page-display .tabs');
   
