@@ -231,6 +231,61 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
 
+    // API: GET /api/timezones (Dynamic options endpoint for timezones)
+    server.on("/api/timezones", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(4096);
+        JsonArray arr = doc.to<JsonArray>();
+        struct TzItem { const char* value; const char* label; };
+        static const TzItem timezones[] = {
+            {"Europe/Paris", "Europe/Paris (UTC+1/+2)"},
+            {"Europe/London", "Europe/London (UTC+0/+1)"},
+            {"Europe/Berlin", "Europe/Berlin (UTC+1/+2)"},
+            {"Europe/Madrid", "Europe/Madrid (UTC+1/+2)"},
+            {"Europe/Rome", "Europe/Rome (UTC+1/+2)"},
+            {"Europe/Brussels", "Europe/Brussels (UTC+1/+2)"},
+            {"Europe/Amsterdam", "Europe/Amsterdam (UTC+1/+2)"},
+            {"Europe/Zurich", "Europe/Zurich (UTC+1/+2)"},
+            {"Europe/Vienna", "Europe/Vienna (UTC+1/+2)"},
+            {"Europe/Athens", "Europe/Athens (UTC+2/+3)"},
+            {"Europe/Helsinki", "Europe/Helsinki (UTC+2/+3)"},
+            {"Europe/Moscow", "Europe/Moscow (UTC+3)"},
+            {"America/New_York", "America/New_York (EST/EDT, UTC-5/-4)"},
+            {"America/Chicago", "America/Chicago (CST/CDT, UTC-6/-5)"},
+            {"America/Denver", "America/Denver (MST/MDT, UTC-7/-6)"},
+            {"America/Los_Angeles", "America/Los_Angeles (PST/PDT, UTC-8/-7)"},
+            {"America/Montreal", "America/Montreal (UTC-5/-4)"},
+            {"America/Toronto", "America/Toronto (UTC-5/-4)"},
+            {"America/Vancouver", "America/Vancouver (UTC-8/-7)"},
+            {"America/Anchorage", "America/Anchorage (AKST/AKDT, UTC-9/-8)"},
+            {"America/Sao_Paulo", "America/Sao_Paulo (BRT, UTC-3)"},
+            {"America/Buenos_Aires", "America/Buenos_Aires (ART, UTC-3)"},
+            {"Pacific/Honolulu", "Pacific/Honolulu (HST, UTC-10)"},
+            {"Asia/Tokyo", "Asia/Tokyo (JST, UTC+9)"},
+            {"Asia/Shanghai", "Asia/Shanghai (CST, UTC+8)"},
+            {"Asia/Hong_Kong", "Asia/Hong_Kong (HKT, UTC+8)"},
+            {"Asia/Singapore", "Asia/Singapore (SGT, UTC+8)"},
+            {"Asia/Seoul", "Asia/Seoul (KST, UTC+9)"},
+            {"Asia/Bangkok", "Asia/Bangkok (ICT, UTC+7)"},
+            {"Asia/Dubai", "Asia/Dubai (GST, UTC+4)"},
+            {"Asia/Kolkata", "Asia/Kolkata (IST, UTC+5:30)"},
+            {"Australia/Sydney", "Australia/Sydney (AEST/AEDT, UTC+10/+11)"},
+            {"Australia/Melbourne", "Australia/Melbourne (AEST/AEDT, UTC+10/+11)"},
+            {"Australia/Brisbane", "Australia/Brisbane (AEST, UTC+10)"},
+            {"Australia/Adelaide", "Australia/Adelaide (ACST/ACDT, UTC+9:30/+10:30)"},
+            {"Australia/Perth", "Australia/Perth (AWST, UTC+8)"},
+            {"Pacific/Auckland", "Pacific/Auckland (NZST/NZDT, UTC+12/+13)"},
+            {"UTC", "UTC (Coordinated Universal Time)"}
+        };
+        for (const auto& tz : timezones) {
+            JsonObject obj = arr.createNestedObject();
+            obj["value"] = tz.value;
+            obj["label"] = tz.label;
+        }
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
@@ -796,7 +851,10 @@ void WebServerAPI::setupRoutes() {
         if (!doc["wake_up_at"].isNull()) config.system.wake_up_at = doc["wake_up_at"].as<String>();
         if (!doc["night_brightness"].isNull()) config.system.night_brightness = doc["night_brightness"].as<int>();
 
-        if (!doc["timezone"].isNull()) config.system.timezone = doc["timezone"].as<String>();
+        if (!doc["timezone"].isNull()) {
+            config.system.timezone = doc["timezone"].as<String>();
+            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
+        }
         if (!doc["format_24h"].isNull()) config.system.format24h = doc["format_24h"].as<bool>();
 
         if (!doc["wifi_ssid"].isNull()) config.wifi.ssid = doc["wifi_ssid"].as<String>();
