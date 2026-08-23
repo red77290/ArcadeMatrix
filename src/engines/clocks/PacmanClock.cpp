@@ -80,7 +80,7 @@ void PacmanClock::update() {
         lastMinute = storedTime.minutes;
         strcpy(oldTimeStr, timeStr);
         strcpy(newTimeStr, timeStr);
-    } else if (lastMinute != storedTime.minutes && !transitioning) {
+    } else if ((lastMinute != storedTime.minutes || strcmp(oldTimeStr, timeStr) != 0) && !transitioning) {
         transitioning = true;
         strcpy(newTimeStr, timeStr);
         pacX = -40.0f;

@@ -26,7 +26,7 @@ void SlotMachineClock::update() {
         lastMinute = storedTime.minutes;
         strcpy(currentTime, timeStr);
         strcpy(targetTime, timeStr);
-    } else if (lastMinute != storedTime.minutes && !spinning) {
+    } else if ((lastMinute != storedTime.minutes || strcmp(currentTime, timeStr) != 0) && !spinning) {
         spinning = true;
         spinSpeed = 15.0f;
         strcpy(targetTime, timeStr);
