@@ -5,7 +5,7 @@
 extern ConfigLoader config;
 
 TempEngine::TempEngine() 
-    : useFahrenheit(false) {}
+    : useFahrenheit(false), tempOffset(0.0f), offsetX(0), offsetY(0) {}
 
 TempEngine::~TempEngine() {}
 
@@ -50,7 +50,18 @@ void TempEngine::update(EngineContext* context) {
 void TempEngine::activate() {}
 void TempEngine::deactivate() {}
 void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
-    setUnit(config.system.unit);
+    if (engineConfig) {
+        String u = engineConfig->getString("units", config.system.unit.c_str());
+        setUnit(u);
+        tempOffset = engineConfig->getFloat("temp_offset", config.system.temp_offset);
+        offsetX = engineConfig->getInt("temp_offset_x", 0);
+        offsetY = engineConfig->getInt("temp_offset_y", 0);
+    } else {
+        setUnit(config.system.unit);
+        tempOffset = config.system.temp_offset;
+        offsetX = 0;
+        offsetY = 0;
+    }
 }
 
 void TempEngine::render(EngineContext* context) {
@@ -59,11 +70,12 @@ void TempEngine::render(EngineContext* context) {
 
     matrix->fillScreen(0);
 
-    EnvironmentData envData = hardwareHAL.readEnvironment(config.system.temp_offset);
+    EnvironmentData envData = hardwareHAL.readEnvironment(tempOffset);
     if (!envData.available) {
         // Fallback or warning if sensor not detected
         matrix->setTextSize(1);
         matrix->setTextColor(matrix->color565(150, 150, 150));
+        matrix->setCursor(4 + offsetX, 12 + offsetY);
         matrix->print("Sensor N/A");
         return;
     }
@@ -89,35 +101,35 @@ void TempEngine::render(EngineContext* context) {
         matrix->setTextSize(textSize);
 
         // Draw Thermometer + Temp on Left
-        drawThermometerIcon(matrix, 4, (height / 2) - 8, tempColor);
+        drawThermometerIcon(matrix, 4 + offsetX, (height / 2) - 8 + offsetY, tempColor);
         matrix->setTextColor(tempColor);
-        matrix->setCursor(20, (height / 2) - (textSize * 4));
+        matrix->setCursor(20 + offsetX, (height / 2) - (textSize * 4) + offsetY);
         matrix->print(tempBuf);
 
         // Draw Water Drop + Humidity on Right
         int rightStartX = (width / 2) + 10;
-        drawWaterDropIcon(matrix, rightStartX, (height / 2) - 8, humColor);
+        drawWaterDropIcon(matrix, rightStartX + offsetX, (height / 2) - 8 + offsetY, humColor);
         matrix->setTextColor(humColor);
-        matrix->setCursor(rightStartX + 16, (height / 2) - (textSize * 4));
+        matrix->setCursor(rightStartX + 16 + offsetX, (height / 2) - (textSize * 4) + offsetY);
         matrix->print(humBuf);
     } else {
         // Standard 64x32 display layout
         matrix->setTextSize(1);
 
         // Draw Thermometer Icon on top-left
-        drawThermometerIcon(matrix, 2, 2, tempColor);
+        drawThermometerIcon(matrix, 2 + offsetX, 2 + offsetY, tempColor);
 
         // Temp text top-right
         matrix->setTextColor(tempColor);
-        matrix->setCursor(18, 5);
+        matrix->setCursor(18 + offsetX, 5 + offsetY);
         matrix->print(tempBuf);
 
         // Draw Water Drop Icon on bottom-left
-        drawWaterDropIcon(matrix, 2, 16, humColor);
+        drawWaterDropIcon(matrix, 2 + offsetX, 16 + offsetY, humColor);
 
         // Humidity text bottom-right
         matrix->setTextColor(humColor);
-        matrix->setCursor(18, 19);
+        matrix->setCursor(18 + offsetX, 19 + offsetY);
         matrix->print(humBuf);
     }
 }
@@ -129,6 +141,7 @@ EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
     desc_temp.requirements.needsTempSensor = true;
     desc_temp.schema.fields = {
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "C", false, "", "", "", "C,F", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_offset", ConfigType::FLOAT, "Calibration Offset (°C)", "Calibration offset in °C added to raw sensor reading", "0.0", false, "-20.0", "20.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

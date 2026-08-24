@@ -31,6 +31,9 @@ void DecibelEngine::deactivate() {
 
 void DecibelEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (engineConfig) {
+        micGain = engineConfig->getFloat("gain", 1.0f);
+        dbCalibration = engineConfig->getFloat("db_calibration", 0.0f);
+        threshold = engineConfig->getInt("threshold", 80);
         config_visualizer_enabled = engineConfig->getBool("visualizer_enabled", false);
     }
 }
@@ -206,10 +209,8 @@ void DecibelEngine::drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, No
 }
 
 void DecibelEngine::update(EngineContext* context) {
-    extern ConfigLoader config;
-    auto inst = config.getInstance("decibel_main"); if (inst) hardwareHAL.setMicGain(inst->config.getFloat("gain", 1.0f));
-    auto vis = config.getInstance("visualizer_main");
-    float rawDb = hardwareHAL.getDecibels(vis ? vis->config.getFloat("db_calibration", 0.0f) : 0.0f);
+    hardwareHAL.setMicGain(micGain);
+    float rawDb = hardwareHAL.getDecibels(dbCalibration);
 
     // Fast Attack (0.75), Smooth Decay (0.15) for immediate clap response and fluid movement
     if (rawDb > currentDb) {
@@ -316,6 +317,8 @@ EngineDescriptor DecibelEngineDescriptorHandler::getDescriptor() const {
     desc_decibel.capabilities.realtime = true;
     desc_decibel.requirements.needsAudio = true;
     desc_decibel.schema.fields = {
+        ConfigField("gain", ConfigType::FLOAT, "Sensitivity (Gain)", "Microphone sensitivity / distance multiplier (lower = closer to speakers)", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("db_calibration", ConfigType::FLOAT, "Calibration Offset (dB)", "Calibration offset in dB (+/- dB)", "0.0", false, "-30.0", "30.0", "1.0", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("threshold", ConfigType::INTEGER, "Alert Threshold (dB)", "Warning threshold level", "80", false, "40", "120", "5", "", "", false, "", ValidationPolicy::Clamp)
     };
     desc_decibel.factory = []() { return std::unique_ptr<IEngine>(new DecibelEngine()); };
