@@ -27,6 +27,9 @@ public:
 
 private:
     bool useFahrenheit;
+    float tempOffset;
+    int offsetX;
+    int offsetY;
 
     void drawThermometerIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color);
     void drawWaterDropIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color);

@@ -37,6 +37,9 @@ private:
 
     float currentDb;
     NoiseStatusLevel currentLevel;
+    float micGain = 1.0f;
+    float dbCalibration = 0.0f;
+    int threshold = 80;
     bool config_visualizer_enabled = false;
 
     void updateStatusLevel(float db);
