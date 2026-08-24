@@ -100,37 +100,117 @@ El ESP32 asignará memoria (`initialize()`) para `crypto_main` la primera vez qu
 
 ---
 
-## 6. Configuración de motores financieros (`crypto` y `stock`)
+## 6. Configuración de todos los Motores
 
-Los motores `crypto` y `stock` admiten visualización multipágina interactiva con cotizaciones en tiempo real y gráficos sparklines históricos:
+Cada motor declara su esquema de configuración de forma dinámica. A continuación se detallan los parámetros de todos los motores disponibles:
 
-| Clave | Tipo | Predeterminado | Opciones | Descripción |
+### Motor: `clock`
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
-| `symbols` | `String` | `"BTC,ETH"` / `"AAPL,NVDA"` | Separados por comas | Activos financieros a monitorear. |
-| `show_chart` | `bool` | `true` | `true`, `false` | Activa la pantalla con el gráfico sparkline histórico. |
-| `chart_timeframe` | `String` | `"daily"` | `"hourly"`, `"daily"`, `"weekly"`, `"monthly"` | Intervalo de tiempo para el gráfico de precios. |
-| `duration_sec` / `page_seconds` | `int` | `5` | `3` a `30` | Segundos para mostrar cada vista antes de alternar. |
-| `cache_ttl_min` | `int` | `5` | `1` a `60` | Minutos de retención de caché antes de consultar las API. |
+| `clock_theme` | `ENUM` | `0` | Desde `/api/themes` | Tema visual / esfera de reloj (Nintendo, Capcom, Sega, Arcade, Cyberpunk, Flip, Tetris, etc.). |
+| `clock_format` | `String` | `%H:%M:%S` | `%H:%M:%S`, `%H:%M`, `%I:%M:%S %p`, `%I:%M %p` | Cadena de formato POSIX strftime. |
+| `clock_font` | `ENUM` | `PressStart2P.ttf` | Desde `/api/fonts` | Tipo de fuente (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, o `.amf` SD). |
+| `timezone` | `ENUM` | `Europe/Paris` | Desde `/api/timezones` | Zona horaria / región. |
+| `clock_size` | `int` | `2` | `1` a `5` | Multiplicador de escala de la fuente. |
+| `clock_color_1` | `Color` | `#ffffff` | Hex `#RRGGBB` | Color primario superior (usado con el tema Personalizado 20). |
+| `clock_color_2` | `Color` | `#ff00ff` | Hex `#RRGGBB` | Color secundario inferior (usado con el tema Personalizado 20). |
+| `clock_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `clock_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+### Motor: `date`
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `date_theme` | `ENUM` | `0` | Desde `/api/themes` | Tema visual para la fecha. |
+| `date_format` | `String` | `%d/%m/%Y` | `%d/%m/%Y`, `%Y-%m-%d`, `%d %b %Y`, `%A %d %B` | Formato para mostrar la fecha. |
+| `date_font` | `ENUM` | `PressStart2P.ttf` | Desde `/api/fonts` | Tipo de fuente (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, o `.amf`). |
+| `timezone` | `ENUM` | `Europe/Paris` | Desde `/api/timezones` | Zona horaria para la fecha. |
+| `date_size` | `int` | `1` | `1` a `3` | Multiplicador de escala de la fuente. |
+| `date_color_1` | `Color` | `#ffffff` | Hex `#RRGGBB` | Color primario (usado con el tema Personalizado 20). |
+| `date_color_2` | `Color` | `#00ffff` | Hex `#RRGGBB` | Color secundario (usado con el tema Personalizado 20). |
+| `date_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `date_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+### Motor: `weather`
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Clave API gratuita | Su clave API de OpenWeatherMap (gratis en [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
+| `city` | `String` | `Paris,FR` | Texto | Ubicación de la ciudad (ver formato abajo). |
+| `units` | `ENUM` | `metric` | `metric`, `imperial` | Unidad de temperatura: `metric` para Celsius (°C) o `imperial` para Fahrenheit (°F). |
+| `lang` | `ENUM` | `es` | `es`, `en`, `fr`, `de`, `it` | Idioma de las etiquetas de días (HOY / TODAY / AUJ.). |
+| `weather_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `weather_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+#### Cómo formatear el campo `city` para OpenWeatherMap
+OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2 letras para EE. UU.):
+* **Ubicaciones Internacionales:** Use `Ciudad,CodigoPais` (ej. `Madrid,ES`, `BuenosAires,AR`, `Mexico,MX`, `Paris,FR`).
+* **Ubicaciones en Estados Unidos:** Use `Ciudad,CodigoEstado,CodigoPais` (ej. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`).
+* **Dónde verificar:** Visite [openweathermap.org](https://openweathermap.org) y busque su ciudad.
+
+### Motor: `gifs`
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `folder` | `LIST` | `all` | Desde `/api/playlists` | Carpetas / Listas de reproducción de GIFs activas (ej. `Arcade`, `Consoles`, `Fighters`). |
+| `speed_multiplier` | `Float` | `1.0` | `0.25` a `3.0` | Factor de velocidad de reproducción (`1.0` = velocidad normal). |
+| `shuffle` | `Boolean` | `true` | `true`, `false` | Orden aleatorio de reproducción de las animaciones. |
+| `duration_sec` | `int` | `10` | `2` a `120` | Duración en segundos por cada GIF. |
+
+### Motor: `crypto` (Requiere PSRAM)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `BTC,ETH,SOL` | Separados por comas | Símbolos de criptomonedas a monitorear. |
+| `show_chart` | `Boolean` | `true` | `true`, `false` | Muestra el gráfico sparkline histórico. |
+| `chart_timeframe` | `ENUM` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal del gráfico de precios. |
+| `duration_sec` | `int` | `5` | `3` a `30` | Segundos para mostrar cada activo. |
+| `currency` | `ENUM` | `USD` | `USD`, `EUR`, `GBP`, `JPY` | Moneda fiduciaria de referencia. |
+| `provider` | `ENUM` | `coingecko` | `coingecko`, `binance` | Proveedor de cotizaciones en tiempo real. |
+| `cache_ttl_min` | `int` | `5` | `1` a `60` | Minutos entre actualizaciones de API. |
+| `crypto_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `crypto_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+### Motor: `stock` (Requiere PSRAM)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `AAPL,TSLA,NVDA` | Separados por comas | Símbolos bursátiles a monitorear. |
+| `show_chart` | `Boolean` | `true` | `true`, `false` | Muestra el gráfico sparkline histórico. |
+| `chart_timeframe` | `ENUM` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal del gráfico de acciones. |
+| `duration_sec` | `int` | `5` | `3` a `30` | Segundos para mostrar cada acción. |
+| `provider` | `ENUM` | `yahoo` | `yahoo` | Proveedor de cotizaciones de mercado. |
+| `cache_ttl_min` | `int` | `5` | `1` a `60` | Minutos entre actualizaciones de API. |
+| `stock_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `stock_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+### Motor: `audiovisualizer` (Requiere Micrófono)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `enabled` | `Boolean` | `false` | `true`, `false` | Activa la superposición del visualizador de audio FFT en vivo. |
+| `style` | `ENUM` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Estilo de renderizado de la visualización de audio. |
+| `sensitivity` | `int` | `5` | `1` a `10` | Sensibilidad de respuesta del micrófono. |
+| `gain` | `Float` | `1.0` | `0.5` a `5.0` | Factor de ganancia del micrófono por hardware. |
+
+### Motor: `decibelMeter` (Requiere Micrófono)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `threshold` | `int` | `80` | `40` a `120` | Umbral de advertencia sonora en decibelios (dB). |
+
+### Motor: `temp` (Requiere Sensor)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `units` | `ENUM` | `C` | `C`, `F` | Unidad de medida del sensor de temperatura integrado. |
+| `temp_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal de píxeles. |
+| `temp_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical de píxeles. |
+
+### Motor: `message`
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `text` | `String` | `ArcadeMatrix` | Texto | Texto del mensaje o cartel a mostrar. |
+| `color` | `Color` | `#ffffff` | Hex `#RRGGBB` | Color del texto. |
+| `size` | `int` | `1` | `1` a `4` | Multiplicador de escala de la fuente. |
+| `direction` | `ENUM` | `rtl` | `rtl`, `ltr`, `ttb`, `btt`, `static` | Dirección de desplazamiento (`rtl` = derecha a izquierda, `static` = texto centrado fijo). |
+| `speed` | `int` | `50` | `10` a `200` | Demora en milisegundos por paso de desplazamiento (menor = más rápido). |
+| `font` | `ENUM` | `Default` | Desde `/api/fonts` | Tipo de fuente (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, `.amf`). |
 
 ---
 
-## 7. Configuración del motor del Clima (`weather`)
-
-El motor `weather` obtiene el pronóstico del tiempo para 3 días desde [OpenWeatherMap](https://openweathermap.org) con una memoria caché automática de 15 minutos:
-
-| Clave | Tipo | Predeterminado | Opciones | Descripción |
-| :--- | :--- | :--- | :--- | :--- |
-| `api_key` | `String` | `""` | Clave API gratuita | Su clave API de OpenWeatherMap (gratuita en [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
-| `city` | `String` | `"Paris,FR"` | Texto | Ubicación de la ciudad (ver formato a continuación). |
-| `units` | `String` | `"metric"` | `"metric"`, `"imperial"` | Unidad de temperatura: `metric` para Celsius (°C) o `imperial` para Fahrenheit (°F). |
-| `lang` | `String` | `"es"` | `"en"`, `"fr"`, `"es"`, `"de"`, `"it"` | Idioma de las etiquetas de días (HOY / TODAY / AUJ.). |
-| `weather_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal en píxeles. |
-| `weather_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical en píxeles. |
-
-### Cómo formatear el campo `city` para OpenWeatherMap
-OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2 letras para EE. UU.) para identificar la localidad sin ambigüedades:
-* **Ubicaciones Internacionales:** Use `Ciudad,CodigoPais` (ej. `Madrid,ES`, `BuenosAires,AR`, `Mexico,MX`, `Paris,FR`).
-* **Ubicaciones en Estados Unidos:** Use `Ciudad,CodigoEstado,CodigoPais` (ej. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Si se omite el estado o el país, la API puede devolver una ciudad homónima en otro lugar.
-* **Dónde verificar:** Visite [openweathermap.org](https://openweathermap.org) y busque su ciudad. El encabezado del resultado y la URL muestran exactamente el formato reconocido por la API.
+*Nota: Los esquemas de configuración se pueden consultar en vivo desde el ESP32 mediante `GET /api/engines`.*
 
 

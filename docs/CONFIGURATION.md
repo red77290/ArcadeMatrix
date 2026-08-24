@@ -100,37 +100,117 @@ The ESP32 will allocate memory (`initialize()`) for `crypto_main` the very first
 
 ---
 
-## 6. Financial Engines Configuration (`crypto` & `stock`)
+## 6. Engine Configurations
 
-Both `crypto` and `stock` engines support interactive multi-page display with real-time quotes and historical sparkline charts:
+Each engine declares its configuration schema dynamically. Below are the parameters and options for all available engines:
 
-| Key | Type | Default | Options | Description |
+### Engine: `clock`
+| Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `symbols` | `String` | `"BTC,ETH"` / `"AAPL,NVDA"` | Comma-separated | Assets to monitor. |
-| `show_chart` | `bool` | `true` | `true`, `false` | Enables the historical sparkline chart view. |
-| `chart_timeframe` | `String` | `"daily"` | `"hourly"`, `"daily"`, `"weekly"`, `"monthly"` | Timeframe range for historical prices. |
-| `duration_sec` / `page_seconds` | `int` | `5` | `3` to `30` | Seconds to display each view before cycling. |
-| `cache_ttl_min` | `int` | `5` | `1` to `60` | Minutes between fresh API queries. |
+| `clock_theme` | `ENUM` | `0` | From `/api/themes` | Visual theme / publisher clockface (Nintendo, Capcom, Sega, Arcade, Cyberpunk, Flip, Tetris, etc.). |
+| `clock_format` | `String` | `%H:%M:%S` | `%H:%M:%S`, `%H:%M`, `%I:%M:%S %p`, `%I:%M %p` | POSIX strftime format string. |
+| `clock_font` | `ENUM` | `PressStart2P.ttf` | From `/api/fonts` | Display typeface (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, or custom `.amf` font). |
+| `timezone` | `ENUM` | `Europe/Paris` | From `/api/timezones` | Timezone / region for time calculation. |
+| `clock_size` | `int` | `2` | `1` to `5` | Font scale multiplier. |
+| `clock_color_1` | `Color` | `#ffffff` | Hex `#RRGGBB` | Primary top color (used with Custom theme 20). |
+| `clock_color_2` | `Color` | `#ff00ff` | Hex `#RRGGBB` | Secondary bottom color (used with Custom theme 20). |
+| `clock_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `clock_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
 
----
+### Engine: `date`
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `date_theme` | `ENUM` | `0` | From `/api/themes` | Visual theme for date. |
+| `date_format` | `String` | `%d/%m/%Y` | `%d/%m/%Y`, `%Y-%m-%d`, `%d %b %Y`, `%A %d %B` | Format for date display. |
+| `date_font` | `ENUM` | `PressStart2P.ttf` | From `/api/fonts` | Display typeface (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, or `.amf`). |
+| `timezone` | `ENUM` | `Europe/Paris` | From `/api/timezones` | Timezone / region for date calculation. |
+| `date_size` | `int` | `1` | `1` to `3` | Font scale multiplier. |
+| `date_color_1` | `Color` | `#ffffff` | Hex `#RRGGBB` | Primary color (used with Custom theme 20). |
+| `date_color_2` | `Color` | `#00ffff` | Hex `#RRGGBB` | Secondary color (used with Custom theme 20). |
+| `date_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `date_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
 
-## 7. Weather Engine Configuration (`weather`)
-
-The `weather` engine fetches a 3-day forecast from [OpenWeatherMap](https://openweathermap.org) with automatic 15-minute caching to minimize API usage:
-
-| Key | Type | Default | Options | Description |
+### Engine: `weather`
+| Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `api_key` | `String` | `""` | Free API key | Your OpenWeatherMap API Key (free tier at [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
-| `city` | `String` | `"Paris,FR"` | Text | City location (see formatting guide below). |
-| `units` | `String` | `"metric"` | `"metric"`, `"imperial"` | Temperature unit: `metric` for Celsius (°C) or `imperial` for Fahrenheit (°F). |
-| `lang` | `String` | `"en"` | `"en"`, `"fr"`, `"es"`, `"de"`, `"it"` | Language code for day labels (TODAY / AUJ. / HOY). |
+| `city` | `String` | `Paris,FR` | Text | City location (see formatting guide below). |
+| `units` | `ENUM` | `metric` | `metric`, `imperial` | Temperature unit: `metric` for Celsius (°C) or `imperial` for Fahrenheit (°F). |
+| `lang` | `ENUM` | `fr` | `fr`, `en`, `es`, `de`, `it` | Language code for day labels (TODAY / AUJ. / HOY). |
 | `weather_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
 | `weather_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
 
-### How to Format the `city` Field on OpenWeatherMap
+#### How to Format the `city` Field on OpenWeatherMap
 OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the US) to disambiguate locations:
 * **International Locations:** Use `City,CountryCode` (e.g. `Paris,FR`, `London,GB`, `Tokyo,JP`, `Montreal,CA`).
 * **United States Locations:** Use `City,StateCode,CountryCode` (e.g. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Specifying only the city or omitting the country may return an incorrect city with the same name.
 * **Where to Look:** Go to [openweathermap.org](https://openweathermap.org), search for your city. The top search result header and URL show the exact `City,State,Country` string recognized by the API.
+
+### Engine: `gifs`
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `folder` | `LIST` | `all` | From `/api/playlists` | Active GIF playlists / folders (e.g. `Arcade`, `Consoles`, `Fighters`). |
+| `speed_multiplier` | `Float` | `1.0` | `0.25` to `3.0` | Playback speed factor (`1.0` = normal speed). |
+| `shuffle` | `Boolean` | `true` | `true`, `false` | Randomize playback order. |
+| `duration_sec` | `int` | `10` | `2` to `120` | Dwell duration in seconds per GIF. |
+
+### Engine: `crypto` (Requires PSRAM)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `BTC,ETH,SOL` | Comma-separated | Crypto asset ticker symbols to monitor. |
+| `show_chart` | `Boolean` | `true` | `true`, `false` | Display historical price sparkline chart. |
+| `chart_timeframe` | `ENUM` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Historical sparkline chart timeframe. |
+| `duration_sec` | `int` | `5` | `3` to `30` | Seconds to display each crypto asset page. |
+| `currency` | `ENUM` | `USD` | `USD`, `EUR`, `GBP`, `JPY` | Fiat currency for quote valuations. |
+| `provider` | `ENUM` | `coingecko` | `coingecko`, `binance` | Live market data provider. |
+| `cache_ttl_min` | `int` | `5` | `1` to `60` | Minutes between fresh API quote updates. |
+| `crypto_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `crypto_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
+
+### Engine: `stock` (Requires PSRAM)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `symbols` | `String` | `AAPL,TSLA,NVDA` | Comma-separated | Stock ticker symbols to monitor. |
+| `show_chart` | `Boolean` | `true` | `true`, `false` | Display historical price sparkline chart. |
+| `chart_timeframe` | `ENUM` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Historical sparkline chart timeframe. |
+| `duration_sec` | `int` | `5` | `3` to `30` | Seconds to display each stock page. |
+| `provider` | `ENUM` | `yahoo` | `yahoo` | Market data provider. |
+| `cache_ttl_min` | `int` | `5` | `1` to `60` | Minutes between fresh API updates. |
+| `stock_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `stock_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
+
+### Engine: `audiovisualizer` (Requires Microphone)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `enabled` | `Boolean` | `false` | `true`, `false` | Enable real-time FFT spectrum overlay. |
+| `style` | `ENUM` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | FFT audio visualization style. |
+| `sensitivity` | `int` | `5` | `1` to `10` | FFT microphone response sensitivity. |
+| `gain` | `Float` | `1.0` | `0.5` to `5.0` | Hardware microphone gain scaling multiplier. |
+
+### Engine: `decibelMeter` (Requires Microphone)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `threshold` | `int` | `80` | `40` to `120` | Noise alert warning threshold in decibels (dB). |
+
+### Engine: `temp` (Requires Sensor)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `units` | `ENUM` | `C` | `C`, `F` | Onboard temperature sensor measurement unit. |
+| `temp_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `temp_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
+
+### Engine: `message`
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `text` | `String` | `ArcadeMatrix` | Text | Text banner or message to display. |
+| `color` | `Color` | `#ffffff` | Hex `#RRGGBB` | Text color. |
+| `size` | `int` | `1` | `1` to `4` | Font scale multiplier. |
+| `direction` | `ENUM` | `rtl` | `rtl`, `ltr`, `ttb`, `btt`, `static` | Scroll direction (`rtl` = right to left, `static` = centered non-scrolling). |
+| `speed` | `int` | `50` | `10` to `200` | Delay in milliseconds per scroll step (lower is faster). |
+| `font` | `ENUM` | `Default` | From `/api/fonts` | Display typeface (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, `.amf`). |
+
+---
+
+*Note: You can always query the live schema and registered engines from the ESP32 via `GET /api/engines`.*
 
 
