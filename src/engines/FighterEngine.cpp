@@ -425,11 +425,8 @@ void FighterEngine::startFight() {
         p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
         fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
         active = true;
-
-        // Immediately trigger background preloading for the NEXT match
-        triggerBackgroundPreload();
     } else {
-        // Not ready yet: trigger preload if not already running
+        // Not ready yet (e.g. at boot): trigger preload
         triggerBackgroundPreload();
     }
 }
