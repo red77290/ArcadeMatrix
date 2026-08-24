@@ -49,6 +49,8 @@ private:
     int cursorY;
     int textWidth;
     int textHeight;
+    int baselineOffset;
+    MatrixPanel_I2S_DMA* matrixDisplay = nullptr;
 };
 
 class MessageEngineDescriptorHandler : public IEngineDescriptorHandler {
