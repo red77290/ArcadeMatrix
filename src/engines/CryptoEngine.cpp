@@ -504,3 +504,26 @@ void CryptoEngine::renderQuote(EngineContext* context) {
         matrix->print(pctBuf);
     }
 }
+
+EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_crypto;
+    desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", "3.0.0"};
+    desc_crypto.capabilities.realtime = false;
+    desc_crypto.capabilities.allowsOverlay = true;
+    desc_crypto.requirements.needsPsram = true;
+    desc_crypto.requirements.needsNetwork = true;
+    desc_crypto.schema.fields = {
+        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("duration_sec", ConfigType::INTEGER, "Page Duration (s)", "Seconds to dwell on each view", "5", false, "3", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("currency", ConfigType::ENUM, "Fiat Currency", "Target currency for quotes", "USD", false, "", "", "", "USD,EUR,GBP,JPY", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("provider", ConfigType::ENUM, "Provider", "Market data provider", "coingecko", false, "", "", "", "coingecko,binance", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("cache_ttl_min", ConfigType::INTEGER, "Cache TTL (min)", "Minutes between fresh API requests", "5", false, "1", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("crypto_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("crypto_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_crypto.factory = []() { return std::unique_ptr<IEngine>(new CryptoEngine()); };
+    return desc_crypto;
+}
+

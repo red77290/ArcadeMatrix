@@ -153,11 +153,17 @@ classDiagram
         +ValidationPolicy validation_policy
     }
 
+    class IEngineDescriptorHandler {
+        <<interface>>
+        +getDescriptor() EngineDescriptor
+    }
+
     EngineDescriptor --> EngineMetadata
     EngineDescriptor --> EngineCapabilities
     EngineDescriptor --> EngineRequirements
     EngineDescriptor --> ConfigSchema
     EngineDescriptor ..> IEngine : construye fábrica
+    IEngineDescriptorHandler ..> EngineDescriptor : crea
 ```
 
 ### Ciclo de Vida y Responsabilidades
@@ -180,14 +186,52 @@ classDiagram
 
 ## 4. Autodescubrimiento: Registro, Descriptor y Fábrica
 
-### Registro Desacoplado
-En el inicio, `EngineRegistrar::registerAll()` registra los descriptores en `EngineRegistry` sin tipos concretos fijados en `main.cpp`.
+### Registro Desacoplado mediante `IEngineDescriptorHandler`
+En el inicio, `EngineRegistrar::registerAll()` itera sobre las instancias de `IEngineDescriptorHandler` provistas por cada motor y registra los descriptores en `EngineRegistry` sin tipos concretos fijados en `main.cpp` ni esquemas monolíticos.
+
+```mermaid
+sequenceDiagram
+    participant Boot as main.cpp
+    participant HAL as HardwareHAL
+    participant Reg as EngineRegistrar
+    participant Handlers as Handlers Motores
+    participant Registry as EngineRegistry
+
+    Boot->>HAL: begin() sondeo PSRAM, Microfono, Sensores
+    Boot->>Reg: registerAll()
+    loop Para cada IEngineDescriptorHandler
+        Reg->>Handlers: getDescriptor()
+        Handlers-->>Reg: EngineDescriptor schema, reqs, factory
+        Reg->>HAL: capabilities()
+        alt Hardware compatible con EngineRequirements
+            Reg->>Registry: registerEngine(desc) Fabrica Activa
+        else Hardware ausente ej: Sin PSRAM / Sin Microfono
+            Reg->>Registry: registerEngine(desc) available = false + motivo
+        end
+    end
+```
+
+```cpp
+class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "clock", "Reloj Digital & Publisher", "clocks", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = { /* ... */ };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
+        return desc;
+    }
+};
+```
 
 ### Control de Requisitos de Hardware (Gating)
-`EngineRegistrar::meetsRequirements()` compara `EngineRequirements` con `HardwareHAL::capabilities()`. Si falta hardware requerido (PSRAM o micrófono):
+`EngineRegistrar::checkRequirements()` compara `EngineRequirements` con `HardwareHAL::capabilities()`. Si falta hardware requerido (PSRAM o micrófono):
 1. Se registra con `available = false` y la causa descriptiva (*"Requiere PSRAM"*).
 2. La fábrica no se invoca en el bucle de rotación.
 3. `GET /api/engines` envía la causa a la interfaz web para desactivar el motor con un mensaje explicativo.
+
 
 ---
 
@@ -195,22 +239,20 @@ En el inicio, `EngineRegistrar::registerAll()` registra los descriptores en `Eng
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Bucle de pantalla
+    participant MainLoop as Bucle Principal
     participant RM as RotationManager
     participant Reg as EngineRegistry
     participant Eng as IEngine
 
-    Loop->>RM: loop()
-    alt instancia no almacenada en caché
+    MainLoop->>RM: updateDisplay()
+    alt Instancia no en cache
         RM->>Reg: getDescriptor(engine_id)
         Reg-->>RM: EngineDescriptor
         RM->>Eng: factory()
         RM->>Eng: initialize(ctx, config)
         RM->>RM: Almacena instancia unique_ptr
-    else instancia ya activa
-        alt configuración modificada en API
-            RM->>Eng: onConfigChanged(config)
-        end
+    else Instancia activa y config modificada
+        RM->>Eng: onConfigChanged(config)
     end
     RM->>Eng: update(ctx)
     RM->>Eng: render(ctx)

@@ -55,3 +55,9 @@ private:
     // Kept for legacy setup until full migration
     MatrixPanel_I2S_DMA* legacy_matrix;
 };
+
+class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

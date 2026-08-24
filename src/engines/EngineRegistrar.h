@@ -21,11 +21,13 @@ struct RequirementCheckResult {
 };
 
 /**
- * @brief Registers all engines into the global EngineRegistry with complete schemas and requirement gating.
+ * @brief Registers all engines into the global EngineRegistry with requirement gating and handler lookup.
  */
 class EngineRegistrar {
 public:
     static void registerAll();
+    static bool registerHandler(const IEngineDescriptorHandler& handler);
     static RequirementCheckResult checkRequirements(const EngineRequirements& req);
     static bool meetsRequirements(const EngineRequirements& req);
 };
+

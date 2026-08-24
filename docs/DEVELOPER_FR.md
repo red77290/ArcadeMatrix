@@ -34,20 +34,39 @@ Ce document est le guide **technique exhaustif** pour étendre ArcadeMatrix sur 
 ArcadeMatrix **n'a aucune liste de moteurs codée en dur** dans `main.cpp`. Chaque moteur s'enregistre au démarrage dans le `EngineRegistry`.
 
 ```mermaid
-flowchart LR
-    DEV["Vous écrivez src/engines/MyEngine.cpp"] --> REGT["EngineRegistrar::registerAll()"]
-    REGT --> GATING{Prérequis Matériels Remplis ?}
-    GATING -->|"Oui"| REG["EngineRegistry (Fabrique Active)"]
-    GATING -->|"Non"| REG2["EngineRegistry (Available: false + Raison)"]
-    REG --> API["GET /api/engines"]
-    API --> UI["Interface Web Dynamique (Auto-Form)"]
-    REG --> RM["RotationManager (Lazy-Once)"]
-    RM --> SCREEN["Matrice LED HUB75 (DMA)"]
+flowchart TD
+    subgraph ModuleMoteur["Votre Module Moteur (src/engines/MyEngine.*)"]
+        ENG["class MyEngine : public IEngine"]
+        HND["class MyEngineDescriptorHandler : public IEngineDescriptorHandler"]
+        HND -.->|"la fabrique instancie"| ENG
+    end
+
+    subgraph Registre["Enregistrement (src/engines/EngineRegistrar.cpp)"]
+        REGT["EngineRegistrar::registerAll()"]
+        REGT --> CALL["EngineRegistrar::registerHandler(handler)"]
+        CALL --> GET["handler.getDescriptor()"]
+        CALL --> GATING{HardwareHAL valide les prérequis ?}
+    end
+
+    subgraph Core["Engine Registry & Consommation"]
+        GATING -->|"Oui"| REG["EngineRegistry (Fabrique Active)"]
+        GATING -->|"Non"| REG2["EngineRegistry (available=false + raison)"]
+        REG --> API["GET /api/engines (Génération Formulaire Web)"]
+        REG --> RM["RotationManager (Instance Lazy-Once)"]
+        RM --> SCREEN["Matrice LED HUB75 (Tampon DMA)"]
+    end
+
+    HND --> CALL
 ```
 
-Ajouter un moteur nécessite **deux étapes** :
-1. Implémenter votre classe de moteur (`IEngine`) dans `src/engines/`.
-2. Déclarer son descripteur dans `src/engines/EngineRegistrar.cpp`.
+Ajouter un moteur nécessite **deux étapes simples** :
+1. Implémenter votre classe de moteur (`IEngine`) et son descripteur (`IEngineDescriptorHandler`) dans `src/engines/`.
+2. Ajouter l'instance de votre descripteur dans la liste des handlers de `src/engines/EngineRegistrar.cpp`.
+
+> [!NOTE]
+> **Pourquoi `IEngineDescriptorHandler` sur ESP32 ?**
+> Plutôt qu'un registre centralisé monolithique avec tous les schémas en dur (God Class), chaque moteur définit et encapsule ses propres métadonnées, son schéma de configuration, ses besoins matériels et sa fabrique. Le `EngineRegistrar` se charge d'itérer sur l'ensemble des handlers et d'appliquer le gating matériel au runtime avant enregistrement dans `EngineRegistry`.
+
 **`main.cpp` et les fichiers HTML du frontend ne sont jamais modifiés.**
 
 ---
@@ -254,29 +273,42 @@ void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
 }
 ```
 
-### Étape 3 : Enregistrer dans `src/engines/EngineRegistrar.cpp`
+### Étape 3 : Implémenter `IEngineDescriptorHandler` et enregistrer
+
+Dans le fichier de votre moteur (ex. `src/engines/MatrixRainEngine.h` / `.cpp`) :
+```cpp
+class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "matrix_rain", "Matrix Rain", "animations", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = {
+            ConfigField("speed", ConfigType::INTEGER, "Vitesse", "Vitesse de chute en pixels par frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)
+        };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
+        return desc;
+    }
+};
+```
+
+Puis dans `src/engines/EngineRegistrar.cpp`, ajoutez simplement l'instance du handler :
 ```cpp
 #include "MatrixRainEngine.h"
 
 void EngineRegistrar::registerAll() {
     // ...
-    EngineDescriptor desc;
-    desc.metadata = { .id = "matrix_rain", .name = "Matrix Rain", .category = "animations", .version = "3.0.0" };
-    desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
-    desc.requirements = { .needsPsram = false, .needsAudio = false };
-    desc.schema.fields = {
-        {
-            .id = "speed",
-            .type = ConfigType::INTEGER,
-            .label = "Vitesse",
-            .default_value = "2",
-            .min_val = "1",
-            .max_val = "5",
-            .validation_policy = ValidationPolicy::Clamp
-        }
+    static const MatrixRainEngineDescriptorHandler matrixRainHandler;
+
+    const IEngineDescriptorHandler* handlers[] = {
+        // ...
+        &matrixRainHandler
     };
-    desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
-    tryRegister(desc);
+
+    for (const auto* handler : handlers) {
+        if (handler) registerHandler(*handler);
+    }
 }
 ```
 

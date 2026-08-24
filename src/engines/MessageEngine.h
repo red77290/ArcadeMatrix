@@ -50,3 +50,9 @@ private:
     int textWidth;
     int textHeight;
 };
+
+class MessageEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

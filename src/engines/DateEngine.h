@@ -94,3 +94,9 @@ private:
     
     void applyThemeSettings();
 };
+
+class DateEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

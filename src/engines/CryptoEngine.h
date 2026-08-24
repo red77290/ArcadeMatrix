@@ -99,3 +99,9 @@ private:
     void renderQuote(EngineContext* context);
     void renderChart(EngineContext* context);
 };
+
+class CryptoEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

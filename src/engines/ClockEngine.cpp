@@ -137,3 +137,25 @@ void ClockEngine::onConfigChanged(const EngineConfig* config) {
         setTheme(static_cast<PublisherTheme>(theme), true, config);
     }
 }
+
+EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor clockDesc;
+    clockDesc.metadata = {"clock", "Clock", "info", "3.0.0"};
+    clockDesc.capabilities.realtime = true;
+    clockDesc.capabilities.allowsOverlay = true;
+    clockDesc.requirements.needsAudio = false;
+    clockDesc.schema.fields = {
+        ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("clock_format", ConfigType::STRING, "Time Format", "POSIX strftime format", "%H:%M:%S", false, "", "", "", "%H:%M:%S,%H:%M,%I:%M:%S %p,%I:%M %p", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "Europe/Paris", false, "", "", "", "", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Ignore),
+        ConfigField("clock_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#ff00ff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Ignore),
+        ConfigField("clock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("clock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    clockDesc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
+    return clockDesc;
+}
+

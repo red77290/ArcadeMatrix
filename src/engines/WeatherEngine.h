@@ -60,3 +60,8 @@ private:
     void drawIcon(const String& icon, int x, int y);
     void drawForecast(const WeatherData& data);
 };
+
+class WeatherEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};

@@ -33,3 +33,9 @@ private:
     uint16_t getTemperatureColor(MatrixPanel_I2S_DMA* matrix, float tempC);
 };
 
+class TempEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+
+

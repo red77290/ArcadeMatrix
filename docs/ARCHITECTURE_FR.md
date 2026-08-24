@@ -153,11 +153,17 @@ classDiagram
         +ValidationPolicy validation_policy
     }
 
+    class IEngineDescriptorHandler {
+        <<interface>>
+        +getDescriptor() EngineDescriptor
+    }
+
     EngineDescriptor --> EngineMetadata
     EngineDescriptor --> EngineCapabilities
     EngineDescriptor --> EngineRequirements
     EngineDescriptor --> ConfigSchema
     EngineDescriptor ..> IEngine : fabrique
+    IEngineDescriptorHandler ..> EngineDescriptor : crée
 ```
 
 ### Cycle de Vie & Responsabilités
@@ -180,14 +186,52 @@ classDiagram
 
 ## 4. Auto-Découverte : Registre, Descripteur & Fabrique
 
-### Enregistrement Découplé
-Au boot, `EngineRegistrar::registerAll()` remplit le `EngineRegistry` de descripteurs sans aucun type concret hardcodé dans `main.cpp`.
+### Enregistrement Découplé via `IEngineDescriptorHandler`
+Au boot, `EngineRegistrar::registerAll()` itère sur les instances de `IEngineDescriptorHandler` fournies par chaque moteur et remplit le `EngineRegistry` de descripteurs sans aucun type concret hardcodé dans `main.cpp` ni de schéma monolithique.
+
+```mermaid
+sequenceDiagram
+    participant Boot as main.cpp
+    participant HAL as HardwareHAL
+    participant Reg as EngineRegistrar
+    participant Handlers as Handlers Moteurs
+    participant Registry as EngineRegistry
+
+    Boot->>HAL: begin() sonde PSRAM, Micro, Capteurs
+    Boot->>Reg: registerAll()
+    loop Pour chaque IEngineDescriptorHandler
+        Reg->>Handlers: getDescriptor()
+        Handlers-->>Reg: EngineDescriptor schema, reqs, factory
+        Reg->>HAL: capabilities()
+        alt Materiel compatible avec EngineRequirements
+            Reg->>Registry: registerEngine(desc) Fabrique Active
+        else Materiel manquant ex: Pas de PSRAM / Pas de Micro
+            Reg->>Registry: registerEngine(desc) available=false + raison
+        end
+    end
+```
+
+```cpp
+class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "clock", "Horloge Digitale & Publisher", "clocks", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = { /* ... */ };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
+        return desc;
+    }
+};
+```
 
 ### Gating des Prérequis
-`EngineRegistrar::meetsRequirements()` compare dynamiquement les `EngineRequirements` aux `HardwareHAL::capabilities()`. Si un moteur requiert de la PSRAM ou un micro absent sur la carte :
+`EngineRegistrar::checkRequirements()` compare dynamiquement les `EngineRequirements` aux `HardwareHAL::capabilities()`. Si un moteur requiert de la PSRAM ou un micro absent sur la carte :
 1. L'enregistrement consigne `available = false` et la `reason` descriptive (*"Nécessite PSRAM"*).
 2. La fabrique n'est jamais appelée dans la rotation.
 3. `GET /api/engines` transmet la raison à l'UI Web pour griser le moteur avec un badge d'avertissement explicite.
+
 
 ---
 
@@ -195,22 +239,20 @@ Au boot, `EngineRegistrar::registerAll()` remplit le `EngineRegistry` de descrip
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Boucle d'affichage
+    participant MainLoop as Boucle Principale
     participant RM as RotationManager
     participant Reg as EngineRegistry
     participant Eng as IEngine
 
-    Loop->>RM: loop()
-    alt instance non présente en cache
+    MainLoop->>RM: updateDisplay()
+    alt Instance non en cache
         RM->>Reg: getDescriptor(engine_id)
         Reg-->>RM: EngineDescriptor
         RM->>Eng: factory()
         RM->>Eng: initialize(ctx, config)
-        RM->>RM: Stocke l'instance unique_ptr
-    else instance déjà active
-        alt configuration modifiée par l'API
-            RM->>Eng: onConfigChanged(config)
-        end
+        RM->>RM: Mise en cache unique_ptr
+    else Instance active et config modifiee
+        RM->>Eng: onConfigChanged(config)
     end
     RM->>Eng: update(ctx)
     RM->>Eng: render(ctx)

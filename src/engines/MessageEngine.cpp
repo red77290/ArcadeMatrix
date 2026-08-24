@@ -152,3 +152,21 @@ void MessageEngine::render(EngineContext* context) {
     matrix->setCursor(cursorX, cursorY);
     matrix->print(currentMsg.text);
 }
+
+EngineDescriptor MessageEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_msg;
+    desc_msg.metadata = {"message", "Message", "display", "3.0.0"};
+    desc_msg.capabilities.realtime = true;
+    desc_msg.capabilities.allowsOverlay = false;
+    desc_msg.schema.fields = {
+        ConfigField("text", ConfigType::STRING, "Message Text", "Text banner or message to display", "ArcadeMatrix", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("color", ConfigType::COLOR, "Text Color", "Hex color code (#RRGGBB)", "#ffffff", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("size", ConfigType::INTEGER, "Font Size", "Text scale multiplier", "1", false, "1", "4", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("direction", ConfigType::ENUM, "Direction", "Scroll direction or static", "rtl", false, "", "", "", "rtl,ltr,ttb,btt,static", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("speed", ConfigType::INTEGER, "Speed (ms)", "Scroll delay per step (lower is faster)", "50", false, "10", "200", "5", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("font", ConfigType::ENUM, "Font", "Display typeface", "Default", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault)
+    };
+    desc_msg.factory = []() { return std::unique_ptr<IEngine>(new MessageEngine()); };
+    return desc_msg;
+}
+
