@@ -530,8 +530,8 @@ void loop() {
             overlayManager.configure({});
         }
         
+        overlayManager.update();
         if (overlayManager.isActive()) {
-            overlayManager.update();
             overlayManager.render();
             shouldFlip = true;
         }
