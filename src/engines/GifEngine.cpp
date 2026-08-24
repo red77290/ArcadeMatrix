@@ -46,7 +46,7 @@ void GifEngine::activate() {
 }
 
 void GifEngine::update(EngineContext* context) {
-    loop();
+    m_lastFrameDrew = loop();
 }
 
 void GifEngine::render(EngineContext* context) {}

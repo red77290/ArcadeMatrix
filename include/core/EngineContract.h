@@ -209,6 +209,19 @@ public:
      *        Defaults to true. Returns false for purely event-driven/preemptive engines (e.g. Marquee).
      */
     virtual bool allowRotation() const { return true; }
+
+    /**
+     * @brief Declares whether a new frame was rendered during this cycle and the display buffer should be flipped.
+     *        Defaults to true. Returns false for engines waiting between frames (e.g. GifEngine during delay intervals)
+     *        to prevent double-buffer flickering.
+     */
+    virtual bool hasNewFrame() const { return true; }
+
+    /**
+     * @brief Declares whether the matrix screen should be cleared (fillScreen(0)) by the main loop before rendering.
+     *        Defaults to true. Returns false for self-buffering / delta-frame engines (e.g. GifEngine).
+     */
+    virtual bool needsClear() const { return true; }
 };
 
 // =======================================================

@@ -47,6 +47,8 @@ public:
     bool isRealtime() const override { return true; }
     bool selfPaced() const override { return true; }
     void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
+    bool hasNewFrame() const override { return m_lastFrameDrew; }
+    bool needsClear() const override { return false; }
 
     ~GifEngine();
 
@@ -174,6 +176,7 @@ private:
     static int PNGDrawCallback(PNGDRAW *pDraw);
 
     bool m_hasPsram = false;
+    bool m_lastFrameDrew = true;
 };
 
 class GifEngineDescriptorHandler : public IEngineDescriptorHandler {
