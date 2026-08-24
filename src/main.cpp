@@ -458,16 +458,7 @@ void loop() {
         frontendListener->loop();
     }
 
-    bool shouldClear = true;
-    if ((gifEngine && gifEngine->isActive()) || (rotationManager && rotationManager->getCurrentEngineId() == "gifs")) {
-        shouldClear = false; // AnimatedGIF needs previous frame in buffer
-    }
-
     bool shouldFlip = true;
-    if (shouldClear) {
-        matrixEngine.getDisplay()->fillScreen(0);
-    }
-
     DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
@@ -518,12 +509,18 @@ void loop() {
         
         if (winner.engine != nullptr) {
             activeEngine = winner.engine;
+            if (activeEngine->needsClear()) {
+                matrixEngine.getDisplay()->fillScreen(0);
+            }
             activeEngine->update(appCtx);
             activeEngine->render(appCtx);
-            shouldFlip = true;
+            shouldFlip = activeEngine->hasNewFrame();
         } else {
-            shouldFlip = rotationManager->loop();
             activeEngine = rotationManager->getCurrentActiveEngine();
+            if (activeEngine && activeEngine->needsClear()) {
+                matrixEngine.getDisplay()->fillScreen(0);
+            }
+            shouldFlip = rotationManager->loop();
         }
         
         // Polymorphic 3-tier overlay resolution
@@ -533,8 +530,11 @@ void loop() {
             overlayManager.configure({});
         }
         
-        overlayManager.update();
-        overlayManager.render();
+        if (overlayManager.isActive()) {
+            overlayManager.update();
+            overlayManager.render();
+            shouldFlip = true;
+        }
         
         xSemaphoreGive(sdMutex);
     }

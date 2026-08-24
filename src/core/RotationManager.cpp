@@ -228,9 +228,11 @@ bool RotationManager::loop() {
   bool isSoloMode = (config.rotation.size() == 1);
 
   IEngine* activeEngine = getActiveEngine(inst_id);
+  bool shouldFlip = true;
   if (activeEngine) {
       activeEngine->update(m_ctx);
       activeEngine->render(m_ctx);
+      shouldFlip = activeEngine->hasNewFrame();
       
       if (!isSoloMode) {
           if (activeEngine->selfPaced()) {
@@ -254,7 +256,7 @@ bool RotationManager::loop() {
     currentIndex = (currentIndex + 1) % config.rotation.size();
     switchToModule(currentIndex);
   }
-  return true;
+  return shouldFlip;
 }
 
 String RotationManager::getCurrentInstanceId() const {
