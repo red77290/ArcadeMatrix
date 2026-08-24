@@ -15,7 +15,7 @@ FrontendSyncEngine::FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine,
 
 void FrontendSyncEngine::begin() {
     stop();
-    if (!mqttConfig.enabled || mqttConfig.broker.isEmpty()) return;
+    if (!mqttConfig.enabled) return;
     
     hasReceivedAnyEvent = false;
     hasPendingEvent = false;
@@ -23,7 +23,7 @@ void FrontendSyncEngine::begin() {
     waitingDisplayed = false;
     lastReconnectAttempt = 0;
     
-    if (mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
+    if (mqttConfig.broker.isEmpty() || mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
         LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
         internalBroker = new PicoMQTT::Server(mqttConfig.port);
         
@@ -46,10 +46,23 @@ void FrontendSyncEngine::begin() {
         LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
     } else {
         LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%d", mqttConfig.broker.c_str(), mqttConfig.port);
+        espClient.setTimeout(1); // 1s max timeout
+        mqttClient.setClient(espClient);
         mqttClient.setServer(mqttConfig.broker.c_str(), mqttConfig.port);
         mqttClient.setCallback(FrontendSyncEngine::callback);
+        mqttClient.setSocketTimeout(1);
     }
     systemMappings = loadMappingsFromSD();
+}
+
+void FrontendSyncEngine::reconnectTaskFunc(void* param) {
+    FrontendSyncEngine* self = (FrontendSyncEngine*)param;
+    if (self) {
+        self->reconnect();
+        self->isReconnecting = false;
+        self->reconnectTaskHandle = nullptr;
+    }
+    vTaskDelete(NULL);
 }
 
 void FrontendSyncEngine::stop() {
@@ -57,6 +70,12 @@ void FrontendSyncEngine::stop() {
     waitingDisplayed = false;
     hasPendingEvent = false;
     
+    if (reconnectTaskHandle) {
+        vTaskDelete(reconnectTaskHandle);
+        reconnectTaskHandle = nullptr;
+    }
+    isReconnecting = false;
+
     if (internalBroker) {
         delete internalBroker;
         internalBroker = nullptr;
@@ -84,9 +103,10 @@ bool FrontendSyncEngine::loop() {
     } else {
         if (!mqttClient.connected()) {
             long now = millis();
-            if (now - lastReconnectAttempt > 30000) {
+            if (now - lastReconnectAttempt > 30000 && !isReconnecting) {
                 lastReconnectAttempt = now;
-                reconnect();
+                isReconnecting = true;
+                xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", 4096, this, 1, &reconnectTaskHandle, 0);
             }
         } else {
             mqttClient.loop();

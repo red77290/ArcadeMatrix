@@ -1051,14 +1051,31 @@ void WebServerAPI::setupRoutes() {
         if (!doc["wifi_password"].isNull() && doc["wifi_password"].as<String>() != "") config.wifi.password = doc["wifi_password"].as<String>();
         if (!doc["wifi_hostname"].isNull()) config.wifi.hostname = doc["wifi_hostname"].as<String>();
 
-        if (!doc["mqtt_enabled"].isNull()) config.mqtt.enabled = doc["mqtt_enabled"].as<bool>();
-        if (!doc["mqtt_broker"].isNull()) config.mqtt.broker = doc["mqtt_broker"].as<String>();
-        if (!doc["mqtt_port"].isNull()) config.mqtt.port = doc["mqtt_port"].as<int>();
+        bool mqttStateChanged = false;
+        if (!doc["mqtt_enabled"].isNull()) {
+            bool newMqtt = doc["mqtt_enabled"].as<bool>();
+            if (newMqtt != config.mqtt.enabled) mqttStateChanged = true;
+            config.mqtt.enabled = newMqtt;
+        }
+        if (!doc["mqtt_broker"].isNull()) {
+            String newBroker = doc["mqtt_broker"].as<String>();
+            if (newBroker != config.mqtt.broker) mqttStateChanged = true;
+            config.mqtt.broker = newBroker;
+        }
+        if (!doc["mqtt_port"].isNull()) {
+            int newPort = doc["mqtt_port"].as<int>();
+            if (newPort != config.mqtt.port) mqttStateChanged = true;
+            config.mqtt.port = newPort;
+        }
         if (!doc["mqtt_user"].isNull()) config.mqtt.user = doc["mqtt_user"].as<String>();
         if (!doc["mqtt_pass"].isNull()) config.mqtt.pass = doc["mqtt_pass"].as<String>();
         if (!doc["mqtt_topic_bato"].isNull()) config.mqtt.topic_batocera = doc["mqtt_topic_bato"].as<String>();
         if (!doc["mqtt_topic_recal"].isNull()) config.mqtt.topic_recalbox = doc["mqtt_topic_recal"].as<String>();
         if (!doc["mqtt_device"].isNull()) config.mqtt.deviceName = doc["mqtt_device"].as<String>();
+
+        if (mqttStateChanged) {
+            willReboot = true;
+        }
 
         // Sanitize all instances before persisting
         ConfigSanitizer::sanitizeInstances(config);

@@ -42,11 +42,15 @@ private:
     PicoMQTT::Server* internalBroker = nullptr;
     std::map<String, std::vector<String>> systemMappings;
 
-    unsigned long lastReconnectAttempt;
+    unsigned long lastReconnectAttempt = 0;
     uint32_t currentRequestId = 0;
     bool isGamePlaying = false;
     bool waitingDisplayed = false;
     bool hasReceivedAnyEvent = false;
+
+    volatile bool isReconnecting = false;
+    TaskHandle_t reconnectTaskHandle = nullptr;
+    static void reconnectTaskFunc(void* param);
 
     void reconnect();
     static void callback(char* topic, byte* payload, unsigned int length);
