@@ -93,9 +93,16 @@ Définit l'ordre de passage à l'écran.
 ```json
 {
   "instance_id": "crypto_principale",
-  "duration_sec": 30
+  "duration_sec": 30,
+  "overlays": {
+    "fighter": true
+  }
 }
 ```
+* `instance_id` : Nom unique de l'instance de moteur à exécuter.
+* `duration_sec` : Durée d'affichage en secondes.
+* `overlays.fighter` : (Booléen optionnel, défaut `false`) Active l'overlay animé de combat MUGEN Fighter sur ce slot. Les overlays sont transversaux et activables sur TOUS les moteurs (Clock, Date, Météo, GIFs, Crypto, etc.).
+
 L'ESP32 allouera la mémoire (`initialize()`) pour `crypto_principale` la toute première fois qu'il le rencontre dans cette boucle de rotation.
 
 ---

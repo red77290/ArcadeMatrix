@@ -96,7 +96,6 @@ classDiagram
         +isRealtime() bool
         +setRotationBudget(budget) void
         +selfPaced() bool
-        +allowsOverlay() bool
     }
 
     class EngineDescriptor {
@@ -119,7 +118,6 @@ classDiagram
         +bool supports_256x64
         +bool realtime
         +bool interruptible
-        +bool allowsOverlay
         +bool selfPaced
     }
 
@@ -178,35 +176,36 @@ classDiagram
 | `onConfigChanged()`| En cambios vía API | Aplicación inmediata de ajustes sin recrear instancia. | Cero reasignaciones. |
 | `isFinished()` | Consultado en la rotación | Señala finalización anticipada de secuencia. | Consulta const. |
 | `isRealtime()` | Consultado en el limitador FPS | Indicación de cadencia dinámica (~60 FPS vs ~20 FPS). | Consulta const. |
-| `setRotationBudget()`| Al activar el módulo | Establece presupuesto por unidades (ej: reproducir N GIFs). | Recibe el valor numérico de rotación. |
-| `selfPaced()` | Consultado en la rotación | Si es true, el temporizador no fuerza el avance. | Controlado por `isFinished()`. |
-| `allowsOverlay()` | Consultado por DisplayArbiter | Si es true, el overlay Fighter puede superponerse. | Desactiva superposiciones si es false. |
+| `setRotationBudget()`| Al activar el módulo | Establece presupuesto por conteo (ej: reproducir N GIFs). | Recibe el valor numérico de la rotación. |
+| `selfPaced()` | Consultado en rotación | Si es true, el temporizador de duración no fuerza el avance. | Controlado por `isFinished()`. |
 
 ---
 
 ## 4. Autodescubrimiento: Registro, Descriptor y Fábrica
 
 ### Registro Desacoplado mediante `IEngineDescriptorHandler`
-En el inicio, `EngineRegistrar::registerAll()` itera sobre las instancias de `IEngineDescriptorHandler` provistas por cada motor y registra los descriptores en `EngineRegistry` sin tipos concretos fijados en `main.cpp` ni esquemas monolíticos.
+El núcleo del framework no codifica tipos concretos de motores en `main.cpp` ni en una clase monolítica. Cada motor encapsula su propio esquema de configuración, capacidades y fábrica en un `IEngineDescriptorHandler`.
+
+Al arrancar, `EngineRegistrar::registerAll()` itera sobre los manejadores registrados:
 
 ```mermaid
 sequenceDiagram
     participant Boot as main.cpp
     participant HAL as HardwareHAL
     participant Reg as EngineRegistrar
-    participant Handlers as Handlers Motores
+    participant Handlers as Manejadores de Motores
     participant Registry as EngineRegistry
 
-    Boot->>HAL: begin() sondeo PSRAM, Microfono, Sensores
+    Boot->>HAL: begin() sondea PSRAM, Micrófono, Sensores
     Boot->>Reg: registerAll()
-    loop Para cada IEngineDescriptorHandler
+    loop Por cada IEngineDescriptorHandler
         Reg->>Handlers: getDescriptor()
-        Handlers-->>Reg: EngineDescriptor schema, reqs, factory
+        Handlers-->>Reg: EngineDescriptor esquema, requisitos, fábrica
         Reg->>HAL: capabilities()
-        alt Hardware compatible con EngineRequirements
-            Reg->>Registry: registerEngine(desc) Fabrica Activa
-        else Hardware ausente ej: Sin PSRAM / Sin Microfono
-            Reg->>Registry: registerEngine(desc) available = false + motivo
+        alt Hardware cumple con EngineRequirements
+            Reg->>Registry: registerEngine(desc) Fábrica Activa
+        else Falta Hardware ej: Sin PSRAM / Sin Micrófono
+            Reg->>Registry: registerEngine(desc) available=false + motivo
         end
     end
 ```
@@ -216,8 +215,8 @@ class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
-        desc.metadata = { "clock", "Reloj Digital & Publisher", "clocks", "3.0.0" };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
+        desc.metadata = { "clock", "Reloj Digital y Publisher", "clocks", FIRMWARE_VERSION };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
         desc.requirements = { .needsPsram = false, .needsAudio = false };
         desc.schema.fields = { /* ... */ };
         desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
@@ -298,21 +297,43 @@ La interfaz web (`data/index.html`) es completamente dinámica:
 
 ## 10. El Árbitro de Pantalla (Display Arbiter)
 
+El `DisplayArbiter` evalúa cada fotograma las solicitudes de visualización para determinar la fuente principal activa:
+
+```text
 Jerarquía de prioridades de visualización:
-1. Mensaje MQTT (Prioridad 10)
-2. Marquee Retrogaming (Prioridad 8)
-3. Animación GIF One-Shot (Prioridad 6)
-4. Visualizador de Audio (Prioridad 4)
-5. Bucle de Rotación Principal (Prioridad 0)
+1. Mensaje MQTT (Prioridad 100)
+2. Visualizador de Audio (Prioridad 40)
+3. Marquee Retrogaming (Prioridad 30)
+4. Animación GIF One-Shot (Prioridad 20)
+5. Bucle de Rotación / Reloj Idle (Prioridad 10)
+```
+
+El Árbitro determina **qué fuente principal** controla el framebuffer base. No administra las superposiciones.
 
 ---
 
-## 11. El Compositor de Superposición Fighter (Overlay)
+## 11. Arquitectura de Superposición Transversal e Integración Fighter
 
-El motor `FighterEngine` funciona en **composición aditiva**:
-- Dibuja sobre el búfer del reloj o clima cuando `allowsCurrentOverlay() == true` y `fighter_main.enabled == true`.
-- Nunca limpia la pantalla (`matrix.fillScreen(0)`) para garantizar cero parpadeos.
-- Se desactiva y descarga automáticamente si una fuente prioritaria (MQTT/Marquee/GIF) toma el control.
+El `OverlayManager` opera como una **capa de composición transversal** ejecutada después de que la fuente principal ha dibujado su framebuffer base:
+
+```text
+DisplayArbiter (Fuente Ganadora)
+       ↓
+Engine principal render() -> Framebuffer base
+       ↓
+OverlayManager (configurar overlays)
+       ↓
+FighterEngine composite() [si fue solicitado para esta entrada de rotación]
+       ↓
+matrix.update()
+```
+
+### Invariantes Arquitectónicos Clave:
+1. **EngineRegistry $\ne$ OverlayManager:** Las fuentes de visualización seleccionables (`clock`, `weather`, `gifs`, etc.) residen en `EngineRegistry`. Los overlays (`Fighter`) residen exclusivamente en `OverlayManager`.
+2. **Activación Controlada por el Usuario por Entrada de Rotación:** Los overlays se activan o desactivan por slot de rotación mediante `"overlays": { "fighter": true }`.
+3. **Cero Excepciones por Motor:** `Clock + Fighter`, `GIF + Fighter`, `Weather + Fighter` son 100% legítimos. El framework no contiene ninguna regla que restrinja el Fighter en el motor GIF ni en ningún otro.
+4. **Invariante Aditivo:** Los overlays componen de forma aditiva sobre píxeles existentes y **nunca** llaman a `matrix.clear()` ni borran el framebuffer base.
+5. **Estabilidad del Heap en ESP32:** `OverlayManager` asigna `FighterEngine` perezosamente en la primera demanda y preserva la instancia en el heap entre rotaciones para evitar fragmentación. Durante una preempción (ej: mensaje MQTT), el overlay simplemente se desactiva sin liberar memoria heap.
 
 ---
 

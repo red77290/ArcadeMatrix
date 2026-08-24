@@ -126,7 +126,6 @@ EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_temp;
     desc_temp.metadata = {"temp", "Environment Sensor", "sensor", FIRMWARE_VERSION};
     desc_temp.capabilities.realtime = false;
-    desc_temp.capabilities.allowsOverlay = true;
     desc_temp.requirements.needsTempSensor = true;
     desc_temp.schema.fields = {
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "C", false, "", "", "", "C,F", "", false, "", ValidationPolicy::FallbackDefault),

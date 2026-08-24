@@ -498,7 +498,6 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_stock;
     desc_stock.metadata = {"stock", "Stock Ticker", "finance", FIRMWARE_VERSION};
     desc_stock.capabilities.realtime = false;
-    desc_stock.capabilities.allowsOverlay = true;
     desc_stock.requirements.needsPsram = true;
     desc_stock.requirements.needsNetwork = true;
     desc_stock.schema.fields = {

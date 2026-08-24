@@ -179,7 +179,13 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
             RotationEntry entry;
             entry.instance_id = rotObj["instance_id"] | "";
             entry.duration_sec = rotObj["duration_sec"] | 15;
-            entry.fighter_overlay = rotObj["fighter_overlay"] | false;
+            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObject>()) {
+                entry.overlays.fighter = rotObj["overlays"]["fighter"] | false;
+            } else if (rotObj.containsKey("fighter_overlay")) {
+                entry.overlays.fighter = rotObj["fighter_overlay"] | false;
+            } else {
+                entry.overlays.fighter = false;
+            }
             rotation.push_back(entry);
         }
     }
@@ -234,7 +240,7 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     return true;
 }
 
-String ConfigLoader::serializeToJson() const {
+String ConfigLoader::serializeToJson(bool pretty) const {
     DynamicJsonDocument doc(32768);
 
     JsonObject sysObj = doc.createNestedObject("system");
@@ -285,7 +291,8 @@ String ConfigLoader::serializeToJson() const {
         JsonObject rObj = rotArr.createNestedObject();
         rObj["instance_id"] = rot.instance_id;
         rObj["duration_sec"] = rot.duration_sec;
-        rObj["fighter_overlay"] = rot.fighter_overlay;
+        JsonObject ovObj = rObj.createNestedObject("overlays");
+        ovObj["fighter"] = rot.overlays.fighter;
     }
 
     JsonObject engObj = doc.createNestedObject("engines");
@@ -300,7 +307,11 @@ String ConfigLoader::serializeToJson() const {
     }
 
     String output;
-    serializeJson(doc, output);
+    if (pretty) {
+        serializeJsonPretty(doc, output);
+    } else {
+        serializeJson(doc, output);
+    }
     return output;
 }
 
@@ -403,7 +414,13 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
             RotationEntry entry;
             entry.instance_id = rotItem["instance_id"].as<String>();
             entry.duration_sec = rotItem["duration_sec"] | 15;
-            entry.fighter_overlay = rotItem["fighter_overlay"] | false;
+            if (rotItem.containsKey("overlays") && rotItem["overlays"].is<JsonObject>()) {
+                entry.overlays.fighter = rotItem["overlays"]["fighter"] | false;
+            } else if (rotItem.containsKey("fighter_overlay")) {
+                entry.overlays.fighter = rotItem["fighter_overlay"] | false;
+            } else {
+                entry.overlays.fighter = false;
+            }
             rotation.push_back(entry);
         }
     }
@@ -452,7 +469,7 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         return false;
     }
 
-    String jsonStr = serializeToJson();
+    String jsonStr = serializeToJson(true); // Always save human-readable, indented JSON to SD card
     f.print(jsonStr);
     f.close();
 

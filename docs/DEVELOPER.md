@@ -93,7 +93,6 @@ public:
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
     virtual bool selfPaced() const { return false; }
-    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
@@ -109,7 +108,6 @@ public:
 | `isRealtime()` | `true` | Return `true` for 60 FPS animations; return `false` for static 20 FPS displays. |
 | `setRotationBudget()`| no-op | If count-based (e.g. play N GIFs). Receives the rotation entry count. |
 | `selfPaced()` | `false` | If true, duration timer does not force-advance; engine drives advance via `isFinished()`. |
-| `allowsOverlay()` | `true` | Return `false` if full-screen engines (GIF player) must not have Fighter overlays. |
 
 ---
 
@@ -134,6 +132,9 @@ stateDiagram-v2
    In `onConfigChanged()`, update internal variables directly. The instance is **not** destroyed or recreated.
 3. **Golden Rule #3 — Respect Bus Locks:**
    SD card access must be protected with `sdMutex` when reading streaming assets.
+4. **Golden Rule #4 — Overlays vs Selectable Engines:**
+   - **Selectable Engine:** Replaces the primary framebuffer (e.g. Clock, Weather, GIF, Crypto). Registered in `EngineRegistry` with a descriptor and factory.
+   - **Transverse Overlay:** Composites additively on top of any active display source (e.g. Fighter). Managed exclusively by `OverlayManager`, enabled per rotation slot (`overlays.fighter: true`), never registered in `EngineRegistry`.
 
 ---
 
@@ -147,7 +148,6 @@ struct EngineCapabilities {
     bool supports_256x64 = true;
     bool realtime = true;
     bool interruptible = true;
-    bool allowsOverlay = true;
     bool selfPaced = false;
 };
 
@@ -334,8 +334,8 @@ class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
-        desc.metadata = { "matrix_rain", "Matrix Digital Rain", "animations", "3.0.0" };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+        desc.metadata = { "matrix_rain", "Matrix Digital Rain", "animations", FIRMWARE_VERSION };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
         desc.requirements = { .needsPsram = false, .needsAudio = false };
         desc.schema.fields = {
             ConfigField("speed", ConfigType::INTEGER, "Fall Speed", "Falling speed in pixels per frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)

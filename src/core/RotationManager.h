@@ -37,8 +37,8 @@ public:
     bool isSuspended() const { return suspended; }
     
     bool isCurrentRealtime() const;
-    bool allowsCurrentOverlay() const;
-    bool isCurrentFighterOverlayEnabled() const;
+    OverlayConfig getCurrentOverlays() const;
+    IEngine* getCurrentActiveEngine() const;
 
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
@@ -57,7 +57,6 @@ private:
 
     AppEngineContext* m_ctx = nullptr;
     std::map<String, std::unique_ptr<IEngine>> activeEngines;
-    std::unique_ptr<FighterEngine> fighterOverlay;
     
     size_t currentIndex;
     uint32_t moduleStartTime;

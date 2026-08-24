@@ -20,6 +20,8 @@ enum class RequestLifecycle {
     PERSISTENT        // Always active, though can be preempted
 };
 
+class IEngine;
+
 struct DisplayRequest {
     String source;
     DisplayPriority priority;
@@ -28,6 +30,16 @@ struct DisplayRequest {
     String instance_id;
     unsigned long timeout_ms; // Used if lifecycle is TIMED
     unsigned long created_at;
+    IEngine* engine; // Polymorphic engine pointer for direct execution
+
+    DisplayRequest()
+        : source(""), priority(DisplayPriority::ROTATION), lifecycle(RequestLifecycle::PERSISTENT),
+          preemptive(false), instance_id(""), timeout_ms(0), created_at(0), engine(nullptr) {}
+
+    DisplayRequest(String src, DisplayPriority prio, RequestLifecycle life, bool pre = true,
+                   String inst = "", unsigned long timeout = 0, unsigned long created = 0, IEngine* eng = nullptr)
+        : source(src), priority(prio), lifecycle(life), preemptive(pre),
+          instance_id(inst), timeout_ms(timeout), created_at(created), engine(eng) {}
 };
 
 class DisplayArbiter {

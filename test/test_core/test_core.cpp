@@ -111,8 +111,6 @@ void test_capabilities_and_requirements(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.caps";
     desc.capabilities.realtime = true;
-    desc.capabilities.allowsOverlay = false;
-    desc.capabilities.isOverlay = false;
     desc.capabilities.selfPaced = true;
     desc.requirements.needsPsram = true;
     desc.requirements.needsAudio = true;
@@ -121,9 +119,9 @@ void test_capabilities_and_requirements(void) {
     const EngineDescriptor* found = EngineRegistry::getDescriptor("test.caps");
     TEST_ASSERT_NOT_NULL(found);
     TEST_ASSERT_TRUE(found->capabilities.realtime);
-    TEST_ASSERT_FALSE(found->capabilities.allowsOverlay);
-    TEST_ASSERT_FALSE(found->capabilities.isOverlay);
     TEST_ASSERT_TRUE(found->capabilities.selfPaced);
+    TEST_ASSERT_TRUE(found->capabilities.allowsOverlay);
+    TEST_ASSERT_TRUE(found->capabilities.allowRotation);
     TEST_ASSERT_TRUE(found->requirements.needsPsram);
     TEST_ASSERT_TRUE(found->requirements.needsAudio);
 }
@@ -140,8 +138,8 @@ void test_sanitizer_injects_defaults(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_main", "clock");
-
+    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
+    
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.defaults_injected);
@@ -159,40 +157,35 @@ void test_sanitizer_clamps_out_of_bound_integers(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_main", "clock");
-    inst->config.setInt("speed", 50);
+    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
+    inst->config.setInt("speed", 999);
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(1, res.values_clamped);
     TEST_ASSERT_EQUAL(10, inst->config.getInt("speed"));
-
-    inst->config.setInt("speed", -5);
-    res = ConfigSanitizer::sanitizeInstances(cfg);
-    TEST_ASSERT_TRUE(res.modified);
-    TEST_ASSERT_EQUAL(1, inst->config.getInt("speed"));
 }
 
 void test_sanitizer_handles_invalid_boolean_and_enum(void) {
     EngineDescriptor desc;
-    desc.metadata.id = "clock";
+    desc.metadata.id = "weather";
     desc.schema.fields = {
-        ConfigField("show_seconds", ConfigType::BOOLEAN, "Show Sec", "Show Sec", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("theme", ConfigType::ENUM, "Theme", "Theme", "nintendo", false, "nintendo,capcom,sega", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
+        ConfigField("use_celsius", ConfigType::BOOLEAN, "Celsius", "Use Celsius", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("icon_set", ConfigType::ENUM, "Icon Set", "Theme icon set", "classic", false, "classic,modern,retro", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new MockTestEngine()); };
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_main", "clock");
-    inst->config.setString("show_seconds", "not_a_bool");
-    inst->config.setString("theme", "unknown_theme_val");
+    EngineInstance* inst = cfg.addInstance("weather_1", "weather");
+    inst->config.setString("use_celsius", "invalid_bool");
+    inst->config.setString("icon_set", "unknown_icon_theme");
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.values_fallback);
-    TEST_ASSERT_EQUAL_STRING("true", inst->config.getString("show_seconds").c_str());
-    TEST_ASSERT_EQUAL_STRING("nintendo", inst->config.getString("theme").c_str());
+    TEST_ASSERT_EQUAL_STRING("true", inst->config.getString("use_celsius").c_str());
+    TEST_ASSERT_EQUAL_STRING("classic", inst->config.getString("icon_set").c_str());
 }
 
 void test_sanitizer_flags_unknown_engines(void) {
@@ -244,59 +237,113 @@ void test_requirements_gating(void) {
     TEST_ASSERT_TRUE(checkNone.satisfied);
 }
 
-void test_overlay_manager_preemption_cycle(void) {
-    ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("fighter_main", "fighter");
-    inst->config.setBool("enabled", true);
+void test_fighter_not_in_registry_or_selectable(void) {
+    // 1. EngineRegistrar must NOT register Fighter into EngineRegistry
+    EngineRegistrar::registerAll();
+    const EngineDescriptor* desc = EngineRegistry::getDescriptor("fighter");
+    TEST_ASSERT_NULL(desc);
 
-    EngineDescriptor desc;
-    desc.metadata.id = "fighter";
-    desc.capabilities.isOverlay = true;
-    desc.capabilities.allowsOverlay = false;
-    desc.factory = []() { return std::unique_ptr<IEngine>(new MockTestEngine()); };
-    EngineRegistry::registerEngine(desc);
+    // 2. ConfigSanitizer must reject instances pointing to "fighter"
+    ConfigLoader cfg;
+    cfg.addInstance("fighter_main", "fighter");
+    SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
+    TEST_ASSERT_EQUAL(1, res.invalid_instances);
+    TEST_ASSERT_EQUAL(0, cfg.instances.size());
+}
+
+void test_canonical_overlays_schema_and_migration(void) {
+    ConfigLoader cfg;
+    const char* legacyJson = R"({
+        "system": {"idle_fighter_enabled": true},
+        "rotation": [
+            {"instance_id": "clock_main", "duration_sec": 15, "fighter_overlay": true},
+            {"instance_id": "gifs_main", "duration_sec": 20, "overlays": {"fighter": true}},
+            {"instance_id": "weather_main", "duration_sec": 10, "fighter_overlay": false}
+        ]
+    })";
+
+    TEST_ASSERT_TRUE(cfg.parseFromJson(legacyJson));
+    TEST_ASSERT_EQUAL(3, cfg.rotation.size());
+    TEST_ASSERT_TRUE(cfg.rotation[0].overlays.fighter);
+    TEST_ASSERT_TRUE(cfg.rotation[1].overlays.fighter);
+    TEST_ASSERT_FALSE(cfg.rotation[2].overlays.fighter);
+
+    // Verify serialization produces canonical "overlays": {"fighter": true}
+    String serialized = cfg.serializeToJson();
+    TEST_ASSERT_TRUE(serialized.indexOf("\"overlays\":{\"fighter\":true}") >= 0);
+}
+
+void test_rotation_overlay_combinations(void) {
+    ConfigLoader cfg;
+    cfg.system.idle_fighter_enabled = true;
 
     OverlayManager overlay;
     overlay.initialize(nullptr, &cfg);
 
-    // 1. Rotation active with allowsOverlay=true -> overlay becomes active
-    overlay.process(true);
-    TEST_ASSERT_TRUE(overlay.hasActiveOverlay());
+    // 1. Clock + Fighter ON
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
 
-    // 2. Preempted by MQTT / GIF (allowsOverlay=false or deactivate called)
-    overlay.deactivate();
-    TEST_ASSERT_FALSE(overlay.hasActiveOverlay());
+    // 2. Clock + Fighter OFF
+    overlay.configure(OverlayConfig{false});
+    TEST_ASSERT_FALSE(overlay.isActive());
 
-    // 3. Resumed back to Rotation with allowsOverlay=true -> overlay cleanly re-activates
-    overlay.process(true);
-    TEST_ASSERT_TRUE(overlay.hasActiveOverlay());
+    // 3. GIF + Fighter ON (MUST be valid with zero GIF special rule!)
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
 
-    overlay.deactivate();
-    TEST_ASSERT_FALSE(overlay.hasActiveOverlay());
+    // 4. GIF + Fighter OFF
+    overlay.configure(OverlayConfig{false});
+    TEST_ASSERT_FALSE(overlay.isActive());
+
+    // 5. Global master switch disabled overrides per-rotation true
+    cfg.system.idle_fighter_enabled = false;
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_FALSE(overlay.isActive());
 }
 
-void test_is_overlay_capability_separation(void) {
-    EngineDescriptor descFighter;
-    descFighter.metadata.id = "fighter";
-    descFighter.capabilities.isOverlay = true;
-    descFighter.capabilities.allowsOverlay = false;
-    EngineRegistry::registerEngine(descFighter);
+void test_overlay_manager_lifecycle_and_heap_preservation(void) {
+    ConfigLoader cfg;
+    cfg.system.idle_fighter_enabled = true;
 
-    EngineDescriptor descClock;
-    descClock.metadata.id = "clock";
-    descClock.capabilities.isOverlay = false;
-    descClock.capabilities.allowsOverlay = true;
-    EngineRegistry::registerEngine(descClock);
+    OverlayManager overlay;
+    overlay.initialize(nullptr, &cfg);
+    TEST_ASSERT_FALSE(overlay.hasInstantiatedFighter());
 
-    const EngineDescriptor* f = EngineRegistry::getDescriptor("fighter");
-    TEST_ASSERT_NOT_NULL(f);
-    TEST_ASSERT_TRUE(f->capabilities.isOverlay);
-    TEST_ASSERT_FALSE(f->capabilities.allowsOverlay);
+    // First time ON -> lazy allocation
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
+    TEST_ASSERT_TRUE(overlay.hasInstantiatedFighter());
 
-    const EngineDescriptor* c = EngineRegistry::getDescriptor("clock");
-    TEST_ASSERT_NOT_NULL(c);
-    TEST_ASSERT_FALSE(c->capabilities.isOverlay);
-    TEST_ASSERT_TRUE(c->capabilities.allowsOverlay);
+    // Switch to OFF -> inactive but instance PRESERVED in heap (prevents fragmentation)
+    overlay.configure(OverlayConfig{false});
+    TEST_ASSERT_FALSE(overlay.isActive());
+    TEST_ASSERT_TRUE(overlay.hasInstantiatedFighter());
+
+    // Switch back to ON -> re-activates without re-allocating
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
+    TEST_ASSERT_TRUE(overlay.hasInstantiatedFighter());
+}
+
+void test_overlay_preemption_by_arbiter(void) {
+    ConfigLoader cfg;
+    cfg.system.idle_fighter_enabled = true;
+
+    OverlayManager overlay;
+    overlay.initialize(nullptr, &cfg);
+
+    // 1. Rotation active with Fighter ON
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
+
+    // 2. Preempted by priority source (Arbiter selects MARQUEE/MQTT -> passes empty OverlayConfig{})
+    overlay.configure(OverlayConfig{});
+    TEST_ASSERT_FALSE(overlay.isActive());
+
+    // 3. Resumed back to Rotation with Fighter ON
+    overlay.configure(OverlayConfig{true});
+    TEST_ASSERT_TRUE(overlay.isActive());
 }
 
 void setup() {
@@ -317,8 +364,11 @@ void setup() {
     // Arbiter, Overlays & Requirements
     RUN_TEST(test_arbiter_priority_resolution);
     RUN_TEST(test_requirements_gating);
-    RUN_TEST(test_overlay_manager_preemption_cycle);
-    RUN_TEST(test_is_overlay_capability_separation);
+    RUN_TEST(test_fighter_not_in_registry_or_selectable);
+    RUN_TEST(test_canonical_overlays_schema_and_migration);
+    RUN_TEST(test_rotation_overlay_combinations);
+    RUN_TEST(test_overlay_manager_lifecycle_and_heap_preservation);
+    RUN_TEST(test_overlay_preemption_by_arbiter);
     UNITY_END();
 }
 

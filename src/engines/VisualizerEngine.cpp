@@ -239,7 +239,6 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_visualizer;
     desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", FIRMWARE_VERSION};
     desc_visualizer.capabilities.realtime = true;
-    desc_visualizer.capabilities.allowsOverlay = false;
     desc_visualizer.requirements.needsAudio = true;
     desc_visualizer.schema.fields = {
         ConfigField("enabled", ConfigType::BOOLEAN, "Enabled", "Enable real-time spectrum display", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),

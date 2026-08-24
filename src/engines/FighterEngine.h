@@ -11,8 +11,8 @@
 #include <Arduino.h>
 #include <vector>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../core/SDUtils.h"
 #include "FS.h"
-#include "SD.h"
 
 /**
  * @enum FighterState

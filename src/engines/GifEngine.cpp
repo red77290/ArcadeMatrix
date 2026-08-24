@@ -767,7 +767,6 @@ EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_gifs;
     desc_gifs.metadata = {"gifs", "GIF Player", "media", FIRMWARE_VERSION};
     desc_gifs.capabilities.realtime = true;
-    desc_gifs.capabilities.allowsOverlay = false;
     desc_gifs.capabilities.selfPaced = true;
     desc_gifs.requirements.needsAudio = false;
     desc_gifs.requirements.needsNetwork = false;

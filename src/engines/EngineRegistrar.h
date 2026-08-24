@@ -5,7 +5,6 @@
 class ClockEngine;
 class DateEngine;
 class WeatherEngine;
-class FighterEngine;
 class GifEngine;
 class CryptoEngine;
 class StockEngine;
