@@ -192,16 +192,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            int chunkCount = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 32768) ? 32768 : toRead;
+                size_t chunk = (toRead > 65536) ? 65536 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
                 toRead -= r;
-                if (++chunkCount % 2 == 0) {
-                    vTaskDelay(1); // Yield to FreeRTOS display task so clock rendering is never starved!
-                }
             }
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
@@ -570,11 +566,6 @@ bool FighterEngine::loop() {
         active = false;
         extern ConfigLoader config;
         retryDelayEnd = now + (config.system.idle_fighter_interval * 1000);
-        if (matrix) {
-            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
-            matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);
-            matrix->fillRect(p2.x, p2.y, p2.width_px * scale, p2.height * scale, 0);
-        }
     }
     return true;
 }
