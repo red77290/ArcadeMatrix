@@ -29,6 +29,8 @@ public:
     
     void displayMessage(const MessageConfig& config);
     bool isActive() const { return active; }
+    bool allowsOverlay() const override { return false; }
+    bool needsClear() const override { return true; }
 
     /// Sets an optional custom GFXfont (e.g. from BitmapFontLoader, loaded from SD) to use
     /// instead of the default 5x7 font for subsequent displayMessage() calls. Pass nullptr to
