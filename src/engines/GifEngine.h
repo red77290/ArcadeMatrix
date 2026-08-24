@@ -47,7 +47,6 @@ public:
     bool isRealtime() const override { return true; }
     bool selfPaced() const override { return true; }
     void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
-    bool allowsOverlay() const override { return false; }
 
     ~GifEngine();
 

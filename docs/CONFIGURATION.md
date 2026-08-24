@@ -93,9 +93,16 @@ Defines the display order on the screen.
 ```json
 {
   "instance_id": "crypto_main",
-  "duration_sec": 30
+  "duration_sec": 30,
+  "overlays": {
+    "fighter": true
+  }
 }
 ```
+* `instance_id`: Unique identifier of the engine instance to run.
+* `duration_sec`: Duration in seconds for this rotation slot.
+* `overlays.fighter`: (Optional boolean, default `false`) Enables the animated MUGEN Fighter overlay on top of this slot. Overlays are transverse and can be enabled on ANY engine (Clock, Date, Weather, GIFs, Crypto, etc.).
+
 The ESP32 will allocate memory (`initialize()`) for `crypto_main` the very first time it encounters it in this rotation loop.
 
 ---

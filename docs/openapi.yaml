@@ -530,6 +530,60 @@ paths:
         '200':
           description: Configuration updated and hot reloaded.
 
+  /api/rotation:
+    get:
+      tags:
+        - Engines
+      summary: List configured display rotation entries
+      description: Returns the active sequence of display rotation instances with durations and overlay settings.
+      responses:
+        '200':
+          description: List of rotation slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    instance_id:
+                      type: string
+                    duration_sec:
+                      type: integer
+                    overlays:
+                      type: object
+                      properties:
+                        fighter:
+                          type: boolean
+    post:
+      tags:
+        - Engines
+      summary: Replace display rotation sequence
+      description: Sets the complete rotation sequence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required:
+                  - instance_id
+                properties:
+                  instance_id:
+                    type: string
+                  duration_sec:
+                    type: integer
+                  overlays:
+                    type: object
+                    properties:
+                      fighter:
+                        type: boolean
+      responses:
+        '200':
+          description: Rotation updated
+
   /api/engines:
     get:
       tags:
@@ -568,10 +622,14 @@ paths:
                           type: boolean
                         interruptible:
                           type: boolean
-                        allowsOverlay:
-                          type: boolean
                         selfPaced:
                           type: boolean
+                        allowsOverlay:
+                          type: boolean
+                          description: Whether this engine authorizes transverse overlays (like Fighter).
+                        allowRotation:
+                          type: boolean
+                          description: Whether this engine can be selected by users in the rotation loop.
                     requirements:
                       type: object
                       properties:

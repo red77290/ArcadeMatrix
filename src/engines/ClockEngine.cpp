@@ -142,7 +142,6 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor clockDesc;
     clockDesc.metadata = {"clock", "Clock", "info", FIRMWARE_VERSION};
     clockDesc.capabilities.realtime = true;
-    clockDesc.capabilities.allowsOverlay = true;
     clockDesc.requirements.needsAudio = false;
     clockDesc.schema.fields = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),

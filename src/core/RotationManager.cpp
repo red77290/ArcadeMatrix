@@ -9,7 +9,6 @@ extern ConfigLoader config;
 RotationManager::RotationManager() {
   currentIndex = 0;
   moduleStartTime = 0;
-  fighterOverlay = std::unique_ptr<FighterEngine>(new FighterEngine());
 }
 size_t RotationManager::countSymbols(const String& symbols) {
   if (symbols.length() == 0) return 0;
@@ -38,7 +37,6 @@ size_t RotationManager::countSymbols(const String& symbols) {
 void RotationManager::begin(const ConfigLoader &cfg) {
   activeEngines.clear();
   currentActiveInstanceId = "";
-  fighterOverlay->initialize(m_ctx, nullptr);
   queueAction(RotationAction::RESET_ROTATION);
 }
 
@@ -178,19 +176,21 @@ bool RotationManager::isCurrentRealtime() const {
     return false;
 }
 
-bool RotationManager::allowsCurrentOverlay() const {
-    if (currentActiveInstanceId == "") return false;
-    auto it = activeEngines.find(currentActiveInstanceId);
-    if (it != activeEngines.end()) {
-        return it->second->allowsOverlay();
+OverlayConfig RotationManager::getCurrentOverlays() const {
+    extern ConfigLoader config;
+    if (config.rotation.empty() || currentIndex >= config.rotation.size()) {
+        return OverlayConfig{};
     }
-    return true;
+    return config.rotation[currentIndex].overlays;
 }
 
-bool RotationManager::isCurrentFighterOverlayEnabled() const {
-    extern ConfigLoader config;
-    if (currentIndex >= config.rotation.size()) return false;
-    return config.rotation[currentIndex].fighter_overlay;
+IEngine* RotationManager::getCurrentActiveEngine() const {
+    if (currentActiveInstanceId == "") return nullptr;
+    auto it = activeEngines.find(currentActiveInstanceId);
+    if (it != activeEngines.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 
 void RotationManager::setSuspended(bool susp) {
@@ -242,11 +242,6 @@ bool RotationManager::loop() {
                   advance = true;
               }
           }
-      }
-      
-      if (config.system.idle_fighter_enabled && config.rotation[currentIndex].fighter_overlay) {
-          fighterOverlay->update(m_ctx);
-          fighterOverlay->render(m_ctx);
       }
   } else {
       // Fallback if engine fails to load or id is invalid

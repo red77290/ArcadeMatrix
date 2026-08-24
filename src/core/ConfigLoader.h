@@ -9,10 +9,21 @@ struct EngineInstance {
     DictionaryEngineConfig config;
 };
 
+struct OverlayConfig {
+    bool fighter;
+
+    OverlayConfig() : fighter(false) {}
+    explicit OverlayConfig(bool f) : fighter(f) {}
+};
+
 struct RotationEntry {
     String instance_id;
     int duration_sec;
-    bool fighter_overlay = false;
+    OverlayConfig overlays;
+
+    RotationEntry() : instance_id(""), duration_sec(15), overlays() {}
+    RotationEntry(String id, int dur = 15, OverlayConfig ov = OverlayConfig{})
+        : instance_id(id), duration_sec(dur), overlays(ov) {}
 };
 
 struct MatrixConfig {
@@ -70,7 +81,7 @@ public:
     void setDefaults();
     
     bool parseFromJson(const char* jsonContent);
-    String serializeToJson() const;
+    String serializeToJson(bool pretty = false) const;
     
     bool loadFromSD(const char* filepath);
     bool saveToSD(const char* filepath);

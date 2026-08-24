@@ -545,7 +545,6 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_date;
     desc_date.metadata = {"date", "Date", "info", FIRMWARE_VERSION};
     desc_date.capabilities.realtime = false;
-    desc_date.capabilities.allowsOverlay = true;
     desc_date.requirements.needsAudio = false;
     desc_date.requirements.needsNetwork = false;
     desc_date.schema.fields = {

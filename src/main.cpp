@@ -474,21 +474,13 @@ void loop() {
         // Synchronize Music Visualizer active state and configuration with config setting
         if (visualizerEngine) {
             bool visEnabled = false;
-            for (const auto& inst : config.instances) {
-                if (inst.engine_id == "audiovisualizer" && inst.config.getBool("enabled", false)) {
-                    visEnabled = true;
-                    visualizerEngine->onConfigChanged(&inst.config);
-                    break;
-                }
+            auto visInst = config.getInstance("visualizer_main");
+            if (visInst && visInst->config.getBool("enabled", false)) {
+                visEnabled = true;
             }
             if (visEnabled && !visualizerEngine->isActive()) {
                 visualizerEngine->activate();
-                DisplayRequest req;
-                req.source = "VISUALIZER";
-                req.priority = DisplayPriority::VISUALIZER;
-                req.lifecycle = RequestLifecycle::UNTIL_CANCELLED;
-                req.preemptive = true;
-                req.timeout_ms = 0;
+                DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
                 displayArbiter.submitRequest(req);
             } else if (!visEnabled && visualizerEngine->isActive()) {
                 visualizerEngine->deactivate();
@@ -498,7 +490,7 @@ void loop() {
 
         if (marqueeEngine) {
             if (marqueeEngine->isActive()) {
-                DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), marqueeEngine};
                 displayArbiter.submitRequest(req);
             } else {
                 displayArbiter.cancelRequest("MARQUEE");
@@ -506,7 +498,7 @@ void loop() {
         }
         if (messageEngine) {
             if (messageEngine->isActive() && rotationManager->getCurrentEngineId() != "message") {
-                DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), messageEngine};
                 displayArbiter.submitRequest(req);
             } else {
                 displayArbiter.cancelRequest("MESSAGE");
@@ -514,7 +506,7 @@ void loop() {
         }
         if (gifEngine) {
             if (gifEngine->isActive() && rotationManager->getCurrentEngineId() != "gifs") {
-                DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), gifEngine};
                 displayArbiter.submitRequest(req);
             } else {
                 displayArbiter.cancelRequest("GIF");
@@ -522,33 +514,27 @@ void loop() {
         }
 
         winner = displayArbiter.evaluate();
+        IEngine* activeEngine = nullptr;
         
-        if (winner.source == "VISUALIZER") {
-            visualizerEngine->update(appCtx);
-            visualizerEngine->render(appCtx);
+        if (winner.engine != nullptr) {
+            activeEngine = winner.engine;
+            activeEngine->update(appCtx);
+            activeEngine->render(appCtx);
             shouldFlip = true;
-            overlayManager.deactivate();
-        } else if (winner.source == "MARQUEE") {
-            marqueeEngine->update(appCtx);
-            marqueeEngine->render(appCtx);
-            shouldFlip = true;
-            overlayManager.deactivate();
-        } else if (winner.source == "MESSAGE") {
-            messageEngine->update(appCtx);
-            messageEngine->render(appCtx);
-            shouldFlip = true;
-            overlayManager.deactivate();
-        } else if (winner.source == "GIF") {
-            if (gifEngine) {
-                gifEngine->update(appCtx);
-                gifEngine->render(appCtx);
-                shouldFlip = true;
-            }
-            overlayManager.deactivate();
         } else {
             shouldFlip = rotationManager->loop();
-            overlayManager.process(rotationManager->allowsCurrentOverlay());
+            activeEngine = rotationManager->getCurrentActiveEngine();
         }
+        
+        // Polymorphic 3-tier overlay resolution
+        if (activeEngine && activeEngine->allowsOverlay()) {
+            overlayManager.configure(rotationManager->getCurrentOverlays());
+        } else {
+            overlayManager.configure({});
+        }
+        
+        overlayManager.update();
+        overlayManager.render();
         
         xSemaphoreGive(sdMutex);
     }

@@ -28,6 +28,9 @@ public:
     void show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds = 8);
     bool isActive() const { return active; }
 
+    bool allowsOverlay() const override { return false; }
+    bool allowRotation() const override { return false; }
+
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }
 
 private:

@@ -93,9 +93,16 @@ Define el orden de visualización en la pantalla.
 ```json
 {
   "instance_id": "crypto_main",
-  "duration_sec": 30
+  "duration_sec": 30,
+  "overlays": {
+    "fighter": true
+  }
 }
 ```
+* `instance_id`: Identificador único de la instancia de motor a ejecutar.
+* `duration_sec`: Duración de visualización en segundos.
+* `overlays.fighter`: (Booleano opcional, por defecto `false`) Activa la superposición animada de combate MUGEN Fighter sobre este slot. Las superposiciones son transversales y pueden activarse en CUALQUIER motor (Clock, Date, Weather, GIFs, Crypto, etc.).
+
 El ESP32 asignará memoria (`initialize()`) para `crypto_main` la primera vez que lo encuentre en este bucle de rotación.
 
 ---

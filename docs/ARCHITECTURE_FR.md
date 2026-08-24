@@ -96,7 +96,6 @@ classDiagram
         +isRealtime() bool
         +setRotationBudget(budget) void
         +selfPaced() bool
-        +allowsOverlay() bool
     }
 
     class EngineDescriptor {
@@ -119,7 +118,6 @@ classDiagram
         +bool supports_256x64
         +bool realtime
         +bool interruptible
-        +bool allowsOverlay
         +bool selfPaced
     }
 
@@ -180,7 +178,6 @@ classDiagram
 | `isRealtime()` | Scrutation limiteur FPS | Indication de cadence dynamique (~60 FPS vs ~20 FPS). | Requête const. |
 | `setRotationBudget()`| À l'activation du module | Fixe le budget par quantité (ex: jouer N GIFs). | Reçoit la valeur numérique du slot de rotation. |
 | `selfPaced()` | Scrutation dans la rotation | Si true, le minuteur de durée ne force pas l'avancement. | Piloté par `isFinished()`. |
-| `allowsOverlay()` | Scrutation DisplayArbiter | Si true, l'overlay Fighter peut composer par-dessus. | Désactive les overlays si false. |
 
 ---
 
@@ -216,8 +213,8 @@ class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
-        desc.metadata = { "clock", "Horloge Digitale & Publisher", "clocks", "3.0.0" };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
+        desc.metadata = { "clock", "Horloge Digitale & Publisher", "clocks", FIRMWARE_VERSION };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
         desc.requirements = { .needsPsram = false, .needsAudio = false };
         desc.schema.fields = { /* ... */ };
         desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
@@ -298,21 +295,43 @@ L'interface Web (`data/index.html`) est 100% dynamique :
 
 ## 10. Le Display Arbiter
 
+Le `DisplayArbiter` évalue chaque frame les requêtes d'affichage pour désigner la source principale qui pilote le framebuffer :
+
+```text
 Hiérarchie des priorités d'affichage :
-1. Message MQTT (Priorité 10)
-2. Marquee Retrogaming (Priorité 8)
-3. Animation GIF One-Shot (Priorité 6)
-4. Visualiseur Audio Prioritaire (Priorité 4)
-5. Boucle de Rotation Idle (Priorité 0)
+1. Message MQTT (Priorité 100)
+2. Visualiseur Audio Prioritaire (Priorité 40)
+3. Marquee Retrogaming (Priorité 30)
+4. Animation GIF One-Shot (Priorité 20)
+5. Boucle de Rotation / Horloge Idle (Priorité 10)
+```
+
+L'arbitre détermine **quelle source d'affichage principale** possède le framebuffer. Il ne gère pas les overlays.
 
 ---
 
-## 11. Le Compositeur d'Overlay Fighter
+## 11. Architecture d'Overlay Transverse & Intégration Fighter
 
-Le moteur M.U.G.E.N `FighterEngine` fonctionne en **composition additive** :
-- Dessine directement par-dessus le tampon de l'horloge/météo lorsque `allowsCurrentOverlay() == true` et `fighter_main.enabled == true`.
-- N'efface jamais l'écran (`matrix.fillScreen(0)`) pour garantir un rendu sans scintillement.
-- Se masque automatiquement lorsqu'une source prioritaire (MQTT/Marquee/GIF) prend la main.
+Le `OverlayManager` opère comme une **couche de composition transverse** appliquée après que la source principale a dessiné son framebuffer :
+
+```text
+DisplayArbiter (Source Gagnante)
+       ↓
+Engine principal render() -> Framebuffer de base
+       ↓
+OverlayManager (configure overlays)
+       ↓
+FighterEngine composite() [si demandé pour ce slot de rotation]
+       ↓
+matrix.update()
+```
+
+### Invariants Architecturaux Clés :
+1. **EngineRegistry $\ne$ OverlayManager :** Les sources d'affichage sélectionnables (`clock`, `weather`, `gifs`, etc.) vivent dans `EngineRegistry`. Les overlays (`Fighter`) vivent exclusivement dans `OverlayManager`.
+2. **Activation Contrôlée par l'Utilisateur par Entrée de Rotation :** Les overlays sont activés ou désactivés par slot de rotation via `"overlays": { "fighter": true }`.
+3. **Zéro Exception Moteur :** `Clock + Fighter`, `GIF + Fighter`, `Weather + Fighter` sont 100% légitimes. Le framework ne contient aucune règle restreignant le Fighter sur le moteur GIF ou un autre.
+4. **Invariant Additif :** Les overlays composent de manière additive et n'appellent **jamais** `matrix.clear()` ni n'effacent le framebuffer de base.
+5. **Stabilité du Tas (Heap) sur ESP32 :** `OverlayManager` alloue `FighterEngine` de manière paresseuse au premier besoin et préserve l'instance dans le tas entre les rotations afin d'éviter toute fragmentation mémoire. Lors d'une préemption (ex: message MQTT), l'overlay est simplement désactivé sans libération du tas.
 
 ---
 

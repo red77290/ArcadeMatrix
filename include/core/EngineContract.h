@@ -64,9 +64,22 @@ struct EngineCapabilities {
     bool supports_256x64 = true;
     bool realtime = false;
     bool interruptible = true;
-    bool allowsOverlay = true;
-    bool isOverlay = false;
     bool selfPaced = false;
+
+    /**
+     * @brief Declares whether this engine permits transverse overlays (such as the M.U.G.E.N Fighter)
+     *        to be composited on top of its rendered frame.
+     *        If false, overlays are permanently forbidden for this engine regardless of user settings.
+     *        If true, active overlay display is governed by user settings (master switch + per-slot toggle).
+     */
+    bool allowsOverlay = true;
+
+    /**
+     * @brief Declares whether this engine can be selected by users as part of the normal display rotation loop.
+     *        If false, the engine is strictly event-driven/preemptive (e.g. Marquee game covers, system alerts)
+     *        and will not appear in the Web UI rotation picker or be permitted by the ConfigSanitizer.
+     */
+    bool allowRotation = true;
 };
 
 struct EngineRequirements {
@@ -184,8 +197,18 @@ public:
     virtual bool selfPaced() const { return false; }
     virtual void setRotationBudget(uint32_t budget) {}
 
-    // Overlay compositing capability query
+    /**
+     * @brief Declares whether this specific engine instance authorizes transverse overlays
+     *        (like Fighter) to composite on top of its rendered pixels.
+     *        Defaults to true. Can be overridden to false for full-screen emergency alerts, etc.
+     */
     virtual bool allowsOverlay() const { return true; }
+
+    /**
+     * @brief Declares whether this engine is eligible for the normal user rotation sequence.
+     *        Defaults to true. Returns false for purely event-driven/preemptive engines (e.g. Marquee).
+     */
+    virtual bool allowRotation() const { return true; }
 };
 
 // =======================================================

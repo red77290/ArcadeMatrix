@@ -509,7 +509,6 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_crypto;
     desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", FIRMWARE_VERSION};
     desc_crypto.capabilities.realtime = false;
-    desc_crypto.capabilities.allowsOverlay = true;
     desc_crypto.requirements.needsPsram = true;
     desc_crypto.requirements.needsNetwork = true;
     desc_crypto.schema.fields = {

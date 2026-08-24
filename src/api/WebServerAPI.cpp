@@ -159,7 +159,6 @@ void WebServerAPI::setupRoutes() {
             capObj["supports_256x64"] = descriptors[i].capabilities.supports_256x64;
             capObj["realtime"] = descriptors[i].capabilities.realtime;
             capObj["interruptible"] = descriptors[i].capabilities.interruptible;
-            capObj["allowsOverlay"] = descriptors[i].capabilities.allowsOverlay;
             capObj["selfPaced"] = descriptors[i].capabilities.selfPaced;
 
             JsonObject reqObj = obj.createNestedObject("requirements");
@@ -490,7 +489,8 @@ void WebServerAPI::setupRoutes() {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = rot.instance_id;
             obj["duration_sec"] = rot.duration_sec;
-            obj["fighter_overlay"] = rot.fighter_overlay;
+            JsonObject ovObj = obj.createNestedObject("overlays");
+            ovObj["fighter"] = rot.overlays.fighter;
         }
         String response;
         serializeJson(doc, response);
@@ -512,7 +512,13 @@ void WebServerAPI::setupRoutes() {
             RotationEntry re;
             re.instance_id = entry["instance_id"].as<String>();
             re.duration_sec = entry["duration_sec"] | 15;
-            re.fighter_overlay = entry["fighter_overlay"] | false;
+            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>()) {
+                re.overlays.fighter = entry["overlays"]["fighter"] | false;
+            } else if (entry.containsKey("fighter_overlay")) {
+                re.overlays.fighter = entry["fighter_overlay"] | false;
+            } else {
+                re.overlays.fighter = false;
+            }
             if (!re.instance_id.isEmpty()) {
                 config.rotation.push_back(re);
             }

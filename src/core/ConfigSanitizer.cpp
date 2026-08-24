@@ -123,16 +123,19 @@ SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config) {
         ++it;
     }
 
-    // Now remove any references in rotation list to instances that no longer exist
+    // Now remove any references in rotation list to instances that no longer exist or do not allow rotation
     for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
-        bool found = false;
+        bool valid = false;
         for (const auto& inst : config.instances) {
             if (inst.instance_id == it->instance_id) {
-                found = true;
+                const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+                if (desc && desc->capabilities.allowRotation) {
+                    valid = true;
+                }
                 break;
             }
         }
-        if (!found) {
+        if (!valid) {
             it = config.rotation.erase(it);
             result.modified = true;
         } else {

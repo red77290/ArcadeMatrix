@@ -91,7 +91,6 @@ public:
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
     virtual bool selfPaced() const { return false; }
-    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
@@ -102,6 +101,9 @@ public:
 1. **Regla de Oro #1 — Cero Asignaciones en el Bucle Activo:** Nunca instancie `String`, `std::vector` ni use `malloc`/`new` en `update()` o `render()`. Preasigne todo en `initialize()`.
 2. **Regla de Oro #2 — Recarga en Caliente en el Lugar:** En `onConfigChanged()`, actualice directamente las variables miembro.
 3. **Regla de Oro #3 — Bloqueos de Bus SD:** Las lecturas en la tarjeta SD deben protegerse con `sdMutex`.
+4. **Regla de Oro #4 — Overlays vs Motores Seleccionables:**
+   - **Motor Seleccionable (Engine):** Reemplaza el framebuffer principal (ej: Reloj, Clima, GIF, Cripto). Registrado en `EngineRegistry` con descriptor y fábrica.
+   - **Overlay Transversal:** Compone de forma aditiva sobre la fuente activa (ej: Fighter). Administrado exclusivamente por `OverlayManager`, activado por ranura de rotación (`overlays.fighter: true`), nunca registrado en `EngineRegistry`.
 
 ---
 
@@ -113,7 +115,6 @@ struct EngineCapabilities {
     bool supports_256x64 = true;
     bool realtime = true;
     bool interruptible = true;
-    bool allowsOverlay = true;
     bool selfPaced = false;
 };
 
@@ -281,8 +282,8 @@ class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
-        desc.metadata = { "matrix_rain", "Matrix Rain", "animations", "3.0.0" };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+        desc.metadata = { "matrix_rain", "Matrix Rain", "animations", FIRMWARE_VERSION };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
         desc.requirements = { .needsPsram = false, .needsAudio = false };
         desc.schema.fields = {
             ConfigField("speed", ConfigType::INTEGER, "Velocidad", "Velocidad de caída en píxeles por frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)

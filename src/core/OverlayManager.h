@@ -3,12 +3,18 @@
 #include <Arduino.h>
 #include <memory>
 #include "../../include/core/EngineContract.h"
-#include "../../include/core/EngineRegistry.h"
 #include "ConfigLoader.h"
+#include "../engines/FighterEngine.h"
+#include "Logger.h"
 
 /**
  * @class OverlayManager
- * @brief Encapsulates decorative overlay passes composited on top of active base engines.
+ * @brief Transverse composition layer applying decorative overlays additively onto base framebuffers.
+ *
+ * CONTRACT:
+ * - Overlay rendering MUST be additive onto existing framebuffers.
+ * - Overlay rendering MUST NOT call matrix->clear() or replace the base display.
+ * - FighterEngine is lazily instantiated on first demand and preserved in heap to prevent fragmentation.
  */
 class OverlayManager {
 public:
@@ -20,50 +26,72 @@ public:
         _config = config;
     }
 
-    void process(bool allowsOverlay) {
-        if (!_context || !_config) return;
+    /**
+     * @brief Configures which overlays should be active for the current display pass.
+     * @param overlays Requested overlay switches from the current rotation slot (or empty when preempted).
+     */
+    void configure(const OverlayConfig& overlays) {
+        if (!_config) {
+            _fighterActive = false;
+            return;
+        }
 
-        auto fighterInst = _config->getInstance("fighter_main");
-        bool enabled = fighterInst && fighterInst->config.getBool("enabled", false);
+        // Global master switch + per-rotation entry switch
+        bool globalEnabled = _config->system.idle_fighter_enabled;
+        bool requested = overlays.fighter;
+        bool shouldBeActive = globalEnabled && requested;
 
-        if (enabled && allowsOverlay) {
-            if (!_activeOverlay) {
-                auto desc = EngineRegistry::getDescriptor("fighter");
-                if (desc && desc->factory) {
-                    _activeOverlay = desc->factory();
-                    _activeOverlay->initialize(_context, &fighterInst->config);
-                    _activeOverlay->activate();
+        if (shouldBeActive) {
+            if (!_fighterOverlay) {
+                LOGI("OverlayManager", "Lazy-instantiating FighterEngine overlay...");
+                _fighterOverlay = std::unique_ptr<FighterEngine>(new FighterEngine());
+                if (_context) {
+                    _fighterOverlay->initialize(_context, nullptr);
                 }
             }
-            if (_activeOverlay) {
-                _activeOverlay->update(_context);
-                _activeOverlay->render(_context);
+            if (!_fighterActive && _fighterOverlay) {
+                _fighterOverlay->activate();
+                _fighterActive = true;
             }
-        } else if (_activeOverlay) {
-            deactivate();
+        } else {
+            if (_fighterActive && _fighterOverlay) {
+                _fighterOverlay->deactivate();
+                _fighterActive = false;
+            }
+        }
+    }
+
+    void update() {
+        if (_fighterActive && _fighterOverlay && _context) {
+            _fighterOverlay->update(_context);
+        }
+    }
+
+    void render() {
+        if (_fighterActive && _fighterOverlay && _context) {
+            _fighterOverlay->render(_context);
         }
     }
 
     void deactivate() {
-        if (_activeOverlay) {
-            _activeOverlay->deactivate();
-            _activeOverlay.reset();
+        if (_fighterActive && _fighterOverlay) {
+            _fighterOverlay->deactivate();
+            _fighterActive = false;
         }
     }
 
     void onConfigChanged() {
-        if (_activeOverlay && _config) {
-            auto fighterInst = _config->getInstance("fighter_main");
-            if (fighterInst) {
-                _activeOverlay->onConfigChanged(&fighterInst->config);
-            }
+        if (_fighterOverlay) {
+            _fighterOverlay->onConfigChanged(nullptr);
         }
     }
 
-    bool hasActiveOverlay() const { return _activeOverlay != nullptr; }
+    bool isActive() const { return _fighterActive; }
+    bool hasInstantiatedFighter() const { return _fighterOverlay != nullptr; }
 
 private:
     EngineContext* _context = nullptr;
     ConfigLoader* _config = nullptr;
-    std::unique_ptr<IEngine> _activeOverlay;
+    std::unique_ptr<FighterEngine> _fighterOverlay;
+    bool _fighterActive = false;
 };
