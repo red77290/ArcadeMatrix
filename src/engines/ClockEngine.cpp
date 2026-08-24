@@ -11,11 +11,11 @@
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 
-ClockEngine::ClockEngine() : legacy_matrix(nullptr), activeFace(nullptr), currentTheme(THEME_NONE) {
+ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
 }
 
-ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : legacy_matrix(display), activeFace(nullptr), currentTheme(THEME_NONE) {
+ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrixDisplay(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
 }
 
@@ -36,29 +36,29 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
     currentTheme = theme;
     
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(legacy_matrix, config);
+        activeFace = new CyberpunkClock(matrixDisplay, config);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(legacy_matrix, config);
+        activeFace = new FlipClock(matrixDisplay, config);
     } else if (theme == 22) {
-        activeFace = new PongClock(legacy_matrix, config);
+        activeFace = new PongClock(matrixDisplay, config);
     } else if (theme == 23) {
-        activeFace = new TetrisClock(legacy_matrix, false, config); // Normal Tetris
+        activeFace = new TetrisClock(matrixDisplay, false, config); // Normal Tetris
     } else if (theme == 29) {
-        activeFace = new TetrisClock(legacy_matrix, true, config); // Gameboy Tetris
+        activeFace = new TetrisClock(matrixDisplay, true, config); // Gameboy Tetris
     } else if (theme == 24) {
-        activeFace = new WordClock(legacy_matrix, config);
+        activeFace = new WordClock(matrixDisplay, config);
     } else if (theme == 25) {
-        activeFace = new BinaryClock(legacy_matrix, config);
+        activeFace = new BinaryClock(matrixDisplay, config);
     } else if (theme == 26) {
-        activeFace = new PacmanClock(legacy_matrix, config);
+        activeFace = new PacmanClock(matrixDisplay, config);
     } else if (theme == 27) {
-        activeFace = new VersusClock(legacy_matrix, config);
+        activeFace = new VersusClock(matrixDisplay, config);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(legacy_matrix, config);
+        activeFace = new MatrixRainClock(matrixDisplay, config);
     } else if (theme == 28) {
-        activeFace = new SlotMachineClock(legacy_matrix, config);
+        activeFace = new SlotMachineClock(matrixDisplay, config);
     } else {
-        ArcadeClock* arcade = new ArcadeClock(legacy_matrix, config);
+        ArcadeClock* arcade = new ArcadeClock(matrixDisplay, config);
         arcade->setTheme(theme);
         activeFace = arcade;
     }
@@ -87,7 +87,7 @@ bool ClockEngine::loop() {
 // =========================================================
 
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    legacy_matrix = context->getMatrix();
+    matrixDisplay = context->getMatrix();
     currentConfig = config;
     int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;
     setTheme(static_cast<PublisherTheme>(theme), true, config);
@@ -140,7 +140,7 @@ void ClockEngine::onConfigChanged(const EngineConfig* config) {
 
 EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor clockDesc;
-    clockDesc.metadata = {"clock", "Clock", "info", "3.0.0"};
+    clockDesc.metadata = {"clock", "Clock", "info", FIRMWARE_VERSION};
     clockDesc.capabilities.realtime = true;
     clockDesc.capabilities.allowsOverlay = true;
     clockDesc.requirements.needsAudio = false;

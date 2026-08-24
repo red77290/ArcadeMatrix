@@ -765,7 +765,7 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
 
 EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_gifs;
-    desc_gifs.metadata = {"gifs", "GIF Player", "media", "3.0.0"};
+    desc_gifs.metadata = {"gifs", "GIF Player", "media", FIRMWARE_VERSION};
     desc_gifs.capabilities.realtime = true;
     desc_gifs.capabilities.allowsOverlay = false;
     desc_gifs.capabilities.selfPaced = true;

@@ -64,7 +64,7 @@ public:
     void setDate(const char* dateStr);
     void setDateData(const TimeData& d);
     
-    // Legacy mapping (maps legacy character ID to new PublisherTheme)
+    // Backward compatibility mapping (maps legacy numeric character ID to new PublisherTheme)
     void setCharacter(int characterId);
     
     void setTheme(PublisherTheme theme);

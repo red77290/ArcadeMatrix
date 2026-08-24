@@ -28,11 +28,10 @@ protected:
 
 class ClockEngine : public IEngine {
 public:
-    ClockEngine(); // For Registry Factory
-    ClockEngine(MatrixPanel_I2S_DMA* display); // Legacy
+    ClockEngine();
+    ClockEngine(MatrixPanel_I2S_DMA* display);
     ~ClockEngine() override;
 
-    // Legacy methods
     void setTheme(PublisherTheme theme, bool forceReload = false, const EngineConfig* config = nullptr);
     void updateTime(const TimeData& t);
     bool loop(); 
@@ -51,9 +50,7 @@ private:
     TimeData currentTime;
     const EngineConfig* currentConfig = nullptr;
     volatile bool configDirty = false;
-    
-    // Kept for legacy setup until full migration
-    MatrixPanel_I2S_DMA* legacy_matrix;
+    MatrixPanel_I2S_DMA* matrixDisplay;
 };
 
 class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
