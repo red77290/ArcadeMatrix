@@ -1440,7 +1440,22 @@ async function initDynamicEngines() {
               });
           } else if (field.options_endpoint) {
              const data = await API.get(field.options_endpoint).catch(() => []);
-             const optList = Array.isArray(data) ? data : (data.playlists || data.options || data.fonts || []);
+             let optList = [];
+             if (Array.isArray(data)) {
+                 optList = data;
+             } else if (data && typeof data === 'object') {
+                 if (Array.isArray(data.playlists)) optList = data.playlists;
+                 else if (Array.isArray(data.options)) optList = data.options;
+                 else if (Array.isArray(data.fonts)) optList = data.fonts;
+                 else {
+                     optList = Object.entries(data).map(([key, val]) => {
+                         if (typeof val === 'object' && val !== null) {
+                             return { value: val.path || key, label: val.name || key };
+                         }
+                         return { value: key, label: key };
+                     });
+                 }
+             }
              if (field.multiple) {
                  input = document.createElement('div');
                  input.className = 'rotation-toggles';
@@ -1449,7 +1464,7 @@ async function initDynamicEngines() {
                  optList.forEach(opt => {
                      const val = (typeof opt === 'object') ? (opt.id !== undefined ? opt.id : opt.value) : opt;
                      const lbl = (typeof opt === 'object') ? (opt.name || opt.label || val) : opt;
-                     const isChecked = selectedValues.includes(String(val));
+                     const isChecked = selectedValues.includes(String(val)) || selectedValues.includes(String(val).replace('/gifs/', '')) || (currentVal === 'all') || (currentVal === '');
                      const l = document.createElement('label');
                      l.className = 'toggle-btn';
                      l.innerHTML = `<input type="checkbox" value="${val}" class="multi-cb-${instance.instance_id}-${field.id}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${lbl}</span>`;
