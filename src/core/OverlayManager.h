@@ -86,7 +86,7 @@ public:
         }
     }
 
-    bool isActive() const { return _fighterActive; }
+    bool isActive() const { return _fighterActive && _fighterOverlay && _fighterOverlay->isActive(); }
     bool hasInstantiatedFighter() const { return _fighterOverlay != nullptr; }
 
 private:

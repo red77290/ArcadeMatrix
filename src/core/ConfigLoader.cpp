@@ -50,10 +50,10 @@ void ConfigLoader::setDefaults() {
     matrix.forceSingleBuffer = false;
     matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
-    matrix.limitRefreshRateHz = 60;
+    matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
-    matrix.clkPhase = false;
-    matrix.latchBlanking = 1;
+    matrix.clkPhase = true;
+    matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
     matrix.matrix_power = true;
 
