@@ -47,3 +47,9 @@ private:
     const char* getLevelText(NoiseStatusLevel level);
 };
 
+class DecibelEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+
+

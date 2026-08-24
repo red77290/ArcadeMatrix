@@ -176,3 +176,9 @@ private:
 
     bool m_hasPsram = false;
 };
+
+class GifEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

@@ -762,3 +762,22 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     }
     return 1;
 }
+
+EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_gifs;
+    desc_gifs.metadata = {"gifs", "GIF Player", "media", "3.0.0"};
+    desc_gifs.capabilities.realtime = true;
+    desc_gifs.capabilities.allowsOverlay = false;
+    desc_gifs.capabilities.selfPaced = true;
+    desc_gifs.requirements.needsAudio = false;
+    desc_gifs.requirements.needsNetwork = false;
+    desc_gifs.schema.fields = {
+        ConfigField("folder", ConfigType::LIST, "Playlists", "Active GIF playlists", "all", false, "", "", "", "", "/api/playlists", true, "", ValidationPolicy::Ignore),
+        ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("shuffle", ConfigType::BOOLEAN, "Shuffle", "Randomize animation order", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("duration_sec", ConfigType::INTEGER, "Duration per GIF", "Seconds per animation", "10", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_gifs.factory = []() { return std::unique_ptr<IEngine>(new GifEngine()); };
+    return desc_gifs;
+}
+

@@ -34,20 +34,39 @@ This is the **complete, exhaustive** guide to extending ArcadeMatrix on ESP32 (w
 ArcadeMatrix has **no hardcoded list of display features** in `main.cpp`. Each engine is a decoupled plugin registered at startup in the central `EngineRegistry`.
 
 ```mermaid
-flowchart LR
-    DEV["You write src/engines/MyEngine.cpp"] --> REGT["EngineRegistrar::registerAll()"]
-    REGT --> GATING{Meets Hardware Requirements?}
-    GATING -->|"Yes"| REG["EngineRegistry (Active Factory)"]
-    GATING -->|"No"| REG2["EngineRegistry (Available: false + Reason)"]
-    REG --> API["GET /api/engines"]
-    API --> UI["Dynamic Web UI (Auto-Form)"]
-    REG --> RM["RotationManager (Lazy-Once)"]
-    RM --> SCREEN["HUB75 LED Matrix (DMA)"]
+flowchart TD
+    subgraph EngineModule["Your Engine Module (src/engines/MyEngine.*)"]
+        ENG["class MyEngine : public IEngine"]
+        HND["class MyEngineDescriptorHandler : public IEngineDescriptorHandler"]
+        HND -.->|"factory builds"| ENG
+    end
+
+    subgraph Registration["Engine Registrar (src/engines/EngineRegistrar.cpp)"]
+        REGT["EngineRegistrar::registerAll()"]
+        REGT --> CALL["EngineRegistrar::registerHandler(handler)"]
+        CALL --> GET["handler.getDescriptor()"]
+        CALL --> GATING{HardwareHAL Meets Requirements?}
+    end
+
+    subgraph Core["Engine Registry & Consumer"]
+        GATING -->|"Yes"| REG["EngineRegistry (Active Factory)"]
+        GATING -->|"No"| REG2["EngineRegistry (available=false + reason)"]
+        REG --> API["GET /api/engines (Web UI Auto-Form)"]
+        REG --> RM["RotationManager (Lazy-Once Instance)"]
+        RM --> SCREEN["HUB75 LED Matrix (DMA Buffer)"]
+    end
+
+    HND --> CALL
 ```
 
-Adding an engine requires **two steps**:
-1. Implement your engine class (`IEngine`) in `src/engines/`.
-2. Declare its descriptor (metadata, schema, factory) in `src/engines/EngineRegistrar.cpp`.
+Adding an engine requires **two simple steps**:
+1. Implement your engine class (`IEngine`) and its companion descriptor handler (`IEngineDescriptorHandler`) in `src/engines/`.
+2. Add your descriptor handler instance to the handlers array in `src/engines/EngineRegistrar.cpp`.
+
+> [!NOTE]
+> **Why `IEngineDescriptorHandler` on ESP32?**
+> Rather than a monolithic registrar with hardcoded schemas (God Class), each engine defines and encapsulates its own metadata, config schema, requirements, and factory. The `EngineRegistrar` then automatically iterates over all handlers and performs runtime hardware gating before registering into `EngineRegistry`.
+
 **`main.cpp` and WebUI HTML files are never edited.**
 
 ---
@@ -307,31 +326,42 @@ void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
 }
 ```
 
-### Step 3: Register in `src/engines/EngineRegistrar.cpp`
+### Step 3: Implement `IEngineDescriptorHandler` in your Engine & Register
 
+In your engine file (e.g. `src/engines/MatrixRainEngine.h` / `.cpp`):
+```cpp
+class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "matrix_rain", "Matrix Digital Rain", "animations", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = {
+            ConfigField("speed", ConfigType::INTEGER, "Fall Speed", "Falling speed in pixels per frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)
+        };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
+        return desc;
+    }
+};
+```
+
+Then in `src/engines/EngineRegistrar.cpp`, simply add your handler instance:
 ```cpp
 #include "MatrixRainEngine.h"
 
 void EngineRegistrar::registerAll() {
     // ...
-    EngineDescriptor desc;
-    desc.metadata = { .id = "matrix_rain", .name = "Matrix Digital Rain", .category = "animations", .version = "3.0.0" };
-    desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
-    desc.requirements = { .needsPsram = false, .needsAudio = false };
-    desc.schema.fields = {
-        {
-            .id = "speed",
-            .type = ConfigType::INTEGER,
-            .label = "Fall Speed",
-            .default_value = "2",
-            .min_val = "1",
-            .max_val = "5",
-            .step = "1",
-            .validation_policy = ValidationPolicy::Clamp
-        }
+    static const MatrixRainEngineDescriptorHandler matrixRainHandler;
+
+    const IEngineDescriptorHandler* handlers[] = {
+        // ...
+        &matrixRainHandler
     };
-    desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
-    tryRegister(desc);
+
+    for (const auto* handler : handlers) {
+        if (handler) registerHandler(*handler);
+    }
 }
 ```
 

@@ -234,3 +234,20 @@ void VisualizerEngine::render(EngineContext* context) {
         default: drawSpectrum(matrix); break;
     }
 }
+
+EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_visualizer;
+    desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", "3.0.0"};
+    desc_visualizer.capabilities.realtime = true;
+    desc_visualizer.capabilities.allowsOverlay = false;
+    desc_visualizer.requirements.needsAudio = true;
+    desc_visualizer.schema.fields = {
+        ConfigField("enabled", ConfigType::BOOLEAN, "Enabled", "Enable real-time spectrum display", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("sensitivity", ConfigType::INTEGER, "Sensitivity", "Microphone sensitivity", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("gain", ConfigType::FLOAT, "Audio Gain", "Gain scaling factor", "1.0", false, "0.5", "5.0", "0.5", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_visualizer.factory = []() { return std::unique_ptr<IEngine>(new VisualizerEngine()); };
+    return desc_visualizer;
+}
+

@@ -168,11 +168,17 @@ classDiagram
         +getBool(key, default) bool
     }
 
+    class IEngineDescriptorHandler {
+        <<interface>>
+        +getDescriptor() EngineDescriptor
+    }
+
     EngineDescriptor --> EngineMetadata
     EngineDescriptor --> EngineCapabilities
     EngineDescriptor --> EngineRequirements
     EngineDescriptor --> ConfigSchema
     EngineDescriptor ..> IEngine : factory builds
+    IEngineDescriptorHandler ..> EngineDescriptor : creates
     ConfigSchema "1" --> "*" ConfigField
     IEngine ..> EngineContext : uses
     IEngine ..> EngineConfig : reads
@@ -198,20 +204,50 @@ classDiagram
 
 ## 4. Auto-Discovery: Registry, Descriptor & Factory
 
-### Decoupled Registration
-The core framework does not hardcode concrete engine types in `main.cpp`. At boot, `EngineRegistrar::registerAll()` registers all descriptors into `EngineRegistry`.
+### Decoupled Registration via `IEngineDescriptorHandler`
+The core framework does not hardcode concrete engine types in `main.cpp` or in a monolithic God-Class. Each engine encapsulates its own configuration schema, capabilities, and factory in a companion `IEngineDescriptorHandler`. 
+
+At boot, `EngineRegistrar::registerAll()` iterates through the registered descriptor handlers:
+
+```mermaid
+sequenceDiagram
+    participant Boot as main.cpp
+    participant HAL as HardwareHAL
+    participant Reg as EngineRegistrar
+    participant Handlers as Engine Handlers
+    participant Registry as EngineRegistry
+
+    Boot->>HAL: begin() probe PSRAM, Mic, Sensors
+    Boot->>Reg: registerAll()
+    loop For each IEngineDescriptorHandler
+        Reg->>Handlers: getDescriptor()
+        Handlers-->>Reg: EngineDescriptor schema, reqs, factory
+        Reg->>HAL: capabilities()
+        alt Hardware meets EngineRequirements
+            Reg->>Registry: registerEngine(desc) Active Factory
+        else Missing Hardware e.g. No PSRAM / No Mic
+            Reg->>Registry: registerEngine(desc) available = false + reason
+        end
+    end
+```
 
 ```cpp
-EngineDescriptor desc;
-desc.metadata = { .id = "clock", .name = "Digital & Publisher Clock", .category = "clocks", .version = "3.0.0" };
-desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
-desc.requirements = { .needsPsram = false, .needsAudio = false };
-desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
-EngineRegistry::registerEngine(desc);
+class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "clock", "Digital & Publisher Clock", "clocks", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = true };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = { /* ... */ };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new ClockEngine()); };
+        return desc;
+    }
+};
 ```
 
 ### Requirement Gating
-`EngineRegistrar::meetsRequirements()` dynamically compares the engine's `EngineRequirements` against `HardwareHAL::capabilities()`. If an engine requires PSRAM or an audio codec that is physically absent:
+`EngineRegistrar::checkRequirements()` dynamically compares the engine's `EngineRequirements` against `HardwareHAL::capabilities()`. If an engine requires PSRAM or an audio microphone physically absent on the board:
 1. Registration records `available = false` and a descriptive `reason` (e.g. *"Requires PSRAM"*).
 2. The engine factory is safely withheld from the rotation loop.
 3. `GET /api/engines` exposes the rejection reason to the WebUI to grey out unsupported features with explanatory badges.
@@ -224,22 +260,20 @@ EngineRegistry::registerEngine(desc);
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Display Loop
+    participant MainLoop as Display Loop
     participant RM as RotationManager
     participant Reg as EngineRegistry
     participant Eng as IEngine
 
-    Loop->>RM: loop()
+    MainLoop->>RM: updateDisplay()
     alt instance not cached
         RM->>Reg: getDescriptor(engine_id)
         Reg-->>RM: EngineDescriptor
         RM->>Eng: factory()
         RM->>Eng: initialize(ctx, config)
         RM->>RM: Cache unique_ptr instance
-    else instance already active
-        alt config was modified via API
-            RM->>Eng: onConfigChanged(config)
-        end
+    else instance already active and config modified
+        RM->>Eng: onConfigChanged(config)
     end
     RM->>Eng: update(ctx)
     RM->>Eng: render(ctx)

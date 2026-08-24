@@ -122,4 +122,20 @@ void TempEngine::render(EngineContext* context) {
     }
 }
 
+EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_temp;
+    desc_temp.metadata = {"temp", "Environment Sensor", "sensor", "3.0.0"};
+    desc_temp.capabilities.realtime = false;
+    desc_temp.capabilities.allowsOverlay = true;
+    desc_temp.requirements.needsTempSensor = true;
+    desc_temp.schema.fields = {
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "C", false, "", "", "", "C,F", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("temp_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_temp.factory = []() { return std::unique_ptr<IEngine>(new TempEngine()); };
+    return desc_temp;
+}
+
+
 

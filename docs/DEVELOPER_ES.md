@@ -34,16 +34,40 @@ Esta es la guía **técnica exhaustiva** para extender ArcadeMatrix en ESP32 (de
 ArcadeMatrix **no tiene ninguna lista de motores prefijada en código** en `main.cpp`. Cada motor se registra al arrancar en `EngineRegistry`.
 
 ```mermaid
-flowchart LR
-    DEV["Escribes src/engines/MyEngine.cpp"] --> REGT["EngineRegistrar::registerAll()"]
-    REGT --> GATING{¿Cumple Requisitos de Hardware?}
-    GATING -->|"Sí"| REG["EngineRegistry (Fábrica Activa)"]
-    GATING -->|"No"| REG2["EngineRegistry (Available: false + Causa)"]
-    REG --> API["GET /api/engines"]
-    API --> UI["Interfaz Web Dinámica (Auto-Form)"]
-    REG --> RM["RotationManager (Lazy-Once)"]
-    RM --> SCREEN["Matriz LED HUB75 (DMA)"]
+flowchart TD
+    subgraph ModuloMotor["Tu Módulo Motor (src/engines/MyEngine.*)"]
+        ENG["class MyEngine : public IEngine"]
+        HND["class MyEngineDescriptorHandler : public IEngineDescriptorHandler"]
+        HND -.->|"la fábrica instancia"| ENG
+    end
+
+    subgraph Registro["Registro de Motores (src/engines/EngineRegistrar.cpp)"]
+        REGT["EngineRegistrar::registerAll()"]
+        REGT --> CALL["EngineRegistrar::registerHandler(handler)"]
+        CALL --> GET["handler.getDescriptor()"]
+        CALL --> GATING{HardwareHAL valida requisitos?}
+    end
+
+    subgraph Core["Engine Registry y Consumo"]
+        GATING -->|"Sí"| REG["EngineRegistry (Fábrica Activa)"]
+        GATING -->|"No"| REG2["EngineRegistry (available=false + causa)"]
+        REG --> API["GET /api/engines (Formulario Web Automático)"]
+        REG --> RM["RotationManager (Instancia Lazy-Once)"]
+        RM --> SCREEN["Matriz LED HUB75 (Búfer DMA)"]
+    end
+
+    HND --> CALL
 ```
+
+Añadir un motor requiere **dos pasos sencillos**:
+1. Implementar la clase del motor (`IEngine`) y su descriptor (`IEngineDescriptorHandler`) en `src/engines/`.
+2. Añadir la instancia del descriptor a la lista de handlers en `src/engines/EngineRegistrar.cpp`.
+
+> [!NOTE]
+> **¿Por qué `IEngineDescriptorHandler` en ESP32?**
+> En lugar de un registrador monolítico con esquemas prefijados en código (God Class), cada motor define y encapsula sus propios metadatos, esquema de configuración, requisitos de hardware y fábrica. `EngineRegistrar` itera automáticamente sobre todos los handlers y aplica el control de hardware en tiempo de ejecución antes de registrar en `EngineRegistry`.
+
+**`main.cpp` y los archivos HTML del frontend nunca se modifican.**
 
 ---
 
@@ -249,29 +273,42 @@ void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
 }
 ```
 
-### Paso 3: Registrar en `src/engines/EngineRegistrar.cpp`
+### Paso 3: Implementar `IEngineDescriptorHandler` y registrar
+
+En el archivo de su motor (ej. `src/engines/MatrixRainEngine.h` / `.cpp`):
+```cpp
+class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override {
+        EngineDescriptor desc;
+        desc.metadata = { "matrix_rain", "Matrix Rain", "animations", "3.0.0" };
+        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
+        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.schema.fields = {
+            ConfigField("speed", ConfigType::INTEGER, "Velocidad", "Velocidad de caída en píxeles por frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)
+        };
+        desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
+        return desc;
+    }
+};
+```
+
+Luego en `src/engines/EngineRegistrar.cpp`, simplemente añada la instancia del handler:
 ```cpp
 #include "MatrixRainEngine.h"
 
 void EngineRegistrar::registerAll() {
     // ...
-    EngineDescriptor desc;
-    desc.metadata = { .id = "matrix_rain", .name = "Matrix Rain", .category = "animations", .version = "3.0.0" };
-    desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true, .allowsOverlay = false };
-    desc.requirements = { .needsPsram = false, .needsAudio = false };
-    desc.schema.fields = {
-        {
-            .id = "speed",
-            .type = ConfigType::INTEGER,
-            .label = "Velocidad",
-            .default_value = "2",
-            .min_val = "1",
-            .max_val = "5",
-            .validation_policy = ValidationPolicy::Clamp
-        }
+    static const MatrixRainEngineDescriptorHandler matrixRainHandler;
+
+    const IEngineDescriptorHandler* handlers[] = {
+        // ...
+        &matrixRainHandler
     };
-    desc.factory = []() { return std::unique_ptr<IEngine>(new MatrixRainEngine()); };
-    tryRegister(desc);
+
+    for (const auto* handler : handlers) {
+        if (handler) registerHandler(*handler);
+    }
 }
 ```
 

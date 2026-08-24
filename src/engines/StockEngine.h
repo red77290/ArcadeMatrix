@@ -97,3 +97,9 @@ private:
     void renderQuote(EngineContext* context);
     void renderChart(EngineContext* context);
 };
+
+class StockEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

@@ -493,3 +493,25 @@ void StockEngine::renderQuote(EngineContext* context) {
         matrix->print(pctBuf);
     }
 }
+
+EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_stock;
+    desc_stock.metadata = {"stock", "Stock Ticker", "finance", "3.0.0"};
+    desc_stock.capabilities.realtime = false;
+    desc_stock.capabilities.allowsOverlay = true;
+    desc_stock.requirements.needsPsram = true;
+    desc_stock.requirements.needsNetwork = true;
+    desc_stock.schema.fields = {
+        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated stock symbols", "AAPL,TSLA,NVDA", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("duration_sec", ConfigType::INTEGER, "Page Duration (s)", "Seconds to dwell on each view", "5", false, "3", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("provider", ConfigType::ENUM, "Provider", "Market data provider", "yahoo", false, "", "", "", "yahoo", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("cache_ttl_min", ConfigType::INTEGER, "Cache TTL (min)", "Minutes between fresh API requests", "5", false, "1", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("stock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("stock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_stock.factory = []() { return std::unique_ptr<IEngine>(new StockEngine()); };
+    return desc_stock;
+}
+

@@ -52,3 +52,9 @@ private:
     uint16_t getSpectrumColor(int heightIndex, int maxHeight);
 };
 
+class VisualizerEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+
+

@@ -196,3 +196,21 @@ struct EngineDescriptor {
     ConfigSchema schema;
     EngineFactory factory;
 };
+
+// =======================================================
+// 7. Descriptor Handler Interface
+// =======================================================
+
+/**
+ * @class IEngineDescriptorHandler
+ * @brief Interface implemented by engines to declare their metadata, capabilities,
+ *        hardware requirements, config schema, and factory constructor.
+ */
+class IEngineDescriptorHandler {
+public:
+    virtual ~IEngineDescriptorHandler() = default;
+    virtual EngineDescriptor getDescriptor() const = 0;
+};
+
+using EngineDescriptorHandler = IEngineDescriptorHandler;
+

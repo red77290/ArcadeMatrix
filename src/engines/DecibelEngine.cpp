@@ -310,4 +310,18 @@ void DecibelEngine::render(EngineContext* context) {
     }
 }
 
+EngineDescriptor DecibelEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_decibel;
+    desc_decibel.metadata = {"decibelMeter", "Noise Level", "audio", "3.0.0"};
+    desc_decibel.capabilities.realtime = true;
+    desc_decibel.capabilities.allowsOverlay = false;
+    desc_decibel.requirements.needsAudio = true;
+    desc_decibel.schema.fields = {
+        ConfigField("threshold", ConfigType::INTEGER, "Alert Threshold (dB)", "Warning threshold level", "80", false, "40", "120", "5", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_decibel.factory = []() { return std::unique_ptr<IEngine>(new DecibelEngine()); };
+    return desc_decibel;
+}
+
+
 
