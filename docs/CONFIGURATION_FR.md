@@ -112,3 +112,25 @@ Les moteurs `crypto` et `stock` intègrent un affichage multi-pages avec cours e
 | `duration_sec` / `page_seconds` | `int` | `5` | `3` à `30` | Durée en secondes d'affichage de chaque vue avant alternance. |
 | `cache_ttl_min` | `int` | `5` | `1` à `60` | Minutes de rétention du cache avant ré-interrogation API. |
 
+---
+
+## 7. Configuration du moteur Météo (`weather`)
+
+Le moteur `weather` récupère les prévisions météo sur 3 jours depuis [OpenWeatherMap](https://openweathermap.org) avec mise en cache automatique de 15 minutes :
+
+| Clé | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Clé API gratuite | Votre clé API OpenWeatherMap (gratuite sur [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
+| `city` | `String` | `"Paris,FR"` | Texte | Localisation de la ville (voir format ci-dessous). |
+| `units` | `String` | `"metric"` | `"metric"`, `"imperial"` | Unité de température : `metric` pour Celsius (°C) ou `imperial` pour Fahrenheit (°F). |
+| `lang` | `String` | `"fr"` | `"en"`, `"fr"`, `"es"`, `"de"`, `"it"` | Langue des labels des jours (AUJ. / TODAY / HOY). |
+| `weather_offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
+| `weather_offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
+
+### Comment formater le champ `city` pour OpenWeatherMap
+OpenWeatherMap utilise le code pays ISO 3166 (et le code d'État à 2 lettres pour les États-Unis) pour identifier sans ambiguïté la localité :
+* **International :** Utilisez `Ville,CodePays` (ex: `Paris,FR`, `Bruxelles,BE`, `Montreal,CA`, `Tokyo,JP`).
+* **États-Unis :** Utilisez `Ville,CodeEtat,CodePays` (ex: `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Si l'État ou le pays est omis, l'API peut renvoyer une homonyme située dans un autre pays/état.
+* **Où vérifier :** Rendez-vous sur [openweathermap.org](https://openweathermap.org) et cherchez votre ville. Le titre du résultat et l'URL indiquent exactement le format reconnu.
+
+

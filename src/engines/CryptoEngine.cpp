@@ -1,6 +1,8 @@
 #include "CryptoEngine.h"
 #include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
+#include "../api/CoinGeckoProvider.h"
+#include "../api/BinanceProvider.h"
 #include <HTTPClient.h>
 
 CryptoEngine* CryptoEngine::instance = nullptr;
@@ -9,6 +11,8 @@ CryptoEngine::CryptoEngine()
     : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
+    addProvider(new CoinGeckoProvider());
+    addProvider(new BinanceProvider());
 }
 
 EngineError CryptoEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {

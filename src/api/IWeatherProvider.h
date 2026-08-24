@@ -22,5 +22,9 @@ public:
      * @param outNumForecasts The actual number of forecasts fetched.
      * @return true if successful, false otherwise.
      */
-    virtual bool fetchForecast(const String& apiKey, const String& city, const String& lang, WeatherData outForecasts[], int maxDays, int& outNumForecasts) = 0;
+    virtual bool fetchForecast(const String& apiKey, const String& city, const String& lang, const String& units, WeatherData outForecasts[], int maxDays, int& outNumForecasts) = 0;
+    
+    virtual bool fetchForecast(const String& apiKey, const String& city, const String& lang, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
+        return fetchForecast(apiKey, city, lang, "metric", outForecasts, maxDays, outNumForecasts);
+    }
 };

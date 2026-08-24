@@ -155,6 +155,7 @@ private:
      * again into "/gifs/gifs").
      */
     static String sanitizePlaylistPath(String p);
+    static void expandPlaylists(const std::vector<String>& inputPaths, std::vector<String>& outPaths);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;

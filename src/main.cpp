@@ -54,6 +54,7 @@ void time_sync_notification_cb(struct timeval *tv) {
 // Pins definition moved to HardwareProfile.h
 
 SemaphoreHandle_t sdMutex;
+std::mutex configMutex;
 
 ConfigLoader config;
 MatrixEngine matrixEngine;
@@ -217,66 +218,6 @@ void setup() {
     // 4. Initialize Engines
     // GifEngine initialization deferred to EngineRegistry
 
-    // Load saved GIF playlists from SD, fallback to all available playlists
-    {
-        bool selectedLoaded = false;
-        FsFile playlistFile;
-        if (sd.exists("/playlists_selected.json")) {
-            playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
-        }
-        if (playlistFile) {
-            DynamicJsonDocument doc(4096);
-            DeserializationError error = deserializeJson(doc, playlistFile);
-            playlistFile.close();
-            if (!error) {
-                JsonArray arr = doc["playlists"].as<JsonArray>();
-                std::vector<String> paths;
-                for (JsonVariant v : arr) paths.push_back(v.as<String>());
-                if (!paths.empty()) {
-                if (gifEngine) gifEngine->setDefaultPlaylists(paths);
-                    selectedLoaded = true;
-                    LOGI("GIF", "Loaded %d GIF playlists from playlists_selected.json", paths.size());
-                }
-            }
-        }
-        
-        if (!selectedLoaded) {
-            std::vector<String> paths;
-            FsFile master;
-            if (sd.exists("/gifs/playlists.json")) {
-                master = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
-            }
-            if (master) {
-                DynamicJsonDocument masterDoc(16384);
-                if (!deserializeJson(masterDoc, master)) {
-                    JsonObject root = masterDoc.as<JsonObject>();
-                    for (JsonPair kv : root) {
-                        paths.push_back(kv.value()["path"].as<String>());
-                    }
-                }
-                master.close();
-            }
-            if (paths.empty()) {
-                paths.push_back("/gifs");
-            }
-            
-            if (gifEngine) gifEngine->setDefaultPlaylists(paths);
-            LOGI("GIF", "Defaulted to %d GIF playlists.", paths.size());
-
-            // Save default selection to /playlists_selected.json so it persists immediately
-            if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
-            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
-            if (f) {
-                DynamicJsonDocument saveDoc(1024);
-                JsonArray arr = saveDoc["playlists"].to<JsonArray>();
-                for (const String& p : paths) arr.add(p);
-                serializeJson(saveDoc, f);
-                f.close();
-                LOGI("GIF", "Created initial playlists_selected.json on SD with all playlists.");
-            }
-        }
-    }
-    
     // CryptoEngine is now created by IEngine factory.
     
     // StockEngine is now created by IEngine factory.
@@ -288,7 +229,7 @@ void setup() {
     rotationManager->setEngineContext(appCtx);
     overlayManager.initialize(appCtx, &config);
     
-    auto desc = EngineRegistry::getDescriptor("visualizer");
+    auto desc = EngineRegistry::getDescriptor("audiovisualizer");
     if (desc && desc->factory) {
         auto visPtr = desc->factory();
         visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
@@ -490,7 +431,7 @@ void loop() {
     }
 
     bool shouldClear = true;
-    if (gifEngine && gifEngine->isActive()) {
+    if ((gifEngine && gifEngine->isActive()) || (rotationManager && rotationManager->getCurrentEngineId() == "gifs")) {
         shouldClear = false; // AnimatedGIF needs previous frame in buffer
     }
 
@@ -504,7 +445,14 @@ void loop() {
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
         // Synchronize Music Visualizer active state with config setting
         if (visualizerEngine) {
-            if ((config.getInstance("visualizer_main") && config.getInstance("visualizer_main")->config.getBool("enabled")) && !visualizerEngine->isActive()) {
+            bool visEnabled = false;
+            for (const auto& inst : config.instances) {
+                if (inst.engine_id == "audiovisualizer" && inst.config.getBool("enabled", false)) {
+                    visEnabled = true;
+                    break;
+                }
+            }
+            if (visEnabled && !visualizerEngine->isActive()) {
                 visualizerEngine->activate();
                 DisplayRequest req;
                 req.source = "VISUALIZER";
@@ -513,24 +461,35 @@ void loop() {
                 req.preemptive = true;
                 req.timeout_ms = 0;
                 displayArbiter.submitRequest(req);
-            } else if (!(config.getInstance("visualizer_main") && config.getInstance("visualizer_main")->config.getBool("enabled")) && visualizerEngine->isActive()) {
+            } else if (!visEnabled && visualizerEngine->isActive()) {
                 visualizerEngine->deactivate();
                 displayArbiter.cancelRequest("VISUALIZER");
             }
         }
 
-        displayArbiter.clearExpired();
-        
-        if (marqueeEngine && marqueeEngine->isActive()) {
-            DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
-            displayArbiter.submitRequest(req);
+        if (marqueeEngine) {
+            if (marqueeEngine->isActive()) {
+                DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                displayArbiter.submitRequest(req);
+            } else {
+                displayArbiter.cancelRequest("MARQUEE");
+            }
         }
-        if (messageEngine && messageEngine->isActive()) {
-            DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
-            displayArbiter.submitRequest(req);
-        } else if (gifEngine && gifEngine->isActive() && rotationManager->getCurrentInstanceId() != "gifs") {
-            DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
-            displayArbiter.submitRequest(req);
+        if (messageEngine) {
+            if (messageEngine->isActive() && rotationManager->getCurrentEngineId() != "message") {
+                DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                displayArbiter.submitRequest(req);
+            } else {
+                displayArbiter.cancelRequest("MESSAGE");
+            }
+        }
+        if (gifEngine) {
+            if (gifEngine->isActive() && rotationManager->getCurrentEngineId() != "gifs") {
+                DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis()};
+                displayArbiter.submitRequest(req);
+            } else {
+                displayArbiter.cancelRequest("GIF");
+            }
         }
 
         winner = displayArbiter.evaluate();

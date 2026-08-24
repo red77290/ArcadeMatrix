@@ -38,7 +38,7 @@ enum PublisherTheme {
 struct DateConfig {
     int theme;
     String format;
-    int date_font;
+    String date_font;
     int date_size;
     int date_offset_x;
     int date_offset_y;
@@ -58,6 +58,7 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
     
     // Updates the current date string (e.g. "Mer 08 Jul")
     void setDate(const char* dateStr);

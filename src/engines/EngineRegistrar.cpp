@@ -101,9 +101,10 @@ void EngineRegistrar::registerAll() {
     desc_weather.requirements.needsAudio = false;
     desc_weather.requirements.needsNetwork = true;
     desc_weather.schema.fields = {
-        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap 3.0 API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("city", ConfigType::STRING, "City", "City name for forecast", "Paris", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("lang", ConfigType::ENUM, "Language", "Language code for weather descriptions", "fr", false, "", "", "", "fr,en,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "metric", false, "", "", "", "metric,imperial", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("lang", ConfigType::ENUM, "Language", "Language code for day labels", "fr", false, "", "", "", "fr,en,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("weather_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
@@ -122,8 +123,8 @@ void EngineRegistrar::registerAll() {
         ConfigField("enabled", ConfigType::BOOLEAN, "Enabled", "Enable M.U.G.E.N fighter overlay pass", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("fighter_interval_sec", ConfigType::INTEGER, "Switch Interval", "Seconds between fighter changes", "15", false, "5", "120", "5", "", "", false, "", ValidationPolicy::Clamp)
     };
-    desc_fighter.factory = []() { return std::unique_ptr<IEngine>(new FighterEngine()); };
-    tryRegister(desc_fighter);
+    // desc_fighter.factory = []() { return std::unique_ptr<IEngine>(new FighterEngine()); };
+    // tryRegister(desc_fighter); // Removed, Fighter is an overlay, not a standalone engine
 
     // 5. GIF Player Engine
     EngineDescriptor desc_gifs;
@@ -185,13 +186,13 @@ void EngineRegistrar::registerAll() {
 
     // 8. Visualizer Engine (Requires Microphone)
     EngineDescriptor desc_visualizer;
-    desc_visualizer.metadata = {"visualizer", "Audio Visualizer", "audio", "3.0.0"};
+    desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", "3.0.0"};
     desc_visualizer.capabilities.realtime = true;
     desc_visualizer.capabilities.allowsOverlay = false;
     desc_visualizer.requirements.needsAudio = true;
     desc_visualizer.schema.fields = {
         ConfigField("enabled", ConfigType::BOOLEAN, "Enabled", "Enable real-time spectrum display", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization bar style", "0", false, "", "", "", "0,1,2,3", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("sensitivity", ConfigType::INTEGER, "Sensitivity", "Microphone sensitivity", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("gain", ConfigType::FLOAT, "Audio Gain", "Gain scaling factor", "1.0", false, "0.5", "5.0", "0.5", "", "", false, "", ValidationPolicy::Clamp)
     };
@@ -200,7 +201,7 @@ void EngineRegistrar::registerAll() {
 
     // 9. Decibel Engine (Requires Microphone)
     EngineDescriptor desc_decibel;
-    desc_decibel.metadata = {"decibel", "Noise Level", "audio", "3.0.0"};
+    desc_decibel.metadata = {"decibelMeter", "Noise Level", "audio", "3.0.0"};
     desc_decibel.capabilities.realtime = true;
     desc_decibel.capabilities.allowsOverlay = false;
     desc_decibel.requirements.needsAudio = true;
@@ -224,27 +225,18 @@ void EngineRegistrar::registerAll() {
     desc_temp.factory = []() { return std::unique_ptr<IEngine>(new TempEngine()); };
     tryRegister(desc_temp);
 
-    // 11. Marquee Engine
-    EngineDescriptor desc_marquee;
-    desc_marquee.metadata = {"marquee", "Text Marquee", "display", "3.0.0"};
-    desc_marquee.capabilities.realtime = true;
-    desc_marquee.capabilities.allowsOverlay = false;
-    desc_marquee.schema.fields = {
-        ConfigField("text", ConfigType::STRING, "Marquee Text", "Scrolling banner text", "ArcadeMatrix", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("speed", ConfigType::INTEGER, "Speed", "Scroll speed in pixels/frame", "2", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("color", ConfigType::COLOR, "Color", "Text banner color", "#00ffcc", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore)
-    };
-    desc_marquee.factory = []() { return std::unique_ptr<IEngine>(new MarqueeEngine()); };
-    tryRegister(desc_marquee);
-
-    // 12. Message Engine
+    // 11. Message Engine (Unified text scrolling & banner engine)
     EngineDescriptor desc_msg;
-    desc_msg.metadata = {"message", "Instant Message", "display", "3.0.0"};
+    desc_msg.metadata = {"message", "Message", "display", "3.0.0"};
     desc_msg.capabilities.realtime = true;
     desc_msg.capabilities.allowsOverlay = false;
     desc_msg.schema.fields = {
-        ConfigField("text", ConfigType::STRING, "Message Text", "Text payload", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("color", ConfigType::COLOR, "Text Color", "Message color", "#ffffff", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore)
+        ConfigField("text", ConfigType::STRING, "Message Text", "Text banner or message to display", "ArcadeMatrix", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("color", ConfigType::COLOR, "Text Color", "Hex color code (#RRGGBB)", "#ffffff", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("size", ConfigType::INTEGER, "Font Size", "Text scale multiplier", "1", false, "1", "4", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("direction", ConfigType::ENUM, "Direction", "Scroll direction or static", "rtl", false, "", "", "", "rtl,ltr,ttb,btt,static", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("speed", ConfigType::INTEGER, "Speed (ms)", "Scroll delay per step (lower is faster)", "50", false, "10", "200", "5", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("font", ConfigType::ENUM, "Font", "Display typeface", "Default", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault)
     };
     desc_msg.factory = []() { return std::unique_ptr<IEngine>(new MessageEngine()); };
     tryRegister(desc_msg);

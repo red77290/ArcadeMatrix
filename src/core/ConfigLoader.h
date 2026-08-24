@@ -12,6 +12,7 @@ struct EngineInstance {
 struct RotationEntry {
     String instance_id;
     int duration_sec;
+    bool fighter_overlay = false;
 };
 
 struct MatrixConfig {
@@ -58,6 +59,8 @@ struct SystemConfig {
     String turn_off_at;
     String wake_up_at;
     int night_brightness;
+    bool idle_fighter_enabled = false;
+    int idle_fighter_interval = 60;
 };
 
 class ConfigLoader {

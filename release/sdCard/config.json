@@ -17,9 +17,7 @@
     "wifi": {
         "ssid": "MyNetwork",
         "password": "SecretPassword",
-        "hostname": "arcadematrix",
-        "configured": false,
-        "disable_internal": false
+        "hostname": "arcadematrix"
     },
     "mqtt": {
         "enabled": false,
@@ -46,7 +44,7 @@
     "api_token": "9101d2ff5928c93107e537aa3c07a282",
     "instances": [
         {
-            "instance_id": "default_clock",
+            "instance_id": "clock_main",
             "engine_id": "clock",
             "config": {
                 "theme": "0",
@@ -54,22 +52,130 @@
             }
         },
         {
-            "instance_id": "default_weather",
+            "instance_id": "date_main",
+            "engine_id": "date",
+            "config": {
+                "format": "%A, %d %B"
+            }
+        },
+        {
+            "instance_id": "weather_main",
             "engine_id": "weather",
             "config": {
                 "city": "Paris,FR",
-                "api_key": ""
+                "api_key": "",
+                "units": "metric"
+            }
+        },
+        {
+            "instance_id": "temp_main",
+            "engine_id": "temp",
+            "config": {
+                "units": "C"
+            }
+        },
+        {
+            "instance_id": "decibel_main",
+            "engine_id": "decibelMeter",
+            "config": {
+                "threshold": "80"
+            }
+        },
+        {
+            "instance_id": "visualizer_main",
+            "engine_id": "audiovisualizer",
+            "config": {
+                "enabled": "false",
+                "style": "0",
+                "sensitivity": "5"
+            }
+        },
+        {
+            "instance_id": "crypto_main",
+            "engine_id": "crypto",
+            "config": {
+                "symbols": "BTC,ETH,SOL",
+                "currency": "USD"
+            }
+        },
+        {
+            "instance_id": "stock_main",
+            "engine_id": "stock",
+            "config": {
+                "symbols": "AAPL,TSLA,NVDA"
+            }
+        },
+        {
+            "instance_id": "gifs_main",
+            "engine_id": "gifs",
+            "config": {
+                "playlist": "all",
+                "speed": "100"
+            }
+        },
+        {
+            "instance_id": "marquee_main",
+            "engine_id": "marquee",
+            "config": {
+                "text": "ArcadeMatrix",
+                "speed": "2",
+                "color": "#00ffcc"
+            }
+        },
+        {
+            "instance_id": "message_main",
+            "engine_id": "message",
+            "config": {
+                "text": "",
+                "color": "#ffffff"
             }
         }
     ],
     "rotation": [
         {
-            "instance_id": "default_clock",
-            "duration_sec": 60
+            "instance_id": "clock_main",
+            "duration_sec": 15,
+            "fighter_overlay": true
         },
         {
-            "instance_id": "default_weather",
-            "duration_sec": 15
+            "instance_id": "date_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "weather_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "crypto_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "stock_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "gifs_main",
+            "duration_sec": 30,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "temp_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "decibel_main",
+            "duration_sec": 15,
+            "fighter_overlay": false
+        },
+        {
+            "instance_id": "message_main",
+            "duration_sec": 15,
+            "fighter_overlay": false
         }
     ]
 }

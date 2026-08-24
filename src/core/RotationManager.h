@@ -10,7 +10,13 @@
 #include "AppEngineContext.h"
 #include <map>
 #include <memory>
+#include <mutex>
 
+enum class RotationAction {
+    NOTIFY_CONFIG_CHANGED,
+    RECREATE_INSTANCE,
+    RESET_ROTATION
+};
 
 class RotationManager {
 public:
@@ -26,22 +32,32 @@ public:
     
     
     String getCurrentInstanceId() const;
+    String getCurrentEngineId() const;
     void setSuspended(bool suspended);
     bool isSuspended() const { return suspended; }
     
     bool isCurrentRealtime() const;
     bool allowsCurrentOverlay() const;
+    bool isCurrentFighterOverlayEnabled() const;
 
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
     IEngine* getActiveEngine(const String& instanceId);
 
+    // Thread-safe API for WebServer
+    void queueAction(RotationAction action, const String& instanceId = "");
+
     // Helper: count valid non-empty comma-separated symbols
     static size_t countSymbols(const String& symbols);
 
 private:
+    std::mutex actionMutex;
+    std::vector<std::pair<RotationAction, String>> pendingActions;
+    void processPendingActions();
+
     AppEngineContext* m_ctx = nullptr;
     std::map<String, std::unique_ptr<IEngine>> activeEngines;
+    std::unique_ptr<FighterEngine> fighterOverlay;
     
     size_t currentIndex;
     uint32_t moduleStartTime;

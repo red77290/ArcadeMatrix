@@ -50,6 +50,11 @@ void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     config_api_key = engineConfig->getString("api_key", "");
     config_city = engineConfig->getString("city", "");
     config_lang = engineConfig->getString("lang", "fr");
+    String newUnits = engineConfig->getString("units", "metric");
+    if (newUnits != config_units) {
+        config_units = newUnits;
+        forceUpdate(); // Force fetch with new units
+    }
     config_offset_x = engineConfig->getInt("weather_offset_x", 0);
     config_offset_y = engineConfig->getInt("weather_offset_y", 0);
 }
@@ -79,7 +84,7 @@ void WeatherEngine::setCharacter(int characterId) {
     }
 }
 
-void WeatherEngine::updateWeather(const String& apiKey, const String& city) {
+void WeatherEngine::updateWeather(const String& apiKey, const String& city, const String& units) {
     if (apiKey.isEmpty() || city.isEmpty()) {
         static unsigned long lastWarn = 0;
         if (millis() - lastWarn > 10000) {
@@ -109,7 +114,7 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city) {
     
     bool fetched = false;
     for (IWeatherProvider* provider : providers) {
-        if (provider->fetchForecast(apiKey, city, reqLang, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
+        if (provider->fetchForecast(apiKey, city, reqLang, units, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
             fetched = true;
             break;
         }
@@ -119,7 +124,7 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city) {
         validData = true;
         activeSlide = 0;
         lastSlideChange = millis();
-        LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
+        LOGI("WeatherEngine", "Success! Parsed %d forecast days in %s units.", numForecasts, units.c_str());
     } else {
         LOGE("WeatherEngine", "Error: Failed to parse weather data or 0 forecast entries parsed.");
     }
@@ -173,7 +178,7 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
 }
 
 bool WeatherEngine::loop() {
-    updateWeather(config_api_key, config_city);
+    updateWeather(config_api_key, config_city, config_units);
 
     if (!validData || numForecasts == 0) return true;
 
@@ -193,8 +198,9 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
     // if another engine left a custom GFX font active.
     matrix->setFont(nullptr);
     
+    char unitChar = (config_units.equalsIgnoreCase("imperial") || config_units.equalsIgnoreCase("fahrenheit") || config_units.equalsIgnoreCase("f")) ? 'F' : 'C';
     char tempStr[16];
-    sprintf(tempStr, "%.0fC", data.temp);
+    sprintf(tempStr, "%.0f%c", data.temp, unitChar);
     
     int textSize = 1;
     int charWidth = 6;

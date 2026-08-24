@@ -138,7 +138,7 @@ public:
     bool isActive() const { return active; }
 
 private:
-    int config_fighter_interval_sec = 15;
+
     
     MatrixPanel_I2S_DMA* matrix; ///< DMA Matrix instance
     bool active = false;         ///< Is the engine currently active?

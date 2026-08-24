@@ -3,15 +3,27 @@
 
 SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config) {
     SanitizeResult result;
+    
+    // ConfigSanitizer validates schemas and fields of existing instances.
+    // It NEVER creates or injects instances: instance lifecycle is managed solely by the user via the UI/API.
 
-    for (auto& inst : config.instances) {
-        const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+    for (auto it = config.instances.begin(); it != config.instances.end(); ) {
+        // Migrate old visualizer to audiovisualizer
+        if (it->engine_id == "visualizer") {
+            it->engine_id = "audiovisualizer";
+            result.modified = true;
+            LOGI("ConfigSanitizer", "Migrated visualizer to audiovisualizer");
+        }
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(it->engine_id.c_str());
         if (!desc) {
-            LOGW("ConfigSanitizer", "Unknown engine_id '%s' for instance '%s'", inst.engine_id.c_str(), inst.instance_id.c_str());
+            LOGW("ConfigSanitizer", "Unknown engine_id '%s' for instance '%s' - removing", it->engine_id.c_str(), it->instance_id.c_str());
             result.invalid_instances++;
+            it = config.instances.erase(it);
+            result.modified = true;
             continue;
         }
 
+        auto& inst = *it;
         const ConfigSchema& schema = desc->schema;
 
         for (const auto& field : schema.fields) {
@@ -107,6 +119,24 @@ SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config) {
                     }
                 }
             }
+        }
+        ++it;
+    }
+
+    // Now remove any references in rotation list to instances that no longer exist
+    for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
+        bool found = false;
+        for (const auto& inst : config.instances) {
+            if (inst.instance_id == it->instance_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            it = config.rotation.erase(it);
+            result.modified = true;
+        } else {
+            ++it;
         }
     }
 

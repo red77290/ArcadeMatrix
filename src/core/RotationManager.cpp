@@ -9,6 +9,7 @@ extern ConfigLoader config;
 RotationManager::RotationManager() {
   currentIndex = 0;
   moduleStartTime = 0;
+  fighterOverlay = std::unique_ptr<FighterEngine>(new FighterEngine());
 }
 size_t RotationManager::countSymbols(const String& symbols) {
   if (symbols.length() == 0) return 0;
@@ -37,31 +38,57 @@ size_t RotationManager::countSymbols(const String& symbols) {
 void RotationManager::begin(const ConfigLoader &cfg) {
   activeEngines.clear();
   currentActiveInstanceId = "";
-  resetRotation();
+  fighterOverlay->initialize(m_ctx, nullptr);
+  queueAction(RotationAction::RESET_ROTATION);
+}
+
+void RotationManager::queueAction(RotationAction action, const String& instanceId) {
+    std::lock_guard<std::mutex> lock(actionMutex);
+    pendingActions.push_back({action, instanceId});
+}
+
+void RotationManager::processPendingActions() {
+    std::vector<std::pair<RotationAction, String>> actionsToProcess;
+    {
+        std::lock_guard<std::mutex> lock(actionMutex);
+        actionsToProcess = std::move(pendingActions);
+        pendingActions.clear();
+    }
+    
+    for (const auto& p : actionsToProcess) {
+        if (p.first == RotationAction::NOTIFY_CONFIG_CHANGED) {
+            extern ConfigLoader config;
+            auto it = activeEngines.find(p.second);
+            if (it != activeEngines.end()) {
+                for (auto& inst : config.instances) {
+                    if (inst.instance_id == p.second) {
+                        it->second->onConfigChanged(&inst.config);
+                        break;
+                    }
+                }
+            }
+        } else if (p.first == RotationAction::RECREATE_INSTANCE) {
+            auto it = activeEngines.find(p.second);
+            if (it != activeEngines.end()) {
+                if (currentActiveInstanceId == p.second) {
+                    it->second->deactivate();
+                }
+                activeEngines.erase(it);
+                LOGI("RotationManager", "Instance %s destroyed for structural re-instantiation", p.second.c_str());
+            }
+        } else if (p.first == RotationAction::RESET_ROTATION) {
+            currentIndex = 0;
+            switchToModule(currentIndex);
+        }
+    }
 }
 
 void RotationManager::notifyConfigChanged(const String& instanceId) {
-    extern ConfigLoader config;
-    auto it = activeEngines.find(instanceId);
-    if (it != activeEngines.end()) {
-        for (auto& inst : config.instances) {
-            if (inst.instance_id == instanceId) {
-                it->second->onConfigChanged(&inst.config);
-                break;
-            }
-        }
-    }
+    queueAction(RotationAction::NOTIFY_CONFIG_CHANGED, instanceId);
 }
 
 void RotationManager::recreateInstance(const String& instanceId) {
-    auto it = activeEngines.find(instanceId);
-    if (it != activeEngines.end()) {
-        if (currentActiveInstanceId == instanceId) {
-            it->second->deactivate();
-        }
-        activeEngines.erase(it);
-        LOGI("RotationManager", "Instance %s destroyed for structural re-instantiation", instanceId.c_str());
-    }
+    queueAction(RotationAction::RECREATE_INSTANCE, instanceId);
 }
 IEngine* RotationManager::getActiveEngine(const String& instanceId) {
     auto it = activeEngines.find(instanceId);
@@ -90,8 +117,7 @@ IEngine* RotationManager::getActiveEngine(const String& instanceId) {
 }
 
 void RotationManager::resetRotation() {
-  currentIndex = 0;
-  switchToModule(currentIndex);
+    queueAction(RotationAction::RESET_ROTATION);
 }
 
 void RotationManager::switchToModule(int index) {
@@ -161,6 +187,12 @@ bool RotationManager::allowsCurrentOverlay() const {
     return true;
 }
 
+bool RotationManager::isCurrentFighterOverlayEnabled() const {
+    extern ConfigLoader config;
+    if (currentIndex >= config.rotation.size()) return false;
+    return config.rotation[currentIndex].fighter_overlay;
+}
+
 void RotationManager::setSuspended(bool susp) {
     if (susp == suspended) return;
     suspended = susp;
@@ -183,6 +215,8 @@ void RotationManager::setSuspended(bool susp) {
 }
 
 bool RotationManager::loop() {
+    processPendingActions();
+
     if (suspended || config.rotation.empty())
         return true;
 
@@ -209,6 +243,11 @@ bool RotationManager::loop() {
               }
           }
       }
+      
+      if (config.system.idle_fighter_enabled && config.rotation[currentIndex].fighter_overlay) {
+          fighterOverlay->update(m_ctx);
+          fighterOverlay->render(m_ctx);
+      }
   } else {
       // Fallback if engine fails to load or id is invalid
       if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) {
@@ -226,4 +265,12 @@ bool RotationManager::loop() {
 String RotationManager::getCurrentInstanceId() const {
     extern ConfigLoader config;
     return config.rotation.empty() ? "" : config.rotation[currentIndex].instance_id;
+}
+
+String RotationManager::getCurrentEngineId() const {
+    extern ConfigLoader config;
+    if (config.rotation.empty() || currentIndex >= config.rotation.size()) return "";
+    String inst_id = config.rotation[currentIndex].instance_id;
+    const auto* inst = config.getInstance(inst_id);
+    return inst ? inst->engine_id : "";
 }

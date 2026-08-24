@@ -112,3 +112,25 @@ Los motores `crypto` y `stock` admiten visualización multipágina interactiva c
 | `duration_sec` / `page_seconds` | `int` | `5` | `3` a `30` | Segundos para mostrar cada vista antes de alternar. |
 | `cache_ttl_min` | `int` | `5` | `1` a `60` | Minutos de retención de caché antes de consultar las API. |
 
+---
+
+## 7. Configuración del motor del Clima (`weather`)
+
+El motor `weather` obtiene el pronóstico del tiempo para 3 días desde [OpenWeatherMap](https://openweathermap.org) con una memoria caché automática de 15 minutos:
+
+| Clave | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Clave API gratuita | Su clave API de OpenWeatherMap (gratuita en [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
+| `city` | `String` | `"Paris,FR"` | Texto | Ubicación de la ciudad (ver formato a continuación). |
+| `units` | `String` | `"metric"` | `"metric"`, `"imperial"` | Unidad de temperatura: `metric` para Celsius (°C) o `imperial` para Fahrenheit (°F). |
+| `lang` | `String` | `"es"` | `"en"`, `"fr"`, `"es"`, `"de"`, `"it"` | Idioma de las etiquetas de días (HOY / TODAY / AUJ.). |
+| `weather_offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal en píxeles. |
+| `weather_offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical en píxeles. |
+
+### Cómo formatear el campo `city` para OpenWeatherMap
+OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2 letras para EE. UU.) para identificar la localidad sin ambigüedades:
+* **Ubicaciones Internacionales:** Use `Ciudad,CodigoPais` (ej. `Madrid,ES`, `BuenosAires,AR`, `Mexico,MX`, `Paris,FR`).
+* **Ubicaciones en Estados Unidos:** Use `Ciudad,CodigoEstado,CodigoPais` (ej. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Si se omite el estado o el país, la API puede devolver una ciudad homónima en otro lugar.
+* **Dónde verificar:** Visite [openweathermap.org](https://openweathermap.org) y busque su ciudad. El encabezado del resultado y la URL muestran exactamente el formato reconocido por la API.
+
+

@@ -33,9 +33,7 @@ void FighterEngine::deactivate() {
 }
 
 void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
-    if (engineConfig) {
-        config_fighter_interval_sec = engineConfig->getInt("fighter_interval_sec", 15);
-    }
+    // Config now comes from global config.system
 }
 
 
@@ -52,10 +50,12 @@ void FighterEngine::initialize() {
 String FighterEngine::getFightersDir() {
     if (matrix && matrix->height() <= 32) return "/fighters_32";
     if (!m_hasPsram) {
-        Serial.println("FighterEngine: No PSRAM found. Forcing /fighters_32 to avoid OOM!");
         return "/fighters_32";
     }
-    return "/fighters_64";
+    if (sd.exists("/fighters_64/index.txt")) {
+        return "/fighters_64";
+    }
+    return "/fighters_32";
 }
 
 void FighterEngine::loadRoster() {
@@ -568,7 +568,8 @@ bool FighterEngine::loop() {
     
     if (fightEndTime > 0 && now - fightEndTime > 2000) {
         active = false;
-        retryDelayEnd = now + (config_fighter_interval_sec * 1000);
+        extern ConfigLoader config;
+        retryDelayEnd = now + (config.system.idle_fighter_interval * 1000);
         if (matrix) {
             int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
             matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);

@@ -1,4 +1,5 @@
 #include "MessageEngine.h"
+#include "fonts/ArcadeFonts.h"
 
 MessageEngine::MessageEngine() : active(false), customFont(nullptr) {}
 
@@ -21,7 +22,50 @@ void MessageEngine::deactivate() {
     active = false;
 }
 
-void MessageEngine::onConfigChanged(const EngineConfig* engineConfig) {}
+void MessageEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) {
+        currentMsg.text = config->getString("text", "ArcadeMatrix");
+        
+        String colorStr = config->getString("color", "#ffffff");
+        if (colorStr.startsWith("#")) colorStr = colorStr.substring(1);
+        long val = strtol(colorStr.c_str(), NULL, 16);
+        currentMsg.color = ((val >> 16) & 0xFF) << 11 | ((val >> 8) & 0xFF) << 5 | (val & 0xFF);
+        
+        currentMsg.size = config->getInt("size", 1);
+        currentMsg.direction = config->getString("direction", "rtl");
+        currentMsg.speed = config->getInt("speed", 50);
+        currentMsg.timeoutSeconds = 0; // Infinite timeout when rotating
+        
+        // Font loading logic
+        String fontSetting = config->getString("font", "Default");
+        if (fontSetting.isEmpty() || fontSetting.equalsIgnoreCase("Default")) {
+            fontSetting = config->getString("font_path", "");
+        }
+
+        if (fontSetting.equalsIgnoreCase("PressStart2P")) {
+            customFont = (GFXfont*)&PressStart2P9pt7b;
+        } else if (fontSetting.equalsIgnoreCase("namco")) {
+            customFont = (GFXfont*)&namco__9pt7b;
+        } else if (fontSetting.equalsIgnoreCase("FreeSansBold")) {
+            customFont = (GFXfont*)&FreeSansBold9pt7b;
+        } else if (fontSetting.equalsIgnoreCase("FreeMonoBold")) {
+            customFont = (GFXfont*)&FreeMonoBold9pt7b;
+        } else if (fontSetting.equalsIgnoreCase("RetroGaming")) {
+            customFont = (GFXfont*)&Retro_Gaming9pt7b;
+        } else if (fontSetting.endsWith(".amf") || fontSetting.startsWith("/")) {
+            if (fontLoader.loadFromSD(fontSetting.c_str())) {
+                customFont = fontLoader.getFont();
+            } else {
+                customFont = nullptr;
+            }
+        } else {
+            fontLoader.unload();
+            customFont = nullptr;
+        }
+
+        displayMessage(currentMsg);
+    }
+}
 
 void MessageEngine::displayMessage(const MessageConfig& config) {
     currentMsg = config;
@@ -29,19 +73,19 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
     startTime = millis();
     lastUpdate = millis();
 
-    // Default sizing setup - bounds will be relative to actual display later
     textWidth = currentMsg.text.length() * 6 * currentMsg.size;
     textHeight = 8 * currentMsg.size;
 
-    // We can't set cursor fully without matrix bounds, so we defer dynamic pos to update/render
-    // But we will reset it slightly out of bounds based on direction convention here.
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
-        cursorX = 999; // Will snap in update()
+        cursorX = 999;
     } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
         cursorX = -textWidth;
     } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
         cursorY = -textHeight;
     } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
+        cursorY = 999;
+    } else if (currentMsg.direction == "static") {
+        cursorX = 999;
         cursorY = 999;
     }
 }
@@ -58,27 +102,31 @@ void MessageEngine::update(EngineContext* context) {
     }
 
     // Dynamic initial bounds resolution
+    if (currentMsg.direction == "static") {
+        cursorX = (matrix->width() - textWidth) / 2;
+        cursorY = (matrix->height() - textHeight) / 2;
+        return;
+    }
+
     if (cursorX == 999) cursorX = matrix->width();
     if (cursorY == 999) cursorY = matrix->height();
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left" || currentMsg.direction == "ltr" || currentMsg.direction == "right") {
-        if (cursorY == 999 || cursorY == -textHeight || cursorY > matrix->height()) { // Not set yet or was vertical
+        if (cursorY == 999 || cursorY == -textHeight || cursorY > matrix->height()) {
             cursorY = (matrix->height() - textHeight) / 2;
         }
-    } else { // vertical
+    } else {
         if (cursorX == 999 || cursorX == -textWidth || cursorX > matrix->width()) {
             cursorX = (matrix->width() - textWidth) / 2;
         }
     }
     
-    matrix->setFont(customFont); // nullptr falls back to the default 5x7 font
     // Scroll logic based on speed (ms per pixel update)
-    if (millis() - lastUpdate > currentMsg.speed) {
+    if (millis() - lastUpdate > (unsigned long)currentMsg.speed) {
         lastUpdate = millis();
 
-        // Update coordinates
         if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
             cursorX--;
-            if (cursorX < -textWidth) cursorX = matrix->width(); // Loop
+            if (cursorX < -textWidth) cursorX = matrix->width();
         } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
             cursorX++;
             if (cursorX > matrix->width()) cursorX = -textWidth;

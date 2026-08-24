@@ -26,10 +26,11 @@ public:
     String config_api_key;
     String config_city;
     String config_lang;
+    String config_units = "metric";
     int config_offset_x = 0;
     int config_offset_y = 0;
     
-    void updateWeather(const String& apiKey, const String& city);
+    void updateWeather(const String& apiKey, const String& city, const String& units = "metric");
     
     bool loop();
     void setCharacter(int characterId);
