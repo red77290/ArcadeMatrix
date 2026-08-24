@@ -14,6 +14,12 @@ SanitizeResult ConfigSanitizer::sanitizeInstances(ConfigLoader& config) {
             result.modified = true;
             LOGI("ConfigSanitizer", "Migrated visualizer to audiovisualizer");
         }
+        if (it->engine_id == "audiovisualizer") {
+            if (it->config.hasKey("enabled") && !it->config.hasKey("priority_mode")) {
+                it->config.setString("priority_mode", it->config.getString("enabled"));
+                result.modified = true;
+            }
+        }
         const EngineDescriptor* desc = EngineRegistry::getDescriptor(it->engine_id.c_str());
         if (!desc) {
             LOGW("ConfigSanitizer", "Unknown engine_id '%s' for instance '%s' - removing", it->engine_id.c_str(), it->instance_id.c_str());

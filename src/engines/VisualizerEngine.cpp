@@ -43,7 +43,8 @@ void VisualizerEngine::setMode(const String& modeStr) {
 
 void VisualizerEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
-    String styleStr = engineConfig->getString("style", "spectrum");
+    String styleStr = engineConfig->getString("style", "");
+    if (styleStr.isEmpty()) styleStr = engineConfig->getString("mode", "spectrum");
     if (styleStr == "0") styleStr = "spectrum";
     else if (styleStr == "1") styleStr = "waveform";
     else if (styleStr == "2") styleStr = "radial";
@@ -216,12 +217,11 @@ void VisualizerEngine::drawNeonFire(MatrixPanel_I2S_DMA* matrix) {
 }
 
 void VisualizerEngine::update(EngineContext* context) {
-    auto inst = config.getInstance("visualizer_main"); if (inst) hardwareHAL.setMicGain(inst->config.getFloat("gain", 1.0f));
-    auto inst2 = config.getInstance("visualizer_main"); if (inst2) setMode(inst2->config.getString("mode", "frequency"));
+    // Dynamic runtime update if needed
 }
 
 void VisualizerEngine::render(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getMatrix() : nullptr;
     if (!matrix || !active) return;
 
     matrix->fillScreen(0);
@@ -239,12 +239,13 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_visualizer;
     desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", FIRMWARE_VERSION};
     desc_visualizer.capabilities.realtime = true;
+    desc_visualizer.capabilities.allowRotation = false; // Priority override engine
     desc_visualizer.requirements.needsAudio = true;
     desc_visualizer.schema.fields = {
-        ConfigField("enabled", ConfigType::BOOLEAN, "Enabled", "Enable real-time spectrum display", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("sensitivity", ConfigType::INTEGER, "Sensitivity", "Microphone sensitivity", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("gain", ConfigType::FLOAT, "Audio Gain", "Gain scaling factor", "1.0", false, "0.5", "5.0", "0.5", "", "", false, "", ValidationPolicy::Clamp)
+        ConfigField("priority_mode", ConfigType::BOOLEAN, "Mode Prioritaire (Continu)", "Afficher l'Audio Visualizer en continu (prend la priorité sur la rotation)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("style", ConfigType::ENUM, "Style", "Style de visualisation FFT", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("sensitivity", ConfigType::INTEGER, "Sensibilité", "Sensibilité du microphone", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("gain", ConfigType::FLOAT, "Gain Micro", "Facteur de gain audio", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp)
     };
     desc_visualizer.factory = []() { return std::unique_ptr<IEngine>(new VisualizerEngine()); };
     return desc_visualizer;
