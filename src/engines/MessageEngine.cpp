@@ -155,7 +155,7 @@ void MessageEngine::render(EngineContext* context) {
 
 EngineDescriptor MessageEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_msg;
-    desc_msg.metadata = {"message", "Message", "display", "3.0.0"};
+    desc_msg.metadata = {"message", "Message", "display", FIRMWARE_VERSION};
     desc_msg.capabilities.realtime = true;
     desc_msg.capabilities.allowsOverlay = false;
     desc_msg.schema.fields = {

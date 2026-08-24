@@ -496,7 +496,7 @@ void StockEngine::renderQuote(EngineContext* context) {
 
 EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_stock;
-    desc_stock.metadata = {"stock", "Stock Ticker", "finance", "3.0.0"};
+    desc_stock.metadata = {"stock", "Stock Ticker", "finance", FIRMWARE_VERSION};
     desc_stock.capabilities.realtime = false;
     desc_stock.capabilities.allowsOverlay = true;
     desc_stock.requirements.needsPsram = true;

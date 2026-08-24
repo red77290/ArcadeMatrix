@@ -507,7 +507,7 @@ void CryptoEngine::renderQuote(EngineContext* context) {
 
 EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_crypto;
-    desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", "3.0.0"};
+    desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", FIRMWARE_VERSION};
     desc_crypto.capabilities.realtime = false;
     desc_crypto.capabilities.allowsOverlay = true;
     desc_crypto.requirements.needsPsram = true;

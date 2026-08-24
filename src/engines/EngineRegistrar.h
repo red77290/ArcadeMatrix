@@ -1,7 +1,7 @@
 #pragma once
 #include "core/EngineContract.h"
 
-// Forward declarations for legacy engines
+// Forward declarations for engine classes
 class ClockEngine;
 class DateEngine;
 class WeatherEngine;

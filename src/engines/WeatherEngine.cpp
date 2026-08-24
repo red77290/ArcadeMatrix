@@ -259,7 +259,7 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
 
 EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_weather;
-    desc_weather.metadata = {"weather", "Weather", "info", "3.0.0"};
+    desc_weather.metadata = {"weather", "Weather", "info", FIRMWARE_VERSION};
     desc_weather.capabilities.realtime = false;
     desc_weather.capabilities.allowsOverlay = true;
     desc_weather.requirements.needsAudio = false;

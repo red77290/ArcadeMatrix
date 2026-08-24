@@ -136,7 +136,7 @@ void DateEngine::setResolution(int width, int height) {
 
 
 void DateEngine::setCharacter(int characterId) {
-    // Map legacy character IDs to our new Publisher Themes
+    // Backward compatibility mapping for v2 numeric character IDs to new Publisher Themes
     switch (characterId) {
         case 0: setTheme(THEME_CAPCOM); break; // Ryu
         case 1: setTheme(THEME_NINTENDO); break; // Mario
@@ -543,7 +543,7 @@ bool DateEngine::loop() {
 
 EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_date;
-    desc_date.metadata = {"date", "Date", "info", "3.0.0"};
+    desc_date.metadata = {"date", "Date", "info", FIRMWARE_VERSION};
     desc_date.capabilities.realtime = false;
     desc_date.capabilities.allowsOverlay = true;
     desc_date.requirements.needsAudio = false;

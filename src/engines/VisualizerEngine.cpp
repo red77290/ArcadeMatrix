@@ -237,7 +237,7 @@ void VisualizerEngine::render(EngineContext* context) {
 
 EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_visualizer;
-    desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", "3.0.0"};
+    desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", FIRMWARE_VERSION};
     desc_visualizer.capabilities.realtime = true;
     desc_visualizer.capabilities.allowsOverlay = false;
     desc_visualizer.requirements.needsAudio = true;

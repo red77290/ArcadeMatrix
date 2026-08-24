@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <time.h>
+#include "core/BuildInfo.h"
 
 // Forward declarations to avoid heavy includes in the contract
 class MatrixPanel_I2S_DMA;
@@ -48,10 +49,14 @@ enum class ValidationPolicy {
 // =======================================================
 
 struct EngineMetadata {
-    const char* id;          // e.g., "clock.cyberpunk"
-    const char* name;        // e.g., "Cyberpunk Clock"
-    const char* category;    // e.g., "clock", "visualizer", "info"
-    const char* version;     // e.g., "1.0.0"
+    const char* id = "";          // e.g., "clock"
+    const char* name = "";        // e.g., "Clock"
+    const char* category = "";    // e.g., "info", "media", "finance"
+    const char* version = FIRMWARE_VERSION;
+
+    EngineMetadata() = default;
+    EngineMetadata(const char* id_, const char* name_, const char* category_, const char* ver_ = FIRMWARE_VERSION)
+        : id(id_), name(name_), category(category_), version(ver_) {}
 };
 
 struct EngineCapabilities {

@@ -312,7 +312,7 @@ void DecibelEngine::render(EngineContext* context) {
 
 EngineDescriptor DecibelEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_decibel;
-    desc_decibel.metadata = {"decibelMeter", "Noise Level", "audio", "3.0.0"};
+    desc_decibel.metadata = {"decibelMeter", "Noise Level", "audio", FIRMWARE_VERSION};
     desc_decibel.capabilities.realtime = true;
     desc_decibel.capabilities.allowsOverlay = false;
     desc_decibel.requirements.needsAudio = true;
