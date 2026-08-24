@@ -47,20 +47,17 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     shadowColor = matrix->color565(0, 0, 0);
 
     m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-    m_config.date_font = config->getString("date_font", "Default");
-    m_config.date_size = config->getInt("date_size", 1);
-    m_config.date_offset_x = config->getInt("date_offset_x", 0);
-    m_config.date_offset_y = config->getInt("date_offset_y", 0);
-    m_config.date_font_path = config->getString("date_font_path", "");
-    if (m_config.date_font.endsWith(".amf") || m_config.date_font.startsWith("/")) {
+    m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+    m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
+    m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
+    m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
+    m_config.date_offset_y = config->getInt("date_offset_y", config->getInt("offset_y", 0));
+    m_config.date_font_path = config->getString("date_font_path", config->getString("font_path", "").c_str());
+    if (m_config.date_font.endsWith(".amf") || m_config.date_font.endsWith(".AMF") || m_config.date_font.startsWith("/")) {
         m_config.date_font_path = m_config.date_font;
     }
     
-    if (m_config.date_font_path.length() > 0) {
-        if (!customFont.loadFromSD(m_config.date_font_path.c_str())) {
-            LOGW("DateEngine", "date_font_path set but failed to load; using compiled-in font.");
-        }
-    }
+    reloadCustomFont();
     
     setTheme(static_cast<PublisherTheme>(m_config.theme));
     return EngineError::OK;
@@ -69,12 +66,13 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
 void DateEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-        m_config.date_font = config->getString("date_font", "Default");
-        m_config.date_size = config->getInt("date_size", 1);
-        m_config.date_offset_x = config->getInt("date_offset_x", 0);
-        m_config.date_offset_y = config->getInt("date_offset_y", 0);
-        m_config.date_font_path = config->getString("date_font_path", "");
-        if (m_config.date_font.endsWith(".amf") || m_config.date_font.startsWith("/")) {
+        m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+        m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
+        m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
+        m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
+        m_config.date_offset_y = config->getInt("date_offset_y", config->getInt("offset_y", 0));
+        m_config.date_font_path = config->getString("date_font_path", config->getString("font_path", "").c_str());
+        if (m_config.date_font.endsWith(".amf") || m_config.date_font.endsWith(".AMF") || m_config.date_font.startsWith("/")) {
             m_config.date_font_path = m_config.date_font;
         }
         m_config.date_color_1 = config->getString("date_color_1", "");
@@ -199,9 +197,12 @@ void DateEngine::setTheme(PublisherTheme theme) {
 }
 
 void DateEngine::reloadCustomFont() {
-    if (m_config.date_font_path.length() > 0) {
+    if (m_config.date_font_path.length() > 0 && !m_config.date_font_path.equalsIgnoreCase("Default")) {
         if (!customFont.loadFromSD(m_config.date_font_path.c_str())) {
-            Serial.println("DateEngine: date_font_path set but failed to load; using compiled-in font.");
+            String altPath = m_config.date_font_path.startsWith("/") ? m_config.date_font_path : ("/fonts/" + m_config.date_font_path);
+            if (!customFont.loadFromSD(altPath.c_str())) {
+                Serial.printf("DateEngine: date_font '%s' failed to load from SD.\n", m_config.date_font_path.c_str());
+            }
         }
     } else {
         customFont.unload();
@@ -377,15 +378,15 @@ void DateEngine::applyThemeSettings() {
     GFXfont* loadedCustomFont = customFont.getFont();
     if (loadedCustomFont) {
         selectedFont = loadedCustomFont;
-    } else if (m_config.date_font.equalsIgnoreCase("PressStart2P")) {
+    } else if (m_config.date_font.equalsIgnoreCase("PressStart2P") || m_config.date_font.equalsIgnoreCase("PressStart2P.ttf")) {
         selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
-    } else if (m_config.date_font.equalsIgnoreCase("namco")) {
+    } else if (m_config.date_font.equalsIgnoreCase("namco") || m_config.date_font.equalsIgnoreCase("namco.ttf")) {
         selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
-    } else if (m_config.date_font.equalsIgnoreCase("FreeSansBold")) {
+    } else if (m_config.date_font.equalsIgnoreCase("FreeSansBold") || m_config.date_font.equalsIgnoreCase("FreeSansBold.ttf")) {
         selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
-    } else if (m_config.date_font.equalsIgnoreCase("FreeMonoBold")) {
+    } else if (m_config.date_font.equalsIgnoreCase("FreeMonoBold") || m_config.date_font.equalsIgnoreCase("FreeMonoBold.ttf")) {
         selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
-    } else if (m_config.date_font.equalsIgnoreCase("RetroGaming")) {
+    } else if (m_config.date_font.equalsIgnoreCase("RetroGaming") || m_config.date_font.equalsIgnoreCase("Retro_Gaming") || m_config.date_font.equalsIgnoreCase("RetroGaming.ttf")) {
         selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b;
     } else if (m_config.date_font.equalsIgnoreCase("Default")) {
         selectedFont = nullptr;
@@ -402,11 +403,18 @@ void DateEngine::applyThemeSettings() {
     uint16_t bw, bh;
     matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
     
-    // Fallback to built-in font if GFX font overflows total matrix bounds at targetSize
+    // Fallback if GFX font overflows total matrix bounds at targetSize
     if (selectedFont != nullptr && (bw > matrixW || bh > matrixH)) {
-        selectedFont = nullptr;
-        matrix->setFont(nullptr);
-        matrix->setTextSize(targetSize);
+        if (targetSize > 1) {
+            targetSize = 1;
+            matrix->setTextSize(1);
+            matrix->getTextBounds(currentDate, 0, 0, &bx, &by, &bw, &bh);
+        }
+        if (bw > matrixW || bh > matrixH) {
+            selectedFont = nullptr;
+            matrix->setFont(nullptr);
+            matrix->setTextSize(1);
+        }
     }
 }
 

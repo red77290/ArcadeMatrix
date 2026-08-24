@@ -423,10 +423,38 @@ void loop() {
     }
     wasPoweredOn = true;
 
+    // Dynamic MQTT synchronization (enables/disables or reconfigures MQTT live without reboot)
+    static bool lastMqttEnabled = false;
+    static String lastMqttBroker = "";
+    static int lastMqttPort = 0;
+    static String lastMqttTopicBato = "";
+    static String lastMqttTopicRecal = "";
+
+    if (config.mqtt.enabled != lastMqttEnabled || 
+        (config.mqtt.enabled && (config.mqtt.broker != lastMqttBroker || config.mqtt.port != lastMqttPort || 
+                                config.mqtt.topic_batocera != lastMqttTopicBato || config.mqtt.topic_recalbox != lastMqttTopicRecal))) {
+        lastMqttEnabled = config.mqtt.enabled;
+        lastMqttBroker = config.mqtt.broker;
+        lastMqttPort = config.mqtt.port;
+        lastMqttTopicBato = config.mqtt.topic_batocera;
+        lastMqttTopicRecal = config.mqtt.topic_recalbox;
+
+        if (config.mqtt.enabled) {
+            if (!frontendListener) {
+                frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
+            }
+            frontendListener->begin();
+        } else {
+            if (frontendListener) {
+                frontendListener->stop();
+            }
+        }
+    }
+
     // Handle incoming MQTT events before evaluating display logic
     // We do NOT wrap this in sdMutex because frontendListener handles SD access and network
     // operations asynchronously, and takes sdMutex internally only when needed!
-    if (frontendListener) {
+    if (frontendListener && config.mqtt.enabled) {
         frontendListener->loop();
     }
 
@@ -443,12 +471,13 @@ void loop() {
     DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
     if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        // Synchronize Music Visualizer active state with config setting
+        // Synchronize Music Visualizer active state and configuration with config setting
         if (visualizerEngine) {
             bool visEnabled = false;
             for (const auto& inst : config.instances) {
                 if (inst.engine_id == "audiovisualizer" && inst.config.getBool("enabled", false)) {
                     visEnabled = true;
+                    visualizerEngine->onConfigChanged(&inst.config);
                     break;
                 }
             }
