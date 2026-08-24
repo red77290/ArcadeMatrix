@@ -763,11 +763,11 @@ select.input option {
             <h3>Matrix Hardware Configuration</h3>
             <div class="form-grid col-4">
               <div class="form-group">
-                <label>Rows (Height)</label>
+                <label>Rows (Height) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rows">?</span></label>
                 <input type="number" id="hw-rows" class="input" value="32">
               </div>
               <div class="form-group">
-                <label>Cols (Width)</label>
+                <label>Cols (Width) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_cols">?</span></label>
                 <input type="number" id="hw-cols" class="input" value="64">
               </div>
               <div class="form-group">
@@ -788,7 +788,7 @@ select.input option {
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A, ICN2038S, MBI5124, SM16208)">?</span></label>
+                <label>Matrix Driver Chip <span class="tooltip-icon" data-i18n-tooltip="tt_hw_driver_chip">?</span></label>
                 <select id="hw-driver-chip" class="input">
                   <option value="SHIFTREG">Standard (SHIFTREG)</option>
                   <option value="FM6124">FM6124</option>
@@ -799,15 +799,15 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>Color Depth <span class="tooltip-icon" data-tooltip="Profondeur de couleur par canal (ex: 8)">?</span></label>
+                <label>Color Depth <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
                 <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
               </div>
               <div class="form-group">
-                <label>Row Addr Mode <span class="tooltip-icon" data-tooltip="0 = Standard direct, 1 = Shift Register, 2 = Direct 16 lines">?</span></label>
+                <label>Row Addr Mode <span class="tooltip-icon" data-i18n-tooltip="tt_hw_row_addr_mode">?</span></label>
                 <input type="number" id="hw-row-addr-mode" class="input" value="0" min="0" max="4">
               </div>
               <div class="form-group">
-                <label>Latch Blanking <span class="tooltip-icon" data-tooltip="Cycles d'extinction OE pendant le verrouillage de ligne (0-4)">?</span></label>
+                <label>Latch Blanking <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
                 <input type="number" id="hw-latch-blanking" class="input" value="0" min="0" max="4">
               </div>
             </div>
@@ -817,7 +817,7 @@ select.input option {
                 <input type="number" id="hw-limit-refresh" class="input" value="90" min="0" max="300">
               </div>
               <div class="form-group">
-                <label>Clock Phase (Invert) <span class="tooltip-icon" data-tooltip="Inverser la phase d'horloge pour réduire les bruits de pixels">?</span></label>
+                <label>Clock Phase (Invert) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-clk-phase">
@@ -826,7 +826,7 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label>Force Single Buffer <span class="tooltip-icon" data-tooltip="Réduit l'usage RAM si la PSRAM n'est pas disponible">?</span></label>
+                <label>Force Single Buffer <span class="tooltip-icon" data-i18n-tooltip="tt_hw_force_single_buffer">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-force-single-buffer">
@@ -1098,9 +1098,17 @@ const translations = {
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
     // Tooltips
-    tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
-    tt_hw_rgb: "Change this if your colors appear swapped (e.g., Red looks Blue).",
-    tt_hw_limit_refresh: "Refresh rate limit in Hz (default 90Hz to optimize DMA and CPU load).",
+    tt_hw_rows: "Height in pixels of a single LED panel (usually 32 or 64).",
+    tt_hw_cols: "Width in pixels of a single LED panel (usually 64 or 128).",
+    tt_hw_chain: "Number of LED panels daisy-chained horizontally in a single line (e.g. 2 for 128x32 or 256x64).",
+    tt_hw_rgb: "Color channel ordering. Adjust if colors look inverted or wrong (e.g. Red looks Blue or Green).",
+    tt_hw_driver_chip: "Hardware controller chip type. Select FM6126A, ICN2038S or standard SHIFTREG if your panels require a specific initialization register sequence to light up.",
+    tt_hw_color_depth: "Color bit depth per channel (1 to 8 bits). Lower to 8 or 6 bits to reduce DMA bandwidth, eliminate GIF lag and boost rendering framerate.",
+    tt_hw_row_addr_mode: "Row line addressing scheme (0=Direct binary A,B,C,D,E; 1=Shift Register; 2=Direct 16 lines). Change if your image appears split in horizontal bands or only half displays.",
+    tt_hw_latch_blanking: "Number of OE blanking clock cycles during row latching (0 to 4). Increase to 4 to eliminate vertical/horizontal ghosting lines and background bleed.",
+    tt_hw_limit_refresh: "Refresh rate cap in Hz (default 90Hz). Prevents the DMA hardware driver from saturating memory bandwidth and starving the CPU.",
+    tt_hw_clk_phase: "Inverts the I2S pixel clock sampling edge. Enable this if you see sparkling pixels, static noise or color speckles on sensitive panels.",
+    tt_hw_force_single_buffer: "Disables DMA double-buffering to halve RAM memory usage. Essential on boards without PSRAM to avoid out-of-memory crashes.",
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -1112,9 +1120,17 @@ const translations = {
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
     // Tooltips
-    tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
-    tt_hw_rgb: "Modifiez ceci si vos couleurs sont inversées (ex: le rouge apparait bleu).",
-    tt_hw_limit_refresh: "Limite de rafraîchissement en Hz (90Hz par défaut pour optimiser le DMA).",
+    tt_hw_rows: "Hauteur en pixels d'une dalle LED unique (généralement 32 ou 64).",
+    tt_hw_cols: "Largeur en pixels d'une dalle LED unique (généralement 64 ou 128).",
+    tt_hw_chain: "Nombre de dalles reliées en série horizontalement (ex: 2 pour 128x32 ou 256x64).",
+    tt_hw_rgb: "Ordre des canaux de couleur. À modifier si les couleurs sont fausses (ex: si le rouge s'affiche en bleu ou vert).",
+    tt_hw_driver_chip: "Protocole du contrôleur LED. Choisissez FM6126A, ICN2038S ou SHIFTREG standard si vos dalles nécessitent une séquence d'initialisation pour s'allumer.",
+    tt_hw_color_depth: "Profondeur de couleur par canal (1 à 8 bits). Réduire à 8 ou 6 bits pour soulager le bus DMA, éliminer les saccades et augmenter les FPS.",
+    tt_hw_row_addr_mode: "Schéma d'adressage des lignes (0=Direct binaire A,B,C,D,E; 1=Registre à décalage; 2=Direct 16 lignes). À modifier si l'image est découpée en bandes ou incomplète.",
+    tt_hw_latch_blanking: "Nombre de cycles d'extinction des LEDs pendant le verrouillage de chaque ligne (0 à 4). Augmenter à 4 pour éliminer totalement le ghosting et les traînées lumineuses.",
+    tt_hw_limit_refresh: "Plafonne la fréquence de rafraîchissement (ex: 90 Hz). Évite la saturation du bus DMA et libère le processeur pour le Wi-Fi et les animations.",
+    tt_hw_clk_phase: "Inverse le front d'échantillonnage de l'horloge I2S. À activer si vous constatez des pixels qui scintillent ou du bruit statique.",
+    tt_hw_force_single_buffer: "Désactive la double mémoire tampon DMA pour diviser par deux la RAM consommée. Indispensable sur les cartes sans PSRAM pour éviter les crashs mémoire.",
   },
   es: {
     nav_dashboard: "Panel",
@@ -1126,9 +1142,17 @@ const translations = {
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
     // Tooltips
-    tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
-    tt_hw_rgb: "Cambia esto si tus colores aparecen intercambiados (ej: rojo se ve azul).",
-    tt_hw_limit_refresh: "Límite de refresco en Hz (90Hz por defecto para optimizar DMA).",
+    tt_hw_rows: "Altura en píxeles de un panel LED individual (normalmente 32 o 64).",
+    tt_hw_cols: "Anchura en píxeles de un panel LED individual (normalmente 64 o 128).",
+    tt_hw_chain: "Número de paneles conectados en serie horizontalmente (ej: 2 para 128x32 o 256x64).",
+    tt_hw_rgb: "Orden de canales de color. Modificar si los colores aparecen invertidos (ej: rojo se ve azul o verde).",
+    tt_hw_driver_chip: "Protocolo del controlador LED. Selecciona FM6126A, ICN2038S o SHIFTREG estándar si tus paneles necesitan una secuencia de inicio para encender.",
+    tt_hw_color_depth: "Profundidad de color por canal (1 a 8 bits). Bajar a 8 o 6 bits para reducir el ancho de banda DMA, eliminar lag en GIFs y ganar FPS.",
+    tt_hw_row_addr_mode: "Esquema de direccionamiento de filas (0=Directo A,B,C,D,E; 1=Registro de desplazamiento; 2=Directo 16 líneas). Cambiar si la imagen aparece partida o incompleta.",
+    tt_hw_latch_blanking: "Ciclos de apagado OE durante el bloqueo de fila (0 a 4). Aumentar a 4 para eliminar totalmente el ghosting y las líneas parásitas.",
+    tt_hw_limit_refresh: "Límite de tasa de refresco en Hz (90Hz por defecto). Evita saturar el bus DMA y libera memoria/CPU para Wi-Fi y animaciones.",
+    tt_hw_clk_phase: "Invierte el flanco de muestreo del reloj I2S. Activar si observas píxeles parpadeantes o ruido estático en paneles sensibles.",
+    tt_hw_force_single_buffer: "Desactiva el doble búfer DMA para reducir el uso de RAM a la mitad. Esencial en placas sin PSRAM para evitar bloqueos por falta de memoria.",
   }
 };
 
