@@ -41,7 +41,20 @@ void VisualizerEngine::setMode(const String& modeStr) {
     }
 }
 
-void VisualizerEngine::onConfigChanged(const EngineConfig* engineConfig) {}
+void VisualizerEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (!engineConfig) return;
+    String styleStr = engineConfig->getString("style", "spectrum");
+    if (styleStr == "0") styleStr = "spectrum";
+    else if (styleStr == "1") styleStr = "waveform";
+    else if (styleStr == "2") styleStr = "radial";
+    else if (styleStr == "3") styleStr = "neon_fire";
+    setMode(styleStr);
+    
+    float gain = engineConfig->getFloat("gain", 1.0f);
+    hardwareHAL.setMicGain(gain);
+    
+    LOGI("VisualizerEngine", "Config updated: mode=%s, gain=%.2f", styleStr.c_str(), gain);
+}
 
 static uint16_t matrix_color565(uint8_t r, uint8_t g, uint8_t b) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);

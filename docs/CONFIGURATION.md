@@ -112,3 +112,25 @@ Both `crypto` and `stock` engines support interactive multi-page display with re
 | `duration_sec` / `page_seconds` | `int` | `5` | `3` to `30` | Seconds to display each view before cycling. |
 | `cache_ttl_min` | `int` | `5` | `1` to `60` | Minutes between fresh API queries. |
 
+---
+
+## 7. Weather Engine Configuration (`weather`)
+
+The `weather` engine fetches a 3-day forecast from [OpenWeatherMap](https://openweathermap.org) with automatic 15-minute caching to minimize API usage:
+
+| Key | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Free API key | Your OpenWeatherMap API Key (free tier at [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
+| `city` | `String` | `"Paris,FR"` | Text | City location (see formatting guide below). |
+| `units` | `String` | `"metric"` | `"metric"`, `"imperial"` | Temperature unit: `metric` for Celsius (°C) or `imperial` for Fahrenheit (°F). |
+| `lang` | `String` | `"en"` | `"en"`, `"fr"`, `"es"`, `"de"`, `"it"` | Language code for day labels (TODAY / AUJ. / HOY). |
+| `weather_offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
+| `weather_offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |
+
+### How to Format the `city` Field on OpenWeatherMap
+OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the US) to disambiguate locations:
+* **International Locations:** Use `City,CountryCode` (e.g. `Paris,FR`, `London,GB`, `Tokyo,JP`, `Montreal,CA`).
+* **United States Locations:** Use `City,StateCode,CountryCode` (e.g. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Specifying only the city or omitting the country may return an incorrect city with the same name.
+* **Where to Look:** Go to [openweathermap.org](https://openweathermap.org), search for your city. The top search result header and URL show the exact `City,State,Country` string recognized by the API.
+
+

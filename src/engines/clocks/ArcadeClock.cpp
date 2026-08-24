@@ -8,9 +8,13 @@ ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* confi
     animationFrame = 0;
     lastFrameTime = 0;
     currentTheme = static_cast<PublisherTheme>((engineConfig ? engineConfig->getInt("clock_theme", 0) : 0));
-    if ((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")).length() > 0) {
-        if (!customFont.loadFromSD((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")).c_str())) {
-            Serial.println("ArcadeClock: clock_font_path set but failed to load; using compiled-in font.");
+    String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
+    if (fontSetting.length() > 0 && fontSetting != "Default") {
+        if (fontSetting.endsWith(".amf") || fontSetting.startsWith("/")) {
+            if (!customFont.loadFromSD(fontSetting.c_str())) {
+                Serial.println("ArcadeClock: clock_font set but failed to load; using compiled-in font.");
+            }
         }
     }
 }
@@ -69,9 +73,9 @@ void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t 
         matrix->setCursor(x + 1, y + 1); matrix->print(timeStr);
     } else if (currentTheme != THEME_FLIP) {
         matrix->setTextColor(shadowColor);
-        for (int i = 1; i <= effectDepth; i++) {
-            matrix->setCursor(x + i, y + i); matrix->print(timeStr);
-        }
+        matrix->setCursor(x + effectDepth, y + effectDepth); matrix->print(timeStr);
+        matrix->setCursor(x + effectDepth - 1, y + effectDepth); matrix->print(timeStr);
+        matrix->setCursor(x + effectDepth, y + effectDepth - 1); matrix->print(timeStr);
     }
 
     matrix->setTextColor(textColor);
@@ -85,21 +89,31 @@ void ArcadeClock::drawStaticTime() {
     const GFXfont* font9pt = nullptr;
     const GFXfont* font12pt = nullptr;
     
-    switch (currentTheme) {
-        case THEME_NINTENDO: case THEME_HUDSON: font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b; break;
-        case THEME_SEGA: font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b; break;
-        case THEME_CAVE: case THEME_SNK: case THEME_TECHNOS: case THEME_MARCO: font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b; break;
-        case THEME_TAITO: case THEME_KONAMI: case THEME_SPACE: font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b; break;
-        case THEME_CAPCOM: case THEME_IGS: case THEME_BANPRESTO: case THEME_NAMCO: case THEME_RYU: case THEME_MEGAMAN: case THEME_MARIO: case THEME_BUB: font9pt = &namco__9pt7b; font12pt = &namco__12pt7b; break;
-        default: font9pt = nullptr; font12pt = nullptr; break;
-    }
-    
-    // A user-supplied SD font ((engineConfig ? engineConfig->getString("clock_font_path", "") : String("")), converted via tools/bdf_to_amfont)
-    // always takes priority over the compiled-in font families above.
-    GFXfont* loadedCustomFont = customFont.getFont();
-    if (loadedCustomFont) {
-        font9pt = loadedCustomFont;
-        font12pt = loadedCustomFont;
+    String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
+    if (fontSetting.equalsIgnoreCase("PressStart2P")) {
+        font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b;
+    } else if (fontSetting.equalsIgnoreCase("namco")) {
+        font9pt = &namco__9pt7b; font12pt = &namco__12pt7b;
+    } else if (fontSetting.equalsIgnoreCase("FreeSansBold")) {
+        font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b;
+    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold")) {
+        font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b;
+    } else if (fontSetting.equalsIgnoreCase("RetroGaming")) {
+        font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b;
+    } else if (customFont.getFont()) {
+        font9pt = customFont.getFont();
+        font12pt = customFont.getFont();
+    } else if (fontSetting.equalsIgnoreCase("Default")) {
+        font9pt = nullptr; font12pt = nullptr;
+    } else {
+        switch (currentTheme) {
+            case THEME_NINTENDO: case THEME_HUDSON: font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b; break;
+            case THEME_SEGA: font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b; break;
+            case THEME_CAVE: case THEME_SNK: case THEME_TECHNOS: case THEME_MARCO: font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b; break;
+            case THEME_TAITO: case THEME_KONAMI: case THEME_SPACE: font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b; break;
+            case THEME_CAPCOM: case THEME_IGS: case THEME_BANPRESTO: case THEME_NAMCO: case THEME_RYU: case THEME_MEGAMAN: case THEME_MARIO: case THEME_BUB: font9pt = &namco__9pt7b; font12pt = &namco__12pt7b; break;
+            default: font9pt = nullptr; font12pt = nullptr; break;
+        }
     }
     
     matrix->setTextSize(1);

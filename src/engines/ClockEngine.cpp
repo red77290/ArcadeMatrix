@@ -99,6 +99,14 @@ void ClockEngine::activate() {
 }
 
 void ClockEngine::update(EngineContext* context) {
+    if (configDirty) {
+        configDirty = false;
+        if (currentConfig) {
+            int theme = currentConfig->getInt("clock_theme", 0);
+            setTheme(static_cast<PublisherTheme>(theme), true, currentConfig);
+        }
+    }
+    
     if (context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
@@ -124,7 +132,6 @@ void ClockEngine::deactivate() {
 void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentConfig = config;
-        int theme = config->getInt("clock_theme", 0);
-        setTheme(static_cast<PublisherTheme>(theme), false, config); // setTheme already prevents recreation if theme == currentTheme
+        configDirty = true;
     }
 }

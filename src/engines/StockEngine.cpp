@@ -1,6 +1,7 @@
 #include "StockEngine.h"
 #include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
+#include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 
 StockEngine* StockEngine::instance = nullptr;
@@ -9,6 +10,7 @@ StockEngine::StockEngine()
     : currentSymbolIndex(0), lastItemSwitchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
+    addProvider(new YahooFinanceProvider());
 }
 
 EngineError StockEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {

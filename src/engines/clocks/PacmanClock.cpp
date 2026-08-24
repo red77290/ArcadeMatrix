@@ -102,7 +102,7 @@ void PacmanClock::update() {
         animFrame++;
         
         if (transitioning) {
-            float pacSpeed = max(0.6f, 0.8f * matrix->width() / 64.0f);
+            float pacSpeed = max(1.2f, 1.6f * matrix->width() / 64.0f);
             pacX += pacSpeed;
             
             if (pacX >= matrix->width() + pacRadius * 3.0f) {
@@ -155,7 +155,7 @@ void PacmanClock::update() {
             matrix->drawPixel((int)px, (int)py, dotColor);
         }
     } else {
-        int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
+        int mouthAngle = (int)(abs(sin(animFrame * 1.0f)) * 45);
         
         // Draw old time
         matrix->setCursor(tx, ty);
@@ -184,7 +184,7 @@ void PacmanClock::update() {
         // Draw Ghosts
         for (int i = 0; i < 4; i++) {
             float gx = pacX - (pacRadius * 3.0f) - (i * ghostSpacing);
-            float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * (pacRadius / 3.0f);
+            float gy = matrix->height() / 2 + sin(animFrame * 0.4f + i) * (pacRadius / 3.0f);
             drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
         }
     }

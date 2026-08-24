@@ -138,15 +138,17 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: GET /api/engines (Schema-driven engine descriptors)
+    // API: GET /api/engines (Streamed engine descriptors with minimal RAM)
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
         size_t count = 0;
         const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-        const auto& caps = hardwareHAL.capabilities();
         
-        DynamicJsonDocument doc(8192);
-        JsonArray array = doc.to<JsonArray>();
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        response->print("[");
+        
         for (size_t i = 0; i < count; i++) {
-            JsonObject obj = array.createNestedObject();
+            DynamicJsonDocument doc(2048);
+            JsonObject obj = doc.to<JsonObject>();
             obj["metadata"]["id"] = descriptors[i].metadata.id;
             obj["metadata"]["name"] = descriptors[i].metadata.name;
             obj["metadata"]["category"] = descriptors[i].metadata.category;
@@ -198,11 +200,13 @@ void WebServerAPI::setupRoutes() {
                 if (strlen(field.max_val) > 0) fieldObj["max_val"] = field.max_val;
                 if (strlen(field.step) > 0) fieldObj["step"] = field.step;
             }
+            
+            if (i > 0) response->print(",");
+            serializeJson(doc, *response);
         }
         
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        response->print("]");
+        request->send(response);
     });
 
     // API: GET /api/themes (Dynamic options endpoint for themes)
@@ -289,20 +293,23 @@ void WebServerAPI::setupRoutes() {
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        DynamicJsonDocument doc(4096);
-        JsonArray arr = doc.to<JsonArray>();
-        for (const auto& inst : config.instances) {
-            JsonObject obj = arr.createNestedObject();
+        AsyncResponseStream *response = request->beginResponseStream("application/json");
+        response->print("[");
+        for (size_t i = 0; i < config.instances.size(); i++) {
+            const auto& inst = config.instances[i];
+            DynamicJsonDocument doc(1024);
+            JsonObject obj = doc.to<JsonObject>();
             obj["instance_id"] = inst.instance_id;
             obj["engine_id"] = inst.engine_id;
             JsonObject cfgObj = obj.createNestedObject("config");
             for (const auto& kv : inst.config.getDictionary()) {
                 cfgObj[kv.first] = kv.second;
             }
+            if (i > 0) response->print(",");
+            serializeJson(doc, *response);
         }
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        response->print("]");
+        request->send(response);
     });
 
     AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [](AsyncWebServerRequest *request, JsonVariant &json) {
@@ -479,6 +486,7 @@ void WebServerAPI::setupRoutes() {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = rot.instance_id;
             obj["duration_sec"] = rot.duration_sec;
+            obj["fighter_overlay"] = rot.fighter_overlay;
         }
         String response;
         serializeJson(doc, response);
@@ -500,6 +508,7 @@ void WebServerAPI::setupRoutes() {
             RotationEntry re;
             re.instance_id = entry["instance_id"].as<String>();
             re.duration_sec = entry["duration_sec"] | 15;
+            re.fighter_overlay = entry["fighter_overlay"] | false;
             if (!re.instance_id.isEmpty()) {
                 config.rotation.push_back(re);
             }
@@ -530,10 +539,40 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: List custom SD fonts (.amf files)
+    // API: System Info (Dashboard metrics compatibility)
+    server.on("/api/system_info", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(512);
+        float tempC = 0.0f;
+        if (hardwareHAL.capabilities().hasTempSensor) {
+            tempC = hardwareHAL.readEnvironment().temperatureC;
+        } else {
+            tempC = temperatureRead();
+        }
+        
+        doc["cpu_load"] = 0.0f;
+        doc["temperature_c"] = tempC;
+        doc["ram_used_mb"] = (float)(ESP.getHeapSize() - ESP.getFreeHeap()) / (1024.0f * 1024.0f);
+        doc["ram_total_mb"] = (float)ESP.getHeapSize() / (1024.0f * 1024.0f);
+        doc["disk_free_gb"] = 0.0f;
+        doc["free_heap"] = ESP.getFreeHeap();
+        doc["uptime_sec"] = millis() / 1000;
+        
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: List fonts (Built-in + custom SD .amf files)
     server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(2048);
         JsonArray arr = doc.to<JsonArray>();
+        
+        arr.add("Default");
+        arr.add("PressStart2P");
+        arr.add("namco");
+        arr.add("FreeSansBold");
+        arr.add("FreeMonoBold");
+        arr.add("RetroGaming");
         
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
             FsFile dir = sd.open("/fonts", FILE_OPEN_READ);
@@ -827,6 +866,8 @@ void WebServerAPI::setupRoutes() {
         doc["turn_off_at"] = config.system.turn_off_at;
         doc["wake_up_at"] = config.system.wake_up_at;
         doc["night_brightness"] = config.system.night_brightness;
+        doc["idle_fighter_enabled"] = config.system.idle_fighter_enabled;
+        doc["idle_fighter_interval"] = config.system.idle_fighter_interval;
         doc["matrix_power"] = config.matrix.matrix_power;
 
         // WiFi
@@ -990,6 +1031,8 @@ void WebServerAPI::setupRoutes() {
         if (!doc["turn_off_at"].isNull()) config.system.turn_off_at = doc["turn_off_at"].as<String>();
         if (!doc["wake_up_at"].isNull()) config.system.wake_up_at = doc["wake_up_at"].as<String>();
         if (!doc["night_brightness"].isNull()) config.system.night_brightness = doc["night_brightness"].as<int>();
+        if (!doc["idle_fighter_enabled"].isNull()) config.system.idle_fighter_enabled = doc["idle_fighter_enabled"].as<bool>();
+        if (!doc["idle_fighter_interval"].isNull()) config.system.idle_fighter_interval = doc["idle_fighter_interval"].as<int>();
 
         if (!doc["timezone"].isNull()) {
             config.system.timezone = doc["timezone"].as<String>();
@@ -1051,43 +1094,7 @@ void WebServerAPI::setupRoutes() {
     });
     
     // API: Save Selected GIF Playlists — write directly to SD
-    AsyncCallbackJsonWebHandler* savePlaylistsHandler = new AsyncCallbackJsonWebHandler("/api/playlists/save", [](AsyncWebServerRequest *request, JsonVariant &json) {
-        if (!json.is<JsonObject>()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-            return;
-        }
-        JsonObject doc = json.as<JsonObject>();
-        JsonArray playlistsArray = doc["playlists"].as<JsonArray>();
-        
-        std::vector<String> paths;
-        for (JsonVariant v : playlistsArray) {
-            paths.push_back(v.as<String>());
-        }
-        
-        // Apply immediately
-        extern GifEngine* gifEngine;
-        if (gifEngine) gifEngine->setDefaultPlaylists(paths);
 
-        // Write directly to SD (no async flag — prevents data loss on reboot)
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
-            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
-            if (f) {
-                DynamicJsonDocument saveDoc(1024);
-                JsonArray arr = saveDoc["playlists"].to<JsonArray>();
-                for (const String& p : paths) arr.add(p);
-                serializeJson(saveDoc, f);
-                f.close();
-                LOGI("WebServer", "GIF playlists saved to SD.");
-            } else {
-                LOGE("WebServer", "Failed to write playlists_selected.json");
-            }
-            xSemaphoreGive(sdMutex);
-        }
-
-        request->send(200, "application/json", "{\"success\":true}");
-    }, 4096);
-    server.addHandler(savePlaylistsHandler);
 
     // API: Send Marquee Message
     AsyncCallbackJsonWebHandler* msgHandler = new AsyncCallbackJsonWebHandler("/api/message", [this](AsyncWebServerRequest *request, JsonVariant &json) {
@@ -1182,6 +1189,11 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"success\":true}");
         delay(500);
         ESP.restart();
+    });
+    server.on("/api/system/restart_app", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":true}");
+        delay(500);
+        ESP.restart(); // On ESP32, "Restart App" is equivalent to a full reboot
     });
     
     // API: OTA Firmware Update

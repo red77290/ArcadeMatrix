@@ -20,11 +20,16 @@ struct SpiRamAllocator {
 
 using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
-bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& city, const String& lang, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
+bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& city, const String& lang, const String& units, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
     HTTPClient http;
     String reqLang = lang.length() > 0 ? lang : "fr";
+    String reqUnits = (units.equalsIgnoreCase("imperial") || units.equalsIgnoreCase("fahrenheit") || units.equalsIgnoreCase("f")) ? "imperial" : "metric";
     
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + reqLang;
+    String encodedCity = city;
+    encodedCity.trim();
+    encodedCity.replace(" ", "%20");
+    
+    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + encodedCity + "&units=" + reqUnits + "&appid=" + apiKey + "&lang=" + reqLang;
     
     http.begin(url);
     int httpCode = http.GET();

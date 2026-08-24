@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <gfxfont.h>
+#include "../core/BitmapFontLoader.h"
 
 struct MessageConfig {
     String text;
@@ -39,6 +40,7 @@ private:
     MessageConfig currentMsg;
     bool active;
     GFXfont* customFont;
+    BitmapFontLoader fontLoader;
     
     unsigned long startTime;
     unsigned long lastUpdate;

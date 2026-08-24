@@ -49,13 +49,10 @@ void DisplayArbiter::clearExpired() {
     unsigned long now = millis();
     for (auto it = requests.begin(); it != requests.end(); ) {
         if (it->lifecycle == RequestLifecycle::TIMED) {
-            if (now - it->created_at >= it->timeout_ms) {
+            if (it->timeout_ms > 0 && (now - it->created_at >= it->timeout_ms)) {
                 it = requests.erase(it);
                 continue;
             }
-        } else if (it->lifecycle == RequestLifecycle::ONE_SHOT) {
-            it = requests.erase(it);
-            continue;
         }
         ++it;
     }

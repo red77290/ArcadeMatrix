@@ -50,6 +50,7 @@ private:
     PublisherTheme currentTheme;
     TimeData currentTime;
     const EngineConfig* currentConfig = nullptr;
+    volatile bool configDirty = false;
     
     // Kept for legacy setup until full migration
     MatrixPanel_I2S_DMA* legacy_matrix;

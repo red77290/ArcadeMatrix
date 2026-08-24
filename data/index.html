@@ -580,9 +580,6 @@ select.input option {
         <li class="nav-item" data-page="media">
           <span class="icon">🎬</span> <span data-i18n="nav_media">Media</span>
         </li>
-        <li class="nav-item" data-page="message">
-          <span class="icon">💬</span> <span data-i18n="nav_message">Message</span>
-        </li>
         <li class="nav-item" data-page="system">
           <span class="icon">⚙️</span> <span data-i18n="nav_system">System</span>
         </li>
@@ -678,69 +675,41 @@ select.input option {
             <h1 data-i18n="nav_media">Media Management</h1>
           </div>
         </header>
+
+        <!-- Fighter Animation Settings Card -->
+        <div class="card glass shadow" style="margin-bottom: 1.5rem;">
+          <h3>🥋 Fighter Animation Overlay</h3>
+          <p class="text-muted">Configure random arcade fighters overlaid across active rotation screens.</p>
+          
+          <div class="form-grid" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Activation</label>
+              <label class="switch" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="setting-idle_fighter_enabled">
+                <span>Enable Fighter Animations</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label>Interval / Frequency (seconds)</label>
+              <input type="number" id="setting-idle_fighter_interval" class="input" min="1" max="3600" placeholder="60">
+              <small class="text-muted">Delay between random fighter appearances.</small>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveMediaSettings()" style="margin-top: 1rem;">💾 Save Media Settings</button>
+        </div>
+
+        <!-- Custom Marquee Image Card -->
         <div class="card glass shadow">
-          <h3>Custom Marquee Image</h3>
+          <h3>🖼️ Custom Marquee Image</h3>
           <p class="text-muted">Upload an image to display immediately on the matrix.</p>
-          <div id="marquee-drop-zone" class="drop-zone">
+          <div id="marquee-drop-zone" class="drop-zone" style="margin-top: 1rem;">
             <div class="drop-icon">🖼️</div>
             <div class="drop-text">Drop image here or click to browse</div>
             <input type="file" id="marquee-file-input" accept="image/png, image/jpeg, image/gif" style="display: none;">
           </div>
         </div>
-        
-        <div class="card glass shadow" style="margin-top: 2rem;">
-          <h3>GIF Playlists</h3>
-          <p>Select which GIF folders play during idle rotation.</p>
-          <div class="playlist-list"></div>
-        </div>
       </section>
 
-      <!-- Message Page -->
-      <section id="page-message" class="page">
-        <header class="page-header">
-          <div class="header-left">
-            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
-            <h1 data-i18n="nav_message">Custom Message</h1>
-          </div>
-        </header>
-        <div class="card glass shadow">
-          <h3>Custom Marquee Message</h3>
-          <div class="form-group">
-            <label>Text</label>
-            <input type="text" id="msg-input" class="input" placeholder="Type text to scroll...">
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Color (Hex)</label>
-              <input type="color" id="msg-color" class="input" value="#ffffff" style="height: 42px; padding: 0.2rem;">
-            </div>
-            <div class="form-group">
-              <label>Size (Scale)</label>
-              <input type="number" id="msg-size" class="input" value="1" min="1" max="5">
-            </div>
-            <div class="form-group">
-              <label>Direction</label>
-              <select id="msg-direction" class="input">
-                <option value="left">Scroll Left</option>
-                <option value="right">Scroll Right</option>
-                <option value="up">Scroll Up</option>
-                <option value="down">Scroll Down</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-grid col-2" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Speed (Higher = Slower)</label>
-              <input type="number" id="msg-speed" class="input" value="30">
-            </div>
-            <div class="form-group">
-              <label>Timeout (Seconds)</label>
-              <input type="number" id="msg-timeout" class="input" value="10">
-            </div>
-          </div>
-          <button id="btn-send-message" class="btn btn-primary" style="margin-top: 1.5rem;">Send to Matrix 🚀</button>
-        </div>
-      </section>
 
       <!-- System Page -->
       <section id="page-system" class="page">
@@ -1354,7 +1323,8 @@ async function initDynamicEngines() {
        if (!inst) return;
        API.post('/api/instances', { instance_id: inst, engine_id: eng, config: {} }).then(() => {
            window.showToast('Instance created, please refresh', 'success');
-           setTimeout(() => location.reload(), 1000);
+           localStorage.setItem('activePage', 'display');
+           setTimeout(() => location.reload(), 500);
        });
     };
     
@@ -1402,9 +1372,10 @@ async function initDynamicEngines() {
       delBtn.innerText = '🗑️ Remove';
       delBtn.onclick = () => {
           if (confirm('Are you sure you want to remove this instance?')) {
-              API.delete(`/api/instances/${instance.instance_id}`).then(() => {
+              API.delete(`/api/instances?id=${instance.instance_id}`).then(() => {
                   window.showToast('Instance removed', 'success');
-                  setTimeout(() => location.reload(), 1000);
+                  localStorage.setItem('activePage', 'display');
+                  setTimeout(() => location.reload(), 500);
               });
           }
       };
@@ -1824,23 +1795,29 @@ document.addEventListener('DOMContentLoaded', () => {
   initCustomMarquee();
   initNetworkSettings();
   initSettings();
-  initPlaylists();
   initDynamicEngines();
   initHardwareCapabilities();
 });
 
+function switchToPage(pageName) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+  if (navItem) navItem.classList.add('active');
+  const pageEl = document.getElementById(`page-${pageName}`);
+  if (pageEl) pageEl.classList.add('active');
+  localStorage.setItem('activePage', pageName);
+}
+
 function initNavigation() {
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-
-      item.classList.add('active');
-      const pageId = `page-${item.getAttribute('data-page')}`;
-      const pageEl = document.getElementById(pageId);
-      if (pageEl) pageEl.classList.add('active');
+      switchToPage(item.getAttribute('data-page'));
     });
   });
+
+  const savedPage = localStorage.getItem('activePage') || 'dashboard';
+  switchToPage(savedPage);
 
   const langSelect = document.getElementById('lang-selector');
   if (langSelect) {
@@ -1931,10 +1908,14 @@ function initDashboard() {
   setInterval(async () => {
     try {
       const info = await API.get('/api/system_info');
-      document.getElementById('metric-cpu').textContent = `${info.cpu_load.toFixed(1)} %`;
-      document.getElementById('metric-temp').textContent = `${info.temperature_c.toFixed(1)} °C`;
-      document.getElementById('metric-ram').textContent = `${info.ram_used_mb} MB`;
-      document.getElementById('metric-disk').textContent = `${info.disk_free_gb} GB`;
+      const elCpu = document.getElementById('metric-cpu');
+      const elTemp = document.getElementById('metric-temp');
+      const elRam = document.getElementById('metric-ram');
+      const elDisk = document.getElementById('metric-disk');
+      if (elCpu && info.cpu_load !== undefined) elCpu.textContent = `${info.cpu_load.toFixed(1)} %`;
+      if (elTemp && info.temperature_c !== undefined) elTemp.textContent = `${info.temperature_c.toFixed(1)} °C`;
+      if (elRam && info.ram_used_mb !== undefined) elRam.textContent = `${info.ram_used_mb.toFixed(1)} MB`;
+      if (elDisk && info.disk_free_gb !== undefined) elDisk.textContent = `${info.disk_free_gb.toFixed(1)} GB`;
     } catch {}
   }, 4000);
 }
@@ -2159,13 +2140,13 @@ function initNetworkSettings() {
   const btnSaveMqtt = document.getElementById('btn-save-mqtt');
   if (btnSaveMqtt) {
     btnSaveMqtt.addEventListener('click', async () => {
-      const mqtt_enable = document.getElementById('hw-mqtt-enable').value === '1';
+      const mqtt_enabled = document.getElementById('hw-mqtt-enable').value === '1';
       const mqtt_broker = document.getElementById('hw-mqtt-broker').value;
       const mqtt_port = parseInt(document.getElementById('hw-mqtt-port').value, 10);
       const mqtt_user = document.getElementById('hw-mqtt-user').value;
       const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
       try {
-        await API.post('/api/settings', { mqtt_enable, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
+        await API.post('/api/settings', { mqtt_enabled, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
         window.showToast('MQTT Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
@@ -2187,6 +2168,20 @@ function initNetworkSettings() {
     });
   }
 }
+
+window.saveMediaSettings = async function() {
+  const enabled = document.getElementById("setting-idle_fighter_enabled") ? document.getElementById("setting-idle_fighter_enabled").checked : false;
+  const interval = parseInt(document.getElementById("setting-idle_fighter_interval").value) || 0;
+  try {
+    await API.post("/api/settings", { 
+      idle_fighter_enabled: enabled,
+      idle_fighter_interval: interval 
+    });
+    window.showToast("Media & Fighter settings saved!", "success");
+  } catch (e) {
+    window.showToast("Failed to save media settings", "warning");
+  }
+};
 
 async function initSettings() {
   // Load fonts list
@@ -2252,6 +2247,14 @@ async function initSettings() {
     // API
     document.getElementById('hw-api-auth').value = s.api_auth_enabled ? 'true' : 'false';
     document.getElementById('hw-api-token').value = s.api_token || '';
+
+    // Media / Fighter
+    if (document.getElementById("setting-idle_fighter_enabled")) {
+      document.getElementById("setting-idle_fighter_enabled").checked = !!s.idle_fighter_enabled;
+    }
+    if (document.getElementById("setting-idle_fighter_interval")) {
+      document.getElementById("setting-idle_fighter_interval").value = (s.idle_fighter_interval !== undefined) ? s.idle_fighter_interval : 60;
+    }
 
     // Hardware, Network, and MQTT settings are loaded above.
     // Dynamic engines and rotation are loaded by initDynamicEngines().
@@ -2328,79 +2331,6 @@ async function initSettings() {
   }
 }
 
-async function initPlaylists() {
-  const container = document.querySelector('.playlist-list');
-  if (!container) return;
-  
-  container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-color);">Loading GIFs...<br><small style="opacity:0.7">Reading SD Card, this may take a few seconds...</small></div>`;
-  
-  try {
-    const res = await API.get('/api/playlists');
-    const allPlaylists = res; 
-    
-    let selectedPaths = [];
-    try {
-      const selRes = await API.get('/api/playlists/selected');
-      selectedPaths = selRes.playlists || [];
-    } catch (e) {
-      console.warn('Could not fetch selected playlists', e);
-    }
-    
-    let html = '';
-    for (const [name, info] of Object.entries(allPlaylists)) {
-      const isChecked = selectedPaths.includes(info.path) ? 'checked' : '';
-      const count = info.count || (info.files ? info.files.length : 0);
-      
-      html += `
-        <div class="playlist-item">
-          <div class="info">
-            <h4>${name}</h4>
-            <span>${count} GIFs found</span>
-          </div>
-          <div class="action">
-            <label style="display:flex; align-items:center; cursor:pointer;">
-              <input type="checkbox" class="playlist-cb" value="${info.path}" ${isChecked} style="width:20px;height:20px;margin-right:10px;accent-color:var(--primary);">
-              Include
-            </label>
-          </div>
-        </div>
-      `;
-    }
-    
-    if (Object.keys(allPlaylists).length === 0) {
-      html = `<div style="padding:1rem;text-align:center;">No GIF folders found. Check your data/gifs directory.</div>`;
-    } else {
-      html += `<button id="btn-save-playlists" class="btn btn-primary" style="margin-top:1rem; width:100%;">Save GIF Playlists</button>`;
-    }
-    
-    container.innerHTML = html;
-    
-    const btnSave = document.getElementById('btn-save-playlists');
-    if (btnSave) {
-      btnSave.addEventListener('click', async () => {
-        btnSave.disabled = true;
-        btnSave.textContent = 'Saving...';
-        
-        const checkboxes = document.querySelectorAll('.playlist-cb:checked');
-        const pathsToSave = Array.from(checkboxes).map(cb => cb.value);
-        
-        try {
-          await API.post('/api/playlists/save', { playlists: pathsToSave });
-          window.showToast('Playlists saved successfully!', 'success');
-        } catch (e) {
-          window.showToast('Failed to save playlists', 'error');
-        } finally {
-          btnSave.disabled = false;
-          btnSave.textContent = 'Save GIF Playlists';
-        }
-      });
-    }
-    
-  } catch (e) {
-    container.innerHTML = `<div style="padding:2rem;text-align:center;color:#ef4444;">Failed to load playlists.</div>`;
-    console.error(e);
-  }
-}
 
 
 

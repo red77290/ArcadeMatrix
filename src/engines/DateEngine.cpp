@@ -46,12 +46,15 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     textColor = matrix->color565(255, 255, 255);
     shadowColor = matrix->color565(0, 0, 0);
 
-    m_config.theme = config->getInt("theme", 0);
-    m_config.date_font = config->getInt("date_font", 0);
+    m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
+    m_config.date_font = config->getString("date_font", "Default");
     m_config.date_size = config->getInt("date_size", 1);
     m_config.date_offset_x = config->getInt("date_offset_x", 0);
     m_config.date_offset_y = config->getInt("date_offset_y", 0);
     m_config.date_font_path = config->getString("date_font_path", "");
+    if (m_config.date_font.endsWith(".amf") || m_config.date_font.startsWith("/")) {
+        m_config.date_font_path = m_config.date_font;
+    }
     
     if (m_config.date_font_path.length() > 0) {
         if (!customFont.loadFromSD(m_config.date_font_path.c_str())) {
@@ -61,6 +64,25 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     
     setTheme(static_cast<PublisherTheme>(m_config.theme));
     return EngineError::OK;
+}
+
+void DateEngine::onConfigChanged(const EngineConfig* config) {
+    if (config) {
+        m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
+        m_config.date_font = config->getString("date_font", "Default");
+        m_config.date_size = config->getInt("date_size", 1);
+        m_config.date_offset_x = config->getInt("date_offset_x", 0);
+        m_config.date_offset_y = config->getInt("date_offset_y", 0);
+        m_config.date_font_path = config->getString("date_font_path", "");
+        if (m_config.date_font.endsWith(".amf") || m_config.date_font.startsWith("/")) {
+            m_config.date_font_path = m_config.date_font;
+        }
+        m_config.date_color_1 = config->getString("date_color_1", "");
+        m_config.date_color_2 = config->getString("date_color_2", "");
+        
+        reloadCustomFont();
+        setTheme(static_cast<PublisherTheme>(m_config.theme));
+    }
 }
 
 void DateEngine::activate() {}
@@ -355,27 +377,18 @@ void DateEngine::applyThemeSettings() {
     GFXfont* loadedCustomFont = customFont.getFont();
     if (loadedCustomFont) {
         selectedFont = loadedCustomFont;
-    } else if (m_config.date_font != THEME_NONE && m_config.date_font != 0) {
-        switch (m_config.date_font) {
-            case THEME_NINTENDO:
-            case THEME_HUDSON:
-                selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b; break;
-            case THEME_SEGA:
-                selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b; break;
-            case THEME_CAVE:
-            case THEME_SNK:
-            case THEME_TECHNOS:
-                selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b; break;
-            case THEME_TAITO:
-            case THEME_KONAMI:
-                selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b; break;
-            case THEME_CAPCOM:
-            case THEME_IGS:
-            case THEME_BANPRESTO:
-            case THEME_NAMCO:
-                selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b; break;
-            default: break;
-        }
+    } else if (m_config.date_font.equalsIgnoreCase("PressStart2P")) {
+        selectedFont = isHD ? (GFXfont*)&PressStart2P12pt7b : (GFXfont*)&PressStart2P9pt7b;
+    } else if (m_config.date_font.equalsIgnoreCase("namco")) {
+        selectedFont = isHD ? (GFXfont*)&namco__12pt7b : (GFXfont*)&namco__9pt7b;
+    } else if (m_config.date_font.equalsIgnoreCase("FreeSansBold")) {
+        selectedFont = isHD ? (GFXfont*)&FreeSansBold12pt7b : (GFXfont*)&FreeSansBold9pt7b;
+    } else if (m_config.date_font.equalsIgnoreCase("FreeMonoBold")) {
+        selectedFont = isHD ? (GFXfont*)&FreeMonoBold12pt7b : (GFXfont*)&FreeMonoBold9pt7b;
+    } else if (m_config.date_font.equalsIgnoreCase("RetroGaming")) {
+        selectedFont = isHD ? (GFXfont*)&Retro_Gaming12pt7b : (GFXfont*)&Retro_Gaming9pt7b;
+    } else if (m_config.date_font.equalsIgnoreCase("Default")) {
+        selectedFont = nullptr;
     }
     
     matrix->setFont(selectedFont);

@@ -19,7 +19,14 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
     if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
     m_instanceConfig = config;
     m_hasPsram = context->hasPsram();
-    return begin(context->getMatrix()) ? EngineError::OK : EngineError::InitializationFailed;
+    if (!begin(context->getMatrix())) return EngineError::InitializationFailed;
+    if (config) onConfigChanged(config);
+    else {
+        std::vector<String> paths;
+        paths.push_back("/gifs");
+        setDefaultPlaylists(paths);
+    }
+    return EngineError::OK;
 }
 
 void GifEngine::activate() {
@@ -30,9 +37,12 @@ void GifEngine::activate() {
         int cfgCount = m_instanceConfig->getInt("gifs_count", 0);
         if (cfgCount > 0) count = cfgCount;
     }
-    if (hasDefaultPlaylists()) {
-        playDefaultPlaylists(count);
+    if (!hasDefaultPlaylists()) {
+        std::vector<String> paths;
+        paths.push_back("/gifs");
+        setDefaultPlaylists(paths);
     }
+    playDefaultPlaylists(count);
 }
 
 void GifEngine::update(EngineContext* context) {
@@ -47,6 +57,31 @@ void GifEngine::deactivate() {
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
     m_instanceConfig = config;
+    if (config) {
+        String folders = config->getString("folder", "all");
+        std::vector<String> paths;
+        
+        if (folders == "all" || folders.isEmpty()) {
+            paths.push_back("/gifs"); // Fallback
+        } else {
+            // Split by comma
+            int start = 0;
+            while (start < folders.length()) {
+                int comma = folders.indexOf(',', start);
+                if (comma == -1) comma = folders.length();
+                String path = folders.substring(start, comma);
+                path.trim();
+                if (path.length() > 0) {
+                    paths.push_back(path);
+                }
+                start = comma + 1;
+            }
+        }
+        
+        if (!paths.empty()) {
+            setDefaultPlaylists(paths);
+        }
+    }
 }
 
 bool GifEngine::isFinished() const {
@@ -190,36 +225,85 @@ bool GifEngine::decodePng(const char* filepath) {
     return true;
 }
 
-void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
-    if (playlistPaths.empty()) return;
-    
-    // Sanitize all paths immediately
-    std::vector<String> sanitized;
-    for (String p : playlistPaths) {
-        sanitized.push_back(sanitizePlaylistPath(p));
+void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vector<String>& outPaths) {
+    outPaths.clear();
+    for (String p : inputPaths) {
+        String cleanPath = sanitizePlaylistPath(p);
+        
+        // If the path is /gifs or all, load all folders directly from /gifs/playlists.json
+        if (cleanPath == "/gifs" || cleanPath == "/all" || cleanPath == "all") {
+            bool loadedFromJson = false;
+            if (sd.exists("/gifs/playlists.json")) {
+                FsFile plFile = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
+                if (plFile) {
+                    DynamicJsonDocument doc(2048);
+                    DeserializationError err = deserializeJson(doc, plFile);
+                    plFile.close();
+                    if (!err && doc.is<JsonObject>()) {
+                        for (JsonPair kv : doc.as<JsonObject>()) {
+                            if (kv.value().is<JsonObject>()) {
+                                String subPath = kv.value()["path"].as<String>();
+                                if (subPath.length() > 0) {
+                                    outPaths.push_back(subPath);
+                                    loadedFromJson = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!loadedFromJson) {
+                // Fallback to SD directory check if playlists.json is absent
+                FsFile dir = sd.open("/gifs", FILE_OPEN_READ);
+                if (dir && isDirectory(dir)) {
+                    FsFile entry = dir.openNextFile();
+                    while (entry) {
+                        if (isDirectory(entry)) {
+                            String subName = getFileName(entry);
+                            if (!isMacJunk(subName)) {
+                                outPaths.push_back("/gifs/" + subName);
+                            }
+                        }
+                        entry.close();
+                        entry = dir.openNextFile();
+                    }
+                    dir.close();
+                }
+            }
+        } else {
+            outPaths.push_back(cleanPath);
+        }
     }
     
-    pendingPlaylists = sanitized;
+    // Safety fallback
+    if (outPaths.empty() && !inputPaths.empty()) {
+        for (String p : inputPaths) {
+            outPaths.push_back(sanitizePlaylistPath(p));
+        }
+    }
+}
+
+void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
+    if (playlistPaths.empty()) return;
+    std::vector<String> expanded;
+    expandPlaylists(playlistPaths, expanded);
+    pendingPlaylists = expanded;
     hasPendingPlaylists = true;
     remainingGifsToPlay = -1;
 }
 
 void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
-    std::vector<String> sanitized;
-    for (String p : playlistPaths) {
-        sanitized.push_back(sanitizePlaylistPath(p));
-    }
-    defaultPlaylists = sanitized;
-    pendingPlaylists = sanitized;
+    std::vector<String> expanded;
+    expandPlaylists(playlistPaths, expanded);
+    defaultPlaylists = expanded;
+    pendingPlaylists = expanded;
     hasPendingPlaylists = true;
+    LOGI("GifEngine", "Set %u default playlist folders.", (unsigned int)expanded.size());
 }
 
 String GifEngine::sanitizePlaylistPath(String p) {
     if (!p.startsWith("/")) p = "/" + p;
-    // Exact match ("/gifs" or "/sprites", no trailing slash) must NOT be re-prefixed - only
-    // startsWith("/gifs/")/("/sprites/") checks the sub-path case. Without this exact-match
-    // check, the common default playlist value "/gifs" would incorrectly become "/gifs/gifs"
-    // (a real bug seen in production: every open() on the resulting bad path silently fails).
+    // Exact match ("/gifs" or "/sprites", no trailing slash) must NOT be re-prefixed
     if (p == "/gifs" || p == "/sprites") return p;
     if (!p.startsWith("/gifs/") && !p.startsWith("/sprites/")) p = "/gifs" + p;
     return p;
@@ -252,11 +336,14 @@ void GifEngine::loadNextFileInPlaylist() {
         
         String indexPath = pPath + "/index.txt";
         indexPath.replace("//", "/");
-        FsFile indexFile = sd.open(indexPath, FILE_OPEN_READ);
+        FsFile indexFile;
+        if (sd.exists(indexPath.c_str())) {
+            indexFile = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+        }
         
         String targetPath = "";
+        std::vector<String> validFiles;
         if (indexFile && indexFile.size() > 0) {
-            std::vector<String> validFiles;
             while (indexFile.available()) {
                 String line = indexFile.readStringUntil('\n');
                 line.trim();
@@ -267,21 +354,43 @@ void GifEngine::loadNextFileInPlaylist() {
                 }
             }
             indexFile.close();
-            
-            if (!validFiles.empty()) {
-                int selectedIdx = random(validFiles.size());
-                String candidate = pPath + "/" + validFiles[selectedIdx];
-                // Prevent playing the exact same GIF twice in a row if playlist has multiple files
-                if (validFiles.size() > 1 && candidate == lastPlayedGif) {
-                    selectedIdx = (selectedIdx + 1 + random(validFiles.size() - 1)) % validFiles.size();
-                    candidate = pPath + "/" + validFiles[selectedIdx];
+        }
+        
+        // Dynamic directory scan fallback if index.txt not present or empty
+        if (validFiles.empty()) {
+            FsFile pDir = sd.open(pPath.c_str(), FILE_OPEN_READ);
+            if (pDir && isDirectory(pDir)) {
+                FsFile fileEntry = pDir.openNextFile();
+                while (fileEntry) {
+                    if (!isDirectory(fileEntry)) {
+                        String name = getFileName(fileEntry);
+                        if (!isMacJunk(name) && name.indexOf("._") == -1 && name.indexOf("System Volume") == -1) {
+                            String lower = name;
+                            lower.toLowerCase();
+                            if (lower.endsWith(".gif") || lower.endsWith(".png") || lower.endsWith(".raw")) {
+                                validFiles.push_back(name);
+                            }
+                        }
+                    }
+                    fileEntry.close();
+                    fileEntry = pDir.openNextFile();
                 }
-                targetPath = candidate;
+                pDir.close();
             }
         }
         
+        if (!validFiles.empty()) {
+            int selectedIdx = random(validFiles.size());
+            String candidate = pPath + "/" + validFiles[selectedIdx];
+            if (validFiles.size() > 1 && candidate == lastPlayedGif) {
+                selectedIdx = (selectedIdx + 1 + random(validFiles.size() - 1)) % validFiles.size();
+                candidate = pPath + "/" + validFiles[selectedIdx];
+            }
+            targetPath = candidate;
+        }
+        
         if (targetPath.length() == 0) {
-            LOGW("GifEngine", "No index.txt found in %s, please run generate_index.sh", pPath.c_str());
+            LOGW("GifEngine", "No valid files or index.txt found in %s", pPath.c_str());
         }
         
         if (targetPath.length() > 0) {
