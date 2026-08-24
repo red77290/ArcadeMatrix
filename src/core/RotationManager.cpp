@@ -119,8 +119,16 @@ void RotationManager::resetRotation() {
 }
 
 void RotationManager::switchToModule(int index) {
-  if (config.rotation.empty())
+  if (config.rotation.empty()) {
+    if (currentActiveInstanceId != "") {
+      IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+      if (oldEngine) {
+        oldEngine->deactivate();
+      }
+      currentActiveInstanceId = "";
+    }
     return;
+  }
 
   static int switchDepth = 0;
   if (switchDepth > (int)config.rotation.size()) {
@@ -217,8 +225,16 @@ void RotationManager::setSuspended(bool susp) {
 bool RotationManager::loop() {
     processPendingActions();
 
-    if (suspended || config.rotation.empty())
+    if (suspended || config.rotation.empty()) {
+        if (currentActiveInstanceId != "") {
+            IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+            if (oldEngine) {
+                oldEngine->deactivate();
+            }
+            currentActiveInstanceId = "";
+        }
         return true;
+    }
 
   uint32_t now = millis();
   String inst_id = config.rotation[currentIndex].instance_id;

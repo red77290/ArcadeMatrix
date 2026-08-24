@@ -496,7 +496,7 @@ void loop() {
             }
         }
         if (gifEngine) {
-            if (gifEngine->isActive() && rotationManager->getCurrentEngineId() != "gifs") {
+            if (gifEngine->isActive()) {
                 DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), gifEngine};
                 displayArbiter.submitRequest(req);
             } else {
