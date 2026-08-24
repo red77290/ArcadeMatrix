@@ -158,7 +158,7 @@ void MessageEngine::render(EngineContext* context) {
     auto* matrix = context->getMatrix();
     if (!matrix) return;
 
-    matrix->clearScreen();
+    matrix->fillScreen(0);
     matrix->setFont(customFont);
     matrix->setTextSize(currentMsg.size);
     matrix->setTextColor(currentMsg.color);

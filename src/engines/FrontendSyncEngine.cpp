@@ -99,7 +99,7 @@ bool FrontendSyncEngine::loop() {
         handleGameEvent(pendingPayload, reqId);
     } else if (!hasReceivedAnyEvent && !waitingDisplayed && message && millis() > 12000) {
         waitingDisplayed = true;
-        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
+        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "rtl", 40, 0 };
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }

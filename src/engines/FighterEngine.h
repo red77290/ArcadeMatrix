@@ -146,6 +146,17 @@ private:
     FighterPlayer p1;            ///< Player 1 (Left)
     FighterPlayer p2;            ///< Player 2 (Right)
 
+    // Background Preloader (Core 0 FreeRTOS task)
+    FighterPlayer nextP1;
+    FighterPlayer nextP2;
+    volatile bool isNextReady = false;
+    volatile bool isPreloading = false;
+    TaskHandle_t loaderTaskHandle = nullptr;
+
+    static void loaderTaskFunc(void* param);
+    void runBackgroundPreload();
+    void triggerBackgroundPreload();
+
     int numAvailableFighters = 0;   ///< Number of total indexed fighters on SD
     uint32_t* fighterOffsets = nullptr; ///< File offsets for the fighter index
     uint32_t retryDelayEnd = 0;     ///< Delay timer for retry logic
@@ -168,22 +179,8 @@ private:
     uint32_t hitStopUntilMillis = 0; ///< Hit-stop pause end time
     int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake
     
-    /**
-     * @brief State machine for asynchronous loading from SD to avoid blocking.
-     */
-    enum LoadState {
-        LOAD_IDLE,
-        LOAD_INIT,
-        LOAD_P1_WALK, LOAD_P1_ATTACK, LOAD_P1_HIT, LOAD_P1_WIN,
-        LOAD_P1_SPECIAL, LOAD_P1_SUPER, LOAD_P1_FALL,
-        LOAD_P2_WALK, LOAD_P2_ATTACK, LOAD_P2_HIT, LOAD_P2_WIN,
-        LOAD_P2_SPECIAL, LOAD_P2_SUPER, LOAD_P2_FALL,
-        LOAD_FINISH
-    };
-    LoadState currentLoadState = LOAD_IDLE;
     String loadDir;
     bool m_hasPsram = false;
-    void processLoadState();
 };
 
 #endif
