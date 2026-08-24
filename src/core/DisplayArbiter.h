@@ -9,8 +9,9 @@ enum class DisplayPriority {
     ROTATION = 10,
     GIF = 20,
     MARQUEE = 30,
-    VISUALIZER = 40,
-    MQTT = 100
+    MQTT = 40,
+    VISUALIZER = 50,
+    ALERT = 100
 };
 
 enum class RequestLifecycle {

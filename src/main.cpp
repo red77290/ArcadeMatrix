@@ -464,11 +464,18 @@ void loop() {
     // Synchronize Music Visualizer active state and configuration with config setting
     if (visualizerEngine) {
         bool visEnabled = false;
-        auto visInst = config.getInstance("visualizer_main");
-        if (visInst && visInst->config.getBool("enabled", false)) {
-            visEnabled = true;
+        const EngineConfig* activeCfg = nullptr;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "audiovisualizer" || inst.engine_id == "visualizer") {
+                if (inst.config.getBool("priority_mode", false) || inst.config.getBool("enabled", false)) {
+                    visEnabled = true;
+                    activeCfg = &inst.config;
+                    break;
+                }
+            }
         }
         if (visEnabled && !visualizerEngine->isActive()) {
+            if (activeCfg) visualizerEngine->onConfigChanged(activeCfg);
             visualizerEngine->activate();
             DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
             displayArbiter.submitRequest(req);

@@ -29,6 +29,8 @@ public:
     void onConfigChanged(const EngineConfig* engineConfig) override;
 
     bool isActive() const { return active; }
+    bool allowsOverlay() const override { return false; }
+    bool allowRotation() const override { return false; }
 
     /**
      * @brief Sets the visual display mode ("spectrum", "waveform", "radial", "neon_fire").
