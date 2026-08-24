@@ -474,14 +474,24 @@ void loop() {
                 }
             }
         }
-        if (visEnabled && !visualizerEngine->isActive()) {
-            if (activeCfg) visualizerEngine->onConfigChanged(activeCfg);
-            visualizerEngine->activate();
-            DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
-            displayArbiter.submitRequest(req);
-        } else if (!visEnabled && visualizerEngine->isActive()) {
-            visualizerEngine->deactivate();
-            displayArbiter.cancelRequest("VISUALIZER");
+        if (visEnabled) {
+            if (!visualizerEngine->isActive()) {
+                if (activeCfg) visualizerEngine->onConfigChanged(activeCfg);
+                visualizerEngine->activate();
+                DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
+                displayArbiter.submitRequest(req);
+            }
+            if (rotationManager && !rotationManager->isSuspended()) {
+                rotationManager->setSuspended(true);
+            }
+        } else {
+            if (visualizerEngine->isActive()) {
+                visualizerEngine->deactivate();
+                displayArbiter.cancelRequest("VISUALIZER");
+            }
+            if (rotationManager && rotationManager->isSuspended() && !config.mqtt.enabled) {
+                rotationManager->setSuspended(false);
+            }
         }
     }
 
