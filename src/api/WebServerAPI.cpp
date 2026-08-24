@@ -312,7 +312,7 @@ void WebServerAPI::setupRoutes() {
         request->send(response);
     });
 
-    AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [](AsyncWebServerRequest *request, JsonVariant &json) {
+    AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [this](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -376,6 +376,10 @@ void WebServerAPI::setupRoutes() {
             } else {
                 rotationManager->notifyConfigChanged(instanceId);
             }
+        }
+        
+        if (inst->engine_id == "audiovisualizer" && visualizer) {
+            visualizer->onConfigChanged(&inst->config);
         }
         
         request->send(200, "application/json", "{\"success\":true}");
@@ -644,15 +648,21 @@ void WebServerAPI::setupRoutes() {
                     else visualizer->deactivate();
                 }
             }
+            if (!doc["style"].isNull()) {
+                visInst->config.setString("style", doc["style"].as<String>());
+            }
             if (!doc["mode"].isNull()) {
-                visInst->config.setString("mode", doc["mode"].as<String>());
-                if (visualizer) {
-                    visualizer->onConfigChanged(&visInst->config);
-                }
+                visInst->config.setString("style", doc["mode"].as<String>());
+            }
+            if (visualizer) {
+                visualizer->onConfigChanged(&visInst->config);
             }
             if (!doc["gain"].isNull()) {
                 visInst->config.setString("gain", String(doc["gain"].as<float>()));
                 hardwareHAL.setMicGain(doc["gain"].as<float>());
+            }
+            if (!doc["sensitivity"].isNull()) {
+                visInst->config.setString("sensitivity", String(doc["sensitivity"].as<int>()));
             }
         }
         config.saveToSD("/config.json");

@@ -14,7 +14,14 @@ FrontendSyncEngine::FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine,
 }
 
 void FrontendSyncEngine::begin() {
+    stop();
     if (!mqttConfig.enabled || mqttConfig.broker.isEmpty()) return;
+    
+    hasReceivedAnyEvent = false;
+    hasPendingEvent = false;
+    isGamePlaying = false;
+    waitingDisplayed = false;
+    lastReconnectAttempt = 0;
     
     if (mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
         LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
@@ -48,6 +55,16 @@ void FrontendSyncEngine::begin() {
 void FrontendSyncEngine::stop() {
     isGamePlaying = false;
     waitingDisplayed = false;
+    hasPendingEvent = false;
+    
+    if (internalBroker) {
+        delete internalBroker;
+        internalBroker = nullptr;
+    }
+    if (mqttClient.connected()) {
+        mqttClient.disconnect();
+    }
+    
     if (gif) gif->stop();
     if (message) message->deactivate();
     LOGI("RetroFrontend", "MQTT Listener stopped.");

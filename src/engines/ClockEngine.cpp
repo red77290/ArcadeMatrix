@@ -89,7 +89,7 @@ bool ClockEngine::loop() {
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
     legacy_matrix = context->getMatrix();
     currentConfig = config;
-    int theme = config ? config->getInt("clock_theme", 0) : 0;
+    int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;
     setTheme(static_cast<PublisherTheme>(theme), true, config);
     return EngineError::OK;
 }
@@ -102,7 +102,7 @@ void ClockEngine::update(EngineContext* context) {
     if (configDirty) {
         configDirty = false;
         if (currentConfig) {
-            int theme = currentConfig->getInt("clock_theme", 0);
+            int theme = currentConfig->getInt("clock_theme", currentConfig->getInt("theme", 0));
             setTheme(static_cast<PublisherTheme>(theme), true, currentConfig);
         }
     }
@@ -133,5 +133,7 @@ void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentConfig = config;
         configDirty = true;
+        int theme = config->getInt("clock_theme", config->getInt("theme", 0));
+        setTheme(static_cast<PublisherTheme>(theme), true, config);
     }
 }

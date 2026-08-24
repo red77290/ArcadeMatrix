@@ -7,13 +7,18 @@ ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* confi
     isAnimating = false;
     animationFrame = 0;
     lastFrameTime = 0;
-    currentTheme = static_cast<PublisherTheme>((engineConfig ? engineConfig->getInt("clock_theme", 0) : 0));
+    currentTheme = static_cast<PublisherTheme>((engineConfig ? engineConfig->getInt("clock_theme", engineConfig->getInt("theme", 0)) : 0));
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
     if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
-    if (fontSetting.length() > 0 && fontSetting != "Default") {
-        if (fontSetting.endsWith(".amf") || fontSetting.startsWith("/")) {
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font_path", "");
+    if (fontSetting.length() > 0 && !fontSetting.equalsIgnoreCase("Default")) {
+        if (fontSetting.endsWith(".amf") || fontSetting.endsWith(".AMF") || fontSetting.startsWith("/")) {
             if (!customFont.loadFromSD(fontSetting.c_str())) {
-                Serial.println("ArcadeClock: clock_font set but failed to load; using compiled-in font.");
+                String altPath = fontSetting.startsWith("/") ? fontSetting : ("/fonts/" + fontSetting);
+                if (!customFont.loadFromSD(altPath.c_str())) {
+                    Serial.printf("ArcadeClock: clock_font '%s' failed to load from SD.\n", fontSetting.c_str());
+                }
             }
         }
     }
@@ -35,12 +40,17 @@ void ArcadeClock::draw(const TimeData& t) {
 }
 
 void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
-    char timeStr[12];
-    sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
+    char timeStr[16];
+    String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
+    if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
+    if (fmt == "%H:%M") {
+        sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
+    } else {
+        sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
+    }
 
     int currentScale = max(1, scale);
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
-    int effectDepth = (logicalSize >= 5) ? 2 : 1;
+    int effectDepth = (currentScale >= 5) ? 2 : 1;
 
     if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
         matrix->setTextColor(shadowColor);
@@ -84,21 +94,27 @@ void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t 
 }
 
 void ArcadeClock::drawStaticTime() {
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (logicalSize < 1) logicalSize = 1;
+    bool isHD = (matrix->height() >= 64);
     
     const GFXfont* font9pt = nullptr;
     const GFXfont* font12pt = nullptr;
     
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
-    if (fontSetting.equalsIgnoreCase("PressStart2P")) {
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font_path", "");
+    
+    if (fontSetting.equalsIgnoreCase("PressStart2P") || fontSetting.equalsIgnoreCase("PressStart2P.ttf")) {
         font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("namco")) {
+    } else if (fontSetting.equalsIgnoreCase("namco") || fontSetting.equalsIgnoreCase("namco.ttf")) {
         font9pt = &namco__9pt7b; font12pt = &namco__12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("FreeSansBold")) {
+    } else if (fontSetting.equalsIgnoreCase("FreeSansBold") || fontSetting.equalsIgnoreCase("FreeSansBold.ttf")) {
         font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold")) {
+    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold") || fontSetting.equalsIgnoreCase("FreeMonoBold.ttf")) {
         font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("RetroGaming")) {
+    } else if (fontSetting.equalsIgnoreCase("RetroGaming") || fontSetting.equalsIgnoreCase("Retro_Gaming") || fontSetting.equalsIgnoreCase("RetroGaming.ttf")) {
         font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b;
     } else if (customFont.getFont()) {
         font9pt = customFont.getFont();
@@ -116,76 +132,54 @@ void ArcadeClock::drawStaticTime() {
         }
     }
     
-    matrix->setTextSize(1);
-    matrix->setFont(font9pt);
-    int16_t bx, by;
-    uint16_t bw, bh;
-    char timeStr[12];
-    sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
-    matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
-    
-    if (bw == 0 || bh == 0) { bw = 48; bh = 7; } // Fallback
-    
-    int maxScaleW = matrix->width() / bw;
-    int maxScaleH = matrix->height() / bh;
-    int sMax = min(maxScaleW, maxScaleH);
-    
-    bool fallbackToSmall = false;
-    if (sMax < 1) {
-        sMax = 1;
-        fallbackToSmall = true; // The font is inherently too big for this screen!
+    char timeStr[16];
+    String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
+    if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
+    if (fmt == "%H:%M") {
+        sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
+    } else {
+        sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     }
+
+    const GFXfont* chosenFont = (isHD && font12pt) ? font12pt : font9pt;
     
+    int16_t bx = 0, by = 0;
+    uint16_t bw = 0, bh = 0;
     int gfxSize = 1;
-    bool use12pt = false;
     
-    if (logicalSize >= 5) {
-        gfxSize = sMax; 
-    } else if (logicalSize == 4) {
-        gfxSize = max(1, (sMax * 4) / 5);
-    } else if (logicalSize == 3) {
-        gfxSize = max(1, (sMax * 3) / 5);
-    } else if (logicalSize == 2) {
-        gfxSize = max(1, (sMax * 2) / 5);
-        if (gfxSize == 1 && sMax == 1) fallbackToSmall = true;
-    } else {
-        gfxSize = max(1, sMax / 5);
-        if (gfxSize == 1 && sMax <= 2) fallbackToSmall = true;
-    }
-    
-    if (fallbackToSmall) {
-        matrix->setFont(nullptr); // Use default 5x7 font
-        // Re-calculate sMax for the default font
+    if (chosenFont != nullptr) {
+        matrix->setFont(chosenFont);
         matrix->setTextSize(1);
-        matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
+        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
         
-        int sMaxDefault = min(matrix->width() / bw, matrix->height() / bh);
-        if (sMaxDefault < 1) sMaxDefault = 1;
-        
-        if (logicalSize >= 5) gfxSize = sMaxDefault;
-        else if (logicalSize == 4) gfxSize = max(1, (sMaxDefault * 4) / 5);
-        else if (logicalSize == 3) gfxSize = max(1, (sMaxDefault * 3) / 5);
-        else if (logicalSize == 2) gfxSize = max(1, (sMaxDefault * 2) / 5);
-        else gfxSize = max(1, sMaxDefault / 5);
-        
-        matrix->setTextSize(gfxSize);
-    } else {
-        matrix->setFont(font9pt);
-        matrix->setTextSize(gfxSize);
+        if (bw > matrix->width() || bh > matrix->height()) {
+            // If font overflows screen at 1x size, fallback to 5x7 default font
+            chosenFont = nullptr;
+            matrix->setFont(nullptr);
+        } else {
+            int sMaxW = bw > 0 ? (matrix->width() / bw) : 1;
+            int sMaxH = bh > 0 ? (matrix->height() / bh) : 1;
+            int sMax = min(sMaxW, sMaxH);
+            gfxSize = min(max(1, logicalSize), max(1, sMax));
+            matrix->setTextSize(gfxSize);
+            matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        }
     }
     
-    matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
-    
-    // Safety check: if it STILL overflows, force it to smallest possible font
-    if (bw > matrix->width()) {
+    if (chosenFont == nullptr) {
         matrix->setFont(nullptr);
         matrix->setTextSize(1);
-        matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = strlen(timeStr) * 6; bh = 8; }
+        int sMaxW = bw > 0 ? (matrix->width() / bw) : 1;
+        int sMaxH = bh > 0 ? (matrix->height() / bh) : 1;
+        int sMax = min(sMaxW, sMaxH);
+        gfxSize = min(max(1, logicalSize), max(1, sMax));
+        matrix->setTextSize(gfxSize);
+        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
     }
     
-    logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
-    int effectDepth = (logicalSize >= 5) ? 2 : 1;
+    int effectDepth = (gfxSize >= 5) ? 2 : 1;
     
     int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
     if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
@@ -201,8 +195,10 @@ void ArcadeClock::drawStaticTime() {
     int fullW = leftExtra + bw + rightExtra;
     int fullH = topExtra + bh + bottomExtra;
     
-    int x = (matrix->width() - fullW) / 2 + leftExtra + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - bx;
-    int y = (matrix->height() - fullH) / 2 + topExtra - by + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
+    int offsetX = engineConfig ? engineConfig->getInt("clock_offset_x", engineConfig->getInt("offset_x", 0)) : 0;
+    int offsetY = engineConfig ? engineConfig->getInt("clock_offset_y", engineConfig->getInt("offset_y", 0)) : 0;
+    int x = (matrix->width() - fullW) / 2 + leftExtra + offsetX - bx;
+    int y = (matrix->height() - fullH) / 2 + topExtra - by + offsetY;
     
     uint16_t textColor = matrix->color565(255, 255, 255);
     uint16_t shadowColor = matrix->color565(0, 0, 0);
