@@ -296,8 +296,6 @@ void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
     std::vector<String> expanded;
     expandPlaylists(playlistPaths, expanded);
     defaultPlaylists = expanded;
-    pendingPlaylists = expanded;
-    hasPendingPlaylists = true;
     LOGI("GifEngine", "Set %u default playlist folders.", (unsigned int)expanded.size());
 }
 
@@ -417,6 +415,7 @@ void GifEngine::stop() {
         isPlaying = false;
     }
     playlistMode = false;
+    hasPendingPlaylists = false;
     freePsramBuffer();
 }
 
