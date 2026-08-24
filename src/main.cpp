@@ -461,82 +461,78 @@ void loop() {
     bool shouldFlip = true;
     DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
-    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        // Synchronize Music Visualizer active state and configuration with config setting
-        if (visualizerEngine) {
-            bool visEnabled = false;
-            auto visInst = config.getInstance("visualizer_main");
-            if (visInst && visInst->config.getBool("enabled", false)) {
-                visEnabled = true;
-            }
-            if (visEnabled && !visualizerEngine->isActive()) {
-                visualizerEngine->activate();
-                DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
-                displayArbiter.submitRequest(req);
-            } else if (!visEnabled && visualizerEngine->isActive()) {
-                visualizerEngine->deactivate();
-                displayArbiter.cancelRequest("VISUALIZER");
-            }
+    // Synchronize Music Visualizer active state and configuration with config setting
+    if (visualizerEngine) {
+        bool visEnabled = false;
+        auto visInst = config.getInstance("visualizer_main");
+        if (visInst && visInst->config.getBool("enabled", false)) {
+            visEnabled = true;
         }
+        if (visEnabled && !visualizerEngine->isActive()) {
+            visualizerEngine->activate();
+            DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
+            displayArbiter.submitRequest(req);
+        } else if (!visEnabled && visualizerEngine->isActive()) {
+            visualizerEngine->deactivate();
+            displayArbiter.cancelRequest("VISUALIZER");
+        }
+    }
 
-        if (marqueeEngine) {
-            if (marqueeEngine->isActive()) {
-                DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), marqueeEngine};
-                displayArbiter.submitRequest(req);
-            } else {
-                displayArbiter.cancelRequest("MARQUEE");
-            }
+    if (marqueeEngine) {
+        if (marqueeEngine->isActive()) {
+            DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), marqueeEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("MARQUEE");
         }
-        if (messageEngine) {
-            if (messageEngine->isActive() && rotationManager->getCurrentEngineId() != "message") {
-                DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), messageEngine};
-                displayArbiter.submitRequest(req);
-            } else {
-                displayArbiter.cancelRequest("MESSAGE");
-            }
+    }
+    if (messageEngine) {
+        if (messageEngine->isActive() && rotationManager->getCurrentEngineId() != "message") {
+            DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), messageEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("MESSAGE");
         }
-        if (gifEngine) {
-            if (gifEngine->isActive()) {
-                DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), gifEngine};
-                displayArbiter.submitRequest(req);
-            } else {
-                displayArbiter.cancelRequest("GIF");
-            }
+    }
+    if (gifEngine) {
+        if (gifEngine->isActive()) {
+            DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), gifEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("GIF");
         }
+    }
 
-        winner = displayArbiter.evaluate();
-        IEngine* activeEngine = nullptr;
-        
-        if (winner.engine != nullptr) {
-            activeEngine = winner.engine;
-            if (activeEngine->needsClear()) {
-                matrixEngine.getDisplay()->fillScreen(0);
-            }
-            activeEngine->update(appCtx);
-            activeEngine->render(appCtx);
-            shouldFlip = activeEngine->hasNewFrame();
-        } else {
-            activeEngine = rotationManager->getCurrentActiveEngine();
-            if (activeEngine && activeEngine->needsClear()) {
-                matrixEngine.getDisplay()->fillScreen(0);
-            }
-            shouldFlip = rotationManager->loop();
+    winner = displayArbiter.evaluate();
+    IEngine* activeEngine = nullptr;
+    
+    if (winner.engine != nullptr) {
+        activeEngine = winner.engine;
+        if (activeEngine->needsClear()) {
+            matrixEngine.getDisplay()->fillScreen(0);
         }
-        
-        // Polymorphic 3-tier overlay resolution
-        if (activeEngine && activeEngine->allowsOverlay()) {
-            overlayManager.configure(rotationManager->getCurrentOverlays());
-        } else {
-            overlayManager.configure({});
+        activeEngine->update(appCtx);
+        activeEngine->render(appCtx);
+        shouldFlip = activeEngine->hasNewFrame();
+    } else {
+        activeEngine = rotationManager->getCurrentActiveEngine();
+        if (activeEngine && activeEngine->needsClear()) {
+            matrixEngine.getDisplay()->fillScreen(0);
         }
-        
-        overlayManager.update();
-        if (overlayManager.isActive()) {
-            overlayManager.render();
-            shouldFlip = true;
-        }
-        
-        xSemaphoreGive(sdMutex);
+        shouldFlip = rotationManager->loop();
+    }
+    
+    // Polymorphic 3-tier overlay resolution
+    if (activeEngine && activeEngine->allowsOverlay()) {
+        overlayManager.configure(rotationManager->getCurrentOverlays());
+    } else {
+        overlayManager.configure({});
+    }
+    
+    overlayManager.update();
+    if (overlayManager.isActive()) {
+        overlayManager.render();
+        shouldFlip = true;
     }
 
     // 2. Fetch Time & Handle Night Mode
