@@ -676,57 +676,48 @@ void WebServerAPI::setupRoutes() {
     });
     server.addHandler(visHandler);
 
-    // API: List GIF Playlists (Reads playlists.json first, falls back to dynamic directory scan)
+    // API: List GIF Playlists (Direct SD streaming with zero heap allocation, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
-        String content = "";
         bool hasJson = false;
-        
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile jsonFile = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
-            if (jsonFile) {
-                size_t len = jsonFile.size();
-                char* buf = (char*)malloc(len + 1);
-                if (buf) {
-                    jsonFile.read((uint8_t*)buf, len);
-                    buf[len] = '\0';
-                    content = buf;
-                    free(buf);
-                    hasJson = true;
-                }
-                jsonFile.close();
-            }
-            
-            if (!hasJson) {
-                content = "{";
-                bool first = true;
-                FsFile dir = sd.open("/gifs");
-                if (dir && isDirectory(dir)) {
-                    FsFile file;
-                    while (getNextFile(dir, file)) {
-                        if (isDirectory(file)) {
-                            String name = getFileName(file);
-                            // Extract just the folder name if it contains full path
-                            int lastSlash = name.lastIndexOf('/');
-                            if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                            
-                            if (name.length() > 0 && name[0] != '.') {
-                                if (!first) content += ",";
-                                content += "\"" + name + "\":{";
-                                content += "\"path\":\"/gifs/" + name + "\",";
-                                content += "\"count\":0"; // No count in fallback to prevent WDT crashes
-                                content += "}";
-                                first = false;
-                            }
-                        }
-                    }
-                }
-                if (dir) dir.close();
-                content += "}";
-            }
+            hasJson = sd.exists("/gifs/playlists.json");
             xSemaphoreGive(sdMutex);
         }
         
-        if (content.length() == 0) content = "{}";
+        if (hasJson) {
+            // Stream the JSON file directly from SD to client in chunks (no full file malloc)
+            request->send(new AsyncSdFatResponse("/gifs/playlists.json", "application/json"));
+            return;
+        }
+
+        // Fallback: Dynamic directory scan if playlists.json is absent
+        String content = "{";
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            bool first = true;
+            FsFile dir = sd.open("/gifs");
+            if (dir && isDirectory(dir)) {
+                FsFile file;
+                while (getNextFile(dir, file)) {
+                    if (isDirectory(file)) {
+                        String name = getFileName(file);
+                        int lastSlash = name.lastIndexOf('/');
+                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                        
+                        if (name.length() > 0 && name[0] != '.') {
+                            if (!first) content += ",";
+                            content += "\"" + name + "\":{";
+                            content += "\"path\":\"/gifs/" + name + "\",";
+                            content += "\"count\":0"; // No count in fallback to prevent WDT crashes
+                            content += "}";
+                            first = false;
+                        }
+                    }
+                }
+            }
+            if (dir) dir.close();
+            xSemaphoreGive(sdMutex);
+        }
+        content += "}";
         request->send(200, "application/json", content);
     });
 
