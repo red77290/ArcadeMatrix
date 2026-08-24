@@ -8,6 +8,7 @@ void MessageEngine::setCustomFont(GFXfont* font) {
 }
 
 EngineError MessageEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (context) matrixDisplay = context->getMatrix();
     if (engineConfig) onConfigChanged(engineConfig);
     return EngineError::OK;
 }
@@ -16,6 +17,7 @@ void MessageEngine::activate() {
     active = true;
     startTime = millis();
     lastUpdate = millis();
+    displayMessage(currentMsg);
 }
 
 void MessageEngine::deactivate() {
@@ -73,20 +75,39 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
     startTime = millis();
     lastUpdate = millis();
 
-    textWidth = currentMsg.text.length() * 6 * currentMsg.size;
-    textHeight = 8 * currentMsg.size;
+    if (customFont != nullptr && matrixDisplay != nullptr) {
+        int16_t x1 = 0, y1 = 0;
+        uint16_t w = 0, h = 0;
+        matrixDisplay->setFont(customFont);
+        matrixDisplay->setTextSize(currentMsg.size);
+        matrixDisplay->getTextBounds(currentMsg.text.c_str(), 0, 0, &x1, &y1, &w, &h);
+        textWidth = w;
+        textHeight = h;
+        baselineOffset = (y1 < 0) ? -y1 : textHeight;
+    } else {
+        textWidth = currentMsg.text.length() * 6 * currentMsg.size;
+        textHeight = 8 * currentMsg.size;
+        baselineOffset = 0;
+    }
+
+    int matrixW = matrixDisplay ? matrixDisplay->width() : 128;
+    int matrixH = matrixDisplay ? matrixDisplay->height() : 64;
 
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
-        cursorX = 999;
+        cursorX = matrixW;
+        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
     } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
         cursorX = -textWidth;
+        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
     } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
-        cursorY = -textHeight;
+        cursorX = (matrixW - textWidth) / 2;
+        cursorY = -textHeight + baselineOffset;
     } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
-        cursorY = 999;
-    } else if (currentMsg.direction == "static") {
-        cursorX = 999;
-        cursorY = 999;
+        cursorX = (matrixW - textWidth) / 2;
+        cursorY = matrixH + baselineOffset;
+    } else if (currentMsg.direction == "static" || currentMsg.direction == "none") {
+        cursorX = (matrixW - textWidth) / 2;
+        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
     }
 }
 
@@ -95,29 +116,17 @@ void MessageEngine::update(EngineContext* context) {
     
     auto* matrix = context->getMatrix();
     if (!matrix) return;
+    matrixDisplay = matrix;
 
     if (currentMsg.timeoutSeconds > 0 && millis() - startTime > (currentMsg.timeoutSeconds * 1000)) {
         active = false;
         return;
     }
 
-    // Dynamic initial bounds resolution
-    if (currentMsg.direction == "static") {
+    if (currentMsg.direction == "static" || currentMsg.direction == "none") {
         cursorX = (matrix->width() - textWidth) / 2;
-        cursorY = (matrix->height() - textHeight) / 2;
+        cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
         return;
-    }
-
-    if (cursorX == 999) cursorX = matrix->width();
-    if (cursorY == 999) cursorY = matrix->height();
-    if (currentMsg.direction == "rtl" || currentMsg.direction == "left" || currentMsg.direction == "ltr" || currentMsg.direction == "right") {
-        if (cursorY == 999 || cursorY == -textHeight || cursorY > matrix->height()) {
-            cursorY = (matrix->height() - textHeight) / 2;
-        }
-    } else {
-        if (cursorX == 999 || cursorX == -textWidth || cursorX > matrix->width()) {
-            cursorX = (matrix->width() - textWidth) / 2;
-        }
     }
     
     // Scroll logic based on speed (ms per pixel update)
@@ -127,15 +136,19 @@ void MessageEngine::update(EngineContext* context) {
         if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
             cursorX--;
             if (cursorX < -textWidth) cursorX = matrix->width();
+            cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
         } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
             cursorX++;
             if (cursorX > matrix->width()) cursorX = -textWidth;
+            cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
         } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
             cursorY++;
-            if (cursorY > matrix->height()) cursorY = -textHeight;
+            if (cursorY > matrix->height() + baselineOffset) cursorY = -textHeight + baselineOffset;
+            cursorX = (matrix->width() - textWidth) / 2;
         } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
             cursorY--;
-            if (cursorY < -textHeight) cursorY = matrix->height();
+            if (cursorY < -textHeight + baselineOffset) cursorY = matrix->height() + baselineOffset;
+            cursorX = (matrix->width() - textWidth) / 2;
         }
     }
 }

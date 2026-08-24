@@ -1109,6 +1109,13 @@ const translations = {
     tt_hw_limit_refresh: "Refresh rate cap in Hz (default 90Hz). Prevents the DMA hardware driver from saturating memory bandwidth and starving the CPU.",
     tt_hw_clk_phase: "Inverts the I2S pixel clock sampling edge. Enable this if you see sparkling pixels, static noise or color speckles on sensitive panels.",
     tt_hw_force_single_buffer: "Disables DMA double-buffering to halve RAM memory usage. Essential on boards without PSRAM to avoid out-of-memory crashes.",
+    
+    // Directions
+    dir_rtl: "Right to Left (RTL)",
+    dir_ltr: "Left to Right (LTR)",
+    dir_ttb: "Top to Bottom (TTB)",
+    dir_btt: "Bottom to Top (BTT)",
+    dir_static: "Static (No Scroll)",
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -1131,6 +1138,13 @@ const translations = {
     tt_hw_limit_refresh: "Plafonne la fréquence de rafraîchissement (ex: 90 Hz). Évite la saturation du bus DMA et libère le processeur pour le Wi-Fi et les animations.",
     tt_hw_clk_phase: "Inverse le front d'échantillonnage de l'horloge I2S. À activer si vous constatez des pixels qui scintillent ou du bruit statique.",
     tt_hw_force_single_buffer: "Désactive la double mémoire tampon DMA pour diviser par deux la RAM consommée. Indispensable sur les cartes sans PSRAM pour éviter les crashs mémoire.",
+    
+    // Directions
+    dir_rtl: "Droite vers Gauche (RTL)",
+    dir_ltr: "Gauche vers Droite (LTR)",
+    dir_ttb: "Haut vers Bas (TTB)",
+    dir_btt: "Bas vers Haut (BTT)",
+    dir_static: "Statique (Sans défilement)",
   },
   es: {
     nav_dashboard: "Panel",
@@ -1153,6 +1167,13 @@ const translations = {
     tt_hw_limit_refresh: "Límite de tasa de refresco en Hz (90Hz por defecto). Evita saturar el bus DMA y libera memoria/CPU para Wi-Fi y animaciones.",
     tt_hw_clk_phase: "Invierte el flanco de muestreo del reloj I2S. Activar si observas píxeles parpadeantes o ruido estático en paneles sensibles.",
     tt_hw_force_single_buffer: "Desactiva el doble búfer DMA para reducir el uso de RAM a la mitad. Esencial en placas sin PSRAM para evitar bloqueos por falta de memoria.",
+    
+    // Directions
+    dir_rtl: "Derecha a Izquierda (RTL)",
+    dir_ltr: "Izquierda a Derecha (LTR)",
+    dir_ttb: "Arriba a Abajo (TTB)",
+    dir_btt: "Abajo a Arriba (BTT)",
+    dir_static: "Estático (Sin desplazamiento)",
   }
 };
 
@@ -1507,23 +1528,36 @@ async function initDynamicEngines() {
                  });
              }
           } else if (field.options && (typeof field.options === 'string' || Array.isArray(field.options))) {
-             input = document.createElement('select');
-             input.className = 'input';
-             input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-             const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
-             optsArray.forEach(opt => {
-                 const option = document.createElement('option');
-                 if (typeof opt === 'object') {
-                     option.value = opt.value;
-                     option.innerText = opt.label;
-                 } else {
-                     const clean = String(opt).trim();
-                     option.value = clean;
-                     option.innerText = clean;
-                 }
-                 if (String(option.value) === String(currentVal)) option.selected = true;
-                 input.appendChild(option);
-             });
+              input = document.createElement('select');
+              input.className = 'input';
+              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+              const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
+              const formatOptLabel = (val, raw) => {
+                const lang = localStorage.getItem('lang') || 'en';
+                const dict = translations[lang] || translations.en;
+                const v = String(val).toLowerCase().trim();
+                if (field.id === 'direction' || v === 'rtl' || v === 'ltr' || v === 'ttb' || v === 'btt' || v === 'static' || v === 'left' || v === 'right' || v === 'up' || v === 'down' || v === 'none') {
+                  if (v === 'rtl' || v === 'left') return dict.dir_rtl || "Right to Left (RTL)";
+                  if (v === 'ltr' || v === 'right') return dict.dir_ltr || "Left to Right (LTR)";
+                  if (v === 'ttb' || v === 'down') return dict.dir_ttb || "Top to Bottom (TTB)";
+                  if (v === 'btt' || v === 'up') return dict.dir_btt || "Bottom to Top (BTT)";
+                  if (v === 'static' || v === 'none') return dict.dir_static || "Static (No Scroll)";
+                }
+                return raw || val;
+              };
+              optsArray.forEach(opt => {
+                  const option = document.createElement('option');
+                  if (typeof opt === 'object') {
+                      option.value = opt.value;
+                      option.innerText = formatOptLabel(opt.value, opt.label);
+                  } else {
+                      const clean = String(opt).trim();
+                      option.value = clean;
+                      option.innerText = formatOptLabel(clean, clean);
+                  }
+                  if (String(option.value) === String(currentVal)) option.selected = true;
+                  input.appendChild(option);
+              });
           } else if (field.field_type === 0 || field.field_type === 'Boolean') {
              input = document.createElement('select');
              input.className = 'input';
