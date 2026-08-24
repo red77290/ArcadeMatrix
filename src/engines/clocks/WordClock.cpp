@@ -14,7 +14,7 @@ void WordClock::update() {
     matrix->fillScreen(0);
     
     int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
-    if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
+    if (matrix->height() >= 64 && matrix->width() >= 128 && gfxSize == 1) gfxSize = 2; // Auto-scale for 128x64
     
     String lang = (engineConfig ? engineConfig->getString("lang", "fr") : String("fr"));
     lang.toLowerCase();
@@ -28,11 +28,62 @@ void WordClock::update() {
     }
 }
 
-void WordClock::drawLines(const std::vector<String>& lines, int gfxSize) {
-    matrix->setTextSize(gfxSize);
+void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize) {
     matrix->setFont(NULL);
     
-    int lineSpacing = 4 * gfxSize;
+    // Break down any long lines that exceed screen width into wrapped lines
+    std::vector<String> lines;
+    int maxCharsPerLine = max(1, matrix->width() / 6);
+
+    for (const String& rawLine : rawLines) {
+        if ((int)rawLine.length() <= maxCharsPerLine) {
+            lines.push_back(rawLine);
+        } else {
+            int start = 0;
+            while (start < (int)rawLine.length()) {
+                int nextSpace = rawLine.indexOf(' ', start);
+                if (nextSpace == -1) {
+                    lines.push_back(rawLine.substring(start));
+                    break;
+                }
+                int afterSpace = rawLine.indexOf(' ', nextSpace + 1);
+                if (afterSpace != -1 && (afterSpace - start) <= maxCharsPerLine) {
+                    lines.push_back(rawLine.substring(start, afterSpace));
+                    start = afterSpace + 1;
+                } else {
+                    lines.push_back(rawLine.substring(start, nextSpace));
+                    start = nextSpace + 1;
+                }
+            }
+        }
+    }
+
+    int gfxSize = requestedSize;
+    if (gfxSize < 1) gfxSize = 1;
+    
+    while (gfxSize > 1) {
+        bool overflows = false;
+        int totalH = 0;
+        int lineSpacing = 3 * gfxSize;
+        for (const String& line : lines) {
+            int lineW = line.length() * (6 * gfxSize);
+            if (lineW > matrix->width()) {
+                overflows = true;
+                break;
+            }
+            totalH += (8 * gfxSize) + lineSpacing;
+        }
+        if (totalH > matrix->height()) overflows = true;
+        if (overflows) {
+            gfxSize--;
+        } else {
+            break;
+        }
+    }
+
+    matrix->setTextSize(gfxSize);
+    
+    int lineSpacing = (matrix->height() >= 64 ? 4 : 2) * gfxSize;
     int totalH = 0;
     std::vector<int> lineHeights;
     
