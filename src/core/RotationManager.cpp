@@ -1,3 +1,4 @@
+#include "../../include/core/EngineRegistry.h"
 #include "RotationManager.h"
 #include "ConfigLoader.h"
 #include "Logger.h"
@@ -5,14 +6,7 @@
 
 extern ConfigLoader config;
 
-RotationManager::RotationManager(ClockEngine *c, DateEngine *d,
-                                 WeatherEngine *w, GifEngine *g,
-                                 FighterEngine *f, CryptoEngine *cr,
-                                 StockEngine *st, TempEngine *t,
-                                 DecibelEngine *db)
-    : clockEngine(c), dateEngine(d), weatherEngine(w), gifEngine(g),
-      fighterEngine(f), cryptoEngine(cr), stockEngine(st),
-      tempEngine(t), decibelEngine(db) {
+RotationManager::RotationManager() {
   currentIndex = 0;
   moduleStartTime = 0;
 }
@@ -40,249 +34,256 @@ size_t RotationManager::countSymbols(const String& symbols) {
 }
 
 
-void RotationManager::parseRotationString(const String &rotStr) {
-  sequence.clear();
-  String s = rotStr;
-  s.toLowerCase();
-
-  int start = 0;
-  int end = s.indexOf(',');
-  while (end != -1) {
-    String mod = s.substring(start, end);
-    mod.trim();
-    if (mod == "clock")
-      sequence.push_back(MODULE_CLOCK);
-    else if (mod == "date")
-      sequence.push_back(MODULE_DATE);
-    else if (mod == "weather")
-      sequence.push_back(MODULE_WEATHER);
-    else if (mod == "gifs")
-      sequence.push_back(MODULE_GIFS);
-    else if (mod == "crypto")
-      sequence.push_back(MODULE_CRYPTO);
-    else if (mod == "stock" || mod == "stocks")
-      sequence.push_back(MODULE_STOCKS);
-    else if (mod == "temp" || mod == "temperature")
-      sequence.push_back(MODULE_TEMP);
-    else if (mod == "decibel" || mod == "db")
-      sequence.push_back(MODULE_DECIBEL);
-
-    start = end + 1;
-    end = s.indexOf(',', start);
-  }
-  // Last item
-  String mod = s.substring(start);
-  mod.trim();
-  if (mod == "clock")
-    sequence.push_back(MODULE_CLOCK);
-  else if (mod == "date")
-    sequence.push_back(MODULE_DATE);
-  else if (mod == "weather")
-    sequence.push_back(MODULE_WEATHER);
-  else if (mod == "gifs")
-    sequence.push_back(MODULE_GIFS);
-  else if (mod == "crypto")
-    sequence.push_back(MODULE_CRYPTO);
-  else if (mod == "stock" || mod == "stocks")
-    sequence.push_back(MODULE_STOCKS);
-  else if (mod == "temp" || mod == "temperature")
-    sequence.push_back(MODULE_TEMP);
-  else if (mod == "decibel" || mod == "db")
-    sequence.push_back(MODULE_DECIBEL);
-
-  if (sequence.empty()) {
-    sequence.push_back(MODULE_CLOCK); // Fallback
-  }
+void RotationManager::begin(const ConfigLoader &cfg) {
+  activeEngines.clear();
+  currentActiveInstanceId = "";
+  queueAction(RotationAction::RESET_ROTATION);
 }
 
-void RotationManager::begin(const ConfigLoader &cfg) {
-  config = cfg;
-  parseRotationString(cfg.idle.rotation);
-  resetRotation();
+void RotationManager::queueAction(RotationAction action, const String& instanceId) {
+    std::lock_guard<std::mutex> lock(actionMutex);
+    pendingActions.push_back({action, instanceId});
+}
+
+void RotationManager::processPendingActions() {
+    std::vector<std::pair<RotationAction, String>> actionsToProcess;
+    {
+        std::lock_guard<std::mutex> lock(actionMutex);
+        actionsToProcess = std::move(pendingActions);
+        pendingActions.clear();
+    }
+    
+    for (const auto& p : actionsToProcess) {
+        if (p.first == RotationAction::NOTIFY_CONFIG_CHANGED) {
+            extern ConfigLoader config;
+            auto it = activeEngines.find(p.second);
+            if (it != activeEngines.end()) {
+                for (auto& inst : config.instances) {
+                    if (inst.instance_id == p.second) {
+                        it->second->onConfigChanged(&inst.config);
+                        break;
+                    }
+                }
+            }
+        } else if (p.first == RotationAction::RECREATE_INSTANCE) {
+            auto it = activeEngines.find(p.second);
+            if (it != activeEngines.end()) {
+                if (currentActiveInstanceId == p.second) {
+                    it->second->deactivate();
+                }
+                activeEngines.erase(it);
+                LOGI("RotationManager", "Instance %s destroyed for structural re-instantiation", p.second.c_str());
+            }
+        } else if (p.first == RotationAction::RESET_ROTATION) {
+            currentIndex = 0;
+            switchToModule(currentIndex);
+        }
+    }
+}
+
+void RotationManager::notifyConfigChanged(const String& instanceId) {
+    queueAction(RotationAction::NOTIFY_CONFIG_CHANGED, instanceId);
+}
+
+void RotationManager::recreateInstance(const String& instanceId) {
+    queueAction(RotationAction::RECREATE_INSTANCE, instanceId);
+}
+IEngine* RotationManager::getActiveEngine(const String& instanceId) {
+    auto it = activeEngines.find(instanceId);
+    if (it != activeEngines.end()) {
+        return it->second.get();
+    }
+    
+    // Lazy initialization
+    extern ConfigLoader config;
+    for (const auto& inst : config.instances) {
+        if (inst.instance_id == instanceId) {
+            auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+            if (desc && desc->factory) {
+                auto engine = desc->factory();
+                if (engine) {
+                    engine->initialize(m_ctx, &inst.config);
+                    IEngine* ptr = engine.get();
+                    activeEngines[instanceId] = std::move(engine);
+                    return ptr;
+                }
+            }
+        }
+    }
+    
+    return nullptr;
 }
 
 void RotationManager::resetRotation() {
-  currentIndex = 0;
-  switchToModule(currentIndex);
-}
-
-void RotationManager::updateBackgroundSprites() {
-  if (config.idle.fighter_enabled && !fighterEngine->isActive()) {
-    fighterEngine->startFight();
-  }
+    queueAction(RotationAction::RESET_ROTATION);
 }
 
 void RotationManager::switchToModule(int index) {
-  if (sequence.empty())
+  if (config.rotation.empty()) {
+    if (currentActiveInstanceId != "") {
+      IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+      if (oldEngine) {
+        oldEngine->deactivate();
+      }
+      currentActiveInstanceId = "";
+    }
     return;
+  }
 
   static int switchDepth = 0;
-  if (switchDepth > (int)sequence.size()) {
-    // Infinite skip loop protection
+  if (switchDepth > (int)config.rotation.size()) {
     switchDepth = 0;
-    sequence.clear();
-    sequence.push_back(MODULE_CLOCK);
-    switchToModule(0);
-    return;
+    return; // Infinite skip loop protection
   }
   switchDepth++;
 
   moduleStartTime = millis();
-  RotationModule mod = sequence[index];
-
-  // Deactivate Decibel audio sampling if leaving Decibel mode
-  if (mod != MODULE_DECIBEL && decibelEngine && decibelEngine->isActive()) {
-    decibelEngine->onDeactivate();
+  String newInstanceId = config.rotation[index].instance_id;
+  uint32_t dur = config.rotation[index].duration_sec;
+  
+  String mod = newInstanceId; // Default to instance_id for legacy compatibility
+  for (const auto& inst : config.instances) {
+      if (inst.instance_id == newInstanceId) {
+          mod = inst.engine_id;
+          break;
+      }
   }
 
-  // Stop any playing GIFs if leaving GIF mode
-  if (mod != MODULE_GIFS && gifEngine->isActive()) {
-    gifEngine->stop();
+  // Deactivate old engine
+  if (currentActiveInstanceId != "" && currentActiveInstanceId != newInstanceId) {
+      IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+      if (oldEngine) {
+          oldEngine->deactivate();
+      }
   }
 
-  if (mod == MODULE_WEATHER) {
-    weatherEngine->update(config.weather.api_key, config.weather.city);
-    if (!weatherEngine->hasValidData() || WiFi.status() != WL_CONNECTED) {
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-  } else if (mod == MODULE_GIFS) {
-    fighterEngine->stop();
-    if (config.idle.gifs_count > 0 && gifEngine->hasDefaultPlaylists()) {
-      gifEngine->playDefaultPlaylists(config.idle.gifs_count);
-    } else {
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-  } else if (mod == MODULE_CRYPTO) {
-    if (!config.crypto.enabled || countSymbols(config.crypto.symbols) == 0 || !cryptoEngine) {
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-    cryptoEngine->updateConfig(config.crypto);
-    cryptoEngine->onDisplayStart();
-  } else if (mod == MODULE_STOCKS) {
-    if (!config.stock.enabled || countSymbols(config.stock.symbols) == 0 || !stockEngine) {
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-    stockEngine->updateConfig(config.stock);
-    stockEngine->onDisplayStart();
-  } else if (mod == MODULE_TEMP) {
-    if (!hardwareHAL.isTempSensorAvailable()) {
-      // Auto-skip Temp module if physical sensor is missing
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-  } else if (mod == MODULE_DECIBEL) {
-    if (!hardwareHAL.isAudioAvailable()) {
-      // Auto-skip Decibel module if audio input is missing
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-      return;
-    }
-    if (decibelEngine) {
-      decibelEngine->onActivate();
-    }
-  }
-
-  if (mod == MODULE_CLOCK || mod == MODULE_DATE || mod == MODULE_WEATHER || mod == MODULE_TEMP || mod == MODULE_DECIBEL) {
-    updateBackgroundSprites();
+  // Activate new engine
+  IEngine* newEngine = getActiveEngine(newInstanceId);
+  if (newEngine) {
+      if (newEngine->selfPaced()) {
+          newEngine->setRotationBudget(dur);
+      }
+      if (currentActiveInstanceId != newInstanceId) {
+          newEngine->activate();
+      }
   }
   
-  const char* modNames[] = {"CLOCK", "DATE", "WEATHER", "GIFS", "CRYPTO", "STOCKS", "TEMP", "DECIBEL"};
-  LOGI("RotationManager", "Switched to %s", modNames[mod]);
+  currentActiveInstanceId = newInstanceId;
   
+  LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
+      mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
   switchDepth = 0;
+}
+
+bool RotationManager::isCurrentRealtime() const {
+    if (currentActiveInstanceId == "") return false;
+    auto it = activeEngines.find(currentActiveInstanceId);
+    if (it != activeEngines.end()) {
+        return it->second->isRealtime();
+    }
+    return false;
+}
+
+OverlayConfig RotationManager::getCurrentOverlays() const {
+    extern ConfigLoader config;
+    if (config.rotation.empty() || currentIndex >= config.rotation.size()) {
+        return OverlayConfig{};
+    }
+    return config.rotation[currentIndex].overlays;
+}
+
+IEngine* RotationManager::getCurrentActiveEngine() const {
+    if (currentActiveInstanceId == "") return nullptr;
+    auto it = activeEngines.find(currentActiveInstanceId);
+    if (it != activeEngines.end()) {
+        return it->second.get();
+    }
+    return nullptr;
 }
 
 void RotationManager::setSuspended(bool susp) {
     if (susp == suspended) return;
     suspended = susp;
+    
     if (suspended) {
-        if (gifEngine && gifEngine->isActive()) gifEngine->stop();
-        if (decibelEngine && decibelEngine->isActive()) decibelEngine->onDeactivate();
+        if (currentActiveInstanceId != "") {
+            IEngine* engine = getActiveEngine(currentActiveInstanceId);
+            if (engine) engine->deactivate();
+        }
         LOGI("RotationManager", "Rotation Manager SUSPENDED.");
     } else {
         LOGI("RotationManager", "Rotation Manager RESUMED.");
-        resetRotation();
+        if (currentActiveInstanceId != "") {
+            IEngine* engine = getActiveEngine(currentActiveInstanceId);
+            if (engine) engine->activate();
+        } else {
+            resetRotation();
+        }
     }
 }
 
 bool RotationManager::loop() {
-    if (suspended || sequence.empty())
+    processPendingActions();
+
+    if (suspended || config.rotation.empty()) {
+        if (currentActiveInstanceId != "") {
+            IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
+            if (oldEngine) {
+                oldEngine->deactivate();
+            }
+            currentActiveInstanceId = "";
+        }
         return true;
+    }
 
   uint32_t now = millis();
-  RotationModule currentMod = sequence[currentIndex];
+  String inst_id = config.rotation[currentIndex].instance_id;
+  uint32_t dur = config.rotation[currentIndex].duration_sec;
+  
   bool advance = false;
+  bool isSoloMode = (config.rotation.size() == 1);
 
-  // Single module in rotation sequence (Solo mode): do NOT advance timer
-  bool isSoloMode = (sequence.size() == 1);
-
-  if (currentMod == MODULE_GIFS) {
-    bool drewFrame = gifEngine->loop();
-    if (!gifEngine->isActive()) {
-      advance = true;
-    }
-    if (advance) {
-      currentIndex = (currentIndex + 1) % sequence.size();
-      switchToModule(currentIndex);
-    }
-    return drewFrame;
+  IEngine* activeEngine = getActiveEngine(inst_id);
+  bool shouldFlip = true;
+  if (activeEngine) {
+      activeEngine->update(m_ctx);
+      activeEngine->render(m_ctx);
+      shouldFlip = activeEngine->hasNewFrame();
+      
+      if (!isSoloMode) {
+          if (activeEngine->selfPaced()) {
+              if (activeEngine->isFinished()) {
+                  advance = true;
+              }
+          } else {
+              if (activeEngine->isFinished() || (now - moduleStartTime >= dur * 1000UL)) {
+                  advance = true;
+              }
+          }
+      }
   } else {
-    if (currentMod == MODULE_CLOCK) {
-      clockEngine->loop();
-      if (!isSoloMode && (now - moduleStartTime >= config.idle.clock_duration_sec * 1000UL))
-        advance = true;
-    } else if (currentMod == MODULE_DATE) {
-      dateEngine->loop();
-      if (!isSoloMode && (now - moduleStartTime >= config.idle.date_duration_sec * 1000UL))
-        advance = true;
-    } else if (currentMod == MODULE_WEATHER) {
-      weatherEngine->loop();
-      if (!isSoloMode && (now - moduleStartTime >= config.idle.weather_duration_sec * 1000UL))
-        advance = true;
-    } else if (currentMod == MODULE_CRYPTO) {
-      if (cryptoEngine) cryptoEngine->loop();
-      size_t symbolCount = countSymbols(config.crypto.symbols);
-      uint32_t perSymbolSec = config.crypto.duration_sec > 0 ? config.crypto.duration_sec : 5;
-      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
-      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs))
-        advance = true;
-    } else if (currentMod == MODULE_STOCKS) {
-      if (stockEngine) stockEngine->loop();
-      size_t symbolCount = countSymbols(config.stock.symbols);
-      uint32_t perSymbolSec = config.stock.duration_sec > 0 ? config.stock.duration_sec : 5;
-      uint32_t totalDurationMs = perSymbolSec * symbolCount * 1000UL;
-      if (!isSoloMode && (symbolCount == 0 || now - moduleStartTime >= totalDurationMs))
-        advance = true;
-    } else if (currentMod == MODULE_TEMP) {
-      if (tempEngine) tempEngine->loop();
-      uint32_t dur = config.idle.temp_duration_sec >= 3 ? config.idle.temp_duration_sec : 8;
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL))
-        advance = true;
-    } else if (currentMod == MODULE_DECIBEL) {
-      if (decibelEngine) decibelEngine->loop();
-      uint32_t dur = config.idle.decibel_duration_sec >= 3 ? config.idle.decibel_duration_sec : 10;
-      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL))
-        advance = true;
-    }
-
-    if (config.idle.fighter_enabled) {
-      fighterEngine->loop();
-      fighterEngine->draw();
-    }
+      // Fallback if engine fails to load or id is invalid
+      if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) {
+          advance = true;
+      }
   }
 
   if (advance && !isSoloMode) {
-    currentIndex = (currentIndex + 1) % sequence.size();
+    currentIndex = (currentIndex + 1) % config.rotation.size();
     switchToModule(currentIndex);
   }
-  return true;
+  return shouldFlip;
+}
+
+String RotationManager::getCurrentInstanceId() const {
+    extern ConfigLoader config;
+    return config.rotation.empty() ? "" : config.rotation[currentIndex].instance_id;
+}
+
+String RotationManager::getCurrentEngineId() const {
+    extern ConfigLoader config;
+    if (config.rotation.empty() || currentIndex >= config.rotation.size()) return "";
+    String inst_id = config.rotation[currentIndex].instance_id;
+    const auto* inst = config.getInstance(inst_id);
+    return inst ? inst->engine_id : "";
 }

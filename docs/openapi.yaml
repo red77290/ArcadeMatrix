@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ArcadeMatrix Local API
   description: API for controlling and configuring the ArcadeMatrix ESP32 firmware locally over Wi-Fi.
-  version: 1.0.0
+  version: 3.0.0
 servers:
   - url: http://ArcadeMatrix.local
     description: Default local mDNS address (or use the device's assigned IP)
@@ -71,25 +71,56 @@ paths:
             schema:
               type: object
               properties:
+                matrix_rows:
+                  type: integer
+                  description: "Matrix height in pixels (16, 32, 64)"
+                  example: 32
+                matrix_cols:
+                  type: integer
+                  description: "Matrix width in pixels (32, 64, 128)"
+                  example: 64
+                matrix_chain:
+                  type: integer
+                  description: "Number of chained panels"
+                  example: 2
+                brightness_limit:
+                  type: integer
+                  description: "Global brightness power limit percent (10-100)"
+                  example: 50
                 color_depth:
                   type: integer
-                  description: "Color depth (3-8 bits)"
-                pwm_bits:
-                  type: integer
-                  description: "PWM bits (8-14)"
+                  description: "Color depth per channel (3-8 bits, default 8)"
+                  example: 8
+                matrix_rgb_sequence:
+                  type: string
+                  enum: [RGB, RBG, GRB, GBR, BRG, BGR]
+                  description: "RGB color sequence order"
+                  example: "RGB"
                 matrix_driver_chip:
                   type: string
-                  enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, SM16208]
+                  enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, MBI5124, SM16208]
                   description: "LED Panel Hardware Driver Chip"
+                  example: "SHIFTREG"
                 matrix_clk_phase:
                   type: boolean
                   description: "Clock Phase toggle for pixel alignment"
+                  example: false
                 matrix_latch_blanking:
                   type: integer
-                  description: "Latch blanking timing (1-16)"
+                  description: "Latch blanking timing (0-4 cycles)"
+                  example: 0
                 matrix_row_address_mode:
                   type: integer
-                  description: "Row addressing mode (0=Default, 1=AB-Direct, 2=ShiftRegister Row)"
+                  description: "Row addressing mode (0=Default/Direct, 1=ShiftRegister, 2=Direct 16 lines)"
+                  example: 0
+                matrix_force_single_buffer:
+                  type: boolean
+                  description: "Forces single DMA buffer to reduce RAM usage"
+                  example: false
+                matrix_limit_refresh_rate_hz:
+                  type: integer
+                  description: "Refresh rate cap in Hz (default 90)"
+                  example: 90
                 crypto_symbols:
                   type: string
                   description: "Comma-separated crypto token symbols (e.g. BTC,ETH,SOL,DOGE)"
@@ -400,6 +431,275 @@ paths:
         '200':
           description: Success
 
+  /api/hardware:
+    get:
+      tags:
+        - System
+      summary: Get hardware profile and runtime capabilities
+      description: Returns the detected board profile (ESP32_STD vs WAVESHARE_S3) and dynamic peripheral presence (PSRAM, microphone, temperature sensor, gyroscope).
+      responses:
+        '200':
+          description: Hardware capabilities snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    type: string
+                    example: "WAVESHARE_S3"
+                  psram:
+                    type: object
+                    properties:
+                      available:
+                        type: boolean
+                      bytes:
+                        type: integer
+                  microphone:
+                    type: boolean
+                  temperature_sensor:
+                    type: boolean
+                  gyroscope:
+                    type: boolean
+
+  /api/themes:
+    get:
+      tags:
+        - Configuration
+      summary: List available clock and date themes
+      description: Dynamic options endpoint returning all 30 built-in publisher pixel-art and animated themes.
+      responses:
+        '200':
+          description: List of themes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+
+  /api/instances:
+    get:
+      tags:
+        - Configuration
+      summary: List all configured engine instances
+      description: Returns instances currently loaded in config.json.
+      responses:
+        '200':
+          description: List of instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    instance_id:
+                      type: string
+                    engine_id:
+                      type: string
+                    config:
+                      type: object
+    post:
+      tags:
+        - Configuration
+      summary: Create or update an engine instance
+      description: Validates against descriptor schema, sanitizes, persists to SD, and dispatches onConfigChanged() hot reload without reboot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instance_id
+                - engine_id
+              properties:
+                instance_id:
+                  type: string
+                engine_id:
+                  type: string
+                config:
+                  type: object
+      responses:
+        '200':
+          description: Configuration updated and hot reloaded.
+
+  /api/rotation:
+    get:
+      tags:
+        - Engines
+      summary: List configured display rotation entries
+      description: Returns the active sequence of display rotation instances with durations and overlay settings.
+      responses:
+        '200':
+          description: List of rotation slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    instance_id:
+                      type: string
+                    duration_sec:
+                      type: integer
+                    overlays:
+                      type: object
+                      properties:
+                        fighter:
+                          type: boolean
+    post:
+      tags:
+        - Engines
+      summary: Replace display rotation sequence
+      description: Sets the complete rotation sequence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required:
+                  - instance_id
+                properties:
+                  instance_id:
+                    type: string
+                  duration_sec:
+                    type: integer
+                  overlays:
+                    type: object
+                    properties:
+                      fighter:
+                        type: boolean
+      responses:
+        '200':
+          description: Rotation updated
+
+  /api/engines:
+    get:
+      tags:
+        - Engines
+      summary: List registered engines with schema, capabilities, and availability
+      description: Schema-driven engine discovery endpoint. UI consumes this to render configuration forms, dynamic options dropdowns, and hardware availability banners.
+      responses:
+        '200':
+          description: List of engine descriptors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    metadata:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        category:
+                          type: string
+                        version:
+                          type: string
+                    capabilities:
+                      type: object
+                      properties:
+                        supports_128x32:
+                          type: boolean
+                        supports_256x64:
+                          type: boolean
+                        realtime:
+                          type: boolean
+                        interruptible:
+                          type: boolean
+                        selfPaced:
+                          type: boolean
+                        allowsOverlay:
+                          type: boolean
+                          description: Whether this engine authorizes transverse overlays (like Fighter).
+                        allowRotation:
+                          type: boolean
+                          description: Whether this engine can be selected by users in the rotation loop.
+                    requirements:
+                      type: object
+                      properties:
+                        needs_psram:
+                          type: boolean
+                        needs_audio:
+                          type: boolean
+                        needs_temp_sensor:
+                          type: boolean
+                        needs_gyroscope:
+                          type: boolean
+                        needs_network:
+                          type: boolean
+                        needs_sd:
+                          type: boolean
+                    available:
+                      type: boolean
+                    reason:
+                      type: string
+                    schema:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          field_type:
+                            type: integer
+                          label:
+                            type: string
+                          description:
+                            type: string
+                          default_value:
+                            type: string
+                          options:
+                            type: string
+                          options_endpoint:
+                            type: string
+                          multiple:
+                            type: boolean
+                          visible_when:
+                            type: string
+
+  /api/version:
+    get:
+      tags:
+        - System
+      summary: Get firmware version and build information
+      description: Returns firmware semantic version, git commit hash, and build timestamp.
+      responses:
+        '200':
+          description: Build version info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: "3.0.0"
+                  git_commit:
+                    type: string
+                    example: "a63490c"
+                  build_timestamp:
+                    type: string
+                    example: "2026-08-22 12:00:00 UTC"
+                  arch:
+                    type: string
+                    example: "esp32s3"
+
   /api/ota:
     post:
       tags:
@@ -422,3 +722,4 @@ paths:
           description: Firmware updated successfully, device will reboot.
         '400':
           description: Update failed or no file provided.
+

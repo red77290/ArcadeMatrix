@@ -1,22 +1,29 @@
-#include "RetroFrontendListener.h"
+#include "FrontendSyncEngine.h"
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
 #include <esp_task_wdt.h>
 
-RetroFrontendListener* RetroFrontendListener::instance = nullptr;
+FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
 
-RetroFrontendListener::RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine)
-    : mqttConfig(config), gif(gifEngine), clock(clockEngine), message(messageEngine), mqttClient(espClient) {
+FrontendSyncEngine::FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine)
+    : mqttConfig(config), gif(gifEngine), message(messageEngine), mqttClient(espClient) {
     instance = this;
     lastReconnectAttempt = 0;
 }
 
-void RetroFrontendListener::begin() {
-    if (!mqttConfig.enabled || mqttConfig.broker.isEmpty()) return;
+void FrontendSyncEngine::begin() {
+    stop();
+    if (!mqttConfig.enabled) return;
     
-    if (mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
+    hasReceivedAnyEvent = false;
+    hasPendingEvent = false;
+    isGamePlaying = false;
+    waitingDisplayed = false;
+    lastReconnectAttempt = 0;
+    
+    if (mqttConfig.broker.isEmpty() || mqttConfig.broker == "127.0.0.1" || mqttConfig.broker == "localhost") {
         LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
         internalBroker = new PicoMQTT::Server(mqttConfig.port);
         
@@ -39,25 +46,54 @@ void RetroFrontendListener::begin() {
         LOGI("RetroFrontend", "Embedded MQTT Broker started successfully.");
     } else {
         LOGI("RetroFrontend", "Configuring external MQTT Client connecting to %s:%d", mqttConfig.broker.c_str(), mqttConfig.port);
+        espClient.setTimeout(1); // 1s max timeout
+        mqttClient.setClient(espClient);
         mqttClient.setServer(mqttConfig.broker.c_str(), mqttConfig.port);
-        mqttClient.setCallback(RetroFrontendListener::callback);
+        mqttClient.setCallback(FrontendSyncEngine::callback);
+        mqttClient.setSocketTimeout(1);
     }
     systemMappings = loadMappingsFromSD();
 }
 
-void RetroFrontendListener::stop() {
+void FrontendSyncEngine::reconnectTaskFunc(void* param) {
+    FrontendSyncEngine* self = (FrontendSyncEngine*)param;
+    if (self) {
+        self->reconnect();
+        self->isReconnecting = false;
+        self->reconnectTaskHandle = nullptr;
+    }
+    vTaskDelete(NULL);
+}
+
+void FrontendSyncEngine::stop() {
     isGamePlaying = false;
     waitingDisplayed = false;
+    hasPendingEvent = false;
+    
+    if (reconnectTaskHandle) {
+        vTaskDelete(reconnectTaskHandle);
+        reconnectTaskHandle = nullptr;
+    }
+    isReconnecting = false;
+
+    if (internalBroker) {
+        delete internalBroker;
+        internalBroker = nullptr;
+    }
+    if (mqttClient.connected()) {
+        mqttClient.disconnect();
+    }
+    
     if (gif) gif->stop();
-    if (message) message->stop();
+    if (message) message->deactivate();
     LOGI("RetroFrontend", "MQTT Listener stopped.");
 }
 
-bool RetroFrontendListener::loop() {
+bool FrontendSyncEngine::loop() {
     if (!mqttConfig.enabled) {
         if (waitingDisplayed) {
             waitingDisplayed = false;
-            if (message) message->stop();
+            if (message) message->deactivate();
         }
         return true;
     }
@@ -67,9 +103,10 @@ bool RetroFrontendListener::loop() {
     } else {
         if (!mqttClient.connected()) {
             long now = millis();
-            if (now - lastReconnectAttempt > 30000) {
+            if (now - lastReconnectAttempt > 30000 && !isReconnecting) {
                 lastReconnectAttempt = now;
-                reconnect();
+                isReconnecting = true;
+                xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", 4096, this, 1, &reconnectTaskHandle, 0);
             }
         } else {
             mqttClient.loop();
@@ -82,7 +119,7 @@ bool RetroFrontendListener::loop() {
         handleGameEvent(pendingPayload, reqId);
     } else if (!hasReceivedAnyEvent && !waitingDisplayed && message && millis() > 12000) {
         waitingDisplayed = true;
-        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
+        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "rtl", 40, 0 };
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }
@@ -90,12 +127,12 @@ bool RetroFrontendListener::loop() {
     return true;
 }
 
-void RetroFrontendListener::reconnect() {
+void FrontendSyncEngine::reconnect() {
     if (WiFi.status() == WL_CONNECTED) {
         Serial.print("Attempting MQTT connection...");
         if (mqttClient.connect(mqttConfig.deviceName.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str())) {
             Serial.println("connected");
-            // Subscribe to the *configured* topics (conf.ini [MQTT] TOPIC_BATOCERA/TOPIC_RECALBOX)
+            // Subscribe to the *configured* topics (config.json [MQTT] TOPIC_BATOCERA/TOPIC_RECALBOX)
             // rather than hardcoded ones - this is what tools/recalbox_daemon/ actually publishes
             // to (default "recalbox/system/playing"/"batocera/system/playing"), matching
             // ArcadeMatrix_RPi's core/ssh_installer.py daemon exactly so the same daemon install
@@ -116,7 +153,7 @@ void RetroFrontendListener::reconnect() {
     }
 }
 
-void RetroFrontendListener::callback(char* topic, byte* payload, unsigned int length) {
+void FrontendSyncEngine::callback(char* topic, byte* payload, unsigned int length) {
     if (!instance) return;
     
     String payloadStr;
@@ -130,7 +167,7 @@ void RetroFrontendListener::callback(char* topic, byte* payload, unsigned int le
 // Note: the "msg" parameter here intentionally avoids the name "message" - the class also has a
 // member `MessageEngine* message` (see header), and shadowing it with a String parameter here would
 // be a foot-gun for anyone adding code that needs the MessageEngine pointer inside this function.
-void RetroFrontendListener::handleMessage(String topic, String msg) {
+void FrontendSyncEngine::handleMessage(String topic, String msg) {
     LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
     
     if (topic == mqttConfig.topic_recalbox || topic == mqttConfig.topic_batocera ||
@@ -161,7 +198,7 @@ void RetroFrontendListener::handleMessage(String topic, String msg) {
     }
 }
 
-void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t reqId) {
+void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t reqId) {
     StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, jsonPayload);
     if (err) {
@@ -192,7 +229,7 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
 
     isGamePlaying = true;
     waitingDisplayed = false;
-    if (message) message->stop();
+    if (message) message->deactivate();
 
     String game = String(gameRaw);
     String folder = mapSystemToPixelcadeFolder(cleanSystem);
@@ -295,10 +332,10 @@ void RetroFrontendListener::handleGameEvent(const String& jsonPayload, uint32_t 
     }
 }
 
-void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t reqId) {
+void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqId) {
     isGamePlaying = true;
     waitingDisplayed = false;
-    if (message) message->stop();
+    if (message) message->deactivate();
 
     std::vector<SystemVariant> variants = getSystemNameVariantsMapped(systemMappings, systemId);
 
@@ -385,7 +422,7 @@ void RetroFrontendListener::handleSystemEvent(const String& systemId, uint32_t r
     }
 }
 
-String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
+String FrontendSyncEngine::cleanSystemName(const String& rawSystem) {
     String s = rawSystem;
     s.trim();
     
@@ -423,7 +460,7 @@ String RetroFrontendListener::cleanSystemName(const String& rawSystem) {
 
 #include "BuiltinSystemMaps.h"
 
-std::map<String, std::vector<String>> RetroFrontendListener::loadMappingsFromSD() {
+std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
     std::map<String, std::vector<String>> mappings;
 
     // 1. Pre-populate with firmware embedded default mappings (290+ systems & manufacturers)
@@ -534,12 +571,12 @@ std::map<String, std::vector<String>> RetroFrontendListener::loadMappingsFromSD(
     return mappings;
 }
 
-std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSystemNameVariants(const String& rawSystem) {
+std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariants(const String& rawSystem) {
     std::map<String, std::vector<String>> emptyMap;
     return getSystemNameVariantsMapped(emptyMap, rawSystem);
 }
 
-std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSystemNameVariantsMapped(
+std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariantsMapped(
     const std::map<String, std::vector<String>>& mappings,
     const String& rawSystem) {
     String clean = cleanSystemName(rawSystem);
@@ -819,7 +856,7 @@ std::vector<RetroFrontendListener::SystemVariant> RetroFrontendListener::getSyst
     return list;
 }
 
-String RetroFrontendListener::mapSystemToPixelcadeFolder(const String& systemId) {
+String FrontendSyncEngine::mapSystemToPixelcadeFolder(const String& systemId) {
     String sLower = systemId;
     sLower.trim();
     sLower.toLowerCase();
@@ -854,7 +891,7 @@ String RetroFrontendListener::mapSystemToPixelcadeFolder(const String& systemId)
     return systemId;
 }
 
-bool RetroFrontendListener::downloadPixelcadeArt(const String& folder, const String& filename, String& outPath, uint32_t reqId) {
+bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String& filename, String& outPath, uint32_t reqId) {
 
     String baseUrl = "https://raw.githubusercontent.com/alinke/pixelcade/master/" + folder + "/";
     // URL encode the filename spaces if any

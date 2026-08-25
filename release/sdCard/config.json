@@ -1,0 +1,181 @@
+{
+    "matrix": {
+        "width": 64,
+        "height": 32,
+        "panel_type": "P3",
+        "chain_length": 2,
+        "power_limit_percent": 50,
+        "force_single_buffer": false,
+        "color_depth": 8,
+        "rgb_sequence": "RGB",
+        "limit_refresh_rate_hz": 90,
+        "driver_chip": "SHIFTREG",
+        "clk_phase": true,
+        "latch_blanking": 4,
+        "row_address_mode": 0
+    },
+    "wifi": {
+        "ssid": "MyNetwork",
+        "password": "SecretPassword",
+        "hostname": "arcadematrix"
+    },
+    "mqtt": {
+        "enabled": false,
+        "broker": "127.0.0.1",
+        "port": 1883,
+        "user": "",
+        "pass": "",
+        "device_name": "arcadematrix",
+        "topic_batocera": "batocera",
+        "topic_recalbox": "recalbox"
+    },
+    "system": {
+        "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",
+        "format_24h": true,
+        "lang": "en",
+        "unit": "c",
+        "temp_offset": 0.0,
+        "night_mode_enabled": false,
+        "turn_off_at": "23:00",
+        "wake_up_at": "07:00",
+        "night_brightness": 10
+    },
+    "api_auth_enabled": false,
+    "api_token": "9101d2ff5928c93107e537aa3c07a282",
+    "instances": [
+        {
+            "instance_id": "clock_main",
+            "engine_id": "clock",
+            "config": {
+                "theme": "0",
+                "format": "%H:%M:%S"
+            }
+        },
+        {
+            "instance_id": "date_main",
+            "engine_id": "date",
+            "config": {
+                "format": "%A, %d %B"
+            }
+        },
+        {
+            "instance_id": "weather_main",
+            "engine_id": "weather",
+            "config": {
+                "city": "Paris,FR",
+                "api_key": "",
+                "units": "metric"
+            }
+        },
+        {
+            "instance_id": "temp_main",
+            "engine_id": "temp",
+            "config": {
+                "units": "C"
+            }
+        },
+        {
+            "instance_id": "decibel_main",
+            "engine_id": "decibelMeter",
+            "config": {
+                "threshold": "80"
+            }
+        },
+        {
+            "instance_id": "visualizer_main",
+            "engine_id": "audiovisualizer",
+            "config": {
+                "enabled": "false",
+                "style": "0",
+                "sensitivity": "5"
+            }
+        },
+        {
+            "instance_id": "crypto_main",
+            "engine_id": "crypto",
+            "config": {
+                "symbols": "BTC,ETH,SOL",
+                "currency": "USD"
+            }
+        },
+        {
+            "instance_id": "stock_main",
+            "engine_id": "stock",
+            "config": {
+                "symbols": "AAPL,TSLA,NVDA"
+            }
+        },
+        {
+            "instance_id": "gifs_main",
+            "engine_id": "gifs",
+            "config": {
+                "playlist": "all",
+                "speed": "100"
+            }
+        },
+        {
+            "instance_id": "marquee_main",
+            "engine_id": "marquee",
+            "config": {
+                "text": "ArcadeMatrix",
+                "speed": "2",
+                "color": "#00ffcc"
+            }
+        },
+        {
+            "instance_id": "message_main",
+            "engine_id": "message",
+            "config": {
+                "text": "",
+                "color": "#ffffff"
+            }
+        }
+    ],
+    "rotation": [
+        {
+            "instance_id": "clock_main",
+            "duration_sec": 15,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "date_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "weather_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "crypto_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "stock_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "gifs_main",
+            "duration_sec": 30,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "temp_main",
+            "duration_sec": 10,
+            "fighter_overlay": true
+        },
+        {
+            "instance_id": "decibel_main",
+            "duration_sec": 15,
+            "fighter_overlay": false
+        },
+        {
+            "instance_id": "message_main",
+            "duration_sec": 15,
+            "fighter_overlay": false
+        }
+    ]
+}

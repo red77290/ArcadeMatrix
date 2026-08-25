@@ -3,9 +3,12 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <vector>
 #include <map>
+#include "../../include/core/EngineContract.h"
 #include "../core/ConfigLoader.h"
 #include "../api/ICryptoProvider.h"
+#include "../api/Timeframe.h"
 #include "icons/CryptoStockIcons.h"
+#include "renderers/SparklineRenderer.h"
 #include <PNGdec.h>
 #include "../core/SDUtils.h"
 
@@ -22,33 +25,61 @@ struct AssetQuoteCache {
 };
 #endif
 
+#ifndef ASSET_HISTORY_CACHE_H
+#define ASSET_HISTORY_CACHE_H
+struct AssetHistoryCache {
+    float points[64];
+    size_t count = 0;
+    float minPrice = 0.0f;
+    float maxPrice = 0.0f;
+    uint32_t lastFetchTime = 0;
+    bool hasData = false;
+};
+#endif
+
 /**
  * @class CryptoEngine
- * @brief Displays real-time crypto prices, 24h % change badges, and pixel-art logos.
+ * @brief Displays real-time crypto prices, 24h % change badges, pixel-art logos, and sparklines.
  */
-class CryptoEngine {
+class CryptoEngine : public IEngine {
 public:
+    enum class DisplayPage {
+        Info,
+        Chart
+    };
+
     CryptoEngine();
     
-    void begin(MatrixPanel_I2S_DMA* display);
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
+    bool isFinished() const override;
+
     void addProvider(ICryptoProvider* provider);
-    void updateConfig(const CryptoConfig& cfg);
-    void onDisplayStart();
-    bool loop();
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
-    CryptoConfig config;
+    int config_duration_sec = 5;
+    bool config_enabled = true;
+    int config_cache_ttl_min = 15;
+    bool config_show_chart = true;
+    Timeframe config_chart_timeframe = Timeframe::Daily;
     
     std::vector<String> symbolList;
     size_t currentSymbolIndex;
+    size_t symbolsShownThisCycle = 0;
     uint32_t lastItemSwitchTime;
     uint32_t lastFetchTime;
+    DisplayPage currentPage = DisplayPage::Info;
     
     std::vector<ICryptoProvider*> providers;
     
     // Per-symbol quote cache map
     std::map<String, AssetQuoteCache> quoteCache;
+    // Per-symbol history cache map
+    std::map<String, AssetHistoryCache> historyCache;
     
     // Currently displayed market quote
     String activeSymbol;
@@ -62,7 +93,15 @@ private:
     static int pngDraw(PNGDRAW *pDraw);
     static CryptoEngine* instance;
     
-    void parseSymbols();
+    void parseSymbols(const String& syms);
     void fetchQuote(const String& symbol);
-    void renderQuote();
+    void fetchHistory(const String& symbol, Timeframe tf);
+    void renderQuote(EngineContext* context);
+    void renderChart(EngineContext* context);
 };
+
+class CryptoEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

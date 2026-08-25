@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <gfxfont.h>
+#include "../core/BitmapFontLoader.h"
 
 struct MessageConfig {
     String text;
@@ -12,14 +13,24 @@ struct MessageConfig {
     unsigned long timeoutSeconds; // 30 by default
 };
 
-class MessageEngine {
+#include "../../include/core/EngineContract.h"
+
+class MessageEngine : public IEngine {
 public:
-    MessageEngine(MatrixPanel_I2S_DMA* display);
+    MessageEngine();
+    ~MessageEngine() override = default;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void activate() override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* engineConfig) override;
     
     void displayMessage(const MessageConfig& config);
-    bool isActive();
-    bool loop();
-    void stop();
+    bool isActive() const { return active; }
+    bool allowsOverlay() const override { return false; }
+    bool needsClear() const override { return true; }
 
     /// Sets an optional custom GFXfont (e.g. from BitmapFontLoader, loaded from SD) to use
     /// instead of the default 5x7 font for subsequent displayMessage() calls. Pass nullptr to
@@ -27,10 +38,11 @@ public:
     void setCustomFont(GFXfont* font);
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+
     MessageConfig currentMsg;
     bool active;
     GFXfont* customFont;
+    BitmapFontLoader fontLoader;
     
     unsigned long startTime;
     unsigned long lastUpdate;
@@ -39,4 +51,12 @@ private:
     int cursorY;
     int textWidth;
     int textHeight;
+    int baselineOffset;
+    MatrixPanel_I2S_DMA* matrixDisplay = nullptr;
 };
+
+class MessageEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

@@ -1,3 +1,4 @@
+#include "core/AppEngineContext.h"
 #include <FS.h>
 #include <Arduino.h>
 #include <SPI.h>
@@ -9,7 +10,6 @@
 #include "core/ConfigLoader.h"
 #include "core/MatrixEngine.h"
 #include "engines/GifEngine.h"
-#include "engines/ClockEngine.h"
 #include "engines/clocks/ArcadeClock.h"
 #include "engines/MessageEngine.h"
 #include "api/WebServerAPI.h"
@@ -28,15 +28,15 @@ void time_sync_notification_cb(struct timeval *tv) {
 }
 #endif
 
-#include "engines/RetroFrontendListener.h"
+#include "engines/FrontendSyncEngine.h"
 #include "engines/DateEngine.h"
-#include "engines/WeatherEngine.h"
 #include "engines/FighterEngine.h"
 #include "engines/MarqueeEngine.h"
 #include "engines/CryptoEngine.h"
 #include "engines/StockEngine.h"
 #include "core/RotationManager.h"
 #include "core/BitmapFontLoader.h"
+#include "core/ConfigSanitizer.h"
 #include "api/CoinGeckoProvider.h"
 #include "api/BinanceProvider.h"
 #include "api/OpenWeatherMapProvider.h"
@@ -44,31 +44,32 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "hal/HardwareHAL.h"
 #include "engines/TempEngine.h"
 #include "engines/VisualizerEngine.h"
+#include "../include/core/EngineRegistry.h"
 #include "engines/DecibelEngine.h"
+#include "engines/EngineRegistrar.h"
+
+#include "core/DisplayArbiter.h"
+#include "core/OverlayManager.h"
 
 // Pins definition moved to HardwareProfile.h
 
 SemaphoreHandle_t sdMutex;
+std::mutex configMutex;
 
 ConfigLoader config;
 MatrixEngine matrixEngine;
-GifEngine gifEngine;
+GifEngine* gifEngine = nullptr;
 
-ClockEngine* clockEngine = nullptr;
-DateEngine* dateEngine = nullptr;
-WeatherEngine* weatherEngine = nullptr;
-FighterEngine* fighterEngine = nullptr;
-CryptoEngine cryptoEngine;
-StockEngine stockEngine;
-TempEngine* tempEngine = nullptr;
 VisualizerEngine* visualizerEngine = nullptr;
-DecibelEngine* decibelEngine = nullptr;
 RotationManager* rotationManager = nullptr;
 MessageEngine* messageEngine = nullptr;
 MarqueeEngine* marqueeEngine = nullptr;
 WebServerAPI* webServer = nullptr;
-RetroFrontendListener* frontendListener = nullptr;
+FrontendSyncEngine* frontendListener = nullptr;
+AppEngineContext* appCtx = nullptr;
 BitmapFontLoader customFontLoader;
+DisplayArbiter displayArbiter;
+OverlayManager overlayManager;
 
 #if !USE_SD_MMC
 SdFs sd;
@@ -76,25 +77,71 @@ SdFs sd;
 
 unsigned long lastTick = 0;
 uint8_t currentMinute = 42;
-#ifndef UNIT_TEST
+#ifndef PIO_UNIT_TESTING
 
 
 String getPosixTimezone(String tz) {
-    if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome") return "CET-1CEST,M3.5.0,M10.5.0/3";
-    if (tz == "Europe/London") return "GMT0BST,M3.5.0/1,M10.5.0";
-    if (tz == "America/New_York") return "EST5EDT,M3.2.0,M11.1.0";
-    if (tz == "America/Chicago") return "CST6CDT,M3.2.0,M11.1.0";
-    if (tz == "America/Denver") return "MST7MDT,M3.2.0,M11.1.0";
-    if (tz == "America/Los_Angeles") return "PST8PDT,M3.2.0,M11.1.0";
+    if (tz == "Europe/Paris" || tz == "Europe/Berlin" || tz == "Europe/Madrid" || tz == "Europe/Rome" || tz == "Europe/Brussels" || tz == "Europe/Amsterdam" || tz == "Europe/Vienna" || tz == "Europe/Zurich" || tz == "Europe/Warsaw" || tz == "Europe/Prague" || tz == "Europe/Stockholm" || tz == "Europe/Oslo" || tz == "Europe/Copenhagen") return "CET-1CEST,M3.5.0,M10.5.0/3";
+    if (tz == "Europe/London" || tz == "Europe/Lisbon" || tz == "Atlantic/Canary") return "GMT0BST,M3.5.0/1,M10.5.0";
+    if (tz == "Europe/Dublin") return "GMT0IST,M3.5.0/1,M10.5.0";
+    if (tz == "Europe/Athens" || tz == "Europe/Helsinki" || tz == "Europe/Bucharest" || tz == "Europe/Kyiv" || tz == "Europe/Sofia" || tz == "Europe/Tallinn" || tz == "Europe/Riga" || tz == "Europe/Vilnius") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
+    if (tz == "Europe/Moscow") return "MSK-3";
+    if (tz == "Europe/Istanbul") return "TRT-3";
+    if (tz == "Atlantic/Reykjavik") return "GMT0";
+    if (tz == "Atlantic/Azores") return "AZOT1AZOST,M3.5.0/0,M10.5.0/1";
+    if (tz == "America/New_York" || tz == "America/Montreal" || tz == "America/Toronto" || tz == "America/Detroit" || tz == "America/Indiana/Indianapolis") return "EST5EDT,M3.2.0,M11.1.0";
+    if (tz == "America/Chicago" || tz == "America/Winnipeg") return "CST6CDT,M3.2.0,M11.1.0";
+    if (tz == "America/Mexico_City") return "CST6";
+    if (tz == "America/Phoenix") return "MST7"; // Arizona does NOT observe DST!
+    if (tz == "America/Denver" || tz == "America/Boise" || tz == "America/Edmonton") return "MST7MDT,M3.2.0,M11.1.0";
+    if (tz == "America/Los_Angeles" || tz == "America/Vancouver" || tz == "America/Tijuana") return "PST8PDT,M3.2.0,M11.1.0";
+    if (tz == "America/Anchorage") return "AKST9AKDT,M3.2.0,M11.1.0";
+    if (tz == "America/Halifax") return "AST4ADT,M3.2.0,M11.1.0";
+    if (tz == "America/St_Johns") return "NST3:30NDT,M3.2.0,M11.1.0";
+    if (tz == "Pacific/Honolulu") return "HST10";
+    if (tz == "America/Sao_Paulo") return "BRT3";
+    if (tz == "America/Buenos_Aires") return "ART3";
+    if (tz == "America/Bogota") return "COT5";
+    if (tz == "America/Lima") return "PET5";
+    if (tz == "America/Santiago") return "CLT4CLST,M9.1.6/24,M4.1.6/24";
+    if (tz == "Africa/Cairo") return "EET-2EEST,M4.5.5/0,M10.5.5/24";
+    if (tz == "Africa/Johannesburg") return "SAST-2";
+    if (tz == "Africa/Casablanca") return "WEST-1";
+    if (tz == "Africa/Nairobi") return "EAT-3";
+    if (tz == "Africa/Lagos") return "WAT-1";
+    if (tz == "Asia/Jerusalem") return "IST-2IDT,M3.4.4/26,M10.5.0";
+    if (tz == "Asia/Riyadh") return "AST-3";
+    if (tz == "Asia/Dubai") return "GST-4";
+    if (tz == "Asia/Tehran") return "IRST-3:30";
+    if (tz == "Asia/Karachi") return "PKT-5";
+    if (tz == "Asia/Kolkata") return "IST-5:30";
+    if (tz == "Asia/Dhaka") return "BST-6";
+    if (tz == "Asia/Bangkok" || tz == "Asia/Jakarta") return "ICT-7";
+    if (tz == "Asia/Singapore" || tz == "Asia/Hong_Kong" || tz == "Asia/Shanghai" || tz == "Asia/Taipei" || tz == "Asia/Manila") return "CST-8";
     if (tz == "Asia/Tokyo") return "JST-9";
-    if (tz == "Asia/Shanghai") return "CST-8";
-    if (tz == "Australia/Sydney") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
-    return tz; // Fallback to raw string (which could be a POSIX string)
+    if (tz == "Asia/Seoul") return "KST-9";
+    if (tz == "Australia/Sydney" || tz == "Australia/Melbourne") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+    if (tz == "Australia/Brisbane") return "AEST-10";
+    if (tz == "Australia/Adelaide") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
+    if (tz == "Australia/Perth") return "AWST-8";
+    if (tz == "Pacific/Guam") return "ChST-10";
+    if (tz == "Pacific/Auckland") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
+    if (tz == "Pacific/Fiji") return "FJT-12";
+    if (tz == "UTC" || tz == "GMT") return "UTC0";
+    return tz; // Fallback to raw string (which could already be any standard POSIX string)
 }
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
+    
+    // 1. Initialize HAL first so auto-detection can be used by the Registrar
+    hardwareHAL.begin();
+    
+    // Register all dynamic engines & wrappers (uses HAL info)
+    EngineRegistrar::registerAll();
+    
+    
     randomSeed(esp_random());
     LOGI("System", "Starting ArcadeMatrix Firmware...");
 
@@ -137,18 +184,15 @@ void setup() {
 
     esp_task_wdt_add(NULL);
 
-    // Initialize Hardware Abstraction Layer & Sensors
-    hardwareHAL.begin();
-
     sdMutex = xSemaphoreCreateMutex();
 
     // 0. Pre-initialize Wi-Fi driver to reserve its internal RAM buffers
     // before the HUB75 matrix or other engines fragment the memory.
     WiFi.mode(WIFI_STA);
 
-    if (psramFound()) {
+    if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
-             ESP.getPsramSize() / (1024 * 1024), ESP.getPsramSize(), ESP.getFreePsram());
+             hardwareHAL.capabilities().psramBytes / (1024 * 1024), hardwareHAL.capabilities().psramBytes, ESP.getFreePsram());
     } else {
         LOGI("System", "No PSRAM detected on hardware.");
     }
@@ -174,10 +218,15 @@ void setup() {
     LOGI("SD", "SD Card mounted successfully.");
 
     // 2. Load Configuration from SD
-    if (!config.parseFromSD("/conf.ini")) {
-        LOGW("Config", "/conf.ini not found or failed to parse. Using defaults.");
+    if (!config.loadFromSD("/config.json")) {
+        LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
     } else {
-        LOGI("Config", "Configuration loaded from /conf.ini.");
+        LOGI("Config", "Configuration loaded from /config.json.");
+    }
+
+    SanitizeResult sanitizeRes = ConfigSanitizer::sanitizeInstances(config);
+    if (sanitizeRes.modified) {
+        config.saveToSD("/config.json");
     }
 
     // 3. Initialize Matrix
@@ -190,98 +239,45 @@ void setup() {
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
     // 4. Initialize Engines
-    gifEngine.begin(matrixEngine.getDisplay());
+    // GifEngine initialization deferred to EngineRegistry
 
-    // Load saved GIF playlists from SD, fallback to all available playlists
-    {
-        bool selectedLoaded = false;
-        FsFile playlistFile;
-        if (sd.exists("/playlists_selected.json")) {
-            playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
-        }
-        if (playlistFile) {
-            DynamicJsonDocument doc(4096);
-            DeserializationError error = deserializeJson(doc, playlistFile);
-            playlistFile.close();
-            if (!error) {
-                JsonArray arr = doc["playlists"].as<JsonArray>();
-                std::vector<String> paths;
-                for (JsonVariant v : arr) paths.push_back(v.as<String>());
-                if (!paths.empty()) {
-                    gifEngine.setDefaultPlaylists(paths);
-                    selectedLoaded = true;
-                    LOGI("GIF", "Loaded %d GIF playlists from playlists_selected.json", paths.size());
-                }
-            }
-        }
-        
-        if (!selectedLoaded) {
-            std::vector<String> paths;
-            FsFile master;
-            if (sd.exists("/gifs/playlists.json")) {
-                master = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
-            }
-            if (master) {
-                DynamicJsonDocument masterDoc(16384);
-                if (!deserializeJson(masterDoc, master)) {
-                    JsonObject root = masterDoc.as<JsonObject>();
-                    for (JsonPair kv : root) {
-                        paths.push_back(kv.value()["path"].as<String>());
-                    }
-                }
-                master.close();
-            }
-            if (paths.empty()) {
-                paths.push_back("/gifs");
-            }
-            
-            gifEngine.setDefaultPlaylists(paths);
-            LOGI("GIF", "Defaulted to %d GIF playlists.", paths.size());
-
-            // Save default selection to /playlists_selected.json so it persists immediately
-            if (sd.exists("/playlists_selected.json")) sd.remove("/playlists_selected.json");
-            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_WRITE);
-            if (f) {
-                DynamicJsonDocument saveDoc(1024);
-                JsonArray arr = saveDoc["playlists"].to<JsonArray>();
-                for (const String& p : paths) arr.add(p);
-                serializeJson(saveDoc, f);
-                f.close();
-                LOGI("GIF", "Created initial playlists_selected.json on SD with all playlists.");
-            }
-        }
+    // CryptoEngine is now created by IEngine factory.
+    
+    // StockEngine is now created by IEngine factory.
+    
+    // TempEngine is now created by IEngine factory.
+    // DecibelEngine is now created by IEngine factory.
+    rotationManager = new RotationManager();
+    appCtx = new AppEngineContext(matrixEngine.getDisplay(), frontendListener);
+    rotationManager->setEngineContext(appCtx);
+    overlayManager.initialize(appCtx, &config);
+    
+    auto desc = EngineRegistry::getDescriptor("audiovisualizer");
+    if (desc && desc->factory) {
+        auto visPtr = desc->factory();
+        visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
+        visualizerEngine->initialize(appCtx, nullptr);
     }
 
-    clockEngine = new ClockEngine(matrixEngine.getDisplay());
-    clockEngine->setTheme(static_cast<PublisherTheme>(config.time.clock_theme));
-    dateEngine = new DateEngine(matrixEngine.getDisplay());
-    dateEngine->setResolution(matrixEngine.getDisplay()->width(), matrixEngine.getDisplay()->height());
-    dateEngine->setTheme((PublisherTheme)config.dateSettings.theme);
-    
-    weatherEngine = new WeatherEngine(matrixEngine.getDisplay());
-    weatherEngine->addProvider(new OpenWeatherMapProvider());
-    
-    fighterEngine = new FighterEngine(matrixEngine.getDisplay());
-    fighterEngine->initialize();
-    
-    cryptoEngine.begin(matrixEngine.getDisplay());
-    cryptoEngine.addProvider(new CoinGeckoProvider());
-    cryptoEngine.addProvider(new BinanceProvider());
-    
-    stockEngine.begin(matrixEngine.getDisplay());
-    stockEngine.addProvider(new YahooFinanceProvider());
-    
-    tempEngine = new TempEngine(matrixEngine.getDisplay());
-    visualizerEngine = new VisualizerEngine(matrixEngine.getDisplay());
-    decibelEngine = new DecibelEngine(matrixEngine.getDisplay());
+    auto msgDesc = EngineRegistry::getDescriptor("message");
+    if (msgDesc && msgDesc->factory) {
+        auto msgPtr = msgDesc->factory();
+        messageEngine = static_cast<MessageEngine*>(msgPtr.release());
+        messageEngine->initialize(appCtx, nullptr);
+    }
 
-    rotationManager = new RotationManager(clockEngine, dateEngine, weatherEngine, &gifEngine, fighterEngine, &cryptoEngine, &stockEngine, tempEngine, decibelEngine);
-    messageEngine = new MessageEngine(matrixEngine.getDisplay());
+    auto gifDesc = EngineRegistry::getDescriptor("gifs");
+    if (gifDesc && gifDesc->factory) {
+        auto gifPtr = gifDesc->factory();
+        gifEngine = static_cast<GifEngine*>(gifPtr.release());
+        gifEngine->initialize(appCtx, nullptr);
+    }
     // marqueeEngine allocation deferred until after webServer->begin() to prevent AsyncTCP task failure due to heap fragmentation
 
     // 4b. Optional SD-loadable custom bitmap font (see docs/DEVELOPER.md, tools/bdf_to_amfont)
-    if (config.fonts.custom_font_path.length() > 0) {
-        if (customFontLoader.loadFromSD(config.fonts.custom_font_path.c_str())) {
+    String fontPath = config.getInstance("clock_main") ? config.getInstance("clock_main")->config.getString("clock_font_path") : "";
+    if (fontPath.length() > 0) {
+        if (customFontLoader.loadFromSD(fontPath.c_str())) {
             messageEngine->setCustomFont(customFontLoader.getFont());
             Serial.println("Custom font applied to MessageEngine.");
         } else {
@@ -321,7 +317,8 @@ void setup() {
             delay(500);
             Serial.print(".");
             matrixEngine.getDisplay()->fillScreen(0);
-            messageEngine->loop();
+            messageEngine->update(appCtx);
+            messageEngine->render(appCtx);
             matrixEngine.getDisplay()->flipDMABuffer();
             attempts++;
         }
@@ -338,20 +335,26 @@ void setup() {
                 LOGI("WiFi", "mDNS responder started: http://%s.local", config.wifi.hostname.c_str());
             }
             
-            configTzTime(getPosixTimezone(config.time.timezone).c_str(), config.time.ntpServer.c_str());
+            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
             LOGI("NTP", "NTP Time Sync initiated.");
             
             LOGI("System", "Free Heap before Web Server start: %d bytes", ESP.getFreeHeap());
-            webServer = new WebServerAPI(80, messageEngine, clockEngine);
+            webServer = new WebServerAPI(80, messageEngine);
             webServer->begin();
             webServer->setVisualizerEngine(visualizerEngine);
-            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+            auto msgDesc = EngineRegistry::getDescriptor("marquee");
+            if (msgDesc && msgDesc->factory) {
+                auto msgPtr = msgDesc->factory();
+                marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+                marqueeEngine->initialize(appCtx, nullptr);
+            }
             webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
             
             if (config.mqtt.enabled) {
-                frontendListener = new RetroFrontendListener(config.mqtt, &gifEngine, clockEngine, messageEngine);
+                frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
                 frontendListener->begin();
+                if (appCtx) appCtx->setEventBus(frontendListener);
             }
         } else {
             Serial.println("Wi-Fi connection failed. Starting Access Point (AP) Mode.");
@@ -362,9 +365,14 @@ void setup() {
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
             messageEngine->displayMessage(failConfig);
             
-            webServer = new WebServerAPI(80, messageEngine, clockEngine);
+            webServer = new WebServerAPI(80, messageEngine);
             webServer->begin();
-            marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+            auto msgDesc = EngineRegistry::getDescriptor("marquee");
+            if (msgDesc && msgDesc->factory) {
+                auto msgPtr = msgDesc->factory();
+                marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+                marqueeEngine->initialize(appCtx, nullptr);
+            }
             webServer->setMarqueeEngine(marqueeEngine);
         }
     } else {
@@ -376,9 +384,14 @@ void setup() {
         MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
         messageEngine->displayMessage(failConfig);
         
-        webServer = new WebServerAPI(80, messageEngine, clockEngine);
+        webServer = new WebServerAPI(80, messageEngine);
         webServer->begin();
-        marqueeEngine = new MarqueeEngine(matrixEngine.getDisplay(), config.matrix.width, config.matrix.height);
+        auto msgDesc = EngineRegistry::getDescriptor("marquee");
+        if (msgDesc && msgDesc->factory) {
+            auto msgPtr = msgDesc->factory();
+            marqueeEngine = static_cast<MarqueeEngine*>(msgPtr.release());
+            marqueeEngine->initialize(appCtx, nullptr);
+        }
         webServer->setMarqueeEngine(marqueeEngine);
     }
     
@@ -388,12 +401,13 @@ void setup() {
     unsigned long startWait = millis();
     while (messageEngine->isActive()) {
         matrixEngine.getDisplay()->fillScreen(0);
-        messageEngine->loop();
+        messageEngine->update(appCtx);
+        messageEngine->render(appCtx);
         matrixEngine.getDisplay()->flipDMABuffer();
         delay(5);
         if (millis() - startWait > 5000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
-            messageEngine->stop();
+            messageEngine->deactivate();
             break;
         }
     }
@@ -404,7 +418,6 @@ void setup() {
     LOGD("System", "rotationManager started.");
     
     TimeData initialTime = {10, 42, 0};
-    clockEngine->updateTime(initialTime);
     LOGI("System", "Setup complete. Entering loop().");
 }
 
@@ -421,7 +434,7 @@ void loop() {
     static bool wasPoweredOn = true;
 
     // 1. Manual Power Toggle
-    if (!config.standby.matrix_power) {
+    if (!config.matrix.matrix_power) {
         if (wasPoweredOn) {
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.getDisplay()->flipDMABuffer();
@@ -434,51 +447,135 @@ void loop() {
     }
     wasPoweredOn = true;
 
+    // Dynamic MQTT synchronization (enables/disables or reconfigures MQTT live without reboot)
+    static bool lastMqttEnabled = config.mqtt.enabled;
+    static String lastMqttBroker = config.mqtt.broker;
+    static int lastMqttPort = config.mqtt.port;
+    static String lastMqttTopicBato = config.mqtt.topic_batocera;
+    static String lastMqttTopicRecal = config.mqtt.topic_recalbox;
+
+    if (config.mqtt.enabled != lastMqttEnabled || 
+        (config.mqtt.enabled && (config.mqtt.broker != lastMqttBroker || config.mqtt.port != lastMqttPort || 
+                                config.mqtt.topic_batocera != lastMqttTopicBato || config.mqtt.topic_recalbox != lastMqttTopicRecal))) {
+        lastMqttEnabled = config.mqtt.enabled;
+        lastMqttBroker = config.mqtt.broker;
+        lastMqttPort = config.mqtt.port;
+        lastMqttTopicBato = config.mqtt.topic_batocera;
+        lastMqttTopicRecal = config.mqtt.topic_recalbox;
+
+        if (config.mqtt.enabled) {
+            if (!frontendListener) {
+                frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
+            }
+            frontendListener->begin();
+            if (appCtx) appCtx->setEventBus(frontendListener);
+        } else {
+            if (frontendListener) {
+                frontendListener->stop();
+            }
+            if (appCtx) appCtx->setEventBus(nullptr);
+        }
+    }
+
     // Handle incoming MQTT events before evaluating display logic
     // We do NOT wrap this in sdMutex because frontendListener handles SD access and network
     // operations asynchronously, and takes sdMutex internally only when needed!
-    if (frontendListener) {
+    if (frontendListener && config.mqtt.enabled) {
         frontendListener->loop();
     }
 
-    bool shouldClear = true;
-    if (gifEngine.isActive()) {
-        shouldClear = false; // AnimatedGIF needs previous frame in buffer
-    }
-
     bool shouldFlip = true;
-    if (shouldClear) {
-        matrixEngine.getDisplay()->fillScreen(0);
-    }
-
+    DisplayRequest winner;
     // Handle Idle Rotation Logic & Priority Display Overrides
-    if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-        if (rotationManager) {
-            rotationManager->setSuspended(config.mqtt.enabled);
-        }
-
-        // Synchronize Music Visualizer active state with config setting
-        if (visualizerEngine) {
-            if (config.audio.visualizer_enabled && !visualizerEngine->isActive()) {
-                visualizerEngine->start();
-            } else if (!config.audio.visualizer_enabled && visualizerEngine->isActive()) {
-                visualizerEngine->stop();
+    // Synchronize Music Visualizer active state and configuration with config setting
+    if (visualizerEngine) {
+        bool visEnabled = false;
+        const EngineConfig* activeCfg = nullptr;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "audiovisualizer" || inst.engine_id == "visualizer") {
+                if (inst.config.getBool("priority_mode", false) || inst.config.getBool("enabled", false)) {
+                    visEnabled = true;
+                    activeCfg = &inst.config;
+                    break;
+                }
             }
         }
-
-        if (visualizerEngine && visualizerEngine->isActive()) {
-            shouldFlip = visualizerEngine->loop();
-        } else if (marqueeEngine && marqueeEngine->isActive()) {
-            shouldFlip = marqueeEngine->loop();
-        } else if (messageEngine && messageEngine->isActive()) {
-            shouldFlip = messageEngine->loop();
-        } else if (gifEngine.isActive() && rotationManager->getCurrentModule() != MODULE_GIFS) {
-            shouldFlip = gifEngine.loop();
+        if (visEnabled) {
+            if (!visualizerEngine->isActive()) {
+                if (activeCfg) visualizerEngine->onConfigChanged(activeCfg);
+                visualizerEngine->activate();
+                DisplayRequest req{"VISUALIZER", DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), visualizerEngine};
+                displayArbiter.submitRequest(req);
+            }
+            if (rotationManager && !rotationManager->isSuspended()) {
+                rotationManager->setSuspended(true);
+            }
         } else {
-            shouldFlip = rotationManager->loop();
+            if (visualizerEngine->isActive()) {
+                visualizerEngine->deactivate();
+                displayArbiter.cancelRequest("VISUALIZER");
+            }
+            if (rotationManager && rotationManager->isSuspended() && !config.mqtt.enabled) {
+                rotationManager->setSuspended(false);
+            }
         }
-        
-        xSemaphoreGive(sdMutex);
+    }
+
+    if (marqueeEngine) {
+        if (marqueeEngine->isActive()) {
+            DisplayRequest req{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), marqueeEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("MARQUEE");
+        }
+    }
+    if (messageEngine) {
+        if (messageEngine->isActive() && rotationManager->getCurrentEngineId() != "message") {
+            DisplayRequest req{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), messageEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("MESSAGE");
+        }
+    }
+    if (gifEngine) {
+        if (gifEngine->isActive()) {
+            DisplayRequest req{"GIF", DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, "", 0, millis(), gifEngine};
+            displayArbiter.submitRequest(req);
+        } else {
+            displayArbiter.cancelRequest("GIF");
+        }
+    }
+
+    winner = displayArbiter.evaluate();
+    IEngine* activeEngine = nullptr;
+    
+    if (winner.engine != nullptr) {
+        activeEngine = winner.engine;
+        if (activeEngine->needsClear()) {
+            matrixEngine.getDisplay()->fillScreen(0);
+        }
+        activeEngine->update(appCtx);
+        activeEngine->render(appCtx);
+        shouldFlip = activeEngine->hasNewFrame();
+    } else {
+        activeEngine = rotationManager->getCurrentActiveEngine();
+        if (activeEngine && activeEngine->needsClear()) {
+            matrixEngine.getDisplay()->fillScreen(0);
+        }
+        shouldFlip = rotationManager->loop();
+    }
+    
+    // Polymorphic 3-tier overlay resolution
+    if (activeEngine && activeEngine->allowsOverlay()) {
+        overlayManager.configure(rotationManager->getCurrentOverlays());
+    } else {
+        overlayManager.configure({});
+    }
+    
+    overlayManager.update();
+    if (overlayManager.isActive()) {
+        overlayManager.render();
+        shouldFlip = true;
     }
 
     // 2. Fetch Time & Handle Night Mode
@@ -486,10 +583,10 @@ void loop() {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
         bool is_night = false;
-        if (config.standby.night_mode_enabled) {
+        if (config.system.night_mode_enabled) {
             int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-            int off_min = config.standby.turn_off_at.substring(0, 2).toInt() * 60 + config.standby.turn_off_at.substring(3).toInt();
-            int wake_min = config.standby.wake_up_at.substring(0, 2).toInt() * 60 + config.standby.wake_up_at.substring(3).toInt();
+            int off_min = config.system.turn_off_at.substring(0, 2).toInt() * 60 + config.system.turn_off_at.substring(3).toInt();
+            int wake_min = config.system.wake_up_at.substring(0, 2).toInt() * 60 + config.system.wake_up_at.substring(3).toInt();
             if (off_min > wake_min) {
                 is_night = (now_min >= off_min || now_min < wake_min);
             } else {
@@ -498,13 +595,13 @@ void loop() {
         }
         
         if (is_night) {
-            if (config.standby.night_brightness == 0) {
+            if (config.system.night_brightness == 0) {
                 matrixEngine.getDisplay()->fillScreen(0);
                 matrixEngine.getDisplay()->flipDMABuffer();
                 delay(1000);
                 return;
             } else {
-                matrixEngine.setBrightness(config.standby.night_brightness);
+                matrixEngine.setBrightness(config.system.night_brightness);
             }
         } else {
             matrixEngine.setBrightness(config.matrix.powerLimitPercent);
@@ -516,69 +613,7 @@ void loop() {
             static int lastDay = -1;
             if (timeinfo.tm_mday != lastDay) {
                 lastDay = timeinfo.tm_mday;
-                if ((int)config.dateSettings.theme == 99 || config.dateSettings.theme == THEME_NONE) {
-                    PublisherTheme randomTheme = static_cast<PublisherTheme>(random(0, 20));
-                    dateEngine->setTheme(randomTheme);
-                    LOGI("DateEngine", "New day detected (%02d)! Selected dynamic Date theme: %d", lastDay, (int)randomTheme);
-                }
             }
-            
-            TimeData realTime = {(uint8_t)timeinfo.tm_hour, (uint8_t)timeinfo.tm_min, (uint8_t)timeinfo.tm_sec};
-            clockEngine->updateTime(realTime);
-            
-            static const char* fr_months_short[] = {"Janv", "Fevr", "Mars", "Avr", "Mai", "Juin", "Juil", "Aout", "Sept", "Oct", "Nov", "Dece"};
-            static const char* fr_months_long[]  = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
-            static const char* fr_days_short[]   = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
-            static const char* fr_days_long[]    = {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"};
-
-            static const char* es_months_short[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
-            static const char* es_months_long[]  = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
-            static const char* es_days_short[]   = {"Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"};
-            static const char* es_days_long[]    = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
-
-            static const char* en_months_short[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-            static const char* en_months_long[]  = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
-            static const char* en_days_short[]   = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-            static const char* en_days_long[]    = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-
-            const char** m_short = en_months_short;
-            const char** m_long  = en_months_long;
-            const char** d_short = en_days_short;
-            const char** d_long  = en_days_long;
-
-            String lang = config.weather.lang;
-            if (lang.equalsIgnoreCase("fr")) {
-                m_short = fr_months_short; m_long = fr_months_long;
-                d_short = fr_days_short;   d_long = fr_days_long;
-            } else if (lang.equalsIgnoreCase("es")) {
-                m_short = es_months_short; m_long = es_months_long;
-                d_short = es_days_short;   d_long = es_days_long;
-            }
-
-            String dateRes = config.dateSettings.format;
-            if (dateRes.length() == 0) dateRes = "DD/MM";
-
-            char numBuf[16];
-            snprintf(numBuf, sizeof(numBuf), "%04d", timeinfo.tm_year + 1900);
-            dateRes.replace("YYYY", numBuf); dateRes.replace("%Y", numBuf);
-
-            snprintf(numBuf, sizeof(numBuf), "%02d", (timeinfo.tm_year + 1900) % 100);
-            dateRes.replace("YY", numBuf); dateRes.replace("%y", numBuf);
-
-            snprintf(numBuf, sizeof(numBuf), "%02d", timeinfo.tm_mon + 1);
-            dateRes.replace("MM", numBuf); dateRes.replace("%m", numBuf);
-
-            dateRes.replace("MMMM", m_long[timeinfo.tm_mon]); dateRes.replace("%B", m_long[timeinfo.tm_mon]);
-            dateRes.replace("MMM", m_short[timeinfo.tm_mon]); dateRes.replace("%b", m_short[timeinfo.tm_mon]);
-
-            snprintf(numBuf, sizeof(numBuf), "%02d", timeinfo.tm_mday);
-            dateRes.replace("DD", numBuf); dateRes.replace("%d", numBuf);
-
-            dateRes.replace("DDDD", d_long[timeinfo.tm_wday]); dateRes.replace("%A", d_long[timeinfo.tm_wday]);
-            dateRes.replace("DDD", d_short[timeinfo.tm_wday]); dateRes.replace("%a", d_short[timeinfo.tm_wday]);
-
-            dateEngine->setDateData({(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)});
-            dateEngine->setDate(dateRes.c_str());
         }
     }
     
@@ -594,12 +629,13 @@ void loop() {
         }
     }
 
-    
-    // Stable ~60 FPS frame limiter
+    // Adaptive frame limiter (realtime ~60fps vs static ~20fps to save CPU/power)
     static unsigned long lastLoopTime = 0;
     unsigned long currentLoopTime = millis();
-    if (currentLoopTime - lastLoopTime < 16) {
-        delay(16 - (currentLoopTime - lastLoopTime));
+    bool isRealtime = (winner.source != "" && winner.source != "ROTATION") || (rotationManager && rotationManager->isCurrentRealtime());
+    unsigned long targetInterval = isRealtime ? 16 : 50;
+    if (currentLoopTime - lastLoopTime < targetInterval) {
+        delay(targetInterval - (currentLoopTime - lastLoopTime));
     }
     lastLoopTime = millis();
 }

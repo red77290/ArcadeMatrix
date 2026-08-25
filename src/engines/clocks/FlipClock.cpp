@@ -2,8 +2,6 @@
 #include "../../core/ConfigLoader.h"
 #include <stdio.h>
 
-extern ConfigLoader config;
-
 static const uint8_t digit5x7[10][5] = {
     {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
     {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
@@ -17,7 +15,7 @@ static const uint8_t digit5x7[10][5] = {
     {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
 };
 
-FlipClock::FlipClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
+FlipClock::FlipClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     for (int i = 0; i < 6; i++) {
         prevDigits[i] = -1;
         oldDigits[i] = -1;
@@ -191,7 +189,7 @@ void FlipClock::drawTime() {
     uint16_t textColor = matrix->color565(15, 15, 15);
     uint16_t dotCol    = matrix->color565(210, 210, 210);
     
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
     int spacing = (matrix->width() <= 64) ? 1 : 2;
     int dotWidth = (matrix->width() <= 64) ? 2 : 3;
     
@@ -212,8 +210,8 @@ void FlipClock::drawTime() {
     if (panelH < 8) panelH = 8;
     
     int totalW = (panelW * 6) + (spacing * 6) + (2 * (dotWidth + spacing * 2));
-    int startX = (matrix->width() - totalW) / 2 + config.time.clock_offset_x;
-    int y = (matrix->height() - panelH) / 2 + config.time.clock_offset_y;
+    int startX = (matrix->width() - totalW) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0);
+    int y = (matrix->height() - panelH) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
     int curr[6] = {
         storedTime.hours / 10, storedTime.hours % 10,

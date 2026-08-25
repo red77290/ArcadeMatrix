@@ -25,7 +25,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 **[⬇️ Télécharger la dernière Release précompilée & Kit Carte SD](https://github.com/red77290/ArcadeMatrix/releases/latest)**
 - **Archives Firmware** : Choisissez `ArcadeMatrix-esp32dev.zip` ou `ArcadeMatrix-esp32s3_waveshare.zip` selon votre carte (contient `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` et `boot_app0.bin` pour le flash manuel avec `esptool.py` - voir [Premiers pas](docs/GETTING_STARTED_FR.md#flashing-a-pre-built-release)).
-- **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`conf.ini`, dossiers GIFs/MUGEN, et scripts d'indexation).
+- **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`config.json`, dossiers GIFs/MUGEN, et scripts d'indexation).
 
 
 ## Fonctionnalités
@@ -46,7 +46,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressembler à ceci :
 ```
 SD:/
-  ├─ conf.ini
+  ├─ config.json
   ├─ gifs/
   │  │   └─ mario.gif
   └─ fighters_32/
@@ -60,9 +60,9 @@ SD:/
 ```
 *Remarque : le dossier `www/` n'est plus nécessaire sur la carte SD, car l'interface Web est désormais directement intégrée au firmware ESP32 !*
 
-## Configuration (`conf.ini`)
-Le fichier `conf.ini` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres liés à la taille de la matrice, à la profondeur de couleur, aux thèmes d'horloge, à l'ordre de rotation au repos et aux arrière-plans des sprites MUGEN.
-Ouvrez le `conf.ini` fourni dans le dossier `release/sdCard/` pour voir toutes les valeurs possibles.
+## Configuration (`config.json`)
+Le fichier `config.json` situé à la racine de votre carte SD est exhaustif. Il contient les paramètres liés à la taille de la matrice, à la profondeur de couleur, aux thèmes d'horloge, à l'ordre de rotation au repos et aux arrière-plans des sprites MUGEN.
+Ouvrez le `config.json` fourni dans le dossier `release/sdCard/` pour voir toutes les valeurs possibles.
 
 ## Extraction des sprites MUGEN (script `mugen_extractor.py`)
 Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichiers bruts `.fgt`. Comme l'ESP32 n'est pas assez puissant pour décoder nativement les formats complexes de personnages MUGEN, nous fournissons un script Python sur mesure pour les convertir et générer un manifeste `index.txt` contenant des boîtes englobantes parfaites et les valeurs de sol virtuel.
@@ -83,7 +83,7 @@ Pour tous les détails, consultez la documentation dans `tools/mugen_extractor/R
 
 ### Arrière-plans des sprites
 Les combattants ont besoin d'une arène ! Vous pouvez définir l'arrière-plan sur lequel ils se battent en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/`.
-Ensuite, associez cet arrière-plan dans votre `conf.ini` sous la section `[DATE]` (les arrière-plans servent à enrichir le module date !) :
+Ensuite, associez cet arrière-plan dans votre `config.json` sous la section `[DATE]` (les arrière-plans servent à enrichir le module date !) :
 ```ini
 BACKGROUND_SPRITE=stage1.raw
 ```

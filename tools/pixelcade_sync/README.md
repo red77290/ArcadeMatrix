@@ -16,7 +16,7 @@ the same:
 - No filesystem cache big enough to grow unbounded, and no cache-eviction logic worth the
   complexity for a microcontroller.
 
-Instead, `RetroFrontendListener` on the ESP32 expects artwork to already be present at
+Instead, `FrontendSyncEngine` on the ESP32 expects artwork to already be present at
 `/pixelcade/<system>/<game>.png` on the SD card - this script populates that folder once (offline,
 on a real PC), you copy it to the SD card, and the firmware just does a fast `SD.exists()` +
 `gif->playGif()` at runtime. No network round-trip at all when a game launches.
@@ -72,7 +72,7 @@ with paths like:
 ```
 
 The system folder names (`mame`, `snes`, `nes`, ...) match Pixelcade's own repository layout, and
-`RetroFrontendListener::mapSystemToPixelcadeFolder()` (firmware side) maps Recalbox/Batocera
+`FrontendSyncEngine::mapSystemToPixelcadeFolder()` (firmware side) maps Recalbox/Batocera
 `SystemId` values (e.g. `fbneo`, `megadrive`) to these same folder names - kept in sync with
 `ArcadeMatrix_RPi/core/dmd_cache.py`'s `SYSTEM_MAP`. If you add a system there, mirror the change
 in both places.

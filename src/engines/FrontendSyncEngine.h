@@ -6,7 +6,7 @@
 #include <HTTPClient.h>
 #include "../core/ConfigLoader.h"
 #include "GifEngine.h"
-#include "ClockEngine.h"
+
 #include "MessageEngine.h"
 #include <map>
 
@@ -17,9 +17,9 @@
 // same wire format/topic as ArcadeMatrix_RPi's core/ssh_installer.py daemon, so a single daemon
 // install serves both projects). Falls back to displaying the game name as scrolling text (via
 // MessageEngine) if no matching artwork is found on the SD card.
-class RetroFrontendListener {
+class FrontendSyncEngine {
 public:
-    RetroFrontendListener(MqttConfig& config, GifEngine* gifEngine, ClockEngine* clockEngine, MessageEngine* messageEngine = nullptr);
+    FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine = nullptr);
     void begin();
     bool loop();
     void stop();
@@ -36,22 +36,25 @@ public:
 private:
     MqttConfig& mqttConfig;
     GifEngine* gif;
-    ClockEngine* clock;
-    MessageEngine* message;
+        MessageEngine* message;
     WiFiClient espClient;
     PubSubClient mqttClient;
     PicoMQTT::Server* internalBroker = nullptr;
     std::map<String, std::vector<String>> systemMappings;
 
-    unsigned long lastReconnectAttempt;
+    unsigned long lastReconnectAttempt = 0;
     uint32_t currentRequestId = 0;
     bool isGamePlaying = false;
     bool waitingDisplayed = false;
     bool hasReceivedAnyEvent = false;
 
+    volatile bool isReconnecting = false;
+    TaskHandle_t reconnectTaskHandle = nullptr;
+    static void reconnectTaskFunc(void* param);
+
     void reconnect();
     static void callback(char* topic, byte* payload, unsigned int length);
-    static RetroFrontendListener* instance;
+    static FrontendSyncEngine* instance;
 
     void handleMessage(String topic, String payload);
 

@@ -2,9 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-extern ConfigLoader config;
-
-PongClock::PongClock(MatrixPanel_I2S_DMA* display) : ClockFace(display), lastMinute(-1), forceMiss(false), lastFrameTime(0) {
+PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) {
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));
@@ -35,8 +33,8 @@ void PongClock::draw(const TimeData& t) {
 
 void PongClock::drawScores() {
     matrix->setFont(NULL);
-    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 1;
-    if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
     matrix->setTextSize(gfxSize);
     
     char scoreLeft[3];
@@ -64,77 +62,83 @@ void PongClock::drawScores() {
 void PongClock::update() {
     if (lastMinute == -1) {
         lastMinute = storedTime.minutes;
-    } else if (lastMinute != storedTime.minutes) {
-        forceMiss = true;
-        lastMinute = storedTime.minutes;
+        lastHour = storedTime.hours;
+    } else {
+        if (lastMinute != storedTime.minutes) {
+            forceMissLeft = true;
+            lastMinute = storedTime.minutes;
+        }
+        if (lastHour != storedTime.hours) {
+            forceMissRight = true;
+            lastHour = storedTime.hours;
+        }
     }
 
     // No internal throttle, rely on main loop 60 FPS
         
-        // Physics update
-        ball_x += ball_dx;
-        ball_y += ball_dy;
-        
-        // Top/Bottom bounce
-        if (ball_y <= 0) {
-            ball_y = 0;
-            ball_dy *= -1;
-        } else if (ball_y >= matrix->height() - ball_size) {
-            ball_y = matrix->height() - ball_size;
-            ball_dy *= -1;
+    // Physics update
+    ball_x += ball_dx;
+    ball_y += ball_dy;
+    
+    // Top/Bottom bounce
+    if (ball_y <= 0) {
+        ball_y = 0;
+        ball_dy *= -1;
+    } else if (ball_y >= matrix->height() - ball_size) {
+        ball_y = matrix->height() - ball_size;
+        ball_dy *= -1;
+    }
+    
+    float ai_speed = matrix->height() / 20.0f;
+    // P1 AI (Left)
+    float target_p1 = ball_y - (pad_h / 2);
+    if (ball_dx < 0) {
+        if (forceMissLeft) {
+            if (ball_y > matrix->height() / 2) target_p1 = 0;
+            else target_p1 = matrix->height() - pad_h;
         }
-        
-        float ai_speed = matrix->height() / 20.0f;
-        // P1 AI (Left)
-        float target_p1 = ball_y - (pad_h / 2);
-        if (ball_dx < 0) {
-            if (forceMiss) {
-                if (ball_y > matrix->height() / 2) target_p1 = 0;
-                else target_p1 = matrix->height() - pad_h;
-            }
-            if (p1_y < target_p1) p1_y += min(ai_speed, target_p1 - p1_y);
-            if (p1_y > target_p1) p1_y -= min(ai_speed, p1_y - target_p1);
+        if (p1_y < target_p1) p1_y += min(ai_speed, target_p1 - p1_y);
+        if (p1_y > target_p1) p1_y -= min(ai_speed, p1_y - target_p1);
+    }
+    
+    // P2 AI (Right)
+    float target_p2 = ball_y - (pad_h / 2);
+    if (ball_dx > 0) {
+        if (forceMissRight) {
+            if (ball_y > matrix->height() / 2) target_p2 = 0;
+            else target_p2 = matrix->height() - pad_h;
         }
-        
-        // P2 AI (Right)
-        float target_p2 = ball_y - (pad_h / 2);
-        if (ball_dx > 0) {
-            if (p2_y < target_p2) p2_y += min(ai_speed, target_p2 - p2_y);
-            if (p2_y > target_p2) p2_y -= min(ai_speed, p2_y - target_p2);
+        if (p2_y < target_p2) p2_y += min(ai_speed, target_p2 - p2_y);
+        if (p2_y > target_p2) p2_y -= min(ai_speed, p2_y - target_p2);
+    }
+    
+    // Clamp
+    if (p1_y < 0) p1_y = 0;
+    if (p1_y > matrix->height() - pad_h) p1_y = matrix->height() - pad_h;
+    if (p2_y < 0) p2_y = 0;
+    if (p2_y > matrix->height() - pad_h) p2_y = matrix->height() - pad_h;
+    
+    // Paddle Collisions
+    if (ball_dx < 0 && ball_x <= pad_w + ball_size) {
+        if (ball_y >= p1_y - ball_size && ball_y <= p1_y + pad_h) {
+            ball_x = pad_w + ball_size + 1;
+            ball_dx = abs(ball_dx);
         }
-        
-        // Clamp
-        if (p1_y < 0) p1_y = 0;
-        if (p1_y > matrix->height() - pad_h) p1_y = matrix->height() - pad_h;
-        if (p2_y < 0) p2_y = 0;
-        if (p2_y > matrix->height() - pad_h) p2_y = matrix->height() - pad_h;
-        
-        // Paddle Collisions
-        if (ball_dx < 0 && ball_x <= pad_w + ball_size) {
-            if (ball_y >= p1_y - ball_size && ball_y <= p1_y + pad_h) {
-                ball_x = pad_w + ball_size + 1;
-                ball_dx = abs(ball_dx);
-            }
-        } else if (ball_dx > 0 && ball_x >= matrix->width() - pad_w - ball_size) {
-            if (ball_y >= p2_y - ball_size && ball_y <= p2_y + pad_h) {
-                ball_x = matrix->width() - pad_w - ball_size - 1;
-                ball_dx = -abs(ball_dx);
-            }
+    } else if (ball_dx > 0 && ball_x >= matrix->width() - pad_w - ball_size) {
+        if (ball_y >= p2_y - ball_size && ball_y <= p2_y + pad_h) {
+            ball_x = matrix->width() - pad_w - ball_size - 1;
+            ball_dx = -abs(ball_dx);
         }
-        
-        // Speed cap isn't strictly necessary since we bounce with constant dx, 
-        // but let's keep it safe.
-        // ball_dx doesn't accelerate in Rust. It just flips sign.
-        // We will remove the acceleration from C++ paddle collision.
-        
-        // Scoring
-        if (ball_x < -10) {
-            resetBall(true);
-            forceMiss = false;
-        } else if (ball_x > matrix->width() + 10) {
-            resetBall(false);
-            forceMiss = false;
-        }
+    }
+    
+    // Scoring
+    if (ball_x < -10) {
+        resetBall(true);
+        forceMissLeft = false;
+    } else if (ball_x > matrix->width() + 10) {
+        resetBall(false);
+        forceMissRight = false;
+    }
 
     
     // Draw

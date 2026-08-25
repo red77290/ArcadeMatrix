@@ -3,12 +3,12 @@
 🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
 
 Ce dossier est un point de départ prêt à l'emploi pour votre carte SD : copiez son contenu à la
-racine d'une carte SD formatée en **FAT32**, modifiez `conf.ini` pour votre Wi-Fi/matériel, et
+racine d'une carte SD formatée en **FAT32**, modifiez `config.json` pour votre Wi-Fi/matériel, et
 c'est prêt à démarrer.
 
 ```
 sdCard/
-  ├─ conf.ini            <- vos réglages, voir docs/CONFIGURATION_FR.md pour la référence complète
+  ├─ config.json            <- vos réglages, voir docs/CONFIGURATION_FR.md pour la référence complète
   ├─ gifs/                <- exemple de manifeste de playlist GIF (voir gif_indexation/ ci-dessous)
   ├─ fighters_32/         <- exemple d'export de sprites MUGEN pour matrices de 32px de haut
   └─ gif_indexation/      <- outil côté PC, PAS nécessaire sur la carte SD elle-même (voir ci-dessous)

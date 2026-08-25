@@ -5,20 +5,25 @@
 
 extern ConfigLoader config;
 
-VisualizerEngine::VisualizerEngine(MatrixPanel_I2S_DMA* display) 
-    : matrix(display), active(false), currentMode(VISUALIZER_SPECTRUM), lastPeakDecay(0) {
+VisualizerEngine::VisualizerEngine() 
+    : active(false), currentMode(VISUALIZER_SPECTRUM), lastPeakDecay(0) {
     for (int i = 0; i < 128; i++) peakHold[i] = 0.0f;
 }
 
 VisualizerEngine::~VisualizerEngine() {}
 
-void VisualizerEngine::start() {
+EngineError VisualizerEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
+}
+
+void VisualizerEngine::activate() {
     active = true;
     hardwareHAL.startAudioSampling();
     LOGI("VisualizerEngine", "Music Visualizer STARTED.");
 }
 
-void VisualizerEngine::stop() {
+void VisualizerEngine::deactivate() {
     active = false;
     hardwareHAL.stopAudioSampling();
     LOGI("VisualizerEngine", "Music Visualizer STOPPED.");
@@ -36,24 +41,48 @@ void VisualizerEngine::setMode(const String& modeStr) {
     }
 }
 
+void VisualizerEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (!engineConfig) return;
+    String styleStr = engineConfig->getString("style", "");
+    if (styleStr.isEmpty()) styleStr = engineConfig->getString("mode", "spectrum");
+    if (styleStr == "0") styleStr = "spectrum";
+    else if (styleStr == "1") styleStr = "waveform";
+    else if (styleStr == "2") styleStr = "radial";
+    else if (styleStr == "3") styleStr = "neon_fire";
+    setMode(styleStr);
+    
+    float gain = engineConfig->getFloat("gain", 1.0f);
+    hardwareHAL.setMicGain(gain);
+    
+    LOGI("VisualizerEngine", "Config updated: mode=%s, gain=%.2f", styleStr.c_str(), gain);
+}
+
+static uint16_t matrix_color565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
 uint16_t VisualizerEngine::getSpectrumColor(int heightIndex, int maxHeight) {
-    if (!matrix || maxHeight <= 0) return 0xFFFF;
+    // We cannot use matrix color565 without context, but since this is an internal helper,
+    // we can re-implement it without `matrix->color565`. It's basically RGB565.
+    if (maxHeight <= 0) return 0xFFFF;
     float ratio = (float)heightIndex / (float)maxHeight;
     if (ratio < 0.4f) {
         // Cyan to Green
-        return matrix->color565(0, (uint8_t)(200 * (ratio / 0.4f)), 255);
+        return matrix_color565(0, (uint8_t)(200 * (ratio / 0.4f)), 255);
     } else if (ratio < 0.75f) {
         // Yellow to Orange
         float sub = (ratio - 0.4f) / 0.35f;
-        return matrix->color565((uint8_t)(255 * sub), 255, 0);
+        return matrix_color565((uint8_t)(255 * sub), 255, 0);
     } else {
         // Red to Magenta
         float sub = (ratio - 0.75f) / 0.25f;
-        return matrix->color565(255, (uint8_t)(50 * (1.0f - sub)), (uint8_t)(200 * sub));
+        return matrix_color565(255, (uint8_t)(50 * (1.0f - sub)), (uint8_t)(200 * sub));
     }
 }
 
-void VisualizerEngine::drawSpectrum() {
+
+
+void VisualizerEngine::drawSpectrum(MatrixPanel_I2S_DMA* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -103,7 +132,7 @@ void VisualizerEngine::drawSpectrum() {
     }
 }
 
-void VisualizerEngine::drawWaveform() {
+void VisualizerEngine::drawWaveform(MatrixPanel_I2S_DMA* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int midY = height / 2;
@@ -137,7 +166,7 @@ void VisualizerEngine::drawWaveform() {
     }
 }
 
-void VisualizerEngine::drawRadial() {
+void VisualizerEngine::drawRadial(MatrixPanel_I2S_DMA* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int cx = width / 2;
@@ -160,7 +189,7 @@ void VisualizerEngine::drawRadial() {
     matrix->drawCircle(cx, cy, currentRadius / 2, matrix->color565(0, 200, 255));
 }
 
-void VisualizerEngine::drawNeonFire() {
+void VisualizerEngine::drawNeonFire(MatrixPanel_I2S_DMA* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -187,21 +216,38 @@ void VisualizerEngine::drawNeonFire() {
     }
 }
 
-bool VisualizerEngine::loop() {
-    if (!matrix || !active) return false;
+void VisualizerEngine::update(EngineContext* context) {
+    // Dynamic runtime update if needed
+}
+
+void VisualizerEngine::render(EngineContext* context) {
+    auto* matrix = context ? context->getMatrix() : nullptr;
+    if (!matrix || !active) return;
 
     matrix->fillScreen(0);
 
-    hardwareHAL.setMicGain(config.audio.mic_gain);
-    setMode(config.audio.visualizer_mode);
-
     switch (currentMode) {
-        case VISUALIZER_WAVEFORM: drawWaveform(); break;
-        case VISUALIZER_RADIAL: drawRadial(); break;
-        case VISUALIZER_NEON_FIRE: drawNeonFire(); break;
+        case VISUALIZER_WAVEFORM: drawWaveform(matrix); break;
+        case VISUALIZER_RADIAL: drawRadial(matrix); break;
+        case VISUALIZER_NEON_FIRE: drawNeonFire(matrix); break;
         case VISUALIZER_SPECTRUM:
-        default: drawSpectrum(); break;
+        default: drawSpectrum(matrix); break;
     }
-
-    return true;
 }
+
+EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_visualizer;
+    desc_visualizer.metadata = {"audiovisualizer", "Audio Visualizer", "audio", FIRMWARE_VERSION};
+    desc_visualizer.capabilities.realtime = true;
+    desc_visualizer.capabilities.allowRotation = false; // Priority override engine
+    desc_visualizer.requirements.needsAudio = true;
+    desc_visualizer.schema.fields = {
+        ConfigField("priority_mode", ConfigType::BOOLEAN, "Mode Prioritaire (Continu)", "Afficher l'Audio Visualizer en continu (prend la priorité sur la rotation)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("style", ConfigType::ENUM, "Style", "Style de visualisation FFT", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("sensitivity", ConfigType::INTEGER, "Sensibilité", "Sensibilité du microphone", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("gain", ConfigType::FLOAT, "Gain Micro", "Facteur de gain audio", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_visualizer.factory = []() { return std::unique_ptr<IEngine>(new VisualizerEngine()); };
+    return desc_visualizer;
+}
+

@@ -1,4 +1,5 @@
 #include "MatrixEngine.h"
+#include "../hal/HardwareHAL.h"
 #include "Logger.h"
 #include "../../include/HardwareProfile.h"
 
@@ -24,7 +25,7 @@ MatrixEngine::~MatrixEngine() {
  * Automatically adjusts color depth and double-buffering based on the total 
  * physical pixel count to prevent ESP32 memory limits from being exceeded.
  * 
- * @param config The MatrixConfig loaded from conf.ini
+ * @param config The MatrixConfig loaded from config.json
  * @return true if DMA allocation and initialization succeeded.
  * @return false if out of memory or initialization failed.
  */
@@ -94,7 +95,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     
     // PSRAM Warning for large panels
     if (config.width * config.height * config.chainLength >= 16384) { 
-        if (!psramFound()) {
+        if (!hardwareHAL.capabilities().hasPsram) {
             Serial.println("WARNING: 256x64 requested but no PSRAM found! This WILL cause Out-Of-Memory bootloops on a standard ESP32 WROOM.");
             // We no longer force 3-bit color here, because the user explicitly wants 24-bit on ESP32-S3.
         } else {

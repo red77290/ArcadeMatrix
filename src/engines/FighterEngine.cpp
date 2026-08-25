@@ -7,28 +7,62 @@
 
 extern SemaphoreHandle_t sdMutex;
 
-#define MAX_FIGHTER_FRAME_SIZE 98304
+FighterEngine::FighterEngine() : matrix(nullptr) {}
 
-FighterEngine::FighterEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context ? context->getMatrix() : nullptr;
+    m_hasPsram = context ? context->hasPsram() : false;
+    initialize();
+    return EngineError::OK;
 }
 
+void FighterEngine::activate() {
+    startFight();
+}
+
+void FighterEngine::update(EngineContext* context) {
+    loop();
+}
+
+void FighterEngine::render(EngineContext* context) {
+    draw();
+}
+
+void FighterEngine::deactivate() {
+    stop();
+}
+
+void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    // Config now comes from global config.system
+}
+
+
 FighterEngine::~FighterEngine() {
+    if (loaderTaskHandle) {
+        vTaskDelete(loaderTaskHandle);
+        loaderTaskHandle = nullptr;
+    }
     if (fighterOffsets) free(fighterOffsets);
     freeFighter(p1);
     freeFighter(p2);
+    freeFighter(nextP1);
+    freeFighter(nextP2);
 }
 
 void FighterEngine::initialize() {
     loadRoster();
+    triggerBackgroundPreload();
 }
 
 String FighterEngine::getFightersDir() {
-    if (matrix->height() <= 32) return "/fighters_32";
-    if (!psramFound()) {
-        Serial.println("FighterEngine: No PSRAM found. Forcing /fighters_32 to avoid OOM!");
+    if (matrix && matrix->height() <= 32) return "/fighters_32";
+    if (!m_hasPsram) {
         return "/fighters_32";
     }
-    return "/fighters_64";
+    if (sd.exists("/fighters_64/index.txt")) {
+        return "/fighters_64";
+    }
+    return "/fighters_32";
 }
 
 void FighterEngine::loadRoster() {
@@ -144,7 +178,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     int frameSize = anim.width * anim.height * 2;
     anim.totalPixelsSize = frameSize * anim.numFrames;
-    int maxFrameSize = psramFound() ? (2 * 1024 * 1024) : 98304;
+    int maxFrameSize = m_hasPsram ? (2 * 1024 * 1024) : 32768;
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
@@ -152,7 +186,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         return false;
     }
     
-    if (psramFound()) {
+    if (m_hasPsram) {
         size_t freePsram = ESP.getFreePsram();
         size_t safetyHeadroom = 1048576; // 1 MB safety reserve
         if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
@@ -165,16 +199,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            int chunkCount = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 32768) ? 32768 : toRead;
+                size_t chunk = (toRead > 65536) ? 65536 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
                 toRead -= r;
-                if (++chunkCount % 2 == 0) {
-                    vTaskDelay(1); // Yield to FreeRTOS display task so clock rendering is never starved!
-                }
             }
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
@@ -200,7 +230,7 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) p.activeFile.close();
     if (p.currentFrameBuffer) {
-        if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+        if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
         else free(p.currentFrameBuffer);
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
@@ -214,158 +244,217 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
     freeAnim(p.animFall);
 }
 
+void FighterEngine::triggerBackgroundPreload() {
+    if (isNextReady || isPreloading || numAvailableFighters < 2) return;
+    isPreloading = true;
+    xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 4096, this, 1, &loaderTaskHandle, 0);
+}
+
+void FighterEngine::loaderTaskFunc(void* param) {
+    FighterEngine* self = (FighterEngine*)param;
+    self->runBackgroundPreload();
+    self->loaderTaskHandle = nullptr;
+    vTaskDelete(NULL);
+}
+
+void FighterEngine::runBackgroundPreload() {
+    freeFighter(nextP1);
+    freeFighter(nextP2);
+
+    bool gotP1 = false;
+    if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
+        gotP1 = getRandomFighter(nextP1);
+        xSemaphoreGive(sdMutex);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+    if (!gotP1) {
+        isPreloading = false;
+        return;
+    }
+
+    int h1 = nextP1.height > 0 ? nextP1.height : ((nextP1.ground_y - nextP1.head_y) > 0 ? (nextP1.ground_y - nextP1.head_y) : 32);
+    bool found = false;
+    
+    struct SimpleMeta {
+        String name = "";
+        int height = 0;
+        int ground_y = 0;
+        int head_y = 0;
+        int origin_x = 0;
+        int width_px = 0;
+    } bestMeta, candMeta;
+    float bestRatio = 0.0f;
+
+    for (int i = 0; i < 40; i++) {
+        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
+            FighterPlayer tempP;
+            if (getRandomFighter(tempP)) {
+                candMeta.name = tempP.name;
+                candMeta.height = tempP.height;
+                candMeta.ground_y = tempP.ground_y;
+                candMeta.head_y = tempP.head_y;
+                candMeta.origin_x = tempP.origin_x;
+                candMeta.width_px = tempP.width_px;
+
+                if (candMeta.name != nextP1.name) {
+                    int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
+                    if (h1 > 0 && h2 > 0) {
+                        float minH = (h1 < h2) ? (float)h1 : (float)h2;
+                        float maxH = (h1 > h2) ? (float)h1 : (float)h2;
+                        float ratio = minH / maxH;
+                        if (ratio > bestRatio) {
+                            bestRatio = ratio;
+                            bestMeta = candMeta;
+                        }
+                        if (ratio >= 0.80f) {
+                            nextP2.name = candMeta.name;
+                            nextP2.height = candMeta.height;
+                            nextP2.ground_y = candMeta.ground_y;
+                            nextP2.head_y = candMeta.head_y;
+                            nextP2.origin_x = candMeta.origin_x;
+                            nextP2.width_px = candMeta.width_px;
+                            found = true;
+                        }
+                    }
+                }
+            }
+            xSemaphoreGive(sdMutex);
+            if (found) break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (!found && bestMeta.name.length() > 0) {
+        nextP2.name = bestMeta.name;
+        nextP2.height = bestMeta.height;
+        nextP2.ground_y = bestMeta.ground_y;
+        nextP2.head_y = bestMeta.head_y;
+        nextP2.origin_x = bestMeta.origin_x;
+        nextP2.width_px = bestMeta.width_px;
+    }
+
+    String dir = getFightersDir();
+    bool ok = true;
+
+    auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
+        bool res = false;
+        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(200))) {
+            res = loadFighterAnim(anim, path.c_str());
+            xSemaphoreGive(sdMutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Breathe! Yield SD bus and CPU to Core 1 rendering
+        return res;
+    };
+
+    ok &= loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt");
+    ok &= loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt");
+    ok &= loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt");
+    ok &= loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt");
+
+    int t1[3] = {1, 2, 3};
+    for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t1[i]; t1[i]=t1[r]; t1[r]=temp; }
+    for(int i=0; i<3; i++) {
+        if (loadAnimThreadSafe(nextP1.animSpecial, dir + "/" + nextP1.name + "/special" + String(t1[i]) + ".fgt")) break;
+    }
+    for(int i=0; i<3; i++) {
+        if (loadAnimThreadSafe(nextP1.animSuper, dir + "/" + nextP1.name + "/super" + String(t1[i]) + ".fgt")) break;
+    }
+    loadAnimThreadSafe(nextP1.animFall, dir + "/" + nextP1.name + "/fall.fgt");
+
+    ok &= loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt");
+    ok &= loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt");
+    ok &= loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt");
+    ok &= loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt");
+
+    int t2[3] = {1, 2, 3};
+    for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t2[i]; t2[i]=t2[r]; t2[r]=temp; }
+    for(int i=0; i<3; i++) {
+        if (loadAnimThreadSafe(nextP2.animSpecial, dir + "/" + nextP2.name + "/special" + String(t2[i]) + ".fgt")) break;
+    }
+    for(int i=0; i<3; i++) {
+        if (loadAnimThreadSafe(nextP2.animSuper, dir + "/" + nextP2.name + "/super" + String(t2[i]) + ".fgt")) break;
+    }
+    loadAnimThreadSafe(nextP2.animFall, dir + "/" + nextP2.name + "/fall.fgt");
+
+    if (ok) {
+        isNextReady = true;
+        LOGI("FighterEngine", "Background preload completed on Core 0: %s vs %s", nextP1.name.c_str(), nextP2.name.c_str());
+    } else {
+        freeFighter(nextP1);
+        freeFighter(nextP2);
+        LOGW("FighterEngine", "Background preload failed for %s vs %s", nextP1.name.c_str(), nextP2.name.c_str());
+    }
+    isPreloading = false;
+}
+
+static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
+    dest.name = src.name;
+    dest.height = src.height;
+    dest.ground_y = src.ground_y;
+    dest.head_y = src.head_y;
+    dest.origin_x = src.origin_x;
+    dest.width_px = src.width_px;
+    dest.animWalk = src.animWalk;
+    dest.animAttack = src.animAttack;
+    dest.animHit = src.animHit;
+    dest.animWin = src.animWin;
+    dest.animSpecial = src.animSpecial;
+    dest.animSuper = src.animSuper;
+    dest.animFall = src.animFall;
+    dest.state = src.state;
+    dest.currentFrameBuffer = src.currentFrameBuffer;
+    dest.currentBufferSize = src.currentBufferSize;
+    dest.x = src.x;
+    dest.y = src.y;
+    dest.direction = src.direction;
+    dest.currentFrame = src.currentFrame;
+    dest.lastFrameTime = src.lastFrameTime;
+    dest.hasHit = src.hasHit;
+    dest.isDead = src.isDead;
+
+    src.animWalk = FgtAnimation();
+    src.animAttack = FgtAnimation();
+    src.animHit = FgtAnimation();
+    src.animWin = FgtAnimation();
+    src.animSpecial = FgtAnimation();
+    src.animSuper = FgtAnimation();
+    src.animFall = FgtAnimation();
+    src.currentFrameBuffer = nullptr;
+    src.currentBufferSize = 0;
+}
+
 void FighterEngine::startFight() {
     if (millis() < retryDelayEnd) return;
     if (numAvailableFighters < 2) return;
     
-    freeFighter(p1);
-    freeFighter(p2);
-    
-    if (!getRandomFighter(p1)) return;
-    
-    int h1 = (p1.ground_y - p1.head_y) > 0 ? (p1.ground_y - p1.head_y) : p1.height;
-    bool found = false;
-    for (int i = 0; i < 30; i++) {
-        if (getRandomFighter(p2)) {
-            int h2 = (p2.ground_y - p2.head_y) > 0 ? (p2.ground_y - p2.head_y) : p2.height;
-            if (p2.name != p1.name && h1 > 0 && h2 > 0) {
-                float minH = (h1 < h2) ? (float)h1 : (float)h2;
-                float maxH = (h1 > h2) ? (float)h1 : (float)h2;
-                if ((minH / maxH) >= 0.80f) {
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-    
-    if (!found) {
-        // Fallback
-        int attempts = 0;
-        do {
-            getRandomFighter(p2);
-            attempts++;
-        } while (p1.name == p2.name && attempts < 10);
-    }
-    
-    loadDir = getFightersDir();
-    currentLoadState = LOAD_INIT;
-    active = true;
-}
+    if (isNextReady) {
+        freeFighter(p1);
+        freeFighter(p2);
 
-void FighterEngine::processLoadState() {
-    switch (currentLoadState) {
-        case LOAD_INIT:
-            currentLoadState = LOAD_P1_WALK;
-            break;
-        case LOAD_P1_WALK:
-            if (!loadFighterAnim(p1.animWalk, (loadDir + "/" + p1.name + "/walk.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P1_ATTACK;
-            break;
-        case LOAD_P1_ATTACK:
-            if (!loadFighterAnim(p1.animAttack, (loadDir + "/" + p1.name + "/attack.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P1_HIT;
-            break;
-        case LOAD_P1_HIT:
-            if (!loadFighterAnim(p1.animHit, (loadDir + "/" + p1.name + "/hit.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P1_WIN;
-            break;
-        case LOAD_P1_WIN:
-            if (!loadFighterAnim(p1.animWin, (loadDir + "/" + p1.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P1_SPECIAL;
-            break;
-        case LOAD_P1_SPECIAL: {
-            int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
-            for(int i=0; i<3; i++) {
-                if (loadFighterAnim(p1.animSpecial, (loadDir + "/" + p1.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
-            }
-            currentLoadState = LOAD_P1_SUPER;
-            break;
-        }
-        case LOAD_P1_SUPER: {
-            int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
-            for(int i=0; i<3; i++) {
-                if (loadFighterAnim(p1.animSuper, (loadDir + "/" + p1.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
-            }
-            currentLoadState = LOAD_P1_FALL;
-            break;
-        }
-        case LOAD_P1_FALL:
-            loadFighterAnim(p1.animFall, (loadDir + "/" + p1.name + "/fall.fgt").c_str());
-            currentLoadState = LOAD_P2_WALK;
-            break;
-        case LOAD_P2_WALK:
-            if (!loadFighterAnim(p2.animWalk, (loadDir + "/" + p2.name + "/walk.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P2_ATTACK;
-            break;
-        case LOAD_P2_ATTACK:
-            if (!loadFighterAnim(p2.animAttack, (loadDir + "/" + p2.name + "/attack.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P2_HIT;
-            break;
-        case LOAD_P2_HIT:
-            if (!loadFighterAnim(p2.animHit, (loadDir + "/" + p2.name + "/hit.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P2_WIN;
-            break;
-        case LOAD_P2_WIN:
-            if (!loadFighterAnim(p2.animWin, (loadDir + "/" + p2.name + "/win.fgt").c_str())) currentLoadState = LOAD_FINISH;
-            else currentLoadState = LOAD_P2_SPECIAL;
-            break;
-        case LOAD_P2_SPECIAL: {
-            int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
-            for(int i=0; i<3; i++) {
-                if (loadFighterAnim(p2.animSpecial, (loadDir + "/" + p2.name + "/special" + String(t[i]) + ".fgt").c_str())) break;
-            }
-            currentLoadState = LOAD_P2_SUPER;
-            break;
-        }
-        case LOAD_P2_SUPER: {
-            int t[3] = {1, 2, 3};
-            for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t[i]; t[i]=t[r]; t[r]=temp; }
-            for(int i=0; i<3; i++) {
-                if (loadFighterAnim(p2.animSuper, (loadDir + "/" + p2.name + "/super" + String(t[i]) + ".fgt").c_str())) break;
-            }
-            currentLoadState = LOAD_P2_FALL;
-            break;
-        }
-        case LOAD_P2_FALL:
-            loadFighterAnim(p2.animFall, (loadDir + "/" + p2.name + "/fall.fgt").c_str());
-            
-            // Done! Finish setup
-            {
-                int scale = (matrix->height() >= 64 && getFightersDir().endsWith("32")) ? (matrix->height() / 32) : 1;
-                int p1_ground_at_0 = p1.ground_y - p1.head_y;
-                int p2_ground_at_0 = p2.ground_y - p2.head_y;
-                int fight_max_h = p1_ground_at_0 > p2_ground_at_0 ? p1_ground_at_0 : p2_ground_at_0;
+        movePlayer(p1, nextP1);
+        movePlayer(p2, nextP2);
+        isNextReady = false;
 
-                p1.direction = 1; 
-                p1.x = -p1.width_px * scale; 
-                p1.y = (fight_max_h - p1.ground_y) * scale;
-                
-                p2.direction = -1; 
-                p2.x = matrix->width();
-                p2.y = (fight_max_h - p2.ground_y) * scale;
-                
-                setPlayerState(p1, FIGHTER_WALK);
-                setPlayerState(p2, FIGHTER_WALK);
-                p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
-                fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
-                active = true;
-                currentLoadState = LOAD_IDLE;
-            }
-            break;
-        case LOAD_FINISH:
-            LOGE("FighterEngine", "Failed to start fight for %s vs %s", p1.name.c_str(), p2.name.c_str());
-            freeFighter(p1);
-            freeFighter(p2);
-            active = false;
-            retryDelayEnd = millis() + 5000;
-            currentLoadState = LOAD_IDLE;
-            break;
-        default:
-            break;
+        loadDir = getFightersDir();
+        int scale = (matrix && matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+        int ground_y_screen = p1.ground_y > p2.ground_y ? p1.ground_y : p2.ground_y;
+
+        p1.direction = 1; 
+        p1.x = -p1.width_px * scale; 
+        p1.y = (ground_y_screen - p1.ground_y) * scale;
+        
+        p2.direction = -1; 
+        p2.x = matrix ? matrix->width() : 128;
+        p2.y = (ground_y_screen - p2.ground_y) * scale;
+        
+        setPlayerState(p1, FIGHTER_WALK);
+        setPlayerState(p2, FIGHTER_WALK);
+        p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
+        fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
+        active = true;
+    } else {
+        // Not ready yet (e.g. at boot): trigger preload
+        triggerBackgroundPreload();
     }
 }
 
@@ -390,28 +479,29 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
     if (p.activeFile) p.activeFile.close();
+
+    // Reset frame cache for all animations when changing state so new frames are freshly read
+    p.animWalk.cachedFrameIndex = -1;
+    p.animAttack.cachedFrameIndex = -1;
+    p.animHit.cachedFrameIndex = -1;
+    p.animWin.cachedFrameIndex = -1;
+    p.animSpecial.cachedFrameIndex = -1;
+    p.animSuper.cachedFrameIndex = -1;
+    p.animFall.cachedFrameIndex = -1;
+
     if (anim && anim->loaded && !anim->psramBuffer) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
             if (p.currentFrameBuffer) {
-                if (psramFound()) heap_caps_free(p.currentFrameBuffer);
+                if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
                 else free(p.currentFrameBuffer);
             }
-            if (psramFound()) {
+            if (m_hasPsram) {
                 p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
             } else {
                 p.currentFrameBuffer = (uint8_t*)malloc(newSize);
             }
             p.currentBufferSize = newSize;
-            
-            // Force redraw since buffer was reallocated
-            p.animWalk.cachedFrameIndex = -1;
-            p.animAttack.cachedFrameIndex = -1;
-            p.animHit.cachedFrameIndex = -1;
-            p.animWin.cachedFrameIndex = -1;
-            p.animSpecial.cachedFrameIndex = -1;
-            p.animSuper.cachedFrameIndex = -1;
-            p.animFall.cachedFrameIndex = -1;
         }
         p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
     }
@@ -419,11 +509,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
 
 bool FighterEngine::loop() {
     if (millis() < retryDelayEnd) return true;
-    
-    if (currentLoadState != LOAD_IDLE) {
-        processLoadState();
-        return true;
-    }
     
     if (millis() < hitStopUntilMillis) return true;
     
@@ -444,14 +529,18 @@ bool FighterEngine::loop() {
     else if (p1.state == FIGHTER_SUPER) anim1 = &p1.animSuper;
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
-    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames) && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
-        p1.currentFrame++;
-        p1.lastFrameTime = now;
-        if (p1.currentFrame >= anim1->numFrames) {
-            if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
-            else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
-            else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
-            else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
+    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames)) {
+        uint32_t delay = anim1->frameDelays[p1.currentFrame];
+        if (delay < 30) delay = 30;
+        if (now - p1.lastFrameTime >= delay) {
+            p1.currentFrame++;
+            p1.lastFrameTime = now;
+            if (p1.currentFrame >= anim1->numFrames) {
+                if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
+                else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
+                else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
+                else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
+            }
         }
     }
     
@@ -464,14 +553,18 @@ bool FighterEngine::loop() {
     else if (p2.state == FIGHTER_SUPER) anim2 = &p2.animSuper;
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
-    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames) && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
-        p2.currentFrame++;
-        p2.lastFrameTime = now;
-        if (p2.currentFrame >= anim2->numFrames) {
-            if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
-            else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
-            else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
-            else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; }
+    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames)) {
+        uint32_t delay = anim2->frameDelays[p2.currentFrame];
+        if (delay < 30) delay = 30;
+        if (now - p2.lastFrameTime >= delay) {
+            p2.currentFrame++;
+            p2.lastFrameTime = now;
+            if (p2.currentFrame >= anim2->numFrames) {
+                if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
+                else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
+                else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
+                else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; } // Stay on last win frame
+            }
         }
     }
     
@@ -540,14 +633,12 @@ bool FighterEngine::loop() {
     }
     
     if (fightEndTime > 0 && now - fightEndTime > 2000) {
-        extern ConfigLoader config;
         active = false;
-        retryDelayEnd = now + (config.idle.fighter_interval_sec * 1000);
-        if (matrix) {
-            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
-            matrix->fillRect(p1.x, p1.y, p1.width_px * scale, p1.height * scale, 0);
-            matrix->fillRect(p2.x, p2.y, p2.width_px * scale, p2.height * scale, 0);
-        }
+        freeFighter(p1);
+        freeFighter(p2);
+        extern ConfigLoader config;
+        retryDelayEnd = now + (config.system.idle_fighter_interval * 1000);
+        triggerBackgroundPreload();
     }
     return true;
 }
