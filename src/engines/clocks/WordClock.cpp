@@ -62,11 +62,28 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
         chosenFont = customFont.getFont();
     }
 
+    // If the chosen font is too tall for a 3-line word clock (e.g. 27px tall font on 32px/64px matrix),
+    // fallback to clean 5x7 so all 3 lines can be displayed and scaled by the size slider
+    if (chosenFont != nullptr) {
+        matrix->setFont(chosenFont);
+        matrix->setTextSize(1);
+        int16_t tbx, tby;
+        uint16_t tbw, tbh;
+        matrix->getTextBounds("TEST", 0, 0, &tbx, &tby, &tbw, &tbh);
+        if (tbh > (matrix->height() / 2)) {
+            chosenFont = nullptr;
+        }
+    }
+
     matrix->setFont(chosenFont);
     
+    int gfxSize = requestedSize;
+    if (gfxSize < 1) gfxSize = 1;
+    matrix->setTextSize(gfxSize);
+
     // Break down any long lines that exceed screen width into wrapped lines
     std::vector<String> lines;
-    int maxCharsPerLine = max(1, matrix->width() / (chosenFont ? 12 : 6));
+    int maxCharsPerLine = max(1, matrix->width() / (chosenFont ? 12 : (6 * gfxSize)));
 
     for (const String& rawLine : rawLines) {
         if ((int)rawLine.length() <= maxCharsPerLine) {
@@ -90,37 +107,8 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
             }
         }
     }
-
-    int gfxSize = requestedSize;
-    if (gfxSize < 1) gfxSize = 1;
     
-    while (gfxSize > 1) {
-        bool overflows = false;
-        int totalH = 0;
-        int lineSpacing = (matrix->height() >= 64 ? 4 : 2) * gfxSize;
-        matrix->setTextSize(gfxSize);
-        for (const String& line : lines) {
-            int16_t bx, by;
-            uint16_t bw, bh;
-            matrix->getTextBounds(line, 0, 0, &bx, &by, &bw, &bh);
-            if (bw > (uint16_t)matrix->width()) {
-                overflows = true;
-                break;
-            }
-            int lh = (bh == 0) ? (chosenFont ? 14 : 8) * gfxSize : bh;
-            totalH += lh + lineSpacing;
-        }
-        if (totalH > matrix->height()) overflows = true;
-        if (overflows) {
-            gfxSize--;
-        } else {
-            break;
-        }
-    }
-
-    matrix->setTextSize(gfxSize);
-    
-    int lineSpacing = (matrix->height() >= 64 ? 4 : 2) * gfxSize;
+    int lineSpacing = (matrix->height() >= 64 ? 3 : 1) * gfxSize;
     int totalH = 0;
     std::vector<int> lineHeights;
     
@@ -128,11 +116,18 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(line, 0, 0, &bx, &by, &bw, &bh);
-        int finalLh = (bh == 0) ? ((chosenFont ? 14 : 8) * gfxSize) : bh;
+        int finalLh = (bh == 0) ? ((chosenFont ? 10 : 8) * gfxSize) : bh;
         lineHeights.push_back(finalLh);
         totalH += finalLh + lineSpacing;
     }
     if (totalH > 0) totalH -= lineSpacing;
+
+    if (totalH > matrix->height() && lineSpacing > 1) {
+        lineSpacing = 1;
+        totalH = 0;
+        for (int lh : lineHeights) totalH += lh + lineSpacing;
+        if (totalH > 0) totalH -= lineSpacing;
+    }
     
     int y = (matrix->height() - totalH) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
