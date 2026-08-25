@@ -1,5 +1,6 @@
 #include "OpenWeatherMapProvider.h"
 #include "../core/Logger.h"
+#include "core/I18n.h"
 #include <esp_heap_caps.h>
 
 struct SpiRamAllocator {
@@ -49,77 +50,12 @@ bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& c
     return false;
 }
 
-static String translateCondition(const String& mainCond, const String& apiDesc, const String& lang) {
-    String m = mainCond;
-    m.toLowerCase();
-    String d = apiDesc;
-    d.toLowerCase();
-    String l = lang;
-    l.toLowerCase();
-    
-    if (l == "fr") {
-        if (m.indexOf("clear") != -1) return "Soleil";
-        if (m.indexOf("cloud") != -1) {
-            if (d.indexOf("couvert") != -1 || d.indexOf("overcast") != -1) return "Couvert";
-            if (d.indexOf("part") != -1 || d.indexOf("peu") != -1 || d.indexOf("scat") != -1) return "Eclaircies";
-            return "Nuageux";
-        }
-        if (m.indexOf("rain") != -1 || m.indexOf("drizzle") != -1) return "Pluie";
-        if (m.indexOf("thunder") != -1) return "Orage";
-        if (m.indexOf("snow") != -1) return "Neige";
-        if (m.indexOf("mist") != -1 || m.indexOf("fog") != -1 || m.indexOf("haze") != -1) return "Brume";
-        if (apiDesc.length() > 0) {
-            String res = apiDesc;
-            res[0] = toupper(res[0]);
-            return res;
-        }
-        return "Meteo";
-    } else if (l == "es") {
-        if (m.indexOf("clear") != -1) return "Soleado";
-        if (m.indexOf("cloud") != -1) return "Nublado";
-        if (m.indexOf("rain") != -1 || m.indexOf("drizzle") != -1) return "Lluvia";
-        if (m.indexOf("thunder") != -1) return "Tormenta";
-        if (m.indexOf("snow") != -1) return "Nieve";
-        if (m.indexOf("mist") != -1 || m.indexOf("fog") != -1) return "Niebla";
-    }
-    
-    if (m.indexOf("clear") != -1) return "Clear";
-    if (m.indexOf("cloud") != -1) return "Clouds";
-    if (m.indexOf("rain") != -1) return "Rain";
-    if (m.indexOf("drizzle") != -1) return "Drizzle";
-    if (m.indexOf("thunder") != -1) return "Thunder";
-    if (m.indexOf("snow") != -1) return "Snow";
-    if (m.indexOf("mist") != -1 || m.indexOf("fog") != -1) return "Fog";
-    return mainCond;
-}
-
 bool OpenWeatherMapProvider::parsePayload(const String& payload, WeatherData outForecasts[], int maxDays, int& outNumForecasts, const String& lang, bool haveTime, int currentWday) {
     SpiRamJsonDocument doc(32768);
     DeserializationError error = deserializeJson(doc, payload);
     
     if (!error && doc["list"].is<JsonArray>()) {
         JsonArray list = doc["list"].as<JsonArray>();
-        
-        const char* dayNames[7];
-        const char* fixedLabels[3];
-        
-        if (lang.equalsIgnoreCase("fr")) {
-            const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
-            const char* fr_fixedLabels[3] = {"AUJ.", "DEMN", nullptr};
-            memcpy(dayNames, fr_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
-        } else if (lang.equalsIgnoreCase("es")) {
-            const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
-            const char* es_fixedLabels[3] = {"HOY", "MANA", nullptr};
-            memcpy(dayNames, es_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, es_fixedLabels, sizeof(fixedLabels));
-        } else {
-            const char* en_dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-            const char* en_fixedLabels[3] = {"TODAY", "TMRW", nullptr};
-            memcpy(dayNames, en_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, en_fixedLabels, sizeof(fixedLabels));
-        }
-
         const int sampleIndices[3] = {0, 8, 16};
 
         outNumForecasts = 0;
@@ -154,16 +90,16 @@ bool OpenWeatherMapProvider::parsePayload(const String& payload, WeatherData out
 
             String rawMain = item["weather"][0]["main"] | "";
             String rawDesc = item["weather"][0]["description"] | "";
-            d.description = translateCondition(rawMain, rawDesc, lang);
+            String combined = rawMain + " " + rawDesc;
+            d.description = I18n::getWeatherCondition(combined);
             d.iconCode = item["weather"][0]["icon"].as<String>();
 
-            if (fixedLabels[i] != nullptr) {
-                d.label = fixedLabels[i];
-            } else if (haveTime) {
-                int dayOfWeek = (currentWday + 2) % 7;
-                d.label = dayNames[dayOfWeek];
+            if (i == 0) {
+                d.label = I18n::getWeatherDayLabel(currentWday, true, false);
+            } else if (i == 1) {
+                d.label = I18n::getWeatherDayLabel((currentWday + 1) % 7, false, true);
             } else {
-                d.label = "DAY3";
+                d.label = I18n::getWeatherDayLabel((currentWday + 2) % 7, false, false);
             }
             outNumForecasts++;
         }

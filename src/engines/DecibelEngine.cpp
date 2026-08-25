@@ -1,6 +1,7 @@
 #include "DecibelEngine.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
+#include "core/I18n.h"
 
 
 
@@ -85,42 +86,7 @@ uint16_t DecibelEngine::getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLe
 }
 
 const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
-    extern ConfigLoader config;
-    String lang = config.getInstance("weather_main") ? config.getInstance("weather_main")->config.getString("lang") : "en";
-    lang.toLowerCase();
-
-    if (lang == "fr") {
-        switch (level) {
-            case NOISE_CALM:     return "SILENCE";
-            case NOISE_NORMAL:   return "PAISIBLE";
-            case NOISE_MODERATE: return "MODERE";
-            case NOISE_VIGILANCE:return "ELEVE";
-            case NOISE_LIMIT:    return "BRUYANT";
-            case NOISE_ALERT:
-            default:             return "ALERTE";
-        }
-    } else if (lang == "es") {
-        switch (level) {
-            case NOISE_CALM:     return "SILENCIO";
-            case NOISE_NORMAL:   return "TRANQUIL";
-            case NOISE_MODERATE: return "MODERADO";
-            case NOISE_VIGILANCE:return "ELEVADO";
-            case NOISE_LIMIT:    return "RUIDOSO";
-            case NOISE_ALERT:
-            default:             return "ALERTA";
-        }
-    } else {
-        // English default
-        switch (level) {
-            case NOISE_CALM:     return "SILENT";
-            case NOISE_NORMAL:   return "QUIET";
-            case NOISE_MODERATE: return "MODERATE";
-            case NOISE_VIGILANCE:return "ELEVATED";
-            case NOISE_LIMIT:    return "LOUD";
-            case NOISE_ALERT:
-            default:             return "ALERT";
-        }
-    }
+    return I18n::getNoiseLevelLabel((int)level);
 }
 
 void DecibelEngine::drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db) {

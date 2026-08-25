@@ -1230,7 +1230,14 @@ const translations = {
   }
 };
 
+const SUPPORTED_LANGUAGES = [
+  { code: 'fr', label: 'Français' },
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Español' }
+];
+
 function setLanguage(lang) {
+  localStorage.setItem('lang', lang);
   const dict = translations[lang] || translations.en;
   
   // Text content translation
@@ -2026,11 +2033,29 @@ function initNavigation() {
 
   const langSelect = document.getElementById('lang-selector');
   if (langSelect) {
+    langSelect.innerHTML = '';
+    SUPPORTED_LANGUAGES.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.code;
+      opt.textContent = l.label;
+      langSelect.appendChild(opt);
+    });
+
+    const savedLang = localStorage.getItem('lang');
     const defaultLang = navigator.language.split('-')[0];
-    const initialLang = ['en', 'fr', 'es'].includes(defaultLang) ? defaultLang : 'en';
+    const initialLang = savedLang || (SUPPORTED_LANGUAGES.some(l => l.code === defaultLang) ? defaultLang : 'fr');
     langSelect.value = initialLang;
     setLanguage(initialLang);
-    langSelect.addEventListener('change', (e) => setLanguage(e.target.value));
+
+    langSelect.addEventListener('change', async (e) => {
+      const selected = e.target.value;
+      setLanguage(selected);
+      try {
+        await API.post('/api/system', { lang: selected });
+      } catch (err) {
+        console.warn('Failed to sync lang to backend:', err);
+      }
+    });
   }
 }
 
@@ -2407,6 +2432,12 @@ async function initSettings() {
   // Load current settings
   try {
     const s = await API.get('/api/settings');
+
+    if (s.lang) {
+      const ls = document.getElementById('lang-selector');
+      if (ls) ls.value = s.lang;
+      setLanguage(s.lang);
+    }
     
     // Dashboard
     const sliderBright = document.getElementById('slider-brightness');

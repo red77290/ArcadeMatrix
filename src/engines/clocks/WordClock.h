@@ -15,9 +15,6 @@ private:
     TimeData storedTime;
     BitmapFontLoader customFont;
     
-    void renderFR(int hours, int minutes, int gfxSize);
-    void renderEN(int hours, int minutes, int gfxSize);
-    void renderES(int hours, int minutes, int gfxSize);
     void drawLines(const std::vector<String>& lines, int gfxSize);
 };
 
