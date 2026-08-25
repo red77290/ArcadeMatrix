@@ -134,6 +134,15 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city, cons
         return;
     }
     
+    // Invalidate if system language changed
+    extern ConfigLoader config;
+    String sysLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+    if (sysLang != config_lang) {
+        config_lang = sysLang;
+        validData = false;
+        lastFetchTime = 0;
+    }
+
     // Only update every 15 minutes on success, or retry every 30 seconds on failure.
     uint32_t interval = validData ? 900000 : 30000;
     if (lastFetchTime > 0 && millis() - lastFetchTime < interval) return;
@@ -400,7 +409,6 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
         ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
         ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "metric", false, "", "", "", "metric,imperial", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Language", "Language code for day labels", "fr", false, "", "", "", "fr,en,es", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("weather_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

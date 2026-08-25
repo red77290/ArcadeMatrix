@@ -902,6 +902,7 @@ void WebServerAPI::setupRoutes() {
         }
 
         // System / Time
+        doc["lang"] = config.system.lang;
         doc["timezone"] = config.system.timezone;
         doc["format_24h"] = config.system.format24h;
 
@@ -1071,6 +1072,17 @@ void WebServerAPI::setupRoutes() {
             }
         }
 
+        if (!doc["lang"].isNull()) {
+            String newLang = doc["lang"].as<String>();
+            if (newLang != config.system.lang) {
+                config.system.lang = newLang;
+                if (rotationManager) {
+                    for (const auto& inst : config.instances) {
+                        rotationManager->notifyConfigChanged(inst.instance_id);
+                    }
+                }
+            }
+        }
         if (!doc["night_mode_enabled"].isNull()) config.system.night_mode_enabled = doc["night_mode_enabled"].as<bool>();
         if (!doc["turn_off_at"].isNull()) config.system.turn_off_at = doc["turn_off_at"].as<String>();
         if (!doc["wake_up_at"].isNull()) config.system.wake_up_at = doc["wake_up_at"].as<String>();
@@ -1239,6 +1251,69 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", response);
     });
     server.addHandler(powerHandler);
+
+    // API: System settings (GET /api/system)
+    server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
+        extern ConfigLoader config;
+        DynamicJsonDocument doc(1024);
+        JsonObject sys = doc.createNestedObject("system");
+        sys["lang"] = config.system.lang.length() > 0 ? config.system.lang : "fr";
+        sys["timezone"] = config.system.timezone;
+        sys["format_24h"] = config.system.format24h;
+        sys["night_mode_enabled"] = config.system.night_mode_enabled;
+        sys["turn_off_at"] = config.system.turn_off_at;
+        sys["wake_up_at"] = config.system.wake_up_at;
+        sys["night_brightness"] = config.system.night_brightness;
+        sys["idle_fighter_enabled"] = config.system.idle_fighter_enabled;
+        sys["idle_fighter_interval"] = config.system.idle_fighter_interval;
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+
+    // API: System settings update (POST /api/system)
+    AsyncCallbackJsonWebHandler* sysHandler = new AsyncCallbackJsonWebHandler("/api/system", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject doc = json.as<JsonObject>();
+        extern ConfigLoader config;
+        bool changed = false;
+
+        if (!doc["lang"].isNull()) {
+            String newLang = doc["lang"].as<String>();
+            if (newLang != config.system.lang) {
+                config.system.lang = newLang;
+                changed = true;
+                if (rotationManager) {
+                    for (const auto& inst : config.instances) {
+                        rotationManager->notifyConfigChanged(inst.instance_id);
+                    }
+                }
+            }
+        }
+        if (!doc["timezone"].isNull()) {
+            config.system.timezone = doc["timezone"].as<String>();
+            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
+            changed = true;
+        }
+        if (!doc["format_24h"].isNull()) {
+            config.system.format24h = doc["format_24h"].as<bool>();
+            changed = true;
+        }
+        if (changed) {
+            config.saveToSD("/config.json");
+        }
+
+        DynamicJsonDocument resp(512);
+        resp["status"] = "success";
+        resp["lang"] = config.system.lang;
+        String response;
+        serializeJson(resp, response);
+        request->send(200, "application/json", response);
+    });
+    server.addHandler(sysHandler);
     
     // API: System commands (Reboot / Shutdown)
     server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
