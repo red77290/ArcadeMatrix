@@ -354,6 +354,7 @@ void setup() {
             if (config.mqtt.enabled) {
                 frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
                 frontendListener->begin();
+                if (appCtx) appCtx->setEventBus(frontendListener);
             }
         } else {
             Serial.println("Wi-Fi connection failed. Starting Access Point (AP) Mode.");
@@ -447,11 +448,11 @@ void loop() {
     wasPoweredOn = true;
 
     // Dynamic MQTT synchronization (enables/disables or reconfigures MQTT live without reboot)
-    static bool lastMqttEnabled = false;
-    static String lastMqttBroker = "";
-    static int lastMqttPort = 0;
-    static String lastMqttTopicBato = "";
-    static String lastMqttTopicRecal = "";
+    static bool lastMqttEnabled = config.mqtt.enabled;
+    static String lastMqttBroker = config.mqtt.broker;
+    static int lastMqttPort = config.mqtt.port;
+    static String lastMqttTopicBato = config.mqtt.topic_batocera;
+    static String lastMqttTopicRecal = config.mqtt.topic_recalbox;
 
     if (config.mqtt.enabled != lastMqttEnabled || 
         (config.mqtt.enabled && (config.mqtt.broker != lastMqttBroker || config.mqtt.port != lastMqttPort || 
@@ -467,10 +468,12 @@ void loop() {
                 frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
             }
             frontendListener->begin();
+            if (appCtx) appCtx->setEventBus(frontendListener);
         } else {
             if (frontendListener) {
                 frontendListener->stop();
             }
+            if (appCtx) appCtx->setEventBus(nullptr);
         }
     }
 
