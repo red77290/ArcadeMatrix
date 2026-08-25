@@ -272,17 +272,49 @@ void FighterEngine::runBackgroundPreload() {
         return;
     }
 
-    int h1 = (nextP1.ground_y - nextP1.head_y) > 0 ? (nextP1.ground_y - nextP1.head_y) : nextP1.height;
+    int h1 = nextP1.height > 0 ? nextP1.height : ((nextP1.ground_y - nextP1.head_y) > 0 ? (nextP1.ground_y - nextP1.head_y) : 32);
     bool found = false;
-    for (int i = 0; i < 20; i++) {
+    
+    struct SimpleMeta {
+        String name = "";
+        int height = 0;
+        int ground_y = 0;
+        int head_y = 0;
+        int origin_x = 0;
+        int width_px = 0;
+    } bestMeta, candMeta;
+    float bestRatio = 0.0f;
+
+    for (int i = 0; i < 40; i++) {
         if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
-            if (getRandomFighter(nextP2)) {
-                int h2 = (nextP2.ground_y - nextP2.head_y) > 0 ? (nextP2.ground_y - nextP2.head_y) : nextP2.height;
-                if (nextP2.name != nextP1.name && h1 > 0 && h2 > 0) {
-                    float minH = (h1 < h2) ? (float)h1 : (float)h2;
-                    float maxH = (h1 > h2) ? (float)h1 : (float)h2;
-                    if ((minH / maxH) >= 0.80f) {
-                        found = true;
+            FighterPlayer tempP;
+            if (getRandomFighter(tempP)) {
+                candMeta.name = tempP.name;
+                candMeta.height = tempP.height;
+                candMeta.ground_y = tempP.ground_y;
+                candMeta.head_y = tempP.head_y;
+                candMeta.origin_x = tempP.origin_x;
+                candMeta.width_px = tempP.width_px;
+
+                if (candMeta.name != nextP1.name) {
+                    int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
+                    if (h1 > 0 && h2 > 0) {
+                        float minH = (h1 < h2) ? (float)h1 : (float)h2;
+                        float maxH = (h1 > h2) ? (float)h1 : (float)h2;
+                        float ratio = minH / maxH;
+                        if (ratio > bestRatio) {
+                            bestRatio = ratio;
+                            bestMeta = candMeta;
+                        }
+                        if (ratio >= 0.80f) {
+                            nextP2.name = candMeta.name;
+                            nextP2.height = candMeta.height;
+                            nextP2.ground_y = candMeta.ground_y;
+                            nextP2.head_y = candMeta.head_y;
+                            nextP2.origin_x = candMeta.origin_x;
+                            nextP2.width_px = candMeta.width_px;
+                            found = true;
+                        }
                     }
                 }
             }
@@ -292,16 +324,13 @@ void FighterEngine::runBackgroundPreload() {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    if (!found) {
-        int attempts = 0;
-        do {
-            if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
-                getRandomFighter(nextP2);
-                xSemaphoreGive(sdMutex);
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-            attempts++;
-        } while (nextP1.name == nextP2.name && attempts < 10);
+    if (!found && bestMeta.name.length() > 0) {
+        nextP2.name = bestMeta.name;
+        nextP2.height = bestMeta.height;
+        nextP2.ground_y = bestMeta.ground_y;
+        nextP2.head_y = bestMeta.head_y;
+        nextP2.origin_x = bestMeta.origin_x;
+        nextP2.width_px = bestMeta.width_px;
     }
 
     String dir = getFightersDir();
