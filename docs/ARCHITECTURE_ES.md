@@ -18,13 +18,14 @@ Este documento es la referencia **técnica exhaustiva** de la arquitectura de Ar
 6. [Modelo de Configuración: `config.json` → Instancias](#6-modelo-de-configuración-configjson--instancias)
 7. [Autorreparación: el ConfigSanitizer](#7-autorreparación-el-configsanitizer)
 8. [Propagación de Configuración y Recarga en Caliente](#8-propagación-de-configuración-y-recarga-en-caliente)
-9. [Interfaz Web Dinámica Basada en Esquemas y Listas Dinámicas](#9-interfaz-web-dinámica-basada-en-esquemas-y-listas-dinámicas)
-10. [El Árbitro de Pantalla (Display Arbiter)](#10-el-árbitro-de-pantalla-display-arbiter)
-11. [El Compositor de Superposición Fighter (Overlay)](#11-el-compositor-de-superposición-fighter-overlay)
-12. [Aislamiento en Tiempo de Ejecución y Modelo de Doble Núcleo](#12-aislamiento-en-tiempo-de-ejecución-y-modelo-de-doble-núcleo)
-13. [Cadencia de Renderizado y Limitador Adaptable](#13-cadencia-de-renderizado-y-limitador-adaptable)
-14. [Superficie de la API HTTP](#14-superficie-de-la-api-http)
-15. [Metadatos de Compilación](#15-metadatos-de-compilación)
+9. [Interfaz Web Dinámica Basada en Esquemas](#9-interfaz-web-dinámica-basada-en-esquemas)
+10. [Arquitectura de Internacionalización (i18n) y Fuente Única de Verdad](#10-arquitectura-de-internacionalización-i18n-y-fuente-única-de-verdad)
+11. [El Árbitro de Pantalla (Display Arbiter)](#11-el-árbitro-de-pantalla-display-arbiter)
+12. [Arquitectura de Superposición Transversal e Integración Fighter](#12-arquitectura-de-superposición-transversal-e-integración-fighter)
+13. [Aislamiento en Tiempo de Ejecución y Doble Núcleo](#13-aislamiento-en-tiempo-de-ejecución-y-doble-núcleo)
+14. [Cadencia de Renderizado y Limitador Adaptable](#14-cadencia-de-renderizado-y-limitador-adaptable)
+15. [Superficie de la API HTTP](#15-superficie-de-la-api-http)
+16. [Metadatos de Compilación](#16-metadatos-de-compilación)
 
 ---
 
@@ -287,6 +288,8 @@ Toda la configuración se persiste en `/config.json` en la tarjeta microSD:
 
 ---
 
+---
+
 ## 9. Interfaz Web Dinámica Basada en Esquemas
 
 La interfaz web (`data/index.html`) es completamente dinámica:
@@ -295,7 +298,39 @@ La interfaz web (`data/index.html`) es completamente dinámica:
 
 ---
 
-## 10. El Árbitro de Pantalla (Display Arbiter)
+## 10. Arquitectura de Internacionalización (i18n) y Fuente Única de Verdad
+
+ArcadeMatrix separa de forma estricta la configuración visual global de la lógica interna de los motores:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Usuario
+    participant WebUI as WebUI (#lang-selector)
+    participant API as AsyncWebServer (/api/system)
+    participant SD as microSD (config.json)
+    participant I18N as Módulo Centralizado I18n
+    participant ENG as Motores Activos (Weather, WordClock..)
+    participant MX as Matriz HUB75 (DMA)
+
+    User->>WebUI: Selecciona "English" / "Español" / "Français"
+    WebUI->>WebUI: Aplica inmediatamente translations[lang] en el DOM
+    WebUI->>API: POST /api/system { "lang": "es" }
+    API->>SD: Guarda system.lang = "es"
+    API->>ENG: RotationManager::notifyConfigChanged()
+    ENG->>I18N: I18n::getWeatherDayLabel() / getWordClockLines()
+    I18N-->>ENG: Devuelve cadenas traducidas en "es"
+    ENG->>MX: Renderiza directamente los textos traducidos en la matriz LED
+```
+
+### Ventajas de la Arquitectura i18n Centralizada:
+1. **Cero Redundancia en Esquemas:** Ningún motor individual (`WeatherEngine`, `WordClock`, `DecibelEngine`, etc.) incluye un campo `lang` en su esquema.
+2. **Sincronización Universal:** Cambiar el idioma en la cabecera de la WebUI reconfigura instantáneamente todo el sistema (WebUI + visualización en la matriz).
+3. **Extensibilidad Directa:** Añadir un nuevo idioma (ej: Alemán `de`) requiere únicamente una entrada en `SUPPORTED_LANGUAGES` (Front) y las tablas de traducción del módulo `I18n` (Back-end C++ y Rust).
+
+---
+
+## 11. El Árbitro de Pantalla (Display Arbiter)
 
 El `DisplayArbiter` evalúa cada fotograma las solicitudes de visualización para determinar la fuente principal activa:
 
