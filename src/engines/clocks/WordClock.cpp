@@ -1,9 +1,22 @@
 #include "WordClock.h"
 #include "../../core/ConfigLoader.h"
+#include "../fonts/ArcadeFonts.h"
 #include <string.h>
 
 WordClock::WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     storedTime = {0, 0, 0};
+    String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font_path", "");
+    if (fontSetting.length() > 0 && !fontSetting.equalsIgnoreCase("Default")) {
+        if (fontSetting.endsWith(".amf") || fontSetting.endsWith(".AMF") || fontSetting.startsWith("/")) {
+            if (!customFont.loadFromSD(fontSetting.c_str())) {
+                String altPath = fontSetting.startsWith("/") ? fontSetting : ("/fonts/" + fontSetting);
+                customFont.loadFromSD(altPath.c_str());
+            }
+        }
+    }
 }
 
 void WordClock::draw(const TimeData& t) {
@@ -13,8 +26,8 @@ void WordClock::draw(const TimeData& t) {
 void WordClock::update() {
     matrix->fillScreen(0);
     
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
-    if (matrix->height() >= 64 && matrix->width() >= 128 && gfxSize == 1) gfxSize = 2; // Auto-scale for 128x64
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
     
     String lang = (engineConfig ? engineConfig->getString("lang", "fr") : String("fr"));
     lang.toLowerCase();
@@ -29,11 +42,31 @@ void WordClock::update() {
 }
 
 void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize) {
-    matrix->setFont(NULL);
+    const GFXfont* chosenFont = nullptr;
+    String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
+    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font_path", "");
+
+    if (fontSetting.equalsIgnoreCase("PressStart2P") || fontSetting.equalsIgnoreCase("PressStart2P.ttf")) {
+        chosenFont = &PressStart2P9pt7b;
+    } else if (fontSetting.equalsIgnoreCase("namco") || fontSetting.equalsIgnoreCase("namco.ttf")) {
+        chosenFont = &namco__9pt7b;
+    } else if (fontSetting.equalsIgnoreCase("FreeSansBold") || fontSetting.equalsIgnoreCase("FreeSansBold.ttf")) {
+        chosenFont = &FreeSansBold9pt7b;
+    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold") || fontSetting.equalsIgnoreCase("FreeMonoBold.ttf")) {
+        chosenFont = &FreeMonoBold9pt7b;
+    } else if (fontSetting.equalsIgnoreCase("RetroGaming") || fontSetting.equalsIgnoreCase("Retro_Gaming") || fontSetting.equalsIgnoreCase("RetroGaming.ttf")) {
+        chosenFont = &Retro_Gaming9pt7b;
+    } else if (customFont.getFont()) {
+        chosenFont = customFont.getFont();
+    }
+
+    matrix->setFont(chosenFont);
     
     // Break down any long lines that exceed screen width into wrapped lines
     std::vector<String> lines;
-    int maxCharsPerLine = max(1, matrix->width() / 6);
+    int maxCharsPerLine = max(1, matrix->width() / (chosenFont ? 12 : 6));
 
     for (const String& rawLine : rawLines) {
         if ((int)rawLine.length() <= maxCharsPerLine) {
@@ -64,14 +97,18 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
     while (gfxSize > 1) {
         bool overflows = false;
         int totalH = 0;
-        int lineSpacing = 3 * gfxSize;
+        int lineSpacing = (matrix->height() >= 64 ? 4 : 2) * gfxSize;
+        matrix->setTextSize(gfxSize);
         for (const String& line : lines) {
-            int lineW = line.length() * (6 * gfxSize);
-            if (lineW > matrix->width()) {
+            int16_t bx, by;
+            uint16_t bw, bh;
+            matrix->getTextBounds(line, 0, 0, &bx, &by, &bw, &bh);
+            if (bw > (uint16_t)matrix->width()) {
                 overflows = true;
                 break;
             }
-            totalH += (8 * gfxSize) + lineSpacing;
+            int lh = (bh == 0) ? (chosenFont ? 14 : 8) * gfxSize : bh;
+            totalH += lh + lineSpacing;
         }
         if (totalH > matrix->height()) overflows = true;
         if (overflows) {
@@ -91,7 +128,7 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(line, 0, 0, &bx, &by, &bw, &bh);
-        int finalLh = (bh == 0) ? (8 * gfxSize) : bh;
+        int finalLh = (bh == 0) ? ((chosenFont ? 14 : 8) * gfxSize) : bh;
         lineHeights.push_back(finalLh);
         totalH += finalLh + lineSpacing;
     }
@@ -106,11 +143,12 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(lines[i], 0, 0, &bx, &by, &bw, &bh);
-        int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0);
+        int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - (chosenFont ? bx : 0);
+        int curY = y - (chosenFont ? by : 0);
         
         uint16_t color = (i % 2 == 0) ? color1 : color2;
         matrix->setTextColor(color);
-        matrix->setCursor(x, y);
+        matrix->setCursor(x, curY);
         matrix->print(lines[i]);
         
         y += lineHeights[i] + lineSpacing;

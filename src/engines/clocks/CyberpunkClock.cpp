@@ -36,13 +36,9 @@ void CyberpunkClock::drawTime() {
     int sMax = min(maxScaleW, maxScaleH);
     if (sMax < 1) sMax = 1;
     
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
-    int gfxSize = 1;
-    if (logicalSize >= 5) gfxSize = sMax + 1;
-    else if (logicalSize == 4) gfxSize = sMax;
-    else if (logicalSize == 3) gfxSize = max(1, (sMax * 3) / 4);
-    else if (logicalSize == 2) gfxSize = max(1, (sMax * 2) / 4);
-    else gfxSize = max(1, sMax / 4);
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (logicalSize < 1) logicalSize = 1;
+    int gfxSize = min(logicalSize, sMax);
     
     matrix->setTextSize(gfxSize);
     matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);

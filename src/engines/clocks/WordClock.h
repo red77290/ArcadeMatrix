@@ -2,6 +2,7 @@
 #define WORDCLOCK_H
 
 #include "../ClockEngine.h"
+#include "../../core/BitmapFontLoader.h"
 #include <vector>
 
 class WordClock : public ClockFace {
@@ -12,6 +13,7 @@ public:
 
 private:
     TimeData storedTime;
+    BitmapFontLoader customFont;
     
     void renderFR(int hours, int minutes, int gfxSize);
     void renderEN(int hours, int minutes, int gfxSize);

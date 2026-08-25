@@ -115,7 +115,8 @@ void PacmanClock::update() {
     
     matrix->fillScreen(0);
     
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
     matrix->setTextSize(gfxSize);
     // Default GFX font
     matrix->setFont(NULL);
