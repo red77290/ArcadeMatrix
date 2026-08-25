@@ -4,8 +4,10 @@
 struct WeatherData {
     String description;
     float temp;
+    float temp_min;
+    float temp_max;
     String iconCode;
-    String label; // "Today" / "Tmrw" / abbreviated weekday name
+    String label; // "AUJ." / "DEMN" / abbreviated weekday name
 };
 
 class IWeatherProvider {
