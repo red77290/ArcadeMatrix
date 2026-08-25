@@ -26,7 +26,7 @@ void test_decibel_status_mapping(void) {
 }
 
 void test_visualizer_mode_parsing(void) {
-    VisualizerEngine engine(nullptr);
+    VisualizerEngine engine;
     engine.setMode("waveform");
     engine.setMode("radial");
     engine.setMode("neon_fire");

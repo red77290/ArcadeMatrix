@@ -3,12 +3,12 @@
 🇬🇧 [English](README.md) | 🇫🇷 [Français](README_FR.md) | 🇪🇸 Español
 
 Esta carpeta es un punto de partida listo para usar para tu tarjeta SD: copia su contenido a la
-raíz de una tarjeta SD formateada en **FAT32**, edita `conf.ini` con tu Wi-Fi/hardware, y ya
+raíz de una tarjeta SD formateada en **FAT32**, edita `config.json` con tu Wi-Fi/hardware, y ya
 está listo para arrancar.
 
 ```
 sdCard/
-  ├─ conf.ini            <- tu configuración, ver docs/CONFIGURATION_ES.md para la referencia completa
+  ├─ config.json            <- tu configuración, ver docs/CONFIGURATION_ES.md para la referencia completa
   ├─ gifs/                <- manifiesto de playlist GIF de ejemplo (ver gif_indexation/ más abajo)
   ├─ fighters_32/         <- exportación de sprites MUGEN de ejemplo para matrices de 32px de alto
   └─ gif_indexation/      <- herramienta del lado del PC, NO necesaria en la tarjeta SD misma (ver más abajo)

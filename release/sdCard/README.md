@@ -3,11 +3,11 @@
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
 This folder is a ready-to-use starting point for your SD card: copy its contents to the root of
-a **FAT32**-formatted SD card, edit `conf.ini` for your Wi-Fi/hardware, and you're ready to boot.
+a **FAT32**-formatted SD card, edit `config.json` for your Wi-Fi/hardware, and you're ready to boot.
 
 ```
 sdCard/
-  ├─ conf.ini            <- your settings, see docs/CONFIGURATION.md for the full reference
+  ├─ config.json            <- your settings, see docs/CONFIGURATION.md for the full reference
   ├─ gifs/                <- sample GIF playlist manifest (see docs/... or gif_indexation/ below)
   ├─ fighters_32/         <- sample MUGEN sprite export for 32px-tall matrices
   └─ gif_indexation/      <- PC-side tool, NOT required on the SD card itself (see below)

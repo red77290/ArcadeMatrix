@@ -1,19 +1,19 @@
 #include <Arduino.h>
 #include <unity.h>
-#include "engines/RetroFrontendListener.h"
+#include "engines/FrontendSyncEngine.h"
 
 void setUp(void) {}
 void tearDown(void) {}
 
 void test_clean_system_name(void) {
-    TEST_ASSERT_EQUAL_STRING("Toaplan", RetroFrontendListener::cleanSystemName("Arcade manufacturer Toaplan").c_str());
-    TEST_ASSERT_EQUAL_STRING("Atari", RetroFrontendListener::cleanSystemName("Arcade Manufacturer Atari").c_str());
-    TEST_ASSERT_EQUAL_STRING("NeoGeo", RetroFrontendListener::cleanSystemName("Arcade manufacturer NeoGeo").c_str());
-    TEST_ASSERT_EQUAL_STRING("CPS1", RetroFrontendListener::cleanSystemName("Arcade System CPS1").c_str());
+    TEST_ASSERT_EQUAL_STRING("Toaplan", FrontendSyncEngine::cleanSystemName("Arcade manufacturer Toaplan").c_str());
+    TEST_ASSERT_EQUAL_STRING("Atari", FrontendSyncEngine::cleanSystemName("Arcade Manufacturer Atari").c_str());
+    TEST_ASSERT_EQUAL_STRING("NeoGeo", FrontendSyncEngine::cleanSystemName("Arcade manufacturer NeoGeo").c_str());
+    TEST_ASSERT_EQUAL_STRING("CPS1", FrontendSyncEngine::cleanSystemName("Arcade System CPS1").c_str());
 }
 
 void test_system_name_variants_priority(void) {
-    std::vector<RetroFrontendListener::SystemVariant> variants = RetroFrontendListener::getSystemNameVariants("snes");
+    std::vector<FrontendSyncEngine::SystemVariant> variants = FrontendSyncEngine::getSystemNameVariants("snes");
     TEST_ASSERT_TRUE(variants.size() > 0);
     
     // First variant must be in "console" folder
@@ -31,7 +31,7 @@ void test_system_name_variants_priority(void) {
 }
 
 void test_arcade_manufacturer_cleaning(void) {
-    std::vector<RetroFrontendListener::SystemVariant> variants = RetroFrontendListener::getSystemNameVariants("Arcade manufacturer Toaplan");
+    std::vector<FrontendSyncEngine::SystemVariant> variants = FrontendSyncEngine::getSystemNameVariants("Arcade manufacturer Toaplan");
     bool foundDefaultToaplan = false;
     bool foundToaplan = false;
     for (const auto& v : variants) {
@@ -41,7 +41,7 @@ void test_arcade_manufacturer_cleaning(void) {
     TEST_ASSERT_TRUE(foundDefaultToaplan);
     TEST_ASSERT_TRUE(foundToaplan);
 
-    std::vector<RetroFrontendListener::SystemVariant> atariVariants = RetroFrontendListener::getSystemNameVariants("Arcade Manufacturer Atari");
+    std::vector<FrontendSyncEngine::SystemVariant> atariVariants = FrontendSyncEngine::getSystemNameVariants("Arcade Manufacturer Atari");
     bool foundDefaultZatari = false;
     bool foundDirectAtari = false;
     for (const auto& v : atariVariants) {

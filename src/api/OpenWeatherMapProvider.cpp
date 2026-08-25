@@ -1,5 +1,6 @@
 #include "OpenWeatherMapProvider.h"
 #include "../core/Logger.h"
+#include "core/I18n.h"
 #include <esp_heap_caps.h>
 
 struct SpiRamAllocator {
@@ -20,11 +21,16 @@ struct SpiRamAllocator {
 
 using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
-bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& city, const String& lang, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
+bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& city, const String& lang, const String& units, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
     HTTPClient http;
     String reqLang = lang.length() > 0 ? lang : "fr";
+    String reqUnits = (units.equalsIgnoreCase("imperial") || units.equalsIgnoreCase("fahrenheit") || units.equalsIgnoreCase("f")) ? "imperial" : "metric";
     
-    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + city + "&units=metric&appid=" + apiKey + "&lang=" + reqLang;
+    String encodedCity = city;
+    encodedCity.trim();
+    encodedCity.replace(" ", "%20");
+    
+    String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + encodedCity + "&units=" + reqUnits + "&appid=" + apiKey + "&lang=" + reqLang;
     
     http.begin(url);
     int httpCode = http.GET();
@@ -50,27 +56,6 @@ bool OpenWeatherMapProvider::parsePayload(const String& payload, WeatherData out
     
     if (!error && doc["list"].is<JsonArray>()) {
         JsonArray list = doc["list"].as<JsonArray>();
-        
-        const char* dayNames[7];
-        const char* fixedLabels[3];
-        
-        if (lang.equalsIgnoreCase("fr")) {
-            const char* fr_dayNames[7] = {"DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM"};
-            const char* fr_fixedLabels[3] = {"AUJ.", "DEMN", nullptr};
-            memcpy(dayNames, fr_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, fr_fixedLabels, sizeof(fixedLabels));
-        } else if (lang.equalsIgnoreCase("es")) {
-            const char* es_dayNames[7] = {"DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"};
-            const char* es_fixedLabels[3] = {"HOY", "MANA", nullptr};
-            memcpy(dayNames, es_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, es_fixedLabels, sizeof(fixedLabels));
-        } else {
-            const char* en_dayNames[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-            const char* en_fixedLabels[3] = {"TODAY", "TMRW", nullptr};
-            memcpy(dayNames, en_dayNames, sizeof(dayNames));
-            memcpy(fixedLabels, en_fixedLabels, sizeof(fixedLabels));
-        }
-
         const int sampleIndices[3] = {0, 8, 16};
 
         outNumForecasts = 0;
@@ -80,17 +65,41 @@ bool OpenWeatherMapProvider::parsePayload(const String& payload, WeatherData out
 
             JsonObject item = list[idx];
             WeatherData& d = outForecasts[outNumForecasts];
+
+            // Calculate min (morning) and max (afternoon) temps across day's intervals
+            float dayMin = 999.0f;
+            float dayMax = -999.0f;
+            int startIdx = i * 8;
+            int endIdx = min((i + 1) * 8, (int)list.size());
+            for (int k = startIdx; k < endIdx; k++) {
+                JsonObject entry = list[k];
+                float t = entry["main"]["temp"].as<float>();
+                float tMin = entry["main"]["temp_min"] | t;
+                float tMax = entry["main"]["temp_max"] | t;
+                if (tMin < dayMin) dayMin = tMin;
+                if (tMax > dayMax) dayMax = tMax;
+                if (t < dayMin) dayMin = t;
+                if (t > dayMax) dayMax = t;
+            }
+            if (dayMin > 900.0f) dayMin = item["main"]["temp"].as<float>();
+            if (dayMax < -900.0f) dayMax = item["main"]["temp"].as<float>();
+
             d.temp = item["main"]["temp"].as<float>();
-            d.description = item["weather"][0]["main"].as<String>();
+            d.temp_min = dayMin;
+            d.temp_max = dayMax;
+
+            String rawMain = item["weather"][0]["main"] | "";
+            String rawDesc = item["weather"][0]["description"] | "";
+            String combined = rawMain + " " + rawDesc;
+            d.description = I18n::getWeatherCondition(combined);
             d.iconCode = item["weather"][0]["icon"].as<String>();
 
-            if (fixedLabels[i] != nullptr) {
-                d.label = fixedLabels[i];
-            } else if (haveTime) {
-                int dayOfWeek = (currentWday + 2) % 7;
-                d.label = dayNames[dayOfWeek];
+            if (i == 0) {
+                d.label = I18n::getWeatherDayLabel(currentWday, true, false);
+            } else if (i == 1) {
+                d.label = I18n::getWeatherDayLabel((currentWday + 1) % 7, false, true);
             } else {
-                d.label = "DAY3";
+                d.label = I18n::getWeatherDayLabel((currentWday + 2) % 7, false, false);
             }
             outNumForecasts++;
         }

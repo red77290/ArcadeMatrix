@@ -2,9 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-extern ConfigLoader config;
-
-PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display) : ClockFace(display) {
+PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     storedTime = {0, 0, 0};
     strcpy(oldTimeStr, "");
     strcpy(newTimeStr, "");
@@ -82,7 +80,7 @@ void PacmanClock::update() {
         lastMinute = storedTime.minutes;
         strcpy(oldTimeStr, timeStr);
         strcpy(newTimeStr, timeStr);
-    } else if (lastMinute != storedTime.minutes && !transitioning) {
+    } else if ((lastMinute != storedTime.minutes || strcmp(oldTimeStr, timeStr) != 0) && !transitioning) {
         transitioning = true;
         strcpy(newTimeStr, timeStr);
         pacX = -40.0f;
@@ -104,7 +102,7 @@ void PacmanClock::update() {
         animFrame++;
         
         if (transitioning) {
-            float pacSpeed = max(1.5f, 3.0f * matrix->width() / 64.0f);
+            float pacSpeed = max(1.2f, 1.6f * matrix->width() / 64.0f);
             pacX += pacSpeed;
             
             if (pacX >= matrix->width() + pacRadius * 3.0f) {
@@ -117,7 +115,8 @@ void PacmanClock::update() {
     
     matrix->fillScreen(0);
     
-    int gfxSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
     matrix->setTextSize(gfxSize);
     // Default GFX font
     matrix->setFont(NULL);
@@ -127,12 +126,12 @@ void PacmanClock::update() {
     matrix->getTextBounds(newTimeStr, 0, 0, &bx, &by, &bw, &bh);
     if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
     
-    int tx = (matrix->width() - bw) / 2 + config.time.clock_offset_x;
-    int ty = (matrix->height() - bh) / 2 + config.time.clock_offset_y;
+    int tx = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0);
+    int ty = (matrix->height() - bh) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
     
     uint16_t color1 = matrix->color565(255, 255, 255);
-    if (config.time.clock_color_1[0] == '#') {
-        long c1 = strtol(&config.time.clock_color_1[1], NULL, 16);
+    if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[0] == '#') {
+        long c1 = strtol(&(engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
     if (color1 == 0) color1 = matrix->color565(255, 255, 255); // Fallback to white if black
@@ -157,7 +156,7 @@ void PacmanClock::update() {
             matrix->drawPixel((int)px, (int)py, dotColor);
         }
     } else {
-        int mouthAngle = (int)(abs(sin(animFrame * 0.5f)) * 45);
+        int mouthAngle = (int)(abs(sin(animFrame * 1.0f)) * 45);
         
         // Draw old time
         matrix->setCursor(tx, ty);
@@ -186,7 +185,7 @@ void PacmanClock::update() {
         // Draw Ghosts
         for (int i = 0; i < 4; i++) {
             float gx = pacX - (pacRadius * 3.0f) - (i * ghostSpacing);
-            float gy = matrix->height() / 2 + sin(animFrame * 0.2f + i) * (pacRadius / 3.0f);
+            float gy = matrix->height() / 2 + sin(animFrame * 0.4f + i) * (pacRadius / 3.0f);
             drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
         }
     }

@@ -14,50 +14,49 @@ enum VisualizerMode {
  * @class VisualizerEngine
  * @brief Rhythmic music visualizer engine (takes priority over the rotation loop).
  */
-class VisualizerEngine {
+#include "../../include/core/EngineContract.h"
+
+class VisualizerEngine : public IEngine {
 public:
-    explicit VisualizerEngine(MatrixPanel_I2S_DMA* display);
+    VisualizerEngine();
     ~VisualizerEngine();
 
-    /**
-     * @brief Starts audio sampling and activates the visualizer.
-     */
-    void start();
+    EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void activate() override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* engineConfig) override;
 
-    /**
-     * @brief Stops the visualizer and suspends I2S sampling.
-     */
-    void stop();
-
-    /**
-     * @brief Indicates whether the visualizer is currently active.
-     */
     bool isActive() const { return active; }
+    bool allowsOverlay() const override { return false; }
+    bool allowRotation() const override { return false; }
 
     /**
      * @brief Sets the visual display mode ("spectrum", "waveform", "radial", "neon_fire").
      */
     void setMode(const String& modeStr);
 
-    /**
-     * @brief Renders a single frame of the visualizer.
-     * @return true if the frame was drawn
-     */
-    bool loop();
+
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
     bool active;
     VisualizerMode currentMode;
 
     float peakHold[128];
     uint32_t lastPeakDecay;
 
-    void drawSpectrum();
-    void drawWaveform();
-    void drawRadial();
-    void drawNeonFire();
+    void drawSpectrum(MatrixPanel_I2S_DMA* matrix);
+    void drawWaveform(MatrixPanel_I2S_DMA* matrix);
+    void drawRadial(MatrixPanel_I2S_DMA* matrix);
+    void drawNeonFire(MatrixPanel_I2S_DMA* matrix);
 
     uint16_t getSpectrumColor(int heightIndex, int maxHeight);
 };
+
+class VisualizerEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+
 

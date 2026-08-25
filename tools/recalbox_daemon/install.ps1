@@ -137,10 +137,39 @@ try {
 
         Write-Host "Cleaning up any previous install..."
         Invoke-RemoteCommand "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
-        Invoke-RemoteCommand "mkdir -p $TargetDir" | Out-Null
+        Invoke-RemoteCommand "mkdir -p $TargetDir /userdata/system/configs/emulationstation/scripts" | Out-Null
 
         Write-Host "Uploading daemon..."
         Copy-ToRemote $daemonLocal "/userdata/system/arcadematrix_daemon.py"
+
+        Write-Host "Installing Batocera event hooks..."
+        $hookCmd = @'
+cat > /userdata/system/scripts/arcadematrix_hook.sh << 'EOF'
+#!/bin/sh
+EVENT="$(basename "$0")"
+SYSTEM="$1"
+ROMPATH="$2"
+GAMENAME="$3"
+case "$EVENT" in
+    game-selected) STATE="browsing" ;;
+    game-start)    STATE="playing" ;;
+    game-end)      STATE="stopped" ;;
+    system-selected) STATE="browsing"; ROMPATH="" ;;
+    *)             STATE="browsing" ;;
+esac
+cat > /tmp/es_state.inf << STATEEOF
+SystemId=$SYSTEM
+GamePath=$ROMPATH
+State=$STATE
+STATEEOF
+EOF
+chmod +x /userdata/system/scripts/arcadematrix_hook.sh
+for evt in game-selected game-start game-end system-selected; do
+    ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/scripts/$evt
+    ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/configs/emulationstation/scripts/$evt
+done
+'@
+        Invoke-RemoteCommand $hookCmd | Out-Null
 
         $cmd = 'if [ ! -f /userdata/system/custom.sh ]; then echo "#!/bin/sh" > /userdata/system/custom.sh; echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; chmod +x /userdata/system/custom.sh; else if ! grep -q "arcadematrix_daemon.py" /userdata/system/custom.sh; then echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; fi; fi'
         Invoke-RemoteCommand $cmd | Out-Null

@@ -12,7 +12,6 @@
 #include <AsyncJson.h>
 #include "../core/ConfigLoader.h"
 #include "../engines/MessageEngine.h"
-#include "../engines/ClockEngine.h"
 #include "../engines/MarqueeEngine.h"
 #include "../engines/VisualizerEngine.h"
 #include "../hal/HardwareHAL.h"
@@ -28,9 +27,8 @@ public:
      * 
      * @param port The HTTP port to listen on (typically 80).
      * @param msgEngine Pointer to the MessageEngine for triggering marquee alerts.
-     * @param clkEngine Pointer to the ClockEngine to manipulate clock settings.
      */
-    WebServerAPI(uint16_t port, MessageEngine* msgEngine, ClockEngine* clkEngine);
+    WebServerAPI(uint16_t port, MessageEngine* msgEngine);
     
     /**
      * @brief Attach the MarqueeEngine used by the /api/marquee route.
@@ -50,7 +48,6 @@ public:
 private:
     AsyncWebServer server; ///< Underlying ESPAsyncWebServer instance
     MessageEngine* msg;    ///< Reference to the MessageEngine
-    ClockEngine* clock;    ///< Reference to the ClockEngine
     MarqueeEngine* marquee = nullptr; ///< Reference to the MarqueeEngine
     VisualizerEngine* visualizer = nullptr; ///< Reference to the VisualizerEngine
     

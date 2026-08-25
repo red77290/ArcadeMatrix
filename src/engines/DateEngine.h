@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/BitmapFontLoader.h"
+#include "../../include/core/EngineContract.h"
 
 #include "TimeData.h"
 
@@ -34,18 +35,36 @@ enum PublisherTheme {
     THEME_TETRIS_GB = 29
 };
 
-class DateEngine {
-public:
-    DateEngine(MatrixPanel_I2S_DMA* display);
-    ~DateEngine();
+struct DateConfig {
+    int theme;
+    String format;
+    String date_font;
+    int date_size;
+    int date_offset_x;
+    int date_offset_y;
+    String date_font_path;
+    String date_color_1;
+    String date_color_2;
+};
 
-    bool loop();
+class DateEngine : public IEngine {
+public:
+    DateEngine();
+    ~DateEngine() override;
+
+    // IEngine lifecycle
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
     
     // Updates the current date string (e.g. "Mer 08 Jul")
     void setDate(const char* dateStr);
     void setDateData(const TimeData& d);
     
-    // Legacy mapping (maps legacy character ID to new PublisherTheme)
+    // Backward compatibility mapping (maps legacy numeric character ID to new PublisherTheme)
     void setCharacter(int characterId);
     
     void setTheme(PublisherTheme theme);
@@ -58,7 +77,9 @@ public:
     void setResolution(int width, int height);
 
 private:
+    bool loop();
     MatrixPanel_I2S_DMA* matrix;
+    DateConfig m_config;
     char currentDate[32];
     uint16_t textColor;
     uint16_t shadowColor;
@@ -73,3 +94,9 @@ private:
     
     void applyThemeSettings();
 };
+
+class DateEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
+};
+

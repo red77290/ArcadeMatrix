@@ -4,21 +4,92 @@
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
-extern ConfigLoader config;
 
 
 
-WeatherEngine::WeatherEngine(MatrixPanel_I2S_DMA* display) : matrix(display) {
+
+#include "../api/OpenWeatherMapProvider.h"
+
+WeatherEngine::WeatherEngine() : matrix(nullptr) {
     validData = false;
     lastFetchTime = 0;
-    textColor = matrix->color565(255, 255, 255);
-    shadowColor = matrix->color565(0, 0, 0);
     numForecasts = 0;
     activeSlide = 0;
     lastSlideChange = 0;
 }
 
-WeatherEngine::~WeatherEngine() {}
+WeatherEngine::~WeatherEngine() {
+    for (auto* provider : providers) {
+        delete provider;
+    }
+}
+
+EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    matrix = context->getMatrix();
+    textColor = matrix->color565(255, 255, 255);
+    shadowColor = matrix->color565(0, 0, 0);
+    
+    // Add default provider
+    addProvider(new OpenWeatherMapProvider());
+
+    if (config) {
+        onConfigChanged(config);
+    } else {
+        // Fallback: query active instance from global config
+        extern ConfigLoader config;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "weather") {
+                onConfigChanged(&inst.config);
+                break;
+            }
+        }
+    }
+    
+    return EngineError::OK;
+}
+
+void WeatherEngine::activate() {
+    if (config_api_key.isEmpty() || config_city.isEmpty()) {
+        extern ConfigLoader config;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "weather") {
+                onConfigChanged(&inst.config);
+                break;
+            }
+        }
+    }
+}
+
+void WeatherEngine::update(EngineContext* context) {
+    loop();
+}
+
+void WeatherEngine::render(EngineContext* context) {}
+
+void WeatherEngine::deactivate() {}
+
+void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    if (!engineConfig) return;
+    String newKey = engineConfig->getString("api_key", "");
+    String newCity = engineConfig->getString("city", "");
+    String newLang = engineConfig->getString("lang", "");
+    if (newLang.isEmpty()) {
+        extern ConfigLoader config;
+        newLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+    }
+    String newUnits = engineConfig->getString("units", "metric");
+    
+    if (newKey != config_api_key || newCity != config_city || newLang != config_lang || newUnits != config_units) {
+        config_api_key = newKey;
+        config_city = newCity;
+        config_lang = newLang;
+        config_units = newUnits;
+        validData = false;
+        forceUpdate(); // Force fetch immediately with new settings
+    }
+    config_offset_x = engineConfig->getInt("weather_offset_x", 0);
+    config_offset_y = engineConfig->getInt("weather_offset_y", 0);
+}
 
 void WeatherEngine::addProvider(IWeatherProvider* provider) {
     if (provider) {
@@ -45,8 +116,8 @@ void WeatherEngine::setCharacter(int characterId) {
     }
 }
 
-void WeatherEngine::update(const String& apiKey, const String& city) {
-    if (apiKey.length() == 0 || city.length() == 0) {
+void WeatherEngine::updateWeather(const String& apiKey, const String& city, const String& units) {
+    if (apiKey.isEmpty() || city.isEmpty()) {
         static unsigned long lastWarn = 0;
         if (millis() - lastWarn > 10000) {
             LOGW("WeatherEngine", "Cannot fetch weather: API Key ('%s') or City ('%s') is missing!", apiKey.c_str(), city.c_str());
@@ -63,6 +134,15 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
         return;
     }
     
+    // Invalidate if system language changed
+    extern ConfigLoader config;
+    String sysLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+    if (sysLang != config_lang) {
+        config_lang = sysLang;
+        validData = false;
+        lastFetchTime = 0;
+    }
+
     // Only update every 15 minutes on success, or retry every 30 seconds on failure.
     uint32_t interval = validData ? 900000 : 30000;
     if (lastFetchTime > 0 && millis() - lastFetchTime < interval) return;
@@ -70,12 +150,12 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
     // Set lastFetchTime immediately so we don't spam the API on failure
     lastFetchTime = millis();
 
-    String reqLang = config.weather.lang;
+    String reqLang = config_lang;
     if (reqLang.length() == 0) reqLang = "fr";
     
     bool fetched = false;
     for (IWeatherProvider* provider : providers) {
-        if (provider->fetchForecast(apiKey, city, reqLang, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
+        if (provider->fetchForecast(apiKey, city, reqLang, units, forecasts, MAX_FORECAST_DAYS, numForecasts)) {
             fetched = true;
             break;
         }
@@ -85,7 +165,7 @@ void WeatherEngine::update(const String& apiKey, const String& city) {
         validData = true;
         activeSlide = 0;
         lastSlideChange = millis();
-        LOGI("WeatherEngine", "Success! Parsed %d forecast days.", numForecasts);
+        LOGI("WeatherEngine", "Success! Parsed %d forecast days in %s units.", numForecasts, units.c_str());
     } else {
         LOGE("WeatherEngine", "Error: Failed to parse weather data or 0 forecast entries parsed.");
     }
@@ -139,6 +219,8 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y) {
 }
 
 bool WeatherEngine::loop() {
+    updateWeather(config_api_key, config_city, config_units);
+
     if (!validData || numForecasts == 0) return true;
 
     // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
@@ -153,64 +235,251 @@ bool WeatherEngine::loop() {
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {
-    // Reset font to default GLCD font to avoid drawing from baseline (which pushes text off-screen)
-    // if another engine left a custom GFX font active.
+    // Reset font to default GLCD font to avoid drawing from baseline
     matrix->setFont(nullptr);
     
-    char tempStr[16];
-    sprintf(tempStr, "%.0fC", data.temp);
+    char unitChar = (config_units.equalsIgnoreCase("imperial") || config_units.equalsIgnoreCase("fahrenheit") || config_units.equalsIgnoreCase("f")) ? 'F' : 'C';
+    char tempMinStr[16];
+    char tempMaxStr[16];
+    sprintf(tempMinStr, "%.0f%c", data.temp_min, unitChar);
+    sprintf(tempMaxStr, "%.0f%c", data.temp_max, unitChar);
     
-    int textSize = 1;
-    int charWidth = 6;
-    int charHeight = 8;
-    
-    // Only use size 2 if we have at least 128 width or 64 width but stack vertically
-    if (matrix->width() >= 128) {
-        textSize = 2;
-        charWidth = 12;
-        charHeight = 16;
+    int mw = matrix->width();
+    int mh = matrix->height();
+
+    uint16_t colorMorning = matrix->color565(120, 200, 255); // Soft Cyan (Morning / Min)
+    uint16_t colorAfternoon = matrix->color565(255, 150, 50); // Warm Orange (Afternoon / Max)
+    uint16_t colorLabel = matrix->color565(180, 180, 255);    // Lavender
+    uint16_t colorDesc = matrix->color565(210, 210, 210);     // Light silver
+
+    if (mw >= 256 && mh >= 64) {
+        // --- 256x64 Ultra-Widescreen HD Layout ---
+        int iconX = 20 + config_offset_x;
+        int iconY = (mh - 24) / 2 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY);
+
+        int tempX = iconX + 36;
+        int textW = max((int)strlen(tempMinStr), (int)strlen(tempMaxStr)) * 12;
+
+        // Matin (Haut) - Size 2
+        matrix->setTextSize(2);
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 10 + 1 + config_offset_y);
+        matrix->print(tempMinStr);
+        matrix->setTextColor(colorMorning);
+        matrix->setCursor(tempX, 10 + config_offset_y);
+        matrix->print(tempMinStr);
+
+        // Après-midi (Bas) - Size 2
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 38 + 1 + config_offset_y);
+        matrix->print(tempMaxStr);
+        matrix->setTextColor(colorAfternoon);
+        matrix->setCursor(tempX, 38 + config_offset_y);
+        matrix->print(tempMaxStr);
+
+        // Right Column: Label & Condition
+        int rightX = tempX + textW + 18;
+        matrix->setTextSize(2);
+        matrix->setTextColor(colorLabel);
+        matrix->setCursor(rightX, 10 + config_offset_y);
+        matrix->print(data.label);
+
+        if (data.description.length() > 0) {
+            matrix->setTextColor(colorDesc);
+            matrix->setCursor(rightX, 38 + config_offset_y);
+            matrix->print(data.description);
+        }
+    } else if (mw >= 128 && mh <= 32) {
+        // --- 128x32 Widescreen Layout ---
+        int iconX = 4 + config_offset_x;
+        int iconY = (mh - 24) / 2 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY);
+
+        int tempX = iconX + 28;
+        int maxLen = max((int)strlen(tempMinStr), (int)strlen(tempMaxStr));
+        int textW = maxLen * 6;
+
+        matrix->setTextSize(1);
+        // Matin (Haut)
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 4 + 1 + config_offset_y);
+        matrix->print(tempMinStr);
+        matrix->setTextColor(colorMorning);
+        matrix->setCursor(tempX, 4 + config_offset_y);
+        matrix->print(tempMinStr);
+
+        // Après-midi (Bas)
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 18 + 1 + config_offset_y);
+        matrix->print(tempMaxStr);
+        matrix->setTextColor(colorAfternoon);
+        matrix->setCursor(tempX, 18 + config_offset_y);
+        matrix->print(tempMaxStr);
+
+        // Right Column: Label on top, Condition on bottom
+        int rightX = tempX + textW + 6;
+        if (rightX < 60 + config_offset_x) rightX = 60 + config_offset_x;
+        int maxRightX = mw - 42;
+        if (rightX > maxRightX) rightX = maxRightX;
+
+        // Label
+        matrix->setTextColor(colorLabel);
+        matrix->setCursor(rightX, 4 + config_offset_y);
+        matrix->print(data.label);
+
+        // Condition
+        if (data.description.length() > 0) {
+            int availW = mw - rightX - 2;
+            int maxChars = max(1, availW / 6);
+            String desc = data.description;
+            if ((int)desc.length() > maxChars) {
+                if (maxChars > 3) {
+                    desc = desc.substring(0, maxChars - 1) + ".";
+                } else {
+                    desc = desc.substring(0, maxChars);
+                }
+            }
+            matrix->setTextColor(colorDesc);
+            matrix->setCursor(rightX, 18 + config_offset_y);
+            matrix->print(desc);
+        }
+    } else if (mh >= 64 && mw >= 128) {
+        // --- 128x64 Layout ---
+        int iconX = 6 + config_offset_x;
+        int iconY = (mh - 24) / 2 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY);
+
+        int tempX = iconX + 30;
+        int textW = max((int)strlen(tempMinStr), (int)strlen(tempMaxStr)) * 12;
+
+        // Matin (Haut) - Size 2
+        matrix->setTextSize(2);
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 12 + 1 + config_offset_y);
+        matrix->print(tempMinStr);
+        matrix->setTextColor(colorMorning);
+        matrix->setCursor(tempX, 12 + config_offset_y);
+        matrix->print(tempMinStr);
+
+        // Après-midi (Bas) - Size 2
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(tempX + 1, 38 + 1 + config_offset_y);
+        matrix->print(tempMaxStr);
+        matrix->setTextColor(colorAfternoon);
+        matrix->setCursor(tempX, 38 + config_offset_y);
+        matrix->print(tempMaxStr);
+
+        // Right Column
+        int rightX = tempX + textW + 8;
+        if (rightX < 72 + config_offset_x) rightX = 72 + config_offset_x;
+        int maxRightX = mw - 46;
+        if (rightX > maxRightX) rightX = maxRightX;
+
+        matrix->setTextSize(1);
+        matrix->setTextColor(colorLabel);
+        matrix->setCursor(rightX, 14 + config_offset_y);
+        matrix->print(data.label);
+
+        if (data.description.length() > 0) {
+            int availW = mw - rightX - 2;
+            int maxChars = max(1, availW / 6);
+            String desc = data.description;
+            if ((int)desc.length() > maxChars) {
+                if (maxChars > 3) {
+                    desc = desc.substring(0, maxChars - 1) + ".";
+                } else {
+                    desc = desc.substring(0, maxChars);
+                }
+            }
+            matrix->setTextColor(colorDesc);
+            matrix->setCursor(rightX, 38 + config_offset_y);
+            matrix->print(desc);
+        }
+    } else if (mw <= 64 && mh <= 32) {
+        // --- 64x32 Compact Horizontal Layout ---
+        int iconX = 2 + config_offset_x;
+        int iconY = (mh - 24) / 2 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY);
+
+        int rightX = iconX + 26;
+        int availW = mw - rightX - 1;
+        int maxChars = max(1, availW / 6);
+
+        matrix->setTextSize(1);
+        // Line 1: Day Label
+        matrix->setTextColor(colorLabel);
+        matrix->setCursor(rightX, 2 + config_offset_y);
+        matrix->print(data.label);
+
+        // Line 2: Temperatures (Min + Max)
+        matrix->setCursor(rightX, 11 + config_offset_y);
+        matrix->setTextColor(colorMorning);
+        matrix->print(tempMinStr);
+        matrix->setCursor(rightX + (strlen(tempMinStr) * 6) + 2, 11 + config_offset_y);
+        matrix->setTextColor(colorAfternoon);
+        matrix->print(tempMaxStr);
+
+        // Line 3: Condition
+        if (data.description.length() > 0) {
+            String desc = data.description;
+            if ((int)desc.length() > maxChars) {
+                if (maxChars > 3) {
+                    desc = desc.substring(0, maxChars - 1) + ".";
+                } else {
+                    desc = desc.substring(0, maxChars);
+                }
+            }
+            matrix->setTextColor(colorDesc);
+            matrix->setCursor(rightX, 21 + config_offset_y);
+            matrix->print(desc);
+        }
+    } else {
+        // --- 64x64 or Vertical Layout ---
+        int iconX = (mw - 24) / 2 + config_offset_x;
+        int iconY = 14 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY);
+
+        matrix->setTextSize(1);
+        int labelW = data.label.length() * 6;
+        matrix->setTextColor(colorLabel);
+        matrix->setCursor((mw - labelW) / 2 + config_offset_x, 3 + config_offset_y);
+        matrix->print(data.label);
+
+        if (data.description.length() > 0) {
+            int descW = data.description.length() * 6;
+            matrix->setTextColor(colorDesc);
+            matrix->setCursor((mw - descW) / 2 + config_offset_x, 40 + config_offset_y);
+            matrix->print(data.description);
+        }
+
+        int minW = strlen(tempMinStr) * 6;
+        int maxW = strlen(tempMaxStr) * 6;
+        
+        matrix->setTextColor(colorMorning);
+        matrix->setCursor((mw - minW) / 2 + config_offset_x, 49 + config_offset_y);
+        matrix->print(tempMinStr);
+
+        matrix->setTextColor(colorAfternoon);
+        matrix->setCursor((mw - maxW) / 2 + config_offset_x, 57 + config_offset_y);
+        matrix->print(tempMaxStr);
     }
-    
-    matrix->setTextSize(textSize);
-    
-    int textWidth = strlen(tempStr) * charWidth;
-    int iconWidth = 24;
-    int iconHeight = 24;
-    
-    int totalWidth = iconWidth + 4 + textWidth;
-    int startX = (matrix->width() - totalWidth) / 2 + config.weather.weather_offset_x;
-    
-    int iconX = startX;
-    int textX = startX + iconWidth + 4;
-    int y = (matrix->height() - charHeight) / 2 + config.weather.weather_offset_y;
-    int iconY = (matrix->height() - iconHeight) / 2 + config.weather.weather_offset_y;
-    
-    // If it doesn't fit horizontally (e.g. 64x64), stack vertically
-    if (totalWidth > matrix->width() && matrix->height() >= 64) {
-        iconX = (matrix->width() - iconWidth) / 2 + config.weather.weather_offset_x;
-        textX = (matrix->width() - textWidth) / 2 + config.weather.weather_offset_x;
-        iconY = (matrix->height() / 2 - iconHeight) / 2 + config.weather.weather_offset_y;
-        y = matrix->height() / 2 + (matrix->height() / 2 - charHeight) / 2 + config.weather.weather_offset_y;
-    }
-    
-    // Draw icon
-    drawIcon(data.iconCode, iconX, iconY);
-
-    // Draw day label (TODAY/TMRW/weekday) in the top-left corner, small size to avoid overlapping.
-    matrix->setTextSize(1);
-    matrix->setTextColor(matrix->color565(180, 180, 255));
-    matrix->setCursor(2, 2);
-    matrix->print(data.label);
-
-    matrix->setTextSize(textSize);
-
-    // Draw shadow
-    matrix->setTextColor(shadowColor);
-    matrix->setCursor(textX + 1, y + 1);
-    matrix->print(tempStr);
-    
-    // Draw text
-    matrix->setTextColor(textColor);
-    matrix->setCursor(textX, y);
-    matrix->print(tempStr);
 }
+
+EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
+    EngineDescriptor desc_weather;
+    desc_weather.metadata = {"weather", "Weather", "info", FIRMWARE_VERSION};
+    desc_weather.capabilities.realtime = false;
+    desc_weather.requirements.needsAudio = false;
+    desc_weather.requirements.needsNetwork = true;
+    desc_weather.schema.fields = {
+        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "metric", false, "", "", "", "metric,imperial", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("weather_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
+    };
+    desc_weather.factory = []() { return std::unique_ptr<IEngine>(new WeatherEngine()); };
+    return desc_weather;
+}
+

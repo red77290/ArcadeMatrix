@@ -11,8 +11,8 @@
 #include <Arduino.h>
 #include <vector>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../core/SDUtils.h"
 #include "FS.h"
-#include "SD.h"
 
 /**
  * @enum FighterState
@@ -91,14 +91,20 @@ struct FighterPlayer {
  * Manages loading fighters, pacing the fight sequence, and rendering pixels
  * to the display while managing memory efficiently.
  */
-class FighterEngine {
+#include "../../include/core/EngineContract.h"
+#include "../core/AppEngineContext.h"
+
+class FighterEngine : public IEngine {
 public:
-    /**
-     * @brief Construct a new Fighter Engine object.
-     * @param display Pointer to the DMA Matrix Engine.
-     */
-    FighterEngine(MatrixPanel_I2S_DMA* display);
+    FighterEngine();
     ~FighterEngine();
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;
+    void onConfigChanged(const EngineConfig* config) override;
 
     /**
      * @brief Initialize the engine (e.g. read the SD card index).
@@ -132,11 +138,24 @@ public:
     bool isActive() const { return active; }
 
 private:
+
+    
     MatrixPanel_I2S_DMA* matrix; ///< DMA Matrix instance
     bool active = false;         ///< Is the engine currently active?
     
     FighterPlayer p1;            ///< Player 1 (Left)
     FighterPlayer p2;            ///< Player 2 (Right)
+
+    // Background Preloader (Core 0 FreeRTOS task)
+    FighterPlayer nextP1;
+    FighterPlayer nextP2;
+    volatile bool isNextReady = false;
+    volatile bool isPreloading = false;
+    TaskHandle_t loaderTaskHandle = nullptr;
+
+    static void loaderTaskFunc(void* param);
+    void runBackgroundPreload();
+    void triggerBackgroundPreload();
 
     int numAvailableFighters = 0;   ///< Number of total indexed fighters on SD
     uint32_t* fighterOffsets = nullptr; ///< File offsets for the fighter index
@@ -160,21 +179,8 @@ private:
     uint32_t hitStopUntilMillis = 0; ///< Hit-stop pause end time
     int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake
     
-    /**
-     * @brief State machine for asynchronous loading from SD to avoid blocking.
-     */
-    enum LoadState {
-        LOAD_IDLE,
-        LOAD_INIT,
-        LOAD_P1_WALK, LOAD_P1_ATTACK, LOAD_P1_HIT, LOAD_P1_WIN,
-        LOAD_P1_SPECIAL, LOAD_P1_SUPER, LOAD_P1_FALL,
-        LOAD_P2_WALK, LOAD_P2_ATTACK, LOAD_P2_HIT, LOAD_P2_WIN,
-        LOAD_P2_SPECIAL, LOAD_P2_SUPER, LOAD_P2_FALL,
-        LOAD_FINISH
-    };
-    LoadState currentLoadState = LOAD_IDLE;
     String loadDir;
-    void processLoadState();
+    bool m_hasPsram = false;
 };
 
 #endif

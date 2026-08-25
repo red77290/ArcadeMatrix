@@ -1,38 +1,65 @@
 #include "ConfigLoader.h"
-#include "SDUtils.h"
 #include "Logger.h"
 #include <ArduinoJson.h>
-#include "../engines/GifEngine.h"
+#include "SDUtils.h"
 
 ConfigLoader::ConfigLoader() {
     setDefaults();
 }
 
 void ConfigLoader::setDefaults() {
+    instances.clear();
+    rotation.clear();
+    
+    // Setup default instances
+    auto addInstance = [&](String inst_id, String eng_id) {
+        EngineInstance inst;
+        inst.instance_id = inst_id;
+        inst.engine_id = eng_id;
+        instances.push_back(inst);
+        return &instances.back();
+    };
+    
+    addInstance("clock_main", "clock");
+    addInstance("date_main", "date");
+    addInstance("weather_main", "weather");
+    addInstance("temp_main", "temp");
+    addInstance("decibel_main", "decibelMeter");
+    addInstance("crypto_main", "crypto");
+    addInstance("stock_main", "stock");
+    addInstance("visualizer_main", "audiovisualizer");
+    addInstance("gifs_main", "gifs");
+    addInstance("message_main", "message");
+
+    
+    RotationEntry re;
+    re.instance_id = "clock_main"; re.duration_sec = 15; rotation.push_back(re);
+    re.instance_id = "date_main"; re.duration_sec = 10; rotation.push_back(re);
+    re.instance_id = "weather_main"; re.duration_sec = 10; rotation.push_back(re);
+    re.instance_id = "crypto_main"; re.duration_sec = 10; rotation.push_back(re);
+    re.instance_id = "stock_main"; re.duration_sec = 10; rotation.push_back(re);
+    re.instance_id = "gifs_main"; re.duration_sec = 30; rotation.push_back(re);
+    re.instance_id = "temp_main"; re.duration_sec = 10; rotation.push_back(re);
+    re.instance_id = "decibel_main"; re.duration_sec = 15; rotation.push_back(re);
+    re.instance_id = "message_main"; re.duration_sec = 15; rotation.push_back(re);
     matrix.width = 64;
     matrix.height = 32;
-    matrix.panelType = "FM6126A";
+    matrix.panelType = "SHIFTREG";
     matrix.chainLength = 1;
-    matrix.powerLimitPercent = 100;
-#ifdef HARDWARE_PROFILE_WAVESHARE_S3
+    matrix.powerLimitPercent = 50;
     matrix.forceSingleBuffer = false;
-#else
-    // On standard ESP32 without PSRAM, 128x32 double buffering uses too much DMA memory.
-    // The library silently drops color depth to fit it, resulting in wrong/neon colors.
-    // Defaulting to single buffer fixes this and preserves true colors.
-    matrix.forceSingleBuffer = true; 
-#endif
     matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
-    matrix.limitRefreshRateHz = 0;
+    matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
-    matrix.clkPhase = false;
-    matrix.latchBlanking = 8;
+    matrix.clkPhase = true;
+    matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
+    matrix.matrix_power = true;
 
     wifi.ssid = "";
     wifi.password = "";
-    wifi.hostname = "ArcadeMatrix";
+    wifi.hostname = "arcadematrix";
 
     mqtt.enabled = false;
     mqtt.broker = "";
@@ -40,414 +67,421 @@ void ConfigLoader::setDefaults() {
     mqtt.user = "";
     mqtt.pass = "";
     mqtt.deviceName = "ArcadeMatrix";
-    mqtt.topic_batocera = "batocera/system/playing";
-    mqtt.topic_recalbox = "recalbox/system/playing";
+    mqtt.topic_batocera = "batocera";
+    mqtt.topic_recalbox = "recalbox";
 
-    time.ntpServer = "pool.ntp.org";
-    time.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
-    time.format24h = true;
-    time.clock_font = 0;
-    time.clock_size = 1;
-    time.clock_theme = 0;
-    time.clock_offset_x = 0;
-    time.clock_offset_y = 0;
-    time.clock_color_1 = "#ffffff";
-    time.clock_color_2 = "#ffffff";
-    time.clock_font_path = "";
-
-    idle.rotation = "clock,date,weather,gifs,temp,decibel";
-    idle.clock_duration_sec = 60;
-    idle.date_duration_sec = 10;
-    idle.weather_duration_sec = 15;
-    idle.temp_duration_sec = 8;
-    idle.decibel_duration_sec = 10;
-    idle.gifs_count = 3;
-    idle.fighter_enabled = true;
-    idle.fighter_interval_sec = 10;
-
-    env.unit = "C";
-    env.temp_offset = 0.0f;
-
-    audio.visualizer_enabled = false;
-    audio.visualizer_mode = "spectrum";
-    audio.mic_gain = 1.0f;
-    audio.db_calibration = 0.0f;
-
-    dateSettings.theme = 0;
-    dateSettings.format = "DD/MM";
-    dateSettings.date_font = 0;
-    dateSettings.date_size = 1;
-    dateSettings.date_offset_x = 0;
-    dateSettings.date_offset_y = 0;
-    dateSettings.background_sprite = "";
-    dateSettings.date_color_1 = "#ffffff";
-    dateSettings.date_color_2 = "#ffffff";
-    dateSettings.date_font_path = "";
-
-    weather.api_key = "";
-    weather.city = "";
-    weather.lang = "en";
-    weather.weather_offset_x = 0;
-    weather.weather_offset_y = 0;
-
-    standby.night_mode_enabled = false;
-    standby.turn_off_at = "23:00";
-    standby.wake_up_at = "07:00";
-    standby.night_brightness = 10;
-
-    fonts.custom_font_path = "";
-
-    crypto.enabled = true;
-    crypto.symbols = "BTC,ETH,SOL,DOGE";
-    crypto.duration_sec = 5;
-    crypto.cache_ttl_min = 1;
-    crypto.currency = "USD";
-
-    stock.enabled = true;
-    stock.symbols = "AAPL,NVDA,TSLA,MSFT";
-    stock.duration_sec = 5;
-    stock.cache_ttl_min = 1;
+    system.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
+    system.format24h = true;
+    system.lang = "en";
+    system.unit = "C";
+    system.temp_offset = 0.0f;
+    system.night_mode_enabled = false;
+    system.turn_off_at = "22:00";
+    system.wake_up_at = "08:00";
+    system.night_brightness = 10;
 }
 
-String ConfigLoader::stripComments(String line) {
-    line.trim();
-    if (line.startsWith("#") || line.startsWith(";")) {
-        return "";
-    }
+bool ConfigLoader::parseFromJson(const char* jsonContent) {
+    DynamicJsonDocument doc(32768);
+    DeserializationError error = deserializeJson(doc, jsonContent);
 
-    int semiPos = line.indexOf(';');
-    if (semiPos != -1) {
-        line = line.substring(0, semiPos);
-    }
-
-    int spaceHashPos = line.indexOf(" #");
-    if (spaceHashPos != -1) {
-        line = line.substring(0, spaceHashPos);
-    }
-
-    line.trim();
-    return line;
-}
-
-String ConfigLoader::extractValue(String line) {
-    int equalsPos = line.indexOf('=');
-    if (equalsPos == -1) return "";
-    
-    String val = line.substring(equalsPos + 1);
-    val.trim();
-    
-    if (val.startsWith("\"") && val.endsWith("\"") && val.length() >= 2) {
-        val = val.substring(1, val.length() - 1);
-    }
-    return val;
-}
-
-void ConfigLoader::parseLine(String line, String& currentSection) {
-    line = stripComments(line);
-    if (line.length() == 0) return;
-
-    if (line.startsWith("[") && line.endsWith("]")) {
-        currentSection = line.substring(1, line.length() - 1);
-        currentSection.toUpperCase();
-        return;
-    }
-
-    String value = extractValue(line);
-    String key = line.substring(0, line.indexOf('='));
-    key.trim();
-    key.toUpperCase();
-
-    if (currentSection == "WIFI") {
-        if (key == "SSID") wifi.ssid = value;
-        else if (key == "PASSWORD") wifi.password = value;
-        else if (key == "HOSTNAME") wifi.hostname = value;
-    } 
-    else if (currentSection == "MATRIX") {
-        if (key == "WIDTH") matrix.width = value.toInt();
-        else if (key == "HEIGHT") matrix.height = value.toInt();
-        else if (key == "PANEL_TYPE") matrix.panelType = value;
-        else if (key == "CHAIN") matrix.chainLength = value.toInt();
-        else if (key == "POWER_LIMIT_PERCENT" || key == "BRIGHTNESS_LIMIT") matrix.powerLimitPercent = value.toInt();
-        else if (key == "COLOR_DEPTH" || key == "PWM_BITS") matrix.colorDepth = value.toInt();
-        else if (key == "FORCE_SINGLE_BUFFER") matrix.forceSingleBuffer = (value == "true" || value == "1");
-        else if (key == "RGB_SEQUENCE") matrix.rgbSequence = value;
-        else if (key == "LIMIT_REFRESH_RATE_HZ") matrix.limitRefreshRateHz = value.toInt();
-        else if (key == "DRIVER_CHIP") matrix.driverChip = value;
-        else if (key == "CLK_PHASE") matrix.clkPhase = (value == "true" || value == "1");
-        else if (key == "LATCH_BLANKING") matrix.latchBlanking = value.toInt();
-        else if (key == "ROW_ADDRESS_MODE") matrix.rowAddressMode = value.toInt();
-    }
-    else if (currentSection == "MQTT") {
-        if (key == "ENABLED") mqtt.enabled = (value == "true" || value == "1");
-        else if (key == "BROKER") mqtt.broker = value;
-        else if (key == "PORT") mqtt.port = value.toInt();
-        else if (key == "USER") mqtt.user = value;
-        else if (key == "PASS" || key == "PASSWORD") mqtt.pass = value;
-        else if (key == "TOPIC_BATOCERA") mqtt.topic_batocera = value;
-        else if (key == "TOPIC_RECALBOX") mqtt.topic_recalbox = value;
-        else if (key == "DEVICE_NAME" || key == "DEVICENAME") mqtt.deviceName = value;
-    }
-    else if (currentSection == "TIME") {
-        if (key == "NTP_SERVER" || key == "NTPSERVER") time.ntpServer = value;
-        else if (key == "TIMEZONE") time.timezone = value;
-        else if (key == "FORMAT_24H" || key == "FORMAT24H") time.format24h = (value == "true" || value == "1");
-        else if (key == "CLOCK_FONT") time.clock_font = value.toInt();
-        else if (key == "CLOCK_SIZE") time.clock_size = value.toInt();
-        else if (key == "CLOCK_THEME") time.clock_theme = value.toInt();
-        else if (key == "CLOCK_OFFSET_X") time.clock_offset_x = value.toInt();
-        else if (key == "CLOCK_OFFSET_Y") time.clock_offset_y = value.toInt();
-        else if (key == "CLOCK_COLOR_1") time.clock_color_1 = value;
-        else if (key == "CLOCK_COLOR_2") time.clock_color_2 = value;
-        else if (key == "CLOCK_FONT_PATH") time.clock_font_path = value;
-    }
-    else if (currentSection == "IDLE") {
-        if (key == "ROTATION") idle.rotation = value;
-        else if (key == "CLOCK_DURATION_SEC") idle.clock_duration_sec = value.toInt();
-        else if (key == "DATE_DURATION_SEC") idle.date_duration_sec = value.toInt();
-        else if (key == "WEATHER_DURATION_SEC") idle.weather_duration_sec = value.toInt();
-        else if (key == "TEMP_DURATION_SEC") idle.temp_duration_sec = value.toInt();
-        else if (key == "DECIBEL_DURATION_SEC" || key == "DB_DURATION_SEC") idle.decibel_duration_sec = value.toInt();
-        else if (key == "GIFS_COUNT") idle.gifs_count = value.toInt();
-        else if (key == "FIGHTER_ENABLED") idle.fighter_enabled = (value == "true" || value == "1");
-        else if (key == "FIGHTER_INTERVAL_SEC") idle.fighter_interval_sec = value.toInt();
-        
-        else if (key == "MODE") idle.mode = value; // Legacy
-        else if (key == "GIFS_BEFORE_CLOCK") idle.gifs_before_clock = value.toInt(); // Legacy
-    }
-    else if (currentSection == "ENVIRONMENT" || currentSection == "TEMP") {
-        if (key == "UNIT" || key == "TEMP_UNIT") env.unit = value;
-        else if (key == "TEMP_OFFSET") env.temp_offset = value.toFloat();
-    }
-    else if (currentSection == "AUDIO" || currentSection == "SOUND") {
-        if (key == "VISUALIZER_ENABLED") audio.visualizer_enabled = (value == "true" || value == "1");
-        else if (key == "VISUALIZER_MODE") audio.visualizer_mode = value;
-        else if (key == "MIC_GAIN") audio.mic_gain = value.toFloat();
-        else if (key == "DB_CALIBRATION") audio.db_calibration = value.toFloat();
-    }
-    else if (currentSection == "WEATHER") {
-        if (key == "API_KEY") weather.api_key = value;
-        else if (key == "CITY") weather.city = value;
-        else if (key == "LANG") weather.lang = value;
-        else if (key == "WEATHER_OFFSET_X") weather.weather_offset_x = value.toInt();
-        else if (key == "WEATHER_OFFSET_Y") weather.weather_offset_y = value.toInt();
-    }
-    else if (currentSection == "STANDBY") {
-        if (key == "NIGHT_MODE" || key == "NIGHT_MODE_ENABLED") standby.night_mode_enabled = (value == "true" || value == "1");
-        else if (key == "TURN_OFF_AT") standby.turn_off_at = value;
-        else if (key == "WAKE_UP_AT") standby.wake_up_at = value;
-        else if (key == "NIGHT_BRIGHTNESS") standby.night_brightness = value.toInt();
-    }
-    else if (currentSection == "DATE") {
-        if (key == "THEME") dateSettings.theme = value.toInt();
-        else if (key == "FORMAT") dateSettings.format = value;
-        else if (key == "DATE_FONT") dateSettings.date_font = value.toInt();
-        else if (key == "DATE_SIZE") dateSettings.date_size = value.toInt();
-        else if (key == "DATE_OFFSET_X") dateSettings.date_offset_x = value.toInt();
-        else if (key == "DATE_OFFSET_Y") dateSettings.date_offset_y = value.toInt();
-        else if (key == "BACKGROUND_SPRITE") dateSettings.background_sprite = value;
-        else if (key == "DATE_COLOR_1") dateSettings.date_color_1 = value;
-        else if (key == "DATE_COLOR_2") dateSettings.date_color_2 = value;
-        else if (key == "DATE_FONT_PATH") dateSettings.date_font_path = value;
-    }
-    else if (currentSection == "FONTS") {
-        if (key == "CUSTOM_FONT_PATH") fonts.custom_font_path = value;
-    }
-    else if (currentSection == "CRYPTO") {
-        if (key == "ENABLED") crypto.enabled = (value == "true" || value == "1");
-        else if (key == "SYMBOLS") crypto.symbols = value;
-        else if (key == "DURATION_SEC") crypto.duration_sec = value.toInt();
-        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") crypto.cache_ttl_min = value.toInt();
-        else if (key == "CURRENCY") crypto.currency = value;
-    }
-    else if (currentSection == "STOCK" || currentSection == "STOCKS") {
-        if (key == "ENABLED") stock.enabled = (value == "true" || value == "1");
-        else if (key == "SYMBOLS") stock.symbols = value;
-        else if (key == "DURATION_SEC") stock.duration_sec = value.toInt();
-        else if (key == "CACHE_TTL_MIN" || key == "CACHE_TTL") stock.cache_ttl_min = value.toInt();
-    }
-}
-
-bool ConfigLoader::parseFromString(const char* iniContent) {
-    if (!iniContent) return false;
-    
-    String content = String(iniContent);
-    String currentSection = "";
-    int lineStart = 0;
-    int lineEnd = 0;
-
-    while (lineEnd != -1) {
-        lineEnd = content.indexOf('\n', lineStart);
-        String line;
-        if (lineEnd == -1) {
-            line = content.substring(lineStart);
-        } else {
-            line = content.substring(lineStart, lineEnd);
-            lineStart = lineEnd + 1;
-        }
-        
-        parseLine(line, currentSection);
-    }
-    return true;
-}
-
-bool ConfigLoader::parseFromSD(const char* filepath) {
-    if (!sd.exists(filepath)) return false;
-    
-    FsFile file = sd.open(filepath, FILE_OPEN_READ);
-    if (!file) {
-        LOGE("ConfigLoader", "Failed to open %s", filepath);
+    if (error) {
+        LOGE("ConfigLoader", "JSON parse failed: %s", error.c_str());
         return false;
     }
 
-    String currentSection = "";
-    while (file.available()) {
-        String line = file.readStringUntil('\n');
-        parseLine(line, currentSection);
+    if (doc.containsKey("system")) {
+        JsonObject sys = doc["system"];
+        system.timezone = sys["timezone"] | system.timezone;
+        if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
+        else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
+        system.lang = sys["lang"] | system.lang;
+        system.unit = sys["unit"] | system.unit;
+        system.temp_offset = sys["temp_offset"] | system.temp_offset;
+        system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
+        system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;
+        system.wake_up_at = sys["wake_up_at"] | system.wake_up_at;
+        system.night_brightness = sys["night_brightness"] | system.night_brightness;
+        system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
+        system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
     }
-    
-    file.close();
 
-    // Load saved playlists for default rotation
-    FsFile playlistFile;
-    if (sd.exists("/playlists_selected.json")) {
-        playlistFile = sd.open("/playlists_selected.json", FILE_OPEN_READ);
+    JsonObject disp;
+    if (doc.containsKey("display")) {
+        disp = doc["display"];
+    } else if (doc.containsKey("matrix")) {
+        disp = doc["matrix"];
     }
-    if (playlistFile) {
-        DynamicJsonDocument doc(4096);
-        DeserializationError error = deserializeJson(doc, playlistFile);
-        if (!error) {
-            JsonArray playlistsArray = doc["playlists"].as<JsonArray>();
-            if (playlistsArray.size() > 0) {
-                // Playlists are handled by GifEngine dynamically
+
+    if (!disp.isNull()) {
+        matrix.width = disp["width"] | matrix.width;
+        matrix.height = disp["height"] | matrix.height;
+        if (disp.containsKey("panel_type")) matrix.panelType = disp["panel_type"].as<String>();
+        else if (disp.containsKey("panelType")) matrix.panelType = disp["panelType"].as<String>();
+        
+        if (disp.containsKey("chain_length")) matrix.chainLength = disp["chain_length"].as<int>();
+        else if (disp.containsKey("chainLength")) matrix.chainLength = disp["chainLength"].as<int>();
+        
+        if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"].as<int>();
+        else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"].as<int>();
+        
+        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
+        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
+        
+        if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"].as<int>();
+        else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"].as<int>();
+        else if (disp.containsKey("pwm_bits")) matrix.colorDepth = disp["pwm_bits"].as<int>();
+        
+        if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
+        else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
+        
+        if (disp.containsKey("limit_refresh_rate_hz")) matrix.limitRefreshRateHz = disp["limit_refresh_rate_hz"].as<int>();
+        else if (disp.containsKey("limitRefreshRateHz")) matrix.limitRefreshRateHz = disp["limitRefreshRateHz"].as<int>();
+        
+        if (disp.containsKey("driver_chip")) matrix.driverChip = disp["driver_chip"].as<String>();
+        else if (disp.containsKey("driverChip")) matrix.driverChip = disp["driverChip"].as<String>();
+        
+        if (disp.containsKey("clk_phase")) matrix.clkPhase = disp["clk_phase"].as<bool>();
+        else if (disp.containsKey("clkPhase")) matrix.clkPhase = disp["clkPhase"].as<bool>();
+        
+        if (disp.containsKey("latch_blanking")) matrix.latchBlanking = disp["latch_blanking"].as<int>();
+        else if (disp.containsKey("latchBlanking")) matrix.latchBlanking = disp["latchBlanking"].as<int>();
+        
+        if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"].as<int>();
+        else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"].as<int>();
+    }
+
+    if (doc.containsKey("wifi")) {
+        wifi.ssid = doc["wifi"]["ssid"] | wifi.ssid;
+        wifi.password = doc["wifi"]["password"] | wifi.password;
+        wifi.hostname = doc["wifi"]["hostname"] | wifi.hostname;
+    }
+
+    if (doc.containsKey("mqtt")) {
+        JsonObject m = doc["mqtt"];
+        mqtt.enabled = m["enabled"] | mqtt.enabled;
+        mqtt.broker = m["broker"] | mqtt.broker;
+        mqtt.port = m["port"] | mqtt.port;
+        mqtt.user = m["user"] | mqtt.user;
+        mqtt.pass = m["pass"] | mqtt.pass;
+        if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
+        else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
+        mqtt.topic_batocera = m["topic_batocera"] | mqtt.topic_batocera;
+        mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
+    }
+
+    instances.clear();
+    rotation.clear();
+
+    if (doc.containsKey("rotation")) {
+        JsonArray rotArr = doc["rotation"].as<JsonArray>();
+        for (JsonObject rotObj : rotArr) {
+            RotationEntry entry;
+            entry.instance_id = rotObj["instance_id"] | "";
+            entry.duration_sec = rotObj["duration_sec"] | 15;
+            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObject>()) {
+                entry.overlays.fighter = rotObj["overlays"]["fighter"] | false;
+            } else if (rotObj.containsKey("fighter_overlay")) {
+                entry.overlays.fighter = rotObj["fighter_overlay"] | false;
+            } else {
+                entry.overlays.fighter = false;
             }
+            rotation.push_back(entry);
         }
-        playlistFile.close();
+    }
+
+    if (doc.containsKey("instances")) {
+        JsonArray instArr = doc["instances"].as<JsonArray>();
+        for (JsonObject instObj : instArr) {
+            EngineInstance inst;
+            inst.instance_id = instObj["instance_id"] | "";
+            inst.engine_id = instObj["engine_id"] | "";
+            if (instObj.containsKey("config")) {
+                JsonObject confObj = instObj["config"];
+                for (JsonPair configPair : confObj) {
+                    if (configPair.value().is<int>()) {
+                        inst.config.setInt(configPair.key().c_str(), configPair.value().as<int>());
+                    } else if (configPair.value().is<float>()) {
+                        inst.config.setString(configPair.key().c_str(), String(configPair.value().as<float>()));
+                    } else if (configPair.value().is<bool>()) {
+                        inst.config.setBool(configPair.key().c_str(), configPair.value().as<bool>());
+                    } else {
+                        inst.config.setString(configPair.key().c_str(), configPair.value().as<String>());
+                    }
+                }
+            }
+            instances.push_back(inst);
+        }
+    } else if (doc.containsKey("engines")) {
+        JsonObject engObj = doc["engines"].as<JsonObject>();
+        for (JsonPair kv : engObj) {
+            String instanceId = kv.key().c_str();
+            
+            EngineInstance inst;
+            inst.instance_id = instanceId;
+            inst.engine_id = kv.value()["engine_id"] | "";
+            
+            JsonObject confObj = kv.value()["config"];
+            for (JsonPair configPair : confObj) {
+                if (configPair.value().is<int>()) {
+                    inst.config.setInt(configPair.key().c_str(), configPair.value().as<int>());
+                } else if (configPair.value().is<float>()) {
+                    inst.config.setString(configPair.key().c_str(), String(configPair.value().as<float>()));
+                } else if (configPair.value().is<bool>()) {
+                    inst.config.setBool(configPair.key().c_str(), configPair.value().as<bool>());
+                } else {
+                    inst.config.setString(configPair.key().c_str(), configPair.value().as<String>());
+                }
+            }
+            instances.push_back(inst);
+        }
     }
 
     return true;
 }
 
-String ConfigLoader::serializeToString() const {
-    String out = "";
+String ConfigLoader::serializeToJson(bool pretty) const {
+    DynamicJsonDocument doc(32768);
 
-    out += "[WIFI]\n";
-    out += "SSID=" + wifi.ssid + "\n";
-    out += "PASSWORD=" + wifi.password + "\n";
-    out += "HOSTNAME=" + wifi.hostname + "\n\n";
+    JsonObject sysObj = doc.createNestedObject("system");
+    sysObj["timezone"] = system.timezone;
+    sysObj["format24h"] = system.format24h;
+    sysObj["lang"] = system.lang;
+    sysObj["unit"] = system.unit;
+    sysObj["temp_offset"] = system.temp_offset;
+    sysObj["night_mode_enabled"] = system.night_mode_enabled;
+    sysObj["turn_off_at"] = system.turn_off_at;
+    sysObj["wake_up_at"] = system.wake_up_at;
+    sysObj["night_brightness"] = system.night_brightness;
+    sysObj["idle_fighter_enabled"] = system.idle_fighter_enabled;
+    sysObj["idle_fighter_interval"] = system.idle_fighter_interval;
 
-    out += "[MATRIX]\n";
-    out += "WIDTH=" + String(matrix.width) + "\n";
-    out += "HEIGHT=" + String(matrix.height) + "\n";
-    out += "PANEL_TYPE=" + matrix.panelType + "\n";
-    out += "CHAIN=" + String(matrix.chainLength) + "\n";
-    out += "BRIGHTNESS_LIMIT=" + String(matrix.powerLimitPercent) + "\n";
-    out += "COLOR_DEPTH=" + String(matrix.colorDepth) + "\n";
-    out += "FORCE_SINGLE_BUFFER=" + String(matrix.forceSingleBuffer ? "true" : "false") + "\n";
-    out += "RGB_SEQUENCE=" + matrix.rgbSequence + "\n";
-    out += "LIMIT_REFRESH_RATE_HZ=" + String(matrix.limitRefreshRateHz) + "\n";
-    out += "DRIVER_CHIP=" + matrix.driverChip + "\n\n";
+    JsonObject dispObj = doc.createNestedObject("display");
+    dispObj["width"] = matrix.width;
+    dispObj["height"] = matrix.height;
+    dispObj["panelType"] = matrix.panelType;
+    dispObj["chainLength"] = matrix.chainLength;
+    dispObj["powerLimitPercent"] = matrix.powerLimitPercent;
+    dispObj["forceSingleBuffer"] = matrix.forceSingleBuffer;
+    dispObj["colorDepth"] = matrix.colorDepth;
+    dispObj["rgbSequence"] = matrix.rgbSequence;
+    dispObj["limitRefreshRateHz"] = matrix.limitRefreshRateHz;
+    dispObj["driverChip"] = matrix.driverChip;
+    dispObj["clkPhase"] = matrix.clkPhase;
+    dispObj["latchBlanking"] = matrix.latchBlanking;
+    dispObj["rowAddressMode"] = matrix.rowAddressMode;
 
-    out += "[MQTT]\n";
-    out += "ENABLED=" + String(mqtt.enabled ? "true" : "false") + "\n";
-    out += "BROKER=" + mqtt.broker + "\n";
-    out += "PORT=" + String(mqtt.port) + "\n";
-    out += "USER=" + mqtt.user + "\n";
-    out += "PASS=" + mqtt.pass + "\n";
-    out += "DEVICE_NAME=" + mqtt.deviceName + "\n";
-    out += "TOPIC_BATOCERA=" + mqtt.topic_batocera + "\n";
-    out += "TOPIC_RECALBOX=" + mqtt.topic_recalbox + "\n\n";
+    JsonObject wObj = doc.createNestedObject("wifi");
+    wObj["ssid"] = wifi.ssid;
+    wObj["password"] = wifi.password;
+    wObj["hostname"] = wifi.hostname;
 
-    out += "[TIME]\n";
-    out += "NTP_SERVER=" + time.ntpServer + "\n";
-    out += "TIMEZONE=" + time.timezone + "\n";
-    out += "FORMAT_24H=" + String(time.format24h ? "true" : "false") + "\n";
-    out += "CLOCK_FONT=" + String(time.clock_font) + "\n";
-    out += "CLOCK_SIZE=" + String(time.clock_size) + "\n";
-    out += "CLOCK_THEME=" + String(time.clock_theme) + "\n";
-    out += "CLOCK_OFFSET_X=" + String(time.clock_offset_x) + "\n";
-    out += "CLOCK_OFFSET_Y=" + String(time.clock_offset_y) + "\n";
-    out += "CLOCK_COLOR_1=" + time.clock_color_1 + "\n";
-    out += "CLOCK_COLOR_2=" + time.clock_color_2 + "\n";
-    out += "CLOCK_FONT_PATH=" + time.clock_font_path + "\n\n";
+    JsonObject mObj = doc.createNestedObject("mqtt");
+    mObj["enabled"] = mqtt.enabled;
+    mObj["broker"] = mqtt.broker;
+    mObj["port"] = mqtt.port;
+    mObj["user"] = mqtt.user;
+    mObj["pass"] = mqtt.pass;
+    mObj["deviceName"] = mqtt.deviceName;
+    mObj["topic_batocera"] = mqtt.topic_batocera;
+    mObj["topic_recalbox"] = mqtt.topic_recalbox;
 
-    out += "[IDLE]\n";
-    out += "ROTATION=" + idle.rotation + "\n";
-    out += "CLOCK_DURATION_SEC=" + String(idle.clock_duration_sec) + "\n";
-    out += "DATE_DURATION_SEC=" + String(idle.date_duration_sec) + "\n";
-    out += "WEATHER_DURATION_SEC=" + String(idle.weather_duration_sec) + "\n";
-    out += "TEMP_DURATION_SEC=" + String(idle.temp_duration_sec) + "\n";
-    out += "DECIBEL_DURATION_SEC=" + String(idle.decibel_duration_sec) + "\n";
-    out += "GIFS_COUNT=" + String(idle.gifs_count) + "\n";
-    out += "FIGHTER_ENABLED=" + String(idle.fighter_enabled ? "true" : "false") + "\n";
-    out += "FIGHTER_INTERVAL_SEC=" + String(idle.fighter_interval_sec) + "\n\n";
+    JsonArray rotArr = doc.createNestedArray("rotation");
+    for (const auto& rot : rotation) {
+        JsonObject rObj = rotArr.createNestedObject();
+        rObj["instance_id"] = rot.instance_id;
+        rObj["duration_sec"] = rot.duration_sec;
+        JsonObject ovObj = rObj.createNestedObject("overlays");
+        ovObj["fighter"] = rot.overlays.fighter;
+    }
 
-    out += "[ENVIRONMENT]\n";
-    out += "UNIT=" + env.unit + "\n";
-    out += "TEMP_OFFSET=" + String(env.temp_offset, 2) + "\n\n";
+    JsonObject engObj = doc.createNestedObject("engines");
+    for (const auto& inst : instances) {
+        JsonObject instNode = engObj.createNestedObject(inst.instance_id);
+        instNode["engine_id"] = inst.engine_id;
+        
+        JsonObject confNode = instNode.createNestedObject("config");
+        for (const auto& ckv : inst.config.getDictionary()) {
+            confNode[ckv.first] = ckv.second;
+        }
+    }
 
-    out += "[AUDIO]\n";
-    out += "VISUALIZER_ENABLED=" + String(audio.visualizer_enabled ? "true" : "false") + "\n";
-    out += "VISUALIZER_MODE=" + audio.visualizer_mode + "\n";
-    out += "MIC_GAIN=" + String(audio.mic_gain, 2) + "\n";
-    out += "DB_CALIBRATION=" + String(audio.db_calibration, 2) + "\n\n";
+    String output;
+    if (pretty) {
+        serializeJsonPretty(doc, output);
+    } else {
+        serializeJson(doc, output);
+    }
+    return output;
+}
 
-    out += "[DATE]\n";
-    out += "THEME=" + String(dateSettings.theme) + "\n";
-    out += "BACKGROUND_SPRITE=" + dateSettings.background_sprite + "\n";
-    out += "FORMAT=" + dateSettings.format + "\n";
-    out += "DATE_FONT=" + String(dateSettings.date_font) + "\n";
-    out += "DATE_SIZE=" + String(dateSettings.date_size) + "\n";
-    out += "DATE_OFFSET_X=" + String(dateSettings.date_offset_x) + "\n";
-    out += "DATE_OFFSET_Y=" + String(dateSettings.date_offset_y) + "\n";
-    out += "DATE_COLOR_1=" + dateSettings.date_color_1 + "\n";
-    out += "DATE_COLOR_2=" + dateSettings.date_color_2 + "\n";
-    out += "DATE_FONT_PATH=" + dateSettings.date_font_path + "\n\n";
+bool ConfigLoader::loadFromSD(const char* filepath) {
+    if (!sd.exists(filepath)) {
+        LOGE("ConfigLoader", "File not found: %s", filepath);
+        return false;
+    }
 
-    out += "[WEATHER]\n";
-    out += "API_KEY=" + weather.api_key + "\n";
-    out += "CITY=" + weather.city + "\n";
-    out += "LANG=" + weather.lang + "\n";
-    out += "WEATHER_OFFSET_X=" + String(weather.weather_offset_x) + "\n";
-    out += "WEATHER_OFFSET_Y=" + String(weather.weather_offset_y) + "\n\n";
+    FsFile f = sd.open(filepath, FILE_OPEN_READ);
+    if (!f) {
+        LOGE("ConfigLoader", "Failed to open file: %s", filepath);
+        return false;
+    }
 
-    out += "[STANDBY]\n";
-    out += "NIGHT_MODE_ENABLED=" + String(standby.night_mode_enabled ? "true" : "false") + "\n";
-    out += "TURN_OFF_AT=" + standby.turn_off_at + "\n";
-    out += "WAKE_UP_AT=" + standby.wake_up_at + "\n";
-    out += "NIGHT_BRIGHTNESS=" + String(standby.night_brightness) + "\n\n";
+    DynamicJsonDocument doc(32768);
+    DeserializationError error = deserializeJson(doc, f);
+    f.close();
 
-    out += "[FONTS]\n";
-    out += "CUSTOM_FONT_PATH=" + fonts.custom_font_path + "\n\n";
+    if (error) {
+        LOGE("ConfigLoader", "JSON parse failed from %s: %s", filepath, error.c_str());
+        return false;
+    }
 
-    out += "[CRYPTO]\n";
-    out += "ENABLED=" + String(crypto.enabled ? "true" : "false") + "\n";
-    out += "SYMBOLS=" + crypto.symbols + "\n";
-    out += "DURATION_SEC=" + String(crypto.duration_sec) + "\n";
-    out += "CACHE_TTL_MIN=" + String(crypto.cache_ttl_min) + "\n";
-    out += "CURRENCY=" + crypto.currency + "\n\n";
+    // Process system, display, wifi, mqtt, rotation, engines/instances
+    if (doc.containsKey("system")) {
+        JsonObject sys = doc["system"];
+        system.timezone = sys["timezone"] | system.timezone;
+        if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
+        else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
+        system.lang = sys["lang"] | system.lang;
+        system.unit = sys["unit"] | system.unit;
+        system.temp_offset = sys["temp_offset"] | system.temp_offset;
+        system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
+        system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;
+        system.wake_up_at = sys["wake_up_at"] | system.wake_up_at;
+        system.night_brightness = sys["night_brightness"] | system.night_brightness;
+        system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
+        system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
+    }
 
-    out += "[STOCK]\n";
-    out += "ENABLED=" + String(stock.enabled ? "true" : "false") + "\n";
-    out += "SYMBOLS=" + stock.symbols + "\n";
-    out += "DURATION_SEC=" + String(stock.duration_sec) + "\n";
-    out += "CACHE_TTL_MIN=" + String(stock.cache_ttl_min) + "\n\n";
+    JsonObject disp;
+    if (doc.containsKey("display")) {
+        disp = doc["display"];
+    } else if (doc.containsKey("matrix")) {
+        disp = doc["matrix"];
+    }
 
-    return out;
+    if (!disp.isNull()) {
+        matrix.width = disp["width"] | matrix.width;
+        matrix.height = disp["height"] | matrix.height;
+        if (disp.containsKey("panel_type")) matrix.panelType = disp["panel_type"].as<String>();
+        else if (disp.containsKey("panelType")) matrix.panelType = disp["panelType"].as<String>();
+        if (disp.containsKey("chain_length")) matrix.chainLength = disp["chain_length"] | matrix.chainLength;
+        else if (disp.containsKey("chainLength")) matrix.chainLength = disp["chainLength"] | matrix.chainLength;
+        if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"] | matrix.powerLimitPercent;
+        else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"] | matrix.powerLimitPercent;
+        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
+        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
+        if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"] | matrix.colorDepth;
+        else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"] | matrix.colorDepth;
+        if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
+        else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
+        if (disp.containsKey("limit_refresh_rate_hz")) matrix.limitRefreshRateHz = disp["limit_refresh_rate_hz"] | matrix.limitRefreshRateHz;
+        else if (disp.containsKey("limitRefreshRateHz")) matrix.limitRefreshRateHz = disp["limitRefreshRateHz"] | matrix.limitRefreshRateHz;
+        if (disp.containsKey("driver_chip")) matrix.driverChip = disp["driver_chip"].as<String>();
+        else if (disp.containsKey("driverChip")) matrix.driverChip = disp["driverChip"].as<String>();
+        if (disp.containsKey("clk_phase")) matrix.clkPhase = disp["clk_phase"].as<bool>();
+        else if (disp.containsKey("clkPhase")) matrix.clkPhase = disp["clkPhase"].as<bool>();
+        if (disp.containsKey("latch_blanking")) matrix.latchBlanking = disp["latch_blanking"] | matrix.latchBlanking;
+        else if (disp.containsKey("latchBlanking")) matrix.latchBlanking = disp["latchBlanking"] | matrix.latchBlanking;
+        if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"] | matrix.rowAddressMode;
+        else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"] | matrix.rowAddressMode;
+        if (disp.containsKey("matrix_power")) matrix.matrix_power = disp["matrix_power"].as<bool>();
+    }
+
+    if (doc.containsKey("wifi")) {
+        JsonObject w = doc["wifi"];
+        wifi.ssid = w["ssid"] | wifi.ssid;
+        wifi.password = w["password"] | wifi.password;
+        wifi.hostname = w["hostname"] | wifi.hostname;
+    }
+
+    if (doc.containsKey("mqtt")) {
+        JsonObject m = doc["mqtt"];
+        mqtt.enabled = m["enabled"] | mqtt.enabled;
+        mqtt.broker = m["broker"] | mqtt.broker;
+        mqtt.port = m["port"] | mqtt.port;
+        mqtt.user = m["user"] | mqtt.user;
+        mqtt.pass = m["pass"] | mqtt.pass;
+        mqtt.deviceName = m["deviceName"] | mqtt.deviceName;
+        mqtt.topic_batocera = m["topic_batocera"] | mqtt.topic_batocera;
+        mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
+    }
+
+    if (doc.containsKey("rotation")) {
+        rotation.clear();
+        JsonArray rotArr = doc["rotation"];
+        for (JsonObject rotItem : rotArr) {
+            RotationEntry entry;
+            entry.instance_id = rotItem["instance_id"].as<String>();
+            entry.duration_sec = rotItem["duration_sec"] | 15;
+            if (rotItem.containsKey("overlays") && rotItem["overlays"].is<JsonObject>()) {
+                entry.overlays.fighter = rotItem["overlays"]["fighter"] | false;
+            } else if (rotItem.containsKey("fighter_overlay")) {
+                entry.overlays.fighter = rotItem["fighter_overlay"] | false;
+            } else {
+                entry.overlays.fighter = false;
+            }
+            rotation.push_back(entry);
+        }
+    }
+
+    if (doc.containsKey("instances")) {
+        instances.clear();
+        JsonArray instArr = doc["instances"];
+        for (JsonObject instObj : instArr) {
+            EngineInstance inst;
+            inst.instance_id = instObj["instance_id"].as<String>();
+            inst.engine_id = instObj["engine_id"].as<String>();
+            if (instObj.containsKey("config")) {
+                JsonObject cfg = instObj["config"];
+                for (JsonPair kv : cfg) {
+                    inst.config.setString(kv.key().c_str(), kv.value().as<String>());
+                }
+            }
+            instances.push_back(inst);
+        }
+    } else if (doc.containsKey("engines")) {
+        instances.clear();
+        JsonObject engObj = doc["engines"];
+        for (JsonPair kv : engObj) {
+            EngineInstance inst;
+            inst.instance_id = kv.key().c_str();
+            JsonObject instNode = kv.value().as<JsonObject>();
+            inst.engine_id = instNode["engine_id"].as<String>();
+            if (instNode.containsKey("config")) {
+                JsonObject confNode = instNode["config"];
+                for (JsonPair ckv : confNode) {
+                    inst.config.setString(ckv.key().c_str(), ckv.value().as<String>());
+                }
+            }
+            instances.push_back(inst);
+        }
+    }
+
+    return true;
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
-    if (sd.exists(filepath)) {
-        sd.remove(filepath);
-    }
-
-    FsFile file = sd.open(filepath, FILE_OPEN_WRITE);
-    if (!file) {
-        LOGE("ConfigLoader", "Failed to open %s for writing", filepath);
+    String tempPath = String(filepath) + ".tmp";
+    FsFile f = sd.open(tempPath.c_str(), FILE_OPEN_WRITE);
+    if (!f) {
+        LOGE("ConfigLoader", "Failed to open temp file for writing: %s", tempPath.c_str());
         return false;
     }
 
-    String data = serializeToString();
-    file.print(data);
-    file.close();
-    return true;
+    String jsonStr = serializeToJson(true); // Always save human-readable, indented JSON to SD card
+    f.print(jsonStr);
+    f.close();
+
+    if (sd.exists(filepath)) {
+        sd.remove(filepath);
+    }
+    
+    if (sd.rename(tempPath.c_str(), filepath)) {
+        LOGI("ConfigLoader", "Configuration saved successfully to %s", filepath);
+        return true;
+    } else {
+        LOGE("ConfigLoader", "Failed to rename temp file to %s", filepath);
+        return false;
+    }
 }

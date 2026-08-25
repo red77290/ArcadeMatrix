@@ -1,23 +1,37 @@
 #include "MarqueeEngine.h"
 #include <string.h>
 
-MarqueeEngine::MarqueeEngine(MatrixPanel_I2S_DMA* display, int width, int height)
-    : matrix(display), panelWidth(width), panelHeight(height), buffer(nullptr),
-      active(false), startTime(0), durationMs(0) {
+MarqueeEngine::MarqueeEngine()
+    : panelWidth(0), panelHeight(0), buffer(nullptr),
+      active(false), startTime(0), durationMs(0), m_hasPsram(false) {
+}
+
+EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
+    if (!context) return EngineError::InitializationFailed;
+    auto matrix = context->getMatrix();
+    if (!matrix) return EngineError::HardwareUnavailable;
+
+    m_hasPsram = context->hasPsram();
+    panelWidth = matrix->width();
+    panelHeight = matrix->height();
+
     // Allocate lazily-sized to the configured panel resolution. PSRAM is used automatically by
     // the ESP32 Arduino allocator when available (256x64 / S3 case); on classic ESP32 at 128x32
     // this is only 8KB, well within the free SRAM budget documented in docs/HARDWARE.md.
     size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
-    if (psramFound()) {
+    if (m_hasPsram) {
         buffer = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM);
     } else {
         buffer = (uint16_t*)malloc(bufferSize);
     }
+    
+    if (engineConfig) onConfigChanged(engineConfig);
+    return EngineError::OK;
 }
 
 MarqueeEngine::~MarqueeEngine() {
     if (buffer) {
-        if (psramFound()) heap_caps_free(buffer);
+        if (m_hasPsram) heap_caps_free(buffer);
         else free(buffer);
     }
 }
@@ -30,21 +44,26 @@ void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long du
     durationMs = durationSeconds * 1000UL;
 }
 
-bool MarqueeEngine::isActive() {
-    return active;
-}
+void MarqueeEngine::activate() {}
 
-void MarqueeEngine::stop() {
+void MarqueeEngine::deactivate() {
     active = false;
 }
 
-bool MarqueeEngine::loop() {
-    if (!active) return true;
+void MarqueeEngine::onConfigChanged(const EngineConfig* engineConfig) {}
 
+void MarqueeEngine::update(EngineContext* context) {
+    if (!active) return;
     if (millis() - startTime >= durationMs) {
         active = false;
-        return true;
     }
+}
+
+void MarqueeEngine::render(EngineContext* context) {
+    if (!active || !buffer) return;
+
+    auto matrix = context->getMatrix();
+    if (!matrix) return;
 
     // main.cpp's loop() clears the screen every frame before calling into whichever engine is
     // active, so this must redraw every frame while active (it's a static image, but there is no
@@ -54,5 +73,4 @@ bool MarqueeEngine::loop() {
             matrix->drawPixel(x, y, buffer[y * panelWidth + x]);
         }
     }
-    return true;
 }

@@ -3,8 +3,6 @@
 #include <Adafruit_GFX.h>
 #include <stdlib.h>
 
-extern ConfigLoader config;
-
 const uint16_t tetrisColors[7] = {
     0xF800, // Red
     0x07E0, // Green
@@ -22,7 +20,7 @@ const uint16_t gameboyColors[4] = {
     0x9DE1  // Lightest green
 };
 
-TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode) : ClockFace(display), isGameboy(gameboyMode), lastFrameTime(0) {
+TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode, const EngineConfig* config) : ClockFace(display, config), isGameboy(gameboyMode), lastFrameTime(0) {
     storedTime = {0, 0, 0};
     strcpy(lastTimeStr, "");
     blockSize = max(1, (int)(matrix->height() / 16));
@@ -33,7 +31,7 @@ void TetrisClock::draw(const TimeData& t) {
 }
 
 void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targetIndices) {
-    int logicalSize = config.time.clock_size > 0 ? config.time.clock_size : 2;
+    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
     int gfxSize = 1;
     
     int16_t bx, by;
@@ -64,8 +62,8 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
     int scaledW = bw * blockSize;
     int scaledH = bh * blockSize;
     
-    int startX = (matrix->width() - scaledW) / 2 + config.time.clock_offset_x - (bx * blockSize);
-    int startY = (matrix->height() - scaledH) / 2 + config.time.clock_offset_y - (by * blockSize);
+    int startX = (matrix->width() - scaledW) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - (bx * blockSize);
+    int startY = (matrix->height() - scaledH) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0) - (by * blockSize);
     
     // Draw full text at scale 1
     GFXcanvas1 fullCanvas(bw + 4, bh + 4);

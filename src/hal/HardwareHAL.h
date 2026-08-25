@@ -4,6 +4,30 @@
 #include "../include/HardwareProfile.h"
 
 /**
+ * @enum HwProfile
+ * @brief Identifies the hardware profile at compile-time.
+ */
+enum class HwProfile {
+    ESP32_STD,
+    WAVESHARE_S3
+};
+
+/**
+ * @struct HardwareCapabilities
+ * @brief Runtime snapshot of available hardware capabilities.
+ */
+struct HardwareCapabilities {
+    bool hasPsram = false;
+    size_t psramBytes = 0;
+
+    bool hasMicrophone = false;
+    bool hasTempSensor = false;
+    bool hasGyroscope = false;
+
+    HwProfile profile = HwProfile::ESP32_STD;
+};
+
+/**
  * @struct EnvironmentData
  * @brief Structure containing environmental data (temperature and humidity).
  */
@@ -28,11 +52,13 @@ public:
      */
     void begin();
 
-    // --- Environmental Sensor (Temperature / Humidity) ---
+    // --- Hardware Capabilities Snapshot ---
+    const HardwareCapabilities& capabilities() const { return _capabilities; }
+
     /**
      * @brief Indicates whether a valid environmental sensor was detected on the I2C bus.
      */
-    bool isTempSensorAvailable() const { return tempSensorDetected; }
+    bool isTempSensorAvailable() const { return _capabilities.hasTempSensor; }
 
     /**
      * @brief Reads environmental data (Celsius, Fahrenheit, Humidity).
@@ -45,7 +71,7 @@ public:
     /**
      * @brief Indicates whether the audio / microphone peripheral is available and functional.
      */
-    bool isAudioAvailable() const { return audioDetected; }
+    bool isAudioAvailable() const { return _capabilities.hasMicrophone; }
 
     /**
      * @brief Enables on-demand I2S DMA audio sampling (Lazy Sampling).
@@ -87,8 +113,10 @@ public:
     float getMicGain() const { return micGain; }
 
 private:
-    bool tempSensorDetected;
-    bool audioDetected;
+    HardwareCapabilities _capabilities;
+    
+    // Internal state variables (these can remain for internal workings)
+    bool audioSamplingEnabled;
     bool audioActive;
     float micGain;
 

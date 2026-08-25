@@ -2,20 +2,19 @@
 #define WORDCLOCK_H
 
 #include "../ClockEngine.h"
+#include "../../core/BitmapFontLoader.h"
 #include <vector>
 
 class WordClock : public ClockFace {
 public:
-    WordClock(MatrixPanel_I2S_DMA* display);
+    WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 
 private:
     TimeData storedTime;
+    BitmapFontLoader customFont;
     
-    void renderFR(int hours, int minutes, int gfxSize);
-    void renderEN(int hours, int minutes, int gfxSize);
-    void renderES(int hours, int minutes, int gfxSize);
     void drawLines(const std::vector<String>& lines, int gfxSize);
 };
 

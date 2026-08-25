@@ -5,7 +5,7 @@
 
 class VersusClock : public ClockFace {
 public:
-    VersusClock(MatrixPanel_I2S_DMA* display);
+    VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 

@@ -19,7 +19,7 @@ def css_replacer(match):
 html_content = re.sub(r'<link rel="stylesheet" href="([^"]+)">', css_replacer, html_content)
 
 # 2. Bundle JS
-js_files = ["js/api.js", "js/i18n.js", "js/components/toast.js", "js/app.js"]
+js_files = ["js/api.js", "js/i18n.js", "js/components/toast.js", "js/dynamic_engines.js", "js/app.js"]
 bundled_js = ""
 for js_file in js_files:
     path = os.path.join(base_dir, js_file)
