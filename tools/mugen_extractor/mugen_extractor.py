@@ -145,8 +145,9 @@ def process_character(char_dir, out_dir):
             required_anims[act_id] = 'hit'
             break
             
-    # Win (any from 180-199, includes taunts 190+)
-    for act_id in range(170, 200):
+    # Win (180-185 are win poses, 190-195 are taunts; do NOT match 170 which is lose/defeat pose)
+    win_anims = [180, 181, 182, 183, 184, 185, 190, 191, 195]
+    for act_id in win_anims:
         if act_id in air.animations:
             required_anims[act_id] = 'win'
             break

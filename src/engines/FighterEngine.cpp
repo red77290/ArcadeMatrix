@@ -408,17 +408,15 @@ void FighterEngine::startFight() {
 
         loadDir = getFightersDir();
         int scale = (matrix && matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
-        int p1_ground_at_0 = p1.ground_y - p1.head_y;
-        int p2_ground_at_0 = p2.ground_y - p2.head_y;
-        int fight_max_h = p1_ground_at_0 > p2_ground_at_0 ? p1_ground_at_0 : p2_ground_at_0;
+        int ground_y_screen = p1.ground_y > p2.ground_y ? p1.ground_y : p2.ground_y;
 
         p1.direction = 1; 
         p1.x = -p1.width_px * scale; 
-        p1.y = (fight_max_h - p1.ground_y) * scale;
+        p1.y = (ground_y_screen - p1.ground_y) * scale;
         
         p2.direction = -1; 
         p2.x = matrix ? matrix->width() : 128;
-        p2.y = (fight_max_h - p2.ground_y) * scale;
+        p2.y = (ground_y_screen - p2.ground_y) * scale;
         
         setPlayerState(p1, FIGHTER_WALK);
         setPlayerState(p2, FIGHTER_WALK);
@@ -452,6 +450,16 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
     if (p.activeFile) p.activeFile.close();
+
+    // Reset frame cache for all animations when changing state so new frames are freshly read
+    p.animWalk.cachedFrameIndex = -1;
+    p.animAttack.cachedFrameIndex = -1;
+    p.animHit.cachedFrameIndex = -1;
+    p.animWin.cachedFrameIndex = -1;
+    p.animSpecial.cachedFrameIndex = -1;
+    p.animSuper.cachedFrameIndex = -1;
+    p.animFall.cachedFrameIndex = -1;
+
     if (anim && anim->loaded && !anim->psramBuffer) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
@@ -465,15 +473,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
                 p.currentFrameBuffer = (uint8_t*)malloc(newSize);
             }
             p.currentBufferSize = newSize;
-            
-            // Force redraw since buffer was reallocated
-            p.animWalk.cachedFrameIndex = -1;
-            p.animAttack.cachedFrameIndex = -1;
-            p.animHit.cachedFrameIndex = -1;
-            p.animWin.cachedFrameIndex = -1;
-            p.animSpecial.cachedFrameIndex = -1;
-            p.animSuper.cachedFrameIndex = -1;
-            p.animFall.cachedFrameIndex = -1;
         }
         p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
     }
@@ -501,14 +500,18 @@ bool FighterEngine::loop() {
     else if (p1.state == FIGHTER_SUPER) anim1 = &p1.animSuper;
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
-    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames) && now - p1.lastFrameTime > (anim1->frameDelays[p1.currentFrame] * 2.5)) {
-        p1.currentFrame++;
-        p1.lastFrameTime = now;
-        if (p1.currentFrame >= anim1->numFrames) {
-            if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
-            else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
-            else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
-            else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
+    if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames)) {
+        uint32_t delay = anim1->frameDelays[p1.currentFrame];
+        if (delay < 30) delay = 30;
+        if (now - p1.lastFrameTime >= delay) {
+            p1.currentFrame++;
+            p1.lastFrameTime = now;
+            if (p1.currentFrame >= anim1->numFrames) {
+                if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
+                else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
+                else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
+                else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
+            }
         }
     }
     
@@ -521,14 +524,18 @@ bool FighterEngine::loop() {
     else if (p2.state == FIGHTER_SUPER) anim2 = &p2.animSuper;
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
-    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames) && now - p2.lastFrameTime > (anim2->frameDelays[p2.currentFrame] * 2.5)) {
-        p2.currentFrame++;
-        p2.lastFrameTime = now;
-        if (p2.currentFrame >= anim2->numFrames) {
-            if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
-            else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
-            else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
-            else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; }
+    if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames)) {
+        uint32_t delay = anim2->frameDelays[p2.currentFrame];
+        if (delay < 30) delay = 30;
+        if (now - p2.lastFrameTime >= delay) {
+            p2.currentFrame++;
+            p2.lastFrameTime = now;
+            if (p2.currentFrame >= anim2->numFrames) {
+                if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
+                else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
+                else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
+                else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; } // Stay on last win frame
+            }
         }
     }
     
