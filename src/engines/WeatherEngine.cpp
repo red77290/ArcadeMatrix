@@ -31,11 +31,34 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
     
     // Add default provider
     addProvider(new OpenWeatherMapProvider());
+
+    if (config) {
+        onConfigChanged(config);
+    } else {
+        // Fallback: query active instance from global config
+        extern ConfigLoader config;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "weather") {
+                onConfigChanged(&inst.config);
+                break;
+            }
+        }
+    }
     
     return EngineError::OK;
 }
 
-void WeatherEngine::activate() {}
+void WeatherEngine::activate() {
+    if (config_api_key.isEmpty() || config_city.isEmpty()) {
+        extern ConfigLoader config;
+        for (const auto& inst : config.instances) {
+            if (inst.engine_id == "weather") {
+                onConfigChanged(&inst.config);
+                break;
+            }
+        }
+    }
+}
 
 void WeatherEngine::update(EngineContext* context) {
     loop();
@@ -47,13 +70,22 @@ void WeatherEngine::deactivate() {}
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
-    config_api_key = engineConfig->getString("api_key", "");
-    config_city = engineConfig->getString("city", "");
-    config_lang = engineConfig->getString("lang", "fr");
+    String newKey = engineConfig->getString("api_key", "");
+    String newCity = engineConfig->getString("city", "");
+    String newLang = engineConfig->getString("lang", "");
+    if (newLang.isEmpty()) {
+        extern ConfigLoader config;
+        newLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+    }
     String newUnits = engineConfig->getString("units", "metric");
-    if (newUnits != config_units) {
+    
+    if (newKey != config_api_key || newCity != config_city || newLang != config_lang || newUnits != config_units) {
+        config_api_key = newKey;
+        config_city = newCity;
+        config_lang = newLang;
         config_units = newUnits;
-        forceUpdate(); // Force fetch with new units
+        validData = false;
+        forceUpdate(); // Force fetch immediately with new settings
     }
     config_offset_x = engineConfig->getInt("weather_offset_x", 0);
     config_offset_y = engineConfig->getInt("weather_offset_y", 0);
