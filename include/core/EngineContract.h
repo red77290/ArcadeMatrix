@@ -5,7 +5,15 @@
 #include <functional>
 #include <memory>
 #include <time.h>
+#if __has_include("core/BuildInfo.h")
 #include "core/BuildInfo.h"
+#elif __has_include("../src/core/BuildInfo.h")
+#include "../src/core/BuildInfo.h"
+#endif
+
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "3.0.0"
+#endif
 
 // Forward declarations to avoid heavy includes in the contract
 class MatrixPanel_I2S_DMA;

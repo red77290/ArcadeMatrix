@@ -33,8 +33,8 @@ void PongClock::draw(const TimeData& t) {
 
 void PongClock::drawScores() {
     matrix->setFont(NULL);
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 1;
-    if (matrix->height() >= 64 && gfxSize == 1) gfxSize = 2; // Auto-scale for 64px if not specified
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
     matrix->setTextSize(gfxSize);
     
     char scoreLeft[3];
