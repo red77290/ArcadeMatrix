@@ -65,10 +65,10 @@ String I18n::getWeatherCondition(const String& raw) {
     switch (l) {
         case Lang::EN: {
             if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Clear";
-            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Partly Cloudy";
+            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "P.Cloudy";
             if (lower.indexOf("overcast") >= 0) return "Overcast";
             if (lower.indexOf("cloud") >= 0) return "Clouds";
-            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Thunderstorm";
+            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Storm";
             if (lower.indexOf("drizzle") >= 0) return "Drizzle";
             if (lower.indexOf("rain") >= 0) return "Rain";
             if (lower.indexOf("snow") >= 0) return "Snow";
@@ -80,9 +80,9 @@ String I18n::getWeatherCondition(const String& raw) {
             if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Soleado";
             if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Parcial";
             if (lower.indexOf("overcast") >= 0) return "Cubierto";
-            if (lower.indexOf("cloud") >= 0) return "Nublado";
-            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Tormenta";
-            if (lower.indexOf("drizzle") >= 0) return "Llovizna";
+            if (lower.indexOf("cloud") >= 0) return "Nubes";
+            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Torm.";
+            if (lower.indexOf("drizzle") >= 0) return "Lloviz.";
             if (lower.indexOf("rain") >= 0) return "Lluvia";
             if (lower.indexOf("snow") >= 0) return "Nieve";
             if (lower.indexOf("mist") >= 0) return "Bruma";
@@ -91,15 +91,15 @@ String I18n::getWeatherCondition(const String& raw) {
         }
         default: { // FR
             if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Soleil";
-            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Éclaircies";
+            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Eclairc.";
             if (lower.indexOf("overcast") >= 0) return "Couvert";
-            if (lower.indexOf("cloud") >= 0) return "Nuageux";
+            if (lower.indexOf("cloud") >= 0) return "Nuages";
             if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Orage";
             if (lower.indexOf("drizzle") >= 0) return "Bruine";
             if (lower.indexOf("rain") >= 0) return "Pluie";
             if (lower.indexOf("snow") >= 0) return "Neige";
             if (lower.indexOf("mist") >= 0) return "Brume";
-            if (lower.indexOf("fog") >= 0) return "Brouillard";
+            if (lower.indexOf("fog") >= 0) return "Brouill.";
             return "Variable";
         }
     }
