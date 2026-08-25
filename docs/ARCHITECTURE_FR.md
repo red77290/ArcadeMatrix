@@ -19,12 +19,13 @@ Ce document constitue la référence **technique exhaustive** de l'architecture 
 7. [Auto-Réparation : le ConfigSanitizer](#7-auto-réparation--le-configsanitizer)
 8. [Propagation de Configuration & Hot Reload](#8-propagation-de-configuration--hot-reload)
 9. [Interface Web Dynamique Pilotée par Schéma & Listes Dynamiques](#9-interface-web-dynamique-pilotée-par-schéma--listes-dynamiques)
-10. [Le Display Arbiter](#10-le-display-arbiter)
-11. [Le Compositeur d'Overlay Fighter](#11-le-compositeur-doverlay-fighter)
-12. [Isolation Runtime & Modèle de Threading Double Cœur](#12-isolation-runtime--modèle-de-threading-double-cœur)
-13. [Cadence de Rendu & Limiteur Adaptatif](#13-cadence-de-rendu--limiteur-adaptatif)
-14. [Surface de l'API HTTP](#14-surface-de-lapi-http)
-15. [Métadonnées de Build](#15-métadonnées-de-build)
+10. [Architecture d'Internationalisation (i18n) & Source de Vérité Unique](#10-architecture-dinternationalisation-i18n--source-de-vérité-unique)
+11. [Le Display Arbiter](#11-le-display-arbiter)
+12. [Le Compositeur d'Overlay Fighter](#12-le-compositeur-doverlay-fighter)
+13. [Isolation Runtime & Modèle de Threading Double Cœur](#13-isolation-runtime--modèle-de-threading-double-cœur)
+14. [Cadence de Rendu & Limiteur Adaptatif](#14-cadence-de-rendu--limiteur-adaptatif)
+15. [Surface de l'API HTTP](#15-surface-de-lapi-http)
+16. [Métadonnées de Build](#16-métadonnées-de-build)
 
 ---
 
@@ -285,6 +286,8 @@ La configuration est stockée dans un fichier unique `/config.json` sur la micro
 
 ---
 
+---
+
 ## 9. Interface Web Dynamique Pilotée par Schéma
 
 L'interface Web (`data/index.html`) est 100% dynamique :
@@ -293,7 +296,39 @@ L'interface Web (`data/index.html`) est 100% dynamique :
 
 ---
 
-## 10. Le Display Arbiter
+## 10. Architecture d'Internationalisation (i18n) & Source de Vérité Unique
+
+ArcadeMatrix sépare strictement la configuration de présentation globale de la logique des moteurs :
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Utilisateur
+    participant WebUI as WebUI (#lang-selector)
+    participant API as AsyncWebServer (/api/system)
+    participant SD as microSD (config.json)
+    participant I18N as Module Centralisé I18n
+    participant ENG as Moteurs Actifs (Weather, WordClock..)
+    participant MX as Matrice HUB75 (DMA)
+
+    User->>WebUI: Sélectionne "English" / "Español" / "Français"
+    WebUI->>WebUI: Applique immédiatement translations[lang] sur le DOM
+    WebUI->>API: POST /api/system { "lang": "en" }
+    API->>SD: Enregistre system.lang = "en"
+    API->>ENG: RotationManager::notifyConfigChanged()
+    ENG->>I18N: I18n::getWeatherDayLabel() / getWordClockLines()
+    I18N-->>ENG: Retourne chaînes traduites en "en"
+    ENG->>MX: Rend directement les textes traduits sur la matrice
+```
+
+### Avantages de l'Architecture i18n Centralisée :
+1. **Zéro Redondance de Schéma :** Aucun moteur individuel (`WeatherEngine`, `WordClock`, `DecibelEngine`, etc.) n'a de champ `lang` dans son schéma.
+2. **Synchronisation Universelle :** Changer la langue dans l'en-tête de la WebUI reconfigure instantanément toute la machine (WebUI + Affichage Matrice).
+3. **Extensibilité Trivialement Simple :** Pour ajouter une langue (ex: Allemand `de`), il suffit d'ajouter une entrée dans `SUPPORTED_LANGUAGES` (Front) et les dictionnaires du module `I18n` (Back-end C++ et Rust).
+
+---
+
+## 11. Le Display Arbiter
 
 Le `DisplayArbiter` évalue chaque frame les requêtes d'affichage pour désigner la source principale qui pilote le framebuffer :
 

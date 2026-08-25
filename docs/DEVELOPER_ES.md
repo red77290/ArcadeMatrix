@@ -22,10 +22,11 @@ Esta es la guía **técnica exhaustiva** para extender ArcadeMatrix en ESP32 (de
 10. [Tutorial: Crear un Nuevo Motor Paso a Paso](#10-tutorial-crear-un-nuevo-motor-paso-a-paso)
 11. [Tutorial: Añadir un Endpoint de Opciones Dinámicas](#11-tutorial-añadir-un-endpoint-de-opciones-dinámicas)
 12. [Tutorial: Añadir una Nueva Esfera / Tema de Reloj (ClockFace)](#12-tutorial-añadir-una-nueva-esfera--tema-de-reloj-clockface)
-13. [Lectura de Configuración en un Motor](#13-lectura-de-configuración-en-un-motor)
-14. [Renderizado en la Matriz LED](#14-renderizado-en-la-matriz-led)
-15. [Pruebas y Compilación Local](#15-pruebas-y-compilación-local)
-16. [Lista de Verificación del Desarrollador](#16-lista-de-verificación-del-desarrollador)
+13. [Internacionalización y Centralización i18n (Front y Back)](#13-internacionalización-y-centralización-i18n-front-y-back)
+14. [Lectura de Configuración en un Motor](#14-lectura-de-configuración-en-un-motor)
+15. [Renderizado en la Matriz LED](#15-renderizado-en-la-matriz-led)
+16. [Pruebas y Compilación Local](#16-pruebas-y-compilación-local)
+17. [Lista de Verificación del Desarrollador](#17-lista-de-verificación-del-desarrollador)
 
 ---
 
@@ -419,7 +420,58 @@ La interfaz Web mostrará automáticamente la nueva opción, la guardará en `co
 
 ---
 
-## 13. Lectura de Configuración en un Motor
+## 13. Internacionalización y Centralización i18n (Front y Back)
+
+ArcadeMatrix utiliza una arquitectura **i18n completamente centralizada**.
+
+> [!IMPORTANT]
+> **Regla de oro: Nunca añada un campo `lang` en el esquema de sus motores (`ConfigSchema`).**
+> El idioma es una configuración global del sistema (`system.lang`), seleccionada por el usuario a través del selector superior de la interfaz Web (`#lang-selector`). Cualquier cambio en la interfaz envía automáticamente una llamada `POST /api/system` y propaga el nuevo idioma a los motores activos en tiempo real.
+
+### A. Uso en un motor C++ (`#include "core/I18n.h"`)
+
+Todos los textos localizados (días de la semana, condiciones climáticas, palabras del reloj de texto, niveles de decibelios, etc.) están centralizados en la clase auxiliar `I18n`:
+
+```cpp
+#include "core/I18n.h"
+
+// 1. Obtener idioma activo (FR, EN, ES)
+Lang currentLang = I18n::getLang();
+
+// 2. Nombres de días meteorológicos (ej: "HOY", "MAÑ.", "LUN"..)
+const char* dayLabel = I18n::getWeatherDayLabel(dayOfWeek, isToday, isTomorrow);
+
+// 3. Traducción de condiciones climáticas
+String condition = I18n::getWeatherCondition("Thunderstorm with heavy rain");
+
+// 4. Líneas completas del reloj de texto (WordClock)
+std::vector<String> lines = I18n::getWordClockLines(hours, minutes);
+
+// 5. Niveles de ruido / decibelios
+const char* noise = I18n::getNoiseLevelLabel(levelIndex);
+```
+
+### B. Tutorial: Añadir un nuevo idioma (ej: Alemán `de`) en 3 pasos
+
+1. **Front-end WebUI (`data/index.html` o `i18n.js`):**
+   Añada el código y nombre del idioma a `SUPPORTED_LANGUAGES` y proporcione las traducciones en `translations`:
+   ```javascript
+   const SUPPORTED_LANGUAGES = [
+     { code: 'fr', label: 'Français' },
+     { code: 'en', label: 'English' },
+     { code: 'es', label: 'Español' },
+     { code: 'de', label: 'Deutsch' }
+   ];
+   ```
+2. **Back-end ESP32 (`src/core/I18n.h` & `src/core/I18n.cpp`):**
+   - Añada `DE` al enum `Lang`.
+   - Implemente las cadenas correspondientes en los métodos estáticos de `I18n.cpp`.
+3. **Back-end Raspberry Pi (`src/core/i18n.rs`):**
+   - Añada `De` al enum `Lang` y complete las tablas de búsqueda.
+
+---
+
+## 14. Lectura de Configuración en un Motor
 
 ```cpp
 int speed = config->getInt("speed", 2);
@@ -430,7 +482,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 14. Renderizado en la Matriz LED
+## 15. Renderizado en la Matriz LED
 
 ```cpp
 MatrixPanel_I2S_DMA* matrix = context->getMatrix();
@@ -441,7 +493,7 @@ matrix->fillRect(x, y, w, h, color);
 
 ---
 
-## 15. Pruebas y Compilación Local
+## 16. Pruebas y Compilación Local
 
 ```bash
 # ESP32 Estándar
@@ -453,9 +505,10 @@ pio run -e esp32s3_waveshare
 
 ---
 
-## 16. Lista de Verificación del Desarrollador
+## 17. Lista de Verificación del Desarrollador
 
 - [ ] `initialize()` realiza todas las asignaciones de memoria; el bucle activo (`update`/`render`) tiene **cero asignaciones dinámicas**.
 - [ ] `onConfigChanged()` actualiza el estado sin destruir la instancia.
 - [ ] Los requisitos de hardware (`needsPsram`, `needsAudio`, `needsTempSensor`) están declarados.
+- [ ] Las cadenas traducidas utilizan el módulo centralizado `I18n` (ningún campo `lang` redundante en el esquema).
 - [ ] La compilación se completa sin errores en `esp32dev` y `esp32s3_waveshare`.

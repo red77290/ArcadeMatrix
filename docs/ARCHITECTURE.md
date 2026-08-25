@@ -19,12 +19,13 @@ This document is the **deep, exhaustive** reference for the ArcadeMatrix archite
 7. [Self-Healing: the ConfigSanitizer](#7-self-healing-the-configsanitizer)
 8. [Config Propagation & Hot Reload](#8-config-propagation--hot-reload)
 9. [Schema-Driven Dynamic UI & Custom Lists](#9-schema-driven-dynamic-ui--custom-lists)
-10. [The Display Arbiter](#10-the-display-arbiter)
-11. [The Fighter Overlay Compositor](#11-the-fighter-overlay-compositor)
-12. [Runtime Isolation & Dual-Core Threading Model](#12-runtime-isolation--dual-core-threading-model)
-13. [Rendering Cadence & Adaptive Limiter](#13-rendering-cadence--adaptive-limiter)
-14. [HTTP API Surface](#14-http-api-surface)
-15. [Build Metadata](#15-build-metadata)
+10. [Internationalization Architecture (i18n) & Single Source of Truth](#10-internationalization-architecture-i18n--single-source-of-truth)
+11. [The Display Arbiter](#11-the-display-arbiter)
+12. [The Fighter Overlay Compositor](#12-the-fighter-overlay-compositor)
+13. [Runtime Isolation & Dual-Core Threading Model](#13-runtime-isolation--dual-core-threading-model)
+14. [Frame Pacing & Adaptive Rate Limiting](#14-frame-pacing--adaptive-rate-limiting)
+15. [HTTP API Surface](#15-http-api-surface)
+16. [Build Metadata](#16-build-metadata)
 
 ---
 
@@ -358,6 +359,8 @@ When a user modifies settings in the WebUI:
 
 ---
 
+---
+
 ## 9. Schema-Driven Dynamic UI & Custom Lists
 
 The WebUI (`data/index.html`) contains **zero hardcoded forms**. It queries `GET /api/engines` and constructs the settings UI dynamically from `ConfigSchema`:
@@ -368,7 +371,39 @@ The WebUI (`data/index.html`) contains **zero hardcoded forms**. It queries `GET
 
 ---
 
-## 10. The Display Arbiter
+## 10. Internationalization Architecture (i18n) & Single Source of Truth
+
+ArcadeMatrix strictly separates global presentation configuration from engine business logic:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User
+    participant WebUI as WebUI (#lang-selector)
+    participant API as AsyncWebServer (/api/system)
+    participant SD as microSD (config.json)
+    participant I18N as Centralized I18n Module
+    participant ENG as Active Engines (Weather, WordClock..)
+    participant MX as HUB75 Matrix (DMA)
+
+    User->>WebUI: Selects "English" / "Español" / "Français"
+    WebUI->>WebUI: Immediately applies translations[lang] across DOM
+    WebUI->>API: POST /api/system { "lang": "en" }
+    API->>SD: Persists system.lang = "en"
+    API->>ENG: RotationManager::notifyConfigChanged()
+    ENG->>I18N: I18n::getWeatherDayLabel() / getWordClockLines()
+    I18N-->>ENG: Returns translated strings for "en"
+    ENG->>MX: Directly draws localized strings onto the LED matrix
+```
+
+### Architectural Highlights of Centralized i18n:
+1. **Zero Schema Redundancy:** Individual engine descriptors (`WeatherEngine`, `WordClock`, `DecibelEngine`, etc.) do not expose a redundant `lang` config field.
+2. **Universal Real-time Synchronization:** Changing the language in the WebUI header instantly updates the whole system (WebUI + Matrix rendering).
+3. **Effortless Extensibility:** Adding a new language (e.g. German `de`) requires only adding an entry in `SUPPORTED_LANGUAGES` (Front) and dictionary entries in the centralized `I18n` class (Back-end C++ and Rust).
+
+---
+
+## 11. The Display Arbiter
 
 The `DisplayArbiter` evaluates priority display requests each frame to determine the primary display source:
 

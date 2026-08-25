@@ -22,10 +22,11 @@ Ce document est le guide **technique exhaustif** pour étendre ArcadeMatrix sur 
 10. [Tutoriel : Créer un Nouveau Moteur Pas-à-Pas](#10-tutoriel--créer-un-nouveau-moteur-pas-à-pas)
 11. [Tutoriel : Ajouter un Endpoint d'Options Dynamiques](#11-tutoriel--ajouter-un-endpoint-doptions-dynamiques)
 12. [Tutoriel : Ajouter un Nouveau Thème / Horloge (ClockFace)](#12-tutoriel--ajouter-un-nouveau-thème--horloge-clockface)
-13. [Lecture de la Configuration dans un Moteur](#13-lecture-de-la-configuration-dans-un-moteur)
-14. [Rendu sur la Matrice LED](#14-rendu-sur-la-matrice-led)
-15. [Tests & Compilation Locale](#15-tests--compilation-locale)
-16. [Checklist du Développeur](#16-checklist-du-développeur)
+13. [Internationalisation & Centralisation i18n (Front & Back)](#13-internationalisation--centralisation-i18n-front--back)
+14. [Lecture de la Configuration dans un Moteur](#14-lecture-de-la-configuration-dans-un-moteur)
+15. [Rendu sur la Matrice LED](#15-rendu-sur-la-matrice-led)
+16. [Tests & Compilation Locale](#16-tests--compilation-locale)
+17. [Checklist du Développeur](#17-checklist-du-développeur)
 
 ---
 
@@ -419,7 +420,58 @@ L'interface Web affichera automatiquement la nouvelle option, l'enregistrera dan
 
 ---
 
-## 13. Lecture de la Configuration dans un Moteur
+## 13. Internationalisation & Centralisation i18n (Front & Back)
+
+ArcadeMatrix utilise une architecture **i18n entièrement centralisée**.
+
+> [!IMPORTANT]
+> **Règle d'or : Ne jamais ajouter de champ `lang` dans les schémas de vos moteurs (`ConfigSchema`).**
+> La langue est une configuration globale du système (`system.lang`), sélectionnée par l'utilisateur via le menu déroulant en haut de l'interface Web (`#lang-selector`). Tout changement de langue dans l'interface envoie automatiquement un appel `POST /api/system` et propage la nouvelle langue aux moteurs actifs en direct.
+
+### A. Utilisation dans un moteur C++ (`#include "core/I18n.h"`)
+
+Tous les textes traduits (jours de la semaine, conditions météo, heures en mots, statuts de décibels, etc.) sont centralisés dans le module `I18n` :
+
+```cpp
+#include "core/I18n.h"
+
+// 1. Obtenir la langue active (FR, EN, ES)
+Lang currentLang = I18n::getLang();
+
+// 2. Libellés des jours météo (ex: "AUJ.", "DEM.", "LUN"..)
+const char* dayLabel = I18n::getWeatherDayLabel(dayOfWeek, isToday, isTomorrow);
+
+// 3. Traduction des conditions météo
+String condition = I18n::getWeatherCondition("Thunderstorm with heavy rain");
+
+// 4. Lignes complètes de l'horloge en mots (WordClock)
+std::vector<String> lines = I18n::getWordClockLines(hours, minutes);
+
+// 5. Niveaux sonores / décibels
+const char* noise = I18n::getNoiseLevelLabel(levelIndex);
+```
+
+### B. Tutoriel : Ajouter une nouvelle langue (ex : Allemand `de`) en 3 étapes
+
+1. **Front-end WebUI (`data/index.html` ou `i18n.js`) :**
+   Ajoutez la langue dans `SUPPORTED_LANGUAGES` et fournissez son dictionnaire dans `translations` :
+   ```javascript
+   const SUPPORTED_LANGUAGES = [
+     { code: 'fr', label: 'Français' },
+     { code: 'en', label: 'English' },
+     { code: 'es', label: 'Español' },
+     { code: 'de', label: 'Deutsch' }
+   ];
+   ```
+2. **Back-end ESP32 (`src/core/I18n.h` & `src/core/I18n.cpp`) :**
+   - Ajoutez la valeur `DE` à l'enum `Lang`.
+   - Renseignez les traductions dans les méthodes statiques de `I18n.cpp`.
+3. **Back-end Raspberry Pi (`src/core/i18n.rs`) :**
+   - Ajoutez `De` à l'enum `Lang` et implémentez les correspondances dans les fonctions de lookup.
+
+---
+
+## 14. Lecture de la Configuration dans un Moteur
 
 ```cpp
 int speed = config->getInt("speed", 2);
@@ -430,7 +482,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 14. Rendu sur la Matrice LED
+## 15. Rendu sur la Matrice LED
 
 ```cpp
 MatrixPanel_I2S_DMA* matrix = context->getMatrix();
@@ -441,7 +493,7 @@ matrix->fillRect(x, y, w, h, color);
 
 ---
 
-## 15. Tests & Compilation Locale
+## 16. Tests & Compilation Locale
 
 ```bash
 # ESP32 Standard
@@ -453,9 +505,11 @@ pio run -e esp32s3_waveshare
 
 ---
 
-## 16. Checklist du Développeur
+## 17. Checklist du Développeur
 
 - [ ] `initialize()` effectue toutes les allocations ; la boucle chaude (`update`/`render`) a **zéro allocation dynamique**.
 - [ ] `onConfigChanged()` met à jour l'état sans détruire l'instance.
 - [ ] Les prérequis matériels (`needsPsram`, `needsAudio`, `needsTempSensor`) sont déclarés.
+- [ ] Les textes localisés utilisent le module centralisé `I18n` (aucun champ `lang` redondant dans le schéma).
 - [ ] La compilation réussit sur `esp32dev` et `esp32s3_waveshare`.
+

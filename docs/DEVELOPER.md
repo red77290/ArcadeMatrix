@@ -22,10 +22,11 @@ This is the **complete, exhaustive** guide to extending ArcadeMatrix on ESP32 (w
 10. [Tutorial: Create a New Engine Step-by-Step](#10-tutorial-create-a-new-engine-step-by-step)
 11. [Tutorial: Add a Custom-List Endpoint](#11-tutorial-add-a-custom-list-endpoint)
 12. [Tutorial: Add a New Clock Face / Theme Step-by-Step](#12-tutorial-add-a-new-clock-face--theme-step-by-step)
-13. [Reading Config in an Engine](#13-reading-config-in-an-engine)
-14. [Rendering into the LED Matrix](#14-rendering-into-the-led-matrix)
-15. [Testing & Local Compilation](#15-testing--local-compilation)
-16. [Developer Checklist](#16-developer-checklist)
+13. [Internationalization & Centralized i18n (Front & Back)](#13-internationalization--centralized-i18n-front--back)
+14. [Reading Config in an Engine](#14-reading-config-in-an-engine)
+15. [Rendering into the LED Matrix](#15-rendering-into-the-led-matrix)
+16. [Testing & Local Compilation](#16-testing--local-compilation)
+17. [Developer Checklist](#17-developer-checklist)
 
 ---
 
@@ -481,7 +482,58 @@ The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, 
 
 ---
 
-## 13. Reading Config in an Engine
+## 13. Internationalization & Centralized i18n (Front & Back)
+
+ArcadeMatrix features a **fully centralized i18n architecture**.
+
+> [!IMPORTANT]
+> **Golden Rule: Never add a `lang` field to your engine's `ConfigSchema`.**
+> Language is a global system setting (`system.lang`), chosen by the user in the WebUI header selector (`#lang-selector`). Any language change in the UI automatically sends a `POST /api/system` call and notifies all active engines in real time.
+
+### A. Usage in C++ Engine (`#include "core/I18n.h"`)
+
+All localized strings (weather day labels, weather conditions, text clock words, noise levels, etc.) are centralized in the `I18n` helper class:
+
+```cpp
+#include "core/I18n.h"
+
+// 1. Get active language (FR, EN, ES)
+Lang currentLang = I18n::getLang();
+
+// 2. Weather day names (e.g., "TODAY", "TOM.", "MON"..)
+const char* dayLabel = I18n::getWeatherDayLabel(dayOfWeek, isToday, isTomorrow);
+
+// 3. Translated weather condition strings
+String condition = I18n::getWeatherCondition("Thunderstorm with heavy rain");
+
+// 4. WordClock full text lines
+std::vector<String> lines = I18n::getWordClockLines(hours, minutes);
+
+// 5. Noise / Decibel level statuses
+const char* noise = I18n::getNoiseLevelLabel(levelIndex);
+```
+
+### B. Tutorial: Adding a New Language (e.g. German `de`) in 3 Steps
+
+1. **Front-end WebUI (`data/index.html` or `i18n.js`):**
+   Add the language code and label to `SUPPORTED_LANGUAGES` and provide translations in `translations`:
+   ```javascript
+   const SUPPORTED_LANGUAGES = [
+     { code: 'fr', label: 'Français' },
+     { code: 'en', label: 'English' },
+     { code: 'es', label: 'Español' },
+     { code: 'de', label: 'Deutsch' }
+   ];
+   ```
+2. **ESP32 Back-end (`src/core/I18n.h` & `src/core/I18n.cpp`):**
+   - Add `DE` to the `Lang` enum.
+   - Implement localized day labels, conditions, WordClock words, and noise strings in `I18n.cpp`.
+3. **Raspberry Pi Back-end (`src/core/i18n.rs`):**
+   - Add `De` to `Lang` enum and provide mappings in the lookup tables.
+
+---
+
+## 14. Reading Config in an Engine
 
 Engines receive an `EngineConfig` proxy:
 
@@ -494,7 +546,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 14. Rendering into the LED Matrix
+## 15. Rendering into the LED Matrix
 
 Always obtain the matrix pointer via `context->getMatrix()`:
 
@@ -509,7 +561,7 @@ matrix->print("TEXT");
 
 ---
 
-## 15. Testing & Local Compilation
+## 16. Testing & Local Compilation
 
 Compile both board targets locally:
 
@@ -526,10 +578,11 @@ pio test -e esp32dev --without-uploading --without-testing
 
 ---
 
-## 16. Developer Checklist
+## 17. Developer Checklist
 
 - [ ] `initialize()` allocates all memory; hot loop (`update`/`render`) has **zero dynamic allocations**.
 - [ ] `onConfigChanged()` updates state in place without destroying the instance.
 - [ ] Hardware requirements (`needsPsram`, `needsAudio`, `needsTempSensor`) are correctly declared.
 - [ ] `options_endpoint` is provided for dynamic options.
+- [ ] Localized strings use the centralized `I18n` module (no redundant `lang` field in schema).
 - [ ] Code compiles cleanly on both `esp32dev` and `esp32s3_waveshare`.
