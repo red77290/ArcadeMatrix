@@ -16,6 +16,10 @@ public:
         return m_eventBus;
     }
 
+    void setEventBus(FrontendSyncEngine* eventBus) {
+        m_eventBus = eventBus;
+    }
+
     void getSystemTime(struct tm* timeinfo) override {
         getLocalTime(timeinfo);
     }
