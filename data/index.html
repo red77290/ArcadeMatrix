@@ -994,17 +994,52 @@ select.input option {
 
         <!-- OTA Firmware Update -->
         <div id="sys-tab-ota" class="tab-pane">
+          <!-- 1. Online Automatic Update (GitHub Releases) -->
+          <div class="card glass shadow ota-card" style="margin-bottom: 1.5rem;">
+            <div class="card-header-badge">
+              <h3>🌐 Online Update (GitHub Releases)</h3>
+              <span class="badge badge-accent">1-Click OTA</span>
+            </div>
+            <p class="text-muted">Check GitHub Releases for new updates matching your ESP32 board and update automatically.</p>
+
+            <div class="ota-info-box" style="margin-bottom: 1rem;">
+              <div>Current Version: <strong id="ota-current-version">v3.0.0</strong></div>
+              <div>Board Profile: <strong id="ota-current-arch">ESP32</strong></div>
+            </div>
+
+            <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <span id="ota-online-badge" class="badge badge-accent">Update Available</span>
+                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">v3.0.0</strong>
+                </div>
+                <span id="ota-online-size" class="text-muted" style="font-size: 0.85rem;">~1.5 MB</span>
+              </div>
+              <div id="ota-online-notes" class="text-muted" style="margin-top: 0.75rem; font-size: 0.85rem; max-height: 140px; overflow-y: auto; white-space: pre-wrap; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px;"></div>
+            </div>
+
+            <div id="ota-auto-progress" class="progress-bar-container" style="display: none; margin-bottom: 1rem;">
+              <div id="ota-auto-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+              <span id="ota-auto-progress-text" class="progress-text">Downloading from GitHub...</span>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+              <button id="btn-ota-check" class="btn btn-primary" style="flex: 1;">
+                🔍 Check for Updates
+              </button>
+              <button id="btn-ota-auto-install" class="btn btn-warning" style="flex: 1; display: none;">
+                ⬇️ Download & Install Update
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. Manual Binary Upload (Offline / Custom) -->
           <div class="card glass shadow ota-card">
             <div class="card-header-badge">
-              <h3>🔄 Firmware Update (OTA)</h3>
-              <span class="badge badge-accent">ESP32 C++ DMA</span>
+              <h3>📁 Manual File Upload</h3>
+              <span class="badge">Offline / Custom</span>
             </div>
-            <p class="text-muted">Upload a compiled firmware binary (.bin) to update the ESP32 over Wi-Fi.</p>
-
-            <div class="ota-info-box">
-              <div>Current Version: <strong id="ota-current-version">v3.0.0</strong></div>
-              <div>Target Architecture: <strong id="ota-current-arch">ESP32</strong></div>
-            </div>
+            <p class="text-muted">Upload a compiled firmware binary (.bin) manually (supports custom builds, beta versions, or downgrades).</p>
 
             <div id="ota-drop-zone" class="drop-zone">
               <div class="drop-icon">📁</div>
@@ -1122,13 +1157,27 @@ const API = {
     });
   },
 
-  async waitForReconnect(timeoutMs = 60000, intervalMs = 2000) {
+  async waitForReconnect(timeoutMs = 60000, intervalMs = 2000, expectedVersion = null) {
     const start = Date.now();
+    let wentOffline = false;
+
+    // Grace period for ESP32 to restart
+    await new Promise(r => setTimeout(r, 2500));
+
     while (Date.now() - start < timeoutMs) {
       try {
         const res = await fetch('/api/version', { signal: AbortSignal.timeout(1500) });
-        if (res.ok) return await res.json();
-      } catch {}
+        if (res.ok) {
+          const data = await res.json();
+          if (expectedVersion && data.version === expectedVersion && !wentOffline && (Date.now() - start < 8000)) {
+            await new Promise(r => setTimeout(r, intervalMs));
+            continue;
+          }
+          return data;
+        }
+      } catch {
+        wentOffline = true;
+      }
       await new Promise(r => setTimeout(r, intervalMs));
     }
     throw new Error('Device did not respond after reboot');
@@ -1147,6 +1196,23 @@ const translations = {
     ota_drop: "Drop firmware binary here or click to browse",
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
+    // Display & Rotation UX
+    add_screen_title: "Add New Screen to Display",
+    add_screen_desc: "Select any engine plugin from the library to create a new customizable screen instance on your LED Matrix.",
+    choose_engine: "Choose Engine:",
+    instance_name_id: "Instance Name (ID):",
+    create_screen_btn: "Create Screen",
+    configured_screens_title: "Configured Screens & Settings",
+    configured_screens_desc: "Click on a screen tab below to customize its visual layout, data feeds, colors, and options.",
+    no_screens_title: "No display screens configured yet",
+    no_screens_desc: "Choose an engine plugin above and click 'Create Screen' to set up your first display screen.",
+    rotation_loop_title: "Screen Rotation Loop (Matrix Playlist)",
+    rotation_loop_badge: "Auto-Cycling",
+    rotation_loop_desc: "This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.",
+    rotation_add_title: "Add Active Screen to Rotation Loop:",
+    rotation_save_btn: "Save Rotation",
+    rotation_empty: "No instances in rotation. Add one below.",
+
     // Tooltips
     tt_hw_rows: "Height in pixels of a single LED panel (usually 32 or 64).",
     tt_hw_cols: "Width in pixels of a single LED panel (usually 64 or 128).",
@@ -1177,6 +1243,23 @@ const translations = {
     ota_drop: "Glissez le binaire ici ou cliquez pour parcourir",
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
+    // Display & Rotation UX
+    add_screen_title: "Ajouter un nouvel écran à l'affichage",
+    add_screen_desc: "Sélectionnez un plugin du catalogue pour créer un nouvel écran personnalisable sur votre matrice LED.",
+    choose_engine: "Choisir l'Engine :",
+    instance_name_id: "Nom de l'instance (ID) :",
+    create_screen_btn: "Créer l'écran",
+    configured_screens_title: "Écrans configurés & Paramètres",
+    configured_screens_desc: "Cliquez sur un onglet ci-dessous pour personnaliser sa disposition, ses sources de données et ses options.",
+    no_screens_title: "Aucun écran configuré pour le moment",
+    no_screens_desc: "Choisissez un plugin ci-dessus et cliquez sur 'Créer l'écran' pour configurer votre premier écran.",
+    rotation_loop_title: "Boucle de Rotation (Playlist Matrice)",
+    rotation_loop_badge: "Défilement Auto",
+    rotation_loop_desc: "Cette séquence contrôle quels écrans défilent sur la matrice LED, la durée d'affichage (secondes / nombre de GIFs), leur ordre et l'activation de l'overlay de combat Street Fighter.",
+    rotation_add_title: "Ajouter un écran actif à la boucle de rotation :",
+    rotation_save_btn: "Enregistrer la rotation",
+    rotation_empty: "Aucun écran dans la rotation. Ajoutez-en un ci-dessous.",
+
     // Tooltips
     tt_hw_rows: "Hauteur en pixels d'une dalle LED unique (généralement 32 ou 64).",
     tt_hw_cols: "Largeur en pixels d'une dalle LED unique (généralement 64 ou 128).",
@@ -1207,6 +1290,23 @@ const translations = {
     ota_drop: "Arrastra el binario aquí o haz clic para buscar",
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
+    // Display & Rotation UX
+    add_screen_title: "Añadir nueva pantalla a la visualización",
+    add_screen_desc: "Selecciona un plugin del catálogo para crear una nueva pantalla personalizable en tu matriz LED.",
+    choose_engine: "Elegir Engine:",
+    instance_name_id: "Nombre de la instancia (ID):",
+    create_screen_btn: "Crear pantalla",
+    configured_screens_title: "Pantallas configuradas y Ajustes",
+    configured_screens_desc: "Haz clic en una pestaña para personalizar su diseño, fuentes de datos y opciones.",
+    no_screens_title: "Aún no hay pantallas configuradas",
+    no_screens_desc: "Elige un plugin arriba y haz clic en 'Crear pantalla' para configurar tu primera pantalla.",
+    rotation_loop_title: "Bucle de Rotación (Lista de reproducción)",
+    rotation_loop_badge: "Ciclo Automático",
+    rotation_loop_desc: "Esta secuencia controla qué pantallas rotan en tu matriz LED, el tiempo de visualización (segundos / cantidad de GIFs), su orden y la superposición de Street Fighter.",
+    rotation_add_title: "Añadir pantalla activa al bucle de rotación:",
+    rotation_save_btn: "Guardar rotación",
+    rotation_empty: "No hay pantallas en la rotación. Añade una abajo.",
+
     // Tooltips
     tt_hw_rows: "Altura en píxeles de un panel LED individual (normalmente 32 o 64).",
     tt_hw_cols: "Anchura en píxeles de un panel LED individual (normalmente 64 o 128).",
@@ -1235,6 +1335,12 @@ const SUPPORTED_LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'es', label: 'Español' }
 ];
+
+function t(key, fallback) {
+  const lang = localStorage.getItem('lang') || 'en';
+  const dict = translations[lang] || translations.en;
+  return dict[key] !== undefined ? dict[key] : (fallback || key);
+}
 
 function setLanguage(lang) {
   localStorage.setItem('lang', lang);
@@ -1438,52 +1544,113 @@ async function initDynamicEngines() {
       enginesMap[desc.metadata.id] = desc;
     });
 
-    // Rotation manager panel (order + duration of instances in the loop).
+    // 1. Rotation manager panel (order + duration of instances in the loop).
     await renderRotationPanel(container, tabsContainer, instancesList, enginesMap);
 
-    // Add New Instance Controls
-    const addContainer = document.createElement('div');
-    addContainer.style = "display: flex; gap: 0.5rem; align-items: center; margin-left: auto;";
+    // 2. Prominent "Add New Engine Screen" Card (Unmistakable & 100% Dynamic)
+    const addCard = document.createElement('div');
+    addCard.className = 'card glass shadow';
+    addCard.style = "margin: 1.5rem 0; border: 1px solid rgba(99, 102, 241, 0.4); background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(30, 41, 59, 0.5) 100%);";
     
-    const engineSelect = document.createElement('select');
-    engineSelect.className = 'input';
-    engineSelect.style = "width: auto; padding: 0.2rem 0.5rem;";
-    descriptors.forEach(desc => {
-        const opt = document.createElement('option');
-        opt.value = desc.metadata.id;
-        opt.innerText = desc.metadata.name;
-        engineSelect.appendChild(opt);
-    });
-    
-    const addBtn = document.createElement('button');
-    addBtn.className = 'btn btn-primary';
-    addBtn.innerHTML = `➕ Add Engine`;
-    addBtn.style = "padding: 0.2rem 0.5rem;";
-    addBtn.onclick = () => {
-       const eng = engineSelect.value;
-       const inst = prompt("Enter a unique name for this instance (e.g. main_" + eng + "):", eng);
-       if (!inst) return;
-       API.post('/api/instances', { instance_id: inst, engine_id: eng, config: {} }).then(() => {
-           window.showToast('Instance created, please refresh', 'success');
-           localStorage.setItem('activePage', 'display');
-           setTimeout(() => location.reload(), 500);
-       });
-    };
-    
-    addContainer.appendChild(engineSelect);
-    addContainer.appendChild(addBtn);
-    tabsContainer.appendChild(addContainer);
+    addCard.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div style="max-width: 480px;">
+          <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;" data-i18n="add_screen_title">
+            <span>➕</span> ${t('add_screen_title', 'Add New Screen to Display')}
+          </h3>
+          <p class="text-muted" style="margin: 0.35rem 0 0 0; font-size: 0.85rem;" data-i18n="add_screen_desc">
+            ${t('add_screen_desc', 'Select any engine plugin from the library to create a new customizable screen instance on your LED Matrix.')}
+          </p>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--accent, #6366f1);" data-i18n="choose_engine">${t('choose_engine', 'Choose Engine:')}</label>
+            <select id="engine-select-dropdown" class="input" style="min-width: 220px; font-weight: 500; border-color: var(--accent, #6366f1);">
+              ${descriptors.map(d => {
+                const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
+                const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+                return `<option value="${d.metadata.id}">${icon} ${name} (${d.metadata.id})</option>`;
+              }).join('')}
+            </select>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted, #888);" data-i18n="instance_name_id">${t('instance_name_id', 'Instance Name (ID):')}</label>
+            <input type="text" id="engine-instance-name-input" class="input" style="width: 140px;" placeholder="e.g. main_screen" value="${descriptors.length ? 'main_' + descriptors[0].metadata.id.toLowerCase().replace('engine', '') : ''}">
+          </div>
+          <div style="display: flex; flex-direction: column; justify-content: flex-end; align-self: flex-end;">
+            <button id="btn-create-engine-instance" class="btn btn-primary" style="padding: 0.5rem 1.1rem; font-weight: 600; white-space: nowrap; box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);" data-i18n="create_screen_btn">
+              ➕ ${t('create_screen_btn', 'Create Screen')}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.insertBefore(addCard, tabsContainer);
+
+    const engineSelectEl = addCard.querySelector('#engine-select-dropdown');
+    const instanceNameInput = addCard.querySelector('#engine-instance-name-input');
+    const createBtn = addCard.querySelector('#btn-create-engine-instance');
+
+    if (engineSelectEl && instanceNameInput) {
+      engineSelectEl.addEventListener('change', () => {
+        const eng = engineSelectEl.value;
+        const cleanName = eng.toLowerCase().replace('engine', '');
+        instanceNameInput.value = `main_${cleanName}`;
+      });
+    }
+
+    if (createBtn) {
+      createBtn.addEventListener('click', () => {
+        const eng = engineSelectEl ? engineSelectEl.value : '';
+        const inst = instanceNameInput && instanceNameInput.value.trim() ? instanceNameInput.value.trim() : `main_${eng.toLowerCase()}`;
+        if (!eng || !inst) return;
+        API.post('/api/instances', { instance_id: inst, engine_id: eng, config: {} }).then(() => {
+          window.showToast(`Screen instance '${inst}' created successfully!`, 'success');
+          localStorage.setItem('activePage', 'display');
+          setTimeout(() => location.reload(), 500);
+        }).catch(err => {
+          window.showToast(`Failed to create instance: ${err.message || err.status}`, 'error');
+        });
+      });
+    }
+
+    // 3. Section Header for Configured Screens Tabs
+    const screensHeader = document.createElement('div');
+    screensHeader.style = "margin: 2rem 0 0.75rem 0; display: flex; align-items: center; justify-content: space-between;";
+    screensHeader.innerHTML = `
+      <div>
+        <h3 style="margin: 0; font-size: 1.15rem;" data-i18n="configured_screens_title">⚙️ ${t('configured_screens_title', 'Configured Screens & Settings')}</h3>
+        <p class="text-muted" style="margin: 0.2rem 0 0 0; font-size: 0.85rem;" data-i18n="configured_screens_desc">${t('configured_screens_desc', 'Click on a screen tab below to customize its visual layout, data feeds, colors, and options.')}</p>
+      </div>
+      <span class="badge" style="font-size: 0.85rem;">${instancesList.length} Active Screen${instancesList.length > 1 ? 's' : ''}</span>
+    `;
+    container.insertBefore(screensHeader, tabsContainer);
+
+    if (instancesList.length === 0) {
+      const emptyCard = document.createElement('div');
+      emptyCard.className = 'card glass shadow';
+      emptyCard.style = "text-align: center; padding: 2rem; color: var(--text-muted, #888);";
+      emptyCard.innerHTML = `
+        <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📺</div>
+        <h4 data-i18n="no_screens_title">${t('no_screens_title', 'No display screens configured yet')}</h4>
+        <p style="font-size: 0.9rem;" data-i18n="no_screens_desc">${t('no_screens_desc', 'Choose an engine plugin above and click Create Screen to set up your first display screen.')}</p>
+      `;
+      container.appendChild(emptyCard);
+    }
 
     instancesList.forEach(async (instance, index) => {
       const engineDesc = enginesMap[instance.engine_id];
       if (!engineDesc) return;
       
+      const icon = (engineDesc.metadata && engineDesc.metadata.icon) ? engineDesc.metadata.icon : '🧩';
+      const name = (engineDesc.metadata && engineDesc.metadata.name) ? engineDesc.metadata.name : instance.engine_id;
       const tabId = `tab-dyn-${instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-')}`;
       
       // 1. Create Tab Button
       const tabBtn = document.createElement('button');
       tabBtn.className = 'tab-btn' + (index === 0 ? ' active' : '');
-      tabBtn.innerHTML = `🧩 ${engineDesc.metadata.name} (${instance.instance_id})`;
+      tabBtn.innerHTML = `${icon} ${name} <span class="badge" style="font-size: 0.75rem; margin-left: 0.35rem; opacity: 0.8;">${instance.instance_id}</span>`;
       tabBtn.onclick = (e) => {
         document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
         e.currentTarget.classList.add('active');
@@ -1493,7 +1660,7 @@ async function initDynamicEngines() {
         if (pane) pane.classList.add('active');
       };
       
-      tabsContainer.insertBefore(tabBtn, addContainer);
+      tabsContainer.appendChild(tabBtn);
       
       // 2. Create Tab Pane
       const tabPane = document.createElement('div');
@@ -1804,9 +1971,15 @@ async function renderRotationPanel(container, tabsContainer, instancesList, engi
   card.className = 'card glass shadow';
   card.style = 'margin: 1rem 0; box-sizing: border-box; max-width: 100%; overflow: hidden;';
 
-  const title = document.createElement('h3');
-  title.innerText = '🔁 Rotation';
-  card.appendChild(title);
+  card.innerHTML = `
+    <div class="card-header-badge" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+      <h3 style="margin: 0;" data-i18n="rotation_loop_title">🔁 ${t('rotation_loop_title', 'Screen Rotation Loop (Matrix Playlist)')}</h3>
+      <span class="badge badge-accent" data-i18n="rotation_loop_badge">${t('rotation_loop_badge', 'Auto-Cycling')}</span>
+    </div>
+    <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.85rem;" data-i18n="rotation_loop_desc">
+      ${t('rotation_loop_desc', 'This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.')}
+    </p>
+  `;
 
   const list = document.createElement('div');
   list.className = 'rotation-list';
@@ -1918,7 +2091,8 @@ async function renderRotationPanel(container, tabsContainer, instancesList, engi
       const empty = document.createElement('p');
       empty.className = 'text-muted';
       empty.style.padding = '0.5rem 0';
-      empty.innerText = 'No instances in rotation. Add one below.';
+      empty.setAttribute('data-i18n', 'rotation_empty');
+      empty.innerText = t('rotation_empty', 'No instances in rotation. Add one below.');
       list.appendChild(empty);
     }
   }
@@ -1928,7 +2102,8 @@ async function renderRotationPanel(container, tabsContainer, instancesList, engi
 
   const addTitle = document.createElement('span');
   addTitle.className = 'rotation-add-title';
-  addTitle.innerText = '➕ Add Instance to Rotation';
+  addTitle.setAttribute('data-i18n', 'rotation_add_title');
+  addTitle.innerText = `➕ ${t('rotation_add_title', 'Add Active Screen to Rotation Loop:')}`;
   addCard.appendChild(addTitle);
 
   const addRow = document.createElement('div');
@@ -1961,7 +2136,8 @@ async function renderRotationPanel(container, tabsContainer, instancesList, engi
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'btn btn-primary rotation-save-btn';
-  saveBtn.innerText = '💾 Save Rotation';
+  saveBtn.setAttribute('data-i18n', 'rotation_save_btn');
+  saveBtn.innerText = `💾 ${t('rotation_save_btn', 'Save Rotation')}`;
   saveBtn.onclick = async () => {
     const payload = entries.map(e => ({
       instance_id: e.instance_id,
@@ -2194,6 +2370,189 @@ function initOta() {
     btnUpdate.disabled = false;
   }
 
+  // --- 1. Online Automatic OTA (GitHub Releases) ---
+  const btnCheck = document.getElementById('btn-ota-check');
+  const btnAutoInstall = document.getElementById('btn-ota-auto-install');
+  const onlineCard = document.getElementById('ota-online-card');
+  const onlineBadge = document.getElementById('ota-online-badge');
+  const onlineTargetVer = document.getElementById('ota-online-target-ver');
+  const onlineSize = document.getElementById('ota-online-size');
+  const onlineNotes = document.getElementById('ota-online-notes');
+  const autoProgress = document.getElementById('ota-auto-progress');
+  const autoProgressFill = document.getElementById('ota-auto-progress-fill');
+  const autoProgressText = document.getElementById('ota-auto-progress-text');
+
+  let latestDownloadUrl = null;
+  let targetVersionName = '';
+
+  function parseSemVer(s) {
+    if (!s) return null;
+    s = s.trim().replace(/^[vV]/, '');
+    const parts = s.split('-');
+    const mainPart = parts[0];
+    const prePart = parts[1] || null;
+
+    const numParts = mainPart.split('.').map(n => parseInt(n, 10) || 0);
+    const major = numParts[0] || 0;
+    const minor = numParts[1] || 0;
+    const patch = numParts[2] || 0;
+
+    let prerelease = null;
+    if (prePart) {
+      const pLower = prePart.toLowerCase();
+      const pNumMatch = pLower.match(/\d+/);
+      const pNum = pNumMatch ? parseInt(pNumMatch[0], 10) : 0;
+      const pName = pLower.replace(/[^a-z]/g, '');
+      prerelease = { name: pName, num: pNum };
+    }
+
+    return { major, minor, patch, prerelease };
+  }
+
+  function isSemVerLower(currStr, latStr) {
+    const curr = parseSemVer(currStr);
+    const lat = parseSemVer(latStr);
+    if (!curr || !lat) return false;
+
+    if (curr.major !== lat.major) return curr.major < lat.major;
+    if (curr.minor !== lat.minor) return curr.minor < lat.minor;
+    if (curr.patch !== lat.patch) return curr.patch < lat.patch;
+
+    if (!curr.prerelease && !lat.prerelease) return false;
+    if (curr.prerelease && !lat.prerelease) return true;  // e.g. 3.0.0-beta.3 < 3.0.0
+    if (!curr.prerelease && lat.prerelease) return false; // e.g. 3.0.0 > 3.0.0-beta.3
+
+    if (curr.prerelease.name !== lat.prerelease.name) {
+      return curr.prerelease.name < lat.prerelease.name;
+    }
+    return curr.prerelease.num < lat.prerelease.num;
+  }
+
+  if (btnCheck) {
+    btnCheck.addEventListener('click', async () => {
+      btnCheck.disabled = true;
+      btnCheck.textContent = '⏳ Checking GitHub...';
+      window.showToast('Checking GitHub for latest release...', 'info');
+
+      try {
+        const sysInfo = await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32' }));
+        const currentVer = sysInfo.version || '3.0.0';
+        const isS3 = (sysInfo.arch || '').toLowerCase().includes('s3');
+
+        const res = await fetch('https://api.github.com/repos/red77290/ArcadeMatrix/releases');
+        if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+        const releases = await res.json();
+        if (!releases || !releases.length) throw new Error('No releases found on GitHub');
+
+        const latestRel = releases[0];
+        const latestVer = latestRel.tag_name.replace(/^[vV]/, '');
+        targetVersionName = latestVer;
+
+        // Find matching asset for ESP32 board
+        let matchingAsset = null;
+        for (const asset of (latestRel.assets || [])) {
+          const nameLower = asset.name.toLowerCase();
+          if (nameLower.endsWith('.bin')) {
+            if (isS3 && (nameLower.includes('s3') || nameLower.includes('waveshare'))) {
+              matchingAsset = asset;
+              break;
+            } else if (!isS3 && (nameLower.includes('esp32dev') || nameLower.includes('esp32.bin') || !nameLower.includes('s3'))) {
+              matchingAsset = asset;
+              break;
+            }
+          }
+        }
+
+        onlineCard.style.display = 'block';
+        onlineTargetVer.textContent = `v${latestVer}`;
+        if (matchingAsset) {
+          onlineSize.textContent = `${(matchingAsset.size / (1024 * 1024)).toFixed(2)} MB (${isS3 ? 'ESP32-S3' : 'ESP32'})`;
+        }
+
+        if (latestRel.body) {
+          onlineNotes.textContent = latestRel.body;
+          onlineNotes.style.display = 'block';
+        } else {
+          onlineNotes.style.display = 'none';
+        }
+
+        const updateAvailable = isSemVerLower(currentVer, latestVer);
+
+        if (updateAvailable && matchingAsset) {
+          latestDownloadUrl = matchingAsset.browser_download_url;
+          onlineBadge.className = 'badge badge-accent';
+          onlineBadge.textContent = 'New Update Available';
+          btnAutoInstall.style.display = 'inline-block';
+          btnAutoInstall.textContent = `⬇️ Download & Install v${latestVer}`;
+          window.showToast(`🎉 New update v${latestVer} available!`, 'success');
+        } else {
+          latestDownloadUrl = null;
+          onlineBadge.className = 'badge';
+          onlineBadge.textContent = 'Up to Date';
+          btnAutoInstall.style.display = 'none';
+          window.showToast(`✅ You are already on the latest version (v${currentVer}).`, 'info');
+        }
+      } catch (err) {
+        window.showToast(`❌ Failed to check updates: ${err.message}`, 'error');
+      } finally {
+        btnCheck.disabled = false;
+        btnCheck.textContent = '🔍 Check for Updates';
+      }
+    });
+  }
+
+  if (btnAutoInstall) {
+    btnAutoInstall.addEventListener('click', async () => {
+      if (!latestDownloadUrl) return;
+      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName} on ESP32? The device will automatically restart.`)) {
+        return;
+      }
+
+      btnCheck.disabled = true;
+      btnAutoInstall.disabled = true;
+      autoProgress.style.display = 'block';
+      autoProgressFill.style.width = '0%';
+      autoProgressText.textContent = '1/2 Downloading from GitHub...';
+      window.showToast('Downloading firmware from GitHub...', 'info');
+
+      try {
+        const oldVersionData = await API.get('/api/version').catch(() => null);
+        const oldVer = oldVersionData?.version || '';
+
+        const resp = await fetch(latestDownloadUrl);
+        if (!resp.ok) throw new Error(`GitHub download failed: HTTP ${resp.status}`);
+        const blob = await resp.blob();
+
+        autoProgressText.textContent = '2/2 Flashing ESP32 firmware (0%)...';
+        window.showToast('Flashing binary to ESP32...', 'info');
+
+        await API.uploadFirmware(blob, (percent) => {
+          autoProgressFill.style.width = `${percent}%`;
+          autoProgressText.textContent = `2/2 Flashing ESP32 firmware (${percent}%)...`;
+        });
+
+        autoProgressText.textContent = 'Rebooting ESP32...';
+        window.showToast('Firmware flashed! Reconnecting to device...', 'info');
+
+        const versionData = await API.waitForReconnect(60000, 2000, oldVer);
+        if (oldVer && versionData.version === oldVer) {
+          window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
+        } else {
+          window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
+        }
+        loadVersion();
+        if (onlineCard) onlineCard.style.display = 'none';
+      } catch (err) {
+        window.showToast(`❌ Automatic update failed: ${err.message || err.status}`, 'error');
+      } finally {
+        btnCheck.disabled = false;
+        btnAutoInstall.disabled = false;
+        autoProgress.style.display = 'none';
+      }
+    });
+  }
+
+  // --- 2. Manual Offline Binary Upload (Supports Beta / Downgrades) ---
   btnUpdate.addEventListener('click', async () => {
     if (!selectedOtaFile) return;
 
@@ -2207,6 +2566,9 @@ function initOta() {
     progressText.textContent = '0%';
 
     try {
+      const oldVersionData = await API.get('/api/version').catch(() => null);
+      const oldVer = oldVersionData?.version || '';
+
       window.showToast('Uploading firmware binary...', 'info');
       await API.uploadFirmware(selectedOtaFile, (percent) => {
         progressFill.style.width = `${percent}%`;
@@ -2216,8 +2578,12 @@ function initOta() {
       progressText.textContent = 'Restarting daemon...';
       window.showToast('Firmware replaced! Reconnecting to device...', 'info');
 
-      const versionData = await API.waitForReconnect();
-      window.showToast(`✅ Firmware updated to v${versionData.version}!`, 'success');
+      const versionData = await API.waitForReconnect(60000, 2000, oldVer);
+      if (oldVer && versionData.version === oldVer) {
+        window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
+      } else {
+        window.showToast(`✅ Firmware updated to v${versionData.version}!`, 'success');
+      }
       loadVersion();
     } catch (err) {
       window.showToast(`❌ Update failed: ${err.message || err.status}`, 'error');
