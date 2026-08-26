@@ -135,31 +135,51 @@ void GoogleCastEngine::render(EngineContext* context) {
         textX = eqX + 14;
     }
 
+    int rightReserved = 2;
+    if (m_showVolume) {
+        rightReserved += 26;
+    }
+
     // 2. Title (Marquee)
     int titleW = m_state.title.length() * 6;
-    int availW = w - textX - 2;
+    int availW = w - textX - rightReserved;
+    if (availW < 20) availW = 20;
+
     int titleDrawX = textX;
-    if (titleW > availW && availW > 0) {
+    if (titleW > availW) {
         int overflow = titleW - availW + 16;
         titleDrawX = textX - (m_marqueeOffset % overflow);
     }
 
+    int yTitle = (h >= 64) ? 8 : 2;
+    int yArtist = (h >= 64) ? 22 : 12;
+
     display->setTextColor(display->color565(255, 255, 255));
-    display->setCursor(titleDrawX, 2);
+    display->setCursor(titleDrawX, yTitle);
     display->print(m_state.title);
 
-    // 3. Artist / Subtitle
+    // 3. Artist / Subtitle (Marquee)
     String artistStr = !m_state.artist.isEmpty() ? m_state.artist : (!m_state.appName.isEmpty() ? m_state.appName : "Google Nest");
+    int artistW = artistStr.length() * 6;
+    int artistDrawX = textX;
+    if (artistW > availW) {
+        int overflow = artistW - availW + 16;
+        artistDrawX = textX - ((m_marqueeOffset / 2) % overflow);
+    }
+
     display->setTextColor(display->color565(0, 230, 255));
-    display->setCursor(textX, 12);
+    display->setCursor(artistDrawX, yArtist);
     display->print(artistStr);
 
-    // 4. Volume (Top-Right)
+    // 4. Volume (Top-Right, right-aligned)
     if (m_showVolume) {
         int volPct = (int)(m_state.volumeLevel * 100.0f);
+        char vBuf[8];
+        snprintf(vBuf, sizeof(vBuf), "%d%%", volPct);
+        int vLen = strlen(vBuf);
         display->setTextColor(display->color565(180, 180, 180));
-        display->setCursor(w - 18, 2);
-        display->printf("%d%%", volPct);
+        display->setCursor(w - (vLen * 6) - 1, yTitle);
+        display->print(vBuf);
     }
 
     // 5. Progress Bar (Bottom 2 pixels)

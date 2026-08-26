@@ -33,7 +33,7 @@ for js_file in js_files:
             bundled_js += f"\n// --- {js_file} ---\n{content}\n"
 
 # Replace the module script tag with our bundled JS
-html_content = re.sub(r'<script type="module" src="/?js/app.js"></script>', f'<script>{bundled_js}</script>', html_content)
+html_content = re.sub(r'<script type="module" src="/?js/app.js"></script>', lambda m: f'<script>{bundled_js}</script>', html_content)
 
 # Hide non-ESP32 sections (Pi specific)
 # Let's replace the whole list item for "Hardware Mapping", "Slowdown", "Audio Conflict", etc.

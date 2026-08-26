@@ -586,8 +586,8 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: System Info (Dashboard metrics compatibility)
-    server.on("/api/system_info", HTTP_GET, [](AsyncWebServerRequest *request){
+    // API: System Info & Stats (Dashboard metrics compatibility)
+    auto sendSysStats = [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(512);
         float tempC = 0.0f;
         if (hardwareHAL.capabilities().hasTempSensor) {
@@ -607,7 +607,9 @@ void WebServerAPI::setupRoutes() {
         String response;
         serializeJson(doc, response);
         request->send(200, "application/json", response);
-    });
+    };
+    server.on("/api/system_info", HTTP_GET, sendSysStats);
+    server.on("/api/stats", HTTP_GET, sendSysStats);
 
     // API: List fonts (Built-in + custom SD .amf files)
     server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1255,7 +1257,7 @@ void WebServerAPI::setupRoutes() {
     // API: System settings (GET /api/system)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        DynamicJsonDocument doc(1024);
+        DynamicJsonDocument doc(4096);
         JsonObject sys = doc.createNestedObject("system");
         sys["lang"] = config.system.lang.length() > 0 ? config.system.lang : "fr";
         sys["timezone"] = config.system.timezone;
@@ -1264,8 +1266,44 @@ void WebServerAPI::setupRoutes() {
         sys["turn_off_at"] = config.system.turn_off_at;
         sys["wake_up_at"] = config.system.wake_up_at;
         sys["night_brightness"] = config.system.night_brightness;
+        sys["day_brightness"] = config.matrix.powerLimitPercent;
+        sys["brightness_limit"] = config.matrix.powerLimitPercent;
         sys["idle_fighter_enabled"] = config.system.idle_fighter_enabled;
         sys["idle_fighter_interval"] = config.system.idle_fighter_interval;
+
+        JsonObject mat = doc.createNestedObject("matrix");
+        mat["height"] = config.matrix.height;
+        mat["width"] = config.matrix.width;
+        mat["chain_length"] = config.matrix.chainLength;
+        mat["parallel"] = 1;
+        mat["driver_chip"] = config.matrix.driverChip;
+        mat["row_address_mode"] = config.matrix.rowAddressMode;
+        mat["multiplexing"] = 0;
+        mat["mapping"] = "regular";
+        mat["rgb_sequence"] = config.matrix.rgbSequence;
+        mat["slowdown"] = 1;
+        mat["pwm_bits"] = config.matrix.colorDepth;
+        mat["pwm_lsb_nanoseconds"] = 130;
+        mat["disable_hardware_pulsing"] = false;
+        mat["limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
+
+        JsonObject mqtt = doc.createNestedObject("mqtt");
+        mqtt["enabled"] = config.mqtt.enabled;
+        mqtt["broker"] = config.mqtt.broker;
+        mqtt["port"] = config.mqtt.port;
+        mqtt["user"] = config.mqtt.user;
+        mqtt["pass"] = config.mqtt.pass;
+        mqtt["topic_batocera"] = config.mqtt.topic_batocera;
+        mqtt["topic_recalbox"] = config.mqtt.topic_recalbox;
+        mqtt["device_name"] = config.mqtt.deviceName;
+
+        JsonObject wifi = doc.createNestedObject("wifi");
+        wifi["ssid"] = config.wifi.ssid;
+        wifi["hostname"] = config.wifi.hostname;
+
+        doc["api_auth_enabled"] = false;
+        doc["api_token"] = "";
+
         String response;
         serializeJson(doc, response);
         request->send(200, "application/json", response);
@@ -1281,8 +1319,9 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         bool changed = false;
 
-        if (!doc["lang"].isNull()) {
-            String newLang = doc["lang"].as<String>();
+        JsonObject sys = doc.containsKey("system") ? doc["system"].as<JsonObject>() : doc;
+        if (!sys["lang"].isNull()) {
+            String newLang = sys["lang"].as<String>();
             if (newLang != config.system.lang) {
                 config.system.lang = newLang;
                 changed = true;
@@ -1293,43 +1332,134 @@ void WebServerAPI::setupRoutes() {
                 }
             }
         }
-        if (!doc["timezone"].isNull()) {
-            config.system.timezone = doc["timezone"].as<String>();
+        if (!sys["timezone"].isNull()) {
+            config.system.timezone = sys["timezone"].as<String>();
             configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
             changed = true;
         }
-        if (!doc["format_24h"].isNull()) {
-            config.system.format24h = doc["format_24h"].as<bool>();
+        if (!sys["format_24h"].isNull()) {
+            config.system.format24h = sys["format_24h"].as<bool>();
             changed = true;
         }
+        if (!sys["night_mode_enabled"].isNull()) {
+            config.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
+            changed = true;
+        }
+        if (!sys["turn_off_at"].isNull()) {
+            config.system.turn_off_at = sys["turn_off_at"].as<String>();
+            changed = true;
+        }
+        if (!sys["wake_up_at"].isNull()) {
+            config.system.wake_up_at = sys["wake_up_at"].as<String>();
+            changed = true;
+        }
+        if (!sys["night_brightness"].isNull()) {
+            config.system.night_brightness = sys["night_brightness"].as<int>();
+            changed = true;
+        }
+        if (!sys["brightness_limit"].isNull() || !sys["brightness"].isNull() || !sys["day_brightness"].isNull()) {
+            int b = !sys["brightness_limit"].isNull() ? sys["brightness_limit"].as<int>() : (!sys["brightness"].isNull() ? sys["brightness"].as<int>() : sys["day_brightness"].as<int>());
+            if (b < 1) b = 1;
+            if (b > 100) b = 100;
+            config.matrix.powerLimitPercent = b;
+            extern MatrixEngine matrixEngine;
+            matrixEngine.setBrightness(b);
+            changed = true;
+        }
+        if (!sys["idle_fighter_enabled"].isNull()) {
+            config.system.idle_fighter_enabled = sys["idle_fighter_enabled"].as<bool>();
+            changed = true;
+        }
+        if (!sys["idle_fighter_interval"].isNull()) {
+            config.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
+            changed = true;
+        }
+
+        bool willReboot = false;
+        if (doc.containsKey("reboot") && doc["reboot"].as<bool>()) willReboot = true;
+
+        if (doc.containsKey("matrix")) {
+            JsonObject mat = doc["matrix"].as<JsonObject>();
+            if (!mat["height"].isNull()) config.matrix.height = mat["height"].as<int>();
+            if (!mat["width"].isNull()) config.matrix.width = mat["width"].as<int>();
+            if (!mat["chain_length"].isNull()) config.matrix.chainLength = mat["chain_length"].as<int>();
+            if (!mat["driver_chip"].isNull()) config.matrix.driverChip = mat["driver_chip"].as<String>();
+            if (!mat["row_address_mode"].isNull()) config.matrix.rowAddressMode = mat["row_address_mode"].as<int>();
+            if (!mat["rgb_sequence"].isNull()) config.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
+            if (!mat["pwm_bits"].isNull()) config.matrix.colorDepth = mat["pwm_bits"].as<int>();
+            if (!mat["limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
+            changed = true;
+            willReboot = true;
+        }
+
+        if (doc.containsKey("mqtt")) {
+            JsonObject mq = doc["mqtt"].as<JsonObject>();
+            bool prevMqtt = config.mqtt.enabled;
+            if (!mq["enabled"].isNull()) config.mqtt.enabled = mq["enabled"].as<bool>();
+            if (!mq["broker"].isNull()) config.mqtt.broker = mq["broker"].as<String>();
+            if (!mq["port"].isNull()) config.mqtt.port = mq["port"].as<int>();
+            if (!mq["user"].isNull()) config.mqtt.user = mq["user"].as<String>();
+            if (!mq["pass"].isNull()) config.mqtt.pass = mq["pass"].as<String>();
+            if (!mq["topic_batocera"].isNull()) config.mqtt.topic_batocera = mq["topic_batocera"].as<String>();
+            if (!mq["topic_recalbox"].isNull()) config.mqtt.topic_recalbox = mq["topic_recalbox"].as<String>();
+            if (!mq["device_name"].isNull()) config.mqtt.deviceName = mq["device_name"].as<String>();
+            changed = true;
+            if (prevMqtt != config.mqtt.enabled) {
+                willReboot = true;
+            }
+        }
+
         if (changed) {
             config.saveToSD("/config.json");
         }
 
         DynamicJsonDocument resp(512);
-        resp["status"] = "success";
+        resp["status"] = willReboot ? "rebooting" : "success";
         resp["lang"] = config.system.lang;
         String response;
         serializeJson(resp, response);
         request->send(200, "application/json", response);
+
+        if (willReboot) {
+            xTaskCreate([](void *param) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                ESP.restart();
+            }, "config_reboot_task", 2048, NULL, 1, NULL);
+        }
+    });
+    sysHandler->setFilter([](AsyncWebServerRequest *request) {
+        return request->url() == "/api/system";
     });
     server.addHandler(sysHandler);
     
-    // API: System commands (Reboot / Shutdown)
+    // API: System commands (Reboot / Shutdown / Restart)
     server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
         request->send(200, "application/json", "{\"success\":true}");
-        delay(500);
-        ESP.restart(); // ESP cannot truly shutdown via software, it just restarts or deep sleeps. We map shutdown to restart here.
+        xTaskCreate([](void *param) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ESP.restart();
+        }, "shutdown_task", 2048, NULL, 1, NULL);
     });
     server.on("/api/system/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
         request->send(200, "application/json", "{\"success\":true}");
-        delay(500);
-        ESP.restart();
+        xTaskCreate([](void *param) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ESP.restart();
+        }, "reboot_task", 2048, NULL, 1, NULL);
+    });
+    server.on("/api/system/restart", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":true}");
+        xTaskCreate([](void *param) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ESP.restart();
+        }, "restart_task", 2048, NULL, 1, NULL);
     });
     server.on("/api/system/restart_app", HTTP_POST, [](AsyncWebServerRequest *request){
         request->send(200, "application/json", "{\"success\":true}");
-        delay(500);
-        ESP.restart(); // On ESP32, "Restart App" is equivalent to a full reboot
+        xTaskCreate([](void *param) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ESP.restart();
+        }, "restart_app_task", 2048, NULL, 1, NULL);
     });
     
     // API: OTA Firmware Update
@@ -1420,6 +1550,14 @@ void WebServerAPI::setupRoutes() {
         }
     });
     server.addHandler(wifiHandler);
+
+    // API: MQTT SSH helpers (Parity stubs for ESP32)
+    server.on("/api/mqtt/install", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":false,\"message\":\"SSH install is only available on Raspberry Pi. On ESP32, configure Batocera/Recalbox manually to send MQTT to this device's IP.\"}");
+    });
+    server.on("/api/mqtt/logs", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", "{\"success\":true,\"logs\":\"SSH logs are only available on Raspberry Pi.\"}");
+    });
 
     // API: Live marquee/box-art image (raw RGB565, little-endian, row-major, matching the
     // configured panel resolution exactly - see tools/mugen_extractor for the same wire format

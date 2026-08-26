@@ -183,26 +183,45 @@ void SpotifyEngine::render(EngineContext* context) {
         textX = imgX + imgSize + 3;
     }
 
+    int rightReserved = 2;
+    if (m_showVisualizer && m_state.isPlaying) {
+        rightReserved += 16;
+    } else if (m_showVolume && m_state.volumePercent > 0) {
+        rightReserved += 26;
+    }
+
     // 2. Title (Marquee)
     int titleW = m_state.title.length() * 6;
-    int availW = w - textX - 2;
+    int availW = w - textX - rightReserved;
+    if (availW < 20) availW = 20;
+
     int titleDrawX = textX;
-    if (titleW > availW && availW > 0) {
+    if (titleW > availW) {
         int overflow = titleW - availW + 16;
         titleDrawX = textX - (m_marqueeOffset % overflow);
     }
 
+    int yTitle = (h >= 64) ? 8 : 2;
+    int yArtist = (h >= 64) ? 22 : 12;
+
     display->setTextColor(display->color565(255, 255, 255));
-    display->setCursor(titleDrawX, 2);
+    display->setCursor(titleDrawX, yTitle);
     display->print(m_state.title);
 
-    // 3. Artist / Album
+    // 3. Artist / Album (Marquee)
     String artistStr = !m_state.artist.isEmpty() ? m_state.artist : (!m_state.album.isEmpty() ? m_state.album : "Spotify");
+    int artistW = artistStr.length() * 6;
+    int artistDrawX = textX;
+    if (artistW > availW) {
+        int overflow = artistW - availW + 16;
+        artistDrawX = textX - ((m_marqueeOffset / 2) % overflow);
+    }
+
     display->setTextColor(display->color565(30, 215, 96));
-    display->setCursor(textX, 12);
+    display->setCursor(artistDrawX, yArtist);
     display->print(artistStr);
 
-    // 4. Animated Equalizer
+    // 4. Animated Equalizer (Far Right)
     if (m_showVisualizer && m_state.isPlaying) {
         int eqX = w - 14;
         int barHeights[4] = {
@@ -212,11 +231,13 @@ void SpotifyEngine::render(EngineContext* context) {
             (int)((m_animFrame * 5) % 6 + 2)
         };
 
+        int eqBaseY = (h >= 64) ? 28 : 20;
+
         for (int i = 0; i < 4; i++) {
             int bx = eqX + (i * 3);
             int bh = barHeights[i];
             for (int by = 0; by < bh; by++) {
-                int py = 20 - by;
+                int py = eqBaseY - by;
                 if (py >= 0) {
                     uint16_t color = (by > 6) ? display->color565(255, 60, 60) : (by > 3) ? display->color565(255, 220, 0) : display->color565(30, 215, 96);
                     display->drawPixel(bx, py, color);
@@ -224,13 +245,14 @@ void SpotifyEngine::render(EngineContext* context) {
                 }
             }
         }
-    }
-
-    // 5. Volume (Top-Right)
-    if (m_showVolume && m_state.volumePercent > 0) {
+    } else if (m_showVolume && m_state.volumePercent > 0) {
+        // 5. Volume (Top-Right, right-aligned)
+        char vBuf[8];
+        snprintf(vBuf, sizeof(vBuf), "%d%%", m_state.volumePercent);
+        int vLen = strlen(vBuf);
         display->setTextColor(display->color565(180, 180, 180));
-        display->setCursor(w - 18, 2);
-        display->printf("%d%%", m_state.volumePercent);
+        display->setCursor(w - (vLen * 6) - 1, yTitle);
+        display->print(vBuf);
     }
 
     // 6. Progress Bar (Bottom 2 pixels)

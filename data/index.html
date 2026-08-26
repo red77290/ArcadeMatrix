@@ -282,6 +282,269 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* Rotation Panel & Responsive Rows */
+.rotation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1rem 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rotation-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.rotation-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.rotation-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.rotation-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rotation-order-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow);
+  padding: 0.2rem 0.5rem;
+  border-radius: 12px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.rotation-title {
+  font-weight: 600;
+  color: #ffffff;
+  font-size: 0.95rem;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.rotation-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.rotation-settings-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  width: 100%;
+}
+
+.rotation-dur-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+}
+
+.rotation-dur-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.rotation-dur-input {
+  width: 3.5rem !important;
+  padding: 0.2rem 0.3rem !important;
+  text-align: center;
+  background: transparent !important;
+  border: none !important;
+  color: #fff !important;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.rotation-unit {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  user-select: none;
+}
+
+.rotation-fighter-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: none;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.rotation-fighter-lbl:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.rotation-add-card {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.rotation-add-title {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rotation-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rotation-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 2.3rem;
+  padding: 0.35rem 2.2rem 0.35rem 0.75rem;
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(255,255,255,0.7)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 0.85rem;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.rotation-select:focus {
+  border-color: var(--accent-primary);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.rotation-select option {
+  background: #181824;
+  color: #fff;
+  padding: 0.5rem;
+}
+
+.rotation-add-btn {
+  height: 2.3rem;
+  padding: 0 0.85rem !important;
+  font-size: 0.85rem !important;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: var(--radius-sm);
+}
+
+.rotation-save-btn {
+  margin-top: 1rem;
+  width: 100%;
+  height: 2.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 768px) {
+  #content {
+    padding: 1rem !important;
+  }
+  .card {
+    padding: 1rem !important;
+  }
+  .rotation-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem;
+  }
+  .rotation-info {
+    width: 100%;
+  }
+  .rotation-controls {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .rotation-add-row {
+    flex-direction: row;
+    gap: 0.4rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .rotation-add-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .rotation-add-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 /* Tooltips */
 [data-tooltip] {
   position: relative;
@@ -359,6 +622,8 @@ body {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: 1.5rem;
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 .shadow {
@@ -372,6 +637,54 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-icon {
+  padding: 0 !important;
+  width: 2rem !important;
+  height: 2rem !important;
+  min-width: 2rem !important;
+  max-width: 2rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 0.85rem !important;
+  border-radius: var(--radius-sm) !important;
+  line-height: 1 !important;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+  border: none !important;
+}
+
+.btn-icon:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.btn-icon.btn-danger {
+  background: rgba(239, 68, 68, 0.25) !important;
+  color: #fca5a5 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+.btn-icon.btn-danger:hover {
+  background: #dc2626 !important;
+  color: #fff !important;
+  border-color: #dc2626 !important;
+}
+
+.btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .btn-primary {
@@ -392,6 +705,9 @@ body {
   background: var(--accent-danger);
   color: #fff;
 }
+.btn-danger:hover {
+  background: #dc2626;
+}
 
 .input {
   width: 100%;
@@ -410,7 +726,7 @@ select.input {
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 0.9rem;
-  padding-right: 2rem;
+  padding-right: 2.2rem;
   cursor: pointer;
 }
 
@@ -453,6 +769,249 @@ select.input option {
 @keyframes slideIn {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Rotation & Catalog Styles */
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+.engine-catalog-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.engine-catalog-card:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.2);
+}
+.engine-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.engine-card-icon {
+  font-size: 1.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.engine-card-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+.engine-card-desc {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  margin: 0.4rem 0 0.8rem 0;
+  flex-grow: 1;
+}
+.engine-card-tags {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+.engine-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+.engine-tag.psram {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.engine-tag.realtime {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.engine-tag.sensor {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.engine-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.engine-card-actions .btn {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.82rem;
+  flex: 1;
+  text-align: center;
+  justify-content: center;
+}
+
+/* Rotation List & Rows */
+.rotation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+.rotation-row {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  transition: all 0.2s ease;
+}
+.rotation-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.rotation-row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 240px;
+}
+.rotation-order-badge {
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  min-width: 28px;
+  text-align: center;
+}
+.rotation-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+}
+.rotation-settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.rotation-dur-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+}
+.rotation-dur-input {
+  width: 55px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+.rotation-fighter-lbl {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+}
+.rotation-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Modal Dialog */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: fadeIn 0.2s ease;
+}
+.modal-box {
+  background: var(--bg-secondary, #181824);
+  border: 1px solid var(--accent-primary);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-lg);
+  max-width: 520px;
+  width: 100%;
+  padding: 1.75rem;
+  animation: slideIn 0.2s ease;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 0.75rem;
+}
+.modal-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+.modal-close:hover {
+  color: #fff;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 1rem;
 }
 
 </style>
@@ -554,9 +1113,6 @@ select.input option {
   <style>
     .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
     .form-grid.col-4 { grid-template-columns: repeat(4, 1fr); }
-    @media (max-width: 768px) {
-      .form-grid.col-3, .form-grid.col-4 { grid-template-columns: 1fr; }
-    }
   </style>
 </head>
 <body>
@@ -580,6 +1136,7 @@ select.input option {
         <li class="nav-item" data-page="media">
           <span class="icon">🎬</span> <span data-i18n="nav_media">Media</span>
         </li>
+        
         <li class="nav-item" data-page="system">
           <span class="icon">⚙️</span> <span data-i18n="nav_system">System</span>
         </li>
@@ -651,6 +1208,9 @@ select.input option {
             </div>
           </div>
         </div>
+
+        <!-- Engine & Plugin Catalog on Dashboard -->
+        <div id="dashboard-catalog-container" style="margin-top: 2rem;"></div>
       </section>
 
       <!-- Display Page -->
@@ -661,10 +1221,12 @@ select.input option {
             <h1 data-i18n="nav_display">Display Settings</h1>
           </div>
         </header>
-        <div class="tabs">
-          <!-- Dynamic instances will generate tabs here -->
+
+        <div id="dynamic-display-wrapper">
+          <div class="tabs">
+            <!-- Dynamic instances will generate tabs here -->
+          </div>
         </div>
-        <div id="dynamic-display-container"></div>
       </section>
 
       <!-- Media Page -->
@@ -675,41 +1237,82 @@ select.input option {
             <h1 data-i18n="nav_media">Media Management</h1>
           </div>
         </header>
-
-        <!-- Fighter Animation Settings Card -->
-        <div class="card glass shadow" style="margin-bottom: 1.5rem;">
-          <h3>🥋 Fighter Animation Overlay</h3>
-          <p class="text-muted">Configure random arcade fighters overlaid across active rotation screens.</p>
-          
-          <div class="form-grid" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Activation</label>
-              <label class="switch" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                <input type="checkbox" id="setting-idle_fighter_enabled">
-                <span>Enable Fighter Animations</span>
-              </label>
-            </div>
-            <div class="form-group">
-              <label>Interval / Frequency (seconds)</label>
-              <input type="number" id="setting-idle_fighter_interval" class="input" min="1" max="3600" placeholder="60">
-              <small class="text-muted">Delay between random fighter appearances.</small>
-            </div>
-          </div>
-          <button class="btn btn-primary" onclick="saveMediaSettings()" style="margin-top: 1rem;">💾 Save Media Settings</button>
-        </div>
-
-        <!-- Custom Marquee Image Card -->
         <div class="card glass shadow">
-          <h3>🖼️ Custom Marquee Image</h3>
+          <h3>Custom Marquee Image</h3>
           <p class="text-muted">Upload an image to display immediately on the matrix.</p>
-          <div id="marquee-drop-zone" class="drop-zone" style="margin-top: 1rem;">
+          <div id="marquee-drop-zone" class="drop-zone">
             <div class="drop-icon">🖼️</div>
             <div class="drop-text">Drop image here or click to browse</div>
             <input type="file" id="marquee-file-input" accept="image/png, image/jpeg, image/gif" style="display: none;">
           </div>
         </div>
+        <div class="card glass shadow">
+          <h3>🥊 <span data-i18n="fighter_title">Fighter Overlay</span></h3>
+          <p class="text-muted" data-i18n="fighter_desc">Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.</p>
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label data-i18n="fighter_enabled">Enabled</label>
+              <label class="switch">
+                <input type="checkbox" id="fighter-enabled">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label data-i18n="fighter_interval">Interval between fights (seconds)</label>
+              <input type="number" id="fighter-interval" class="input" value="10" min="1">
+            </div>
+          </div>
+          <button id="btn-save-fighter" class="btn btn-primary" style="margin-top: 1.5rem;" data-i18n="fighter_save">Save Fighter Settings</button>
+        </div>
       </section>
 
+      <!-- Message Page -->
+      <section id="page-message" class="page">
+        <header class="page-header">
+          <div class="header-left">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
+            <h1 data-i18n="nav_message">Custom Message</h1>
+          </div>
+        </header>
+        <div class="card glass shadow">
+          <h3>Custom Marquee Message</h3>
+          <div class="form-group">
+            <label>Text</label>
+            <input type="text" id="msg-input" class="input" placeholder="Type text to scroll...">
+          </div>
+          <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Color (Hex)</label>
+              <input type="color" id="msg-color" class="input" value="#ffffff" style="height: 42px; padding: 0.2rem;">
+            </div>
+            <div class="form-group">
+              <label>Size (Scale)</label>
+              <input type="number" id="msg-size" class="input" value="1" min="1" max="5">
+            </div>
+            <div class="form-group">
+              <label>Direction</label>
+              <select id="msg-direction" class="input">
+                <option value="rtl">Right to Left (RTL)</option>
+                <option value="ltr">Left to Right (LTR)</option>
+                <option value="ttb">Top to Bottom (TTB)</option>
+                <option value="btt">Bottom to Top (BTT)</option>
+                <option value="static">Static (No Scroll)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>Speed (Higher = Slower)</label>
+              <input type="number" id="msg-speed" class="input" value="30">
+            </div>
+            <div class="form-group">
+              <label>Timeout (Seconds)</label>
+              <input type="number" id="msg-timeout" class="input" value="10">
+            </div>
+          </div>
+          <button id="btn-send-message" class="btn btn-primary" style="margin-top: 1.5rem;">Send to Matrix 🚀</button>
+        </div>
+      </section>
 
       <!-- System Page -->
       <section id="page-system" class="page">
@@ -730,50 +1333,46 @@ select.input option {
         
         <!-- Hardware Settings -->
         <div id="sys-tab-hardware" class="tab-pane active">
-          <div class="card glass shadow" style="margin-bottom: 1.5rem;">
-            <h3>🖥️ Hardware Profile & Capabilities</h3>
-            <div class="form-grid col-3" id="hw-caps-grid" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>Hardware Profile</label>
-                <div id="hw-cap-profile" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
-              </div>
-              <div class="form-group">
-                <label>PSRAM</label>
-                <div id="hw-cap-psram" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
-              </div>
-              <div class="form-group">
-                <label>Microphone (Audio)</label>
-                <div id="hw-cap-mic" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
-              </div>
-              <div class="form-group">
-                <label>Temperature Sensor</label>
-                <div id="hw-cap-temp" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
-              </div>
-              <div class="form-group">
-                <label>Gyroscope (Motion)</label>
-                <div id="hw-cap-gyro" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
-              </div>
-              <div class="form-group">
-                <label>Free Heap / Free PSRAM</label>
-                <div id="hw-cap-heap" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">-</div>
-              </div>
-            </div>
-          </div>
-
           <div class="card glass shadow">
             <h3>Matrix Hardware Configuration</h3>
             <div class="form-grid col-4">
               <div class="form-group">
-                <label>Rows (Height) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rows">?</span></label>
+                <label>Rows (Height)</label>
                 <input type="number" id="hw-rows" class="input" value="32">
               </div>
               <div class="form-group">
-                <label>Cols (Width) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_cols">?</span></label>
+                <label>Cols (Width)</label>
                 <input type="number" id="hw-cols" class="input" value="64">
               </div>
               <div class="form-group">
                 <label>Chain Length <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
                 <input type="number" id="hw-chain" class="input" value="1">
+              </div>
+              <div class="form-group">
+                <label>Parallel Chains <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
+                <input type="number" id="hw-parallel" class="input" value="1">
+              </div>
+            </div>
+            <div class="form-grid col-4" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 high-density, ICN2038S, SM16208)">?</span></label>
+                <select id="hw-driver-chip" class="input">
+                  <option value="SHIFTREG">Standard (SHIFTREG)</option>
+                  <option value="FM6126A">FM6124 / FM6126A</option>
+                  <option value="ICN2038S">ICN2038S</option>
+                  <option value="MBI5124">MBI5124</option>
+                  <option value="SM16208">SM16208</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
+                <select id="hw-mapping" class="input">
+                  <option value="regular">Regular</option>
+                  <option value="regular-pi1">Regular Pi1</option>
+                  <option value="adafruit-hat">Adafruit HAT</option>
+                  <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
+                  <option value="compute-module">Compute Module</option>
+                </select>
               </div>
               <div class="form-group">
                 <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
@@ -786,64 +1385,46 @@ select.input option {
                   <option value="BGR">BGR</option>
                 </select>
               </div>
+              <div class="form-group">
+                <label>Row Addr Type <span class="tooltip-icon" data-tooltip="Default 0. Set to 1 for AB, 2 for direct, 3 for ABC, 4 for ShiftReg. Used for complex P2 panels.">?</span></label>
+                <select id="hw-row-addr-type" class="input">
+                  <option value="0">0 - Direct Binary (Default)</option>
+                  <option value="1">1 - Direct 16 Lines (AB)</option>
+                  <option value="2">2 - Direct 32 Lines (ABC)</option>
+                  <option value="3">3 - Direct 64 Lines (ABCD)</option>
+                  <option value="4">4 - Shift Register (ShiftReg)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Multiplexing <span class="tooltip-icon" data-tooltip="Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.">?</span></label>
+                <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
+              </div>
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Matrix Driver Chip <span class="tooltip-icon" data-i18n-tooltip="tt_hw_driver_chip">?</span></label>
-                <select id="hw-driver-chip" class="input">
-                  <option value="SHIFTREG">Standard (SHIFTREG)</option>
-                  <option value="FM6124">FM6124</option>
-                  <option value="FM6126A">FM6126A</option>
-                  <option value="ICN2038S">ICN2038S</option>
-                  <option value="MBI5124">MBI5124</option>
-                  <option value="SM16208">SM16208</option>
-                </select>
+                <label>Slowdown GPIO <span class="tooltip-icon" data-tooltip="Slowdown for fast Pi CPUs (Pi 4=4, Pi 5=5)">?</span></label>
+                <input type="number" id="hw-slowdown" class="input" value="1" min="0" max="5">
               </div>
               <div class="form-group">
-                <label>Color Depth <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
-                <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
+                <label>PWM Bits <span class="tooltip-icon" data-tooltip="Color depth (1-11)">?</span></label>
+                <input type="number" id="hw-pwm-bits" class="input" value="11" min="1" max="11">
               </div>
               <div class="form-group">
-                <label>Row Addr Mode <span class="tooltip-icon" data-i18n-tooltip="tt_hw_row_addr_mode">?</span></label>
-                <select id="hw-row-addr-mode" class="input">
-                  <option value="0">0 - Direct Binary (A, B, C, D, E)</option>
-                  <option value="1">1 - Shift Register (Row Clock)</option>
-                  <option value="2">2 - Direct 16 Lines (AB)</option>
-                  <option value="3">3 - Direct 32 Lines (ABC)</option>
-                  <option value="4">4 - Direct 64 Lines (ABCD)</option>
-                </select>
+                <label>PWM LSB (ns) <span class="tooltip-icon" data-tooltip="LSB pulse width (130 default)">?</span></label>
+                <input type="number" id="hw-pwm-lsb" class="input" value="130" min="50" max="3000">
               </div>
               <div class="form-group">
-                <label>Latch Blanking <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
-                <input type="number" id="hw-latch-blanking" class="input" value="0" min="0" max="4">
-              </div>
-            </div>
-            <div class="form-grid col-3" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label>Limit Refresh Rate (Hz) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
-                <input type="number" id="hw-limit-refresh" class="input" value="90" min="0" max="300">
+                <label>Limit Refresh (Hz) <span class="tooltip-icon" data-tooltip="Max refresh rate in Hz (0 = unlimited)">?</span></label>
+                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="500">
               </div>
               <div class="form-group">
-                <label>Clock Phase (Invert) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
+                <label>Disable Hardware Pulsing <span class="tooltip-icon" data-tooltip="Enable if audio is glitching">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
-                    <input type="checkbox" id="hw-clk-phase">
+                    <input type="checkbox" id="hw-disable-pulsing">
                     <span class="slider"></span>
                   </label>
                 </div>
-              </div>
-              <div class="form-group">
-                <label>Force Single Buffer <span class="tooltip-icon" data-i18n-tooltip="tt_hw_force_single_buffer">?</span></label>
-                <div style="display: flex; align-items: center; height: 100%;">
-                  <label class="switch">
-                    <input type="checkbox" id="hw-force-single-buffer">
-                    <span class="slider"></span>
-                  </label>
-                </div>
-              </div>
-              <div class="form-group">
-                <label>Sensor Calibration (°C) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_temp_offset">?</span></label>
-                <input type="number" id="hw-temp-offset" class="input" value="0.0" step="0.5" min="-20" max="20">
               </div>
             </div>
             <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save Hardware Settings</button>
@@ -1000,27 +1581,27 @@ select.input option {
               <h3>🌐 Online Update (GitHub Releases)</h3>
               <span class="badge badge-accent">1-Click OTA</span>
             </div>
-            <p class="text-muted">Check GitHub Releases for new updates matching your ESP32 board and update automatically.</p>
+            <p class="text-muted">Check GitHub Releases for new updates matching your Raspberry Pi architecture and update automatically.</p>
 
             <div class="ota-info-box" style="margin-bottom: 1rem;">
               <div>Current Version: <strong id="ota-current-version">v3.0.0</strong></div>
-              <div>Board Profile: <strong id="ota-current-arch">ESP32</strong></div>
+              <div>System Architecture: <strong id="ota-current-arch">aarch64</strong></div>
             </div>
 
             <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
               <div style="display: flex; align-items: center; justify-content: space-between;">
                 <div>
                   <span id="ota-online-badge" class="badge badge-accent">Update Available</span>
-                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">v3.0.0</strong>
+                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">v3.0.0-beta.3</strong>
                 </div>
-                <span id="ota-online-size" class="text-muted" style="font-size: 0.85rem;">~1.5 MB</span>
+                <span id="ota-online-size" class="text-muted" style="font-size: 0.85rem;">15 MB</span>
               </div>
               <div id="ota-online-notes" class="text-muted" style="margin-top: 0.75rem; font-size: 0.85rem; max-height: 140px; overflow-y: auto; white-space: pre-wrap; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px;"></div>
             </div>
 
             <div id="ota-auto-progress" class="progress-bar-container" style="display: none; margin-bottom: 1rem;">
-              <div id="ota-auto-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
-              <span id="ota-auto-progress-text" class="progress-text">Downloading from GitHub...</span>
+              <div id="ota-auto-progress-fill" class="progress-bar-fill" style="width: 100%;"></div>
+              <span id="ota-auto-progress-text" class="progress-text">Downloading from GitHub & installing...</span>
             </div>
 
             <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
@@ -1033,13 +1614,13 @@ select.input option {
             </div>
           </div>
 
-          <!-- 2. Manual Binary Upload (Offline / Custom) -->
+          <!-- 2. Manual Binary Upload (Offline) -->
           <div class="card glass shadow ota-card">
             <div class="card-header-badge">
               <h3>📁 Manual File Upload</h3>
               <span class="badge">Offline / Custom</span>
             </div>
-            <p class="text-muted">Upload a compiled firmware binary (.bin) manually (supports custom builds, beta versions, or downgrades).</p>
+            <p class="text-muted">Upload a pre-compiled binary manually if your device is offline or using a custom build.</p>
 
             <div id="ota-drop-zone" class="drop-zone">
               <div class="drop-icon">📁</div>
@@ -1048,8 +1629,8 @@ select.input option {
             </div>
 
             <div id="ota-file-details" class="file-details" style="display: none;">
-              <span id="ota-filename">firmware.bin</span>
-              <span id="ota-filesize" class="badge">~1.5 MB</span>
+              <span id="ota-filename">arcadematrix</span>
+              <span id="ota-filesize" class="badge">4.8 MB</span>
             </div>
 
             <div id="ota-progress-container" class="progress-bar-container" style="display: none;">
@@ -1071,9 +1652,16 @@ select.input option {
 
   <script>
 // --- js/api.js ---
+function authHeaders(base = {}) {
+  const headers = { ...base };
+  const token = localStorage.getItem('api_token');
+  if (token) headers['X-API-Token'] = token;
+  return headers;
+}
+
 const API = {
   async get(url) {
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -1081,32 +1669,19 @@ const API = {
   async post(url, data) {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
-    return await res.json();
-  },
-
-  async postAuth(url, data) {
-    const headers = { 'Content-Type': 'application/json' };
-    const token = localStorage.getItem('api_token');
-    if (token) headers['X-API-Token'] = token;
-    
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: data ? JSON.stringify(data) : undefined,
     });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
 
+  async postAuth(url, data) {
+    return this.post(url, data);
+  },
+
   async delete(url) {
-    const res = await fetch(url, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -1116,6 +1691,7 @@ const API = {
     formData.append('image', file);
     const res = await fetch('/api/marquee', {
       method: 'POST',
+      headers: authHeaders(),
       body: formData
     });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
@@ -1153,15 +1729,29 @@ const API = {
 
       xhr.onerror = () => reject({ message: 'Network connection error' });
       xhr.open('POST', '/api/update');
+      const token = localStorage.getItem('api_token');
+      if (token) xhr.setRequestHeader('X-API-Token', token);
       xhr.send(formData);
     });
+  },
+
+  async checkOtaUpdate() {
+    return this.get('/api/ota/check');
+  },
+
+  async triggerAutoOta(downloadUrl = null) {
+    return this.post('/api/ota/auto-update', { download_url: downloadUrl });
+  },
+
+  async getVersion() {
+    return this.get('/api/version').catch(() => this.get('/api/stats')).catch(() => ({ version: '3.0.0' }));
   },
 
   async waitForReconnect(timeoutMs = 60000, intervalMs = 2000, expectedVersion = null) {
     const start = Date.now();
     let wentOffline = false;
 
-    // Grace period for ESP32 to restart
+    // Grace period for the daemon to receive the update command and initiate shutdown
     await new Promise(r => setTimeout(r, 2500));
 
     while (Date.now() - start < timeoutMs) {
@@ -1169,6 +1759,7 @@ const API = {
         const res = await fetch('/api/version', { signal: AbortSignal.timeout(1500) });
         if (res.ok) {
           const data = await res.json();
+          // If we expected a new version, make sure it didn't just return the old un-restarted daemon
           if (expectedVersion && data.version === expectedVersion && !wentOffline && (Date.now() - start < 8000)) {
             await new Promise(r => setTimeout(r, intervalMs));
             continue;
@@ -1192,15 +1783,90 @@ const translations = {
     nav_display: "Display",
     nav_media: "Media",
     nav_message: "Message",
+    fighter_title: "Fighter Overlay",
+    fighter_desc: "Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.",
+    fighter_enabled: "Enabled",
+    fighter_interval: "Interval between fights (seconds)",
+    fighter_save: "Save Fighter Settings",
     nav_system: "System",
     ota_drop: "Drop firmware binary here or click to browse",
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
     
-    // Display & Rotation UX
+    // Display, Catalog & Rotation UX
+    onboarding_guide_title: "How Screen Rotation Works",
+    onboarding_guide_desc: "Your LED matrix continuously cycles through your configured playlist. Pick any engine from the library, adjust its duration in the loop, and fine-tune its appearance below.",
+    engine_catalog_title: "Plugin & Engine Library",
+    engine_catalog_desc: "All display engines available on your device. Click 'Add to Loop' to immediately launch a new screen on your matrix.",
+    add_to_rotation_btn: "➕ Add to Loop",
+    remove_from_rotation_btn: "➖ Remove from Loop",
+    configure_btn: "⚙️ Configure",
+    duplicate_btn: "📋 Duplicate",
+    remove_screen_btn: "🗑️ Remove Screen",
+    save_screen_config_btn: "💾 Save Screen Configuration",
+    preview_live_btn: "👁️ Preview Live",
+    config_saved_live: "Configuration saved & applied live!",
+    preview_success: "Screen is now displaying live on the matrix!",
+    screen_name_help: "Custom friendly name displayed in tabs and the rotation playlist.",
+    no_config_available: "No configuration available for this engine.",
+    cancel_btn: "Cancel",
+    creating_btn: "Creating...",
+    in_rotation_badge: "🟢 In Rotation",
+    not_in_rotation_badge: "⚪ Off Loop (Standby)",
+    jump_to_settings: "⚙️ Settings",
+    screen_name_label: "Screen Title / Label:",
+    optgroup_configured: "📁 Configured Screens",
+    optgroup_library: "🌟 Engine Library (Auto-Create & Add)",
+    modal_add_title: "Add New Display Screen",
+    modal_choose_theme: "Theme / Style / Variant:",
+    modal_city_label: "City / Location (e.g. Paris, FR or Tokyo, JP):",
+    modal_gif_folder_label: "GIF Playlist Folder:",
+    modal_crypto_label: "Crypto Symbols (comma-separated):",
+    modal_stock_label: "Stock Tickers (comma-separated):",
+    modal_add_rotation_check: "Insert directly into rotation loop",
+    modal_duration_label: "Display Duration (seconds / GIFs):",
+    modal_create_btn: "🚀 Create & Add Screen",
+    fighter_overlay_label: "🥊 Street Fighter Overlay",
+    move_up_title: "Move Up",
+    move_down_title: "Move Down",
+    remove_from_loop_title: "Remove from rotation loop",
+    fighter_tooltip: "Show Street Fighter battle animation overlay on this screen",
+    dur_tooltip_sec: "Duration in seconds",
+    dur_tooltip_gifs: "Number of GIFs to play before rotating",
+    copy_suffix: "Copy",
+    engines_available: "Engines Available",
+    screens_active: "active screen(s)",
+    tag_psram: "💾 PSRAM",
+    tag_audio: "🎙️ I2S Microphone",
+    tag_temp: "🌡️ Temp Sensor",
+    tag_realtime: "⚡ Real-Time",
+    confirm_remove_screen: "Are you sure you want to remove this screen?",
+    confirm_remove_instance: "Are you sure you want to remove this instance?",
+    
+    // Engine & Clock Names
+    clock_name: "Clock",
+    weather_name: "Weather",
+    message_name: "Message",
+    stock_name: "Stock",
+    theme_tetris: "🎮 Tetris Clock",
+    theme_matrix: "💻 Matrix Rain Clock",
+    theme_versus: "🥊 Capcom / Versus Clock",
+    theme_pacman: "🟡 Pac-Man Clock",
+    theme_flip: "⏱️ Flip Clock",
+    theme_word: "🔤 Word Clock",
+    theme_cyberpunk: "🌆 Cyberpunk Clock",
+    theme_pong: "🏓 Pong Clock",
+    theme_arcade: "👾 Arcade Clock",
+    theme_binary: "🔢 Binary Clock",
+    theme_slot_machine: "🎰 Slot Machine Clock",
+    sysinfo_name: "System Info",
+    theme_hud_bars: "HUD Bars & Gauges",
+    theme_cyberpunk_neon: "Cyberpunk Neon",
+    theme_compact_grid: "Compact Grid (2x2)",
+    
     add_screen_title: "Add New Screen to Display",
     add_screen_desc: "Select any engine plugin from the library to create a new customizable screen instance on your LED Matrix.",
     choose_engine: "Choose Engine:",
-    instance_name_id: "Instance Name (ID):",
+    instance_name_id: "Unique Instance ID:",
     create_screen_btn: "Create Screen",
     configured_screens_title: "Configured Screens & Settings",
     configured_screens_desc: "Click on a screen tab below to customize its visual layout, data feeds, colors, and options.",
@@ -1209,23 +1875,20 @@ const translations = {
     rotation_loop_title: "Screen Rotation Loop (Matrix Playlist)",
     rotation_loop_badge: "Auto-Cycling",
     rotation_loop_desc: "This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.",
-    rotation_add_title: "Add Active Screen to Rotation Loop:",
-    rotation_save_btn: "Save Rotation",
-    rotation_empty: "No instances in rotation. Add one below.",
+    rotation_add_title: "Add to Rotation Loop:",
+    rotation_save_btn: "Save Rotation Playlist",
+    rotation_empty: "No screens in rotation. Pick an engine above or below to add one.",
 
     // Tooltips
-    tt_hw_rows: "Height in pixels of a single LED panel (usually 32 or 64).",
-    tt_hw_cols: "Width in pixels of a single LED panel (usually 64 or 128).",
-    tt_hw_chain: "Number of LED panels daisy-chained horizontally in a single line (e.g. 2 for 128x32 or 256x64).",
-    tt_hw_rgb: "Color channel ordering. Adjust if colors look inverted or wrong (e.g. Red looks Blue or Green).",
-    tt_hw_driver_chip: "Hardware controller chip type. Select FM6126A, ICN2038S or standard SHIFTREG if your panels require a specific initialization register sequence to light up.",
-    tt_hw_color_depth: "Color bit depth per channel (1 to 8 bits). Lower to 8 or 6 bits to reduce DMA bandwidth, eliminate GIF lag and boost rendering framerate.",
-    tt_hw_row_addr_mode: "Row line addressing scheme (0=Direct binary A,B,C,D,E; 1=Shift Register; 2=Direct 16 lines). Change if your image appears split in horizontal bands or only half displays.",
-    tt_hw_latch_blanking: "Number of OE blanking clock cycles during row latching (0 to 4). Increase to 4 to eliminate vertical/horizontal ghosting lines and background bleed.",
-    tt_hw_limit_refresh: "Refresh rate cap in Hz (default 90Hz). Prevents the DMA hardware driver from saturating memory bandwidth and starving the CPU.",
-    tt_hw_clk_phase: "Inverts the I2S pixel clock sampling edge. Enable this if you see sparkling pixels, static noise or color speckles on sensitive panels.",
-    tt_hw_force_single_buffer: "Disables DMA double-buffering to halve RAM memory usage. Essential on boards without PSRAM to avoid out-of-memory crashes.",
-    tt_hw_temp_offset: "Calibration offset added to environment temperature readings in °C (e.g. -7.0 to compensate PCB heat).",
+    tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
+    tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
+    tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
+    tt_hw_rgb: "Change this if your colors appear swapped (e.g., Red looks Blue).",
+    tt_hw_slowdown: "GPIO Slowdown. Crucial for modern Raspberry Pis to prevent flickering (Pi 3 = 1-2, Pi 4 = 2-3, Pi 5 = 4).",
+    tt_hw_pwm_bits: "Lowering this increases refresh rate but reduces color depth. 11 is default.",
+    tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
+    tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
+    tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
     
     // Directions
     dir_rtl: "Right to Left (RTL)",
@@ -1239,11 +1902,86 @@ const translations = {
     nav_display: "Affichage",
     nav_media: "Médias",
     nav_message: "Message",
+    fighter_title: "Overlay Combattant",
+    fighter_desc: "Sprites de combattants animés superposés sur les écrans de rotation en veille. À activer par écran depuis le panneau Rotation.",
+    fighter_enabled: "Activé",
+    fighter_interval: "Intervalle entre les combats (secondes)",
+    fighter_save: "Enregistrer les paramètres Combattant",
     nav_system: "Système",
     ota_drop: "Glissez le binaire ici ou cliquez pour parcourir",
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
     
-    // Display & Rotation UX
+    // Display, Catalog & Rotation UX
+    onboarding_guide_title: "Comment fonctionne l'affichage ?",
+    onboarding_guide_desc: "Votre matrice LED fait défiler vos écrans en boucle continue. Ajoutez directement des moteurs depuis le catalogue, réglez la durée de chaque écran et personnalisez leurs polices, couleurs et options ci-dessous.",
+    engine_catalog_title: "Catalogue des Moteurs & Plugins",
+    engine_catalog_desc: "Tous les moteurs d'affichage disponibles. Cliquez sur 'Ajouter à la boucle' pour lancer instantanément un nouvel écran sur votre matrice.",
+    add_to_rotation_btn: "➕ Ajouter à la boucle",
+    remove_from_rotation_btn: "➖ Retirer de la boucle",
+    configure_btn: "⚙️ Configurer",
+    duplicate_btn: "📋 Dupliquer",
+    remove_screen_btn: "🗑️ Supprimer l'écran",
+    save_screen_config_btn: "💾 Enregistrer la configuration de l'écran",
+    preview_live_btn: "👁️ Afficher en direct (Live)",
+    config_saved_live: "Configuration enregistrée et appliquée à chaud !",
+    preview_success: "Écran affiché en direct sur la matrice LED !",
+    screen_name_help: "Nom personnalisé affiché dans les onglets et la playlist de rotation.",
+    no_config_available: "Aucune configuration disponible pour ce moteur.",
+    cancel_btn: "Annuler",
+    creating_btn: "Création en cours...",
+    in_rotation_badge: "🟢 En Rotation",
+    not_in_rotation_badge: "⚪ Hors Rotation (En veille)",
+    jump_to_settings: "⚙️ Régler",
+    screen_name_label: "Titre / Nom de l'écran :",
+    optgroup_configured: "📁 Écrans Déjà Configurés",
+    optgroup_library: "🌟 Catalogue Moteurs (Création & Ajout Direct)",
+    modal_add_title: "Ajouter un Nouvel Écran",
+    modal_choose_theme: "Thème / Style / Variante :",
+    modal_city_label: "Ville / Localisation (ex : Paris, FR ou Tokyo, JP) :",
+    modal_gif_folder_label: "Dossier de GIFs :",
+    modal_crypto_label: "Symboles Crypto (séparés par une virgule) :",
+    modal_stock_label: "Symboles Bourse (séparés par une virgule) :",
+    modal_add_rotation_check: "Insérer directement dans la boucle de rotation",
+    modal_duration_label: "Durée d'affichage (secondes / GIFs) :",
+    modal_create_btn: "🚀 Créer & Mettre en Rotation",
+    fighter_overlay_label: "🥊 Overlay Street Fighter",
+    move_up_title: "Monter",
+    move_down_title: "Descendre",
+    remove_from_loop_title: "Retirer de la boucle de rotation",
+    fighter_tooltip: "Afficher l'animation de combat Street Fighter sur cet écran",
+    dur_tooltip_sec: "Durée en secondes",
+    dur_tooltip_gifs: "Nombre de GIFs à jouer avant de changer",
+    copy_suffix: "Copie",
+    engines_available: "Moteurs Disponibles",
+    screens_active: "écran(s) actif(s)",
+    tag_psram: "💾 PSRAM",
+    tag_audio: "🎙️ Micro I2S",
+    tag_temp: "🌡️ Capteur Temp",
+    tag_realtime: "⚡ Temps Réel",
+    confirm_remove_screen: "Êtes-vous sûr de vouloir supprimer cet écran ?",
+    confirm_remove_instance: "Êtes-vous sûr de vouloir supprimer cette instance ?",
+    
+    // Engine & Clock Names
+    clock_name: "Horloge",
+    weather_name: "Météo",
+    message_name: "Message",
+    stock_name: "Bourse",
+    theme_tetris: "🎮 Horloge Tetris",
+    theme_matrix: "💻 Horloge Pluie Matrix",
+    theme_versus: "🥊 Horloge Capcom Versus",
+    theme_pacman: "🟡 Horloge Pac-Man",
+    theme_flip: "⏱️ Horloge à Volets",
+    theme_word: "🔤 Horloge Textuelle",
+    theme_cyberpunk: "🌆 Horloge Cyberpunk",
+    theme_pong: "🏓 Horloge Pong",
+    theme_arcade: "👾 Horloge Arcade",
+    theme_binary: "🔢 Horloge Binaire",
+    theme_slot_machine: "🎰 Horloge Machine à Sous",
+    sysinfo_name: "Infos Système",
+    theme_hud_bars: "Jauges HUD & Barres",
+    theme_cyberpunk_neon: "Cyberpunk Néon",
+    theme_compact_grid: "Grille Compacte (2x2)",
+    
     add_screen_title: "Ajouter un nouvel écran à l'affichage",
     add_screen_desc: "Sélectionnez un plugin du catalogue pour créer un nouvel écran personnalisable sur votre matrice LED.",
     choose_engine: "Choisir l'Engine :",
@@ -1256,23 +1994,20 @@ const translations = {
     rotation_loop_title: "Boucle de Rotation (Playlist Matrice)",
     rotation_loop_badge: "Défilement Auto",
     rotation_loop_desc: "Cette séquence contrôle quels écrans défilent sur la matrice LED, la durée d'affichage (secondes / nombre de GIFs), leur ordre et l'activation de l'overlay de combat Street Fighter.",
-    rotation_add_title: "Ajouter un écran actif à la boucle de rotation :",
-    rotation_save_btn: "Enregistrer la rotation",
-    rotation_empty: "Aucun écran dans la rotation. Ajoutez-en un ci-dessous.",
+    rotation_add_title: "Ajouter à la rotation :",
+    rotation_save_btn: "Enregistrer la playlist",
+    rotation_empty: "Aucun écran dans la rotation. Choisissez un moteur ci-dessus ou ci-dessous pour l'ajouter.",
 
     // Tooltips
-    tt_hw_rows: "Hauteur en pixels d'une dalle LED unique (généralement 32 ou 64).",
-    tt_hw_cols: "Largeur en pixels d'une dalle LED unique (généralement 64 ou 128).",
-    tt_hw_chain: "Nombre de dalles reliées en série horizontalement (ex: 2 pour 128x32 ou 256x64).",
-    tt_hw_rgb: "Ordre des canaux de couleur. À modifier si les couleurs sont fausses (ex: si le rouge s'affiche en bleu ou vert).",
-    tt_hw_driver_chip: "Protocole du contrôleur LED. Choisissez FM6126A, ICN2038S ou SHIFTREG standard si vos dalles nécessitent une séquence d'initialisation pour s'allumer.",
-    tt_hw_color_depth: "Profondeur de couleur par canal (1 à 8 bits). Réduire à 8 ou 6 bits pour soulager le bus DMA, éliminer les saccades et augmenter les FPS.",
-    tt_hw_row_addr_mode: "Schéma d'adressage des lignes (0=Direct binaire A,B,C,D,E; 1=Registre à décalage; 2=Direct 16 lignes). À modifier si l'image est découpée en bandes ou incomplète.",
-    tt_hw_latch_blanking: "Nombre de cycles d'extinction des LEDs pendant le verrouillage de chaque ligne (0 à 4). Augmenter à 4 pour éliminer totalement le ghosting et les traînées lumineuses.",
-    tt_hw_limit_refresh: "Plafonne la fréquence de rafraîchissement (ex: 90 Hz). Évite la saturation du bus DMA et libère le processeur pour le Wi-Fi et les animations.",
-    tt_hw_clk_phase: "Inverse le front d'échantillonnage de l'horloge I2S. À activer si vous constatez des pixels qui scintillent ou du bruit statique.",
-    tt_hw_force_single_buffer: "Désactive la double mémoire tampon DMA pour diviser par deux la RAM consommée. Indispensable sur les cartes sans PSRAM pour éviter les crashs mémoire.",
-    tt_hw_temp_offset: "Décalage d'étalonnage ajouté à la température du capteur en °C (ex: -7.0 pour compenser la chaleur du microcontrôleur).",
+    tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
+    tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
+    tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
+    tt_hw_rgb: "Modifiez ceci si vos couleurs sont inversées (ex: le rouge apparait bleu).",
+    tt_hw_slowdown: "Ralentissement GPIO. Indispensable pour éviter le clignotement sur les Pi récents (Pi 3 = 1-2, Pi 4 = 2-3).",
+    tt_hw_pwm_bits: "Baisser cette valeur augmente la fluidité mais réduit les nuances de couleurs. 11 par défaut.",
+    tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
+    tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
+    tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
     
     // Directions
     dir_rtl: "Droite vers Gauche (RTL)",
@@ -1286,11 +2021,86 @@ const translations = {
     nav_display: "Pantalla",
     nav_media: "Medios",
     nav_message: "Mensaje",
+    fighter_title: "Superposición Luchador",
+    fighter_desc: "Sprites de luchadores animados superpuestos sobre las pantallas de rotación inactivas. Actívalo por pantalla desde el panel de Rotación.",
+    fighter_enabled: "Activado",
+    fighter_interval: "Intervalo entre combates (segundos)",
+    fighter_save: "Guardar ajustes de Luchador",
     nav_system: "Sistema",
     ota_drop: "Arrastra el binario aquí o haz clic para buscar",
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
     
-    // Display & Rotation UX
+    // Display, Catalog & Rotation UX
+    onboarding_guide_title: "¿Cómo funciona la visualización?",
+    onboarding_guide_desc: "Tu matriz LED rota tus pantallas en un bucle continuo. Añade motores directamente desde el catálogo, ajusta la duración de cada pantalla y personaliza fuentes, colores y opciones abajo.",
+    engine_catalog_title: "Catálogo de Motores y Plugins",
+    engine_catalog_desc: "Todos los motores de visualización disponibles. Haz clic en 'Añadir al bucle' para iniciar una nueva pantalla en tu matriz.",
+    add_to_rotation_btn: "➕ Añadir al bucle",
+    remove_from_rotation_btn: "➖ Quitar del bucle",
+    configure_btn: "⚙️ Configurar",
+    duplicate_btn: "📋 Duplicar",
+    remove_screen_btn: "🗑️ Eliminar pantalla",
+    save_screen_config_btn: "💾 Guardar configuración de pantalla",
+    preview_live_btn: "👁️ Ver en directo (Live)",
+    config_saved_live: "¡Configuración guardada y aplicada en vivo!",
+    preview_success: "¡Pantalla mostrada en directo en la matriz LED!",
+    screen_name_help: "Nombre personalizado mostrado en las pestañas y la lista de rotación.",
+    no_config_available: "No hay configuración disponible para este motor.",
+    cancel_btn: "Cancelar",
+    creating_btn: "Creando...",
+    in_rotation_badge: "🟢 En Rotación",
+    not_in_rotation_badge: "⚪ En espera (Fuera de bucle)",
+    jump_to_settings: "⚙️ Ajustar",
+    screen_name_label: "Título / Nombre de pantalla:",
+    optgroup_configured: "📁 Pantallas Configuradas",
+    optgroup_library: "🌟 Catálogo de Motores (Crear y Añadir)",
+    modal_add_title: "Añadir Nueva Pantalla",
+    modal_choose_theme: "Tema / Estilo / Variante:",
+    modal_city_label: "Ciudad / Ubicación (ej: París, FR o Tokio, JP):",
+    modal_gif_folder_label: "Carpeta de GIFs:",
+    modal_crypto_label: "Símbolos Crypto (separados por comas):",
+    modal_stock_label: "Símbolos de Bolsa (separados por comas):",
+    modal_add_rotation_check: "Insertar directamente en el bucle de rotación",
+    modal_duration_label: "Duración (segundos / GIFs):",
+    modal_create_btn: "🚀 Crear y Añadir al Bucle",
+    fighter_overlay_label: "🥊 Superposición Street Fighter",
+    move_up_title: "Subir",
+    move_down_title: "Bajar",
+    remove_from_loop_title: "Eliminar del bucle de rotación",
+    fighter_tooltip: "Mostrar la animación de combate Street Fighter en esta pantalla",
+    dur_tooltip_sec: "Duración en segundos",
+    dur_tooltip_gifs: "Cantidad de GIFs a reproducir antes de rotar",
+    copy_suffix: "Copia",
+    engines_available: "Motores Disponibles",
+    screens_active: "pantalla(s) activa(s)",
+    tag_psram: "💾 PSRAM",
+    tag_audio: "🎙️ Micrófono I2S",
+    tag_temp: "🌡️ Sensor Temp",
+    tag_realtime: "⚡ Tiempo Real",
+    confirm_remove_screen: "¿Estás seguro de que deseas eliminar esta pantalla?",
+    confirm_remove_instance: "¿Estás seguro de que deseas eliminar esta instancia?",
+    
+    // Engine & Clock Names
+    clock_name: "Reloj",
+    weather_name: "Tiempo",
+    message_name: "Mensaje",
+    stock_name: "Bolsa",
+    theme_tetris: "🎮 Reloj Tetris",
+    theme_matrix: "💻 Reloj Lluvia Matrix",
+    theme_versus: "🥊 Reloj Capcom Versus",
+    theme_pacman: "🟡 Reloj Pac-Man",
+    theme_flip: "⏱️ Reloj Flip",
+    theme_word: "🔤 Reloj de Palabras",
+    theme_cyberpunk: "🌆 Reloj Cyberpunk",
+    theme_pong: "🏓 Reloj Pong",
+    theme_arcade: "👾 Reloj Arcade",
+    theme_binary: "🔢 Reloj Binario",
+    theme_slot_machine: "🎰 Reloj Tragaperras",
+    sysinfo_name: "Info del Sistema",
+    theme_hud_bars: "Barras y Jaujas HUD",
+    theme_cyberpunk_neon: "Cyberpunk Neón",
+    theme_compact_grid: "Cuadrícula Compacta (2x2)",
+    
     add_screen_title: "Añadir nueva pantalla a la visualización",
     add_screen_desc: "Selecciona un plugin del catálogo para crear una nueva pantalla personalizable en tu matriz LED.",
     choose_engine: "Elegir Engine:",
@@ -1303,23 +2113,20 @@ const translations = {
     rotation_loop_title: "Bucle de Rotación (Lista de reproducción)",
     rotation_loop_badge: "Ciclo Automático",
     rotation_loop_desc: "Esta secuencia controla qué pantallas rotan en tu matriz LED, el tiempo de visualización (segundos / cantidad de GIFs), su orden y la superposición de Street Fighter.",
-    rotation_add_title: "Añadir pantalla activa al bucle de rotación:",
-    rotation_save_btn: "Guardar rotación",
-    rotation_empty: "No hay pantallas en la rotación. Añade una abajo.",
+    rotation_add_title: "Añadir al bucle de rotación:",
+    rotation_save_btn: "Guardar lista de rotación",
+    rotation_empty: "No hay pantallas en la rotación. Elige un motor arriba o abajo para añadirlo.",
 
     // Tooltips
-    tt_hw_rows: "Altura en píxeles de un panel LED individual (normalmente 32 o 64).",
-    tt_hw_cols: "Anchura en píxeles de un panel LED individual (normalmente 64 o 128).",
-    tt_hw_chain: "Número de paneles conectados en serie horizontalmente (ej: 2 para 128x32 o 256x64).",
-    tt_hw_rgb: "Orden de canales de color. Modificar si los colores aparecen invertidos (ej: rojo se ve azul o verde).",
-    tt_hw_driver_chip: "Protocolo del controlador LED. Selecciona FM6126A, ICN2038S o SHIFTREG estándar si tus paneles necesitan una secuencia de inicio para encender.",
-    tt_hw_color_depth: "Profundidad de color por canal (1 a 8 bits). Bajar a 8 o 6 bits para reducir el ancho de banda DMA, eliminar lag en GIFs y ganar FPS.",
-    tt_hw_row_addr_mode: "Esquema de direccionamiento de filas (0=Directo A,B,C,D,E; 1=Registro de desplazamiento; 2=Directo 16 líneas). Cambiar si la imagen aparece partida o incompleta.",
-    tt_hw_latch_blanking: "Ciclos de apagado OE durante el bloqueo de fila (0 a 4). Aumentar a 4 para eliminar totalmente el ghosting y las líneas parásitas.",
-    tt_hw_limit_refresh: "Límite de tasa de refresco en Hz (90Hz por defecto). Evita saturar el bus DMA y libera memoria/CPU para Wi-Fi y animaciones.",
-    tt_hw_clk_phase: "Invierte el flanco de muestreo del reloj I2S. Activar si observas píxeles parpadeantes o ruido estático en paneles sensibles.",
-    tt_hw_force_single_buffer: "Desactiva el doble búfer DMA para reducir el uso de RAM a la mitad. Esencial en placas sin PSRAM para evitar bloqueos por falta de memoria.",
-    tt_hw_temp_offset: "Compensación de calibración añadida a la lectura de temperatura en °C (ej: -7.0 para compensar el calor del microcontrolador).",
+    tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
+    tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
+    tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
+    tt_hw_rgb: "Cambia esto si tus colores aparecen intercambiados (ej: rojo se ve azul).",
+    tt_hw_slowdown: "Ralentización GPIO. Crucial para evitar parpadeos en Pi recientes (Pi 3 = 1-2, Pi 4 = 2-3).",
+    tt_hw_pwm_bits: "Bajar este valor aumenta la tasa de refresco pero reduce la profundidad de color. 11 por defecto.",
+    tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
+    tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
+    tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
     
     // Directions
     dir_rtl: "Derecha a Izquierda (RTL)",
@@ -1466,191 +2273,942 @@ const GLOBAL_TIMEZONES = [
   { value: "UTC", label: "UTC (Coordinated Universal Time)" }
 ];
 
-async function initHardwareCapabilities() {
-  try {
-    const [hw, status] = await Promise.all([
-      API.get('/api/hardware').catch(() => null),
-      API.get('/api/status').catch(() => null)
-    ]);
-    
-    if (hw) {
-      const elProf = document.getElementById('hw-cap-profile');
-      if (elProf) {
-        elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';
-        elProf.style.color = 'var(--accent-info)';
-      }
-      
-      const elPsram = document.getElementById('hw-cap-psram');
-      if (elPsram) {
-        if (hw.psram && hw.psram.available) {
-          const mb = (hw.psram.bytes / (1024 * 1024)).toFixed(0);
-          elPsram.textContent = `Available (${mb} MB)`;
-          elPsram.style.color = 'var(--accent-success)';
-        } else {
-          elPsram.textContent = 'Not Available (Internal SRAM only)';
-          elPsram.style.color = 'var(--accent-warning)';
-        }
-      }
-      
-      const elMic = document.getElementById('hw-cap-mic');
-      if (elMic) {
-        elMic.textContent = hw.microphone ? 'Detected (I2S Audio)' : 'Not Detected';
-        elMic.style.color = hw.microphone ? 'var(--accent-success)' : 'var(--text-muted)';
-      }
-      
-      const elTemp = document.getElementById('hw-cap-temp');
-      if (elTemp) {
-        elTemp.textContent = hw.temperature_sensor ? 'Detected (SHTC3 I2C)' : 'Not Detected';
-        elTemp.style.color = hw.temperature_sensor ? 'var(--accent-success)' : 'var(--text-muted)';
-      }
-      
-      const elGyro = document.getElementById('hw-cap-gyro');
-      if (elGyro) {
-        elGyro.textContent = hw.gyroscope ? 'Detected' : 'Not Detected (I2C 0x68/0x69)';
-        elGyro.style.color = hw.gyroscope ? 'var(--accent-success)' : 'var(--text-muted)';
-      }
-    }
-    
-    if (status) {
-      const elHeap = document.getElementById('hw-cap-heap');
-      if (elHeap) {
-        const freeKb = (status.free_heap / 1024).toFixed(1);
-        let txt = `Heap: ${freeKb} KB`;
-        if (status.free_psram) {
-          const psramMb = (status.free_psram / (1024 * 1024)).toFixed(2);
-          txt += ` | PSRAM: ${psramMb} MB`;
-        }
-        elHeap.textContent = txt;
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load hardware capabilities:', e);
+const THEME_ID_MAP = {
+  "0": "Nintendo", "1": "Capcom", "2": "Taito", "3": "Sega",
+  "4": "Cave", "5": "Konami", "6": "SNK", "7": "Technos",
+  "8": "IGS", "9": "Hudson", "10": "Banpresto", "11": "Namco",
+  "12": "Street Fighter (Ryu)", "13": "Super Mario", "14": "Metal Slug (Marco)",
+  "15": "Mega Man", "16": "Space Invaders", "17": "Bubble Bobble (Bub)",
+  "18": "Cyberpunk", "19": "Flip Clock", "20": "Custom Gradient",
+  "21": "Matrix Rain", "22": "Pong Clock", "23": "Tetris Clock",
+  "24": "Word Clock", "25": "Binary Clock", "26": "Pac-Man Clock",
+  "27": "Versus Clock", "28": "Slot Machine Clock", "29": "Tetris Game Boy",
+  "tetris": "Tetris Clock", "matrix": "Matrix Rain", "matrix_rain": "Matrix Rain",
+  "versus": "Capcom Versus", "arcade": "Arcade", "pacman": "Pac-Man",
+  "flip": "Flip Clock", "word": "Word Clock", "cyberpunk": "Cyberpunk",
+  "pong": "Pong", "binary": "Binary", "slot_machine": "Slot Machine"
+};
+
+// Global in-memory cache to prevent multiple round-trips to the ESP32
+const endpointCache = new Map();
+
+async function fetchCachedEndpoint(url) {
+  if (!url) return [];
+  if (endpointCache.has(url)) {
+    return endpointCache.get(url);
   }
+  const promise = API.get(url).catch(() => []);
+  endpointCache.set(url, promise);
+  return promise;
 }
 
-async function initDynamicEngines() {
+// Robust helper to extract schema fields on both ESP32 and RPi
+function getSchemaFields(engineDesc) {
+  if (!engineDesc || !engineDesc.schema) return [];
+  if (Array.isArray(engineDesc.schema.fields)) return engineDesc.schema.fields;
+  if (Array.isArray(engineDesc.schema)) return engineDesc.schema;
+  return [];
+}
+
+// Robust helper to parse options from array of objects, array of strings, or comma-separated string
+function parseOptions(rawOptions) {
+  if (!rawOptions) return [];
+  if (Array.isArray(rawOptions)) {
+    return rawOptions.map(opt => {
+      if (typeof opt === 'object' && opt !== null) {
+        const val = opt.value !== undefined ? opt.value : (opt.id !== undefined ? opt.id : (opt.name || ''));
+        const lbl = opt.label !== undefined ? opt.label : (opt.name !== undefined ? opt.name : val);
+        return { value: String(val), label: String(lbl) };
+      }
+      return { value: String(opt), label: String(opt) };
+    });
+  }
+  if (typeof rawOptions === 'string' && rawOptions.trim().length > 0) {
+    return rawOptions.split(',').map(s => s.trim()).filter(s => s.length > 0).map(val => ({ value: val, label: val }));
+  }
+  return [];
+}
+
+// Type detection helpers
+function isBooleanField(f) {
+  const t = f.field_type !== undefined ? f.field_type : f.type;
+  return t === 0 || t === '0' || t === 'Boolean' || t === 'BOOLEAN' || t === 'boolean';
+}
+
+function isNumberField(f) {
+  const t = f.field_type !== undefined ? f.field_type : f.type;
+  return t === 1 || t === 2 || t === 6 || t === '1' || t === '2' || t === '6' ||
+         t === 'Integer' || t === 'INTEGER' || t === 'integer' ||
+         t === 'Float' || t === 'FLOAT' || t === 'float' ||
+         t === 'Duration' || t === 'DURATION' || t === 'duration';
+}
+
+function isColorField(f) {
+  const t = f.field_type !== undefined ? f.field_type : f.type;
+  return t === 5 || t === '5' || t === 'Color' || t === 'COLOR' || t === 'color' || 
+         (f.id && f.id.toLowerCase().includes('color'));
+}
+
+function isOptionsField(f) {
+  const t = f.field_type !== undefined ? f.field_type : f.type;
+  return t === 4 || t === 7 || t === '4' || t === '7' ||
+         t === 'Options' || t === 'OPTIONS' || t === 'options' ||
+         t === 'Enum' || t === 'ENUM' || t === 'enum' ||
+         t === 'List' || t === 'LIST' || t === 'list';
+}
+
+// Format options with localization
+function formatOptLabel(fieldId, val, raw) {
+  const lang = localStorage.getItem('lang') || 'en';
+  const dict = (typeof translations !== 'undefined' && translations && translations[lang]) ? translations[lang] : ((typeof translations !== 'undefined' && translations) ? translations.en : {});
+  const v = String(val).trim();
+  const lower = v.toLowerCase();
+
+  // 1. Direction labels
+  if (fieldId === 'direction' || ['rtl', 'ltr', 'ttb', 'btt', 'static', 'left', 'right', 'up', 'down', 'none'].includes(lower)) {
+    if (lower === 'rtl' || lower === 'left') return dict.dir_rtl || "Right to Left (RTL)";
+    if (lower === 'ltr' || lower === 'right') return dict.dir_ltr || "Left to Right (LTR)";
+    if (lower === 'ttb' || lower === 'down') return dict.dir_ttb || "Top to Bottom (TTB)";
+    if (lower === 'btt' || lower === 'up') return dict.dir_btt || "Bottom to Top (BTT)";
+    if (lower === 'static' || lower === 'none') return dict.dir_static || "Static (No Scroll)";
+  }
+  // 2. Units
+  if (fieldId === 'units' || fieldId === 'unit') {
+    if (lower === 'c' || lower === 'metric') return "Celsius (°C)";
+    if (lower === 'f' || lower === 'imperial') return "Fahrenheit (°F)";
+  }
+  // 3. Languages
+  if (fieldId === 'lang') {
+    if (lower === 'fr') return "Français (French)";
+    if (lower === 'en') return "English";
+    if (lower === 'es') return "Español (Spanish)";
+    if (lower === 'de') return "Deutsch (German)";
+    if (lower === 'it') return "Italiano (Italian)";
+  }
+  // 4. Timeframes
+  if (fieldId === 'chart_timeframe') {
+    if (lower === 'hourly') return "Hourly (1h)";
+    if (lower === 'daily') return "Daily (24h)";
+    if (lower === 'weekly') return "Weekly (7d)";
+    if (lower === 'monthly') return "Monthly (30d)";
+  }
+  // 5. Currencies
+  if (fieldId === 'currency') {
+    if (lower === 'usd') return "US Dollar ($ USD)";
+    if (lower === 'eur') return "Euro (€ EUR)";
+    if (lower === 'gbp') return "British Pound (£ GBP)";
+    if (lower === 'jpy') return "Japanese Yen (¥ JPY)";
+  }
+  // 6. Visualizer styles
+  if (fieldId === 'style') {
+    if (lower === 'spectrum') return "Spectrum Bars";
+    if (lower === 'waveform') return "Waveform Oscilloscope";
+    if (lower === 'radial') return "Radial Circular";
+    if (lower === 'neon_fire') return "Neon Fire";
+  }
+  // 7. Date & Clock formats
+  if (fieldId === 'date_format') {
+    if (v === '%d/%m/%Y') return "DD/MM/YYYY (24/08/2026)";
+    if (v === '%Y-%m-%d') return "YYYY-MM-DD (2026-08-24)";
+    if (v === '%d %b %Y') return "DD Mon YYYY (24 Aug 2026)";
+    if (v === '%A %d %B') return "Weekday DD Month (Monday 24 August)";
+  }
+  if (fieldId === 'clock_format') {
+    if (v === '%H:%M:%S') return "24h with Seconds (HH:MM:SS)";
+    if (v === '%H:%M') return "24h (HH:MM)";
+    if (v === '%I:%M:%S %p') return "12h with Seconds (HH:MM:SS AM/PM)";
+    if (v === '%I:%M %p') return "12h (HH:MM AM/PM)";
+  }
+  // 8. Theme names
+  if (fieldId === 'clock_theme' || fieldId === 'theme') {
+    const tName = THEME_ID_MAP[v] || raw || v;
+    const themeKey = `theme_${tName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+    return dict[themeKey] || tName;
+  }
+  return raw || val;
+}
+
+// --- Dynamic Screen Naming & Resolution ---
+function resolveScreenInfo(instance, engineDesc) {
+  const cfg = (instance && instance.config) ? instance.config : {};
+  const engId = (instance && instance.engine_id) ? instance.engine_id.toLowerCase() : '';
+  const icon = (engineDesc && engineDesc.metadata && engineDesc.metadata.icon) ? engineDesc.metadata.icon : '📺';
+  const engName = (engineDesc && engineDesc.metadata && engineDesc.metadata.name) ? engineDesc.metadata.name : (instance ? instance.engine_id : 'Screen');
+  
+  if (cfg.screen_title && String(cfg.screen_title).trim().length > 0) {
+    const custom = String(cfg.screen_title).trim();
+    return { icon, title: custom, subtitle: engName, full: `${icon} ${custom}`, isCustom: true };
+  }
+  
+  if (engId === 'clock') {
+    const themeVal = String(cfg.clock_theme !== undefined ? cfg.clock_theme : (cfg.theme || '0')).toLowerCase();
+    const tName = THEME_ID_MAP[themeVal] || (themeVal.charAt(0).toUpperCase() + themeVal.slice(1));
+    const clockLabel = t('clock_name', 'Clock');
+    return { icon, title: `${clockLabel} (${tName})`, subtitle: tName, full: `${icon} ${clockLabel} (${tName})` };
+  }
+  if (engId === 'weather') {
+    const city = cfg.city || cfg.location || '';
+    const wLabel = t('weather_name', 'Weather');
+    const name = city ? `${wLabel} (${city})` : wLabel;
+    return { icon, title: name, subtitle: city || 'OpenWeatherMap', full: `${icon} ${name}` };
+  }
+  if (engId === 'gifs') {
+    const folder = cfg.folder || 'all';
+    const cleanFolder = folder.replace('/gifs/', '').replace('/gifs', 'all');
+    return { icon, title: `GIFs (${cleanFolder})`, subtitle: cleanFolder, full: `${icon} GIFs (${cleanFolder})` };
+  }
+  if (engId === 'crypto') {
+    const coins = cfg.coins || 'BTC';
+    return { icon, title: `Crypto (${coins})`, subtitle: coins, full: `${icon} Crypto (${coins})` };
+  }
+  if (engId === 'stock') {
+    const symbols = cfg.symbols || 'AAPL';
+    const sLabel = t('stock_name', 'Stock');
+    return { icon, title: `${sLabel} (${symbols})`, subtitle: symbols, full: `${icon} ${sLabel} (${symbols})` };
+  }
+  if (engId === 'google_cast') {
+    return { icon: '🎵', title: 'Google Cast (Nest)', subtitle: 'LAN Auto-Discovery', full: '🎵 Google Cast (Nest)' };
+  }
+  if (engId === 'spotify') {
+    return { icon: '🟢', title: 'Spotify Player', subtitle: 'Official API', full: '🟢 Spotify Player' };
+  }
+  if (engId === 'system_info' || engId === 'sysinfo') {
+    const sLabel = t('sysinfo_name', 'System Info');
+    const th = String(cfg.theme !== undefined ? cfg.theme : '0');
+    const thName = th === '1' ? t('theme_cyberpunk_neon', 'Cyberpunk Neon') : (th === '2' ? t('theme_compact_grid', 'Compact Grid') : t('theme_hud_bars', 'HUD Bars'));
+    return { icon: '📊', title: `${sLabel} (${thName})`, subtitle: thName, full: `📊 ${sLabel} (${thName})` };
+  }
+  if (engId === 'message') {
+    const txt = (cfg.text && cfg.text.length > 14) ? (cfg.text.substring(0, 11) + '...') : (cfg.text || 'ArcadeMatrix');
+    const mLabel = t('message_name', 'Message');
+    return { icon: '💬', title: `${mLabel} (${txt})`, subtitle: txt, full: `💬 ${mLabel} (${txt})` };
+  }
+  return { icon, title: `${engName} (${instance.instance_id})`, subtitle: instance.instance_id, full: `${icon} ${engName} (${instance.instance_id})` };
+}
+
+window.switchToScreenTab = function(instanceId) {
+  const cleanId = instanceId.replace(/[^a-zA-Z0-9]/g, '-');
+  const tabId = `tab-dyn-${cleanId}`;
+  
+  if (typeof window.switchToPage === 'function') {
+    window.switchToPage('display');
+  }
+  
+  document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+    if (btn.getAttribute('data-tab-target') === tabId) {
+      btn.classList.add('active');
+      btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  });
+  
+  document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
+  const targetPane = document.getElementById(tabId);
+  if (targetPane) {
+    targetPane.classList.add('active');
+    targetPane.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+};
+
+// Modal for 1-Click Interactive Screen Creation
+function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaultAddToRotation = true) {
+  const existingModal = document.getElementById('add-screen-modal-overlay');
+  if (existingModal) existingModal.remove();
+
+  const enginesMap = {};
+  descriptors.forEach(d => { enginesMap[d.metadata.id] = d; });
+
+  let currentEngineId = selectedEngineId || (descriptors.length > 0 ? descriptors[0].metadata.id : 'clock');
+  let currentDesc = enginesMap[currentEngineId] || descriptors[0];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'add-screen-modal-overlay';
+  overlay.className = 'modal-overlay';
+
+  function generateSuggestedId(engId, variant) {
+    const base = variant ? `${engId}_${variant}`.toLowerCase().replace(/[^a-z0-9]/g, '_') : `${engId}_1`.toLowerCase();
+    let candidate = base;
+    let counter = 1;
+    while (instancesList.some(i => i.instance_id === candidate)) {
+      counter++;
+      candidate = `${base}_${counter}`;
+    }
+    return candidate;
+  }
+
+  function renderModalContent() {
+    currentDesc = enginesMap[currentEngineId] || descriptors[0];
+    const engId = currentEngineId.toLowerCase();
+    const icon = (currentDesc.metadata && currentDesc.metadata.icon) ? currentDesc.metadata.icon : '📺';
+    const name = (currentDesc.metadata && currentDesc.metadata.name) ? currentDesc.metadata.name : currentEngineId;
+
+    let variantHtml = '';
+    let initialVariant = '';
+
+    if (engId === 'clock') {
+      initialVariant = 'tetris';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_choose_theme">${t('modal_choose_theme', 'Theme / Style / Variant:')}</label>
+          <select id="modal-field-variant" class="input" style="font-weight: 600;">
+            <option value="23" selected>${t('theme_tetris', '🎮 Tetris Clock')}</option>
+            <option value="21">${t('theme_matrix', '💻 Matrix Rain Clock')}</option>
+            <option value="27">${t('theme_versus', '🥊 Capcom / Versus Clock')}</option>
+            <option value="26">${t('theme_pacman', '🟡 Pac-Man Clock')}</option>
+            <option value="19">${t('theme_flip', '⏱️ Flip Clock')}</option>
+            <option value="24">${t('theme_word', '🔤 Word Clock')}</option>
+            <option value="18">${t('theme_cyberpunk', '🌆 Cyberpunk Clock')}</option>
+            <option value="22">${t('theme_pong', '🏓 Pong Clock')}</option>
+            <option value="25">${t('theme_binary', '🔢 Binary Clock')}</option>
+            <option value="28">${t('theme_slot_machine', '🎰 Slot Machine Clock')}</option>
+          </select>
+        </div>
+      `;
+    } else if (engId === 'weather') {
+      initialVariant = 'paris';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_city_label">${t('modal_city_label', 'City / Location (e.g. Paris, FR or Tokyo, JP):')}</label>
+          <input type="text" id="modal-field-variant" class="input" placeholder="Paris, FR" value="Paris, FR">
+        </div>
+      `;
+    } else if (engId === 'gifs') {
+      initialVariant = 'arcade';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_folder_label">${t('modal_gif_folder_label', 'GIF Playlist Folder:')}</label>
+          <input type="text" id="modal-field-variant" class="input" placeholder="all, /gifs/arcade, /gifs/nintendo" value="all">
+        </div>
+      `;
+    } else if (engId === 'crypto') {
+      initialVariant = 'btc';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_crypto_label">${t('modal_crypto_label', 'Crypto Symbols (comma-separated):')}</label>
+          <input type="text" id="modal-field-variant" class="input" placeholder="BTC,ETH,SOL" value="BTC,ETH">
+        </div>
+      `;
+    } else if (engId === 'stock') {
+      initialVariant = 'aapl';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_stock_label">${t('modal_stock_label', 'Stock Tickers (comma-separated):')}</label>
+          <input type="text" id="modal-field-variant" class="input" placeholder="AAPL,TSLA,NVDA" value="AAPL,TSLA">
+        </div>
+      `;
+    } else if (engId === 'system_info' || engId === 'sysinfo') {
+      initialVariant = '0';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_choose_theme">${t('modal_choose_theme', 'Theme / Style / Variant:')}</label>
+          <select id="modal-field-variant" class="input" style="font-weight: 600;">
+            <option value="0" selected>${t('theme_hud_bars', '📊 HUD Bars & Gauges')}</option>
+            <option value="1">${t('theme_cyberpunk_neon', '🌆 Cyberpunk Neon')}</option>
+            <option value="2">${t('theme_compact_grid', '📱 Compact Grid (2x2)')}</option>
+          </select>
+        </div>
+      `;
+    }
+
+    const defaultId = generateSuggestedId(engId, initialVariant);
+
+    overlay.innerHTML = `
+      <div class="modal-box glass">
+        <div class="modal-header">
+          <div class="modal-title">
+            <span>➕</span> <span data-i18n="modal_add_title">${t('modal_add_title', 'Add New Display Screen')}</span>
+          </div>
+          <button class="modal-close" id="modal-btn-close">✕</button>
+        </div>
+        
+        <div class="modal-body">
+          <div class="form-group">
+            <label style="font-size: 0.85rem; font-weight: 600; color: var(--accent-primary);" data-i18n="choose_engine">${t('choose_engine', 'Choose Engine:')}</label>
+            <select id="modal-select-engine" class="input" style="font-weight: 600; font-size: 1rem; border-color: var(--accent-primary);">
+              ${descriptors.map(d => {
+                const dIcon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
+                const dName = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+                const isSel = d.metadata.id === currentEngineId ? 'selected' : '';
+                return `<option value="${d.metadata.id}" ${isSel}>${dIcon} ${dName}</option>`;
+              }).join('')}
+            </select>
+          </div>
+
+          ${variantHtml}
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="screen_name_label">${t('screen_name_label', 'Screen Title / Label:')}</label>
+            <input type="text" id="modal-input-title" class="input" placeholder="e.g. Living Room Clock" value="${name}">
+          </div>
+
+          <div class="form-group" style="margin-top: 0.75rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);" data-i18n="instance_name_id">${t('instance_name_id', 'Unique Instance ID:')}</label>
+            <input type="text" id="modal-input-id" class="input" style="font-size: 0.85rem; opacity: 0.85;" value="${defaultId}">
+          </div>
+
+          <div style="background: rgba(0,0,0,0.25); border-radius: var(--radius-md); padding: 1rem; margin-top: 1.25rem; border: 1px solid var(--glass-border);">
+            <label class="switch" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="checkbox" id="modal-check-rotation" ${defaultAddToRotation ? 'checked' : ''}>
+              <span style="font-weight: 600; font-size: 0.9rem;" data-i18n="modal_add_rotation_check">${t('modal_add_rotation_check', 'Insert directly into rotation loop')}</span>
+            </label>
+            <div id="modal-rotation-options" style="margin-top: 0.75rem; display: ${defaultAddToRotation ? 'flex' : 'none'}; gap: 1rem; align-items: center; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="font-size: 0.85rem; color: var(--text-secondary);" data-i18n="modal_duration_label">${t('modal_duration_label', 'Display Duration (seconds / GIFs):')}</span>
+                <input type="number" id="modal-input-duration" class="input" style="width: 70px; padding: 0.35rem 0.5rem; text-align: center;" value="30" min="1">
+                <span style="font-size: 0.85rem; color: var(--text-muted);">${engId === 'gifs' ? 'GIFs' : 'sec'}</span>
+              </div>
+              <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="modal-check-fighter" checked>
+                <span data-i18n="fighter_overlay_label">${t('fighter_overlay_label', '🥊 Street Fighter Overlay')}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn" id="modal-btn-cancel" style="background: rgba(255,255,255,0.08); color:#fff;" data-i18n="cancel_btn">${t('cancel_btn', 'Cancel')}</button>
+          <button class="btn btn-primary" id="modal-btn-submit" style="font-weight: 700; box-shadow: 0 0 15px var(--accent-glow);" data-i18n="modal_create_btn">
+            ${t('modal_create_btn', '🚀 Create & Add Screen')}
+          </button>
+        </div>
+      </div>
+    `;
+
+    // Wire up events
+    overlay.querySelector('#modal-btn-close').onclick = () => overlay.remove();
+    overlay.querySelector('#modal-btn-cancel').onclick = () => overlay.remove();
+
+    const engSelect = overlay.querySelector('#modal-select-engine');
+    engSelect.onchange = () => {
+      currentEngineId = engSelect.value;
+      renderModalContent();
+    };
+
+    const variantEl = overlay.querySelector('#modal-field-variant');
+    const idInput = overlay.querySelector('#modal-input-id');
+    const titleInput = overlay.querySelector('#modal-input-title');
+
+    if (variantEl && idInput) {
+      variantEl.onchange = () => {
+        const val = variantEl.value;
+        idInput.value = generateSuggestedId(currentEngineId.toLowerCase(), val);
+        if (engId === 'clock') {
+          const optText = variantEl.options[variantEl.selectedIndex].text.replace(/^[^\w\s]+/, '').trim();
+          titleInput.value = `${t('clock_name', 'Horloge')} (${optText})`;
+        } else if (engId === 'weather') {
+          titleInput.value = `${t('weather_name', 'Météo')} (${val})`;
+        } else if (engId === 'system_info' || engId === 'sysinfo') {
+          const optText = variantEl.options[variantEl.selectedIndex].text.replace(/^[^\w\s]+/, '').trim();
+          titleInput.value = `${t('sysinfo_name', 'Infos Système')} (${optText})`;
+        }
+      };
+    }
+
+    const rotCheck = overlay.querySelector('#modal-check-rotation');
+    const rotOpts = overlay.querySelector('#modal-rotation-options');
+    rotCheck.onchange = () => {
+      rotOpts.style.display = rotCheck.checked ? 'flex' : 'none';
+    };
+
+    const submitBtn = overlay.querySelector('#modal-btn-submit');
+    submitBtn.onclick = async () => {
+      const instId = idInput.value.trim() || generateSuggestedId(currentEngineId.toLowerCase(), '');
+      const screenTitle = titleInput.value.trim();
+      const initialConfig = {};
+      if (screenTitle) initialConfig.screen_title = screenTitle;
+
+      let targetEngineId = currentEngineId;
+      if (targetEngineId === 'sysinfo') targetEngineId = 'system_info';
+      else if (targetEngineId === 'gif') targetEngineId = 'gifs';
+      else if (targetEngineId === 'cast') targetEngineId = 'google_cast';
+
+      if (variantEl) {
+        if (engId === 'clock') {
+          initialConfig.clock_theme = String(variantEl.value);
+          initialConfig.theme = String(variantEl.value);
+        } else if (engId === 'weather') initialConfig.city = String(variantEl.value);
+        else if (engId === 'gifs') initialConfig.folder = String(variantEl.value);
+        else if (engId === 'crypto') initialConfig.coins = String(variantEl.value);
+        else if (engId === 'stock') initialConfig.symbols = String(variantEl.value);
+        else if (engId === 'system_info' || engId === 'sysinfo') initialConfig.theme = String(variantEl.value || '0');
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = t('creating_btn', 'Creating...');
+
+      try {
+        await API.post('/api/instances', {
+          instance_id: instId,
+          engine_id: targetEngineId,
+          config: initialConfig
+        });
+
+        if (rotCheck.checked) {
+          const currentRotation = await API.get('/api/rotation').catch(() => []);
+          const dur = parseInt(overlay.querySelector('#modal-input-duration').value) || 30;
+          const fighter = overlay.querySelector('#modal-check-fighter').checked;
+          const newEntries = Array.isArray(currentRotation) ? currentRotation.slice() : [];
+          newEntries.push({ instance_id: instId, duration_sec: dur, fighter_overlay: fighter });
+          await API.post('/api/rotation', newEntries);
+        }
+
+        window.showToast(`Screen '${screenTitle || instId}' created successfully!`, 'success');
+        overlay.remove();
+        await renderDynamicDisplay(instId);
+      } catch (err) {
+        console.error('Failed to create instance:', err);
+        window.showToast(`Error: ${err.message || 'Creation failed'}`, 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerText = t('modal_create_btn', '🚀 Create & Add Screen');
+      }
+    };
+  }
+
+  renderModalContent();
+  document.body.appendChild(overlay);
+}
+
+// 1. Render Rotation Playlist Panel
+function renderRotationPanel(container, insertionPoint, rotationList, instancesList, enginesMap, descriptors) {
+  let entries = Array.isArray(rotationList) ? rotationList.slice() : [];
+
+  const nameFor = (instId) => {
+    const inst = instancesList.find(i => i.instance_id === instId);
+    if (!inst) return instId;
+    const eng = enginesMap[inst.engine_id];
+    const info = resolveScreenInfo(inst, eng);
+    return info.full;
+  };
+
+  const isCountBased = (instId) => {
+    const inst = instancesList.find(i => i.instance_id === instId);
+    return inst && inst.engine_id === 'gifs';
+  };
+
+  const card = document.createElement('div');
+  card.id = 'rotation-playlist-card';
+  card.className = 'card glass shadow';
+  card.style = 'margin: 1rem 0 2rem 0; box-sizing: border-box; max-width: 100%;';
+
+  card.innerHTML = `
+    <div class="card-header-badge" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+      <h3 style="margin: 0; font-size: 1.25rem;" data-i18n="rotation_loop_title">🔁 ${t('rotation_loop_title', 'Screen Rotation Loop (Matrix Playlist)')}</h3>
+      <span class="badge badge-accent" data-i18n="rotation_loop_badge">${t('rotation_loop_badge', 'Auto-Cycling')}</span>
+    </div>
+    <p class="text-muted" style="margin: 0 0 1.25rem 0; font-size: 0.88rem;" data-i18n="rotation_loop_desc">
+      ${t('rotation_loop_desc', 'This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.')}
+    </p>
+  `;
+
+  const list = document.createElement('div');
+  list.className = 'rotation-list';
+  card.appendChild(list);
+
+  function renderRows() {
+    list.innerHTML = '';
+    entries.forEach((entry, idx) => {
+      const row = document.createElement('div');
+      row.className = 'rotation-row';
+      row.id = `rotation-row-${entry.instance_id}`;
+
+      const header = document.createElement('div');
+      header.className = 'rotation-row-header';
+
+      const badge = document.createElement('span');
+      badge.className = 'rotation-order-badge';
+      badge.innerText = `#${idx + 1}`;
+      header.appendChild(badge);
+
+      const label = document.createElement('span');
+      label.className = 'rotation-title';
+      label.id = `rot-title-${entry.instance_id}`;
+      label.innerText = nameFor(entry.instance_id);
+      header.appendChild(label);
+
+      row.appendChild(header);
+
+      const settingsBar = document.createElement('div');
+      settingsBar.className = 'rotation-settings-bar';
+
+      const countBased = isCountBased(entry.instance_id);
+
+      const durGroup = document.createElement('div');
+      durGroup.className = 'rotation-dur-group';
+      durGroup.title = countBased ? t('dur_tooltip_gifs', 'Number of GIFs to play before rotating') : t('dur_tooltip_sec', 'Duration in seconds');
+
+      const durLbl = document.createElement('span');
+      durLbl.style = "font-size: 0.8rem; color: var(--text-secondary);";
+      durLbl.innerText = countBased ? 'Count:' : 'Duration:';
+      durGroup.appendChild(durLbl);
+
+      const dur = document.createElement('input');
+      dur.type = 'number';
+      dur.className = 'input rotation-dur-input';
+      dur.min = '1';
+      dur.value = entry.duration_sec;
+      dur.onchange = () => { entry.duration_sec = parseInt(dur.value) || 1; };
+      durGroup.appendChild(dur);
+
+      const unit = document.createElement('span');
+      unit.style = "font-size: 0.8rem; color: var(--text-muted);";
+      unit.innerText = countBased ? 'GIFs' : 'sec';
+      durGroup.appendChild(unit);
+      settingsBar.appendChild(durGroup);
+
+      const fightLbl = document.createElement('label');
+      fightLbl.className = 'rotation-fighter-lbl';
+      fightLbl.title = t('fighter_tooltip', 'Show Street Fighter battle animation overlay on this screen');
+      const fightCb = document.createElement('input');
+      fightCb.type = 'checkbox';
+      fightCb.checked = entry.fighter_overlay !== false;
+      fightCb.onchange = () => { entry.fighter_overlay = fightCb.checked; };
+      fightLbl.appendChild(fightCb);
+      const fightTxt = document.createElement('span');
+      fightTxt.innerText = `🥊 ${t('fighter_title', 'Overlay')}`;
+      fightLbl.appendChild(fightTxt);
+      settingsBar.appendChild(fightLbl);
+
+      // Direct settings button to jump to the instance tab
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn btn-icon';
+      editBtn.style = "background: rgba(99, 102, 241, 0.2); color: #818cf8; border-color: rgba(99, 102, 241, 0.4); font-weight: 600;";
+      editBtn.title = t('jump_to_settings', 'Jump to this screen settings');
+      editBtn.innerText = t('jump_to_settings', '⚙️ Settings');
+      editBtn.onclick = () => window.switchToScreenTab(entry.instance_id);
+      settingsBar.appendChild(editBtn);
+
+      const actions = document.createElement('div');
+      actions.className = 'rotation-actions';
+
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'btn btn-icon';
+      up.title = t('move_up_title', 'Move Up');
+      up.innerText = '▲';
+      up.disabled = idx === 0;
+      up.onclick = () => { entries.splice(idx - 1, 0, entries.splice(idx, 1)[0]); renderRows(); };
+      actions.appendChild(up);
+
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'btn btn-icon';
+      down.title = t('move_down_title', 'Move Down');
+      down.innerText = '▼';
+      down.disabled = idx === entries.length - 1;
+      down.onclick = () => { entries.splice(idx + 1, 0, entries.splice(idx, 1)[0]); renderRows(); };
+      actions.appendChild(down);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn-icon btn-danger';
+      del.title = t('remove_from_loop_title', 'Remove from rotation loop');
+      del.innerText = '🗑️';
+      del.onclick = () => { entries.splice(idx, 1); renderRows(); };
+      actions.appendChild(del);
+
+      settingsBar.appendChild(actions);
+      row.appendChild(settingsBar);
+      list.appendChild(row);
+    });
+
+    if (entries.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-muted';
+      empty.style.padding = '0.75rem 0';
+      empty.setAttribute('data-i18n', 'rotation_empty');
+      empty.innerText = t('rotation_empty', 'No screens in rotation. Pick an engine above or below to add one.');
+      list.appendChild(empty);
+    }
+  }
+
+  // Quick Add Row with Optgroups
+  const addCard = document.createElement('div');
+  addCard.style = "margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--glass-border);";
+
+  const addRow = document.createElement('div');
+  addRow.style = "display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;";
+
+  const sel = document.createElement('select');
+  sel.className = 'input';
+  sel.style = "flex: 1; min-width: 260px; font-weight: 500;";
+
+  // Group 1: Configured Screens
+  if (instancesList.length > 0) {
+    const grpConfigured = document.createElement('optgroup');
+    grpConfigured.label = t('optgroup_configured', '📁 Configured Screens');
+    instancesList.forEach(inst => {
+      const eng = enginesMap[inst.engine_id];
+      const info = resolveScreenInfo(inst, eng);
+      const opt = document.createElement('option');
+      opt.value = `inst:${inst.instance_id}`;
+      opt.innerText = info.full;
+      grpConfigured.appendChild(opt);
+    });
+    sel.appendChild(grpConfigured);
+  }
+
+  // Group 2: Engine Library
+  const grpLibrary = document.createElement('optgroup');
+  grpLibrary.label = t('optgroup_library', '🌟 Engine Library (Auto-Create & Add)');
+  descriptors.forEach(d => {
+    const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
+    const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+    const opt = document.createElement('option');
+    opt.value = `new:${d.metadata.id}`;
+    opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
+    grpLibrary.appendChild(opt);
+  });
+  sel.appendChild(grpLibrary);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-primary';
+  addBtn.style = "padding: 0.75rem 1.25rem; font-weight: 600; white-space: nowrap;";
+  addBtn.innerText = `➕ ${t('add_to_rotation_btn', 'Add to Loop')}`;
+  addBtn.onclick = () => {
+    const val = sel.value;
+    if (!val) return;
+    if (val.startsWith('inst:')) {
+      const instId = val.replace('inst:', '');
+      entries.push({ instance_id: instId, duration_sec: 30, fighter_overlay: true });
+      renderRows();
+    } else if (val.startsWith('new:')) {
+      const engId = val.replace('new:', '');
+      showAddScreenModal(engId, descriptors, instancesList, true);
+    }
+  };
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.style = "margin-top: 1.25rem; width: 100%; padding: 0.85rem; font-size: 1rem; font-weight: 700; box-shadow: 0 0 15px var(--accent-glow);";
+  saveBtn.setAttribute('data-i18n', 'rotation_save_btn');
+  saveBtn.innerText = `💾 ${t('rotation_save_btn', 'Save Rotation Playlist')}`;
+  saveBtn.onclick = async () => {
+    const payload = entries.map(e => ({
+      instance_id: e.instance_id,
+      duration_sec: parseInt(e.duration_sec) || 1,
+      fighter_overlay: e.fighter_overlay !== false,
+    }));
+    try {
+      await API.post('/api/rotation', payload);
+      window.showToast('Rotation playlist saved successfully!', 'success');
+    } catch (e) {
+      window.showToast('Failed to save rotation playlist', 'warning');
+    }
+  };
+
+  addRow.appendChild(sel);
+  addRow.appendChild(addBtn);
+  addCard.appendChild(addRow);
+  card.appendChild(addCard);
+  card.appendChild(saveBtn);
+
+  renderRows();
+  container.insertBefore(card, insertionPoint);
+}
+
+// 2. Render Visual Engine Catalog (Library) on Dashboard Hub
+function renderEngineCatalog(descriptors, instancesList, enginesMap) {
+  const dashboardContainer = document.getElementById('dashboard-catalog-container');
+  if (!dashboardContainer) return;
+  dashboardContainer.innerHTML = '';
+
+  const catalogWrapper = document.createElement('div');
+  catalogWrapper.id = 'engine-catalog-section';
+
+  const catalogHeader = document.createElement('div');
+  catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;";
+  catalogHeader.innerHTML = `
+    <div>
+      <h3 style="margin: 0; font-size: 1.25rem;" data-i18n="engine_catalog_title">📚 ${t('engine_catalog_title', 'Plugin & Engine Library')}</h3>
+      <p class="text-muted" style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="engine_catalog_desc">${t('engine_catalog_desc', 'All display engines available on your device. Click Add to Loop to launch a new screen on your matrix.')}</p>
+    </div>
+    <span class="badge badge-accent">${descriptors.length} ${t('engines_available', 'Engines Available')}</span>
+  `;
+  catalogWrapper.appendChild(catalogHeader);
+
+  const grid = document.createElement('div');
+  grid.className = 'catalog-grid';
+
+  descriptors.forEach(desc => {
+    const eng = desc.metadata || {};
+    const req = desc.requirements || {};
+    const cap = desc.capabilities || {};
+    const icon = eng.icon || '🧩';
+    const name = eng.name || eng.id;
+    const descText = eng.description || 'Display engine plugin for ArcadeMatrix.';
+
+    const card = document.createElement('div');
+    card.className = 'engine-catalog-card';
+
+    let tagsHtml = '';
+    if (req.needsPsram) tagsHtml += `<span class="engine-tag psram">${t('tag_psram', '💾 PSRAM')}</span>`;
+    if (req.needsAudio) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
+    if (req.needsTempSensor) tagsHtml += `<span class="engine-tag sensor">${t('tag_temp', '🌡️ Capteur Temp')}</span>`;
+    if (cap.realtime) tagsHtml += `<span class="engine-tag realtime">${t('tag_realtime', '⚡ Temps Réel')}</span>`;
+
+    const existingCount = instancesList.filter(i => i.engine_id === eng.id).length;
+    const existingBadge = existingCount > 0 ? `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-size: 0.75rem;">${existingCount} ${t('screens_active', 'active screen(s)')}</span>` : '';
+
+    card.innerHTML = `
+      <div>
+        <div class="engine-card-header">
+          <div class="engine-card-icon">${icon}</div>
+          <div>
+            <div class="engine-card-title">${name}</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">${eng.id}</div>
+          </div>
+        </div>
+        <div class="engine-card-desc">${descText}</div>
+        <div class="engine-card-tags">
+          ${tagsHtml}
+          ${existingBadge}
+        </div>
+      </div>
+      <div class="engine-card-actions">
+        <button class="btn btn-primary btn-add-loop" style="font-weight:600;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>
+        <button class="btn btn-config" style="background: rgba(255,255,255,0.08); color: #fff;">⚙️ ${t('configure_btn', 'Configure')}</button>
+      </div>
+    `;
+
+    card.querySelector('.btn-add-loop').onclick = () => {
+      showAddScreenModal(eng.id, descriptors, instancesList, true);
+    };
+
+    card.querySelector('.btn-config').onclick = () => {
+      const existing = instancesList.find(i => i.engine_id === eng.id);
+      if (existing) {
+        window.switchToScreenTab(existing.instance_id);
+      } else {
+        showAddScreenModal(eng.id, descriptors, instancesList, false);
+      }
+    };
+
+    grid.appendChild(card);
+  });
+
+  catalogWrapper.appendChild(grid);
+  dashboardContainer.appendChild(catalogWrapper);
+}
+
+// 3. Main Dynamic Display Renderer
+async function renderDynamicDisplay(targetActiveInstanceId = null) {
   const container = document.getElementById('page-display');
-  const tabsContainer = document.querySelector('#page-display .tabs');
-  
-  if (!container || !tabsContainer) return;
-  
+  if (!container) return;
+
+  let wrapper = document.getElementById('dynamic-display-wrapper');
+  if (!wrapper) {
+    wrapper = document.createElement('div');
+    wrapper.id = 'dynamic-display-wrapper';
+    container.appendChild(wrapper);
+  }
+  wrapper.innerHTML = '';
+
   try {
-    const descriptors = await API.get('/api/engines');
-    const instancesList = await API.get('/api/instances').catch(() => []);
-    
-    // Convert descriptors to map for easy lookup
+    // Parallel fetch of initial descriptors, instances, and rotation loop
+    const [descriptors, instancesList, rotationList] = await Promise.all([
+      fetchCachedEndpoint('/api/engines'),
+      API.get('/api/instances').catch(() => []),
+      API.get('/api/rotation').catch(() => [])
+    ]);
+
     const enginesMap = {};
     descriptors.forEach(desc => {
       enginesMap[desc.metadata.id] = desc;
     });
 
-    // 1. Rotation manager panel (order + duration of instances in the loop).
-    await renderRotationPanel(container, tabsContainer, instancesList, enginesMap);
+    // 1. Render Visual Engine Catalog directly onto the Dashboard (Home Hub)
+    renderEngineCatalog(descriptors, instancesList, enginesMap);
 
-    // 2. Prominent "Add New Engine Screen" Card (Unmistakable & 100% Dynamic)
-    const addCard = document.createElement('div');
-    addCard.className = 'card glass shadow';
-    addCard.style = "margin: 1.5rem 0; border: 1px solid rgba(99, 102, 241, 0.4); background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(30, 41, 59, 0.5) 100%);";
-    
-    addCard.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-        <div style="max-width: 480px;">
-          <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;" data-i18n="add_screen_title">
-            <span>➕</span> ${t('add_screen_title', 'Add New Screen to Display')}
-          </h3>
-          <p class="text-muted" style="margin: 0.35rem 0 0 0; font-size: 0.85rem;" data-i18n="add_screen_desc">
-            ${t('add_screen_desc', 'Select any engine plugin from the library to create a new customizable screen instance on your LED Matrix.')}
+    // 2. Onboarding Guide Banner on Display Page
+    const guideCard = document.createElement('div');
+    guideCard.className = 'card glass shadow';
+    guideCard.style = "margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(30, 41, 59, 0.6) 100%); border: 1px solid rgba(99, 102, 241, 0.3);";
+    guideCard.innerHTML = `
+      <div style="display: flex; gap: 1rem; align-items: center;">
+        <span style="font-size: 2.2rem;">💡</span>
+        <div>
+          <h4 style="margin: 0 0 0.25rem 0; font-size: 1.05rem;" data-i18n="onboarding_guide_title">${t('onboarding_guide_title', 'How Screen Rotation Works')}</h4>
+          <p class="text-muted" style="margin: 0; font-size: 0.85rem; line-height: 1.4;" data-i18n="onboarding_guide_desc">
+            ${t('onboarding_guide_desc', 'Your LED matrix continuously cycles through your configured playlist. Pick any engine from the library, adjust its duration in the loop, and fine-tune its appearance below.')}
           </p>
         </div>
-        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-          <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-            <label style="font-size: 0.8rem; font-weight: 600; color: var(--accent, #6366f1);" data-i18n="choose_engine">${t('choose_engine', 'Choose Engine:')}</label>
-            <select id="engine-select-dropdown" class="input" style="min-width: 220px; font-weight: 500; border-color: var(--accent, #6366f1);">
-              ${descriptors.map(d => {
-                const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
-                const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
-                return `<option value="${d.metadata.id}">${icon} ${name} (${d.metadata.id})</option>`;
-              }).join('')}
-            </select>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 0.25rem;">
-            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted, #888);" data-i18n="instance_name_id">${t('instance_name_id', 'Instance Name (ID):')}</label>
-            <input type="text" id="engine-instance-name-input" class="input" style="width: 140px;" placeholder="e.g. main_screen" value="${descriptors.length ? 'main_' + descriptors[0].metadata.id.toLowerCase().replace('engine', '') : ''}">
-          </div>
-          <div style="display: flex; flex-direction: column; justify-content: flex-end; align-self: flex-end;">
-            <button id="btn-create-engine-instance" class="btn btn-primary" style="padding: 0.5rem 1.1rem; font-weight: 600; white-space: nowrap; box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);" data-i18n="create_screen_btn">
-              ➕ ${t('create_screen_btn', 'Create Screen')}
-            </button>
-          </div>
-        </div>
       </div>
     `;
+    wrapper.appendChild(guideCard);
 
-    container.insertBefore(addCard, tabsContainer);
+    // Anchor point for tabs section
+    const tabsAnchor = document.createElement('div');
+    tabsAnchor.id = 'tabs-anchor-point';
+    wrapper.appendChild(tabsAnchor);
 
-    const engineSelectEl = addCard.querySelector('#engine-select-dropdown');
-    const instanceNameInput = addCard.querySelector('#engine-instance-name-input');
-    const createBtn = addCard.querySelector('#btn-create-engine-instance');
+    // 3. Render Unified Rotation Loop Panel (Passing pre-fetched rotationList)
+    renderRotationPanel(wrapper, tabsAnchor, rotationList, instancesList, enginesMap, descriptors);
 
-    if (engineSelectEl && instanceNameInput) {
-      engineSelectEl.addEventListener('change', () => {
-        const eng = engineSelectEl.value;
-        const cleanName = eng.toLowerCase().replace('engine', '');
-        instanceNameInput.value = `main_${cleanName}`;
-      });
-    }
-
-    if (createBtn) {
-      createBtn.addEventListener('click', () => {
-        const eng = engineSelectEl ? engineSelectEl.value : '';
-        const inst = instanceNameInput && instanceNameInput.value.trim() ? instanceNameInput.value.trim() : `main_${eng.toLowerCase()}`;
-        if (!eng || !inst) return;
-        API.post('/api/instances', { instance_id: inst, engine_id: eng, config: {} }).then(() => {
-          window.showToast(`Screen instance '${inst}' created successfully!`, 'success');
-          localStorage.setItem('activePage', 'display');
-          setTimeout(() => location.reload(), 500);
-        }).catch(err => {
-          window.showToast(`Failed to create instance: ${err.message || err.status}`, 'error');
-        });
-      });
-    }
-
-    // 3. Section Header for Configured Screens Tabs
+    // 4. Section Header for Configured Screens Tabs
     const screensHeader = document.createElement('div');
-    screensHeader.style = "margin: 2rem 0 0.75rem 0; display: flex; align-items: center; justify-content: space-between;";
+    screensHeader.style = "margin: 3rem 0 1rem 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;";
     screensHeader.innerHTML = `
       <div>
-        <h3 style="margin: 0; font-size: 1.15rem;" data-i18n="configured_screens_title">⚙️ ${t('configured_screens_title', 'Configured Screens & Settings')}</h3>
-        <p class="text-muted" style="margin: 0.2rem 0 0 0; font-size: 0.85rem;" data-i18n="configured_screens_desc">${t('configured_screens_desc', 'Click on a screen tab below to customize its visual layout, data feeds, colors, and options.')}</p>
+        <h3 style="margin: 0; font-size: 1.25rem;" data-i18n="configured_screens_title">⚙️ ${t('configured_screens_title', 'Configured Screens & Settings')}</h3>
+        <p class="text-muted" style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="configured_screens_desc">${t('configured_screens_desc', 'Click on a screen tab below to customize its visual layout, data feeds, colors, and options.')}</p>
       </div>
-      <span class="badge" style="font-size: 0.85rem;">${instancesList.length} Active Screen${instancesList.length > 1 ? 's' : ''}</span>
+      <button id="btn-header-add-screen" class="btn btn-primary" style="padding: 0.5rem 1rem; font-weight: 600;">➕ ${t('modal_add_title', 'Add New Screen')}</button>
     `;
-    container.insertBefore(screensHeader, tabsContainer);
+    wrapper.insertBefore(screensHeader, tabsAnchor);
+
+    screensHeader.querySelector('#btn-header-add-screen').onclick = () => {
+      showAddScreenModal('clock', descriptors, instancesList, true);
+    };
 
     if (instancesList.length === 0) {
       const emptyCard = document.createElement('div');
       emptyCard.className = 'card glass shadow';
-      emptyCard.style = "text-align: center; padding: 2rem; color: var(--text-muted, #888);";
+      emptyCard.style = "text-align: center; padding: 2.5rem; color: var(--text-muted, #888); margin-top: 1rem;";
       emptyCard.innerHTML = `
-        <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📺</div>
+        <div style="font-size: 3rem; margin-bottom: 0.75rem;">📺</div>
         <h4 data-i18n="no_screens_title">${t('no_screens_title', 'No display screens configured yet')}</h4>
-        <p style="font-size: 0.9rem;" data-i18n="no_screens_desc">${t('no_screens_desc', 'Choose an engine plugin above and click Create Screen to set up your first display screen.')}</p>
+        <p style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="no_screens_desc">${t('no_screens_desc', 'Choose an engine plugin above and click Add to Loop to launch your first screen.')}</p>
+        <button class="btn btn-primary" id="btn-empty-first-screen">➕ ${t('modal_add_title', 'Add First Screen')}</button>
       `;
-      container.appendChild(emptyCard);
+      wrapper.appendChild(emptyCard);
+      emptyCard.querySelector('#btn-empty-first-screen').onclick = () => showAddScreenModal('clock', descriptors, instancesList, true);
+      return;
     }
 
-    instancesList.forEach(async (instance, index) => {
+    // 5. Tabs Container
+    const tabsContainer = document.createElement('div');
+    tabsContainer.className = 'tabs';
+    wrapper.insertBefore(tabsContainer, tabsAnchor);
+
+    // Determine initially active tab
+    let activeCleanId = '';
+    if (targetActiveInstanceId) {
+      activeCleanId = targetActiveInstanceId.replace(/[^a-zA-Z0-9]/g, '-');
+    } else if (instancesList.length > 0) {
+      activeCleanId = instancesList[0].instance_id.replace(/[^a-zA-Z0-9]/g, '-');
+    }
+
+    // 6. Generate Dynamic Screen Tabs & Panes
+    for (let index = 0; index < instancesList.length; index++) {
+      const instance = instancesList[index];
       const engineDesc = enginesMap[instance.engine_id];
-      if (!engineDesc) return;
+      if (!engineDesc) continue;
       
-      const icon = (engineDesc.metadata && engineDesc.metadata.icon) ? engineDesc.metadata.icon : '🧩';
-      const name = (engineDesc.metadata && engineDesc.metadata.name) ? engineDesc.metadata.name : instance.engine_id;
-      const tabId = `tab-dyn-${instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-')}`;
+      const info = resolveScreenInfo(instance, engineDesc);
+      const cleanId = instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-');
+      const tabId = `tab-dyn-${cleanId}`;
+      const isTabActive = cleanId === activeCleanId;
+      const rotEntry = Array.isArray(rotationList) ? rotationList.find(r => r.instance_id === instance.instance_id) : null;
       
-      // 1. Create Tab Button
+      // Tab Button
       const tabBtn = document.createElement('button');
-      tabBtn.className = 'tab-btn' + (index === 0 ? ' active' : '');
-      tabBtn.innerHTML = `${icon} ${name} <span class="badge" style="font-size: 0.75rem; margin-left: 0.35rem; opacity: 0.8;">${instance.instance_id}</span>`;
+      tabBtn.id = `btn-tab-${cleanId}`;
+      tabBtn.className = 'tab-btn' + (isTabActive ? ' active' : '');
+      tabBtn.setAttribute('data-tab-target', tabId);
+      tabBtn.innerHTML = `${info.icon} <span class="tab-label-text">${info.title}</span>`;
       tabBtn.onclick = (e) => {
         document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
         e.currentTarget.classList.add('active');
@@ -1662,65 +3220,134 @@ async function initDynamicEngines() {
       
       tabsContainer.appendChild(tabBtn);
       
-      // 2. Create Tab Pane
+      // Tab Pane
       const tabPane = document.createElement('div');
       tabPane.id = tabId;
-      tabPane.className = 'tab-pane' + (index === 0 ? ' active' : '');
+      tabPane.className = 'tab-pane' + (isTabActive ? ' active' : '');
       
       const card = document.createElement('div');
       card.className = 'card glass shadow';
-      card.style.marginTop = '2rem';
+      card.style.marginTop = '1.5rem';
       
-      const title = document.createElement('h3');
-      title.innerText = `⚙️ ${engineDesc.metadata.name} - ${instance.instance_id}`;
+      // Header with Title + In-Rotation Badge + Action Buttons
+      const cardHeader = document.createElement('div');
+      cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
       
-      // Delete instance button
-      const delBtn = document.createElement('button');
-      delBtn.className = 'btn btn-danger';
-      delBtn.style = "float: right; padding: 0.2rem 0.5rem; font-size: 0.8rem;";
-      delBtn.innerText = '🗑️ Remove';
-      delBtn.onclick = () => {
-          if (confirm('Are you sure you want to remove this instance?')) {
-              API.delete(`/api/instances?id=${instance.instance_id}`).then(() => {
-                  window.showToast('Instance removed', 'success');
-                  localStorage.setItem('activePage', 'display');
-                  setTimeout(() => location.reload(), 500);
-              });
+      const statusBadgeHtml = rotEntry ? 
+        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
+        `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
+
+      cardHeader.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <span style="font-size: 1.6rem;" id="header-icon-${cleanId}">${info.icon}</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.2rem;" id="header-title-${cleanId}">${info.title}</h3>
+            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace;">${instance.instance_id} (${instance.engine_id})</span>
+          </div>
+          ${statusBadgeHtml}
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          ${rotEntry ? 
+            `<button class="btn btn-rot-toggle" style="background: rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); font-size:0.82rem; padding:0.4rem 0.75rem;">${t('remove_from_rotation_btn', '➖ Remove from Loop')}</button>` : 
+            `<button class="btn btn-rot-toggle btn-primary" style="font-size:0.82rem; padding:0.4rem 0.75rem;">${t('add_to_rotation_btn', '➕ Add to Loop')}</button>`}
+          <button class="btn btn-duplicate" style="background: rgba(255,255,255,0.08); color:#fff; font-size:0.82rem; padding:0.4rem 0.75rem;">📋 ${t('duplicate_btn', 'Duplicate')}</button>
+          <button class="btn btn-danger btn-delete" style="font-size:0.82rem; padding:0.4rem 0.75rem;">🗑️</button>
+        </div>
+      `;
+
+      // Wire rotation toggle
+      const rotToggleBtn = cardHeader.querySelector('.btn-rot-toggle');
+      if (rotToggleBtn) {
+        rotToggleBtn.onclick = async () => {
+          rotToggleBtn.disabled = true;
+          const curRot = await API.get('/api/rotation').catch(() => []);
+          let newRot = Array.isArray(curRot) ? curRot.slice() : [];
+          if (rotEntry) {
+            newRot = newRot.filter(r => r.instance_id !== instance.instance_id);
+            window.showToast(`Removed '${info.title}' from rotation`, 'info');
+          } else {
+            newRot.push({ instance_id: instance.instance_id, duration_sec: 30, fighter_overlay: true });
+            window.showToast(`Added '${info.title}' to rotation`, 'success');
           }
-      };
-      title.appendChild(delBtn);
-      card.appendChild(title);
+          await API.post('/api/rotation', newRot);
+          await renderDynamicDisplay(instance.instance_id);
+        };
+      }
+
+      // Wire duplicate button
+      const dupBtn = cardHeader.querySelector('.btn-duplicate');
+      if (dupBtn) {
+        dupBtn.onclick = async () => {
+          dupBtn.disabled = true;
+          let counter = 2;
+          let newId = `${instance.instance_id}_copy`;
+          while (instancesList.some(i => i.instance_id === newId)) {
+            newId = `${instance.instance_id}_copy${counter++}`;
+          }
+          const clonedCfg = JSON.parse(JSON.stringify(instance.config || {}));
+          clonedCfg.screen_title = `${info.title} (${t('copy_suffix', 'Copy')})`;
+          try {
+            await API.post('/api/instances', {
+              instance_id: newId,
+              engine_id: instance.engine_id,
+              config: clonedCfg
+            });
+            window.showToast(`Duplicated screen to '${newId}'!`, 'success');
+            await renderDynamicDisplay(newId);
+          } catch (e) {
+            window.showToast('Failed to duplicate screen', 'error');
+            dupBtn.disabled = false;
+          }
+        };
+      }
+
+      // Wire delete button
+      const delBtn = cardHeader.querySelector('.btn-delete');
+      if (delBtn) {
+        delBtn.onclick = async () => {
+          if (confirm(`${t('confirm_remove_screen', 'Are you sure you want to remove this screen?')}\n${info.title} (${instance.instance_id})`)) {
+            delBtn.disabled = true;
+            try {
+              await API.delete(`/api/instances/${instance.instance_id}`);
+              const curRot = await API.get('/api/rotation').catch(() => []);
+              if (Array.isArray(curRot) && curRot.some(r => r.instance_id === instance.instance_id)) {
+                const cleanedRot = curRot.filter(r => r.instance_id !== instance.instance_id);
+                await API.post('/api/rotation', cleanedRot);
+              }
+              window.showToast('Screen removed', 'success');
+              await renderDynamicDisplay();
+            } catch (e) {
+              window.showToast('Failed to remove screen', 'error');
+              delBtn.disabled = false;
+            }
+          }
+        };
+      }
+
+      card.appendChild(cardHeader);
       
       const formGrid = document.createElement('div');
       formGrid.className = 'form-grid';
+
+      // 1. Custom Screen Title field at top of form
+      const titleFormGroup = document.createElement('div');
+      titleFormGroup.className = 'form-group';
+      titleFormGroup.style = "grid-column: 1 / -1; margin-bottom: 0.75rem; background: rgba(255,255,255,0.02); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--glass-border);";
+      titleFormGroup.innerHTML = `
+        <label style="font-size: 0.85rem; font-weight: 600; color: var(--accent-primary);" data-i18n="screen_name_label">${t('screen_name_label', 'Screen Title / Label:')}</label>
+        <input type="text" id="cfg-custom-title-${cleanId}" class="input" placeholder="e.g. ${info.title}" value="${(instance.config && instance.config.screen_title) ? instance.config.screen_title : ''}">
+        <small class="text-muted" style="margin-top: 0.35rem; display: block;" data-i18n="screen_name_help">${t('screen_name_help', 'Custom friendly name displayed in tabs and the rotation playlist.')}</small>
+      `;
+      formGrid.appendChild(titleFormGroup);
       
-      const fields = (engineDesc.schema && engineDesc.schema.fields) ? engineDesc.schema.fields : (engineDesc.schema || []);
+      // Robust schema fields extraction
+      const fields = getSchemaFields(engineDesc);
       
-      // Helper function to update visible_when conditional fields
-      const updateVisibility = () => {
-        fields.forEach(f => {
-          if (f.visible_when) {
-            const parts = f.visible_when.split('=');
-            if (parts.length === 2) {
-              const targetId = parts[0].trim();
-              const targetVal = parts[1].trim();
-              const targetEl = document.getElementById(`cfg-dyn-${instance.instance_id}-${targetId}`);
-              const grp = document.getElementById(`group-dyn-${instance.instance_id}-${f.id}`);
-              if (targetEl && grp) {
-                const isMatch = String(targetEl.value).toLowerCase() === String(targetVal).toLowerCase();
-                grp.style.display = isMatch ? 'flex' : 'none';
-              }
-            }
-          }
-        });
-      };
-      
-      // Generate fields from schema
       if (fields && fields.length > 0) {
         for (const field of fields) {
           const formGroup = document.createElement('div');
           formGroup.className = 'form-group';
-          formGroup.id = `group-dyn-${instance.instance_id}-${field.id}`;
+          formGroup.id = `fg-${cleanId}-${field.id}`;
           
           const label = document.createElement('label');
           label.innerText = field.label || field.id;
@@ -1733,9 +3360,10 @@ async function initDynamicEngines() {
           
           let input = null;
           const configMap = instance.config || {};
-          const currentVal = configMap[field.id] !== undefined ? configMap[field.id] : field.default_value;
+          let currentVal = configMap[field.id] !== undefined ? configMap[field.id] : field.default_value;
+          if (currentVal === undefined || currentVal === null) currentVal = '';
 
-          // 1. Timezone or dynamic options
+          // 1. Timezone or Options Endpoint (using cached requests)
           if (field.id === 'timezone' || field.options_endpoint === '/api/timezones') {
               input = document.createElement('select');
               input.className = 'input';
@@ -1744,153 +3372,91 @@ async function initDynamicEngines() {
                   const option = document.createElement('option');
                   option.value = opt.value;
                   option.innerText = opt.label;
-                  if (opt.value === currentVal) option.selected = true;
+                  if (String(opt.value) === String(currentVal)) option.selected = true;
                   input.appendChild(option);
               });
           } else if (field.options_endpoint) {
-             const data = await API.get(field.options_endpoint).catch(() => []);
-             let optList = [];
-             if (Array.isArray(data)) {
-                 optList = data;
-             } else if (data && typeof data === 'object') {
-                 if (Array.isArray(data.playlists)) optList = data.playlists;
-                 else if (Array.isArray(data.options)) optList = data.options;
-                 else if (Array.isArray(data.fonts)) optList = data.fonts;
-                 else {
-                     optList = Object.entries(data).map(([key, val]) => {
-                         if (typeof val === 'object' && val !== null) {
-                             return { value: val.path || key, label: val.name || key };
-                         }
-                         return { value: key, label: key };
-                     });
-                 }
-             }
+             const data = await fetchCachedEndpoint(field.options_endpoint);
+             const normalizedOpts = parseOptions(data);
              if (field.multiple) {
                  input = document.createElement('div');
                  input.className = 'rotation-toggles';
                  input.style = 'display: flex; gap: 0.5rem; flex-wrap: wrap;';
-                 const selectedValues = currentVal ? currentVal.split(',') : [];
-                 optList.forEach(opt => {
-                     const val = (typeof opt === 'object') ? (opt.id !== undefined ? opt.id : opt.value) : opt;
-                     const lbl = (typeof opt === 'object') ? (opt.name || opt.label || val) : opt;
-                     const isChecked = selectedValues.includes(String(val)) || selectedValues.includes(String(val).replace('/gifs/', '')) || (currentVal === 'all') || (currentVal === '');
-                     const l = document.createElement('label');
-                     l.className = 'toggle-btn';
-                     l.innerHTML = `<input type="checkbox" value="${val}" class="multi-cb-${instance.instance_id}-${field.id}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${lbl}</span>`;
-                     input.appendChild(l);
+                 
+                 const selectedValues = currentVal ? String(currentVal).split(',') : [];
+                 
+                 normalizedOpts.forEach(opt => {
+                     const isChecked = selectedValues.includes(opt.value);
+                     const lbl = document.createElement('label');
+                     lbl.className = 'toggle-btn';
+                     lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instance.instance_id}-${field.id}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${formatOptLabel(field.id, opt.value, opt.label)}</span>`;
+                     input.appendChild(lbl);
                  });
              } else {
                  input = document.createElement('select');
                  input.className = 'input';
                  input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-                 optList.forEach(opt => {
+                 normalizedOpts.forEach(opt => {
                      const option = document.createElement('option');
-                     option.value = (typeof opt === 'object') ? (opt.id !== undefined ? opt.id : opt.value) : opt;
-                     option.innerText = (typeof opt === 'object') ? (opt.name || opt.label || option.value) : opt;
-                     if (String(option.value) === String(currentVal)) option.selected = true;
+                     option.value = opt.value;
+                     option.innerText = formatOptLabel(field.id, opt.value, opt.label);
+                     if (String(opt.value) === String(currentVal)) option.selected = true;
                      input.appendChild(option);
                  });
              }
-          } else if (field.options && (typeof field.options === 'string' || Array.isArray(field.options))) {
+          }
+          // 2. Options / Enum Field (from field.options)
+          else if (isOptionsField(field) || (field.options && field.options.length > 0)) {
+              const opts = parseOptions(field.options);
               input = document.createElement('select');
               input.className = 'input';
               input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-              const optsArray = (typeof field.options === 'string') ? field.options.split(',') : field.options;
-              const formatOptLabel = (val, raw) => {
-                const lang = localStorage.getItem('lang') || 'en';
-                const dict = translations[lang] || translations.en;
-                const v = String(val).trim();
-                const lower = v.toLowerCase();
-                if (field.id === 'direction' || ['rtl', 'ltr', 'ttb', 'btt', 'static', 'left', 'right', 'up', 'down', 'none'].includes(lower)) {
-                  if (lower === 'rtl' || lower === 'left') return dict.dir_rtl || "Right to Left (RTL)";
-                  if (lower === 'ltr' || lower === 'right') return dict.dir_ltr || "Left to Right (LTR)";
-                  if (lower === 'ttb' || lower === 'down') return dict.dir_ttb || "Top to Bottom (TTB)";
-                  if (lower === 'btt' || lower === 'up') return dict.dir_btt || "Bottom to Top (BTT)";
-                  if (lower === 'static' || lower === 'none') return dict.dir_static || "Static (No Scroll)";
-                }
-                if (field.id === 'units' || field.id === 'unit') {
-                  if (lower === 'c' || lower === 'metric') return "Celsius (°C)";
-                  if (lower === 'f' || lower === 'imperial') return "Fahrenheit (°F)";
-                }
-                if (field.id === 'lang') {
-                  if (lower === 'fr') return "Français (French)";
-                  if (lower === 'en') return "English";
-                  if (lower === 'es') return "Español (Spanish)";
-                  if (lower === 'de') return "Deutsch (German)";
-                  if (lower === 'it') return "Italiano (Italian)";
-                }
-                if (field.id === 'chart_timeframe') {
-                  if (lower === 'hourly') return "Hourly (1h)";
-                  if (lower === 'daily') return "Daily (24h)";
-                  if (lower === 'weekly') return "Weekly (7d)";
-                  if (lower === 'monthly') return "Monthly (30d)";
-                }
-                if (field.id === 'currency') {
-                  if (lower === 'usd') return "US Dollar ($ USD)";
-                  if (lower === 'eur') return "Euro (€ EUR)";
-                  if (lower === 'gbp') return "British Pound (£ GBP)";
-                  if (lower === 'jpy') return "Japanese Yen (¥ JPY)";
-                }
-                if (field.id === 'style') {
-                  if (lower === 'spectrum') return "Spectrum Bars";
-                  if (lower === 'waveform') return "Waveform Oscilloscope";
-                  if (lower === 'radial') return "Radial Circular";
-                  if (lower === 'neon_fire') return "Neon Fire";
-                }
-                if (field.id === 'date_format') {
-                  if (v === '%d/%m/%Y') return "DD/MM/YYYY (24/08/2026)";
-                  if (v === '%Y-%m-%d') return "YYYY-MM-DD (2026-08-24)";
-                  if (v === '%d %b %Y') return "DD Mon YYYY (24 Aug 2026)";
-                  if (v === '%A %d %B') return "Weekday DD Month (Monday 24 August)";
-                }
-                if (field.id === 'clock_format') {
-                  if (v === '%H:%M:%S') return "24h with Seconds (HH:MM:SS)";
-                  if (v === '%H:%M') return "24h (HH:MM)";
-                  if (v === '%I:%M:%S %p') return "12h with Seconds (HH:MM:SS AM/PM)";
-                  if (v === '%I:%M %p') return "12h (HH:MM AM/PM)";
-                }
-                return raw || val;
-              };
-              optsArray.forEach(opt => {
-                  const option = document.createElement('option');
-                  if (typeof opt === 'object') {
-                      option.value = opt.value;
-                      option.innerText = formatOptLabel(opt.value, opt.label);
-                  } else {
-                      const clean = String(opt).trim();
-                      option.value = clean;
-                      option.innerText = formatOptLabel(clean, clean);
-                  }
-                  if (String(option.value) === String(currentVal)) option.selected = true;
-                  input.appendChild(option);
+              
+              opts.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt.value;
+                option.innerText = formatOptLabel(field.id, opt.value, opt.label);
+                if (String(opt.value) === String(currentVal)) option.selected = true;
+                input.appendChild(option);
               });
-          } else if (field.field_type === 0 || field.field_type === 'Boolean') {
+          } 
+          // 3. Boolean
+          else if (isBooleanField(field)) { 
              input = document.createElement('select');
              input.className = 'input';
              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
              const o1 = document.createElement('option'); o1.value = 'true'; o1.innerText = 'Enabled';
              const o2 = document.createElement('option'); o2.value = 'false'; o2.innerText = 'Disabled';
-             if (String(currentVal) === 'true') o1.selected = true; else o2.selected = true;
+             if (String(currentVal).toLowerCase() === 'true' || String(currentVal) === '1') o1.selected = true; else o2.selected = true;
              input.appendChild(o1); input.appendChild(o2);
-          } else if (field.field_type === 5 || field.field_type === 'Color' || (field.id && field.id.includes('color'))) {
+          } 
+          // 4. Color
+          else if (isColorField(field)) {
              input = document.createElement('input');
              input.type = 'color';
              input.className = 'input';
              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-             input.value = currentVal || '#ffffff';
-          } else {
+             let col = String(currentVal).trim();
+             if (col.startsWith('0x') || col.startsWith('0X')) {
+               col = '#' + col.slice(2).padStart(6, '0');
+             } else if (!col.startsWith('#') && col.length === 6) {
+               col = '#' + col;
+             }
+             input.value = col || '#ffffff';
+          } 
+          // 5. Default Inputs (Text/Number)
+          else { 
              input = document.createElement('input');
-             input.type = (field.field_type === 1 || field.field_type === 2 || field.field_type === 'Integer' || field.field_type === 'Float') ? 'number' : 'text';
+             input.type = isNumberField(field) ? 'number' : 'text';
              input.className = 'input';
              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-             if (field.min_val !== null && field.min_val !== undefined) input.min = field.min_val;
-             if (field.max_val !== null && field.max_val !== undefined) input.max = field.max_val;
-             input.value = (currentVal !== undefined && currentVal !== null) ? currentVal : '';
+             if (field.min_val !== undefined && field.min_val !== null && field.min_val !== '') input.min = field.min_val;
+             if (field.max_val !== undefined && field.max_val !== null && field.max_val !== '') input.max = field.max_val;
+             if (field.step !== undefined && field.step !== null && field.step !== '') input.step = field.step;
+             input.value = currentVal;
           }
           
           if (input) {
-             input.addEventListener('change', updateVisibility);
-             input.addEventListener('input', updateVisibility);
              formGroup.appendChild(input);
           }
           
@@ -1898,22 +3464,62 @@ async function initDynamicEngines() {
         }
       } else {
          const noSettings = document.createElement('p');
-         noSettings.innerText = 'No configuration available for this engine.';
+         noSettings.setAttribute('data-i18n', 'no_config_available');
+         noSettings.innerText = t('no_config_available', 'No configuration available for this engine.');
          formGrid.appendChild(noSettings);
       }
       
       card.appendChild(formGrid);
+
+      // Reactivity: Handle `visible_when`
+      function updateVisibility() {
+        const curVals = {};
+        fields.forEach(f => {
+          const el = document.getElementById(`cfg-dyn-${instance.instance_id}-${f.id}`);
+          if (el) curVals[f.id] = el.value;
+        });
+        fields.forEach(f => {
+          if (f.visible_when && f.visible_when.trim().length > 0) {
+            const fg = document.getElementById(`fg-${cleanId}-${f.id}`);
+            if (fg) {
+              const parts = f.visible_when.split('=');
+              if (parts.length === 2) {
+                const targetKey = parts[0].trim();
+                const expected = parts[1].trim();
+                const actual = String(curVals[targetKey] !== undefined ? curVals[targetKey] : '');
+                fg.style.display = (actual === expected) ? 'block' : 'none';
+              }
+            }
+          }
+        });
+      }
+      formGrid.addEventListener('input', updateVisibility);
+      formGrid.addEventListener('change', updateVisibility);
+      updateVisibility();
       
+      // Save Action Bar
+      const actionBar = document.createElement('div');
+      actionBar.style = "display: flex; gap: 0.75rem; margin-top: 1.5rem; flex-wrap: wrap;";
+
       const saveBtn = document.createElement('button');
       saveBtn.className = 'btn btn-primary';
-      saveBtn.style = 'margin-top: 1rem; width: 100%;';
-      saveBtn.innerText = 'Save Configuration';
-      saveBtn.onclick = async () => {
+      saveBtn.style = 'flex: 1; min-width: 200px; font-size: 1rem; font-weight: 700; padding: 0.85rem;';
+      saveBtn.setAttribute('data-i18n', 'save_screen_config_btn');
+      saveBtn.innerText = t('save_screen_config_btn', '💾 Save Screen Configuration');
+
+      async function saveConfig() {
+         const customTitleInput = document.getElementById(`cfg-custom-title-${cleanId}`);
          const payload = {
              instance_id: instance.instance_id,
              engine_id: instance.engine_id,
              config: instance.config || {}
          };
+
+         if (customTitleInput && customTitleInput.value.trim()) {
+           payload.config.screen_title = customTitleInput.value.trim();
+         } else {
+           delete payload.config.screen_title;
+         }
          
          if (fields && fields.length > 0) {
              fields.forEach(field => {
@@ -1932,247 +3538,94 @@ async function initDynamicEngines() {
 
          try {
              await API.post(`/api/instances`, payload);
-             window.showToast('Engine configuration saved!', 'success');
+             instance.config = payload.config;
+             const updatedInfo = resolveScreenInfo(instance, engineDesc);
+             
+             // Update tab button label, card header, and playlist row in-place
+             const tabBtnEl = document.getElementById(`btn-tab-${cleanId}`);
+             if (tabBtnEl) {
+               tabBtnEl.innerHTML = `${updatedInfo.icon} <span class="tab-label-text">${updatedInfo.title}</span>`;
+             }
+             const headerTitleEl = document.getElementById(`header-title-${cleanId}`);
+             if (headerTitleEl) headerTitleEl.innerText = updatedInfo.title;
+             const headerIconEl = document.getElementById(`header-icon-${cleanId}`);
+             if (headerIconEl) headerIconEl.innerText = updatedInfo.icon;
+             
+             const rotTitleEl = document.getElementById(`rot-title-${instance.instance_id}`);
+             if (rotTitleEl) {
+               rotTitleEl.innerText = updatedInfo.full;
+             }
+             
+             window.showToast(t('config_saved_live', 'Configuration saved & applied live!'), 'success');
+             return true;
          } catch(e) {
              console.error('API Error:', e);
-             window.showToast('Failed to save engine config', 'warning');
+             window.showToast('Failed to save screen config: ' + (e.message || ''), 'warning');
+             return false;
          }
+      }
+
+      saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        saveBtn.innerText = t('saving_btn', 'Saving...');
+        await saveConfig();
+        saveBtn.disabled = false;
+        saveBtn.innerText = t('save_screen_config_btn', '💾 Save Screen Configuration');
       };
-      card.appendChild(saveBtn);
+
+      actionBar.appendChild(saveBtn);
+      card.appendChild(actionBar);
       
       tabPane.appendChild(card);
-      container.appendChild(tabPane);
-      updateVisibility();
-    });
+      wrapper.appendChild(tabPane);
+    }
     
   } catch (e) {
     console.error('Failed to load dynamic engines:', e);
   }
 }
 
-async function renderRotationPanel(container, tabsContainer, instancesList, enginesMap) {
-  const rotation = await API.get('/api/rotation').catch(() => []);
-  let entries = Array.isArray(rotation) ? rotation.slice() : [];
-
-  const nameFor = (instId) => {
-    const inst = instancesList.find(i => i.instance_id === instId);
-    if (!inst) return instId;
-    const eng = enginesMap[inst.engine_id];
-    return `${eng ? eng.metadata.name : inst.engine_id} (${instId})`;
-  };
-
-  const engineIdFor = (instId) => {
-    const inst = instancesList.find(i => i.instance_id === instId);
-    return inst ? inst.engine_id : null;
-  };
-  const isCountBased = (instId) => engineIdFor(instId) === 'gifs';
-
-  const card = document.createElement('div');
-  card.className = 'card glass shadow';
-  card.style = 'margin: 1rem 0; box-sizing: border-box; max-width: 100%; overflow: hidden;';
-
-  card.innerHTML = `
-    <div class="card-header-badge" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-      <h3 style="margin: 0;" data-i18n="rotation_loop_title">🔁 ${t('rotation_loop_title', 'Screen Rotation Loop (Matrix Playlist)')}</h3>
-      <span class="badge badge-accent" data-i18n="rotation_loop_badge">${t('rotation_loop_badge', 'Auto-Cycling')}</span>
-    </div>
-    <p class="text-muted" style="margin: 0 0 1rem 0; font-size: 0.85rem;" data-i18n="rotation_loop_desc">
-      ${t('rotation_loop_desc', 'This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.')}
-    </p>
-  `;
-
-  const list = document.createElement('div');
-  list.className = 'rotation-list';
-  card.appendChild(list);
-
-  function render() {
-    list.innerHTML = '';
-    entries.forEach((entry, idx) => {
-      const row = document.createElement('div');
-      row.className = 'rotation-row';
-
-      const header = document.createElement('div');
-      header.className = 'rotation-row-header';
-
-      const titleGroup = document.createElement('div');
-      titleGroup.className = 'rotation-title-group';
-
-      const badge = document.createElement('span');
-      badge.className = 'rotation-order-badge';
-      badge.innerText = `#${idx + 1}`;
-      titleGroup.appendChild(badge);
-
-      const label = document.createElement('span');
-      label.className = 'rotation-title';
-      label.title = nameFor(entry.instance_id);
-      label.innerText = nameFor(entry.instance_id);
-      titleGroup.appendChild(label);
-
-      header.appendChild(titleGroup);
-
-      const actions = document.createElement('div');
-      actions.className = 'rotation-actions';
-
-      const up = document.createElement('button');
-      up.type = 'button';
-      up.className = 'btn btn-icon';
-      up.title = 'Move Up';
-      up.innerText = '▲';
-      up.disabled = idx === 0;
-      up.onclick = () => { entries.splice(idx - 1, 0, entries.splice(idx, 1)[0]); render(); };
-      actions.appendChild(up);
-
-      const down = document.createElement('button');
-      down.type = 'button';
-      down.className = 'btn btn-icon';
-      down.title = 'Move Down';
-      down.innerText = '▼';
-      down.disabled = idx === entries.length - 1;
-      down.onclick = () => { entries.splice(idx + 1, 0, entries.splice(idx, 1)[0]); render(); };
-      actions.appendChild(down);
-
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'btn btn-icon btn-danger';
-      del.title = 'Remove from rotation';
-      del.innerText = '🗑️';
-      del.onclick = () => { entries.splice(idx, 1); render(); };
-      actions.appendChild(del);
-
-      header.appendChild(actions);
-      row.appendChild(header);
-
-      const settingsBar = document.createElement('div');
-      settingsBar.className = 'rotation-settings-bar';
-
-      const countBased = isCountBased(entry.instance_id);
-
-      const durGroup = document.createElement('div');
-      durGroup.className = 'rotation-dur-group';
-      durGroup.title = countBased ? 'Number of GIFs to play before rotating' : 'Duration in seconds';
-
-      const durLbl = document.createElement('span');
-      durLbl.className = 'rotation-dur-label';
-      durLbl.innerText = countBased ? 'Count:' : 'Duration:';
-      durGroup.appendChild(durLbl);
-
-      const dur = document.createElement('input');
-      dur.type = 'number';
-      dur.className = 'input rotation-dur-input';
-      dur.min = '1';
-      dur.value = entry.duration_sec;
-      dur.onchange = () => { entry.duration_sec = parseInt(dur.value) || 1; };
-      durGroup.appendChild(dur);
-
-      const unit = document.createElement('span');
-      unit.className = 'rotation-unit';
-      unit.innerText = countBased ? 'GIFs' : 'sec';
-      durGroup.appendChild(unit);
-
-      settingsBar.appendChild(durGroup);
-
-      const fightLbl = document.createElement('label');
-      fightLbl.className = 'rotation-fighter-lbl';
-      fightLbl.title = 'Show the Fighter overlay on this screen';
-      const fightCb = document.createElement('input');
-      fightCb.type = 'checkbox';
-      fightCb.checked = entry.fighter_overlay !== false;
-      fightCb.onchange = () => { entry.fighter_overlay = fightCb.checked; };
-      fightLbl.appendChild(fightCb);
-      const fightTxt = document.createElement('span');
-      fightTxt.innerText = '🥊 Overlay';
-      fightLbl.appendChild(fightTxt);
-      settingsBar.appendChild(fightLbl);
-
-      row.appendChild(settingsBar);
-      list.appendChild(row);
-    });
-    if (entries.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'text-muted';
-      empty.style.padding = '0.5rem 0';
-      empty.setAttribute('data-i18n', 'rotation_empty');
-      empty.innerText = t('rotation_empty', 'No instances in rotation. Add one below.');
-      list.appendChild(empty);
-    }
-  }
-
-  const addCard = document.createElement('div');
-  addCard.className = 'rotation-add-card';
-
-  const addTitle = document.createElement('span');
-  addTitle.className = 'rotation-add-title';
-  addTitle.setAttribute('data-i18n', 'rotation_add_title');
-  addTitle.innerText = `➕ ${t('rotation_add_title', 'Add Active Screen to Rotation Loop:')}`;
-  addCard.appendChild(addTitle);
-
-  const addRow = document.createElement('div');
-  addRow.className = 'rotation-add-row';
-
-  const sel = document.createElement('select');
-  sel.className = 'rotation-select';
-  instancesList.forEach(inst => {
-    const opt = document.createElement('option');
-    opt.value = inst.instance_id;
-    opt.innerText = nameFor(inst.instance_id);
-    sel.appendChild(opt);
-  });
-
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button';
-  addBtn.className = 'btn btn-primary rotation-add-btn';
-  addBtn.innerText = 'Add';
-  addBtn.onclick = () => {
-    if (!sel.value) return;
-    entries.push({ instance_id: sel.value, duration_sec: 30, fighter_overlay: true });
-    render();
-  };
-
-  addRow.appendChild(sel);
-  addRow.appendChild(addBtn);
-  addCard.appendChild(addRow);
-  card.appendChild(addCard);
-
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.className = 'btn btn-primary rotation-save-btn';
-  saveBtn.setAttribute('data-i18n', 'rotation_save_btn');
-  saveBtn.innerText = `💾 ${t('rotation_save_btn', 'Save Rotation')}`;
-  saveBtn.onclick = async () => {
-    const payload = entries.map(e => ({
-      instance_id: e.instance_id,
-      duration_sec: parseInt(e.duration_sec) || 1,
-      fighter_overlay: e.fighter_overlay !== false,
-    }));
-    try {
-      await API.post('/api/rotation', payload);
-      window.showToast('Rotation saved!', 'success');
-    } catch (e) {
-      window.showToast('Failed to save rotation', 'warning');
-    }
-  };
-  card.appendChild(saveBtn);
-
-  render();
-  container.insertBefore(card, tabsContainer);
+function initDynamicEngines() {
+  return renderDynamicDisplay();
 }
+
 
 // --- js/app.js ---
 
 let selectedOtaFile = null;
 
+window.switchTab = function(tabId) {
+  if (window.event && window.event.currentTarget) {
+    document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    window.event.currentTarget.classList.add('active');
+  }
+
+  // Update panes
+  document.querySelectorAll('#page-display .tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  const pane = document.getElementById('tab-' + tabId);
+  if (pane) pane.classList.add('active');
+};
+window.switchDisplayTab = window.switchTab;
+
 window.switchSystemTab = function(tabId) {
   // Update buttons
-  document.querySelectorAll('#page-system .tab-btn').forEach(btn => {
-    btn.classList.remove('active');
-  });
-  event.currentTarget.classList.add('active');
+  if (window.event && window.event.currentTarget) {
+    document.querySelectorAll('#page-system .tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    window.event.currentTarget.classList.add('active');
+  }
 
   // Update panes
   document.querySelectorAll('#page-system .tab-pane').forEach(pane => {
     pane.classList.remove('active');
   });
-  document.getElementById('sys-tab-' + tabId).classList.add('active');
+  const pane = document.getElementById('sys-tab-' + tabId);
+  if (pane) pane.classList.add('active');
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2181,31 +3634,34 @@ document.addEventListener('DOMContentLoaded', () => {
   initOta();
   loadVersion();
   initCustomMarquee();
+  initFighterOverlay();
   initNetworkSettings();
   initSettings();
   initDynamicEngines();
-  initHardwareCapabilities();
 });
 
-function switchToPage(pageName) {
+function switchPage(pageName) {
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
   const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
-  if (navItem) navItem.classList.add('active');
   const pageEl = document.getElementById(`page-${pageName}`);
+  if (navItem) navItem.classList.add('active');
   if (pageEl) pageEl.classList.add('active');
   localStorage.setItem('activePage', pageName);
 }
+window.switchPage = switchPage;
 
 function initNavigation() {
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
-      switchToPage(item.getAttribute('data-page'));
+      const page = item.getAttribute('data-page');
+      switchPage(page);
     });
   });
 
   const savedPage = localStorage.getItem('activePage') || 'dashboard';
-  switchToPage(savedPage);
+  switchPage(savedPage);
 
   const langSelect = document.getElementById('lang-selector');
   if (langSelect) {
@@ -2237,14 +3693,14 @@ function initNavigation() {
 
 async function loadVersion() {
   try {
-    const data = await API.get('/api/version');
+    const data = await API.get('/api/version').catch(() => API.get('/api/stats')).catch(() => ({version: '3.0.0', arch: 'aarch64'}));
     const versionTag = document.getElementById('version-tag');
     const otaVer = document.getElementById('ota-current-version');
     const otaArch = document.getElementById('ota-current-arch');
 
     if (versionTag) versionTag.textContent = `v${data.version}`;
     if (otaVer) otaVer.textContent = `v${data.version}`;
-    if (otaArch) otaArch.textContent = (data.arch || 'ESP32').toUpperCase();
+    if (otaArch) otaArch.textContent = data.arch || 'aarch64';
   } catch (e) {
     console.error('Failed to load version:', e);
   }
@@ -2281,21 +3737,6 @@ function initDashboard() {
     });
   }
 
-  const btnRestartApp = document.getElementById('btn-restart-app');
-  if (btnRestartApp) {
-    btnRestartApp.addEventListener('click', async () => {
-      if (confirm('Are you sure you want to soft restart the application? (Hardware config will be reapplied)')) {
-        try {
-          await API.post('/api/system/restart_app');
-          window.showToast('Restarting application...', 'info');
-          setTimeout(() => location.reload(), 2000);
-        } catch (e) {
-          window.showToast('Failed to restart application', 'error');
-        }
-      }
-    });
-  }
-
   const btnShutdown = document.getElementById('btn-shutdown');
   if (btnShutdown) {
     btnShutdown.addEventListener('click', async () => {
@@ -2310,20 +3751,43 @@ function initDashboard() {
     });
   }
 
-  // System Info Polling
-  setInterval(async () => {
+  const btnRestartApp = document.getElementById('btn-restart-app');
+  if (btnRestartApp) {
+    btnRestartApp.addEventListener('click', async () => {
+      if (confirm('Restart the ArcadeMatrix app? The display will go blank for a few seconds.')) {
+        try {
+          await API.post('/api/system/restart');
+          window.showToast('Restarting app...', 'info');
+        } catch (e) {
+          window.showToast('Failed to restart app', 'error');
+        }
+      }
+    });
+  }
+
+  // System Info Polling (10s interval)
+  const pollMetrics = async () => {
     try {
-      const info = await API.get('/api/system_info');
-      const elCpu = document.getElementById('metric-cpu');
-      const elTemp = document.getElementById('metric-temp');
-      const elRam = document.getElementById('metric-ram');
-      const elDisk = document.getElementById('metric-disk');
-      if (elCpu && info.cpu_load !== undefined) elCpu.textContent = `${info.cpu_load.toFixed(1)} %`;
-      if (elTemp && info.temperature_c !== undefined) elTemp.textContent = `${info.temperature_c.toFixed(1)} °C`;
-      if (elRam && info.ram_used_mb !== undefined) elRam.textContent = `${info.ram_used_mb.toFixed(1)} MB`;
-      if (elDisk && info.disk_free_gb !== undefined) elDisk.textContent = `${info.disk_free_gb.toFixed(1)} GB`;
+      const info = await API.get('/api/stats').catch(() => API.get('/api/system_info')).catch(() => null);
+      if (!info) return;
+
+      const cpuEl = document.getElementById('metric-cpu');
+      const tempEl = document.getElementById('metric-temp');
+      const ramEl = document.getElementById('metric-ram');
+      const diskEl = document.getElementById('metric-disk');
+
+      if (cpuEl && info.cpu_load !== undefined) cpuEl.textContent = `${info.cpu_load.toFixed(1)} %`;
+      if (tempEl && info.temperature_c !== undefined) tempEl.textContent = `${info.temperature_c.toFixed(1)} °C`;
+      if (ramEl) {
+        if (info.ram_used_mb !== undefined) ramEl.textContent = `${typeof info.ram_used_mb === 'number' ? info.ram_used_mb.toFixed(1) : info.ram_used_mb} MB`;
+        else if (info.free_heap !== undefined) ramEl.textContent = `${(info.free_heap / 1024).toFixed(0)} KB Free`;
+      }
+      if (diskEl && info.disk_free_gb !== undefined) diskEl.textContent = `${typeof info.disk_free_gb === 'number' ? info.disk_free_gb.toFixed(1) : info.disk_free_gb} GB`;
     } catch {}
-  }, 4000);
+  };
+
+  pollMetrics();
+  setInterval(pollMetrics, 10000);
 }
 
 function initOta() {
@@ -2379,54 +3843,10 @@ function initOta() {
   const onlineSize = document.getElementById('ota-online-size');
   const onlineNotes = document.getElementById('ota-online-notes');
   const autoProgress = document.getElementById('ota-auto-progress');
-  const autoProgressFill = document.getElementById('ota-auto-progress-fill');
   const autoProgressText = document.getElementById('ota-auto-progress-text');
 
   let latestDownloadUrl = null;
   let targetVersionName = '';
-
-  function parseSemVer(s) {
-    if (!s) return null;
-    s = s.trim().replace(/^[vV]/, '');
-    const parts = s.split('-');
-    const mainPart = parts[0];
-    const prePart = parts[1] || null;
-
-    const numParts = mainPart.split('.').map(n => parseInt(n, 10) || 0);
-    const major = numParts[0] || 0;
-    const minor = numParts[1] || 0;
-    const patch = numParts[2] || 0;
-
-    let prerelease = null;
-    if (prePart) {
-      const pLower = prePart.toLowerCase();
-      const pNumMatch = pLower.match(/\d+/);
-      const pNum = pNumMatch ? parseInt(pNumMatch[0], 10) : 0;
-      const pName = pLower.replace(/[^a-z]/g, '');
-      prerelease = { name: pName, num: pNum };
-    }
-
-    return { major, minor, patch, prerelease };
-  }
-
-  function isSemVerLower(currStr, latStr) {
-    const curr = parseSemVer(currStr);
-    const lat = parseSemVer(latStr);
-    if (!curr || !lat) return false;
-
-    if (curr.major !== lat.major) return curr.major < lat.major;
-    if (curr.minor !== lat.minor) return curr.minor < lat.minor;
-    if (curr.patch !== lat.patch) return curr.patch < lat.patch;
-
-    if (!curr.prerelease && !lat.prerelease) return false;
-    if (curr.prerelease && !lat.prerelease) return true;  // e.g. 3.0.0-beta.3 < 3.0.0
-    if (!curr.prerelease && lat.prerelease) return false; // e.g. 3.0.0 > 3.0.0-beta.3
-
-    if (curr.prerelease.name !== lat.prerelease.name) {
-      return curr.prerelease.name < lat.prerelease.name;
-    }
-    return curr.prerelease.num < lat.prerelease.num;
-  }
 
   if (btnCheck) {
     btnCheck.addEventListener('click', async () => {
@@ -2435,65 +3855,45 @@ function initOta() {
       window.showToast('Checking GitHub for latest release...', 'info');
 
       try {
-        const sysInfo = await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32' }));
-        const currentVer = sysInfo.version || '3.0.0';
-        const isS3 = (sysInfo.arch || '').toLowerCase().includes('s3');
-
-        const res = await fetch('https://api.github.com/repos/red77290/ArcadeMatrix/releases');
-        if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
-        const releases = await res.json();
-        if (!releases || !releases.length) throw new Error('No releases found on GitHub');
-
-        const latestRel = releases[0];
-        const latestVer = latestRel.tag_name.replace(/^[vV]/, '');
-        targetVersionName = latestVer;
-
-        // Find matching asset for ESP32 board
-        let matchingAsset = null;
-        for (const asset of (latestRel.assets || [])) {
-          const nameLower = asset.name.toLowerCase();
-          if (nameLower.endsWith('.bin')) {
-            if (isS3 && (nameLower.includes('s3') || nameLower.includes('waveshare'))) {
-              matchingAsset = asset;
-              break;
-            } else if (!isS3 && (nameLower.includes('esp32dev') || nameLower.includes('esp32.bin') || !nameLower.includes('s3'))) {
-              matchingAsset = asset;
-              break;
-            }
-          }
+        const data = await API.checkOtaUpdate();
+        if (data.status === 'error') {
+          window.showToast(`❌ ${data.message}`, 'error');
+          return;
         }
 
         onlineCard.style.display = 'block';
-        onlineTargetVer.textContent = `v${latestVer}`;
-        if (matchingAsset) {
-          onlineSize.textContent = `${(matchingAsset.size / (1024 * 1024)).toFixed(2)} MB (${isS3 ? 'ESP32-S3' : 'ESP32'})`;
+        targetVersionName = data.latest_version;
+        onlineTargetVer.textContent = `v${data.latest_version}`;
+
+        if (data.asset_size) {
+          onlineSize.textContent = `${(data.asset_size / (1024 * 1024)).toFixed(1)} MB (${data.current_arch})`;
+        } else {
+          onlineSize.textContent = data.current_arch;
         }
 
-        if (latestRel.body) {
-          onlineNotes.textContent = latestRel.body;
+        if (data.release_notes) {
+          onlineNotes.textContent = data.release_notes;
           onlineNotes.style.display = 'block';
         } else {
           onlineNotes.style.display = 'none';
         }
 
-        const updateAvailable = isSemVerLower(currentVer, latestVer);
-
-        if (updateAvailable && matchingAsset) {
-          latestDownloadUrl = matchingAsset.browser_download_url;
+        if (data.update_available && data.download_url) {
+          latestDownloadUrl = data.download_url;
           onlineBadge.className = 'badge badge-accent';
           onlineBadge.textContent = 'New Update Available';
           btnAutoInstall.style.display = 'inline-block';
-          btnAutoInstall.textContent = `⬇️ Download & Install v${latestVer}`;
-          window.showToast(`🎉 New update v${latestVer} available!`, 'success');
+          btnAutoInstall.textContent = `⬇️ Download & Install v${data.latest_version}`;
+          window.showToast(`🎉 New update v${data.latest_version} available!`, 'success');
         } else {
           latestDownloadUrl = null;
           onlineBadge.className = 'badge';
           onlineBadge.textContent = 'Up to Date';
           btnAutoInstall.style.display = 'none';
-          window.showToast(`✅ You are already on the latest version (v${currentVer}).`, 'info');
+          window.showToast(`✅ You are already on the latest version (v${data.current_version}).`, 'info');
         }
       } catch (err) {
-        window.showToast(`❌ Failed to check updates: ${err.message}`, 'error');
+        window.showToast(`❌ Failed to check updates: ${err.message || err.status}`, 'error');
       } finally {
         btnCheck.disabled = false;
         btnCheck.textContent = '🔍 Check for Updates';
@@ -2503,40 +3903,31 @@ function initOta() {
 
   if (btnAutoInstall) {
     btnAutoInstall.addEventListener('click', async () => {
-      if (!latestDownloadUrl) return;
-      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName} on ESP32? The device will automatically restart.`)) {
+      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName || ''} from GitHub? The service will automatically restart.`)) {
         return;
       }
 
       btnCheck.disabled = true;
       btnAutoInstall.disabled = true;
       autoProgress.style.display = 'block';
-      autoProgressFill.style.width = '0%';
-      autoProgressText.textContent = '1/2 Downloading from GitHub...';
+      autoProgressText.textContent = 'Downloading binary from GitHub & verifying...';
       window.showToast('Downloading firmware from GitHub...', 'info');
 
       try {
-        const oldVersionData = await API.get('/api/version').catch(() => null);
+        const oldVersionData = await API.getVersion().catch(() => null);
         const oldVer = oldVersionData?.version || '';
 
-        const resp = await fetch(latestDownloadUrl);
-        if (!resp.ok) throw new Error(`GitHub download failed: HTTP ${resp.status}`);
-        const blob = await resp.blob();
+        const resp = await API.triggerAutoOta(latestDownloadUrl);
+        if (resp.status === 'error') {
+          throw new Error(resp.message || 'Auto-update failed');
+        }
 
-        autoProgressText.textContent = '2/2 Flashing ESP32 firmware (0%)...';
-        window.showToast('Flashing binary to ESP32...', 'info');
-
-        await API.uploadFirmware(blob, (percent) => {
-          autoProgressFill.style.width = `${percent}%`;
-          autoProgressText.textContent = `2/2 Flashing ESP32 firmware (${percent}%)...`;
-        });
-
-        autoProgressText.textContent = 'Rebooting ESP32...';
-        window.showToast('Firmware flashed! Reconnecting to device...', 'info');
+        autoProgressText.textContent = 'Restarting daemon...';
+        window.showToast('Firmware downloaded & replaced! Waiting for restart...', 'info');
 
         const versionData = await API.waitForReconnect(60000, 2000, oldVer);
         if (oldVer && versionData.version === oldVer) {
-          window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
+          window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Check /tmp/arcadematrix_ota.log)`, 'warning');
         } else {
           window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
         }
@@ -2552,7 +3943,7 @@ function initOta() {
     });
   }
 
-  // --- 2. Manual Offline Binary Upload (Supports Beta / Downgrades) ---
+  // --- 2. Manual Offline OTA File Upload ---
   btnUpdate.addEventListener('click', async () => {
     if (!selectedOtaFile) return;
 
@@ -2566,7 +3957,7 @@ function initOta() {
     progressText.textContent = '0%';
 
     try {
-      const oldVersionData = await API.get('/api/version').catch(() => null);
+      const oldVersionData = await API.getVersion().catch(() => null);
       const oldVer = oldVersionData?.version || '';
 
       window.showToast('Uploading firmware binary...', 'info');
@@ -2576,13 +3967,13 @@ function initOta() {
       });
 
       progressText.textContent = 'Restarting daemon...';
-      window.showToast('Firmware replaced! Reconnecting to device...', 'info');
+      window.showToast('Firmware uploaded! Waiting for daemon to restart...', 'info');
 
       const versionData = await API.waitForReconnect(60000, 2000, oldVer);
       if (oldVer && versionData.version === oldVer) {
-        window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
+        window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Check /tmp/arcadematrix_ota.log)`, 'warning');
       } else {
-        window.showToast(`✅ Firmware updated to v${versionData.version}!`, 'success');
+        window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
       }
       loadVersion();
     } catch (err) {
@@ -2627,6 +4018,41 @@ function initCustomMarquee() {
       window.showToast('Failed to display marquee image', 'error');
     }
   }
+}
+
+function initFighterOverlay() {
+  const enabledEl = document.getElementById('fighter-enabled');
+  const intervalEl = document.getElementById('fighter-interval');
+  const saveBtn = document.getElementById('btn-save-fighter');
+  if (!enabledEl || !intervalEl || !saveBtn) return;
+
+  // Load current values from the canonical system config.
+  (async () => {
+    try {
+      const cfg = await API.get('/api/system');
+      const sys = cfg.system || {};
+      if (typeof sys.idle_fighter_enabled === 'boolean') {
+        enabledEl.checked = sys.idle_fighter_enabled;
+      }
+      if (typeof sys.idle_fighter_interval === 'number') {
+        intervalEl.value = sys.idle_fighter_interval;
+      }
+    } catch (e) {
+      console.error('Failed to load fighter settings', e);
+    }
+  })();
+
+  saveBtn.addEventListener('click', async () => {
+    try {
+      await API.post('/api/system', {
+        idle_fighter_enabled: enabledEl.checked,
+        idle_fighter_interval: parseInt(intervalEl.value) || 1,
+      });
+      window.showToast('Fighter overlay settings saved!', 'success');
+    } catch (e) {
+      window.showToast('Failed to save fighter settings', 'error');
+    }
+  });
 }
 
 function initNetworkSettings() {
@@ -2736,13 +4162,18 @@ function initNetworkSettings() {
   const btnSaveMqtt = document.getElementById('btn-save-mqtt');
   if (btnSaveMqtt) {
     btnSaveMqtt.addEventListener('click', async () => {
-      const mqtt_enabled = document.getElementById('hw-mqtt-enable').value === '1';
-      const mqtt_broker = document.getElementById('hw-mqtt-broker').value;
-      const mqtt_port = parseInt(document.getElementById('hw-mqtt-port').value, 10);
-      const mqtt_user = document.getElementById('hw-mqtt-user').value;
-      const mqtt_pass = document.getElementById('hw-mqtt-pass').value;
+      const base = (window.__sysConfig && window.__sysConfig.mqtt) ? { ...window.__sysConfig.mqtt } : {};
+      const mqtt = {
+        ...base,
+        enabled: document.getElementById('hw-mqtt-enable').value === '1',
+        broker: document.getElementById('hw-mqtt-broker').value,
+        port: parseInt(document.getElementById('hw-mqtt-port').value, 10) || 1883,
+        user: document.getElementById('hw-mqtt-user').value,
+        pass: document.getElementById('hw-mqtt-pass').value,
+      };
       try {
-        await API.post('/api/settings', { mqtt_enabled, mqtt_broker, mqtt_port, mqtt_user, mqtt_pass });
+        await API.post('/api/system', { mqtt });
+        if (window.__sysConfig) window.__sysConfig.mqtt = mqtt;
         window.showToast('MQTT Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
@@ -2756,7 +4187,7 @@ function initNetworkSettings() {
       const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
       const api_token = document.getElementById('hw-api-token').value;
       try {
-        await API.post('/api/settings', { api_auth_enabled, api_token });
+        await API.post('/api/system', { api_auth_enabled, api_token });
         window.showToast('API Auth Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save API Auth Settings', 'error');
@@ -2765,120 +4196,87 @@ function initNetworkSettings() {
   }
 }
 
-window.saveMediaSettings = async function() {
-  const enabled = document.getElementById("setting-idle_fighter_enabled") ? document.getElementById("setting-idle_fighter_enabled").checked : false;
-  const interval = parseInt(document.getElementById("setting-idle_fighter_interval").value) || 0;
-  try {
-    await API.post("/api/settings", { 
-      idle_fighter_enabled: enabled,
-      idle_fighter_interval: interval 
-    });
-    window.showToast("Media & Fighter settings saved!", "success");
-  } catch (e) {
-    window.showToast("Failed to save media settings", "warning");
-  }
-};
-
 async function initSettings() {
-  // Load fonts list
+  // Load current settings (canonical nested model straight from config.json).
   try {
-    const fonts = await API.get('/api/fonts');
-    const clockFontSel = document.getElementById('cfg-clock-font');
-    const dateFontSel = document.getElementById('cfg-date-font');
-    if (clockFontSel && dateFontSel) {
-      fonts.forEach(f => {
-        clockFontSel.add(new Option(f, f));
-        dateFontSel.add(new Option(f, f));
-      });
-    }
-  } catch (e) {
-    console.warn('Failed to load fonts list', e);
-  }
+    const cfg = await API.get('/api/system');
+    window.__sysConfig = cfg; // keep the full config to merge on save
+    const sys = cfg.system || {};
+    const matrix = cfg.matrix || {};
+    const mqtt = cfg.mqtt || {};
 
-  // Load current settings
-  try {
-    const s = await API.get('/api/settings');
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.checked = !!v; };
 
-    if (s.lang) {
+    if (sys.lang) {
       const ls = document.getElementById('lang-selector');
-      if (ls) ls.value = s.lang;
-      setLanguage(s.lang);
+      if (ls) ls.value = sys.lang;
+      setLanguage(sys.lang);
     }
-    
-    // Dashboard
+
+    // Dashboard brightness (0-100) is the live daytime brightness (day_brightness).
     const sliderBright = document.getElementById('slider-brightness');
     if (sliderBright) {
-      sliderBright.value = s.brightness_limit;
-      document.getElementById('val-brightness').textContent = s.brightness_limit;
+      const bright = sys.day_brightness ?? 100;
+      sliderBright.value = bright;
+      const valEl = document.getElementById('val-brightness');
+      if (valEl) valEl.textContent = bright;
       sliderBright.addEventListener('input', (e) => {
-        document.getElementById('val-brightness').textContent = e.target.value;
+        const v = document.getElementById('val-brightness');
+        if (v) v.textContent = e.target.value;
       });
       sliderBright.addEventListener('change', async (e) => {
-        await API.post('/api/settings', { brightness_limit: parseInt(e.target.value) });
+        await API.post('/api/system', { brightness_limit: parseInt(e.target.value) });
         window.showToast('Brightness updated', 'info');
       });
     }
 
     // Night Mode
-    if (document.getElementById('cfg-night-mode-enabled')) {
-      document.getElementById('cfg-night-mode-enabled').checked = !!s.night_mode_enabled;
-    }
-    if (document.getElementById('cfg-turn-off-at')) {
-      document.getElementById('cfg-turn-off-at').value = s.turn_off_at || '23:00';
-    }
-    if (document.getElementById('cfg-wake-up-at')) {
-      document.getElementById('cfg-wake-up-at').value = s.wake_up_at || '07:00';
-    }
+    setChk('cfg-night-mode-enabled', sys.night_mode_enabled);
+    setVal('cfg-turn-off-at', sys.turn_off_at || '23:00');
+    setVal('cfg-wake-up-at', sys.wake_up_at || '07:00');
     const sliderNightBright = document.getElementById('cfg-night-brightness');
     if (sliderNightBright) {
-      const nb = (s.night_brightness !== undefined) ? s.night_brightness : 10;
+      const nb = (sys.night_brightness !== undefined) ? sys.night_brightness : 10;
       sliderNightBright.value = nb;
-      if (document.getElementById('night-brightness-val')) {
-        document.getElementById('night-brightness-val').textContent = nb + '%';
-      }
+      const v = document.getElementById('night-brightness-val');
+      if (v) v.textContent = nb + '%';
       sliderNightBright.addEventListener('input', (e) => {
-        document.getElementById('night-brightness-val').textContent = e.target.value + '%';
+        const val = document.getElementById('night-brightness-val');
+        if (val) val.textContent = e.target.value + '%';
       });
     }
 
-    // Hardware
-    if (document.getElementById('hw-rows')) document.getElementById('hw-rows').value = s.matrix_rows || 32;
-    if (document.getElementById('hw-cols')) document.getElementById('hw-cols').value = s.matrix_cols || 64;
-    if (document.getElementById('hw-chain')) document.getElementById('hw-chain').value = s.matrix_chain || 1;
-    if (document.getElementById('hw-driver-chip')) document.getElementById('hw-driver-chip').value = s.matrix_driver_chip || 'SHIFTREG';
-    if (document.getElementById('hw-color-depth')) document.getElementById('hw-color-depth').value = s.color_depth || 8;
-    if (document.getElementById('hw-row-addr-mode')) document.getElementById('hw-row-addr-mode').value = (s.matrix_row_address_mode !== undefined) ? s.matrix_row_address_mode : 0;
-    if (document.getElementById('hw-latch-blanking')) document.getElementById('hw-latch-blanking').value = (s.matrix_latch_blanking !== undefined) ? s.matrix_latch_blanking : 0;
-    if (document.getElementById('hw-clk-phase')) document.getElementById('hw-clk-phase').checked = !!s.matrix_clk_phase;
-    if (document.getElementById('hw-force-single-buffer')) document.getElementById('hw-force-single-buffer').checked = !!s.matrix_force_single_buffer;
-    if (document.getElementById('hw-rgb')) document.getElementById('hw-rgb').value = s.matrix_rgb_sequence || 'RGB';
-    if (document.getElementById('hw-limit-refresh')) document.getElementById('hw-limit-refresh').value = (s.matrix_limit_refresh_rate_hz !== undefined) ? s.matrix_limit_refresh_rate_hz : 90;
-    if (document.getElementById('hw-temp-offset')) document.getElementById('hw-temp-offset').value = (s.temp_offset !== undefined) ? s.temp_offset : 0.0;
-    
-    // MQTT
-    document.getElementById('hw-mqtt-enable').value = s.mqtt_enabled ? '1' : '0';
-    document.getElementById('hw-mqtt-broker').value = s.mqtt_broker;
-    document.getElementById('hw-mqtt-port').value = s.mqtt_port;
-    document.getElementById('hw-mqtt-user').value = s.mqtt_user || '';
-    document.getElementById('hw-mqtt-pass').value = s.mqtt_pass || '';
+    // Hardware (nested matrix.*)
+    setVal('hw-rows', matrix.height);
+    setVal('hw-cols', matrix.width);
+    setVal('hw-chain', matrix.chain_length);
+    setVal('hw-parallel', 1);
+    setVal('hw-driver-chip', matrix.driver_chip || 'SHIFTREG');
+    setVal('hw-row-addr-type', matrix.row_address_mode ?? 0);
+    setVal('hw-multiplexing', matrix.multiplexing ?? 0);
+    setVal('hw-mapping', matrix.mapping || 'regular');
+    setVal('hw-rgb', matrix.rgb_sequence || 'RGB');
+    setVal('hw-slowdown', matrix.slowdown);
+    setVal('hw-pwm-bits', matrix.pwm_bits);
+    setVal('hw-pwm-lsb', matrix.pwm_lsb_nanoseconds);
+    setChk('hw-disable-pulsing', matrix.disable_hardware_pulsing);
+    setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz);
 
-    // API
-    document.getElementById('hw-api-auth').value = s.api_auth_enabled ? 'true' : 'false';
-    document.getElementById('hw-api-token').value = s.api_token || '';
+    // MQTT (nested mqtt.*)
+    setVal('hw-mqtt-enable', mqtt.enabled ? '1' : '0');
+    setVal('hw-mqtt-broker', mqtt.broker);
+    setVal('hw-mqtt-port', mqtt.port);
+    setVal('hw-mqtt-user', mqtt.user || '');
+    setVal('hw-mqtt-pass', mqtt.pass || '');
 
-    // Media / Fighter
-    if (document.getElementById("setting-idle_fighter_enabled")) {
-      document.getElementById("setting-idle_fighter_enabled").checked = !!s.idle_fighter_enabled;
-    }
-    if (document.getElementById("setting-idle_fighter_interval")) {
-      document.getElementById("setting-idle_fighter_interval").value = (s.idle_fighter_interval !== undefined) ? s.idle_fighter_interval : 60;
-    }
-
-    // Hardware, Network, and MQTT settings are loaded above.
-    // Dynamic engines and rotation are loaded by initDynamicEngines().
+    // API auth (top-level)
+    setVal('hw-api-auth', cfg.api_auth_enabled ? 'true' : 'false');
+    setVal('hw-api-token', cfg.api_token || '');
   } catch (e) {
     console.error('Failed to load settings', e);
   }
+
 
   // Save Night Mode settings
   const btnSaveNight = document.getElementById('btn-save-night');
@@ -2890,7 +4288,7 @@ async function initSettings() {
       const nightBright = parseInt(document.getElementById('cfg-night-brightness')?.value) || 0;
 
       try {
-        await API.post('/api/settings', {
+        await API.post('/api/system', {
           night_mode_enabled: nightEnabled,
           turn_off_at: turnOffAt,
           wake_up_at: wakeUpAt,
@@ -2907,73 +4305,36 @@ async function initSettings() {
   const btnSaveHw = document.getElementById('btn-save-hw');
   if (btnSaveHw) {
     btnSaveHw.addEventListener('click', async () => {
-      const rows = parseInt(document.getElementById('hw-rows').value) || 32;
-      const cols = parseInt(document.getElementById('hw-cols').value) || 64;
-      const chain = parseInt(document.getElementById('hw-chain').value) || 1;
-      const driverChip = document.getElementById('hw-driver-chip')?.value || 'SHIFTREG';
-      const colorDepth = parseInt(document.getElementById('hw-color-depth')?.value) || 8;
-      const rowAddrMode = parseInt(document.getElementById('hw-row-addr-mode')?.value) || 0;
-      const latchBlanking = parseInt(document.getElementById('hw-latch-blanking')?.value) || 0;
-      const clkPhase = document.getElementById('hw-clk-phase')?.checked || false;
-      const forceSingleBuffer = document.getElementById('hw-force-single-buffer')?.checked || false;
-      const rgb = document.getElementById('hw-rgb')?.value || 'RGB';
-      const limitRefresh = parseInt(document.getElementById('hw-limit-refresh')?.value) || 90;
-      const tempOffset = parseFloat(document.getElementById('hw-temp-offset')?.value) || 0.0;
-      
+      // Start from the full loaded matrix config so untouched fields (panel_type,
+      // color_depth, latch_blanking, ...) are preserved instead of reset to default.
+      const base = (window.__sysConfig && window.__sysConfig.matrix) ? { ...window.__sysConfig.matrix } : {};
+      const numOr = (id, d) => parseInt(document.getElementById(id)?.value) || d;
+      const matrix = {
+        ...base,
+        height: numOr('hw-rows', 32),
+        width: numOr('hw-cols', 64),
+        chain_length: numOr('hw-chain', 1),
+        driver_chip: document.getElementById('hw-driver-chip')?.value || 'SHIFTREG',
+        row_address_mode: numOr('hw-row-addr-type', 0),
+        multiplexing: numOr('hw-multiplexing', 0),
+        mapping: document.getElementById('hw-mapping')?.value || 'regular',
+        rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
+        slowdown: numOr('hw-slowdown', 2),
+        pwm_bits: numOr('hw-pwm-bits', 11),
+        pwm_lsb_nanoseconds: numOr('hw-pwm-lsb', 130),
+        disable_hardware_pulsing: document.getElementById('hw-disable-pulsing')?.checked || false,
+        limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
+      };
       try {
-        await API.post('/api/settings', { 
-          matrix_rows: rows,
-          matrix_cols: cols,
-          matrix_chain: chain,
-          matrix_driver_chip: driverChip,
-          color_depth: colorDepth,
-          matrix_row_address_mode: rowAddrMode,
-          matrix_latch_blanking: latchBlanking,
-          matrix_clk_phase: clkPhase,
-          matrix_force_single_buffer: forceSingleBuffer,
-          matrix_rgb_sequence: rgb,
-          matrix_limit_refresh_rate_hz: limitRefresh,
-          temp_offset: tempOffset
-        });
-        window.showToast('Hardware settings saved! Restarting app...', 'success');
-        setTimeout(async () => {
-          await API.post('/api/system/restart_app');
-        }, 1500);
+        await API.post('/api/system', { matrix });
+        if (window.__sysConfig) window.__sysConfig.matrix = matrix;
+        window.showToast('Hardware settings saved! The panel will restart to apply changes.', 'success');
       } catch (e) {
         window.showToast('Failed to save HW settings', 'error');
       }
     });
   }
-
-  // Send Custom Message
-  const btnSendMsg = document.getElementById('btn-send-message');
-  if (btnSendMsg) {
-    btnSendMsg.addEventListener('click', async () => {
-      const text = document.getElementById('msg-input').value;
-      const color = document.getElementById('msg-color')?.value || '#ffffff';
-      const size = parseInt(document.getElementById('msg-size')?.value) || 1;
-      const direction = document.getElementById('msg-direction')?.value || 'left';
-      const speed = parseInt(document.getElementById('msg-speed')?.value) || 30;
-      const timeout = parseInt(document.getElementById('msg-timeout')?.value) || 10;
-      
-      if (!text) return;
-      try {
-        await API.post('/api/message', {
-          text: text,
-          color: color,
-          size: size,
-          direction: direction,
-          speed: speed,
-          timeoutSeconds: timeout
-        });
-        window.showToast('Message sent!', 'success');
-      } catch (e) {
-        window.showToast('Failed to send message', 'error');
-      }
-    });
-  }
 }
-
 
 
 
