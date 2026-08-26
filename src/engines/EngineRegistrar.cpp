@@ -15,6 +15,7 @@
 #include "MessageEngine.h"
 #include "GoogleCastEngine.h"
 #include "SpotifyEngine.h"
+#include "SysInfoEngine.h"
 
 RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
     const auto& caps = hardwareHAL.capabilities();
@@ -63,6 +64,7 @@ void EngineRegistrar::registerAll() {
     static const MessageEngineDescriptorHandler messageHandler;
     static const GoogleCastDescriptorHandler googleCastHandler;
     static const SpotifyDescriptorHandler spotifyHandler;
+    static const SysInfoEngineDescriptorHandler sysInfoHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -76,7 +78,8 @@ void EngineRegistrar::registerAll() {
         &tempHandler,
         &messageHandler,
         &googleCastHandler,
-        &spotifyHandler
+        &spotifyHandler,
+        &sysInfoHandler
     };
 
     for (const auto* handler : handlers) {
