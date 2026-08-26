@@ -216,6 +216,27 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'État à 2 lettres po
 | `speed` | `int` | `50` | `10` à `200` | Délai en millisecondes par pas de défilement (plus bas = plus rapide). |
 | `font` | `ENUM` | `Default` | Depuis `/api/fonts` | Police d'affichage (`PressStart2P`, `namco`, `FreeSansBold`, `FreeMonoBold`, `RetroGaming`, `.amf`). |
 
+### Moteur : `google_cast` (Google Home / Nest Audio - Compatible ESP32 Classic & S3)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `device_ip` | `String` | `""` | IP | IP statique de votre enceinte Google Home / Nest Audio. Laissez vide pour la découverte mDNS automatique sur le réseau local. |
+| `device_name` | `String` | `""` | Texte | Filtre sur le nom de l'appareil lors de la détection automatique sur le LAN. |
+| `show_album_art` | `Boolean` | `true` | `true`, `false` | Télécharge et affiche la pochette de l'album (nécessite PSRAM). |
+| `show_progress` | `Boolean` | `true` | `true`, `false` | Affiche la barre de progression temporelle de la lecture en bas de l'écran. |
+| `show_visualizer` | `Boolean` | `true` | `true`, `false` | Affiche l'égaliseur de fréquences animé quand la musique est en lecture. |
+| `show_volume` | `Boolean` | `true` | `true`, `false` | Affiche le niveau de volume actuel de l'enceinte Google Nest. |
+
+### Moteur : `spotify` (Lecteur Officiel Spotify - Nécessite PSRAM / ESP32-S3)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `client_id` | `String` | `""` | Clé API | Votre Client ID Spotify Developer API. |
+| `client_secret` | `String` | `""` | Clé API | Votre Client Secret Spotify Developer API. |
+| `refresh_token` | `String` | `""` | Token OAuth2 | Votre Refresh Token OAuth2 Spotify pour la synchronisation continue de la lecture. |
+| `show_album_art` | `Boolean` | `true` | `true`, `false` | Télécharge et affiche la pochette d'album Spotify sur la matrice. |
+| `show_progress` | `Boolean` | `true` | `true`, `false` | Affiche la barre de progression temporelle du morceau en bas de l'écran. |
+| `show_visualizer` | `Boolean` | `true` | `true`, `false` | Affiche l'égaliseur audio animé quand la musique est en lecture. |
+| `show_volume` | `Boolean` | `true` | `true`, `false` | Affiche le pourcentage de volume de lecture Spotify actif. |
+
 ---
 
 *Note : Les schémas de configuration peuvent être interrogés à tout moment depuis l'ESP32 via `GET /api/engines`.*
