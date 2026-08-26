@@ -120,7 +120,7 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // ex: Historique Crypto/Bourse
+    bool needsPsram = false;      // ex: Historique Crypto/Bourse, Lecteur Spotify
     bool needsAudio = false;      // ex: Visualiseur micro I2S
     bool needsTempSensor = false; // ex: Capteur température SHTC3
     bool needsGyroscope = false;
@@ -128,6 +128,10 @@ struct EngineRequirements {
     bool needsSd = false;
 };
 ```
+
+> [!TIP]
+> **Modèle Adaptatif Dual-Mode (PSRAM vs Non-PSRAM)** :
+> Si votre moteur dispose d'une fonctionnalité avancée gourmande en mémoire (ex: décodage de pochettes d'albums dans `GoogleCastEngine`) mais peut fonctionner avec un rendu alternatif plus léger sur les ESP32 classiques sans PSRAM (ex: égaliseur de barres audio animé + texte défilant), définissez `needsPsram = false` dans `EngineRequirements` et interrogez dynamiquement `context->hasPsram()` dans `initialize()` / `render()`. Si le moteur nécessite obligatoirement de la PSRAM pour fonctionner sans risquer de Heap OOM (ex: `SpotifyEngine`, `CryptoEngine`), définissez impérativement `needsPsram = true`.
 
 ---
 

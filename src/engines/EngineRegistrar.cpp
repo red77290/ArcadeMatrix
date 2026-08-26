@@ -13,6 +13,8 @@
 #include "DecibelEngine.h"
 #include "TempEngine.h"
 #include "MessageEngine.h"
+#include "GoogleCastEngine.h"
+#include "SpotifyEngine.h"
 
 RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
     const auto& caps = hardwareHAL.capabilities();
@@ -59,6 +61,8 @@ void EngineRegistrar::registerAll() {
     static const DecibelEngineDescriptorHandler decibelHandler;
     static const TempEngineDescriptorHandler tempHandler;
     static const MessageEngineDescriptorHandler messageHandler;
+    static const GoogleCastDescriptorHandler googleCastHandler;
+    static const SpotifyDescriptorHandler spotifyHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -70,7 +74,9 @@ void EngineRegistrar::registerAll() {
         &visualizerHandler,
         &decibelHandler,
         &tempHandler,
-        &messageHandler
+        &messageHandler,
+        &googleCastHandler,
+        &spotifyHandler
     };
 
     for (const auto* handler : handlers) {
