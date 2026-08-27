@@ -299,21 +299,22 @@ void FighterEngine::runBackgroundPreload() {
                 if (candMeta.name != nextP1.name) {
                     int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
                     if (h1 > 0 && h2 > 0) {
-                        float minH = (h1 < h2) ? (float)h1 : (float)h2;
-                        float maxH = (h1 > h2) ? (float)h1 : (float)h2;
-                        float ratio = minH / maxH;
-                        if (ratio > bestRatio) {
-                            bestRatio = ratio;
-                            bestMeta = candMeta;
-                        }
-                        if (ratio >= 0.80f) {
-                            nextP2.name = candMeta.name;
-                            nextP2.height = candMeta.height;
-                            nextP2.ground_y = candMeta.ground_y;
-                            nextP2.head_y = candMeta.head_y;
-                            nextP2.origin_x = candMeta.origin_x;
-                            nextP2.width_px = candMeta.width_px;
-                            found = true;
+                        float ratio = (float)h2 / (float)h1;
+                        // P2 must be same height or up to 20% smaller (never taller than P1)
+                        if (h2 <= h1) {
+                            if (ratio > bestRatio) {
+                                bestRatio = ratio;
+                                bestMeta = candMeta;
+                            }
+                            if (ratio >= 0.80f) {
+                                nextP2.name = candMeta.name;
+                                nextP2.height = candMeta.height;
+                                nextP2.ground_y = candMeta.ground_y;
+                                nextP2.head_y = candMeta.head_y;
+                                nextP2.origin_x = candMeta.origin_x;
+                                nextP2.width_px = candMeta.width_px;
+                                found = true;
+                            }
                         }
                     }
                 }
@@ -437,12 +438,14 @@ void FighterEngine::startFight() {
 
         loadDir = getFightersDir();
         int scale = (matrix && matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
-        int ground_y_screen = p1.ground_y > p2.ground_y ? p1.ground_y : p2.ground_y;
 
+        // Place P1 at 1 pixel from the top of the screen
         p1.direction = 1; 
         p1.x = -p1.width_px * scale; 
-        p1.y = (ground_y_screen - p1.ground_y) * scale;
+        p1.y = (1 - p1.head_y) * scale;
         
+        // Align ground line to P1's physical feet, place P2 on same ground line
+        int ground_y_screen = 1 - p1.head_y + p1.ground_y;
         p2.direction = -1; 
         p2.x = matrix ? matrix->width() : 128;
         p2.y = (ground_y_screen - p2.ground_y) * scale;
