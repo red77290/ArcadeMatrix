@@ -162,16 +162,28 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     f.read((uint8_t*)&anim.width, 2);
     f.read((uint8_t*)&anim.height, 2);
-    f.read((uint8_t*)&anim.numFrames, 2);
+    uint16_t fileNumFrames = 0;
+    f.read((uint8_t*)&fileNumFrames, 2);
     f.read((uint8_t*)&anim.transparentColor, 2);
     
-    if (anim.numFrames == 0 || anim.width == 0 || anim.height == 0) {
+    if (fileNumFrames == 0 || anim.width == 0 || anim.height == 0) {
         f.close();
         return false;
     }
     
+    uint16_t maxFrames = 40;
+    anim.numFrames = (fileNumFrames > maxFrames) ? maxFrames : fileNumFrames;
+    
     anim.frameDelays = (uint16_t*)malloc(anim.numFrames * 2);
+    if (!anim.frameDelays) {
+        f.close();
+        return false;
+    }
     f.read((uint8_t*)anim.frameDelays, anim.numFrames * 2);
+    if (fileNumFrames > anim.numFrames) {
+        f.seek(f.position() + (fileNumFrames - anim.numFrames) * 2);
+    }
+    
     anim.filepath = String(filepath);
     anim.pixelsOffset = f.position();
     anim.cachedFrameIndex = -1;

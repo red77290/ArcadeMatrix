@@ -77,6 +77,20 @@ void GoogleCastEngine::update(EngineContext* context) {
         m_animFrame = (m_animFrame + 1) % 100;
         m_lastAnimTick = now;
     }
+
+    // Log newly playing track without spam
+    if (m_state.isActive && !m_state.title.isEmpty()) {
+        String trackKey = m_state.artist + " - " + m_state.title;
+        if (trackKey != m_lastLoggedTrack) {
+            m_lastLoggedTrack = trackKey;
+            LOGI("GoogleCast", "📻 Now Streaming -> \"%s\" by \"%s\" (App: %s)",
+                 m_state.title.c_str(),
+                 m_state.artist.isEmpty() ? "Unknown Artist" : m_state.artist.c_str(),
+                 m_state.appName.isEmpty() ? "Cast" : m_state.appName.c_str());
+        }
+    } else if (!m_lastLoggedTrack.isEmpty()) {
+        m_lastLoggedTrack = "";
+    }
 }
 
 static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
