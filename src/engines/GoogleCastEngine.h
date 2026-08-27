@@ -46,6 +46,7 @@ private:
     uint32_t m_lastMarqueeTick = 0;
     uint32_t m_lastAnimTick = 0;
     uint8_t m_animFrame = 0;
+    String m_lastLoggedTrack = "";
 
     void applyConfig(const EngineConfig* config);
     void pollCastStatus();
