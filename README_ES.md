@@ -27,20 +27,22 @@
 - **Archivos de Firmware**: Elige `ArcadeMatrix-esp32dev.zip` o `ArcadeMatrix-esp32s3_waveshare.zip` según tu placa (contiene `firmware-*.bin`, `bootloader-*.bin`, `partitions-*.bin` y `boot_app0.bin` para flasheo manual con `esptool.py`; consulta [Primeros pasos](docs/GETTING_STARTED_ES.md#flashing-a-pre-built-release)).
 - **Kit de Tarjeta SD (`ArcadeMatrix-sdcard.zip`)**: Contiene la estructura de carpetas lista para copiar a la raíz de la tarjeta SD (`config.json`, carpetas GIFs/MUGEN y scripts de indexación).
 
-
 ## Características
-- **Amplia selección de relojes:** relojes animados que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** y **Versus (Mugen)**.
+- **Gran selección de relojes animados (`clock`):** relojes interactivos que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** y **Versus (Mugen)**.
+- **🎵 Spotify Now Playing (`spotify`):** visualización en tiempo real de la pista actual con carátula del álbum a todo color, desplazamiento artista/título, barra de progreso y ecualizador de audio animado.
+- **📡 Google Cast & Nest (`google_cast`):** descubrimiento automático mDNS de altavoces Google Home / Nest Audio y visualización en directo de carátulas, progreso y volumen de reproducción.
+- **🖥️ Monitor de Sistema (`sysinfo`):** supervisión en tiempo real del uso de CPU (%), RAM (%), temperatura de hardware del SoC (°C/°F) y Uptime con barras de nivel y temas visuales retro.
+- **🥊 Motor de Combate M.U.G.E.N (`fighter`):** auténticos combates con sprites retro (Street Fighter, KOF, DBZ, Marvel...) extraídos directamente en RGB565 sin tirones, en modo independiente o en overlay sobre relojes.
+- **📈 Tickers y Gráficos de Cripto / Bolsa (`crypto`, `stock`):** cotizaciones en vivo, variaciones % en 24h y gráficos sparkline históricos desde CoinGecko, Binance y Yahoo Finance con caché inteligente.
+- **🌦️ Pronóstico del Clima Dinámico (`weather`):** clima actual, temperatura, pronósticos para 3 días e iconos retro animados mediante OpenWeatherMap.
 - **🌡️ Temperatura y Humedad Interior (SHTC3):** Pantalla adaptativa (°C/°F), iconos Pixel Art de termómetro y agua, y endpoint REST  para integración con Home Assistant.
 - **🔊 Sonómetro y Medidor de Decibelios (Uso para Salón de Arcade / Gaming Room :) :** Medición en tiempo real del nivel de ruido con 6 smileys en Pixel Art (<45dB 😊 a >88dB 🚨) y Visualizador de Audio. **¡Ideal para controlar el nivel sonoro en una sala de arcade ruidosa, gaming room o fiesta retro!** ([🎥 Ver la Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualizador de Música Rítmica:** 4 modos de visualización prioritaria (Spectrum Equalizer con retención de picos, Oscilloscope Waveform, Radial Circles y Neon Fire).
-- **Tickers de Criptomonedas y Bolsa en tiempo real:** cotizaciones en vivo y distintivos % 24h de CoinGecko, Binance y Yahoo Finance con caché configurable.
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
-- **Motor de Pelea MUGEN:** ¡Simula nativamente juegos de pelea 2D en la matriz usando sprites extraídos con una alineación perfecta en el suelo virtual!
-- **Motor GIF:** Reproducción fluida de GIFs almacenados en la tarjeta SD.
-- **Clima (OpenWeatherMap):** Pronóstico de 3 días, con una caché de búsqueda de 15 minutos para ahorrar llamadas a la API.
-- **Soporte MQTT:** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
+- **Motor GIF (`gifs`):** Reproducción fluida de GIFs almacenados en la tarjeta SD.
+- **Soporte MQTT (`marquee`):** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
- - **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
+- **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
 
 ## Estructura de la tarjeta SD
 Formatea tu tarjeta SD en **FAT32** o **exFAT**. Tu tarjeta SD debería verse así:

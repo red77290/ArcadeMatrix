@@ -29,18 +29,21 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 
 ## Features
-- **Massive Clock Selection:** Animated clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain**, and **Versus (Mugen)**!
-- **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and  REST endpoint for Home Assistant integration!
-- **🔊 Decibel & Sound Level Meter (Arcade Room / Gaming Room Use-Case :) :** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. **Ideal for monitoring ambient noise levels in a loud arcade room, gaming room, or retro gaming party!** ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
+- **Massive Animated Clock Selection (`clock`):** Interactive clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)**, and **Versus (Mugen)**!
+- **🎵 Spotify Now Playing (`spotify`):** Real-time track display with full-color album artwork, scrolling artist/title, progress bar, and animated audio equalizer.
+- **📡 Google Cast & Nest (`google_cast`):** Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, progress, and volume display.
+- **🖥️ System Monitor (`sysinfo`):** Real-time monitoring of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars and visual themes.
+- **🥊 M.U.G.E.N Combat Engine (`fighter`):** Authentic retro sprite battles (Street Fighter, KOF, DBZ, Marvel...) directly extracted in RGB565 format without stutter, playable standalone or as background overlay on clocks.
+- **📈 Real-Time Crypto & Stock Market Tickers (`crypto`, `stock`):** Live price quotes, 24h % badges, and historical sparkline charts from CoinGecko, Binance, and Yahoo Finance with smart TTL caching.
+- **🌦️ Dynamic Weather Forecasts (`weather`):** Live weather conditions, temperature, 3-day forecasts, and retro animated icons via OpenWeatherMap.
+- **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and REST endpoint for Home Assistant integration!
+- **🔊 Decibel & Sound Level Meter (Arcade / Gaming Room):** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Rhythmic Music Visualizer:** 4 priority display modes (Spectrum Equalizer with peak hold, Oscilloscope Waveform, Radial Circles, and Neon Fire).
-- **Real-Time Crypto & Stock Market Tickers:** Live price quotes & 24h % badges from CoinGecko, Binance, and Yahoo Finance with configurable TTL cache.
 - **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs and change settings live!
-- **MUGEN Fighting Engine:** Natively simulates 2D fighting games on the matrix using extracted sprites with perfect virtual-ground alignment.
-- **GIF Engine:** Smooth playback of GIFs stored on the SD card.
-- **Weather (OpenWeatherMap):** 3-day forecast, with a 15-minute fetch cache to save your API calls.
-- **MQTT Support:** Integrates seamlessly with Batocera and Recalbox to display game marquees.
-- **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI.
- - **ESP32-S3 Waveshare Support:** Full support for high-end ESP32-S3 boards and 256x64 True Matrix panels via DMA.
+- **GIF Engine (`gifs`):** Smooth playback of GIFs and auto-discovered playlists stored on the SD card.
+- **MQTT Support (`marquee`):** Integrates seamlessly with Batocera, Recalbox, and RetroPie to display official scraped game marquees via your Pixelcade fork.
+- **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI or Web Installer.
+- **ESP32-S3 Waveshare Support:** Full support for high-end ESP32-S3 boards and 256x64 True Matrix panels via DMA.
 
 ## SD Card Structure
 Format your SD card to **FAT32** or **exFAT**. Your SD card should look like this:
