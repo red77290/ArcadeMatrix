@@ -29,18 +29,21 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 
 ## Fonctionnalités
-- **Large sélection d'horloges :** horloges animées incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **MatrixRain** et **Versus (Mugen)** !
-- **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST  pour remonter les données dans Home Assistant !
-- **🔊 Sonomètre & Décibelomètre (Usage Salle d'Arcade / Gaming Room :) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et un Visualiseur Audio. **Parfait pour surveiller l'ambiance sonore dans une salle d'arcade bruyante, une gaming room ou une soirée rétro gaming !** ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
+- **Large sélection d'horloges animées (`clock`) :** horloges interactives incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** et **Versus (Mugen)** !
+- **🎵 Spotify Now Playing (`spotify`) :** affichage en direct du morceau en cours de lecture avec pochette d'album en couleur, défilement artiste/titre, barre de progression et égaliseur audio animé.
+- **📡 Google Cast & Nest (`google_cast`) :** découverte automatique mDNS de vos enceintes Google Home / Nest Audio et affichage en direct des médias et flux audio diffusés.
+- **🖥️ Moniteur Système (`sysinfo`) :** surveillance en direct de l'utilisation CPU (%), RAM (%), température SoC (°C/°F) et Uptime avec jauges colorées et thèmes visuels.
+- **🥊 Moteur de combat M.U.G.E.N (`fighter`) :** combats de sprites rétro authentiques (Street Fighter, KOF, DBZ, Marvel...) extraits directement en RGB565 sans saccade, jouables en mode autonome ou en overlay discret sur vos horloges.
+- **📈 Tickers & Graphiques Crypto / Bourse (`crypto`, `stock`) :** cotations en direct, variations % sur 24h et courbes sparklines historiques depuis CoinGecko, Binance et Yahoo Finance avec cache intelligent.
+- **🌦️ Météo dynamique (`weather`) :** météo en direct, température actuelle, prévisions sur 3 jours et icônes rétro animées via OpenWeatherMap.
+- **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
+- **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
-- **Tickers Crypto & Bourse en temps réel :** cotations en direct et badges % sur 24h depuis CoinGecko, Binance et Yahoo Finance avec cache configurable.
 - **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
-- **Moteur de combat MUGEN :** simule nativement des jeux de combat 2D sur la matrice à l'aide de sprites extraits avec un alignement parfait sur le sol virtuel.
-- **Moteur GIF :** lecture fluide des GIF stockés sur la carte SD.
-- **Météo (OpenWeatherMap) :** prévisions sur 3 jours, avec mise en cache de 15 minutes pour économiser vos appels d'API.
-- **Support MQTT :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees des jeux.
-- **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web.
- - **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
+- **Moteur GIF (`gifs`) :** lecture fluide des GIF et playlists organisées sur la carte SD.
+- **Support MQTT (`marquee`) :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees de jeux officiels via votre fork Pixelcade.
+- **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
+- **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
 
 ## Structure de la carte SD
 Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressembler à ceci :
