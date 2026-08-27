@@ -454,6 +454,7 @@ void FighterEngine::startFight() {
         setPlayerState(p2, FIGHTER_WALK);
         p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
         fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
+        LOGI("FighterEngine", "🥊 Match -> [P1: %s] (H:%d) vs [P2: %s] (H:%d)", p1.name.c_str(), p1.height, p2.name.c_str(), p2.height);
         active = true;
     } else {
         // Not ready yet (e.g. at boot): trigger preload
