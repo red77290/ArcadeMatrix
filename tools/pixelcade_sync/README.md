@@ -2,7 +2,7 @@
 
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
-One-shot PC-side tool that downloads the [Pixelcade](https://github.com/alinke/pixelcade) marquee
+One-shot PC-side tool that downloads the [Pixelcade](https://github.com/red77290/pixelcade) marquee
 artwork repository and lays it out ready to copy onto your ArcadeMatrix SD card, so the ESP32
 never needs live internet access to display box-art/marquees during gameplay.
 

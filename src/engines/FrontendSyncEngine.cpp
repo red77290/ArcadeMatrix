@@ -893,7 +893,7 @@ String FrontendSyncEngine::mapSystemToPixelcadeFolder(const String& systemId) {
 
 bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String& filename, String& outPath, uint32_t reqId) {
 
-    String baseUrl = "https://raw.githubusercontent.com/alinke/pixelcade/master/" + folder + "/";
+    String baseUrl = "https://raw.githubusercontent.com/red77290/pixelcade/master/" + folder + "/";
     // URL encode the filename spaces if any
     String urlFileName = filename;
     urlFileName.replace(" ", "%20");

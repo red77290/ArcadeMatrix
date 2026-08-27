@@ -15,7 +15,7 @@
 # Requires only tools already on virtually every Mac/Linux box: curl (or wget) and unzip.
 set -euo pipefail
 
-PIXELCADE_ZIP_URL="https://github.com/alinke/pixelcade/archive/refs/heads/master.zip"
+PIXELCADE_ZIP_URL="https://github.com/red77290/pixelcade/archive/refs/heads/master.zip"
 ZIP_ROOT_PREFIX="pixelcade-master"
 DEST="${DEST:-./pixelcade}"
 SYSTEMS_FILTER="${1:-}"

@@ -2,7 +2,7 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 [Français](README_FR.md) | 🇪🇸 Español
 
-Herramienta one-shot del lado del PC que descarga el repositorio de artwork marquee de [Pixelcade](https://github.com/alinke/pixelcade)
+Herramienta one-shot del lado del PC que descarga el repositorio de artwork marquee de [Pixelcade](https://github.com/red77290/pixelcade)
 y lo organiza listo para copiarlo a tu tarjeta SD de ArcadeMatrix, para que el ESP32 nunca necesite acceso a internet en vivo para mostrar box-art / marquees durante una partida.
 
 ## ¿Por qué no obtenerlo en vivo desde el ESP32?
