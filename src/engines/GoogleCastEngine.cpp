@@ -79,6 +79,33 @@ void GoogleCastEngine::update(EngineContext* context) {
     }
 }
 
+static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || text.isEmpty()) return;
+    int curX = x;
+    for (size_t i = 0; i < text.length(); i++) {
+        char c = text[i];
+        if (curX + 6 > clipMinX && curX < clipMaxX) {
+            display->drawChar(curX, y, c, color, 0, 1);
+        }
+        curX += 6;
+    }
+}
+
+static void renderMarquee(Adafruit_GFX* display, const String& text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
+    int textW = text.length() * 6;
+    int drawX = clipMinX;
+    if (textW > availW) {
+        int overflow = textW - availW + 12;
+        int pauseStart = 35; // ~1.2s initial pause
+        int pauseEnd = 20;   // ~0.7s pause at end
+        int cycle = max(1, pauseStart + overflow + pauseEnd);
+        int phase = (offset % cycle + cycle) % cycle;
+        int dx = (phase < pauseStart) ? 0 : (phase < pauseStart + overflow ? (phase - pauseStart) : overflow);
+        drawX = clipMinX - dx;
+    }
+    drawClippedString(display, text, drawX, y, clipMinX, clipMaxX, color);
+}
+
 void GoogleCastEngine::render(EngineContext* context) {
     if (!context) return;
     auto* display = context->getMatrix();
@@ -89,90 +116,118 @@ void GoogleCastEngine::render(EngineContext* context) {
 
     if (!m_state.isActive || m_state.title.isEmpty()) {
         // Idle screen
-        display->setTextColor(display->color565(66, 133, 244));
-        display->setCursor((w / 2) - 30, (h / 2) - 6);
-        display->print("Google Cast");
+        String title = "Google Cast";
+        String subtitle = !m_deviceName.isEmpty() ? ("Ready to stream • " + m_deviceName) : "Ready to stream";
 
-        display->setTextColor(display->color565(140, 140, 140));
-        display->setCursor((w / 2) - 34, (h / 2) + 3);
-        display->print("Ready to cast");
+        int titleW = title.length() * 6;
+        int yIdleTitle = (h >= 64) ? ((h / 2) - 10) : 4;
+        int yIdleSub = (h >= 64) ? ((h / 2) + 4) : 16;
+
+        if (titleW <= w - 4) {
+            int xTitle = (w - titleW) / 2;
+            drawClippedString(display, title, xTitle, yIdleTitle, 2, w - 2, display->color565(66, 133, 244));
+        } else {
+            renderMarquee(display, title, yIdleTitle, 2, w - 2, w - 4, m_marqueeOffset, display->color565(66, 133, 244));
+        }
+
+        int subW = subtitle.length() * 6;
+        int clipMinX = 2;
+        int clipMaxX = w - 2;
+        int availW = clipMaxX - clipMinX;
+
+        if (subW <= availW) {
+            int xSub = (w - subW) / 2;
+            drawClippedString(display, subtitle, xSub, yIdleSub, clipMinX, clipMaxX, display->color565(160, 160, 175));
+        } else {
+            renderMarquee(display, subtitle, yIdleSub, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(160, 160, 175));
+        }
         return;
     }
 
     int textX = 2;
+    bool hasArt = (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty());
 
-    // 1. Cover Art (if PSRAM available and enabled) or Visualizer on left
-    if (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty()) {
-        // Draw frame for album art
-        int imgSize = 26;
+    // 1. Album Cover Art frame
+    if (hasArt) {
+        int imgSize = (h >= 64) ? 52 : 24;
         int imgX = 1;
-        int imgY = (h - 4 - imgSize) / 2;
+        int imgY = (h >= 64) ? ((h - 4 - imgSize) / 2) : max(1, (h - 3 - imgSize) / 2);
 
         display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(40, 40, 50));
         textX = imgX + imgSize + 3;
-    } else if (m_showVisualizer) {
-        // Draw equalizer bars on the left in non-PSRAM mode
-        int eqX = 2;
-        int barHeights[4] = {
-            (int)((m_animFrame * 3) % 7 + 2),
-            (int)((m_animFrame * 5) % 9 + 2),
-            (int)((m_animFrame * 2) % 8 + 2),
-            (int)((m_animFrame * 7) % 6 + 2)
-        };
-
-        for (int i = 0; i < 4; i++) {
-            int bx = eqX + (i * 3);
-            int bh = barHeights[i];
-            for (int by = 0; by < bh; by++) {
-                int py = 20 - by;
-                if (py >= 0) {
-                    uint16_t color = (by > 6) ? display->color565(255, 50, 50) : (by > 3) ? display->color565(255, 200, 0) : display->color565(0, 255, 100);
-                    display->drawPixel(bx, py, color);
-                    display->drawPixel(bx + 1, py, color);
-                }
-            }
-        }
-        textX = eqX + 14;
     }
 
+    bool isCompact = (w <= 64);
     int rightReserved = 2;
-    if (m_showVolume) {
-        rightReserved += 26;
+    if (m_showVisualizer && m_state.isPlaying) {
+        rightReserved = (isCompact && hasArt) ? 8 : 15;
+    } else if (m_showVolume) {
+        rightReserved = 24;
     }
+
+    // Strict viewport for text
+    int clipMinX = textX;
+    int clipMaxX = w - rightReserved;
+    int availW = max(16, clipMaxX - clipMinX);
+
+    int yTitle = (h >= 64) ? 8 : 3;
+    int yArtist = (h >= 64) ? 22 : 13;
 
     // 2. Title (Marquee)
-    int titleW = m_state.title.length() * 6;
-    int availW = w - textX - rightReserved;
-    if (availW < 20) availW = 20;
-
-    int titleDrawX = textX;
-    if (titleW > availW) {
-        int overflow = titleW - availW + 16;
-        titleDrawX = textX - (m_marqueeOffset % overflow);
-    }
-
-    int yTitle = (h >= 64) ? 8 : 2;
-    int yArtist = (h >= 64) ? 22 : 12;
-
-    display->setTextColor(display->color565(255, 255, 255));
-    display->setCursor(titleDrawX, yTitle);
-    display->print(m_state.title);
+    renderMarquee(display, m_state.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
 
     // 3. Artist / Subtitle (Marquee)
     String artistStr = !m_state.artist.isEmpty() ? m_state.artist : (!m_state.appName.isEmpty() ? m_state.appName : "Google Nest");
-    int artistW = artistStr.length() * 6;
-    int artistDrawX = textX;
-    if (artistW > availW) {
-        int overflow = artistW - availW + 16;
-        artistDrawX = textX - ((m_marqueeOffset / 2) % overflow);
-    }
+    renderMarquee(display, artistStr, yArtist, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(66, 180, 255));
 
-    display->setTextColor(display->color565(0, 230, 255));
-    display->setCursor(artistDrawX, yArtist);
-    display->print(artistStr);
+    // 4. Equalizer Visualizer on the right
+    if (m_showVisualizer && m_state.isPlaying) {
+        int eqBaseY = (h >= 64) ? 44 : 21;
 
-    // 4. Volume (Top-Right, right-aligned)
-    if (m_showVolume) {
+        if (isCompact && hasArt) {
+            // 3 compact bars (2px wide each, 1px spacing)
+            int eqX = w - 7;
+            int barHeights[3] = {
+                (int)((m_animFrame * 3) % 7 + 2),
+                (int)((m_animFrame * 5) % 9 + 3),
+                (int)((m_animFrame * 2) % 6 + 2)
+            };
+
+            for (int i = 0; i < 3; i++) {
+                int bx = eqX + (i * 2);
+                int bh = barHeights[i];
+                for (int by = 0; by < bh; by++) {
+                    int py = eqBaseY - by;
+                    if (py >= 0) {
+                        uint16_t color = (by > 6) ? display->color565(255, 60, 60) : (by > 3) ? display->color565(255, 200, 0) : display->color565(0, 255, 120);
+                        display->drawPixel(bx, py, color);
+                    }
+                }
+            }
+        } else {
+            // 4 wide bars (2px wide + 1px spacing)
+            int eqX = w - 13;
+            int barHeights[4] = {
+                (int)((m_animFrame * 3) % 8 + 2),
+                (int)((m_animFrame * 5) % 11 + 3),
+                (int)((m_animFrame * 2) % 9 + 2),
+                (int)((m_animFrame * 7) % 7 + 2)
+            };
+
+            for (int i = 0; i < 4; i++) {
+                int bx = eqX + (i * 3);
+                int bh = barHeights[i];
+                for (int by = 0; by < bh; by++) {
+                    int py = eqBaseY - by;
+                    if (py >= 0) {
+                        uint16_t color = (by > 7) ? display->color565(255, 50, 50) : (by > 4) ? display->color565(255, 190, 0) : display->color565(0, 240, 110);
+                        display->drawPixel(bx, py, color);
+                        display->drawPixel(bx + 1, py, color);
+                    }
+                }
+            }
+        }
+    } else if (m_showVolume) {
         int volPct = (int)(m_state.volumeLevel * 100.0f);
         char vBuf[8];
         snprintf(vBuf, sizeof(vBuf), "%d%%", volPct);

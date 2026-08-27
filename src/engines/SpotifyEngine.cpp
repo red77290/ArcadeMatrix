@@ -153,6 +153,33 @@ void SpotifyEngine::update(EngineContext* context) {
     }
 }
 
+static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || text.isEmpty()) return;
+    int curX = x;
+    for (size_t i = 0; i < text.length(); i++) {
+        char c = text[i];
+        if (curX + 6 > clipMinX && curX < clipMaxX) {
+            display->drawChar(curX, y, c, color, 0, 1);
+        }
+        curX += 6;
+    }
+}
+
+static void renderMarquee(Adafruit_GFX* display, const String& text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
+    int textW = text.length() * 6;
+    int drawX = clipMinX;
+    if (textW > availW) {
+        int overflow = textW - availW + 12;
+        int pauseStart = 35; // ~1.2s initial pause
+        int pauseEnd = 20;   // ~0.7s pause at end
+        int cycle = max(1, pauseStart + overflow + pauseEnd);
+        int phase = (offset % cycle + cycle) % cycle;
+        int dx = (phase < pauseStart) ? 0 : (phase < pauseStart + overflow ? (phase - pauseStart) : overflow);
+        drawX = clipMinX - dx;
+    }
+    drawClippedString(display, text, drawX, y, clipMinX, clipMaxX, color);
+}
+
 void SpotifyEngine::render(EngineContext* context) {
     if (!context) return;
     auto* display = context->getMatrix();
@@ -162,91 +189,118 @@ void SpotifyEngine::render(EngineContext* context) {
     int h = display->height();
 
     if (!m_state.isActive || m_state.title.isEmpty()) {
-        display->setTextColor(display->color565(30, 215, 96));
-        display->setCursor((w / 2) - 20, (h / 2) - 6);
-        display->print("Spotify");
+        String title = "Spotify";
+        String subtitle = "Ready to stream";
 
-        display->setTextColor(display->color565(140, 140, 140));
-        display->setCursor((w / 2) - 34, (h / 2) + 3);
-        display->print("No music playing");
+        int titleW = title.length() * 6;
+        int yIdleTitle = (h >= 64) ? ((h / 2) - 10) : 4;
+        int yIdleSub = (h >= 64) ? ((h / 2) + 4) : 16;
+
+        if (titleW <= w - 4) {
+            int xTitle = (w - titleW) / 2;
+            drawClippedString(display, title, xTitle, yIdleTitle, 2, w - 2, display->color565(30, 215, 96));
+        } else {
+            renderMarquee(display, title, yIdleTitle, 2, w - 2, w - 4, m_marqueeOffset, display->color565(30, 215, 96));
+        }
+
+        int subW = subtitle.length() * 6;
+        int clipMinX = 2;
+        int clipMaxX = w - 2;
+        int availW = clipMaxX - clipMinX;
+
+        if (subW <= availW) {
+            int xSub = (w - subW) / 2;
+            drawClippedString(display, subtitle, xSub, yIdleSub, clipMinX, clipMaxX, display->color565(160, 160, 175));
+        } else {
+            renderMarquee(display, subtitle, yIdleSub, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(160, 160, 175));
+        }
         return;
     }
 
     int textX = 2;
+    bool hasArt = (m_showAlbumArt && !m_state.imageUrl.isEmpty());
 
     // 1. Album Cover Art frame
-    if (m_showAlbumArt && !m_state.imageUrl.isEmpty()) {
-        int imgSize = 26;
+    if (hasArt) {
+        int imgSize = (h >= 64) ? 52 : 24;
         int imgX = 1;
-        int imgY = (h - 4 - imgSize) / 2;
+        int imgY = (h >= 64) ? ((h - 4 - imgSize) / 2) : max(1, (h - 3 - imgSize) / 2);
+
         display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(30, 45, 35));
         textX = imgX + imgSize + 3;
     }
 
+    bool isCompact = (w <= 64);
     int rightReserved = 2;
     if (m_showVisualizer && m_state.isPlaying) {
-        rightReserved += 16;
+        rightReserved = (isCompact && hasArt) ? 8 : 15;
     } else if (m_showVolume && m_state.volumePercent > 0) {
-        rightReserved += 26;
+        rightReserved = 24;
     }
+
+    // Strict viewport for text
+    int clipMinX = textX;
+    int clipMaxX = w - rightReserved;
+    int availW = max(16, clipMaxX - clipMinX);
+
+    int yTitle = (h >= 64) ? 8 : 3;
+    int yArtist = (h >= 64) ? 22 : 13;
 
     // 2. Title (Marquee)
-    int titleW = m_state.title.length() * 6;
-    int availW = w - textX - rightReserved;
-    if (availW < 20) availW = 20;
-
-    int titleDrawX = textX;
-    if (titleW > availW) {
-        int overflow = titleW - availW + 16;
-        titleDrawX = textX - (m_marqueeOffset % overflow);
-    }
-
-    int yTitle = (h >= 64) ? 8 : 2;
-    int yArtist = (h >= 64) ? 22 : 12;
-
-    display->setTextColor(display->color565(255, 255, 255));
-    display->setCursor(titleDrawX, yTitle);
-    display->print(m_state.title);
+    renderMarquee(display, m_state.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
 
     // 3. Artist / Album (Marquee)
     String artistStr = !m_state.artist.isEmpty() ? m_state.artist : (!m_state.album.isEmpty() ? m_state.album : "Spotify");
-    int artistW = artistStr.length() * 6;
-    int artistDrawX = textX;
-    if (artistW > availW) {
-        int overflow = artistW - availW + 16;
-        artistDrawX = textX - ((m_marqueeOffset / 2) % overflow);
-    }
+    renderMarquee(display, artistStr, yArtist, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(30, 215, 96));
 
-    display->setTextColor(display->color565(30, 215, 96));
-    display->setCursor(artistDrawX, yArtist);
-    display->print(artistStr);
-
-    // 4. Animated Equalizer (Far Right)
+    // 4. Equalizer Visualizer on the right
     if (m_showVisualizer && m_state.isPlaying) {
-        int eqX = w - 14;
-        int barHeights[4] = {
-            (int)((m_animFrame * 4) % 7 + 2),
-            (int)((m_animFrame * 6) % 9 + 2),
-            (int)((m_animFrame * 3) % 8 + 2),
-            (int)((m_animFrame * 5) % 6 + 2)
-        };
+        int eqBaseY = (h >= 64) ? 44 : 21;
 
-        int eqBaseY = (h >= 64) ? 28 : 20;
+        if (isCompact && hasArt) {
+            // 3 compact bars (2px wide each, 1px spacing)
+            int eqX = w - 7;
+            int barHeights[3] = {
+                (int)((m_animFrame * 4) % 7 + 2),
+                (int)((m_animFrame * 6) % 9 + 3),
+                (int)((m_animFrame * 3) % 6 + 2)
+            };
 
-        for (int i = 0; i < 4; i++) {
-            int bx = eqX + (i * 3);
-            int bh = barHeights[i];
-            for (int by = 0; by < bh; by++) {
-                int py = eqBaseY - by;
-                if (py >= 0) {
-                    uint16_t color = (by > 6) ? display->color565(255, 60, 60) : (by > 3) ? display->color565(255, 220, 0) : display->color565(30, 215, 96);
-                    display->drawPixel(bx, py, color);
-                    display->drawPixel(bx + 1, py, color);
+            for (int i = 0; i < 3; i++) {
+                int bx = eqX + (i * 2);
+                int bh = barHeights[i];
+                for (int by = 0; by < bh; by++) {
+                    int py = eqBaseY - by;
+                    if (py >= 0) {
+                        uint16_t color = (by > 6) ? display->color565(255, 60, 60) : (by > 3) ? display->color565(255, 220, 0) : display->color565(30, 215, 96);
+                        display->drawPixel(bx, py, color);
+                    }
+                }
+            }
+        } else {
+            // 4 wide bars (2px wide + 1px spacing)
+            int eqX = w - 13;
+            int barHeights[4] = {
+                (int)((m_animFrame * 4) % 8 + 2),
+                (int)((m_animFrame * 6) % 11 + 3),
+                (int)((m_animFrame * 3) % 9 + 2),
+                (int)((m_animFrame * 5) % 7 + 2)
+            };
+
+            for (int i = 0; i < 4; i++) {
+                int bx = eqX + (i * 3);
+                int bh = barHeights[i];
+                for (int by = 0; by < bh; by++) {
+                    int py = eqBaseY - by;
+                    if (py >= 0) {
+                        uint16_t color = (by > 7) ? display->color565(255, 60, 60) : (by > 4) ? display->color565(255, 220, 0) : display->color565(30, 215, 96);
+                        display->drawPixel(bx, py, color);
+                        display->drawPixel(bx + 1, py, color);
+                    }
                 }
             }
         }
     } else if (m_showVolume && m_state.volumePercent > 0) {
-        // 5. Volume (Top-Right, right-aligned)
         char vBuf[8];
         snprintf(vBuf, sizeof(vBuf), "%d%%", m_state.volumePercent);
         int vLen = strlen(vBuf);
@@ -255,7 +309,7 @@ void SpotifyEngine::render(EngineContext* context) {
         display->print(vBuf);
     }
 
-    // 6. Progress Bar (Bottom 2 pixels)
+    // 5. Progress Bar (Bottom 2 pixels)
     if (m_showProgress && m_state.durationMs > 0) {
         float progress = constrain((float)m_state.progressMs / (float)m_state.durationMs, 0.0f, 1.0f);
         int barW = (int)((w - 2) * progress);
