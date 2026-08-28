@@ -13,6 +13,20 @@ enum class HwProfile {
 };
 
 /**
+ * @struct AudioCapabilities
+ * @brief Runtime snapshot of available audio hardware capabilities.
+ */
+struct AudioCapabilities {
+    bool input = false;          ///< I2S Microphone / ADC available
+    bool output = false;         ///< I2S Speaker / DAC available
+    bool fullDuplex = false;      ///< Simultaneous RX + TX supported
+    uint32_t maxSampleRate = 44100;
+    uint8_t maxChannels = 2;
+    bool bluetoothClassic = false;
+    bool psram = false;
+};
+
+/**
  * @struct HardwareCapabilities
  * @brief Runtime snapshot of available hardware capabilities.
  */
@@ -23,6 +37,8 @@ struct HardwareCapabilities {
     bool hasMicrophone = false;
     bool hasTempSensor = false;
     bool hasGyroscope = false;
+
+    AudioCapabilities audio;
 
     HwProfile profile = HwProfile::ESP32_STD;
 };

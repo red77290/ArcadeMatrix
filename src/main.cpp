@@ -50,6 +50,11 @@ void time_sync_notification_cb(struct timeval *tv) {
 
 #include "core/DisplayArbiter.h"
 #include "core/OverlayManager.h"
+#include "hal/GyroHAL.h"
+#include "core/DisplayOrientationManager.h"
+#include "core/AudioHub.h"
+#include "services/WebRadioService.h"
+#include "services/BluetoothAudioService.h"
 
 // Pins definition moved to HardwareProfile.h
 
@@ -238,6 +243,11 @@ void setup() {
     matrixEngine.setBrightness(config.matrix.powerLimitPercent);
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
+    // 3b. Initialize Display Orientation & Audio Hub
+    gyroHAL.begin();
+    displayOrientationManager.begin(matrixEngine.getDisplay());
+    audioHub.begin();
+
     // 4. Initialize Engines
     // GifEngine initialization deferred to EngineRegistry
 
@@ -424,6 +434,10 @@ void setup() {
 
 void loop() {
     esp_task_wdt_reset();
+
+    // 0. Update background audio stream & orientation
+    displayOrientationManager.update(true, 0);
+    webRadioService.loop();
 
     static bool firstLoop = true;
     if (firstLoop) {
