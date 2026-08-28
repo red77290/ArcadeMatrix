@@ -170,6 +170,8 @@ void MusicEngine::renderIdle(MatrixPanel_I2S_DMA* display, int w, int h) {
     renderMarqueeText(display, sub, ySub, 2, w - 2, display->color565(180, 180, 190));
 }
 
+#include "../services/ArtworkService.h"
+
 void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackState& state) {
     display->fillScreen(0);
     display->setFont(nullptr);
@@ -179,14 +181,24 @@ void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, cons
     int clipMinX = 2;
     int clipMaxX = w - 2;
 
+    // 0. Render Album Artwork if available in PSRAM cache
+    int artW = 0, artH = 0;
+    const uint16_t* artBmp = (_showAlbumArt && !state.artworkId.isEmpty()) ? artworkService.getArtworkBitmap(state.artworkId, artW, artH) : nullptr;
+    if (artBmp && artW > 0 && artH > 0) {
+        int drawH = min(artH, (h >= 64) ? 30 : 22);
+        int drawW = min(artW, drawH);
+        display->drawRGBBitmap(2, 2, artBmp, drawW, drawH);
+        clipMinX += (drawW + 4);
+    }
+
     // Header badge (e.g. "[SPOTIFY]" or "[RADIO]")
     int yTop = 2;
     if (_showSource && state.source != AudioSource::NONE) {
         String srcBadge = "[" + String(AudioHub::getSourceName(state.source)) + "]";
         display->setTextColor(srcColor);
-        display->setCursor(2, yTop);
+        display->setCursor(clipMinX, yTop);
         display->print(srcBadge);
-        clipMinX = srcBadge.length() * 6 + 6;
+        clipMinX += (srcBadge.length() * 6 + 4);
     }
 
     // Title Marquee (Top line)
@@ -195,8 +207,9 @@ void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, cons
 
     // Artist / Channel (Second line)
     int yArtist = (h >= 64) ? 14 : 12;
+    int artistMinX = (artBmp && artW > 0) ? (min(artW, (h >= 64) ? 30 : 22) + 6) : 2;
     if (_showArtist && state.artist.length() > 0) {
-        renderMarqueeText(display, state.artist, yArtist, 2, clipMaxX, display->color565(190, 190, 200));
+        renderMarqueeText(display, state.artist, yArtist, artistMinX, clipMaxX, display->color565(190, 190, 200));
     }
 
     // Progress Bar or Visualizer on bottom half

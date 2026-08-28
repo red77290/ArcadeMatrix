@@ -27,6 +27,26 @@ void ArtworkService::clear() {
     _currentUrl = "";
 }
 
+#include <PNGdec.h>
+
+static PNG s_png;
+static uint16_t* s_targetBuf = nullptr;
+static int s_targetW = 0;
+static int s_targetH = 0;
+
+static int pngDrawToBuffer(PNGDRAW *pDraw) {
+    if (!s_targetBuf || pDraw->y >= s_targetH) return 0;
+
+    uint16_t lineBuf[128];
+    s_png.getLineAsRGB565(pDraw, lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+
+    int copyW = min((int)pDraw->iWidth, s_targetW);
+    for (int x = 0; x < copyW; x++) {
+        s_targetBuf[pDraw->y * s_targetW + x] = lineBuf[x];
+    }
+    return 1;
+}
+
 String ArtworkService::loadArtwork(const String& url, int targetWidth, int targetHeight) {
     if (url.isEmpty()) return "";
 
@@ -55,6 +75,59 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
         LOGE("ArtworkService", "Failed to allocate %u bytes in PSRAM for artwork!", (unsigned)bufSize);
         return "";
     }
+    memset(_bitmapBuffer, 0, bufSize);
+
+    // Download artwork from HTTP stream
+    HTTPClient http;
+    http.setTimeout(3000);
+    if (!http.begin(url)) {
+        LOGW("ArtworkService", "HTTP begin failed for URL: %s", url.c_str());
+        return "";
+    }
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        LOGW("ArtworkService", "HTTP GET failed with code: %d", httpCode);
+        http.end();
+        return "";
+    }
+
+    int len = http.getSize();
+    if (len <= 0 || len > (128 * 1024)) { // Max 128KB image safety bound
+        http.end();
+        return "";
+    }
+
+    uint8_t* imgData = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!imgData) {
+        http.end();
+        return "";
+    }
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t bytesRead = 0;
+    while (http.connected() && (bytesRead < (size_t)len)) {
+        size_t avail = stream->available();
+        if (avail) {
+            int read = stream->readBytes(imgData + bytesRead, avail);
+            bytesRead += read;
+        }
+        delay(1);
+    }
+    http.end();
+
+    // Decode PNG image into RGB565 bitmap buffer
+    s_targetBuf = _bitmapBuffer;
+    s_targetW = _width;
+    s_targetH = _height;
+
+    int rc = s_png.openRAM(imgData, bytesRead, pngDrawToBuffer);
+    if (rc == PNG_SUCCESS) {
+        s_png.decode(NULL, 0);
+        s_png.close();
+    }
+
+    free(imgData);
 
     // Generate unique artwork ID
     _currentArtworkId = "art_" + String(millis());

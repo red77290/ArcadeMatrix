@@ -34,6 +34,56 @@ void AudioOutputHAL::setVolume(uint8_t volume) {
     LOGI("AudioOutputHAL", "Master volume set to %d%% (Scale: %.2f)", _volume, _volumeScale);
 }
 
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+#include <Wire.h>
+
+static bool writeES8311Reg(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(0x18);
+    Wire.write(reg);
+    Wire.write(val);
+    return (Wire.endTransmission() == 0);
+}
+
+static bool configureES8311DAC() {
+    Wire.beginTransmission(0x18);
+    if (Wire.endTransmission() != 0) {
+        LOGW("AudioOutputHAL", "ES8311 DAC not responding on I2C address 0x18.");
+        return false;
+    }
+
+    uint8_t initCmds[][2] = {
+        {0x00, 0x80}, // Reset ES8311
+        {0x00, 0x00}, // Release Reset
+        {0x01, 0x30}, // Clock Manager: Master/Slave
+        {0x02, 0x00}, // Pre-scaler
+        {0x03, 0x10}, // DAC SCLK/LRCK divider
+        {0x04, 0x10}, // ADC SCLK/LRCK divider
+        {0x05, 0x00}, // Clock Manager
+        {0x06, 0x00}, // System control
+        {0x07, 0x00}, // System control
+        {0x08, 0xFF}, // System control
+        {0x09, 0x0C}, // SDPIN: 16-bit Standard I2S
+        {0x0A, 0x0C}, // SDPOUT: 16-bit Standard I2S
+        {0x0D, 0x01}, // System control
+        {0x0E, 0x02}, // System control
+        {0x12, 0x00}, // System control
+        {0x13, 0x10}, // Analog Power
+        {0x14, 0x1A}, // Analog Power & VMID
+        {0x31, 0x00}, // DAC Mute OFF
+        {0x32, 0xBF}, // DAC Volume 0dB (0xBF = 191)
+        {0x37, 0x08}  // DAC Output Power On
+    };
+
+    bool ok = true;
+    for (size_t i = 0; i < sizeof(initCmds)/sizeof(initCmds[0]); i++) {
+        if (!writeES8311Reg(initCmds[i][0], initCmds[i][1])) {
+            ok = false;
+        }
+    }
+    return ok;
+}
+#endif
+
 bool AudioOutputHAL::begin() {
     if (_initialized) return true;
 
@@ -45,8 +95,9 @@ bool AudioOutputHAL::begin() {
     }
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    // On Waveshare S3, HardwareHAL already sets up I2S_NUM_0 in Full-Duplex (TX+RX)
-    // with ES8311 DAC enabled on GPIO 21 and PA on GPIO 11.
+    if (configureES8311DAC()) {
+        LOGI("AudioOutputHAL", "ES8311 DAC registers configured and unmuted.");
+    }
     pinMode(11, OUTPUT);
     digitalWrite(11, HIGH); // Enable Power Amplifier
     _initialized = true;

@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include "../core/AudioHub.h"
+#include <minimp3.h>
 
 /**
  * @class WebRadioService
@@ -56,9 +57,14 @@ private:
     int _bytesUntilMeta;
     uint32_t _lastYieldTime;
 
+    mp3dec_t _mp3d;
+    uint8_t _streamBuf[4096];
+    size_t _streamBufLen;
+
     bool connectStream();
     void parseIcyHeaders();
     void extractIcyMetadata();
+    void decodeAndPlayFrames();
 };
 
 extern WebRadioService webRadioService;

@@ -1,3 +1,5 @@
+#define MINIMP3_IMPLEMENTATION
+#define MINIMP3_ONLY_MP3
 #include "WebRadioService.h"
 #include "../core/Logger.h"
 #include "AudioAnalysisService.h"
@@ -7,7 +9,9 @@ WebRadioService webRadioService;
 #define RADIO_CHUNK_SIZE 512
 
 WebRadioService::WebRadioService()
-    : _isPlaying(false), _metaint(0), _bytesUntilMeta(0), _lastYieldTime(0) {}
+    : _isPlaying(false), _metaint(0), _bytesUntilMeta(0), _lastYieldTime(0), _streamBufLen(0) {
+    mp3dec_init(&_mp3d);
+}
 
 WebRadioService::~WebRadioService() {
     stop();
@@ -117,6 +121,8 @@ bool WebRadioService::play(const String& url, const String& stationName) {
     _streamUrl = url;
     _stationName = stationName.length() > 0 ? stationName : "Web Radio";
     _currentTitle = _stationName;
+    _streamBufLen = 0;
+    mp3dec_init(&_mp3d);
 
     audioHub.requestPlayback(AudioSource::WEBRADIO);
     audioHub.updateStatus(AudioSource::WEBRADIO, PlaybackStatus::STATUS_BUFFERING);
@@ -140,9 +146,44 @@ void WebRadioService::stop() {
         if (_client.connected()) {
             _client.stop();
         }
+        _streamBufLen = 0;
         audioHub.updateStatus(AudioSource::WEBRADIO, PlaybackStatus::STATUS_STOPPED);
         audioHub.releasePlayback(AudioSource::WEBRADIO);
         LOGI("WebRadio", "WebRadio stream stopped.");
+    }
+}
+
+void WebRadioService::decodeAndPlayFrames() {
+    int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    mp3dec_frame_info_t info;
+
+    while (_streamBufLen >= 128) {
+        int samples = mp3dec_decode_frame(&_mp3d, _streamBuf, _streamBufLen, pcm, &info);
+        if (info.frame_bytes <= 0) {
+            // Check if we need more bytes or if there is junk header
+            if (_streamBufLen > 512) {
+                // Skip 1 junk byte to re-sync
+                memmove(_streamBuf, _streamBuf + 1, _streamBufLen - 1);
+                _streamBufLen--;
+                continue;
+            }
+            break;
+        }
+
+        if (samples > 0) {
+            size_t totalSamples = samples * info.channels;
+            audioHub.writePCM(AudioSource::WEBRADIO, pcm, totalSamples);
+            audioAnalysisService.processSamples(pcm, totalSamples);
+        }
+
+        size_t consumed = (size_t)info.frame_bytes;
+        if (consumed <= _streamBufLen) {
+            memmove(_streamBuf, _streamBuf + consumed, _streamBufLen - consumed);
+            _streamBufLen -= consumed;
+        } else {
+            _streamBufLen = 0;
+            break;
+        }
     }
 }
 
@@ -158,19 +199,26 @@ void WebRadioService::loop() {
     size_t avail = _client.available();
     if (avail == 0) return;
 
-    size_t toRead = min(avail, (size_t)RADIO_CHUNK_SIZE);
+    size_t spaceLeft = sizeof(_streamBuf) - _streamBufLen;
+    if (spaceLeft == 0) {
+        decodeAndPlayFrames();
+        spaceLeft = sizeof(_streamBuf) - _streamBufLen;
+        if (spaceLeft == 0) {
+            // Buffer full: drop oldest 512 bytes to recover stream sync
+            memmove(_streamBuf, _streamBuf + 512, _streamBufLen - 512);
+            _streamBufLen -= 512;
+            spaceLeft = 512;
+        }
+    }
+
+    size_t toRead = min(avail, min(spaceLeft, (size_t)RADIO_CHUNK_SIZE));
     if (_metaint > 0 && (int)toRead > _bytesUntilMeta) {
         toRead = _bytesUntilMeta;
     }
 
-    uint8_t buffer[RADIO_CHUNK_SIZE];
-    int bytesRead = _client.read(buffer, toRead);
+    int bytesRead = _client.read(_streamBuf + _streamBufLen, toRead);
     if (bytesRead > 0) {
-        // Stream PCM samples to AudioHub and AudioAnalysisService
-        int16_t* pcm = (int16_t*)buffer;
-        size_t samplesCount = bytesRead / sizeof(int16_t);
-        audioHub.writePCM(AudioSource::WEBRADIO, pcm, samplesCount);
-        audioAnalysisService.processSamples(pcm, samplesCount);
+        _streamBufLen += bytesRead;
 
         if (_metaint > 0) {
             _bytesUntilMeta -= bytesRead;
@@ -179,6 +227,8 @@ void WebRadioService::loop() {
                 _bytesUntilMeta = _metaint;
             }
         }
+
+        decodeAndPlayFrames();
     }
 
     // Yield CPU to FreeRTOS watchdog
