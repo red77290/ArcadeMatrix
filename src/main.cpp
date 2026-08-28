@@ -246,6 +246,7 @@ void setup() {
     // 3b. Initialize Display Orientation & Audio Hub
     gyroHAL.begin();
     displayOrientationManager.begin(matrixEngine.getDisplay());
+    displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
     audioHub.begin();
 
     // 4. Initialize Engines
@@ -436,7 +437,7 @@ void loop() {
     esp_task_wdt_reset();
 
     // 0. Update background audio stream & orientation
-    displayOrientationManager.update(true, 0);
+    displayOrientationManager.update(config.matrix.auto_rotate, config.matrix.rotation_offset);
     webRadioService.loop();
 
     static bool firstLoop = true;
