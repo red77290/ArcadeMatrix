@@ -56,6 +56,10 @@ void ConfigLoader::setDefaults() {
     matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
     matrix.matrix_power = true;
+    matrix.rotation_offset = 0;
+    matrix.auto_rotate = true;
+    matrix.rotation_transition = "vortex";
+    matrix.rotation_transition_duration_ms = 400;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -149,6 +153,18 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         
         if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"].as<int>();
         else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"].as<int>();
+        
+        if (disp.containsKey("rotation_offset")) matrix.rotation_offset = disp["rotation_offset"].as<int>();
+        else if (disp.containsKey("rotationOffset")) matrix.rotation_offset = disp["rotationOffset"].as<int>();
+        
+        if (disp.containsKey("auto_rotate")) matrix.auto_rotate = disp["auto_rotate"].as<bool>();
+        else if (disp.containsKey("autoRotate")) matrix.auto_rotate = disp["autoRotate"].as<bool>();
+        
+        if (disp.containsKey("rotation_transition")) matrix.rotation_transition = disp["rotation_transition"].as<String>();
+        else if (disp.containsKey("rotationTransition")) matrix.rotation_transition = disp["rotationTransition"].as<String>();
+        
+        if (disp.containsKey("rotation_transition_duration_ms")) matrix.rotation_transition_duration_ms = disp["rotation_transition_duration_ms"].as<int>();
+        else if (disp.containsKey("rotationTransitionDurationMs")) matrix.rotation_transition_duration_ms = disp["rotationTransitionDurationMs"].as<int>();
     }
 
     if (doc.containsKey("wifi")) {
@@ -270,6 +286,10 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["clkPhase"] = matrix.clkPhase;
     dispObj["latchBlanking"] = matrix.latchBlanking;
     dispObj["rowAddressMode"] = matrix.rowAddressMode;
+    dispObj["rotation_offset"] = matrix.rotation_offset;
+    dispObj["auto_rotate"] = matrix.auto_rotate;
+    dispObj["rotation_transition"] = matrix.rotation_transition;
+    dispObj["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;

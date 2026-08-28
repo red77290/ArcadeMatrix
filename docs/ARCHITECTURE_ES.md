@@ -1,686 +1,331 @@
-🇪🇸 Español | 🇬🇧 [English](ARCHITECTURE.md) | 🇫🇷 [Français](ARCHITECTURE_FR.md)
+🇬🇧 [English](ARCHITECTURE.md) | 🇫🇷 [Français](ARCHITECTURE_FR.md) | 🇪🇸 Español
 
-# Visión general de la arquitectura (Raspberry Pi - Rust)
+# Visión General de la Arquitectura (ESP32 — C++ / FreeRTOS)
 
-Este documento es la referencia **profunda y exhaustiva** de la arquitectura ArcadeMatrix en Raspberry Pi (escrita en **Rust**). Cubre la filosofía de diseño, el contrato completo de los motores, el Registry de auto-descubrimiento, el ciclo de vida «Lazy-Once», la configuración auto-reparable, la UI dinámica dirigida por esquema (incluidas las **listas de opciones personalizadas / dinámicas**), el árbitro de visualización, el compositor de overlay Fighter y el runtime multihilo.
+Este documento es la referencia **exhaustiva y profunda** de la arquitectura de ArcadeMatrix en ESP32 & ESP32-S3 (desarrollado en **C++** con **FreeRTOS**). Detalla la filosofía de diseño, el contrato `IEngine`, el registro de autodescubrimiento `EngineRegistry` & `EngineRegistrar`, el ciclo de vida "Lazy-Once", el pipeline de configuración autorreparador (`ConfigSanitizer`), la interfaz WebUI dinámica basada en esquemas, el `DisplayArbiter`, el compositor de superposiciones transversales (`OverlayManager` para MUGEN Fighter), el modelo de subprocesos de doble núcleo, y los subsistemas autónomos de Audio y Giroscopio.
 
-> Para **añadir** un motor o un campo de configuración, lee [DEVELOPER_ES.md](DEVELOPER_ES.md). Este documento explica **por qué** y **cómo** se comporta el sistema; la guía del desarrollador explica **qué escribir**.
-
----
-
-## Tabla de contenidos
-
-1. [Filosofía: rendimiento y «jitter»](#1-filosofía-rendimiento-y-jitter)
-2. [Mapa de componentes](#2-mapa-de-componentes)
-3. [El contrato de los motores (modelo de clases)](#3-el-contrato-de-los-motores-modelo-de-clases)
-4. [Auto-descubrimiento: Registry, Descriptor y Factory](#4-auto-descubrimiento-registry-descriptor-y-factory)
-5. [El ciclo de vida «Lazy-Once»](#5-el-ciclo-de-vida-lazy-once)
-6. [Modelo de configuración: `config.json` → instancias](#6-modelo-de-configuración-configjson--instancias)
-7. [Auto-reparación: el ConfigSanitizer](#7-auto-reparación-el-configsanitizer)
-8. [Propagación de config y hot reload](#8-propagación-de-config-y-hot-reload)
-9. [UI dinámica guiada por esquemas y listas personalizadas](#9-ui-dinámica-guiada-por-esquemas-y-listas-personalizadas)
-10. [Arquitectura de Internacionalización (i18n) y Fuente Única de Verdad](#10-arquitectura-de-internacionalización-i18n-y-fuente-única-de-verdad)
-11. [Display Arbiter: resolución de prioridades multifuente](#11-display-arbiter-resolución-de-prioridades-multifuente)
-12. [El compositor de overlay Fighter](#12-el-compositor-de-overlay-fighter)
-13. [Aislamiento runtime y modelo de hilos](#13-aislamiento-runtime-y-modelo-de-hilos)
-14. [Regulación de cadencia (Frame pacing)](#14-regulación-de-cadencia-frame-pacing)
-15. [Superficie de API HTTP](#15-superficie-de-api-http)
-16. [Metadatos de build y telemetría](#16-metadatos-de-build-y-telemetría)
+> Si desea **añadir** un motor o un campo de configuración, consulte [DEVELOPER.md](DEVELOPER_ES.md). Este documento explica el **por qué** y el **cómo** del sistema.
 
 ---
 
-## 1. Filosofía: rendimiento y «jitter»
+## Tabla de Contenidos
 
-A diferencia del ESP32, la Raspberry Pi tiene RAM abundante (512 MB a 8 GB). Sin embargo, su sistema operativo **no** es de tiempo real (sin RTOS). El controlador de la matriz (vía DMA/GPIO, `rpi-rgb-led-matrix`) es extremadamente sensible a los micro-tirones («jitter»).
-
-Para mantener un refresco estable sin desgarros, **el bucle caliente (`update()` + `render()`) no debe realizar asignaciones dinámicas innecesarias**. Cada asignación en el heap arriesga un `malloc`/redimensionamiento que introduce unos milisegundos de latencia impredecible — suficiente para hacer parpadear el panel.
-
-De aquí surgen tres reglas que dan forma a toda la arquitectura:
-
-- **Asignar una vez, mutar in situ.** Los búferes (`String`, `Vec`) se reservan en `initialize()` y se reutilizan en cada frame (`clear()` + `write!()`).
-- **Crear motores de forma perezosa y conservarlos para siempre.** Un motor solo se instancia la primera vez que se muestra, y luego se cachea durante toda la vida del proceso («Lazy-Once»).
-- **Aislar el hilo de renderizado.** HTTP, MQTT y la E/S de red nunca corren en el hilo que habla con la matriz.
+1. [Filosofía: Restricciones Embebidas y Cero Churn de Memoria](#1-filosof%C3%ADa-restricciones-embebidas-y-cero-churn-de-memoria)
+2. [Mapa de Componentes de Alto Nivel](#2-mapa-de-componentes-de-alto-nivel)
+3. [El Contrato del Motor (Modelo `IEngine`)](#3-el-contrato-del-motor-modelo-iengine)
+4. [Autodescubrimiento: Registry, Registrar, Handlers y Gating](#4-autodescubrimiento-registry-registrar-handlers-y-gating)
+5. [Ciclo de Vida de Instancia "Lazy-Once"](#5-ciclo-de-vida-de-instancia-lazy-once)
+6. [Modelo de Configuración: `config.json` → Instancias](#6-modelo-de-configuraci%C3%B3n-configjson--instancias)
+7. [Autorreparación: El `ConfigSanitizer`](#7-autorreparaci%C3%B3n-el-configsanitizer)
+8. [Propagación y Recarga en Caliente sin Reinicio](#8-propagaci%C3%B3n-y-recarga-en-caliente-sin-reinicio)
+9. [WebUI Dinámica y Endpoints de Opciones](#9-webui-din%C3%A1mica-y-endpoints-de-opciones)
+10. [Arquitectura de Internacionalización (i18n) y Fuente Única](#10-arquitectura-de-internacionalizaci%C3%B3n-i18n-y-fuente-%C3%BAnica)
+11. [Capa de Abstracción de Hardware (`HardwareHAL`) y Gating](#11-capa-de-abstracci%C3%B3n-de-hardware-hardwarehal-y-gating)
+12. [El Árbitro de Pantalla (`DisplayArbiter`)](#12-el-%C3%A1rbitro-de-pantalla-displayarbiter)
+13. [El Compositor de Superposiciones Transversales (`OverlayManager`)](#13-el-compositor-de-superposiciones-transversales-overlaymanager)
+14. [Ejecución en Doble Núcleo y Aislamiento FreeRTOS](#14-ejecuci%C3%B3n-en-doble-n%C3%BAcleo-y-aislamiento-freertos)
+15. [Regulación de Cuadros y Doble Búfer DMA](#15-regulaci%C3%B3n-de-cuadros-y-doble-b%C3%BAfer-dma)
+16. [Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)](#16-subsistema-de-audio-aut%C3%B3nomo-audiohub-y-audiooutputhal)
+17. [Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)](#17-orientaci%C3%B3n-girosc%C3%B3pica-gyrohal-y-displayorientationmanager)
+18. [Superficie API REST HTTP](#18-superficie-api-rest-http)
+19. [Metadatos de Compilación y Telemetría](#19-metadatos-de-compilaci%C3%B3n-y-telemetr%C3%ADa)
 
 ---
 
-## 2. Mapa de componentes
+## 1. Filosofía: Restricciones Embebidas y Cero Churn de Memoria
+
+El ESP32 estándar dispone de unos 320 KB de SRAM interna (y hasta 8 MB de PSRAM en ESP32-S3). El controlador de matriz LED HUB75 consume una cantidad importante de memoria DMA y requiere tiempos muy precisos para evitar parpadeos.
+
+- **Asignar una vez, mutar en el sitio:** Búferes y matrices de animación se asignan en `initialize()` y se reutilizan en cada cuadro.
+- **Ciclo de vida "Lazy-Once":** Un motor solo se instancia cuando su configuración se muestra por primera vez y se mantiene en memoria durante la ejecución.
+- **Aislamiento de núcleos:** El Núcleo 1 está dedicado al renderizado gráfico en tiempo real, mientras que el Núcleo 0 maneja la red, `AsyncWebServer`, mDNS, decodificadores de audio y sensores.
+- **Las funciones transversales son Overlays, NO Engines:** MUGEN Fighter reside en `OverlayManager`, manteniendo la pureza de `EngineRegistry`.
+
+---
+
+## 2. Mapa de Componentes de Alto Nivel
 
 ```mermaid
 flowchart TD
-    subgraph Boot
-        MAIN["main.rs"] --> CFG["Config.load() + ConfigSanitizer"]
+    subgraph Boot["Inicio (Núcleo 1)"]
+        MAIN["main.cpp (setup)"] --> HAL["HardwareHAL.begin() (Sondas I2C e I2S)"]
+        HAL --> CFG["ConfigLoader::load() + ConfigSanitizer::sanitize()"]
+        CFG --> REG["EngineRegistrar::registerAll()"]
+        REG --> RM["RotationManager::begin()"]
+        RM --> ARB["DisplayArbiter"]
     end
 
-    CFG --> REND["matrix-render thread (8MB stack)"]
-    CFG --> API["api-server thread (actix, port 80)"]
-
-    subgraph RenderThread["matrix-render thread"]
-        REND --> ARB["DisplayArbiter.evaluate()"]
-        ARB --> ROT["RotationState"]
-        ROT --> RT["EngineRuntime (Lazy-Once cache)"]
-        RT --> REG["EngineRegistry (auto-discovery)"]
-        REG --> ENG["Box<dyn Engine>"]
-        ENG --> MX["MatrixBackend"]
-        RT --> OV["FighterEngine overlay pass"]
-        OV --> MX
+    subgraph Core0["Núcleo 0: Red y Servicios"]
+        WS["AsyncWebServer (Puerto 80)"]
+        WS --> API["API REST (/api/v1/*, /api/engines, /api/instances)"]
+        API --> SAN["ConfigSanitizer"]
+        SAN --> SAVE["config.json (Guardado Atómico)"]
+        MDNS["Respondedor mDNS"]
+        AH["AudioHub (Árbitro de Audio en Segundo Plano)"]
+        AH --> AHAL["AudioOutputHAL (DAC I2S TX)"]
     end
 
-    subgraph ApiThread["api-server thread"]
-        API --> EP["REST endpoints /api/*"]
-        EP --> REG
-        EP --> SAN["ConfigSanitizer"]
-        EP --> SAVE["config.json (atomic save)"]
+    subgraph Core1["Núcleo 1: Bucle de Renderizado (FreeRTOS)"]
+        LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
+        ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
+        RM_LOOP --> ENG["IEngine Activo (update + render)"]
+        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        RM_LOOP --> OV["OverlayManager::render() (Paso Fighter)"]
+        OV --> MATRIX
+        MATRIX --> DMA["DMA Flip Buffer hacia LEDs HUB75"]
     end
 
-    API -.->|"AtomicBool: reload_flag / reset_rotation"| REND
-    SAVE -.->|"RwLock<ConfigSettings>"| REND
+    API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
+    SAVE -.->|"ConfigLoader recarga en caliente"| RM_LOOP
 ```
-
-Los dos hilos **nunca comparten estado mutable directamente**. Se comunican solo mediante:
-
-- un `Config` compartido protegido por `RwLock<ConfigSettings>` (para el snapshot de ajustes), y
-- atómicos sin bloqueo (`AtomicBool` / `AtomicU32`) usados como señales de un solo disparo.
 
 ---
 
-## 3. El contrato de los motores (modelo de clases)
+## 3. El Contrato del Motor (Modelo `IEngine`)
 
-Cada función visual (reloj, clima, reproductor GIF, ticker cripto…) implementa el único trait `Engine`. El Core solo manipula un `Box<dyn Engine>` — **no tiene conocimiento en tiempo de compilación** de los tipos concretos.
+Cada motor implementa la interfaz `IEngine` (`include/core/EngineContract.h`):
 
 ```mermaid
 classDiagram
-    class Engine {
-        <<trait>>
-        +initialize(ctx, config) Result
-        +activate()
-        +update(ctx)
-        +render(ctx)
-        +deactivate()
-        +on_config_changed(config)
-        +is_finished() bool
-        +is_realtime() bool
-        +set_rotation_budget(budget)
-        +self_paced() bool
+    class IEngine {
+        <<interface>>
+        +initialize(context, config) EngineError*
+        +activate()*
+        +update(context)*
+        +render(context)*
+        +deactivate()*
+        +onConfigChanged(config)
+        +isFinished() bool
+        +isRealtime() bool
+        +setRotationBudget(budget)
+        +selfPaced() bool
     }
 
     class EngineDescriptor {
         +EngineMetadata metadata
-        +Capabilities capabilities
-        +Requirements requirements
+        +EngineCapabilities capabilities
+        +EngineRequirements requirements
         +ConfigSchema schema
         +EngineFactory factory
     }
 
     class EngineMetadata {
-        +str id
-        +str name
-        +str category
-        +str version
+        +String id
+        +String name
+        +String category
+        +String version
     }
 
-    class Capabilities {
+    class EngineCapabilities {
         +bool supports_128x32
         +bool supports_256x64
         +bool realtime
         +bool interruptible
     }
 
-    class Requirements {
-        +bool needs_audio
-        +bool needs_network
-        +bool needs_sd
+    class EngineRequirements {
+        +bool needsPsram
+        +bool needsAudio
+        +bool needsMicrophone
+        +bool needsGyro
     }
 
     class ConfigSchema {
-        +Vec~ConfigField~ fields
+        +vector~ConfigField~ fields
     }
 
     class ConfigField {
-        +str id
-        +ConfigType field_type
-        +str label
-        +str description
-        +str default_value
+        +String id
+        +ConfigType type
+        +String label
+        +String description
+        +String default_value
         +bool required
-        +Option~str~ min_val
-        +Option~str~ max_val
-        +Option~str~ step
-        +Option~Vec~ options
-        +Option~str~ visible_when
-        +Option~str~ options_endpoint
-        +bool multiple
+        +String min_val
+        +String max_val
+        +String step
+        +String unit
+        +String options_endpoint
+        +bool is_multiselect
+        +String visible_when
         +ValidationPolicy validation_policy
     }
 
-    class EngineContext {
-        +MatrixBackend matrix
-        +Config config
-    }
-
-    class EngineConfig {
-        <<trait>>
-        +get_string(key, default) String
-        +get_int(key, default) i32
-        +get_bool(key, default) bool
-    }
-
-    EngineDescriptor --> EngineMetadata
-    EngineDescriptor --> Capabilities
-    EngineDescriptor --> Requirements
-    EngineDescriptor --> ConfigSchema
-    EngineDescriptor ..> Engine : factory builds
-    ConfigSchema "1" --> "*" ConfigField
-    ConfigField --> ConfigType
-    ConfigField --> ValidationPolicy
-    Engine ..> EngineContext : uses
-    Engine ..> EngineConfig : reads
+    EngineDescriptor *-- EngineMetadata
+    EngineDescriptor *-- EngineCapabilities
+    EngineDescriptor *-- EngineRequirements
+    EngineDescriptor *-- ConfigSchema
+    ConfigSchema *-- ConfigField
 ```
-
-### Responsabilidades de los métodos
-
-| Método | Llamado | Propósito |
-| :-- | :-- | :-- |
-| `initialize` | una vez, al primer mostrado | Asignación pesada: cargar bitmaps/fuentes, reservar búferes. |
-| `activate` | cada vez que se vuelve visible | Reinicio barato del estado transitorio (sin asignación). |
-| `update` | bucle caliente | Lógica de negocio. **Sin asignación innecesaria.** |
-| `render` | bucle caliente | Dibujar en `context.matrix`. **Sin asignación innecesaria.** |
-| `deactivate` | al salir de pantalla | Detener tareas/escuchas de fondo. |
-| `on_config_changed` | en edición en vivo | Releer valores **in situ**, sin recreación. |
-| `is_finished` | cada frame | Señalar al runtime que avance antes (p. ej. cripto terminó su lista de tokens). |
-| `is_realtime` | cada frame | Pista de cadencia en vivo (≈25 FPS) evaluada por frame, a diferencia del `Capabilities.realtime` estático. |
-| `set_rotation_budget` | al activar | Para motores basados en contador (GIF), recibe el valor numérico de la entrada de rotación como presupuesto de reproducción. |
-| `self_paced` | cada frame | Si es `true`, el temporizador de duración **no** debe forzar el avance; el motor lo dirige vía `is_finished`. |
 
 ---
 
-## 4. Auto-descubrimiento: Registry, Descriptor y Factory
+## 4. Autodescubrimiento: Registry, Registrar, Handlers y Gating
 
-### Por qué el Core no tiene lista de tipos concretos
-
-En versiones previas a la refactorización, `app.rs` incluía cada archivo de motor y construía un enorme `match` con `Box::new(ClockEngine)`. Añadir un motor obligaba a modificar el Core — una violación del principio abierto/cerrado (SOLID).
-
-Ahora cada motor **se registra en tiempo de compilación** mediante el `#[distributed_slice]` de la crate `linkme`. El linker recoge cada función de registro en una única slice estática `ENGINES`; el Core simplemente la itera.
-
-```rust
-// core/registry.rs
-#[distributed_slice]
-pub static ENGINES: [fn() -> EngineDescriptor];
-```
-
-```rust
-// cualquier archivo de motor
-#[distributed_slice(crate::core::registry::ENGINES)]
-fn register_clock() -> EngineDescriptor { /* metadata + schema + factory */ }
-```
-
-### Por qué el Registry guarda descriptores, no instancias
-
-Instanciar cada motor en el arranque (`Box::new(...)`) desperdiciaría RAM y ralentizaría el inicio. Un **descriptor** es barato: lleva metadatos, capacidades, requisitos, el esquema de configuración y una **factory** — un puntero a función `fn() -> Box<dyn Engine>` que construye la instancia solo cuando se necesita.
-
-```mermaid
-flowchart LR
-    ID["engine_id (e.g. 'clock')"] --> REG["EngineRegistry.get_descriptor(id)"]
-    REG --> DESC["EngineDescriptor"]
-    DESC --> FAC["factory()"]
-    FAC --> INST["Box<dyn Engine>"]
-```
-
-`EngineRegistry` expone dos llamadas:
-
-- `get_all_descriptors()` — usada por `GET /api/engines` y el sanitizer.
-- `get_descriptor(id)` — usada por el runtime para construir una instancia.
+1. Cada motor encapsula sus metadatos, su esquema `ConfigSchema`, sus requisitos de hardware `EngineRequirements` y su fábrica en un `IEngineDescriptorHandler`.
+2. Al iniciar, `EngineRegistrar::registerAll()` compara los requisitos con `hardwareHAL.capabilities()`.
+3. Solo los motores soportados se registran como activos en `EngineRegistry`. Los no compatibles se marcan con `available: false` y un motivo descriptivo para la WebUI.
 
 ---
 
-## 5. El ciclo de vida «Lazy-Once»
+## 5. Ciclo de Vida de Instancia "Lazy-Once"
 
-El `EngineRuntime` posee dos mapas: las instancias vivas en caché y un snapshot de la config con la que cada una se configuró por última vez.
-
-```rust
-pub struct EngineRuntime {
-    instances: HashMap<String, Box<dyn Engine>>,     // instance_id -> motor vivo
-    configs:   HashMap<String, HashMap<String,String>>, // instance_id -> última config aplicada
-}
-```
-
-`get_instance()` es el corazón del Lazy-Once y del hot-reload:
-
-```mermaid
-sequenceDiagram
-    participant RLoop as Render loop
-    participant RT as EngineRuntime
-    participant Reg as EngineRegistry
-    participant Eng as Engine
-
-    RLoop->>RT: get_instance(instance_id, engine_id, ctx, config_map)
-    alt instance not cached
-        RT->>Reg: get_descriptor(engine_id)
-        Reg-->>RT: EngineDescriptor
-        RT->>Eng: factory()
-        RT->>Eng: initialize(ctx, config)
-        RT->>RT: cache instance + config snapshot
-    else instance already alive
-        RT->>RT: config_map != last snapshot ?
-        alt config changed
-            RT->>Eng: on_config_changed(config)
-            RT->>RT: update snapshot
-        end
-    end
-    RT-->>RLoop: &mut Box(dyn Engine)
-```
-
-El ciclo de vida como máquina de estados:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Uninstantiated
-    Uninstantiated --> Initialized : first display / factory + initialize()
-    Initialized --> Active : activate()
-    Active --> Active : update() + render() (hot loop)
-    Active --> Active : on_config_changed() (live edit)
-    Active --> Standby : deactivate()
-    Standby --> Active : activate()
-    Active --> [*] : is_finished() advances rotation
-```
-
-**Propiedad clave:** una edición de configuración nunca destruye ni reconstruye una instancia. La instancia conserva sus búferes y simplemente relee los valores en `on_config_changed()`.
+- **Instanciación Perezosa:** Creado únicamente en la primera visualización.
+- **Caché Permanente:** La instancia permanece en memoria en `activeEngines[instance_id]`.
+- **Transiciones Limpias:** Llamadas a `deactivate()` y luego `activate()` en cada cambio de rotación.
 
 ---
 
-## 6. Modelo de configuración: `config.json` → instancias
+## 6. Modelo de Configuración: `config.json` → Instancias
 
-El único archivo raíz `config.json` describe todo el dispositivo. Su estructura:
-
-```mermaid
-classDiagram
-    class ConfigSettings {
-        +MatrixConfig matrix
-        +WifiConfig wifi
-        +MqttConfig mqtt
-        +SystemConfig system
-        +Vec~EngineInstance~ instances
-        +Vec~RotationEntry~ rotation
-        +bool api_auth_enabled
-        +str api_token
-    }
-    class EngineInstance {
-        +str instance_id
-        +str engine_id
-        +HashMap~String,String~ config
-    }
-    class RotationEntry {
-        +str instance_id
-        +u32 duration_sec
-        +bool fighter_overlay
-    }
-    class SystemConfig {
-        +str timezone
-        +bool format_24h
-        +u32 day_brightness
-        +u32 night_brightness
-        +bool idle_fighter_enabled
-        +u32 idle_fighter_interval
-        +...
-    }
-    ConfigSettings "1" --> "*" EngineInstance
-    ConfigSettings "1" --> "*" RotationEntry
-    ConfigSettings --> MatrixConfig
-    ConfigSettings --> SystemConfig
-    ConfigSettings --> WifiConfig
-    ConfigSettings --> MqttConfig
-```
-
-### Tres conceptos distintos
-
-- **Motor (Engine)** — un *tipo* (p. ej. `clock`), declarado una vez por el Registry.
-- **Instancia** — una *ocurrencia nombrada y configurada* de un motor (p. ej. `clock_main`, `clock_arcade`), almacenada en `instances`.
-- **Configuración** — el `HashMap<String,String>` dentro de una instancia, validado contra el `ConfigSchema` del motor.
-
-Por eso puedes ejecutar varios relojes con fuentes/temas distintos a partir del mismo `ClockEngine`.
-
-### Por qué se separan `config.json` y `EngineConfig`
-
-Los motores no deben ver las credenciales WiFi ni los ajustes de otros motores. El runtime envuelve el `HashMap` de cada instancia en un `HashConfig` y solo entrega al motor el trait `EngineConfig` (`get_string/get_int/get_bool`) — un proxy restringido que expone exactamente las claves que el motor declaró en su esquema.
-
-### Las señales del runtime viven en `Config`
-
-`Config` también contiene el estado runtime entre hilos, separado del `ConfigSettings` persistente:
-
-```rust
-pub struct Config {
-    pub reload_flag: AtomicBool,      // cambio de hardware/red -> reinicio limpio
-    pub reset_rotation: AtomicBool,   // edición de instancia/rotación -> relectura en el siguiente frame
-    pub matrix_power: AtomicBool,     // encendido/apagado en vivo
-    pub matrix_brightness: AtomicU32, // brillo en vivo (0..100)
-    pub message_payload: Mutex<Option<Value>>,
-    pub settings: RwLock<ConfigSettings>,
+```json
+{
+  "system": { "brightness": 128, "lang": "fr" },
+  "display": { "auto_rotate": true, "manual_rotation": 0 },
+  "audio": { "master_volume": 80, "enable_bluetooth": true, "enable_webradio": true },
+  "rotation": [
+    { "instance_id": "clock_main", "duration": 15, "overlays": { "fighter": true } },
+    { "instance_id": "weather_paris", "duration": 10 },
+    { "instance_id": "music_main", "duration": 20, "overlays": { "fighter": true } }
+  ],
+  "instances": [
+    { "id": "clock_main", "engine_id": "clock", "config": { "theme": "street_fighter" } },
+    { "id": "weather_paris", "engine_id": "weather", "config": { "city": "Paris" } },
+    { "id": "music_main", "engine_id": "music_player", "config": { "show_progress": true } }
+  ]
 }
 ```
 
 ---
 
-## 7. Auto-reparación: el ConfigSanitizer
+## 7. Autorreparación: El `ConfigSanitizer`
 
-`ConfigSanitizer::sanitize_instances()` se ejecuta en el arranque y tras cada escritura. Para cada instancia busca el esquema del motor y repara la config almacenada para que el runtime siempre vea datos válidos — esto es lo que hace robustas las actualizaciones OTA.
-
-```mermaid
-flowchart TD
-    START["for each instance"] --> SCHEMA{engine_id in Registry?}
-    SCHEMA -->|"no"| INVALID["count invalid_instance, skip"]
-    SCHEMA -->|"yes"| FIELD["for each schema field"]
-    FIELD --> PRESENT{key present?}
-    PRESENT -->|"no"| INJECT["inject default_value"]
-    PRESENT -->|"yes"| TYPE{field_type}
-    TYPE -->|"Integer/Float"| RANGE{in min..max?}
-    RANGE -->|"no"| POLICY{validation_policy}
-    POLICY -->|"Clamp"| CLAMP["clamp to bound"]
-    POLICY -->|"FallbackDefault"| FB1["reset to default"]
-    POLICY -->|"Reject/Accept"| KEEP1["leave as-is"]
-    TYPE -->|"Boolean"| NORM["normalize true/1/yes/on -> true"]
-    TYPE -->|"Options"| OPT{value in allowed?}
-    OPT -->|"no"| FB2["reset to default"]
-    OPT -->|"dynamic (options_endpoint)"| KEEP2["leave as-is"]
-    TYPE -->|"String"| KEEP3["accept"]
-    FIELD --> PRUNE["prune keys not in schema"]
-```
-
-`SanitizeResult` informa cuántos valores fueron `defaults_injected`, `values_clamped`, `values_fallback`, `keys_pruned` e `invalid_instances`, y si el archivo fue `modified` (lo que dispara un reguardado).
-
-Dos sutilezas importantes:
-
-- **Las opciones dinámicas son de confianza.** Un campo con `options_endpoint` (p. ej. un nombre de archivo de fuente) no tiene lista blanca estática en compilación, así que el sanitizer deja su valor intacto.
-- **El multiselección es un CSV.** Cuando `multiple = true`, el valor es una lista separada por comas; cada token debe pertenecer al conjunto permitido.
-
-Ejemplo OTA concreto — el firmware v2 añade `font_size` y elimina `legacy_mode`:
-
-```jsonc
-// almacenado (v1)             // tras arrancar en v2
-{ "font": "foo" }        -->   { "font": "foo", "font_size": "16" }
-{ "legacy_mode": "x" }   -->   {}   // podado: ya no está en el esquema
-```
+Valida la configuración en cada guardado o inicio:
+- Relleno de valores por defecto ausentes.
+- Acotado automático (`clamp`) de valores numéricos.
+- Eliminación de entradas de rotación huérfanas.
 
 ---
 
-## 8. Propagación de config y hot reload
+## 8. Propagación y Recarga en Caliente sin Reinicio
 
-Como las instancias están en caché, una edición debe **empujarse activamente** al motor vivo en vez de recrearlo. La cadena está cableada de extremo a extremo:
-
-```mermaid
-sequenceDiagram
-    participant UI as Web UI
-    participant API as api-server thread
-    participant Disk as config.json
-    participant Flag as reset_rotation (AtomicBool)
-    participant RLoop as matrix-render loop
-    participant RT as EngineRuntime
-    participant Eng as Engine
-
-    UI->>API: POST /api/instances {id, engine_id, config}
-    API->>API: validate engine_id
-    API->>API: ConfigSanitizer.sanitize_instances()
-    API->>Disk: atomic save
-    API->>Flag: store(true)
-    Note over RLoop: next frame
-    RLoop->>Flag: swap(false)
-    RLoop->>RT: get_instance(... new config_map)
-    RT->>RT: snapshot changed?
-    RT->>Eng: on_config_changed(config)
-    Eng-->>RLoop: renders with new values (no realloc)
-```
-
-Dos clases de propagación:
-
-- **Ediciones de instancia / rotación** → `reset_rotation` → aplicadas **en vivo** vía `on_config_changed()`; sin reinicio ni reasignación.
-- **Cambios de hardware / red** (geometría de la matriz, `disable_internal`…) → `reload_flag` → el bucle de render reinicia el proceso limpiamente para reinicializar el controlador. El brillo/encendido en vivo son la excepción: pasan por los atómicos `matrix_brightness` / `matrix_power` sin reinicio.
+Las modificaciones de configuración se aplican de forma dinámica:
+- `NOTIFY_CONFIG_CHANGED`: La instancia recibe `onConfigChanged()` para releer sus valores in situ.
+- `RECREATE_INSTANCE`: La instancia se recrea limpiamente si cambian búferes críticos.
 
 ---
 
-## 9. UI dinámica por esquema y listas personalizadas
+## 9. WebUI Dinámica y Endpoints de Opciones
 
-La UI web no contiene **ningún formulario por motor**. `GET /api/engines` devuelve cada descriptor (metadatos + esquema), y `dynamic_engines.js` interpreta cada `ConfigField` para construir el widget correcto. Añadir un motor o un campo cambia la UI sin ninguna línea de frontend.
+La WebUI no contiene ningún formulario codificado de forma rígida. Consulta `GET /api/engines` para generar automáticamente los campos y usa `options_endpoint` para rellenar desplegables dinámicos.
 
-### Resolución campo → widget
+---
 
-```mermaid
-flowchart TD
-    F["ConfigField"] --> OE{options_endpoint set?}
-    OE -->|"yes"| M{multiple?}
-    M -->|"yes"| CB["checkbox grid (CSV value)"]
-    M -->|"no"| DD1["dropdown from endpoint"]
-    OE -->|"no"| T{field_type}
-    T -->|"Options"| DD2["dropdown from static options"]
-    T -->|"Boolean"| SEL["Enabled/Disabled select"]
-    T -->|"id contains 'color'"| COL["color picker"]
-    T -->|"Integer/Float"| NUM["number input (min/max)"]
-    T -->|"String"| TXT["text input"]
+## 10. Arquitectura de Internacionalización (i18n) y Fuente Única
+
+Soporte nativo de inglés, francés y español:
+- Diccionarios centralizados en `src/core/I18n.cpp`.
+- Esquemas canónicos en inglés con traducción automática en la WebUI según `config.system.lang`.
+
+---
+
+## 11. Capa de Abstracción de Hardware (`HardwareHAL`) y Gating
+
+- **Cableado 100% Congelado:** Los pines definidos en `HardwareProfile.h` son **estrictamente inmutables**.
+- **Instantánea de Capacidades (`AudioCapabilities`):**
+  ```cpp
+  struct AudioCapabilities {
+      bool input = false;          // Micrófono I2S
+      bool output = false;         // DAC I2S
+      bool fullDuplex = false;      // Soporte simultáneo RX + TX
+      uint32_t maxSampleRate = 44100;
+      uint8_t maxChannels = 2;
+      bool bluetoothClassic = false;
+      bool psram = false;
+  };
+  ```
+
+---
+
+## 12. El Árbitro de Pantalla (`DisplayArbiter`)
+
+Resolución estricta de prioridades:
+1. **Alertas de Emergencia / OTA** (Prioridad 100).
+2. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
+3. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
+4. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
+
+El audio en segundo plano continúa sonando incluso si un mensaje prioritario toma la pantalla.
+
+---
+
+## 13. El Compositor de Superposiciones Transversales (`OverlayManager`)
+
+- Renderizado superpuesto tras el paso gráfico del motor activo.
+- Decodificación de sprites animados `.fgt.gz` para luchadores MUGEN.
+- **Fighter es un overlay transversal, NO un engine en `EngineRegistry`.**
+
+---
+
+## 14. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
+
+- **Núcleo 0:** Tareas asíncronas (Web, Audio, Sensores, Análisis FFT).
+- **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual.
+
+---
+
+## 15. Regulación de Cuadros y Doble Búfer DMA
+
+Mantenimiento de 60 FPS estables para animaciones en tiempo real con doble búfer DMA de hardware.
+
+---
+
+## 16. Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)
+
+```text
+Servicios de Audio (BT, Spotify, AirPlay, WebRadio)
+    ↓ (PCM + Metadatos)
+AudioHub (Estado, Generación y Arbitraje)
+    ├──► AudioOutputHAL (Hardware DAC I2S TX)
+    ├──► AudioAnalysisService (Espectro FFT / RMS)
+    └──► ArtworkService (Caché de Imágenes en PSRAM)
+            ↓
+      AudioPlaybackState
+            ↓
+       MusicEngine (Solo Presentación Visual)
 ```
 
-### Listas de opciones personalizadas / dinámicas (los endpoints de «descubrimiento de recursos»)
+- **`AudioHub`** arbitra fuentes y actualiza un `AudioPlaybackState` con identificador `generation`.
+- **`AudioOutputHAL`** es la única abstracción autorizada para comunicarse con el DAC físico.
+- **`MusicEngine`** muestra el estado sin interactuar directamente con el hardware de audio ni sockets de red.
 
-Es el mecanismo que la antigua UI codificada perdía. Un campo declara **de dónde** vienen sus opciones en vez de codificarlas; el backend sirve los recursos reales y actualizados:
+---
 
-| Endpoint | Fuente | Usado por (campo) |
+## 17. Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)
+
+- **`GyroHAL`** lee aceleración I2C (`MPU6050`, `QMI8658`) y calcula la orientación abstracta (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) con filtro antirrebote de 500 ms.
+- **`DisplayOrientationManager`** aplica la rotación al framebuffer (`display->setRotation()`).
+- Los motores se adaptan automáticamente a su área de visualización.
+
+---
+
+## 18. Superficie API REST HTTP
+
+| Método | Ruta | Descripción |
 | :-- | :-- | :-- |
-| `GET /api/fonts` | archivos en `fonts/` (`.ttf`, `.bdf`) | `font` del reloj, cualquier motor de texto |
-| `GET /api/playlists` | subdirectorios de `gifs/` | `playlist` del GIF (**multiple**) |
-| `GET /api/themes` | `core::theme::all_themes()` (fuente única de verdad) | `theme` del reloj |
-
-Cada uno devuelve un array JSON de `{ "value": ..., "label": ... }`. Como la lista se obtiene **en vivo**, soltar una nueva fuente en `fonts/` o una nueva carpeta GIF en `gifs/` aparece inmediatamente en la UI.
-
-```mermaid
-sequenceDiagram
-    participant UI as dynamic_engines.js
-    participant API as api-server
-    participant FS as filesystem / theme table
-
-    UI->>API: GET /api/engines
-    API-->>UI: descriptors (schema incl. options_endpoint)
-    loop each field with options_endpoint
-        UI->>API: GET {options_endpoint}
-        API->>FS: read fonts/ | gifs/ | themes
-        FS-->>API: entries
-        API-->>UI: [{value,label}, ...]
-        UI->>UI: build dropdown or checkbox grid
-    end
-```
-
-### Almacenamiento del multiselección
-
-Para `multiple = true` (p. ej. la playlist GIF), la UI muestra una cuadrícula de casillas y almacena la selección como una **cadena separada por comas** en la config de la instancia (`"mario,zelda"`). El motor GIF y el sanitizer dividen ambos por `,`. Así el usuario elige *qué* carpetas GIF se reproducen — reemplazando el antiguo caso especial «ignorar esto, incluir aquello» por una elección explícita y declarativa.
-
-### `visible_when`
-
-Un campo puede llevar `visible_when` referenciando otro campo, permitiendo al frontend mostrarlo/ocultarlo condicionalmente (campos dependientes declarativos) sin JS específico del motor.
+| `GET` | `/api/v1/system/status` | Heap, PSRAM, tiempo de actividad, Wi-Fi, capacidades. |
+| `GET` | `/api/engines` | Lista de descriptores de motores y esquemas. |
+| `GET` | `/api/instances` | Lista de instancias configuradas. |
+| `POST`| `/api/instances` | Creación o edición de una instancia. |
+| `GET` | `/api/rotation` | Lista de reproducción de rotación. |
+| `POST`| `/api/rotation` | Actualización de la secuencia de rotación. |
+| `GET` | `/api/audio/status` | Estado de reproducción de audio, fuente, volumen. |
+| `POST`| `/api/audio/volume` | Ajuste del volumen de audio principal (0-100%). |
+| `GET` | `/api/gyro/status` | Vector de gravedad y orientación sugerida. |
+| `POST`| `/api/display/orientation` | Fijación manual de rotación o autorrotación. |
 
 ---
 
-## 10. Arquitectura de Internacionalización (i18n) y Fuente Única de Verdad
+## 19. Metadatos de Compilación y Telemetría
 
-ArcadeMatrix separa estrictamente la configuración visual global de la lógica interna de los motores:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Usuario
-    participant WebUI as WebUI (#lang-selector)
-    participant API as api-server (/api/system)
-    participant Disk as config.json (system.lang)
-    participant I18N as crate::core::i18n
-    participant ENG as Motores Activos (Weather, WordClock..)
-    participant MX as Panel LED / Matriz
-
-    User->>WebUI: Selecciona "English" / "Español" / "Français"
-    WebUI->>WebUI: Aplica inmediatamente translations[lang] en el DOM
-    WebUI->>API: POST /api/system { "lang": "es" }
-    API->>Disk: Guarda atómicamente system.lang = "es"
-    API->>ENG: señal reset_rotation
-    ENG->>I18N: i18n::weather_day_label() / word_clock_lines()
-    I18N-->>ENG: Devuelve cadenas traducidas en "es"
-    ENG->>MX: Renderiza directamente los textos traducidos en la matriz
-```
-
-### Ventajas de la Arquitectura i18n Centralizada:
-1. **Cero Redundancia en Esquemas:** Ningún motor individual (`WeatherEngine`, `WordClock`, `DecibelEngine`, etc.) expone un campo `lang` en su esquema.
-2. **Sincronización Universal:** Cambiar el idioma en la cabecera de la WebUI reconfigura instantáneamente todo el sistema (WebUI + visualización en la matriz).
-3. **Extensibilidad Directa:** Añadir un nuevo idioma (ej: Alemán `de`) requiere únicamente una entrada en `SUPPORTED_LANGUAGES` (Front) y las tablas del módulo `crate::core::i18n` (Back-end Rust y C++).
-
----
-
-## 11. Display Arbiter: resolución de prioridades multifuente
-
-La rotación no es lo único que puede poseer la pantalla. Los marquees (frontends de arcade), banners MQTT, mensajes de un disparo y el reproductor GIF compiten por ella. El `DisplayArbiter` lo resuelve por **prioridad**, de modo que el Core nunca contiene lógica de negocio `if source == "mqtt"` en el bucle de render.
-
-```mermaid
-classDiagram
-    class DisplayArbiter {
-        +Vec~DisplayRequest~ requests
-        +submit_request(req)
-        +cancel_request(source)
-        +clear_expired()
-        +evaluate() Option~DisplayRequest~
-    }
-    class DisplayRequest {
-        +str source
-        +DisplayPriority priority
-        +RequestLifecycle lifecycle
-        +bool preemptive
-        +str instance_id
-        +Option~Duration~ timeout
-        +Instant created_at
-    }
-    class DisplayPriority {
-        <<enum>>
-        Rotation = 10
-        Gif = 20
-        Marquee = 30
-        Visualizer = 40
-        Mqtt = 100
-    }
-    class RequestLifecycle {
-        <<enum>>
-        OneShot
-        Timed
-        UntilCancelled
-        Persistent
-    }
-    DisplayArbiter "1" --> "*" DisplayRequest
-    DisplayRequest --> DisplayPriority
-    DisplayRequest --> RequestLifecycle
-```
-
-En cada frame, el bucle de render envía/cancela solicitudes según el estado en vivo, luego llama a `evaluate()`, que descarta las solicitudes expiradas y devuelve la superviviente de **mayor prioridad**. `ROTATION` es una base `Persistent`, no preventiva (prioridad 10) siempre presente; cualquier otra cosa (MQTT=100, Marquee=30, GIF=20…) puede tomar el control temporalmente.
-
-```mermaid
-flowchart LR
-    subgraph Frame
-        S["submit/cancel requests"] --> E["evaluate()"]
-        E --> CE["clear_expired()"]
-        CE --> MAX["max_by priority"]
-    end
-    MAX --> WIN["winning source renders this frame"]
-```
-
----
-
-## 11. La Arquitectura de Overlay Transversal y OverlayManager
-
-El Fighter **no** es un `Engine` en el `EngineRegistry` y **no** es arbitrado como fuente de visualización principal. Es un *overlay transversal aditivo*: sprites decorativos de luchadores superpuestos **encima** del framebuffer de la pantalla activa.
-
-La arquitectura sigue estrictamente una **jerarquía de control de 3 niveles**:
-
-$$\text{Overlay Activo} = \text{engine.allows\_overlay}() \land \text{config.system.idle\_fighter\_enabled} \land \text{rotation\_entry.overlays.fighter}$$
-
-```mermaid
-sequenceDiagram
-    participant RLoop as Bucle de render
-    participant Eng as Motor activo
-    participant OM as OverlayManager
-    participant MX as MatrixBackend
-
-    RLoop->>Eng: update(ctx) + render(ctx)
-    Note over RLoop: Comprueba eng.allows_overlay()
-    alt allows_overlay == true
-        RLoop->>OM: configure(entry.overlays, system)
-    else allows_overlay == false
-        RLoop->>OM: configure(vacío, system)
-    end
-    RLoop->>OM: composite(matrix)
-    OM-->>RLoop: is_active() -> mantiene cadencia alta
-    RLoop->>MX: update()
-```
-
-### Reglas Clave e Invariantes:
-1. **Nivel 1 — Capacidad del Motor (`allows_overlay`)**: Capacidad fija declarada por el motor. Si es `false`, los overlays quedan estrictamente prohibidos (ej. `MarqueeEngine` o alertas de texto de emergencia).
-2. **Nivel 2 — Interruptor Maestro Global (`system.idle_fighter_enabled`)**: Preferencia del sistema para activar o desactivar los overlays en todo el dispositivo.
-3. **Nivel 3 — Interruptor por Entrada de Rotación (`rotation[i].overlays.fighter`)**: Elección granular del usuario para cada tarjeta de rotación en la Web UI. Esquema JSON canónico: `"overlays": { "fighter": true }`.
-4. **Persistencia en Memoria Heap**: El `OverlayManager` crea la instancia de `FighterEngine` una sola vez al inicio y la mantiene en memoria entre ciclos de rotación, eliminando asignaciones dinámicas en caliente y parpadeos.
-5. **Formateo Legible de `config.json`**: Al guardarse en disco, `config.json` siempre se escribe formateado con sangrías para permitir su lectura y edición manual directa por un usuario.
-
----
-
-## 12. Aislamiento del runtime y modelo de hilos
-
-```mermaid
-flowchart TD
-    subgraph P["Process"]
-        direction TB
-        R["matrix-render thread<br/>8MB stack, exclusive matrix access"]
-        A["api-server thread<br/>single-threaded Tokio"]
-        B["background: MQTT listener + HTTP API pollers"]
-    end
-    A -.->|"atomics / RwLock"| R
-    B -.->|"channels / mutex"| R
-    R --> HW["LED matrix (DMA/GPIO)"]
-```
-
-1. **Hilo de renderizado dedicado (`matrix-render`)** — pila de 8 MB, propiedad exclusiva de la matriz. Si compartiera el hilo con HTTP, cada solicitud saltaría un frame (desgarro).
-2. **Hilo Web API aislado (`api-server`)** — un runtime Tokio de un solo hilo que aloja actix en el puerto 80. Solo toca el hilo de render mediante atómicos y lecturas cortas de `RwLock`.
-3. **Servicios de fondo** — el escucha MQTT y los sondeadores HTTP (cripto, clima, bolsa) corren fuera de la vía de render, para que una llamada de red lenta nunca detenga `update()`.
-
----
-
-## 13. Cadencia de renderizado
-
-La pausa por frame se deriva de la capacidad/estado, **nunca** de un nombre de motor codificado:
-
-- `Capabilities.realtime == true` **o** `engine.is_realtime() == true` en vivo → ~25 FPS (40 ms), para contenido animado (GIF, mensaje desplazante, Spotify, overlay Fighter activo).
-- de lo contrario → 1 Hz (1000 ms), para contenido estático (reloj, fecha, clima) — mucho más ligero para CPU y Wi-Fi.
-
-`is_realtime()` se reevalúa en cada frame, así que un motor puede cambiar de cadencia según su estado en vivo (p. ej. un reloj que solo anima en un tema concreto).
-
----
-
-## 14. Superficie de la API HTTP
-
-Todos los endpoints son handlers actix en `src/api/server.rs`; los assets web estáticos se incrustan vía `rust-embed`. Referencia completa en [../openapi.yaml](../openapi.yaml).
-
-| Método | Ruta | Propósito |
-| :-- | :-- | :-- |
-| GET | `/api/system` | Snapshot completo de ajustes |
-| POST | `/api/system` | Patch de ajustes top-level/sistema (guardado parcial seguro) |
-| GET | `/api/instances` | Listar instancias configuradas |
-| POST | `/api/instances` | Upsert de una instancia (saneada + guardada) |
-| DELETE | `/api/instances/{id}` | Eliminar una instancia |
-| GET | `/api/rotation` | Lista de rotación (orden, duraciones, flags de overlay) |
-| POST | `/api/rotation` | Reemplazar la rotación, pone `reset_rotation` |
-| GET | `/api/engines` | Todos los descriptores (dirige la UI dinámica) |
-| GET | `/api/fonts` | Archivos de fuentes en `fonts/` (options_endpoint) |
-| GET | `/api/playlists` | Carpetas GIF en `gifs/` (options_endpoint) |
-| GET | `/api/themes` | Temas de `core::theme` (options_endpoint) |
-| GET | `/api/stats` | Stats del runtime (uptime, memoria, versión) |
-| POST | `/api/wifi` | Actualizar credenciales Wi-Fi |
-| POST | `/api/marquee` | Enviar una imagen de marquee |
-| POST | `/api/mqtt/install` | Instalar/activar el broker MQTT |
-| POST | `/api/mqtt/logs` | Obtener logs MQTT |
-| POST | `/api/system/restart` | Reiniciar el servicio |
-| GET | `/api/action/reboot` · POST `/api/system/reboot` | Reiniciar la Pi |
-| POST | `/api/system/shutdown` | Apagar la Pi |
-| POST | `/api/system/power` | Encendido/apagado en vivo de la matriz |
-
-Cada handler mutador pasa por `check_auth` cuando `api_auth_enabled` está activo.
-
----
-
-## 15. Metadatos de compilación
-
-`core/build_info.rs` centraliza los valores `env!` inyectados por `build.rs` (`VERSION`, `ARCH`, `BUILD_TIMESTAMP`, `GIT_COMMIT`). Se leen **una sola vez** aquí porque `env!` fija los valores en la compilación de cada sitio de llamada; leerlos en un módulo único mantiene coherentes `/api/version`, el banner de arranque y la validación OTA entre compilaciones incrementales.
+El endpoint `/api/v1/system/version` expone la huella exacta de compilación (`git_commit`, `build_timestamp`, `firmware_version`).

@@ -1,14 +1,14 @@
 🇬🇧 [English](CONFIGURATION.md) | 🇫🇷 Français | 🇪🇸 [Español](CONFIGURATION_ES.md)
 
-# Configuration détaillée (config.json) - Raspberry Pi
+# Configuration Détaillée (config.json) — ESP32
 
-Le système de configuration repose exclusivement sur un unique fichier `config.json` situé à la racine du projet (ou sur la partition **DATA** de l'image précompilée). Il gère le pilote matériel, le réseau, l'intégration MQTT, le comportement système, la sécurité de l'API et la logique découplée de chaque moteur (« instances »).
+Le système de configuration repose exclusivement sur un fichier unique `config.json` situé sur le stockage LittleFS / SD. Il pilote le driver DMA de la matrice, le réseau, MQTT, le système, l'orientation de l'affichage, la sécurité API, et les instances indépendantes de chaque moteur.
 
-> L'ancien format `conf.ini` a été entièrement supprimé. `config.json` est désormais la **source unique de vérité**. Au démarrage, le fichier est validé et autoréparé (voir §8), ce qui rend sûr un fichier partiel ou modifié à la main : les clés manquantes sont recréées avec leurs valeurs par défaut.
+> `config.json` est l'**unique source de vérité**. Au démarrage, le fichier est validé et auto-réparé par `ConfigSanitizer`, garantissant que toute clé manquante est automatiquement recréée avec ses valeurs par défaut.
 
 ---
 
-## 1. Structure globale
+## 1. Structure Globale
 
 ```json
 {
@@ -16,6 +16,8 @@ Le système de configuration repose exclusivement sur un unique fichier `config.
   "wifi": { ... },
   "mqtt": { ... },
   "system": { ... },
+  "display": { ... },
+  "audio": { ... },
   "instances": [ ... ],
   "rotation": [ ... ],
   "api_auth_enabled": false,
@@ -25,9 +27,9 @@ Le système de configuration repose exclusivement sur un unique fichier `config.
 
 ---
 
-## 2. Le bloc `"matrix"` (pilote matériel)
+## 2. Le Bloc `"matrix"` (Driver Matériel)
 
-Ce bloc configure les paramètres DMA de la bibliothèque hzeller `rpi-rgb-led-matrix`. Modifier une valeur matérielle déclenche un redémarrage automatique afin que les nouveaux réglages du pilote soient appliqués.
+Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixPanel-I2S-DMA`. La modification des paramètres matériels critiques recharge automatiquement le driver.
 
 | Clé | Type | Description |
 | :--- | :--- | :--- |

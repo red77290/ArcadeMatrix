@@ -30,6 +30,8 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 ## Features
 - **Massive Animated Clock Selection (`clock`):** Interactive clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)**, and **Versus (Mugen)**!
+- **📻 Autonomous WebRadio & Music Engine (`music`):** Background streaming audio with real-time linear MP3 frame decoding (`minimp3`), high-fidelity Everest ES8311 I2S DAC output, Bluetooth A2DP Sink, full-color PNG album artwork, scrolling artist/title, and dynamic 64-point Cooley-Tukey FFT audio visualizer!
+- **🧭 6-Axis Gyroscope Auto-Rotation (`QMI8658` / `GyroHAL`):** Automatic screen orientation ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) detecting physical gravity vector, 500ms anti-vibration hysteresis, custom mounting offset, and 1-click zero calibration from the Web UI!
 - **🎵 Spotify Now Playing (`spotify`):** Real-time track display with full-color album artwork, scrolling artist/title, progress bar, and animated audio equalizer.
 - **📡 Google Cast & Nest (`google_cast`):** Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, progress, and volume display.
 - **🖥️ System Monitor (`sysinfo`):** Real-time monitoring of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars and visual themes.
@@ -39,7 +41,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and REST endpoint for Home Assistant integration!
 - **🔊 Decibel & Sound Level Meter (Arcade / Gaming Room):** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Rhythmic Music Visualizer:** 4 priority display modes (Spectrum Equalizer with peak hold, Oscilloscope Waveform, Radial Circles, and Neon Fire).
-- **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs and change settings live!
+- **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs, calibrate screen orientation, and change settings live!
 - **GIF Engine (`gifs`):** Smooth playback of GIFs and auto-discovered playlists stored on the SD card.
 - **MQTT Support (`marquee`):** Integrates seamlessly with Batocera, Recalbox, and RetroPie to display official scraped game marquees via your Pixelcade fork.
 - **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI or Web Installer.
@@ -128,13 +130,19 @@ For full details, check `tools/bdf_to_amfont/README.md`.
 | Animations (GIFs) | ✅ Yes | ✅ Yes |
 | MUGEN Engine | ✅ Yes | ✅ Yes |
 | Web UI & Wi-Fi | ✅ Yes | ✅ Yes |
+| **Autonomous WebRadio & MP3 Decoding** | ✅ Yes (Built-in ES8311 DAC & Speaker PA) | ❌ No (Requires I2S DAC & PSRAM) |
+| **Bluetooth A2DP Audio Sink** | ✅ Yes (ESP-IDF Native A2DP Sink) | ⚠️ Limited (Requires external DAC) |
+| **6-Axis Gyro Auto-Rotation (`QMI8658`)** | ✅ Yes (Built-in IMU & 1-Click Calibrate) | ❌ No (Requires external I2C sensor) |
 | **Real-Time Crypto** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
 | **Stock Market** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
-| **Decibel Meter** | ✅ Yes (Built-in Mic) | ❌ No (Requires external I2S Mic & custom code) |
-| **Indoor Temp (SHTC3)** | ✅ Yes (Built-in Sensor) | ❌ No (Requires external I2C SHTC3 & custom code) |
+| **Decibel Meter** | ✅ Yes (Built-in ES7210 Mic Array) | ❌ No (Requires external I2S Mic & custom code) |
+| **Indoor Temp & Humidity (SHTC3)** | ✅ Yes (Built-in Sensor) | ❌ No (Requires external I2C SHTC3 & custom code) |
 
-- **ESP32-S3 Waveshare RGB Matrix Board (`esp32s3_waveshare`)**: **100% Compatible with all features.** Highly recommended. Required for large **256x64 True Matrix panels**, RAM-heavy modules (Crypto, Stock), and leverages built-in hardware sensors (Decibel, Temp) out of the box.
-- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Supports core animations, Web UI, and MUGEN for **128x32 / 64x32 matrix panels**. Does not support RAM-heavy features like HTTPS/SSL (Crypto/Stock). Built-in sensors (Mic/Temp) are also absent from standard DevKits.
+> [!NOTE]
+> **Dynamic Hardware Probing & Graceful Degradation:** All hardware sensors (Gyroscope `QMI8658`, Microphone `ES7210`, DAC `ES8311`, Temperature `SHTC3`) are dynamically probed on the I2C/I2S bus at startup. If a sensor or peripheral is absent on your board, the feature is **automatically disabled safely without crashing**, falling back to manual settings in the Web UI.
+
+- **ESP32-S3 Waveshare RGB Matrix Board (`esp32s3_waveshare`)**: **100% Compatible with all features.** Highly recommended. Required for large **256x64 True Matrix panels**, autonomous WebRadio audio streaming, Gyroscope auto-rotation, RAM-heavy modules (Crypto, Stock), and leverages built-in hardware sensors (Decibel, Temp, Speaker DAC) out of the box.
+- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Supports core animations, Web UI, and MUGEN for **128x32 / 64x32 matrix panels**. Does not support RAM-heavy features like HTTPS/SSL (Crypto/Stock) or standalone audio streaming. Built-in sensors (Mic/Temp/Gyro/DAC) are also absent from standard DevKits.
 
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.

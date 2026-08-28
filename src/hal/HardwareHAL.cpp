@@ -67,13 +67,27 @@ void HardwareHAL::begin() {
         LOGW("HardwareHAL", "ES7210 Codec not found; checking generic I2S microphone capability...");
         _capabilities.hasMicrophone = true; // Fallback to generic I2S mic
     }
+    _capabilities.audio.input = _capabilities.hasMicrophone;
+    _capabilities.audio.output = true; // ES8311 DAC on GPIO 21
+    _capabilities.audio.fullDuplex = true;
+    _capabilities.audio.maxSampleRate = 44100;
+    _capabilities.audio.maxChannels = 2;
+    _capabilities.audio.bluetoothClassic = false; // S3 is BLE only
 #else
     _capabilities.hasMicrophone = true; // Default ESP32 generic I2S mic profile
+    _capabilities.audio.input = true;
+    _capabilities.audio.output = true; // External I2S DAC (MAX98357A / PCM5102A)
+    _capabilities.audio.fullDuplex = false;
+    _capabilities.audio.maxSampleRate = 44100;
+    _capabilities.audio.maxChannels = 2;
+    _capabilities.audio.bluetoothClassic = true; // ESP32 Standard supports Classic BT A2DP Sink
 #endif
 
-    LOGI("HardwareHAL", "HAL Init complete. Temp Sensor: %s, Audio Hardware: %s",
+    LOGI("HardwareHAL", "HAL Init complete. Temp Sensor: %s, Audio Input: %s, Audio Output: %s (Full-Duplex: %s)",
          _capabilities.hasTempSensor ? "AVAILABLE" : "NOT DETECTED",
-         _capabilities.hasMicrophone ? "AVAILABLE" : "NOT DETECTED");
+         _capabilities.audio.input ? "YES" : "NO",
+         _capabilities.audio.output ? "YES" : "NO",
+         _capabilities.audio.fullDuplex ? "YES" : "NO");
 
     // Populate Capabilities Snapshot
     _capabilities.hasGyroscope = false;
@@ -85,6 +99,7 @@ void HardwareHAL::begin() {
         _capabilities.hasPsram = false;
         _capabilities.psramBytes = 0;
     }
+    _capabilities.audio.psram = _capabilities.hasPsram;
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     _capabilities.profile = HwProfile::WAVESHARE_S3;
