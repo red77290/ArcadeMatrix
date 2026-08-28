@@ -30,6 +30,8 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 ## Fonctionnalités
 - **Large sélection d'horloges animées (`clock`) :** horloges interactives incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** et **Versus (Mugen)** !
+- **📻 WebRadio Autonome & Moteur Musical (`music`) :** Streaming audio d'arrière-plan avec décodage MP3 linéaire temps réel (`minimp3`), sortie haute fidélité DAC I2S Everest ES8311, Bluetooth A2DP Sink, pochettes d'albums PNG couleur, artiste/titre défilant et visualiseur audio FFT 64 points Cooley-Tukey dynamique !
+- **🧭 Auto-Rotation d'Écran Gyroscopique 6-Axes (`QMI8658` / `GyroHAL`) :** Orientation automatique de l'affichage ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) par détection du vecteur de gravité physique, hystérèse anti-vibrations 500ms, offset mécanique de montage et calibration 1-clic depuis la Web UI !
 - **🎵 Spotify Now Playing (`spotify`) :** affichage en direct du morceau en cours de lecture avec pochette d'album en couleur, défilement artiste/titre, barre de progression et égaliseur audio animé.
 - **📡 Google Cast & Nest (`google_cast`) :** découverte automatique mDNS de vos enceintes Google Home / Nest Audio et affichage en direct des médias et flux audio diffusés.
 - **🖥️ Moniteur Système (`sysinfo`) :** surveillance en direct de l'utilisation CPU (%), RAM (%), température SoC (°C/°F) et Uptime avec jauges colorées et thèmes visuels.
@@ -39,7 +41,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
 - **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
-- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF et modifier la configuration en direct !
+- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF, calibrer l'orientation d'écran et modifier la configuration en direct !
 - **Moteur GIF (`gifs`) :** lecture fluide des GIF et playlists organisées sur la carte SD.
 - **Support MQTT (`marquee`) :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees de jeux officiels via votre fork Pixelcade.
 - **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
@@ -120,13 +122,19 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 | Animations (GIFs) | ✅ Oui | ✅ Oui |
 | Moteur MUGEN | ✅ Oui | ✅ Oui |
 | Interface Web & Wi-Fi | ✅ Oui | ✅ Oui |
+| **WebRadio Autonome & Décodage MP3** | ✅ Oui (DAC ES8311 & Ampli intégrés) | ❌ Non (Nécessite DAC I2S & PSRAM) |
+| **Bluetooth Audio A2DP Sink** | ✅ Oui (Stack A2DP Sink ESP-IDF) | ⚠️ Limité (Nécessite un DAC externe) |
+| **Auto-Rotation Gyroscope 6-Axes (`QMI8658`)** | ✅ Oui (IMU intégré & Calibrate 1-clic) | ❌ Non (Nécessite capteur I2C externe) |
 | **Crypto en Temps Réel** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
 | **Bourse** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
-| **Décibelmètre** | ✅ Oui (Micro Intégré) | ❌ Non (Nécessite un micro I2S externe & du code personnalisé) |
-| **Température Intérieure** | ✅ Oui (Capteur Intégré) | ❌ Non (Nécessite un SHTC3 I2C externe & du code personnalisé) |
+| **Décibelmètre** | ✅ Oui (Double Micro ES7210 intégré) | ❌ Non (Nécessite un micro I2S externe & du code personnalisé) |
+| **Température & Humidité (SHTC3)** | ✅ Oui (Capteur Intégré) | ❌ Non (Nécessite un SHTC3 I2C externe & du code personnalisé) |
 
-- **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, les modules gourmands en RAM (Crypto, Bourse), et exploite les capteurs matériels intégrés (Décibelmètre, Température) directement.
-- **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte les animations de base, l'interface Web et MUGEN pour les matrices **128x32 / 64x32**. Ne supporte pas les fonctionnalités lourdes en RAM (HTTPS/SSL). Les capteurs intégrés sont également absents.
+> [!NOTE]
+> **Détection Matérielle Dynamique & Dégradation Douce :** Tous les capteurs matériels (Gyroscope `QMI8658`, Microphone `ES7210`, DAC `ES8311`, Capteur de température `SHTC3`) sont sondés dynamiquement au démarrage sur le bus I2C/I2S. Si un composant est absent de votre carte, la fonctionnalité est **automatiquement désactivée sans aucun plantage**, avec repli sur le pilotage manuel via l'interface Web.
+
+- **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, le streaming audio WebRadio, l'auto-rotation gyroscopique, les modules gourmands en RAM (Crypto, Bourse), et exploite les capteurs matériels intégrés (Décibelmètre, Température, DAC HP) directement.
+- **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte les animations de base, l'interface Web et MUGEN pour les matrices **128x32 / 64x32**. Ne supporte pas les fonctionnalités lourdes en RAM (HTTPS/SSL, streaming audio autonome). Les capteurs intégrés sont également absents.
 
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.

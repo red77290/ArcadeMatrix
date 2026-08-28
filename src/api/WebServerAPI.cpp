@@ -12,6 +12,11 @@
 #include "../core/BuildInfo.h"
 #include "../core/ConfigSanitizer.h"
 #include "../engines/EngineRegistrar.h"
+#include "../core/AudioHub.h"
+#include "../services/WebRadioService.h"
+#include "../services/BluetoothAudioService.h"
+#include "../core/DisplayOrientationManager.h"
+#include "../hal/GyroHAL.h"
 
 extern RotationManager* rotationManager;
 
@@ -1598,6 +1603,137 @@ void WebServerAPI::setupRoutes() {
             }
         }
     );
+
+    // API: GET /api/audio/status — Returns current audio playback snapshot
+    server.on("/api/audio/status", HTTP_GET, [](AsyncWebServerRequest *request){
+        auto st = audioHub.getPlaybackStateSnapshot();
+        DynamicJsonDocument doc(512);
+        doc["source"] = AudioHub::getSourceName(st.source);
+        doc["status"] = (int)st.status;
+        doc["title"] = st.title;
+        doc["artist"] = st.artist;
+        doc["album"] = st.album;
+        doc["duration_ms"] = st.durationMs;
+        doc["position_ms"] = st.positionMs;
+        doc["volume"] = st.volume;
+        doc["artwork_id"] = st.artworkId;
+        doc["generation"] = st.generation;
+        String res;
+        serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    // API: POST /api/audio/volume — Adjusts master volume (0-100%)
+    AsyncCallbackJsonWebHandler* audioVolHandler = new AsyncCallbackJsonWebHandler("/api/audio/volume", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject obj = json.as<JsonObject>();
+        if (!obj["volume"].isNull()) {
+            uint8_t vol = obj["volume"].as<uint8_t>();
+            audioHub.setVolume(vol);
+        }
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+    server.addHandler(audioVolHandler);
+
+    // API: POST /api/audio/radio — Controls WebRadio playback
+    AsyncCallbackJsonWebHandler* radioHandler = new AsyncCallbackJsonWebHandler("/api/audio/radio", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject obj = json.as<JsonObject>();
+        String url = obj["url"] | "";
+        String name = obj["name"] | "Web Radio";
+        if (url.isEmpty()) {
+            webRadioService.stop();
+            request->send(200, "application/json", "{\"success\":true,\"message\":\"Radio stopped\"}");
+        } else {
+            bool ok = webRadioService.play(url, name);
+            request->send(ok ? 200 : 500, "application/json", ok ? "{\"success\":true}" : "{\"error\":\"Failed to connect to radio stream\"}");
+        }
+    });
+    server.addHandler(radioHandler);
+
+    // API: POST /api/audio/stop — Stops active audio stream
+    server.on("/api/audio/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+        webRadioService.stop();
+        bluetoothAudioService.stop();
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+
+    // API: GET /api/gyro/status — Returns gravity vector and suggested orientation
+    server.on("/api/gyro/status", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(512);
+        GyroOrientation orient = gyroHAL.getOrientation();
+        doc["available"] = gyroHAL.isAvailable();
+        doc["sensor"] = orient.sensorName;
+        doc["ax"] = orient.ax;
+        doc["ay"] = orient.ay;
+        doc["az"] = orient.az;
+        doc["gx"] = orient.gx;
+        doc["gy"] = orient.gy;
+        doc["gz"] = orient.gz;
+        doc["suggested_rotation"] = orient.suggestedRotation;
+        doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
+        doc["current_rotation"] = displayOrientationManager.getRotation();
+        doc["transition_effect"] = RotationTransitionFX::effectToString(displayOrientationManager.getTransitionEffect());
+        doc["transition_duration_ms"] = displayOrientationManager.getTransitionDuration();
+        String res;
+        serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    // API: POST /api/gyro/calibrate — Calibrates current physical position as 0° reference
+    server.on("/api/gyro/calibrate", HTTP_POST, [](AsyncWebServerRequest *request){
+        displayOrientationManager.calibrateZeroReference();
+        DynamicJsonDocument doc(256);
+        doc["success"] = true;
+        doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
+        doc["current_rotation"] = displayOrientationManager.getRotation();
+        String res;
+        serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    // API: POST /api/display/test-transition — Triggers a preview of the rotation transition FX
+    AsyncCallbackJsonWebHandler* testFxHandler = new AsyncCallbackJsonWebHandler("/api/display/test-transition", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        RotationEffect eff = displayOrientationManager.getTransitionEffect();
+        if (json.is<JsonObject>()) {
+            JsonObject obj = json.as<JsonObject>();
+            if (!obj["effect"].isNull()) {
+                eff = RotationTransitionFX::parseEffect(obj["effect"].as<String>());
+            }
+        }
+        displayOrientationManager.triggerTestTransition(eff);
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+    server.addHandler(testFxHandler);
+
+    // API: POST /api/display/orientation — Sets manual rotation index, rotation offset, or transition effect
+    AsyncCallbackJsonWebHandler* orientHandler = new AsyncCallbackJsonWebHandler("/api/display/orientation", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        JsonObject obj = json.as<JsonObject>();
+        if (!obj["manual_rotation"].isNull()) {
+            displayOrientationManager.setRotation(obj["manual_rotation"].as<uint8_t>());
+        }
+        if (!obj["rotation_offset"].isNull()) {
+            displayOrientationManager.setRotationOffset(obj["rotation_offset"].as<uint8_t>());
+        }
+        if (!obj["transition_effect"].isNull()) {
+            displayOrientationManager.setTransitionEffect(obj["transition_effect"].as<String>());
+        }
+        if (!obj["transition_duration_ms"].isNull()) {
+            displayOrientationManager.setTransitionDuration(obj["transition_duration_ms"].as<uint32_t>());
+        }
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+    server.addHandler(orientHandler);
 
     // Handle Preflight CORS
     server.onNotFound([](AsyncWebServerRequest *request) {

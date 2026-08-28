@@ -1,10 +1,10 @@
 🇬🇧 English | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 [Español](CONFIGURATION_ES.md)
 
-# Detailed Configuration (config.json) - Raspberry Pi
+# Detailed Configuration (config.json) — ESP32
 
-The configuration system relies exclusively on a single `config.json` file located at the root of the project (or on the **DATA** partition of the pre-built image). It handles the hardware driver, network, MQTT integration, system behaviour, API security, and the decoupled logic of each engine ("instances").
+The configuration system relies exclusively on a single `config.json` file located on LittleFS / SD storage. It handles the matrix DMA driver, network, MQTT integration, system behaviour, display orientation, API security, and the decoupled logic of each engine ("instances").
 
-> The legacy `conf.ini` format has been fully removed. `config.json` is now the **single source of truth**. On boot the file is validated and self-healed (see §8), so a partial or hand-edited file is safe: missing keys are re-created with their defaults.
+> `config.json` is the **single source of truth**. On boot the file is validated and self-healed by `ConfigSanitizer`, so missing keys are automatically re-created with safe defaults.
 
 ---
 
@@ -16,6 +16,8 @@ The configuration system relies exclusively on a single `config.json` file locat
   "wifi": { ... },
   "mqtt": { ... },
   "system": { ... },
+  "display": { ... },
+  "audio": { ... },
   "instances": [ ... ],
   "rotation": [ ... ],
   "api_auth_enabled": false,
@@ -27,7 +29,7 @@ The configuration system relies exclusively on a single `config.json` file locat
 
 ## 2. The `"matrix"` Block (Hardware Driver)
 
-This block configures the DMA parameters for the hzeller `rpi-rgb-led-matrix` library. Changing any hardware value triggers an automatic restart so the new driver settings take effect.
+This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DMA` driver. Changing critical hardware values triggers an automatic driver reload.
 
 | Key | Type | Description |
 | :--- | :--- | :--- |

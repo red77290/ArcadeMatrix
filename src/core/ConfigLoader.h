@@ -41,6 +41,10 @@ struct MatrixConfig {
     int latchBlanking;
     int rowAddressMode;
     bool matrix_power = true;
+    int rotation_offset = 0;
+    bool auto_rotate = true;
+    String rotation_transition = "vortex";
+    int rotation_transition_duration_ms = 400;
 };
 
 struct WifiConfig {

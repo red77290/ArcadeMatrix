@@ -29,6 +29,8 @@
 
 ## Características
 - **Gran selección de relojes animados (`clock`):** relojes interactivos que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** y **Versus (Mugen)**.
+- **📻 WebRadio Autónoma y Motor Musical (`music`):** Streaming de audio en segundo plano con decodificación de tramas MP3 lineal en tiempo real (`minimp3`), salida DAC I2S Everest ES8311 de alta fidelidad, Bluetooth A2DP Sink, carátulas de álbumes PNG a todo color, artista/título desplazable y visualizador de audio FFT de 64 puntos Cooley-Tukey dinámico.
+- **🧭 Auto-Rotación de Pantalla Giroscópica de 6 Ejes (`QMI8658` / `GyroHAL`):** Orientación automática de pantalla ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) mediante detección física del vector de gravedad, histéresis antivibración de 500 ms, offset mecánico de montaje y calibración en 1 clic desde la Web UI.
 - **🎵 Spotify Now Playing (`spotify`):** visualización en tiempo real de la pista actual con carátula del álbum a todo color, desplazamiento artista/título, barra de progreso y ecualizador de audio animado.
 - **📡 Google Cast & Nest (`google_cast`):** descubrimiento automático mDNS de altavoces Google Home / Nest Audio y visualización en directo de carátulas, progreso y volumen de reproducción.
 - **🖥️ Monitor de Sistema (`sysinfo`):** supervisión en tiempo real del uso de CPU (%), RAM (%), temperatura de hardware del SoC (°C/°F) y Uptime con barras de nivel y temas visuales retro.
@@ -38,7 +40,7 @@
 - **🌡️ Temperatura y Humedad Interior (SHTC3):** Pantalla adaptativa (°C/°F), iconos Pixel Art de termómetro y agua, y endpoint REST  para integración con Home Assistant.
 - **🔊 Sonómetro y Medidor de Decibelios (Uso para Salón de Arcade / Gaming Room :) :** Medición en tiempo real del nivel de ruido con 6 smileys en Pixel Art (<45dB 😊 a >88dB 🚨) y Visualizador de Audio. **¡Ideal para controlar el nivel sonoro en una sala de arcade ruidosa, gaming room o fiesta retro!** ([🎥 Ver la Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualizador de Música Rítmica:** 4 modos de visualización prioritaria (Spectrum Equalizer con retención de picos, Oscilloscope Waveform, Radial Circles y Neon Fire).
-- **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF y cambiar la configuración en vivo.
+- **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF, calibrar la orientación de la pantalla y cambiar la configuración en vivo.
 - **Motor GIF (`gifs`):** Reproducción fluida de GIFs almacenados en la tarjeta SD.
 - **Soporte MQTT (`marquee`):** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
@@ -58,7 +60,7 @@ SD:/
           ├─ idle.fgt
           └─ attack.fgt
   └─ fighters_64/
-      ├─ (misma estructura para paneles de 64px de alto)
+      └─ (misma estructura para paneles de 64px de alto)
 ```
 *Nota: la carpeta `www/` ya no es necesaria en la tarjeta SD, ya que la interfaz web ahora está integrada directamente en el firmware del ESP32.*
 
@@ -127,13 +129,19 @@ Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 | Animaciones (GIFs) | ✅ Sí | ✅ Sí |
 | Motor MUGEN | ✅ Sí | ✅ Sí |
 | Interfaz Web & Wi-Fi | ✅ Sí | ✅ Sí |
+| **WebRadio Autónoma y Decodificación MP3** | ✅ Sí (DAC ES8311 y Altavoz Integrados) | ❌ No (Requiere DAC I2S y PSRAM) |
+| **Bluetooth Audio A2DP Sink** | ✅ Sí (Stack A2DP Sink ESP-IDF) | ⚠️ Limitado (Requiere DAC externo) |
+| **Auto-Rotación Giroscópica 6 Ejes (`QMI8658`)** | ✅ Sí (IMU integrado y Calibrate 1-clic) | ❌ No (Requiere sensor I2C externo) |
 | **Criptomonedas en Tiempo Real** | ✅ Sí | ❌ No (Falta RAM para SSL) |
 | **Bolsa de Valores** | ✅ Sí | ❌ No (Falta RAM para SSL) |
-| **Medidor de Decibelios** | ✅ Sí (Micrófono Integrado) | ❌ No (Requiere micro I2S externo y código personalizado) |
-| **Temperatura Interior (SHTC3)** | ✅ Sí (Sensor Integrado) | ❌ No (Requiere SHTC3 I2C externo y código personalizado) |
+| **Medidor de Decibelios** | ✅ Sí (Micrófono Doble ES7210 Integrado) | ❌ No (Requiere micro I2S externo y código personalizado) |
+| **Temperatura y Humedad (SHTC3)** | ✅ Sí (Sensor Integrado) | ❌ No (Requiere SHTC3 I2C externo y código personalizado) |
 
-- **Placa ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)**: **100% Compatible con todas las características.** Altamente recomendada. Necesaria para paneles grandes **256x64 True Matrix**, módulos que consumen mucha RAM (Criptomonedas, Bolsa) y utiliza los sensores integrados (Decibelios, Temperatura) directamente de fábrica.
-- **ESP32 Clásico (WROOM-32 / `esp32dev`)**: Procesador de doble núcleo Tensilica Xtensa LX6 @ 240MHz. Soporta animaciones principales, interfaz web y MUGEN para paneles **128x32 / 64x32**. No soporta funciones pesadas en RAM como HTTPS/SSL (Cripto/Bolsa). Los sensores integrados tampoco están presentes en un DevKit estándar.
+> [!NOTE]
+> **Detección de Hardware Dinámica y Degradación Suave:** Todos los sensores de hardware (Giroscopio `QMI8658`, Micrófono `ES7210`, DAC `ES8311`, Sensor de temperatura `SHTC3`) se sondean dinámicamente en el bus I2C/I2S durante el arranque. Si un periférico o sensor no está presente, la funcionalidad se **desactiva automáticamente de forma segura sin bloqueos**, recurriendo al control manual a través de la Web UI.
+
+- **Placa ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)**: **100% Compatible con todas las características.** Altamente recomendada. Necesaria para paneles grandes **256x64 True Matrix**, streaming de WebRadio, rotación giroscópica, módulos que consumen mucha RAM (Criptomonedas, Bolsa) y utiliza los sensores integrados (Decibelios, Temperatura, DAC) directamente de fábrica.
+- **ESP32 Clásico (WROOM-32 / `esp32dev`)**: Procesador de doble núcleo Tensilica Xtensa LX6 @ 240MHz. Soporta animaciones principales, interfaz web y MUGEN para paneles **128x32 / 64x32**. No soporta funciones pesadas en RAM como HTTPS/SSL (Cripto/Bolsa) o streaming de audio autónomo. Los sensores integrados tampoco están presentes en un DevKit estándar.
 
 ## Compilación
 Para compilar el firmware por tu cuenta, debes usar **PlatformIO**.
