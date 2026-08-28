@@ -43,6 +43,21 @@ public:
     void setRotation(uint8_t rotation);
 
     /**
+     * @brief Sets baseline mechanical mounting offset (0..3).
+     */
+    void setRotationOffset(uint8_t offset) { _rotationOffset = offset % 4; }
+
+    /**
+     * @brief Returns active mounting offset (0..3).
+     */
+    uint8_t getRotationOffset() const { return _rotationOffset; }
+
+    /**
+     * @brief Calibrates the current physical position as 0° (Normal orientation).
+     */
+    void calibrateZeroReference();
+
+    /**
      * @brief Returns current active rotation index (0..3).
      */
     uint8_t getRotation() const { return _currentRotation; }
@@ -55,6 +70,7 @@ public:
 private:
     Adafruit_GFX* _display;
     uint8_t _currentRotation;
+    uint8_t _rotationOffset;
     uint32_t _lastCheckTime;
 };
 

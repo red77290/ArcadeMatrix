@@ -1673,14 +1673,30 @@ void WebServerAPI::setupRoutes() {
         doc["ax"] = orient.ax;
         doc["ay"] = orient.ay;
         doc["az"] = orient.az;
+        doc["gx"] = orient.gx;
+        doc["gy"] = orient.gy;
+        doc["gz"] = orient.gz;
         doc["suggested_rotation"] = orient.suggestedRotation;
+        doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
         doc["current_rotation"] = displayOrientationManager.getRotation();
         String res;
         serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
 
-    // API: POST /api/display/orientation — Sets manual rotation index or enables auto-rotation
+    // API: POST /api/gyro/calibrate — Calibrates current physical position as 0° reference
+    server.on("/api/gyro/calibrate", HTTP_POST, [](AsyncWebServerRequest *request){
+        displayOrientationManager.calibrateZeroReference();
+        DynamicJsonDocument doc(256);
+        doc["success"] = true;
+        doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
+        doc["current_rotation"] = displayOrientationManager.getRotation();
+        String res;
+        serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    // API: POST /api/display/orientation — Sets manual rotation index or rotation offset
     AsyncCallbackJsonWebHandler* orientHandler = new AsyncCallbackJsonWebHandler("/api/display/orientation", [](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
@@ -1689,6 +1705,9 @@ void WebServerAPI::setupRoutes() {
         JsonObject obj = json.as<JsonObject>();
         if (!obj["manual_rotation"].isNull()) {
             displayOrientationManager.setRotation(obj["manual_rotation"].as<uint8_t>());
+        }
+        if (!obj["rotation_offset"].isNull()) {
+            displayOrientationManager.setRotationOffset(obj["rotation_offset"].as<uint8_t>());
         }
         request->send(200, "application/json", "{\"success\":true}");
     });

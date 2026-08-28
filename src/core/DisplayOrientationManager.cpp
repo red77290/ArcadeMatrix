@@ -4,15 +4,28 @@
 DisplayOrientationManager displayOrientationManager;
 
 DisplayOrientationManager::DisplayOrientationManager()
-    : _display(nullptr), _currentRotation(0), _lastCheckTime(0) {}
+    : _display(nullptr), _currentRotation(0), _rotationOffset(0), _lastCheckTime(0) {}
 
 void DisplayOrientationManager::begin(Adafruit_GFX* display) {
     _display = display;
     _currentRotation = 0;
+    _rotationOffset = 0;
     _lastCheckTime = 0;
 
     if (_display) {
         _display->setRotation(0);
+    }
+}
+
+void DisplayOrientationManager::calibrateZeroReference() {
+    if (gyroHAL.isAvailable()) {
+        GyroOrientation orient = gyroHAL.update();
+        if (orient.available) {
+            // Compute offset needed so current physical orientation maps to Rotation 0 (Normal)
+            _rotationOffset = (4 - (orient.suggestedRotation % 4)) % 4;
+            setRotation(0);
+            LOGI("DisplayOrientation", "Calibrated zero reference! Rotation offset set to %d", _rotationOffset);
+        }
     }
 }
 
@@ -41,10 +54,11 @@ bool DisplayOrientationManager::update(bool autoRotate, uint8_t manualRotation) 
     if (autoRotate && gyroHAL.isAvailable()) {
         GyroOrientation orient = gyroHAL.update();
         if (orient.available) {
-            targetRot = orient.suggestedRotation;
+            // Apply mounting rotation offset
+            targetRot = (orient.suggestedRotation + _rotationOffset) % 4;
         }
     } else {
-        targetRot = manualRotation % 4;
+        targetRot = (manualRotation + _rotationOffset) % 4;
     }
 
     if (targetRot != _currentRotation) {
