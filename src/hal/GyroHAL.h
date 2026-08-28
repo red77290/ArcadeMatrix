@@ -23,6 +23,9 @@ struct GyroOrientation {
     float ax = 0.0f; // in G (-1.0 to 1.0)
     float ay = 0.0f;
     float az = 0.0f;
+    float gx = 0.0f; // in dps (deg/s)
+    float gy = 0.0f;
+    float gz = 0.0f;
     uint8_t suggestedRotation = 0; // 0, 1, 2, 3 (Adafruit_GFX rotation)
     const char* sensorName = "None";
 };

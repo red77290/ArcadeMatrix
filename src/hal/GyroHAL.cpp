@@ -104,10 +104,14 @@ bool GyroHAL::probeQMI8658() {
         _i2cAddr = addr;
         uint8_t who = readReg(0x00); // WHO_AM_I
         if (who == 0x05) {
-            // Enable Accelerometer (CTRL7 = 0x03)
+            // CTRL1: Auto-increment address enabled (0x60)
+            writeReg(0x02, 0x60);
+            // CTRL2: 2G range, 100Hz ODR (0x04)
+            writeReg(0x03, 0x04);
+            // CTRL3: 512dps range, 100Hz ODR for Gyroscope (0x64)
+            writeReg(0x04, 0x64);
+            // CTRL7: Enable Accelerometer & Gyroscope (0x03)
             writeReg(0x08, 0x03);
-            // CTRL1: 2G range, 100Hz ODR
-            writeReg(0x02, 0x00);
             return true;
         }
     }
@@ -158,14 +162,21 @@ bool GyroHAL::readRawMPU6050(float& ax, float& ay, float& az) {
 }
 
 bool GyroHAL::readRawQMI8658(float& ax, float& ay, float& az) {
-    uint8_t raw[6];
-    if (!readRegs(0x35, raw, 6)) return false;
+    uint8_t raw[12];
+    if (!readRegs(0x35, raw, 12)) return false;
     int16_t x = (int16_t)(raw[0] | (raw[1] << 8));
     int16_t y = (int16_t)(raw[2] | (raw[3] << 8));
     int16_t z = (int16_t)(raw[4] | (raw[5] << 8));
     ax = x / 16384.0f;
     ay = y / 16384.0f;
     az = z / 16384.0f;
+
+    int16_t rx = (int16_t)(raw[6] | (raw[7] << 8));
+    int16_t ry = (int16_t)(raw[8] | (raw[9] << 8));
+    int16_t rz = (int16_t)(raw[10] | (raw[11] << 8));
+    _lastOrientation.gx = rx / 64.0f; // 512dps sensitivity
+    _lastOrientation.gy = ry / 64.0f;
+    _lastOrientation.gz = rz / 64.0f;
     return true;
 }
 
