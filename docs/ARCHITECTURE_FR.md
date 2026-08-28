@@ -2,7 +2,7 @@
 
 # Vue d'Ensemble de l'Architecture (ESP32 — C++ / FreeRTOS)
 
-Ce document est la référence **exhaustive et approfondie** de l'architecture ArcadeMatrix sur ESP32 & ESP32-S3 (développé en **C++** avec **FreeRTOS**). Il détaille la philosophie de conception, le contrat `IEngine`, le registre d'auto-découverte `EngineRegistry` & `EngineRegistrar`, le cycle de vie "Lazy-Once", le pipeline de configuration auto-réparateur (`ConfigSanitizer`), l'interface WebUI dynamique pilotée par schéma, le `DisplayArbiter`, le compositeur d'overlay transverse (`OverlayManager` pour MUGEN Fighter), et le modèle de threading double cœur.
+Ce document est la référence **exhaustive et approfondie** de l'architecture ArcadeMatrix sur ESP32 & ESP32-S3 (développé en **C++** avec **FreeRTOS**). Il détaille la philosophie de conception, le contrat `IEngine`, le registre d'auto-découverte `EngineRegistry` & `EngineRegistrar`, le cycle de vie "Lazy-Once", le pipeline de configuration auto-réparateur (`ConfigSanitizer`), l'interface WebUI dynamique pilotée par schéma, le `DisplayArbiter`, le compositeur d'overlay transverse (`OverlayManager` pour MUGEN Fighter), le modèle de threading double cœur, et les sous-systèmes autonomes Audio et Gyroscope.
 
 > Si vous souhaitez **ajouter** un moteur ou un champ de configuration, lisez [DEVELOPER.md](DEVELOPER_FR.md). Ce document explique le **pourquoi** et le **comment** du système.
 
@@ -10,24 +10,25 @@ Ce document est la référence **exhaustive et approfondie** de l'architecture A
 
 ## Table des Matières
 
-1. [Philosophie : Contraintes Embarquées & Zéro Churn Mémoire](#1-philosophie--contraintes-embarqu%C3%A9es--z%C3%A9ro-churn-m%C3%A9moire)
+1. [Philosophie : Contraintes Embarquées & Zéro Churn Mémoire](#1-philosophie--contraintes-embarquées--zéro-churn-mémoire)
 2. [Cartographie des Composants de Haut Niveau](#2-cartographie-des-composants-de-haut-niveau)
-3. [Le Contrat Moteur (Modèle `IEngine`)](#3-le-contrat-moteur-mod%C3%A8le-iengine)
-4. [Auto-Découverte : Registry, Registrar, Handlers & Gating](#4-auto-d%C3%A9couverte--registry-registrar-handlers--gating)
+3. [Le Contrat Moteur (Modèle `IEngine`)](#3-le-contrat-moteur-modèle-iengine)
+4. [Auto-Découverte : Registry, Registrar, Handlers & Gating](#4-auto-découverte--registry-registrar-handlers--gating)
 5. [Cycle de Vie d'Instance "Lazy-Once"](#5-cycle-de-vie-dinstance-lazy-once)
-6. [Modèle de Configuration : `config.json` → Instances](#6-mod%C3%A8le-de-configuration--configjson--instances)
-7. [Auto-Réparation : Le `ConfigSanitizer`](#7-auto-r%C3%A9paration--le-configsanitizer)
-8. [Propagation & Rechargement à Chaud sans Reboot](#8-propagation--rechargement-%C3%A0-chaud-sans-reboot)
+6. [Modèle de Configuration : `config.json` → Instances](#6-modèle-de-configuration--configjson--instances)
+7. [Auto-Réparation : Le `ConfigSanitizer`](#7-auto-réparation--le-configsanitizer)
+8. [Propagation & Rechargement à Chaud sans Reboot](#8-propagation--rechargement-à-chaud-sans-reboot)
 9. [WebUI Dynamique & Endpoints d'Options](#9-webui-dynamique--endpoints-doptions)
-10. [Couche d'Abstraction Matérielle (`HardwareHAL`) & Gating](#10-couche-dabstraction-mat%C3%A9rielle-hardwarehal--gating)
-11. [L'Arbitre d'Affichage (`DisplayArbiter`)](#11-larbitre-daffichage-displayarbiter)
-12. [Le Compositeur d'Overlay Transverse (`OverlayManager`)](#12-le-compositeur-doverlay-transverse-overlaymanager)
-13. [Exécution Double-Cœur & Isolation FreeRTOS](#13-ex%C3%A9cution-double-c%C5%93ur--isolation-freertos)
-14. [Régulation de Cadence & Double-Buffering DMA](#14-r%C3%A9gulation-de-cadence--double-buffering-dma)
-15. [Sous-Système Audio Autonome (`AudioHub` & `AudioOutputHAL`)](#15-sous-syst%C3%A8me-audio-autonome-audiohub--audiooutputhal)
-16. [Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)](#16-orientation-gyroscopique-gyrohal--displayorientationmanager)
-17. [Surface API REST HTTP](#17-surface-api-rest-http)
-18. [Métadonnées de Build & Télémétrie](#18-m%C3%A9tadonn%C3%A9es-de-build--t%C3%A9l%C3%A9m%C3%A9trie)
+10. [Architecture d'Internationalisation (i18n) & Source Unique](#10-architecture-dinternationalisation-i18n--source-unique)
+11. [Couche d'Abstraction Matérielle (`HardwareHAL`) & Gating](#11-couche-dabstraction-matérielle-hardwarehal--gating)
+12. [L'Arbitre d'Affichage (`DisplayArbiter`)](#12-larbitre-daffichage-displayarbiter)
+13. [Le Compositeur d'Overlay Transverse (`OverlayManager`)](#13-le-compositeur-doverlay-transverse-overlaymanager)
+14. [Exécution Double-Cœur & Isolation FreeRTOS](#14-exécution-double-cœur--isolation-freertos)
+15. [Régulation de Cadence & Double-Buffering DMA](#15-régulation-de-cadence--double-buffering-dma)
+16. [Sous-Système Audio Autonome (`AudioHub` & `AudioOutputHAL`)](#16-sous-système-audio-autonome-audiohub--audiooutputhal)
+17. [Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)](#17-orientation-gyroscopique-gyrohal--displayorientationmanager)
+18. [Surface API REST HTTP](#18-surface-api-rest-http)
+19. [Métadonnées de Build & Télémétrie](#19-métadonnées-de-build--télémétrie)
 
 ---
 
@@ -85,25 +86,77 @@ flowchart TD
 
 Chaque moteur implémente l'interface `IEngine` (`include/core/EngineContract.h`) :
 
-```cpp
-class IEngine {
-public:
-    virtual ~IEngine() = default;
+```mermaid
+classDiagram
+    class IEngine {
+        <<interface>>
+        +initialize(context, config) EngineError*
+        +activate()*
+        +update(context)*
+        +render(context)*
+        +deactivate()*
+        +onConfigChanged(config)
+        +isFinished() bool
+        +isRealtime() bool
+        +setRotationBudget(budget)
+        +selfPaced() bool
+    }
 
-    // --- Cycle de vie obligatoire ---
-    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
-    virtual void activate() = 0;
-    virtual void update(EngineContext* context) = 0;
-    virtual void render(EngineContext* context) = 0;
-    virtual void deactivate() = 0;
+    class EngineDescriptor {
+        +EngineMetadata metadata
+        +EngineCapabilities capabilities
+        +EngineRequirements requirements
+        +ConfigSchema schema
+        +EngineFactory factory
+    }
 
-    // --- Méthodes optionnelles ---
-    virtual void onConfigChanged(const EngineConfig* config) {}
-    virtual bool isFinished() const { return false; }
-    virtual bool isRealtime() const { return true; }
-    virtual void setRotationBudget(uint32_t budget) {}
-    virtual bool selfPaced() const { return false; }
-};
+    class EngineMetadata {
+        +String id
+        +String name
+        +String category
+        +String version
+    }
+
+    class EngineCapabilities {
+        +bool supports_128x32
+        +bool supports_256x64
+        +bool realtime
+        +bool interruptible
+    }
+
+    class EngineRequirements {
+        +bool needsPsram
+        +bool needsAudio
+        +bool needsMicrophone
+        +bool needsGyro
+    }
+
+    class ConfigSchema {
+        +vector~ConfigField~ fields
+    }
+
+    class ConfigField {
+        +String id
+        +ConfigType type
+        +String label
+        +String description
+        +String default_value
+        +bool required
+        +String min_val
+        +String max_val
+        +String step
+        +String unit
+        +String options_endpoint
+        +bool is_multiselect
+        +String visible_when
+        +ValidationPolicy validation_policy
+    }
+
+    EngineDescriptor *-- EngineMetadata
+    EngineDescriptor *-- EngineCapabilities
+    EngineDescriptor *-- EngineRequirements
+    EngineDescriptor *-- ConfigSchema
+    ConfigSchema *-- ConfigField
 ```
 
 ---
@@ -130,6 +183,7 @@ public:
 {
   "system": { "brightness": 128, "lang": "fr" },
   "display": { "auto_rotate": true, "manual_rotation": 0 },
+  "audio": { "master_volume": 80, "enable_bluetooth": true, "enable_webradio": true },
   "rotation": [
     { "instance_id": "clock_main", "duration": 15, "overlays": { "fighter": true } },
     { "instance_id": "weather_paris", "duration": 10 },
@@ -168,7 +222,15 @@ L'interface WebUI ne contient **aucun formulaire codé en dur**. Elle lit `GET /
 
 ---
 
-## 10. Couche d'Abstraction Matérielle (`HardwareHAL`) & Gating
+## 10. Architecture d'Internationalisation (i18n) & Source Unique
+
+Prise en charge native de l'anglais, du français et de l'espagnol :
+- Dictionnaires centralisés dans `src/core/I18n.cpp`.
+- Schémas canoniques en anglais avec clés de traduction automatiques dans la WebUI selon `config.system.lang`.
+
+---
+
+## 11. Couche d'Abstraction Matérielle (`HardwareHAL`) & Gating
 
 - **Câblage 100 % Gelé :** Les broches définies dans `HardwareProfile.h` sont **strictement immuables**.
 - **Instantané des Capacités (`AudioCapabilities`) :**
@@ -186,7 +248,7 @@ L'interface WebUI ne contient **aucun formulaire codé en dur**. Elle lit `GET /
 
 ---
 
-## 11. L'Arbitre d'Affichage (`DisplayArbiter`)
+## 12. L'Arbitre d'Affichage (`DisplayArbiter`)
 
 Résolution stricte des priorités d'affichage :
 1. **Alertes d'Urgence / OTA** (Priorité 100).
@@ -198,7 +260,7 @@ L'audio d'arrière-plan continue de jouer même si un message prioritaire prend 
 
 ---
 
-## 12. Le Compositeur d'Overlay Transverse (`OverlayManager`)
+## 13. Le Compositeur d'Overlay Transverse (`OverlayManager`)
 
 - Rendus superposés après la passe graphique du moteur d'arrière-plan.
 - Décodage des sprites animés `.fgt.gz` pour les combattants MUGEN.
@@ -207,20 +269,20 @@ L'audio d'arrière-plan continue de jouer même si un message prioritaire prend 
 
 ---
 
-## 13. Exécution Double-Cœur & Isolation FreeRTOS
+## 14. Exécution Double-Cœur & Isolation FreeRTOS
 
 - **Cœur 0 :** Tâches asynchrones (Web, Audio, Capteurs, Analyse FFT).
 - **Cœur 1 :** Rendu LED 60 FPS, DMA, Overlay, Logique d'affichage.
 
 ---
 
-## 14. Régulation de Cadence & Double-Buffering DMA
+## 15. Régulation de Cadence & Double-Buffering DMA
 
 Maintien d'un framerate stable à 60 FPS pour les animations temps réel avec double-buffering DMA matériel.
 
 ---
 
-## 15. Sous-Système Audio Autonome (`AudioHub` & `AudioOutputHAL`)
+## 16. Sous-Système Audio Autonome (`AudioHub` & `AudioOutputHAL`)
 
 ```text
 Services Audio (BT, Spotify, AirPlay, WebRadio)
@@ -241,7 +303,7 @@ AudioHub (État, Génération & Arbitrage)
 
 ---
 
-## 16. Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)
+## 17. Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)
 
 - **`GyroHAL`** lit les vecteurs d'accélération I2C (`MPU6050`, `QMI8658`) et calcule l'orientation abstraite (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) avec filtre anti-rebond de 500 ms.
 - **`DisplayOrientationManager`** applique la rotation au framebuffer (`display->setRotation()`).
@@ -249,7 +311,7 @@ AudioHub (État, Génération & Arbitrage)
 
 ---
 
-## 17. Surface API REST HTTP
+## 18. Surface API REST HTTP
 
 | Méthode | Route | Description |
 | :-- | :-- | :-- |
@@ -266,6 +328,6 @@ AudioHub (État, Génération & Arbitrage)
 
 ---
 
-## 18. Métadonnées de Build & Télémétrie
+## 19. Métadonnées de Build & Télémétrie
 
 L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_commit`, `build_timestamp`, `firmware_version`).

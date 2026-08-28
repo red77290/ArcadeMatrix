@@ -2,7 +2,7 @@
 
 # Visión General de la Arquitectura (ESP32 — C++ / FreeRTOS)
 
-Este documento es la referencia **exhaustiva y profunda** de la arquitectura de ArcadeMatrix en ESP32 & ESP32-S3 (desarrollado en **C++** con **FreeRTOS**). Detalla la filosofía de diseño, el contrato `IEngine`, el registro de autodescubrimiento `EngineRegistry` & `EngineRegistrar`, el ciclo de vida "Lazy-Once", el pipeline de configuración autorreparador (`ConfigSanitizer`), la interfaz WebUI dinámica basada en esquemas, el `DisplayArbiter`, el compositor de superposiciones transversales (`OverlayManager` para MUGEN Fighter), y el modelo de subprocesos de doble núcleo.
+Este documento es la referencia **exhaustiva y profunda** de la arquitectura de ArcadeMatrix en ESP32 & ESP32-S3 (desarrollado en **C++** con **FreeRTOS**). Detalla la filosofía de diseño, el contrato `IEngine`, el registro de autodescubrimiento `EngineRegistry` & `EngineRegistrar`, el ciclo de vida "Lazy-Once", el pipeline de configuración autorreparador (`ConfigSanitizer`), la interfaz WebUI dinámica basada en esquemas, el `DisplayArbiter`, el compositor de superposiciones transversales (`OverlayManager` para MUGEN Fighter), el modelo de subprocesos de doble núcleo, y los subsistemas autónomos de Audio y Giroscopio.
 
 > Si desea **añadir** un motor o un campo de configuración, consulte [DEVELOPER.md](DEVELOPER_ES.md). Este documento explica el **por qué** y el **cómo** del sistema.
 
@@ -19,15 +19,16 @@ Este documento es la referencia **exhaustiva y profunda** de la arquitectura de 
 7. [Autorreparación: El `ConfigSanitizer`](#7-autorreparaci%C3%B3n-el-configsanitizer)
 8. [Propagación y Recarga en Caliente sin Reinicio](#8-propagaci%C3%B3n-y-recarga-en-caliente-sin-reinicio)
 9. [WebUI Dinámica y Endpoints de Opciones](#9-webui-din%C3%A1mica-y-endpoints-de-opciones)
-10. [Capa de Abstracción de Hardware (`HardwareHAL`) y Gating](#10-capa-de-abstracci%C3%B3n-de-hardware-hardwarehal-y-gating)
-11. [El Árbitro de Pantalla (`DisplayArbiter`)](#11-el-%C3%A1rbitro-de-pantalla-displayarbiter)
-12. [El Compositor de Superposiciones Transversales (`OverlayManager`)](#12-el-compositor-de-superposiciones-transversales-overlaymanager)
-13. [Ejecución en Doble Núcleo y Aislamiento FreeRTOS](#13-ejecuci%C3%B3n-en-doble-n%C3%BAcleo-y-aislamiento-freertos)
-14. [Regulación de Cuadros y Doble Búfer DMA](#14-regulaci%C3%B3n-de-cuadros-y-doble-b%C3%BAfer-dma)
-15. [Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)](#15-subsistema-de-audio-aut%C3%B3nomo-audiohub-y-audiooutputhal)
-16. [Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)](#16-orientaci%C3%B3n-girosc%C3%B3pica-gyrohal-y-displayorientationmanager)
-17. [Superficie API REST HTTP](#17-superficie-api-rest-http)
-18. [Metadatos de Compilación y Telemetría](#18-metadatos-de-compilaci%C3%B3n-y-telemetr%C3%ADa)
+10. [Arquitectura de Internacionalización (i18n) y Fuente Única](#10-arquitectura-de-internacionalizaci%C3%B3n-i18n-y-fuente-%C3%BAnica)
+11. [Capa de Abstracción de Hardware (`HardwareHAL`) y Gating](#11-capa-de-abstracci%C3%B3n-de-hardware-hardwarehal-y-gating)
+12. [El Árbitro de Pantalla (`DisplayArbiter`)](#12-el-%C3%A1rbitro-de-pantalla-displayarbiter)
+13. [El Compositor de Superposiciones Transversales (`OverlayManager`)](#13-el-compositor-de-superposiciones-transversales-overlaymanager)
+14. [Ejecución en Doble Núcleo y Aislamiento FreeRTOS](#14-ejecuci%C3%B3n-en-doble-n%C3%BAcleo-y-aislamiento-freertos)
+15. [Regulación de Cuadros y Doble Búfer DMA](#15-regulaci%C3%B3n-de-cuadros-y-doble-b%C3%BAfer-dma)
+16. [Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)](#16-subsistema-de-audio-aut%C3%B3nomo-audiohub-y-audiooutputhal)
+17. [Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)](#17-orientaci%C3%B3n-girosc%C3%B3pica-gyrohal-y-displayorientationmanager)
+18. [Superficie API REST HTTP](#18-superficie-api-rest-http)
+19. [Metadatos de Compilación y Telemetría](#19-metadatos-de-compilaci%C3%B3n-y-telemetr%C3%ADa)
 
 ---
 
@@ -84,25 +85,77 @@ flowchart TD
 
 Cada motor implementa la interfaz `IEngine` (`include/core/EngineContract.h`):
 
-```cpp
-class IEngine {
-public:
-    virtual ~IEngine() = default;
+```mermaid
+classDiagram
+    class IEngine {
+        <<interface>>
+        +initialize(context, config) EngineError*
+        +activate()*
+        +update(context)*
+        +render(context)*
+        +deactivate()*
+        +onConfigChanged(config)
+        +isFinished() bool
+        +isRealtime() bool
+        +setRotationBudget(budget)
+        +selfPaced() bool
+    }
 
-    // --- Ciclo de vida obligatorio ---
-    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
-    virtual void activate() = 0;
-    virtual void update(EngineContext* context) = 0;
-    virtual void render(EngineContext* context) = 0;
-    virtual void deactivate() = 0;
+    class EngineDescriptor {
+        +EngineMetadata metadata
+        +EngineCapabilities capabilities
+        +EngineRequirements requirements
+        +ConfigSchema schema
+        +EngineFactory factory
+    }
 
-    // --- Métodos opcionales ---
-    virtual void onConfigChanged(const EngineConfig* config) {}
-    virtual bool isFinished() const { return false; }
-    virtual bool isRealtime() const { return true; }
-    virtual void setRotationBudget(uint32_t budget) {}
-    virtual bool selfPaced() const { return false; }
-};
+    class EngineMetadata {
+        +String id
+        +String name
+        +String category
+        +String version
+    }
+
+    class EngineCapabilities {
+        +bool supports_128x32
+        +bool supports_256x64
+        +bool realtime
+        +bool interruptible
+    }
+
+    class EngineRequirements {
+        +bool needsPsram
+        +bool needsAudio
+        +bool needsMicrophone
+        +bool needsGyro
+    }
+
+    class ConfigSchema {
+        +vector~ConfigField~ fields
+    }
+
+    class ConfigField {
+        +String id
+        +ConfigType type
+        +String label
+        +String description
+        +String default_value
+        +bool required
+        +String min_val
+        +String max_val
+        +String step
+        +String unit
+        +String options_endpoint
+        +bool is_multiselect
+        +String visible_when
+        +ValidationPolicy validation_policy
+    }
+
+    EngineDescriptor *-- EngineMetadata
+    EngineDescriptor *-- EngineCapabilities
+    EngineDescriptor *-- EngineRequirements
+    EngineDescriptor *-- ConfigSchema
+    ConfigSchema *-- ConfigField
 ```
 
 ---
@@ -129,6 +182,7 @@ public:
 {
   "system": { "brightness": 128, "lang": "fr" },
   "display": { "auto_rotate": true, "manual_rotation": 0 },
+  "audio": { "master_volume": 80, "enable_bluetooth": true, "enable_webradio": true },
   "rotation": [
     { "instance_id": "clock_main", "duration": 15, "overlays": { "fighter": true } },
     { "instance_id": "weather_paris", "duration": 10 },
@@ -167,7 +221,15 @@ La WebUI no contiene ningún formulario codificado de forma rígida. Consulta `G
 
 ---
 
-## 10. Capa de Abstracción de Hardware (`HardwareHAL`) y Gating
+## 10. Arquitectura de Internacionalización (i18n) y Fuente Única
+
+Soporte nativo de inglés, francés y español:
+- Diccionarios centralizados en `src/core/I18n.cpp`.
+- Esquemas canónicos en inglés con traducción automática en la WebUI según `config.system.lang`.
+
+---
+
+## 11. Capa de Abstracción de Hardware (`HardwareHAL`) y Gating
 
 - **Cableado 100% Congelado:** Los pines definidos en `HardwareProfile.h` son **estrictamente inmutables**.
 - **Instantánea de Capacidades (`AudioCapabilities`):**
@@ -185,7 +247,7 @@ La WebUI no contiene ningún formulario codificado de forma rígida. Consulta `G
 
 ---
 
-## 11. El Árbitro de Pantalla (`DisplayArbiter`)
+## 12. El Árbitro de Pantalla (`DisplayArbiter`)
 
 Resolución estricta de prioridades:
 1. **Alertas de Emergencia / OTA** (Prioridad 100).
@@ -197,7 +259,7 @@ El audio en segundo plano continúa sonando incluso si un mensaje prioritario to
 
 ---
 
-## 12. El Compositor de Superposiciones Transversales (`OverlayManager`)
+## 13. El Compositor de Superposiciones Transversales (`OverlayManager`)
 
 - Renderizado superpuesto tras el paso gráfico del motor activo.
 - Decodificación de sprites animados `.fgt.gz` para luchadores MUGEN.
@@ -205,20 +267,20 @@ El audio en segundo plano continúa sonando incluso si un mensaje prioritario to
 
 ---
 
-## 13. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
+## 14. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
 
 - **Núcleo 0:** Tareas asíncronas (Web, Audio, Sensores, Análisis FFT).
 - **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual.
 
 ---
 
-## 14. Regulación de Cuadros y Doble Búfer DMA
+## 15. Regulación de Cuadros y Doble Búfer DMA
 
 Mantenimiento de 60 FPS estables para animaciones en tiempo real con doble búfer DMA de hardware.
 
 ---
 
-## 15. Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)
+## 16. Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)
 
 ```text
 Servicios de Audio (BT, Spotify, AirPlay, WebRadio)
@@ -239,7 +301,7 @@ AudioHub (Estado, Generación y Arbitraje)
 
 ---
 
-## 16. Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)
+## 17. Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)
 
 - **`GyroHAL`** lee aceleración I2C (`MPU6050`, `QMI8658`) y calcula la orientación abstracta (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) con filtro antirrebote de 500 ms.
 - **`DisplayOrientationManager`** aplica la rotación al framebuffer (`display->setRotation()`).
@@ -247,7 +309,7 @@ AudioHub (Estado, Generación y Arbitraje)
 
 ---
 
-## 17. Superficie API REST HTTP
+## 18. Superficie API REST HTTP
 
 | Método | Ruta | Descripción |
 | :-- | :-- | :-- |
@@ -264,6 +326,6 @@ AudioHub (Estado, Generación y Arbitraje)
 
 ---
 
-## 18. Metadatos de Compilación y Telemetría
+## 19. Metadatos de Compilación y Telemetría
 
 El endpoint `/api/v1/system/version` expone la huella exacta de compilación (`git_commit`, `build_timestamp`, `firmware_version`).
