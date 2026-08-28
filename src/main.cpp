@@ -247,6 +247,8 @@ void setup() {
     gyroHAL.begin();
     displayOrientationManager.begin(matrixEngine.getDisplay());
     displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
+    displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
+    displayOrientationManager.setTransitionDuration(config.matrix.rotation_transition_duration_ms);
     audioHub.begin();
 
     // 4. Initialize Engines
@@ -439,6 +441,14 @@ void loop() {
     // 0. Update background audio stream & orientation
     displayOrientationManager.update(config.matrix.auto_rotate, config.matrix.rotation_offset);
     webRadioService.loop();
+
+    // 0b. Render active orientation transition animation if running
+    if (displayOrientationManager.isTransitioning()) {
+        displayOrientationManager.renderTransition();
+        matrixEngine.getDisplay()->flipDMABuffer();
+        delay(16); // ~60 FPS smooth transition cadence
+        return;
+    }
 
     static bool firstLoop = true;
     if (firstLoop) {
