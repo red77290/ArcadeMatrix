@@ -1,10 +1,10 @@
 🇬🇧 [English](CONFIGURATION.md) | 🇫🇷 [Français](CONFIGURATION_FR.md) | 🇪🇸 Español
 
-# Configuración Detallada (config.json) - Raspberry Pi
+# Configuración Detallada (config.json) — ESP32
 
-El sistema de configuración se basa exclusivamente en un único archivo `config.json` ubicado en la raíz del proyecto (o en la partición **DATA** de la imagen precompilada). Gestiona el controlador de hardware, la red, la integración MQTT, el comportamiento del sistema, la seguridad de la API y la lógica desacoplada de cada motor ("instancias").
+El sistema de configuración se basa exclusivamente en un único archivo `config.json` ubicado en el almacenamiento LittleFS / SD. Controla el controlador DMA de la matriz, la red, MQTT, el sistema, la orientación de la pantalla, la seguridad de la API y las instancias independientes de cada motor.
 
-> El formato heredado `conf.ini` se ha eliminado por completo. `config.json` es ahora la **única fuente de verdad**. En el arranque, el archivo se valida y se autorrepara (ver §8), así que un archivo parcial o editado a mano es seguro: las claves que falten se vuelven a crear con sus valores por defecto.
+> `config.json` es la **única fuente de verdad**. En el inicio, el archivo es validado y autorreparado por `ConfigSanitizer`, garantizando que cualquier clave ausente se recrea automáticamente con sus valores por defecto.
 
 ---
 
@@ -16,6 +16,8 @@ El sistema de configuración se basa exclusivamente en un único archivo `config
   "wifi": { ... },
   "mqtt": { ... },
   "system": { ... },
+  "display": { ... },
+  "audio": { ... },
   "instances": [ ... ],
   "rotation": [ ... ],
   "api_auth_enabled": false,
@@ -25,9 +27,9 @@ El sistema de configuración se basa exclusivamente en un único archivo `config
 
 ---
 
-## 2. El Bloque `"matrix"` (Controlador Hardware)
+## 2. El Bloque `"matrix"` (Controlador de Hardware)
 
-Este bloque configura los parámetros DMA para la biblioteca hzeller `rpi-rgb-led-matrix`. Cambiar cualquier valor de hardware activa un reinicio automático para que la nueva configuración del controlador tenga efecto.
+Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-MatrixPanel-I2S-DMA`. Modificar parámetros de hardware críticos recarga automáticamente el controlador.ón del controlador tenga efecto.
 
 | Clave | Tipo | Descripción |
 | :--- | :--- | :--- |
