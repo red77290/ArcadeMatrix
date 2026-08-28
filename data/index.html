@@ -1336,7 +1336,7 @@ select.input option {
           <!-- Screen Orientation & Gyroscope Calibration Card -->
           <div class="card glass shadow" style="margin-bottom: 1.5rem;">
             <h3>🧭 Screen Orientation & Gyroscope</h3>
-            <p class="text-muted">Configure display rotation, baseline mounting offset, or enable auto-rotation via onboard Gyroscope/IMU.</p>
+            <p class="text-muted">Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via onboard Gyroscope/IMU.</p>
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
@@ -1359,6 +1359,29 @@ select.input option {
               </div>
               <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
                 <button id="btn-gyro-calibrate" class="btn btn-secondary" style="width: 100%;">🎯 Set Current as Normal (0°)</button>
+              </div>
+            </div>
+
+            <!-- Transition Effects Row -->
+            <div class="form-grid col-3" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label>Rotation Transition Effect</label>
+                <select id="hw-rotation-transition" class="input">
+                  <option value="vortex">✨ Particle Vortex (Vortex de Particules)</option>
+                  <option value="glitch">⚡ Cyberpunk Glitch (Glitch Numérique)</option>
+                  <option value="slide">💫 Smooth Slide (Glissement Directionnel)</option>
+                  <option value="zoom">🌀 Tunnel Zoom (Zoom Arcade 3D)</option>
+                  <option value="matrix">🌊 Matrix Rain (Pluie Numérique)</option>
+                  <option value="random">🎲 Random (Aléatoire à chaque rotation)</option>
+                  <option value="none">None (Instant Cut)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Transition Duration (ms)</label>
+                <input type="number" id="hw-transition-duration" class="input" value="400" min="150" max="1500" step="50">
+              </div>
+              <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
+                <button id="btn-test-transition" class="btn btn-secondary" style="width: 100%;">✨ Test Transition FX</button>
               </div>
             </div>
 
@@ -4300,6 +4323,8 @@ async function initSettings() {
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz);
     setVal('hw-screen-rotation', matrix.rotation_offset ?? 0);
     setChk('hw-gyro-autorotate', matrix.auto_rotate ?? true);
+    setVal('hw-rotation-transition', matrix.rotation_transition || 'vortex');
+    setVal('hw-transition-duration', matrix.rotation_transition_duration_ms || 400);
 
     // Fetch Live Gyroscope status
     try {
@@ -4312,6 +4337,8 @@ async function initSettings() {
         const aRot = document.getElementById('gyro-active-rot');
         if (aRot) aRot.textContent = `${(gyro.current_rotation ?? 0) * 90}° (Mode ${gyro.current_rotation ?? 0})`;
         if (gyro.rotation_offset !== undefined) setVal('hw-screen-rotation', gyro.rotation_offset);
+        if (gyro.transition_effect) setVal('hw-rotation-transition', gyro.transition_effect);
+        if (gyro.transition_duration_ms) setVal('hw-transition-duration', gyro.transition_duration_ms);
       }
     } catch (e) {
       console.warn('Gyro status fetch failed', e);
@@ -4343,6 +4370,41 @@ async function initSettings() {
         if (aRot) aRot.textContent = `${rot * 90}° (Mode ${rot})`;
       } catch (err) {
         window.showToast('Failed to apply rotation', 'error');
+      }
+    });
+  }
+
+  const transSelect = document.getElementById('hw-rotation-transition');
+  if (transSelect) {
+    transSelect.addEventListener('change', async (e) => {
+      try {
+        await API.post('/api/display/orientation', { transition_effect: e.target.value });
+        window.showToast(`Transition effect set to '${e.target.value}'`, 'info');
+      } catch (err) {
+        window.showToast('Failed to update transition effect', 'error');
+      }
+    });
+  }
+
+  const transDur = document.getElementById('hw-transition-duration');
+  if (transDur) {
+    transDur.addEventListener('change', async (e) => {
+      const dur = parseInt(e.target.value) || 400;
+      try {
+        await API.post('/api/display/orientation', { transition_duration_ms: dur });
+      } catch (err) {}
+    });
+  }
+
+  const btnTestTrans = document.getElementById('btn-test-transition');
+  if (btnTestTrans) {
+    btnTestTrans.addEventListener('click', async () => {
+      const eff = document.getElementById('hw-rotation-transition')?.value || 'vortex';
+      try {
+        await API.post('/api/display/test-transition', { effect: eff });
+        window.showToast(`✨ Testing transition effect: ${eff}`, 'info');
+      } catch (err) {
+        window.showToast('Failed to trigger transition test', 'error');
       }
     });
   }
@@ -4412,6 +4474,8 @@ async function initSettings() {
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         rotation_offset: numOr('hw-screen-rotation', 0),
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
+        rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',
+        rotation_transition_duration_ms: numOr('hw-transition-duration', 400),
       };
       try {
         await API.post('/api/system', { matrix });

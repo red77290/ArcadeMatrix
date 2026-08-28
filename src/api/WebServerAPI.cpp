@@ -1679,6 +1679,8 @@ void WebServerAPI::setupRoutes() {
         doc["suggested_rotation"] = orient.suggestedRotation;
         doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
         doc["current_rotation"] = displayOrientationManager.getRotation();
+        doc["transition_effect"] = RotationTransitionFX::effectToString(displayOrientationManager.getTransitionEffect());
+        doc["transition_duration_ms"] = displayOrientationManager.getTransitionDuration();
         String res;
         serializeJson(doc, res);
         request->send(200, "application/json", res);
@@ -1696,7 +1698,21 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", res);
     });
 
-    // API: POST /api/display/orientation — Sets manual rotation index or rotation offset
+    // API: POST /api/display/test-transition — Triggers a preview of the rotation transition FX
+    AsyncCallbackJsonWebHandler* testFxHandler = new AsyncCallbackJsonWebHandler("/api/display/test-transition", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        RotationEffect eff = displayOrientationManager.getTransitionEffect();
+        if (json.is<JsonObject>()) {
+            JsonObject obj = json.as<JsonObject>();
+            if (!obj["effect"].isNull()) {
+                eff = RotationTransitionFX::parseEffect(obj["effect"].as<String>());
+            }
+        }
+        displayOrientationManager.triggerTestTransition(eff);
+        request->send(200, "application/json", "{\"success\":true}");
+    });
+    server.addHandler(testFxHandler);
+
+    // API: POST /api/display/orientation — Sets manual rotation index, rotation offset, or transition effect
     AsyncCallbackJsonWebHandler* orientHandler = new AsyncCallbackJsonWebHandler("/api/display/orientation", [](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
@@ -1708,6 +1724,12 @@ void WebServerAPI::setupRoutes() {
         }
         if (!obj["rotation_offset"].isNull()) {
             displayOrientationManager.setRotationOffset(obj["rotation_offset"].as<uint8_t>());
+        }
+        if (!obj["transition_effect"].isNull()) {
+            displayOrientationManager.setTransitionEffect(obj["transition_effect"].as<String>());
+        }
+        if (!obj["transition_duration_ms"].isNull()) {
+            displayOrientationManager.setTransitionDuration(obj["transition_duration_ms"].as<uint32_t>());
         }
         request->send(200, "application/json", "{\"success\":true}");
     });
