@@ -56,6 +56,8 @@ void ConfigLoader::setDefaults() {
     matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
     matrix.matrix_power = true;
+    matrix.rotation_offset = 0;
+    matrix.auto_rotate = true;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -149,6 +151,12 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         
         if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"].as<int>();
         else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"].as<int>();
+        
+        if (disp.containsKey("rotation_offset")) matrix.rotation_offset = disp["rotation_offset"].as<int>();
+        else if (disp.containsKey("rotationOffset")) matrix.rotation_offset = disp["rotationOffset"].as<int>();
+        
+        if (disp.containsKey("auto_rotate")) matrix.auto_rotate = disp["auto_rotate"].as<bool>();
+        else if (disp.containsKey("autoRotate")) matrix.auto_rotate = disp["autoRotate"].as<bool>();
     }
 
     if (doc.containsKey("wifi")) {
@@ -270,6 +278,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["clkPhase"] = matrix.clkPhase;
     dispObj["latchBlanking"] = matrix.latchBlanking;
     dispObj["rowAddressMode"] = matrix.rowAddressMode;
+    dispObj["rotation_offset"] = matrix.rotation_offset;
+    dispObj["auto_rotate"] = matrix.auto_rotate;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;

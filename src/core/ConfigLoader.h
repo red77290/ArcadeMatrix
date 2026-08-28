@@ -41,6 +41,8 @@ struct MatrixConfig {
     int latchBlanking;
     int rowAddressMode;
     bool matrix_power = true;
+    int rotation_offset = 0;
+    bool auto_rotate = true;
 };
 
 struct WifiConfig {
