@@ -21,6 +21,61 @@ class FrontendSyncEngine; // Represents EventBus/MQTT currently
 // class Logger; // Could be added later
 
 // =======================================================
+// 0. Geometry & Responsive Primitives
+// =======================================================
+
+struct Rect {
+    int16_t x;
+    int16_t y;
+    uint16_t width;
+    uint16_t height;
+
+    constexpr Rect() : x(0), y(0), width(0), height(0) {}
+    constexpr Rect(int16_t x_, int16_t y_, uint16_t w_, uint16_t h_) : x(x_), y(y_), width(w_), height(h_) {}
+
+    inline bool isEmpty() const { return width == 0 || height == 0; }
+    inline bool contains(int16_t px, int16_t py) const {
+        return px >= x && py >= y &&
+               px < static_cast<int32_t>(x) + width &&
+               py < static_cast<int32_t>(y) + height;
+    }
+};
+
+enum class LayoutClass : uint8_t {
+    WIDE,       // W >= (H * 3) / 2  (Landscape 64x32, 128x32, 128x64, 256x64)
+    SQUARE,     // Intermediate ratios (Square 64x64)
+    PORTRAIT,   // H >= (W * 3) / 2 && H < W * 3  (TATE 32x64, 64x128)
+    TALL        // H >= W * 3  (Ultra-tall 32x128, 64x256)
+};
+
+struct DisplayGeometry {
+    uint16_t width;           // Active logical width (guaranteed matches display->width())
+    uint16_t height;          // Active logical height (guaranteed matches display->height())
+    uint16_t nativeWidth;    // Native hardware physical width (0 deg)
+    uint16_t nativeHeight;   // Native hardware physical height (0 deg)
+    uint8_t rotation;         // Display orientation index (0..3)
+    LayoutClass layoutClass;  // Evaluated layout ratio class
+    uint32_t version;         // Incremented strictly at APEX on Core 1
+
+    constexpr DisplayGeometry()
+        : width(64), height(32), nativeWidth(64), nativeHeight(32),
+          rotation(0), layoutClass(LayoutClass::WIDE), version(0) {}
+
+    static inline LayoutClass classify(uint16_t w, uint16_t h) {
+        if (h >= w * 3u) return LayoutClass::TALL;
+        if (h >= (w * 3u) / 2u) return LayoutClass::PORTRAIT;
+        if (w >= (h * 3u) / 2u) return LayoutClass::WIDE;
+        return LayoutClass::SQUARE;
+    }
+};
+
+class IDisplayGeometryAware {
+public:
+    virtual ~IDisplayGeometryAware() = default;
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) = 0;
+};
+
+// =======================================================
 // 1. Enums & Errors
 // =======================================================
 
@@ -175,13 +230,19 @@ public:
 
     // Hardware runtime services
     virtual bool hasPsram() const { return false; }
+
+    // Active display geometry snapshot
+    virtual DisplayGeometry getGeometry() const {
+        DisplayGeometry g;
+        return g;
+    }
 };
 
 // =======================================================
 // 5. Engine Interface
 // =======================================================
 
-class IEngine {
+class IEngine : public IDisplayGeometryAware {
 public:
     virtual ~IEngine() = default;
 
@@ -194,6 +255,9 @@ public:
     
     // Dynamic Configuration
     virtual void onConfigChanged(const EngineConfig* config) {}
+    
+    // Geometry Awareness (rebuilds geometry-derived caches on rotation)
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
     
     // Intrinsic sequence completion signaling (not tied to Rotation duration)
     virtual bool isFinished() const { return false; }

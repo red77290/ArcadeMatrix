@@ -138,6 +138,12 @@ void ClockEngine::onConfigChanged(const EngineConfig* config) {
     }
 }
 
+void ClockEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    if (activeFace) {
+        activeFace->onDisplayGeometryChanged(geometry);
+    }
+}
+
 EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor clockDesc;
     clockDesc.metadata = {"clock", "Clock", "info", FIRMWARE_VERSION};

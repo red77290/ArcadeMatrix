@@ -1,7 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
+#include <mutex>
 #include "../include/HardwareProfile.h"
+
+extern std::mutex g_i2cMutex;
 
 /**
  * @enum HwProfile

@@ -1,5 +1,10 @@
 #include "DisplayOrientationManager.h"
 #include "Logger.h"
+#include "RotationManager.h"
+#include "OverlayManager.h"
+
+extern RotationManager* rotationManager;
+extern OverlayManager overlayManager;
 
 DisplayOrientationManager displayOrientationManager;
 
@@ -16,15 +21,39 @@ void DisplayOrientationManager::begin(Adafruit_GFX* display) {
 
     if (_display) {
         _display->setRotation(0);
+        uint16_t w = _display->width();
+        uint16_t h = _display->height();
+        _geometry.nativeWidth = w;
+        _geometry.nativeHeight = h;
+        _geometry.width = w;
+        _geometry.height = h;
+        _geometry.rotation = 0;
+        _geometry.layoutClass = DisplayGeometry::classify(w, h);
+        _geometry.version = 0;
+    }
+}
+
+void DisplayOrientationManager::applyGeometryAndNotify(uint8_t targetRot) {
+    if (_display) {
+        _display->setRotation(targetRot);
+        _geometry.width = _display->width();
+        _geometry.height = _display->height();
+        _geometry.rotation = targetRot;
+        _geometry.layoutClass = DisplayGeometry::classify(_geometry.width, _geometry.height);
+        _geometry.version++;
+
+        LOGI("DisplayOrientation", "Applied geometry update v%d: %dx%d (rot %d, layout %d)", 
+             _geometry.version, _geometry.width, _geometry.height, _geometry.rotation, (int)_geometry.layoutClass);
+
+        if (rotationManager) {
+            rotationManager->notifyGeometryChanged(_geometry);
+        }
+        overlayManager.onDisplayGeometryChanged(_geometry);
     }
 }
 
 void DisplayOrientationManager::onApexReached(uint8_t targetRot) {
-    if (displayOrientationManager._display) {
-        displayOrientationManager._display->setRotation(targetRot);
-        LOGI("DisplayOrientation", "Apex reached: Applied new matrix rotation: %d (%dx%d)", 
-             targetRot, displayOrientationManager._display->width(), displayOrientationManager._display->height());
-    }
+    displayOrientationManager.applyGeometryAndNotify(targetRot);
 }
 
 void DisplayOrientationManager::calibrateZeroReference() {
@@ -43,7 +72,9 @@ void DisplayOrientationManager::triggerTestTransition(RotationEffect effect) {
     uint8_t testTo = (_currentRotation + 1) % 4;
     RotationEffect eff = (effect != RotationEffect::NONE) ? effect : _transitionEffect;
     if (eff == RotationEffect::NONE) eff = RotationEffect::PARTICLE_VORTEX;
-    _fx.start(_currentRotation, testTo, eff, _transitionDurationMs);
+    int16_t w = _display ? _display->width() : 64;
+    int16_t h = _display ? _display->height() : 32;
+    _fx.start(_currentRotation, testTo, eff, _transitionDurationMs, w, h);
     _currentRotation = testTo;
 }
 
@@ -54,16 +85,14 @@ void DisplayOrientationManager::setRotation(uint8_t rotation, bool animated) {
         _currentRotation = target;
         
         if (animated && _transitionEffect != RotationEffect::NONE && _display) {
-            _fx.start(oldRot, _currentRotation, _transitionEffect, _transitionDurationMs);
+            _fx.start(oldRot, _currentRotation, _transitionEffect, _transitionDurationMs, _display->width(), _display->height());
             LOGI("DisplayOrientation", "Started rotation transition '%s' (%d -> %d)", 
                  RotationTransitionFX::effectToString(_transitionEffect).c_str(), oldRot, _currentRotation);
         } else {
-            if (_display) {
-                _display->setRotation(_currentRotation);
-                LOGI("DisplayOrientation", "Applied instantaneous matrix rotation: %d (%dx%d)", 
-                     _currentRotation, _display->width(), _display->height());
-            }
+            applyGeometryAndNotify(_currentRotation);
         }
+    } else if (_geometry.version == 0) {
+        applyGeometryAndNotify(_currentRotation);
     }
 }
 

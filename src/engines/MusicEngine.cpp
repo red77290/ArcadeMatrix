@@ -171,6 +171,88 @@ void MusicEngine::renderIdle(MatrixPanel_I2S_DMA* display, int w, int h) {
 }
 
 #include "../services/ArtworkService.h"
+#include "../core/LayoutHelper.h"
+
+struct MusicLayout {
+    Rect artworkRect;
+    Rect badgeRect;
+    Rect titleRect;
+    Rect artistRect;
+    Rect progressRect;
+    Rect visualizerRect;
+    bool isVertical;
+};
+
+class MusicLayoutCalculator {
+public:
+    static MusicLayout calculate(const DisplayGeometry& geometry, bool hasArt, bool showSource, bool showArtist, bool showProgress, bool showVisualizer) {
+        MusicLayout l;
+        uint16_t w = geometry.width;
+        uint16_t h = geometry.height;
+        l.isVertical = (geometry.layoutClass == LayoutClass::PORTRAIT || geometry.layoutClass == LayoutClass::TALL);
+
+        if (l.isVertical) {
+            // TATE / Portrait Layout
+            int artSize = min((int)(w - 4), (int)(h * 0.35f));
+            if (artSize < 16) artSize = 16;
+            int artX = (w - artSize) / 2;
+            l.artworkRect = Rect{ (int16_t)artX, 2, (uint16_t)artSize, (uint16_t)artSize };
+
+            int curY = hasArt ? (2 + artSize + 2) : 2;
+            l.badgeRect = Rect{ 2, (int16_t)curY, (uint16_t)(w - 4), 8 };
+            if (showSource) curY += 10;
+
+            l.titleRect = Rect{ 2, (int16_t)curY, (uint16_t)(w - 4), 8 };
+            curY += 10;
+
+            if (showArtist) {
+                l.artistRect = Rect{ 2, (int16_t)curY, (uint16_t)(w - 4), 8 };
+                curY += 10;
+            } else {
+                l.artistRect = Rect{ 0, 0, 0, 0 };
+            }
+
+            int bottomSpace = h - curY;
+            if (bottomSpace >= 16 && showVisualizer) {
+                if (showProgress) {
+                    l.progressRect = Rect{ 2, (int16_t)curY, (uint16_t)(w - 4), 3 };
+                    curY += 6;
+                } else {
+                    l.progressRect = Rect{ 0, 0, 0, 0 };
+                }
+                int visH = max(6, h - curY - 2);
+                l.visualizerRect = Rect{ 2, (int16_t)curY, (uint16_t)(w - 4), (uint16_t)visH };
+            } else if (showProgress) {
+                l.progressRect = Rect{ 2, (int16_t)(h - 6), (uint16_t)(w - 4), 3 };
+                l.visualizerRect = Rect{ 0, 0, 0, 0 };
+            } else if (showVisualizer) {
+                l.visualizerRect = Rect{ 2, (int16_t)(h - 10), (uint16_t)(w - 4), 8 };
+                l.progressRect = Rect{ 0, 0, 0, 0 };
+            }
+        } else {
+            // Landscape / Square Layout (Preserved 100% bit-for-bit with current layout)
+            int artSize = (h >= 64) ? 30 : 22;
+            l.artworkRect = Rect{ 2, 2, (uint16_t)artSize, (uint16_t)artSize };
+
+            int leftMargin = hasArt ? (artSize + 6) : 2;
+            int rightMargin = w - 2;
+            int textW = max(0, rightMargin - leftMargin);
+
+            l.badgeRect = Rect{ (int16_t)leftMargin, 2, (uint16_t)textW, 8 };
+            l.titleRect = Rect{ (int16_t)leftMargin, 2, (uint16_t)textW, 8 };
+            l.artistRect = Rect{ (int16_t)leftMargin, (int16_t)((h >= 64) ? 14 : 12), (uint16_t)textW, 8 };
+
+            if (h >= 64) {
+                l.progressRect = Rect{ 4, 28, (uint16_t)(w - 8), 4 };
+                l.visualizerRect = Rect{ 4, 38, (uint16_t)(w - 8), 22 };
+            } else {
+                l.progressRect = Rect{ 2, 22, (uint16_t)(w - 4), 4 };
+                l.visualizerRect = Rect{ 2, 22, (uint16_t)(w - 4), 8 };
+            }
+        }
+        return l;
+    }
+};
 
 void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackState& state) {
     display->fillScreen(0);
@@ -178,71 +260,66 @@ void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, cons
     display->setTextSize(1);
 
     uint16_t srcColor = getSourceColor(state.source, display);
-    int clipMinX = 2;
-    int clipMaxX = w - 2;
 
-    // 0. Render Album Artwork if available in PSRAM cache
+    // 0. Check Album Artwork in PSRAM cache
     int artW = 0, artH = 0;
     const uint16_t* artBmp = (_showAlbumArt && !state.artworkId.isEmpty()) ? artworkService.getArtworkBitmap(state.artworkId, artW, artH) : nullptr;
-    if (artBmp && artW > 0 && artH > 0) {
-        int drawH = min(artH, (h >= 64) ? 30 : 22);
-        int drawW = min(artW, drawH);
-        display->drawRGBBitmap(2, 2, artBmp, drawW, drawH);
-        clipMinX += (drawW + 4);
+    bool hasArt = (artBmp && artW > 0 && artH > 0);
+
+    DisplayGeometry geom;
+    geom.width = w;
+    geom.height = h;
+    geom.layoutClass = DisplayGeometry::classify(w, h);
+
+    MusicLayout layout = MusicLayoutCalculator::calculate(geom, hasArt, _showSource, _showArtist, _showProgress, _showVisualizer);
+
+    // 1. Draw Artwork
+    if (hasArt) {
+        int drawW = min(artW, (int)layout.artworkRect.width);
+        int drawH = min(artH, (int)layout.artworkRect.height);
+        display->drawRGBBitmap(layout.artworkRect.x, layout.artworkRect.y, artBmp, drawW, drawH);
     }
 
-    // Header badge (e.g. "[SPOTIFY]" or "[RADIO]")
-    int yTop = 2;
-    if (_showSource && state.source != AudioSource::NONE) {
+    // 2. Draw Source Badge & Title
+    int titleMinX = layout.titleRect.x;
+    int titleMaxX = layout.titleRect.x + layout.titleRect.width;
+
+    if (!layout.isVertical && _showSource && state.source != AudioSource::NONE) {
         String srcBadge = "[" + String(AudioHub::getSourceName(state.source)) + "]";
         display->setTextColor(srcColor);
-        display->setCursor(clipMinX, yTop);
+        display->setCursor(titleMinX, layout.titleRect.y);
         display->print(srcBadge);
-        clipMinX += (srcBadge.length() * 6 + 4);
+        titleMinX += (srcBadge.length() * 6 + 4);
+    } else if (layout.isVertical && _showSource && state.source != AudioSource::NONE && !layout.badgeRect.isEmpty()) {
+        String srcBadge = "[" + String(AudioHub::getSourceName(state.source)) + "]";
+        int badgeX = (w - (int)(srcBadge.length() * 6)) / 2;
+        display->setTextColor(srcColor);
+        display->setCursor(max(2, badgeX), layout.badgeRect.y);
+        display->print(srcBadge);
     }
 
-    // Title Marquee (Top line)
     String titleText = state.title.length() > 0 ? state.title : "Audio Stream";
-    renderMarqueeText(display, titleText, yTop, clipMinX, clipMaxX, display->color565(255, 255, 255));
+    renderMarqueeText(display, titleText, layout.titleRect.y, titleMinX, titleMaxX, display->color565(255, 255, 255));
 
-    // Artist / Channel (Second line)
-    int yArtist = (h >= 64) ? 14 : 12;
-    int artistMinX = (artBmp && artW > 0) ? (min(artW, (h >= 64) ? 30 : 22) + 6) : 2;
-    if (_showArtist && state.artist.length() > 0) {
-        renderMarqueeText(display, state.artist, yArtist, artistMinX, clipMaxX, display->color565(190, 190, 200));
+    // 3. Draw Artist
+    if (_showArtist && state.artist.length() > 0 && !layout.artistRect.isEmpty()) {
+        renderMarqueeText(display, state.artist, layout.artistRect.y, layout.artistRect.x, layout.artistRect.x + layout.artistRect.width, display->color565(190, 190, 200));
     }
 
-    // Progress Bar or Visualizer on bottom half
-    if (h >= 64) {
-        // 64px tall displays: full layout with progress & visualizer
-        int yProgress = 28;
-        if (_showProgress && state.durationMs > 0) {
-            float pct = (float)state.positionMs / (float)state.durationMs;
-            if (pct > 1.0f) pct = 1.0f;
-            int barW = w - 8;
-            display->drawRect(4, yProgress, barW, 4, display->color565(60, 60, 70));
-            int fillW = (int)(pct * (barW - 2));
-            if (fillW > 0) {
-                display->fillRect(5, yProgress + 1, fillW, 2, srcColor);
-            }
+    // 4. Draw Progress Bar
+    if (_showProgress && state.durationMs > 0 && !layout.progressRect.isEmpty()) {
+        float pct = (float)state.positionMs / (float)state.durationMs;
+        if (pct > 1.0f) pct = 1.0f;
+        display->drawRect(layout.progressRect.x, layout.progressRect.y, layout.progressRect.width, layout.progressRect.height, display->color565(60, 60, 70));
+        int fillW = (int)(pct * (layout.progressRect.width - 2));
+        if (fillW > 0) {
+            display->fillRect(layout.progressRect.x + 1, layout.progressRect.y + 1, fillW, layout.progressRect.height - 2, srcColor);
         }
+    }
 
-        if (_showVisualizer && (_cachedState.status == PlaybackStatus::STATUS_PLAYING)) {
-            renderVisualizerBars(display, 4, 38, w - 8, 22, srcColor);
-        }
-    } else {
-        // 32px displays: compact visualizer / progress
-        int yBottom = 22;
-        if (_showVisualizer && (_cachedState.status == PlaybackStatus::STATUS_PLAYING)) {
-            renderVisualizerBars(display, 2, yBottom, w - 4, 8, srcColor);
-        } else if (_showProgress && state.durationMs > 0) {
-            float pct = (float)state.positionMs / (float)state.durationMs;
-            if (pct > 1.0f) pct = 1.0f;
-            int barW = w - 4;
-            display->drawRect(2, yBottom, barW, 4, display->color565(60, 60, 70));
-            int fillW = (int)(pct * (barW - 2));
-            if (fillW > 0) display->fillRect(3, yBottom + 1, fillW, 2, srcColor);
-        }
+    // 5. Draw Visualizer Bars
+    if (_showVisualizer && (_cachedState.status == PlaybackStatus::STATUS_PLAYING) && !layout.visualizerRect.isEmpty()) {
+        renderVisualizerBars(display, layout.visualizerRect.x, layout.visualizerRect.y, layout.visualizerRect.width, layout.visualizerRect.height, srcColor);
     }
 }
 

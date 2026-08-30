@@ -28,7 +28,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`config.json`, dossiers GIFs/MUGEN, et scripts d'indexation).
 
 
-## Fonctionnalités
+- **🎛️ Master Desk Deck & Hub Multi-Widgets (`dashboard`) :** Horloge de bureau complète & dashboard avec cadrans pixel-art soignés, balayage fluide de trotteuse, horloges multi-fuseaux horaires mondiaux, météo extérieure (OpenWeatherMap + fallback gratuit Open-Meteo), climat intérieur calibré SHTC3, bandeau ticker live cryptos Binance & actions Yahoo Finance, et agencement auto-adaptatif dynamique 100% responsive !
 - **Large sélection d'horloges animées (`clock`) :** horloges interactives incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** et **Versus (Mugen)** !
 - **📻 WebRadio Autonome & Moteur Musical (`music`) :** Streaming audio d'arrière-plan avec décodage MP3 linéaire temps réel (`minimp3`), sortie haute fidélité DAC I2S Everest ES8311, Bluetooth A2DP Sink, pochettes d'albums PNG couleur, artiste/titre défilant et visualiseur audio FFT 64 points Cooley-Tukey dynamique !
 - **🧭 Auto-Rotation d'Écran Gyroscopique 6-Axes (`QMI8658` / `GyroHAL`) :** Orientation automatique de l'affichage ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) par détection du vecteur de gravité physique, hystérèse anti-vibrations 500ms, offset mécanique de montage et calibration 1-clic depuis la Web UI !

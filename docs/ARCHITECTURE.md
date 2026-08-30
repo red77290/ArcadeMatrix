@@ -373,39 +373,161 @@ Transverse visual effects (such as **MUGEN Fighters**) composite on top of the a
 
 ## 15. Frame Pacing & DMA Double-Buffering
 
-The rendering loop on Core 1 targets steady 60 FPS for realtime engines (`isRealtime() == true`) and 20 FPS for static screens, utilizing hardware DMA double-buffering (`mxconfig.double_buff = true`).
+The rendering loop on Core 1 targets steady 60 FPS for realtime engines (`isRealtime() == true`) and 20 FPS for static screens, utilizing hardware DMA- **Allocate once, mutate in place:** Buffers, animation arrays, and strings are allocated during `initialize()` and reused each frame (`clear()`, pointer reuse).
+- **Lazy-Once Instance Lifecycle:** An engine is instantiated only when its configured instance is first displayed, then cached for the lifetime of the firmware ("Lazy-Once").
+- **Core Isolation:** Core 1 runs the high-priority rendering loop (`DisplayArbiter`, active engine `update()`/`render()`, `OverlayManager`, DMA swap), while Core 0 handles network I/O, AsyncWebServer, mDNS, background audio decoders, and sensor polling.
+- **Transverse Features are Overlays, NOT Engines:** Features that visually composite on top of other content (like MUGEN Fighters) live in `OverlayManager`, keeping `EngineRegistry` purely for main content engines.
+
+### Deep Memory Management & Hardware Partitioning (ESP32 vs ESP32-S3 PSRAM)
+
+The ESP32 platform exhibits distinct hardware memory tiers:
+
+| Hardware Board | Internal SRAM | External PSRAM | DMA Memory | SSL / TLS Strategy | Max Resolution |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ESP32 Classic (`esp32dev`)** | ~320 KB (shared with FreeRTOS & WiFi) | None | Internal SRAM (DMA-capable) | **Gated Off:** TLS buffers (~45-60 KB each) starve DMA, causing crashes. Heavy SSL engines (Crypto, Stock) are disabled via `EngineCapabilities`. | `128x32` / `64x32` |
+| **ESP32-S3 Waveshare (`esp32s3_waveshare`)** | ~320 KB (core SRAM) | **8 MB / 16 MB Octal PSRAM** | PSRAM-backed DMA Buffers (`MALLOC_CAP_SPIRAM`) | **Full Support:** `WiFiClientSecure` and mbedTLS internal ring buffers allocate into PSRAM, leaving SRAM completely free for uninterrupted display DMA. | `256x64` / `64x256` |
+
+#### How the SSL / TLS Memory Exhaustion Was Solved
+On resource-constrained microcontrollers, establishing HTTPS/TLS connections requires large cryptographic handshake buffers (input/output fragment buffers of 16 KB + ASN.1 parsing + session state ≈ 45 KB per connection). On standard ESP32 boards, concurrent execution of HUB75 DMA buffers (~16-32 KB) and multiple TLS connections caused severe heap fragmentation and heap starvation panics (`Guru Meditation Error: Core 0 panic'ed (LoadProhibited)`).
+
+This was solved through a two-tiered architectural strategy:
+1. **Capabilities Gating on Classic ESP32:** Heavy network engines (`CryptoEngine`, `StockEngine`) declare `EngineRequirements::needsPsram = true`. On boards without PSRAM, `ConfigSanitizer` automatically gates them off safely without crashing.
+2. **PSRAM Allocation Routing on ESP32-S3:** On ESP32-S3 boards, all large memory consumers (PNG decoding buffers in `ArtworkService`, MP3 ring buffers in `WebRadioService`, and TLS socket buffers in `WiFiClientSecure`) are routed directly to Octal PSRAM via `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`. Internal SRAM remains dedicated solely to FreeRTOS kernel tasks and time-critical hardware interrupts.
+
+#### Concurrency: Seamless Simultaneous Audio & 60 FPS Video
+Real-time audio decoding and HUB75 matrix scanning operate concurrently without micro-stutters:
+- **Core 0 (Audio & Network Pipeline):** Runs `WebRadioService` MP3 frame decoding (`minimp3`) and Bluetooth A2DP Sink callbacks into a lock-free circular buffer, continuously feeding the Everest `ES8311` I2S DAC.
+- **Core 1 (Matrix Render Loop):** Runs the HUB75 DMA display driver, rendering engines, and `OverlayManager` at a rock-solid 60 FPS cadence.
+- **Lock-Free State Handshake:** `AudioHub` publishes atomic `AudioPlaybackState` snapshots with incrementing `generation` IDs. The rendering engine on Core 1 reads snapshots instantly without blocking or acquiring mutexes on the audio thread.
 
 ---
 
-## 16. Autonomous Audio Subsystem Architecture (`AudioHub` & `AudioOutputHAL`)
+## 2. High-Level Component Map
 
-The audio subsystem is an autonomous background infrastructure decoupled from display rendering:
+```mermaid
+flowchart TD
+    subgraph Boot["Boot & Setup (Core 1)"]
+        MAIN["main.cpp (setup)"] --> HAL["HardwareHAL.begin() (Sensor & I2S probe)"]
+        HAL --> CFG["ConfigLoader::load() + ConfigSanitizer::sanitize()"]
+        CFG --> REG["EngineRegistrar::registerAll()"]
+        REG --> RM["RotationManager::begin()"]
+        RM --> ARB["DisplayArbiter"]
+    end
 
-```text
-Audio Services (BT, Spotify, AirPlay, WebRadio)
-    ↓ (PCM + Metadata)
-AudioHub (State, Generation ID & Arbitration)
-    ├──► AudioOutputHAL (I2S TX DAC Hardware)
-    ├──► AudioAnalysisService (FFT Spectrum / RMS)
-    └──► ArtworkService (PSRAM Image Cache)
-            ↓
-      AudioPlaybackState
-            ↓
-       MusicEngine (Visual Presentation Only)
+    subgraph Core0["Core 0: Network & Services"]
+        WS["AsyncWebServer (Port 80)"]
+        WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
+        API --> SAN["ConfigSanitizer"]
+        SAN --> SAVE["config.json (Atomic LittleFS/SD Save)"]
+        MDNS["mDNS Responder"]
+        AH["AudioHub (Background Audio Arbiter)"]
+        AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
+    end
+
+    subgraph Core1["Core 1: Matrix Render Loop (FreeRTOS)"]
+        LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
+        ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
+        RM_LOOP --> ENG["Active IEngine (update + render)"]
+        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
+        OV --> MATRIX
+        MATRIX --> DMA["DMA Flip Buffer to HUB75 LEDs"]
+    end
+
+    API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
 ```
 
-- **`AudioHub`** arbitrates active sources and updates an event-driven `AudioPlaybackState` with an incrementing `generation` counter.
-- **`AudioOutputHAL`** is the sole abstraction interfacing with physical I2S DAC hardware.
-- **`MusicEngine`** is a standard engine that renders state snapshots (`AudioPlaybackState`) without touching audio hardware or network sockets.
-- **Audio survives display preemption:** Turning off `MusicEngine` does not stop audio playback.
+---
+
+## 3. The Engine Contract (`IEngine`)
+
+Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](file:///Users/red1l/Documents/work/git/perso/ArcadeMatrix/include/core/EngineContract.h):
+
+```cpp
+class IDisplayGeometryAware {
+public:
+    virtual ~IDisplayGeometryAware() = default;
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) = 0;
+};
+
+class IEngine : public IDisplayGeometryAware {
+public:
+    virtual ~IEngine() = default;
+
+    // Lifecycle
+    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
+    virtual void activate() = 0;
+    virtual void update(EngineContext* context) = 0;
+    virtual void render(EngineContext* context) = 0;
+    virtual void deactivate() = 0;
+    
+    // Dynamic Configuration
+    virtual void onConfigChanged(const EngineConfig* config) {}
+    
+    // Geometry Awareness (rebuilds geometry-derived caches on rotation)
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
+    
+    // Capabilities & Flow
+    virtual bool isFinished() const { return false; }
+    virtual bool isRealtime() const { return false; }
+    virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
+    virtual bool allowRotation() const { return true; }
+    virtual bool hasNewFrame() const { return true; }
+    virtual bool needsClear() const { return true; }
+};
+```
 
 ---
 
-## 17. Gyroscopic Orientation Architecture (`GyroHAL` & `DisplayOrientationManager`)
+## 20. Multi-Resolution & Declarative Geometry Architecture
 
-- **`GyroHAL`** reads acceleration vectors from I2C sensors (`MPU6050`, `QMI8658`) and computes abstract orientation (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) with a 500 ms hysteresis debounce.
-- **`DisplayOrientationManager`** applies matrix rotation globally (`display->setRotation()`).
-- **Engines remain orientation-agnostic**, automatically rendering into the active `display->width()` and `display->height()`.
+ArcadeMatrix supports any matrix resolution across Landscape, Square, and TATE (Portrait) formats (`64x32`, `128x32`, `256x64`, `128x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+### The Golden Rule of Responsive Rendering
+> **Renderers are orientation-agnostic and do NOT contain `if (layoutClass)` branches.**
+> Classification is performed **once** by a dedicated pure `*LayoutCalculator` (or `*SourceSelector`), returning a declarative layout structure composed of bounded `Rect` structures. The renderer draws exclusively into these pre-calculated rectangles.
+
+```text
+                 DisplayGeometry (width, height, rotation, layoutClass, version)
+                                       │
+                                LayoutHelper (Stateless)
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+           *LayoutCalculator                     *GeometryAdapter
+           (e.g. MusicLayout)                    (e.g. FighterGeometry)
+                    │                                     │
+                    ▼                                     ▼
+             Layout / Rects                        Geometry (groundY, spawns)
+                    │                                     │
+                    └──────────────────┬──────────────────┘
+                                       ▼
+                             Single Pure Renderer
+```
+
+### Deterministic Layout Classification (`LayoutClass`)
+```cpp
+enum class LayoutClass : uint8_t {
+    WIDE,       // W >= (H * 3) / 2  (Landscape 64x32, 128x32, 128x64, 256x64)
+    SQUARE,     // Intermediate ratios (Square 64x64)
+    PORTRAIT,   // H >= (W * 3) / 2 && H < W * 3  (TATE 32x64, 64x128)
+    TALL        // H >= W * 3  (Ultra-tall 32x128, 64x256)
+};
+```
+
+### Strict Multi-Core Lifecycle Sequencing
+1. Orientation changes (triggered by Gyroscope or Web API) are scheduled asynchronously.
+2. The hardware rotation `display->setRotation(newRot)` is executed **strictly within the render loop on Core 1 at the apex of the visual transition**.
+3. `DisplayGeometry` is updated directly from the live `display->width()` / `display->height()` and increments its `version` counter.
+4. `onDisplayGeometryChanged(geometry)` is dispatched to the active engine and `OverlayManager`.
+5. Engines with geometry-derived caches (`MatrixRainClock`, `TetrisClock`, `VisualizerEngine`, `FighterEngine`, `DashboardEngine`) reconfigure their caches in place without resetting business state.
+6. The first full frame rendered post-apex displays a perfectly aligned, artifact-free layout.
+
+### Dual-GIF Architecture (YOKO & TATE)
+- `SD:/gifs/` holds landscape-optimized GIFs (YOKO).
+- `SD:/gifs_tate/` holds portrait-optimized GIFs (TATE).
+- `GifSourceSelector` resolves the appropriate primary and fallback directories based on `DisplayGeometry`. `GifEngine` remains completely decoupled from layout classes and utilizes `LayoutHelper::aspectFit()` per frame for optimal letterboxing/pillarboxing.
 
 ---
 
@@ -421,8 +543,10 @@ AudioHub (State, Generation ID & Arbitration)
 | `POST`| `/api/rotation` | Updates playlist rotation sequence. |
 | `GET` | `/api/audio/status` | Current audio playback state, source, volume. |
 | `POST`| `/api/audio/volume` | Adjusts master audio volume (0-100%). |
-| `GET` | `/api/gyro/status` | Current gravity vector and suggested orientation. |
-| `POST`| `/api/display/orientation` | Sets manual rotation or enables auto-rotation. |
+| `GET` | `/api/gyro/status` | Current gravity vector, active rotation, and transition FX. |
+| `POST`| `/api/gyro/calibrate` | 1-Click zero reference calibration ($0^\circ$ Normal). |
+| `POST`| `/api/display/orientation` | Sets manual rotation, mounting offset, and transition FX. |
+| `POST`| `/api/display/test-transition` | Triggers a live preview of rotation transition effects. |
 
 ---
 

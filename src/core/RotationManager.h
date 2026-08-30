@@ -43,6 +43,7 @@ public:
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
     IEngine* getActiveEngine(const String& instanceId);
+    void notifyGeometryChanged(const DisplayGeometry& geometry);
 
     // Thread-safe API for WebServer
     void queueAction(RotationAction action, const String& instanceId = "");

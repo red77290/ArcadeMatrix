@@ -47,7 +47,7 @@ public:
      * @param effect Transition effect type
      * @param durationMs Total animation duration in milliseconds (e.g. 400ms)
      */
-    void start(uint8_t fromRot, uint8_t toRot, RotationEffect effect, uint32_t durationMs = 400);
+    void start(uint8_t fromRot, uint8_t toRot, RotationEffect effect, uint32_t durationMs = 400, int16_t w = 64, int16_t h = 32);
 
     /**
      * @brief Updates and renders the active transition animation.

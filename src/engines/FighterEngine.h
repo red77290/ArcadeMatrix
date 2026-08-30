@@ -20,6 +20,7 @@
  */
 enum FighterState {
     FIGHTER_WALK,   ///< Walking towards the center or opponent
+    FIGHTER_STAND,  ///< Standing in idle ready stance waiting for opponent
     FIGHTER_ATTACK, ///< Performing an attack animation
     FIGHTER_HIT,    ///< Taking damage from an attack
     FIGHTER_WIN,    ///< Celebration animation upon victory
@@ -59,6 +60,7 @@ struct FighterPlayer {
     int head_y;                 ///< Y position of the head in the stand animation
     int origin_x;               ///< X position of the origin
     int width_px;               ///< Native width of the character
+    FgtAnimation animStand;     ///< Stand / Idle stance animation data
     FgtAnimation animWalk;      ///< Walking animation data
     FgtAnimation animAttack;    ///< Attack animation data
     FgtAnimation animHit;       ///< Hit animation data
@@ -105,6 +107,7 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     /**
      * @brief Initialize the engine (e.g. read the SD card index).

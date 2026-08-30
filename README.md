@@ -28,7 +28,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: Ready-to-copy root folder structure containing `config.json`, GIF/MUGEN asset folders, and playlist indexing scripts.
 
 
-## Features
+- **🎛️ Master Desk Deck & Multi-Widget Dashboard (`dashboard`):** Complete horizontal desk clock & dashboard with handcrafted pixel-art watch dials, smooth sweeping second hand, multiple global timezones, outdoor weather (OpenWeatherMap + free Open-Meteo fallback), calibrated SHTC3 indoor climate, live Binance cryptos & Yahoo Finance stocks/ETFs banner, and a 100% responsive auto-scaling dynamic layout!
 - **Massive Animated Clock Selection (`clock`):** Interactive clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)**, and **Versus (Mugen)**!
 - **📻 Autonomous WebRadio & Music Engine (`music`):** Background streaming audio with real-time linear MP3 frame decoding (`minimp3`), high-fidelity Everest ES8311 I2S DAC output, Bluetooth A2DP Sink, full-color PNG album artwork, scrolling artist/title, and dynamic 64-point Cooley-Tukey FFT audio visualizer!
 - **🧭 6-Axis Gyroscope Auto-Rotation (`QMI8658` / `GyroHAL`):** Automatic screen orientation ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) detecting physical gravity vector, 500ms anti-vibration hysteresis, custom mounting offset, and 1-click zero calibration from the Web UI!

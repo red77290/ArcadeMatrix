@@ -161,3 +161,14 @@ void PongClock::update() {
     // Draw ball
     matrix->fillRect((int)ball_x, (int)ball_y, ball_size, ball_size, white);
 }
+
+void PongClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    ball_size = max(2, (int)(geometry.height / 16));
+    pad_w = max(2, (int)(geometry.width / 32));
+    pad_h = max(6, (int)(geometry.height / 3.0f));
+
+    if (p1_y > geometry.height - pad_h) p1_y = geometry.height - pad_h;
+    if (p2_y > geometry.height - pad_h) p2_y = geometry.height - pad_h;
+    if (ball_x > geometry.width - ball_size) ball_x = geometry.width - ball_size;
+    if (ball_y > geometry.height - ball_size) ball_y = geometry.height - ball_size;
+}
