@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <mutex>
 #include "DictionaryEngineConfig.h"
 
 struct EngineInstance {
@@ -79,6 +80,31 @@ struct SystemConfig {
     int idle_fighter_interval = 60;
 };
 
+struct EngineInstanceSnapshot {
+    String instance_id;
+    String engine_id;
+    DictionaryEngineConfig config;
+};
+
+struct ConfigSnapshot {
+    uint32_t version = 1;
+    MatrixConfig matrix;
+    WifiConfig wifi;
+    MqttConfig mqtt;
+    SystemConfig system;
+    std::vector<RotationEntry> rotation;
+    std::vector<EngineInstanceSnapshot> instances;
+
+    const EngineInstanceSnapshot* getInstance(const String& instanceId) const {
+        for (const auto& inst : instances) {
+            if (inst.instance_id == instanceId) {
+                return &inst;
+            }
+        }
+        return nullptr;
+    }
+};
+
 class ConfigLoader {
 public:
     ConfigLoader();
@@ -99,8 +125,13 @@ public:
     WifiConfig wifi;
     MqttConfig mqtt;
     SystemConfig system;
+
+    ConfigSnapshot getSnapshot() const;
+    uint32_t getVersion() const;
+    void publishSnapshot();
     
     EngineInstance* getInstance(const String& instanceId) {
+        std::lock_guard<std::mutex> lock(_mutex);
         for (auto& inst : instances) {
             if (inst.instance_id == instanceId) {
                 return &inst;
@@ -110,19 +141,32 @@ public:
     }
 
     EngineInstance* addInstance(const String& instanceId, const String& engineId) {
-        EngineInstance* existing = getInstance(instanceId);
-        if (existing) return existing;
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto& inst : instances) {
+            if (inst.instance_id == instanceId) return &inst;
+        }
         instances.push_back({instanceId, engineId, {}});
+        publishSnapshot_locked();
         return &instances.back();
     }
 
     bool removeInstance(const String& instanceId) {
+        std::lock_guard<std::mutex> lock(_mutex);
         for (auto it = instances.begin(); it != instances.end(); ++it) {
             if (it->instance_id == instanceId) {
                 instances.erase(it);
+                publishSnapshot_locked();
                 return true;
             }
         }
         return false;
     }
+
+private:
+    mutable std::mutex _mutex;
+    uint32_t _version = 1;
+    ConfigSnapshot _publishedSnapshot;
+
+    void publishSnapshot_locked();
 };
+

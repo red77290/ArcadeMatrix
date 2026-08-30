@@ -7,7 +7,7 @@
 
 FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
 
-FrontendSyncEngine::FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine)
+FrontendSyncEngine::FrontendSyncEngine(const MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine)
     : mqttConfig(config), gif(gifEngine), message(messageEngine), mqttClient(espClient) {
     instance = this;
     lastReconnectAttempt = 0;

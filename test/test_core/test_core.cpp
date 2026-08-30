@@ -200,24 +200,42 @@ void test_sanitizer_flags_unknown_engines(void) {
 void test_arbiter_priority_resolution(void) {
     DisplayArbiter arbiter;
 
-    DisplayRequest reqRot{"ROTATION", DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false, "", 0, millis()};
-    DisplayRequest reqMarq{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
-    DisplayRequest reqMqtt{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
+    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false, 0, {}, nullptr, 0, millis()};
+    DisplayRequest reqMarq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, nullptr, 0, millis()};
+    DisplayRequest reqMqtt{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, nullptr, 0, millis()};
 
     arbiter.submitRequest(reqRot);
-    TEST_ASSERT_EQUAL_STRING("ROTATION", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
 
     arbiter.submitRequest(reqMarq);
-    TEST_ASSERT_EQUAL_STRING("MARQUEE", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, arbiter.evaluate().sourceId);
 
     arbiter.submitRequest(reqMqtt);
-    TEST_ASSERT_EQUAL_STRING("MESSAGE", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, arbiter.evaluate().sourceId);
 
-    arbiter.cancelRequest("MESSAGE");
-    TEST_ASSERT_EQUAL_STRING("MARQUEE", arbiter.evaluate().source.c_str());
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, arbiter.evaluate().sourceId);
 
-    arbiter.cancelRequest("MARQUEE");
-    TEST_ASSERT_EQUAL_STRING("ROTATION", arbiter.evaluate().source.c_str());
+    arbiter.cancelRequest(DisplaySourceId::MARQUEE);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
+}
+
+void test_config_snapshot_immutability_and_versioning(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+    uint32_t v1 = cfg.getVersion();
+    ConfigSnapshot s1 = cfg.getSnapshot();
+    TEST_ASSERT_EQUAL(v1, s1.version);
+
+    cfg.addInstance("test_clock", "clock");
+    uint32_t v2 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v1, v2);
+
+    ConfigSnapshot s2 = cfg.getSnapshot();
+    TEST_ASSERT_EQUAL(v2, s2.version);
+    TEST_ASSERT_NOT_NULL(s2.getInstance("test_clock"));
+    // Snapshot 1 remains untouched
+    TEST_ASSERT_NULL(s1.getInstance("test_clock"));
 }
 
 void test_requirements_gating(void) {
@@ -363,6 +381,7 @@ void setup() {
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     // Arbiter, Overlays & Requirements
     RUN_TEST(test_arbiter_priority_resolution);
+    RUN_TEST(test_config_snapshot_immutability_and_versioning);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
     RUN_TEST(test_canonical_overlays_schema_and_migration);
