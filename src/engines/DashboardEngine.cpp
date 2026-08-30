@@ -687,6 +687,28 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
 // Market Widget (Crypto & Stock Quotes Infinite Fluid Rolling Ticker)
 // ============================================================================
 
+static void formatMarketPrice(char* buf, size_t bufSize, float price) {
+    if (price <= 0.0f) {
+        snprintf(buf, bufSize, "--");
+    } else if (price >= 100000.0f) {
+        snprintf(buf, bufSize, "$%.0fK", price / 1000.0f);
+    } else if (price >= 1000.0f) {
+        snprintf(buf, bufSize, "$%.1fK", price / 1000.0f);
+    } else if (price >= 100.0f) {
+        snprintf(buf, bufSize, "$%.1f", price);
+    } else if (price >= 1.0f) {
+        snprintf(buf, bufSize, "$%.2f", price);
+    } else if (price >= 0.1f) {
+        snprintf(buf, bufSize, "$%.3f", price);
+    } else if (price >= 0.001f) {
+        snprintf(buf, bufSize, "$%.4f", price);
+    } else if (price >= 0.00001f) {
+        snprintf(buf, bufSize, "$%.5f", price);
+    } else {
+        snprintf(buf, bufSize, "$%.6f", price);
+    }
+}
+
 void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme) {
     if (!matrix || rect.width < 20 || rect.height < 12) return;
 
@@ -722,14 +744,8 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
                 drawClippedMarketIcon8x8(matrix, posX, rect.y + 3, minX, maxX, minY, maxY, items[i].symbol);
                 drawClippedString(matrix, items[i].symbol, posX + 10, rect.y + 3, minX, maxX, minY, maxY, theme.text);
 
-                char priceBuf[12];
-                if (items[i].price >= 1000.0f) {
-                    snprintf(priceBuf, sizeof(priceBuf), "$%.1fK", items[i].price / 1000.0f);
-                } else if (items[i].price >= 100.0f) {
-                    snprintf(priceBuf, sizeof(priceBuf), "$%.1f", items[i].price);
-                } else {
-                    snprintf(priceBuf, sizeof(priceBuf), "$%.2f", items[i].price);
-                }
+                char priceBuf[16];
+                formatMarketPrice(priceBuf, sizeof(priceBuf), items[i].price);
                 drawClippedString(matrix, priceBuf, posX + 10, rect.y + 11, minX, maxX, minY, maxY, theme.primary);
 
                 uint16_t trendCol = (items[i].change24h >= 0) ? theme.green : theme.red;
@@ -755,9 +771,8 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
             drawClippedMarketIcon8x8(matrix, rect.x + 3, posY + 2, minX, maxX, minY, maxY, items[i].symbol);
             drawClippedString(matrix, items[i].symbol, rect.x + 13, posY, minX, maxX, minY, maxY, theme.text);
 
-            char priceBuf[12];
-            if (items[i].price >= 1000.0f) snprintf(priceBuf, sizeof(priceBuf), "$%.0fK", items[i].price / 1000.0f);
-            else snprintf(priceBuf, sizeof(priceBuf), "$%.1f", items[i].price);
+            char priceBuf[16];
+            formatMarketPrice(priceBuf, sizeof(priceBuf), items[i].price);
             drawClippedString(matrix, priceBuf, rect.x + 13, posY + 7, minX, maxX, minY, maxY, theme.primary);
         }
     }
