@@ -109,8 +109,8 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
                         b.ty = curTierY + (py - 2) * blockSize;
                         b.x = b.tx;
                         b.y = b.ty - (h / 3) - (rand() % (int)(h / 4 + 1));
-                        float base_dy = max(0.35f, (float)h / 120.0f);
-                        b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
+                        float base_dy = max(1.0f, (float)(h / 3) / 40.0f);
+                        b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy);
                         if (isGameboy) {
                             b.color = gameboyColors[charIdx % 4];
                         } else {
@@ -174,9 +174,9 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
                         b.tx = startX + (px - 2) * blockSize;
                         b.ty = startY + (py - 2) * blockSize;
                         b.x = b.tx;
-                        b.y = b.ty - h - (rand() % (int)(h / 2 + 1));
-                        float base_dy = max(0.30f, (float)h / 140.0f);
-                        b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
+                        b.y = b.ty - matrix->height() - (rand() % (int)(matrix->height() / 2 + 1));
+                        float base_dy = max(1.0f, matrix->height() / 40.0f);
+                        b.dy = base_dy + (((float)rand() / RAND_MAX) * base_dy);
                         if (isGameboy) {
                             b.color = gameboyColors[charIdx % 4];
                         } else {
@@ -198,7 +198,7 @@ void TetrisClock::update() {
         if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
             for (auto& b : blocks) {
                 b.state = 2; // OUT
-                float base_dy = max(0.40f, matrix->height() / 70.0f);
+                float base_dy = max(1.0f, matrix->height() / 40.0f);
                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
             }
             std::vector<int> allIndices;
@@ -217,7 +217,7 @@ void TetrisClock::update() {
                         for(int idx : changedIndices) {
                             if(b.charIndex == idx) {
                                 b.state = 2; // OUT
-                                float base_dy = max(0.40f, matrix->height() / 70.0f);
+                                float base_dy = max(1.5f, matrix->height() / 15.0f);
                                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
                                 break;
                             }
@@ -238,36 +238,37 @@ void TetrisClock::update() {
     float timeScale = dt / 16.0f; // Scale relative to 60fps
         
     for (auto it = blocks.begin(); it != blocks.end(); ) {
-            if (it->state == 0) { // IN
-                it->y += it->dy * timeScale;
-                if (it->y >= it->ty) {
-                    it->y = it->ty;
-                    it->state = 1; // FIXED
-                }
-                ++it;
-            } else if (it->state == 2) { // OUT
-                it->y += it->dy * timeScale;
-                it->dy += 0.08f * timeScale; // Smooth natural gravity
-                if (it->y > matrix->height()) {
-                    it = blocks.erase(it);
-                } else {
-                    ++it;
-                }
-            } else {
-                ++it; // FIXED
+        if (it->state == 0) { // IN
+            it->y += it->dy * timeScale;
+            if (it->y >= it->ty) {
+                it->y = it->ty;
+                it->state = 1; // FIXED
             }
+            ++it;
+        } else if (it->state == 2) { // OUT
+            it->y += it->dy * timeScale;
+            it->dy += 0.4f * timeScale; // Gravity matches v3.0.0
+            if (it->y > matrix->height()) {
+                it = blocks.erase(it);
+            } else {
+                ++it;
+            }
+        } else {
+            ++it; // FIXED
         }
+    }
 
-    
-    // Draw
-    for (const auto& b : blocks) {
-        matrix->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
+    // Clear and draw
+    if (matrix) {
+        matrix->fillScreen(0);
+        for (const auto& b : blocks) {
+            matrix->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
+        }
     }
 }
 
 void TetrisClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
-    if (strlen(lastTimeStr) > 0 && !blocks.empty()) {
-        std::vector<int> allIndices = {0, 1, 3, 4, 6, 7};
-        buildTargets(lastTimeStr, allIndices);
-    }
+    blocks.clear();
+    strcpy(lastTimeStr, "");
+    if (matrix) matrix->fillScreen(0);
 }

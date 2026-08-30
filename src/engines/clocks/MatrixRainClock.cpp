@@ -55,16 +55,6 @@ void MatrixRainClock::drawTime() {
         int yM = (h / 2) - (textH / 2) + offY;
         int yS = (5 * h / 6) - (textH / 2) + offY;
 
-        // Draw dark halo boxes behind each tier for crystal-clear contrast
-        matrix->fillRect(tx - 3, yH - 2, textW + 6, textH + 4, haloDark);
-        matrix->drawRect(tx - 3, yH - 2, textW + 6, textH + 4, borderCol);
-
-        matrix->fillRect(tx - 3, yM - 2, textW + 6, textH + 4, haloDark);
-        matrix->drawRect(tx - 3, yM - 2, textW + 6, textH + 4, borderCol);
-
-        matrix->fillRect(tx - 3, yS - 2, textW + 6, textH + 4, haloDark);
-        matrix->drawRect(tx - 3, yS - 2, textW + 6, textH + 4, borderCol);
-
         // Tier 1: Hours (Glow + Core)
         matrix->setTextColor(glowGreen);
         matrix->setCursor(tx - 1, yH); matrix->print(hStr);
@@ -92,16 +82,29 @@ void MatrixRainClock::drawTime() {
 
     } else {
         // ====================================================================
-        // Landscape / Widescreen Layout ("HH:MM:SS")
+        // Landscape / Widescreen Layout ("HH:MM:SS" or configured format)
         // ====================================================================
-        char timeStr[12];
-        sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
+        String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
+        if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
+        if (fmt.isEmpty()) fmt = "%H:%M:%S";
+
+        char timeStr[32];
+        struct tm timeinfo;
+        timeinfo.tm_hour = storedTime.hours;
+        timeinfo.tm_min = storedTime.minutes;
+        timeinfo.tm_sec = storedTime.seconds;
+        timeinfo.tm_wday = 0;
+        timeinfo.tm_mday = 1;
+        timeinfo.tm_mon = 0;
+        timeinfo.tm_year = 126;
+        timeinfo.tm_isdst = -1;
+        strftime(timeStr, sizeof(timeStr), fmt.c_str(), &timeinfo);
 
         matrix->setTextSize(1);
         int16_t bx, by;
         uint16_t bw, bh;
-        matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
+        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = strlen(timeStr) * 6; bh = 7; }
 
         int maxScaleW = (w - 8) / bw;
         int maxScaleH = (h - 6) / bh;
@@ -110,16 +113,12 @@ void MatrixRainClock::drawTime() {
 
         int gfxSize = min(logicalSize, sMax);
         matrix->setTextSize(gfxSize);
-        matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
 
         int textW = strlen(timeStr) * 6 * gfxSize - gfxSize;
         int textH = 8 * gfxSize;
         int x = (w - textW) / 2 + offX;
         int y = (h - textH) / 2 + offY;
-
-        // Protective Dark Matrix Halo Box
-        matrix->fillRect(x - 3, y - 2, textW + 6, textH + 4, haloDark);
-        matrix->drawRect(x - 3, y - 2, textW + 6, textH + 4, borderCol);
 
         // Outer Neon Glow
         matrix->setTextColor(glowGreen);

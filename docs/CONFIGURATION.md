@@ -45,7 +45,8 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `disable_hardware_pulsing` | `bool` | Set `true` to stop DMA starving the internal Wi-Fi (slight flicker). |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
 | `row_address_mode` | `int` | Row addressing type for exotic panels (`0` default). |
-| `multiplexing` | `int` | Panel multiplexing type (`0` default). |
+| `clk_phase` | `bool` | Invert CLK clock phase (default `true` on ESP32-S3 to suppress pixel noise and DMA jitter). |
+| `latch_blanking` | `int` | Latch blanking cycles (`1`–`4`) for ghosting/phantom line reduction. |
 | `panel_type` | `String` | Optional panel init string (e.g. `FM6126A`), usually empty. |
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
@@ -73,6 +74,8 @@ You can also push credentials at runtime with `POST /api/wifi { "ssid": "...", "
 | `timezone` | `String` | POSIX string (e.g., `CET-1CEST,M3.5.0,M10.5.0/3`). |
 | `format_24h` | `bool` | Time format. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | System language (e.g., `en`, `fr`, `es`). |
+| `temp_unit` | `String` | Temperature unit preference (`C` for Celsius, `F` for Fahrenheit). |
+| `temp_offset` | `float` | Offset calibration in °C applied to onboard/environmental sensor. |
 | `night_mode_enabled` | `bool` | Enables automatic turn-off / brightness reduction at night. |
 | `turn_off_at` | `String` | Standby start time (e.g., `"23:00"`). |
 | `wake_up_at` | `String` | Wake-up time (e.g., `"07:00"`). |
