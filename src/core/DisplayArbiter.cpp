@@ -21,7 +21,8 @@ DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
 
 DisplayArbiter::DisplayArbiter() {
     for (size_t i = 0; i < MAX_REQUESTS; ++i) {
-        requests[i].active = false;
+        slots[i].active = false;
+        slots[i].request = DisplayRequest{};
     }
     
     // Add default persistent rotation request as fallback in slot 0
@@ -30,42 +31,56 @@ DisplayArbiter::DisplayArbiter() {
     rotReq.priority = DisplayPriority::ROTATION;
     rotReq.lifecycle = RequestLifecycle::PERSISTENT;
     rotReq.preemptive = false;
+    rotReq.requestId = _nextRequestId++;
     rotReq.timeout_ms = 0;
     rotReq.created_at = millis();
-    rotReq.active = true;
-    requests[0] = rotReq;
+    slots[0].request = rotReq;
+    slots[0].active = true;
 }
 
 void DisplayArbiter::submitRequest(const DisplayRequest& request, bool restartTimer) {
     std::lock_guard<std::mutex> lock(arbiterMutex);
     
-    // Check if source already has an active slot, if so update it
     int foundIndex = -1;
     int firstFreeIndex = -1;
     
     for (size_t i = 0; i < MAX_REQUESTS; ++i) {
-        if (requests[i].active && requests[i].sourceId == request.sourceId) {
+        if (slots[i].active && slots[i].request.sourceId == request.sourceId) {
             foundIndex = (int)i;
             break;
         }
-        if (!requests[i].active && firstFreeIndex == -1 && i > 0) {
+        if (!slots[i].active && firstFreeIndex == -1 && i > 0) {
             firstFreeIndex = (int)i;
         }
     }
     
     if (foundIndex != -1) {
-        auto prevCreated = requests[foundIndex].created_at;
-        requests[foundIndex] = request;
-        requests[foundIndex].active = true;
-        if (!restartTimer) {
-            requests[foundIndex].created_at = prevCreated;
+        unsigned long prevCreated = slots[foundIndex].request.created_at;
+        uint32_t prevReqId = slots[foundIndex].request.requestId;
+        slots[foundIndex].request = request;
+        slots[foundIndex].active = true;
+        
+        // Retain existing requestId unless caller explicitly passed a new one or restartTimer is requested
+        if (request.requestId != 0) {
+            slots[foundIndex].request.requestId = request.requestId;
+        } else if (restartTimer) {
+            slots[foundIndex].request.requestId = _nextRequestId++;
         } else {
-            requests[foundIndex].created_at = millis();
+            slots[foundIndex].request.requestId = prevReqId;
+        }
+        
+        if (!restartTimer) {
+            slots[foundIndex].request.created_at = prevCreated;
+        } else {
+            slots[foundIndex].request.created_at = millis();
         }
     } else if (firstFreeIndex != -1) {
-        requests[firstFreeIndex] = request;
-        requests[firstFreeIndex].active = true;
-        requests[firstFreeIndex].created_at = millis();
+        slots[firstFreeIndex].request = request;
+        slots[firstFreeIndex].active = true;
+        if (slots[firstFreeIndex].request.requestId == 0) {
+            slots[firstFreeIndex].request.requestId = _nextRequestId++;
+        }
+        slots[firstFreeIndex].request.created_at = millis();
     }
 }
 
@@ -75,22 +90,18 @@ void DisplayArbiter::cancelRequest(DisplaySourceId sourceId) {
     }
     std::lock_guard<std::mutex> lock(arbiterMutex);
     for (size_t i = 1; i < MAX_REQUESTS; ++i) {
-        if (requests[i].active && requests[i].sourceId == sourceId) {
-            requests[i].active = false;
+        if (slots[i].active && slots[i].request.sourceId == sourceId) {
+            slots[i].active = false;
         }
     }
-}
-
-void DisplayArbiter::cancelRequest(const String& sourceName) {
-    cancelRequest(parseSourceId(sourceName));
 }
 
 void DisplayArbiter::clearExpired() {
     unsigned long now = millis();
     for (size_t i = 1; i < MAX_REQUESTS; ++i) {
-        if (requests[i].active && requests[i].lifecycle == RequestLifecycle::TIMED) {
-            if (requests[i].timeout_ms > 0 && (now - requests[i].created_at >= requests[i].timeout_ms)) {
-                requests[i].active = false;
+        if (slots[i].active && slots[i].request.lifecycle == RequestLifecycle::TIMED) {
+            if (slots[i].request.timeout_ms > 0 && (now - slots[i].request.created_at >= slots[i].request.timeout_ms)) {
+                slots[i].active = false;
             }
         }
     }
@@ -100,32 +111,28 @@ DisplayDecision DisplayArbiter::evaluate() {
     std::lock_guard<std::mutex> lock(arbiterMutex);
     clearExpired();
     
-    DisplayDecision decision;
-    decision.priority = static_cast<DisplayPriority>(0);
-    decision.valid = false;
-    
+    DisplayDecision decision{};
     int bestSlot = -1;
+    
     for (size_t i = 0; i < MAX_REQUESTS; ++i) {
-        if (requests[i].active) {
-            if (static_cast<uint8_t>(requests[i].priority) >= static_cast<uint8_t>(decision.priority)) {
-                decision.priority = requests[i].priority;
-                decision.sourceId = requests[i].sourceId;
-                decision.engineHandle = requests[i].engineHandle;
-                decision.engine = requests[i].engine;
-                decision.requestId = requests[i].requestId;
-                decision.lifecycle = requests[i].lifecycle;
-                decision.allowsOverlay = requests[i].allowsOverlay;
-                decision.needsClear = requests[i].needsClear;
-                decision.isRealtime = requests[i].isRealtime;
-                decision.valid = true;
-                bestSlot = (int)i;
-            }
+        if (!slots[i].active) continue;
+        if (bestSlot == -1 || static_cast<uint8_t>(slots[i].request.priority) >= static_cast<uint8_t>(decision.priority)) {
+            bestSlot = (int)i;
+            decision.priority = slots[i].request.priority;
+            decision.sourceId = slots[i].request.sourceId;
+            decision.engineHandle = slots[i].request.engineHandle;
+            decision.requestId = slots[i].request.requestId;
+            decision.lifecycle = slots[i].request.lifecycle;
+            decision.allowsOverlay = slots[i].request.allowsOverlay;
+            decision.needsClear = slots[i].request.needsClear;
+            decision.isRealtime = slots[i].request.isRealtime;
+            decision.valid = true;
         }
     }
     
     // Auto-consume ONE_SHOT requests
-    if (bestSlot >= 1 && decision.lifecycle == RequestLifecycle::ONE_SHOT) {
-        requests[bestSlot].active = false;
+    if (bestSlot > 0 && decision.lifecycle == RequestLifecycle::ONE_SHOT) {
+        slots[bestSlot].active = false;
     }
     
     return decision;

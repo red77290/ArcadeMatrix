@@ -223,6 +223,7 @@ void AppRuntime::initialize() {
         auto visPtr = desc->factory();
         visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
         visualizerEngine->initialize(m_appCtx, nullptr);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::VISUALIZER, visualizerEngine);
     }
 
     auto msgDesc = EngineRegistry::getDescriptor("message");
@@ -230,6 +231,7 @@ void AppRuntime::initialize() {
         auto msgPtr = msgDesc->factory();
         m_messageEngine = static_cast<MessageEngine*>(msgPtr.release());
         m_messageEngine->initialize(m_appCtx, nullptr);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::MQTT, m_messageEngine);
     }
 
     auto gifDesc = EngineRegistry::getDescriptor("gifs");
@@ -237,9 +239,11 @@ void AppRuntime::initialize() {
         auto gifPtr = gifDesc->factory();
         gifEngine = static_cast<GifEngine*>(gifPtr.release());
         gifEngine->initialize(m_appCtx, nullptr);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine);
     }
 
-    String fontPath = config.getInstance("clock_main") ? config.getInstance("clock_main")->config.getString("clock_font_path") : "";
+    const auto* clockInst = snapshot.getInstance("clock_main");
+    String fontPath = clockInst ? clockInst->config.getString("clock_font_path") : "";
     if (fontPath.length() > 0) {
         if (m_customFontLoader.loadFromSD(fontPath.c_str())) {
             m_messageEngine->setCustomFont(m_customFontLoader.getFont());
@@ -301,6 +305,7 @@ void AppRuntime::initialize() {
                 m_marqueeEngine->initialize(m_appCtx, nullptr);
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
+            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
             MDNS.addService("http", "tcp", 80);
             MDNS.addService("upnp", "tcp", 80);
             MDNS.addService("mediarenderer", "tcp", 80);
@@ -325,6 +330,7 @@ void AppRuntime::initialize() {
                 auto marqPtr = marqueeDesc->factory();
                 m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
                 m_marqueeEngine->initialize(m_appCtx, nullptr);
+                m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
         }
@@ -343,6 +349,7 @@ void AppRuntime::initialize() {
             auto marqPtr = marqueeDesc->factory();
             m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
             m_marqueeEngine->initialize(m_appCtx, nullptr);
+            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
         }
         m_webServer->setMarqueeEngine(m_marqueeEngine);
     }
@@ -456,7 +463,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
             if (!visualizerEngine->isActive()) {
                 if (activeInst) visualizerEngine->onConfigChanged(&activeInst->config);
                 visualizerEngine->activate();
-                DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, visualizerEngine};
+                DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
                 m_displayArbiter.submitRequest(req);
             }
         } else {
@@ -469,7 +476,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
 
     if (m_marqueeEngine) {
         if (m_marqueeEngine->isActive()) {
-            DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, m_marqueeEngine};
+            DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::MARQUEE);
@@ -477,7 +484,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     }
     if (m_messageEngine) {
         if (m_messageEngine->isActive() && rotationManager && rotationManager->getCurrentEngineId() != "message") {
-            DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, m_messageEngine};
+            DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::MQTT);
@@ -485,7 +492,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     }
     if (gifEngine) {
         if (gifEngine->isActive()) {
-            DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, gifEngine};
+            DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true};
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
