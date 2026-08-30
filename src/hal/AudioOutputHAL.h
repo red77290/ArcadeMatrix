@@ -20,6 +20,11 @@ public:
     bool begin();
 
     /**
+     * @brief Prepares hardware for audio playback (unmutes DAC, enables PA, clears DMA buffer).
+     */
+    void preparePlayback();
+
+    /**
      * @brief Stops I2S DAC output and releases resources.
      */
     void stop();
@@ -66,6 +71,7 @@ private:
     bool _initialized;
     uint8_t _volume;
     float _volumeScale; // 0.0f to 1.0f (logarithmic scale)
+    int16_t _scaledBuffer[1024];
 
     void updateVolumeScale();
 };

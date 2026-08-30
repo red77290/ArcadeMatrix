@@ -112,6 +112,28 @@ void TempEngine::render(EngineContext* context) {
         matrix->setTextColor(humColor);
         matrix->setCursor(rightStartX + 16 + offsetX, (height / 2) - (textSize * 4) + offsetY);
         matrix->print(humBuf);
+    } else if (width < 48 || height > (width * 3) / 2) {
+        // Portrait / Tate layout (e.g. 32x64, 32x128, 64x128)
+        matrix->setTextSize(1);
+        
+        int iconX = (width - 16) / 2;
+        int stepY = height / 2;
+
+        // Top half: Thermometer icon + Temperature
+        drawThermometerIcon(matrix, iconX + offsetX, (stepY / 4) - 4 + offsetY, tempColor);
+        int16_t bx, by;
+        uint16_t bw, bh;
+        matrix->getTextBounds(tempBuf, 0, 0, &bx, &by, &bw, &bh);
+        matrix->setTextColor(tempColor);
+        matrix->setCursor((width - bw) / 2 + offsetX, (stepY / 4) + 14 + offsetY);
+        matrix->print(tempBuf);
+
+        // Bottom half: Water drop icon + Humidity
+        drawWaterDropIcon(matrix, iconX + offsetX, stepY + (stepY / 4) - 4 + offsetY, humColor);
+        matrix->getTextBounds(humBuf, 0, 0, &bx, &by, &bw, &bh);
+        matrix->setTextColor(humColor);
+        matrix->setCursor((width - bw) / 2 + offsetX, stepY + (stepY / 4) + 14 + offsetY);
+        matrix->print(humBuf);
     } else {
         // Standard 64x32 display layout
         matrix->setTextSize(1);

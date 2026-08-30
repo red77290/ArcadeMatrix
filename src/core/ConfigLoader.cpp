@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include "SDUtils.h"
 
+extern SemaphoreHandle_t sdMutex;
+
 ConfigLoader::ConfigLoader() {
     setDefaults();
 }
@@ -31,7 +33,6 @@ void ConfigLoader::setDefaults() {
     addInstance("gifs_main", "gifs");
     addInstance("message_main", "message");
 
-    
     RotationEntry re;
     re.instance_id = "clock_main"; re.duration_sec = 15; rotation.push_back(re);
     re.instance_id = "date_main"; re.duration_sec = 10; rotation.push_back(re);
@@ -42,10 +43,17 @@ void ConfigLoader::setDefaults() {
     re.instance_id = "temp_main"; re.duration_sec = 10; rotation.push_back(re);
     re.instance_id = "decibel_main"; re.duration_sec = 15; rotation.push_back(re);
     re.instance_id = "message_main"; re.duration_sec = 15; rotation.push_back(re);
+
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    matrix.width = 256;
+    matrix.height = 64;
+    matrix.chainLength = 4;
+#else
     matrix.width = 64;
     matrix.height = 32;
-    matrix.panelType = "SHIFTREG";
     matrix.chainLength = 1;
+#endif
+    matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
     matrix.forceSingleBuffer = false;
     matrix.colorDepth = 8;
@@ -93,9 +101,12 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         LOGE("ConfigLoader", "JSON parse failed: %s", error.c_str());
         return false;
     }
+    return parseFromJsonDoc(doc);
+}
 
+bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
     if (doc.containsKey("system")) {
-        JsonObject sys = doc["system"];
+        JsonObjectConst sys = doc["system"];
         system.timezone = sys["timezone"] | system.timezone;
         if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
         else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
@@ -110,7 +121,7 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
     }
 
-    JsonObject disp;
+    JsonObjectConst disp;
     if (doc.containsKey("display")) {
         disp = doc["display"];
     } else if (doc.containsKey("matrix")) {
@@ -168,13 +179,14 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     }
 
     if (doc.containsKey("wifi")) {
-        wifi.ssid = doc["wifi"]["ssid"] | wifi.ssid;
-        wifi.password = doc["wifi"]["password"] | wifi.password;
-        wifi.hostname = doc["wifi"]["hostname"] | wifi.hostname;
+        JsonObjectConst w = doc["wifi"];
+        wifi.ssid = w["ssid"] | wifi.ssid;
+        wifi.password = w["password"] | wifi.password;
+        wifi.hostname = w["hostname"] | wifi.hostname;
     }
 
     if (doc.containsKey("mqtt")) {
-        JsonObject m = doc["mqtt"];
+        JsonObjectConst m = doc["mqtt"];
         mqtt.enabled = m["enabled"] | mqtt.enabled;
         mqtt.broker = m["broker"] | mqtt.broker;
         mqtt.port = m["port"] | mqtt.port;
@@ -186,16 +198,14 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
         mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
     }
 
-    instances.clear();
-    rotation.clear();
-
     if (doc.containsKey("rotation")) {
-        JsonArray rotArr = doc["rotation"].as<JsonArray>();
-        for (JsonObject rotObj : rotArr) {
+        rotation.clear();
+        JsonArrayConst rotArr = doc["rotation"].as<JsonArrayConst>();
+        for (JsonObjectConst rotObj : rotArr) {
             RotationEntry entry;
             entry.instance_id = rotObj["instance_id"] | "";
             entry.duration_sec = rotObj["duration_sec"] | 15;
-            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObject>()) {
+            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObjectConst>()) {
                 entry.overlays.fighter = rotObj["overlays"]["fighter"] | false;
             } else if (rotObj.containsKey("fighter_overlay")) {
                 entry.overlays.fighter = rotObj["fighter_overlay"] | false;
@@ -207,14 +217,15 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     }
 
     if (doc.containsKey("instances")) {
-        JsonArray instArr = doc["instances"].as<JsonArray>();
-        for (JsonObject instObj : instArr) {
+        instances.clear();
+        JsonArrayConst instArr = doc["instances"].as<JsonArrayConst>();
+        for (JsonObjectConst instObj : instArr) {
             EngineInstance inst;
             inst.instance_id = instObj["instance_id"] | "";
             inst.engine_id = instObj["engine_id"] | "";
             if (instObj.containsKey("config")) {
-                JsonObject confObj = instObj["config"];
-                for (JsonPair configPair : confObj) {
+                JsonObjectConst confObj = instObj["config"];
+                for (JsonPairConst configPair : confObj) {
                     if (configPair.value().is<int>()) {
                         inst.config.setInt(configPair.key().c_str(), configPair.value().as<int>());
                     } else if (configPair.value().is<float>()) {
@@ -229,16 +240,17 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
             instances.push_back(inst);
         }
     } else if (doc.containsKey("engines")) {
-        JsonObject engObj = doc["engines"].as<JsonObject>();
-        for (JsonPair kv : engObj) {
+        instances.clear();
+        JsonObjectConst engObj = doc["engines"].as<JsonObjectConst>();
+        for (JsonPairConst kv : engObj) {
             String instanceId = kv.key().c_str();
             
             EngineInstance inst;
             inst.instance_id = instanceId;
             inst.engine_id = kv.value()["engine_id"] | "";
             
-            JsonObject confObj = kv.value()["config"];
-            for (JsonPair configPair : confObj) {
+            JsonObjectConst confObj = kv.value()["config"];
+            for (JsonPairConst configPair : confObj) {
                 if (configPair.value().is<int>()) {
                     inst.config.setInt(configPair.key().c_str(), configPair.value().as<int>());
                 } else if (configPair.value().is<float>()) {
@@ -290,6 +302,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["auto_rotate"] = matrix.auto_rotate;
     dispObj["rotation_transition"] = matrix.rotation_transition;
     dispObj["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
+    dispObj["matrix_power"] = matrix.matrix_power;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;
@@ -336,172 +349,94 @@ String ConfigLoader::serializeToJson(bool pretty) const {
 }
 
 bool ConfigLoader::loadFromSD(const char* filepath) {
-    if (!sd.exists(filepath)) {
-        LOGE("ConfigLoader", "File not found: %s", filepath);
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        LOGE("ConfigLoader", "Cannot load %s: SD busy (mutex timeout)", filepath);
         return false;
     }
 
-    FsFile f = sd.open(filepath, FILE_OPEN_READ);
-    if (!f) {
-        LOGE("ConfigLoader", "Failed to open file: %s", filepath);
+    auto tryLoad = [this](const char* path) -> bool {
+        if (!sd.exists(path)) return false;
+        FsFile f = sd.open(path, FILE_OPEN_READ);
+        if (!f) return false;
+        DynamicJsonDocument doc(32768);
+        DeserializationError error = deserializeJson(doc, f);
+        f.close();
+        if (error) {
+            LOGE("ConfigLoader", "JSON parse error in %s: %s", path, error.c_str());
+            return false;
+        }
+        return this->parseFromJsonDoc(doc);
+    };
+
+    bool loaded = tryLoad(filepath);
+    if (!loaded) {
+        String bakPath = String(filepath) + ".bak";
+        if (sd.exists(bakPath.c_str())) {
+            LOGW("ConfigLoader", "Primary file %s failed. Recovering from %s...", filepath, bakPath.c_str());
+            loaded = tryLoad(bakPath.c_str());
+            if (loaded) {
+                LOGI("ConfigLoader", "RECOVERY SUCCESS: Restored configuration from %s", bakPath.c_str());
+            }
+        }
+    }
+
+    if (sdMutex) xSemaphoreGive(sdMutex);
+
+    if (loaded) {
+        LOGI("ConfigLoader", "Configuration loaded successfully from %s", filepath);
+        return true;
+    } else {
+        LOGE("ConfigLoader", "Failed to load %s and backup. Using defaults.", filepath);
         return false;
     }
-
-    DynamicJsonDocument doc(32768);
-    DeserializationError error = deserializeJson(doc, f);
-    f.close();
-
-    if (error) {
-        LOGE("ConfigLoader", "JSON parse failed from %s: %s", filepath, error.c_str());
-        return false;
-    }
-
-    // Process system, display, wifi, mqtt, rotation, engines/instances
-    if (doc.containsKey("system")) {
-        JsonObject sys = doc["system"];
-        system.timezone = sys["timezone"] | system.timezone;
-        if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
-        else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
-        system.lang = sys["lang"] | system.lang;
-        system.unit = sys["unit"] | system.unit;
-        system.temp_offset = sys["temp_offset"] | system.temp_offset;
-        system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
-        system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;
-        system.wake_up_at = sys["wake_up_at"] | system.wake_up_at;
-        system.night_brightness = sys["night_brightness"] | system.night_brightness;
-        system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
-        system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
-    }
-
-    JsonObject disp;
-    if (doc.containsKey("display")) {
-        disp = doc["display"];
-    } else if (doc.containsKey("matrix")) {
-        disp = doc["matrix"];
-    }
-
-    if (!disp.isNull()) {
-        matrix.width = disp["width"] | matrix.width;
-        matrix.height = disp["height"] | matrix.height;
-        if (disp.containsKey("panel_type")) matrix.panelType = disp["panel_type"].as<String>();
-        else if (disp.containsKey("panelType")) matrix.panelType = disp["panelType"].as<String>();
-        if (disp.containsKey("chain_length")) matrix.chainLength = disp["chain_length"] | matrix.chainLength;
-        else if (disp.containsKey("chainLength")) matrix.chainLength = disp["chainLength"] | matrix.chainLength;
-        if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"] | matrix.powerLimitPercent;
-        else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"] | matrix.powerLimitPercent;
-        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
-        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
-        if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"] | matrix.colorDepth;
-        else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"] | matrix.colorDepth;
-        if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
-        else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
-        if (disp.containsKey("limit_refresh_rate_hz")) matrix.limitRefreshRateHz = disp["limit_refresh_rate_hz"] | matrix.limitRefreshRateHz;
-        else if (disp.containsKey("limitRefreshRateHz")) matrix.limitRefreshRateHz = disp["limitRefreshRateHz"] | matrix.limitRefreshRateHz;
-        if (disp.containsKey("driver_chip")) matrix.driverChip = disp["driver_chip"].as<String>();
-        else if (disp.containsKey("driverChip")) matrix.driverChip = disp["driverChip"].as<String>();
-        if (disp.containsKey("clk_phase")) matrix.clkPhase = disp["clk_phase"].as<bool>();
-        else if (disp.containsKey("clkPhase")) matrix.clkPhase = disp["clkPhase"].as<bool>();
-        if (disp.containsKey("latch_blanking")) matrix.latchBlanking = disp["latch_blanking"] | matrix.latchBlanking;
-        else if (disp.containsKey("latchBlanking")) matrix.latchBlanking = disp["latchBlanking"] | matrix.latchBlanking;
-        if (disp.containsKey("row_address_mode")) matrix.rowAddressMode = disp["row_address_mode"] | matrix.rowAddressMode;
-        else if (disp.containsKey("rowAddressMode")) matrix.rowAddressMode = disp["rowAddressMode"] | matrix.rowAddressMode;
-        if (disp.containsKey("matrix_power")) matrix.matrix_power = disp["matrix_power"].as<bool>();
-    }
-
-    if (doc.containsKey("wifi")) {
-        JsonObject w = doc["wifi"];
-        wifi.ssid = w["ssid"] | wifi.ssid;
-        wifi.password = w["password"] | wifi.password;
-        wifi.hostname = w["hostname"] | wifi.hostname;
-    }
-
-    if (doc.containsKey("mqtt")) {
-        JsonObject m = doc["mqtt"];
-        mqtt.enabled = m["enabled"] | mqtt.enabled;
-        mqtt.broker = m["broker"] | mqtt.broker;
-        mqtt.port = m["port"] | mqtt.port;
-        mqtt.user = m["user"] | mqtt.user;
-        mqtt.pass = m["pass"] | mqtt.pass;
-        mqtt.deviceName = m["deviceName"] | mqtt.deviceName;
-        mqtt.topic_batocera = m["topic_batocera"] | mqtt.topic_batocera;
-        mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
-    }
-
-    if (doc.containsKey("rotation")) {
-        rotation.clear();
-        JsonArray rotArr = doc["rotation"];
-        for (JsonObject rotItem : rotArr) {
-            RotationEntry entry;
-            entry.instance_id = rotItem["instance_id"].as<String>();
-            entry.duration_sec = rotItem["duration_sec"] | 15;
-            if (rotItem.containsKey("overlays") && rotItem["overlays"].is<JsonObject>()) {
-                entry.overlays.fighter = rotItem["overlays"]["fighter"] | false;
-            } else if (rotItem.containsKey("fighter_overlay")) {
-                entry.overlays.fighter = rotItem["fighter_overlay"] | false;
-            } else {
-                entry.overlays.fighter = false;
-            }
-            rotation.push_back(entry);
-        }
-    }
-
-    if (doc.containsKey("instances")) {
-        instances.clear();
-        JsonArray instArr = doc["instances"];
-        for (JsonObject instObj : instArr) {
-            EngineInstance inst;
-            inst.instance_id = instObj["instance_id"].as<String>();
-            inst.engine_id = instObj["engine_id"].as<String>();
-            if (instObj.containsKey("config")) {
-                JsonObject cfg = instObj["config"];
-                for (JsonPair kv : cfg) {
-                    inst.config.setString(kv.key().c_str(), kv.value().as<String>());
-                }
-            }
-            instances.push_back(inst);
-        }
-    } else if (doc.containsKey("engines")) {
-        instances.clear();
-        JsonObject engObj = doc["engines"];
-        for (JsonPair kv : engObj) {
-            EngineInstance inst;
-            inst.instance_id = kv.key().c_str();
-            JsonObject instNode = kv.value().as<JsonObject>();
-            inst.engine_id = instNode["engine_id"].as<String>();
-            if (instNode.containsKey("config")) {
-                JsonObject confNode = instNode["config"];
-                for (JsonPair ckv : confNode) {
-                    inst.config.setString(ckv.key().c_str(), ckv.value().as<String>());
-                }
-            }
-            instances.push_back(inst);
-        }
-    }
-
-    return true;
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
-    String tempPath = String(filepath) + ".tmp";
-    FsFile f = sd.open(tempPath.c_str(), FILE_OPEN_WRITE);
-    if (!f) {
-        LOGE("ConfigLoader", "Failed to open temp file for writing: %s", tempPath.c_str());
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
         return false;
     }
 
-    String jsonStr = serializeToJson(true); // Always save human-readable, indented JSON to SD card
-    f.print(jsonStr);
+    String jsonStr = serializeToJson(true);
+    if (jsonStr.length() < 30) {
+        LOGE("ConfigLoader", "Refusing to save truncated JSON to %s", filepath);
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return false;
+    }
+
+    // 1. Remove previous backup if exists
+    String bakPath = String(filepath) + ".bak";
+    if (sd.exists(bakPath.c_str())) {
+        sd.remove(bakPath.c_str());
+    }
+
+    // 2. If current config exists, back it up to .bak
+    if (sd.exists(filepath)) {
+        sd.rename(filepath, bakPath.c_str());
+    }
+
+    // 3. Write new config directly to filepath
+    FsFile f = sd.open(filepath, FILE_OPEN_WRITE);
+    if (!f) {
+        LOGE("ConfigLoader", "Failed to open %s for writing, restoring backup...", filepath);
+        if (sd.exists(bakPath.c_str())) {
+            sd.rename(bakPath.c_str(), filepath);
+        }
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return false;
+    }
+
+    size_t written = f.print(jsonStr);
+    f.flush();
     f.close();
 
-    if (sd.exists(filepath)) {
-        sd.remove(filepath);
-    }
-    
-    if (sd.rename(tempPath.c_str(), filepath)) {
-        LOGI("ConfigLoader", "Configuration saved successfully to %s", filepath);
+    if (sdMutex) xSemaphoreGive(sdMutex);
+
+    if (written >= jsonStr.length()) {
+        LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, written);
         return true;
     } else {
-        LOGE("ConfigLoader", "Failed to rename temp file to %s", filepath);
+        LOGE("ConfigLoader", "Incomplete write to %s (%d/%d bytes)", filepath, written, jsonStr.length());
         return false;
     }
 }

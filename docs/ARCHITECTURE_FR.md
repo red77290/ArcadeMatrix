@@ -303,11 +303,61 @@ AudioHub (État, Génération & Arbitrage)
 
 ---
 
-## 17. Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)
+### Gestion Avancée de la Mémoire (ESP32 vs ESP32-S3 avec PSRAM)
 
-- **`GyroHAL`** lit les vecteurs d'accélération I2C (`MPU6050`, `QMI8658`) et calcule l'orientation abstraite (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) avec filtre anti-rebond de 500 ms.
-- **`DisplayOrientationManager`** applique la rotation au framebuffer (`display->setRotation()`).
-- Les moteurs d'affichage s'adaptent automatiquement à leur viewport sans code spécifique.
+| Carte Matérielle | SRAM Interne | PSRAM Externe | Mémoire DMA | Stratégie SSL / TLS | Résolutions Max |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ESP32 Classic (`esp32dev`)** | ~320 Ko (partagée FreeRTOS / Wi-Fi) | Aucune | SRAM Interne (compatible DMA) | **Désactivé :** Les buffers TLS (~45-60 Ko) privent le DMA et causent des crashs. Moteurs SSL lourds (Crypto, Bourse) désactivés via `EngineCapabilities`. | `128x32` / `64x32` |
+| **ESP32-S3 Waveshare (`esp32s3_waveshare`)** | ~320 Ko (SRAM centrale) | **8 Mo / 16 Mo Octal PSRAM** | Buffers DMA en PSRAM (`MALLOC_CAP_SPIRAM`) | **Support Total :** `WiFiClientSecure` et buffers mbedTLS alloués en PSRAM, laissant la SRAM libre pour le DMA d'affichage continu. | `256x64` / `64x256` |
+
+#### Résolution de l'Épuisement Mémoire SSL / TLS
+Sur microcontrôleur, une connexion HTTPS exige d'importants buffers d'échange cryptographique (16 Ko in/out + ASN.1 + état de session ≈ 45 Ko par socket). Sur l'ESP32 classique, la coexistence des buffers DMA HUB75 et de connexions TLS causait une fragmentation sévère de la heap.
+- **Classic ESP32 :** Filtrage via `EngineRequirements::needsPsram = true`. `ConfigSanitizer` désactive automatiquement les moteurs lourds sans crash.
+- **ESP32-S3 :** Allocation systématique en PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`) pour les buffers mbedTLS, MP3 et PNG, réservant la SRAM interne aux interruptions temps réel.
+
+#### Concurrence : Audio Simultané & Rendu 60 FPS
+- **Core 0 :** Décodage MP3 (`minimp3`), Bluetooth A2DP Sink, Wi-Fi et requêtes réseau.
+- **Core 1 :** Rendu matriciel à 60 FPS ininterrompu et affichage d'overlays.
+- **Communication sans verrou :** `AudioHub` publie des snapshots atomiques `AudioPlaybackState` avec identifiant `generation` incrémental, lus instantanément par le Core 1 sans blocage ni mutex.
+
+---
+
+## 20. Architecture Multi-Résolutions & Géométrie Déclarative
+
+ArcadeMatrix prend en charge toutes les résolutions et orientations (`64x32`, `128x32`, `256x64`, `128x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+### La Règle d'Or du Rendu Responsif
+> **Les renderers ne contiennent aucun embranchement `if (layoutClass)`.**
+> La classification est effectuée **une seule fois** par une calculatrice pure `*LayoutCalculator` produisant des structures déclaratives de `Rect`s bornés. Le moteur de rendu dessine exclusivement dans ces rectangles.
+
+```text
+                 DisplayGeometry (width, height, rotation, layoutClass, version)
+                                       │
+                                LayoutHelper (Stateless)
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+           *LayoutCalculator                     *GeometryAdapter
+           (ex: MusicLayout)                     (ex: FighterGeometry)
+                    │                                     │
+                    ▼                                     ▼
+             Layout / Rects                        Geometry (groundY, spawns)
+                    │                                     │
+                    └──────────────────┬──────────────────┘
+                                       ▼
+                             Renderer Pur Unique
+```
+
+### Séquencement Multi-Core Strict à l'Apex
+1. La rotation matérielle `display->setRotation(newRot)` est appliquée **exclusivement sur le Core 1 à l'apex de la transition**.
+2. `DisplayGeometry` est actualisée directement depuis les dimensions actives `display->width()` / `display->height()`.
+3. `onDisplayGeometryChanged(geometry)` est notifié à l'engine actif et à l'`OverlayManager`.
+4. Les moteurs avec caches géométriques (`MatrixRainClock`, `TetrisClock`, `VisualizerEngine`, `FighterEngine`) reconfigurent leurs structures dérivées sans réinitialiser la logique métier ni la partie en cours.
+
+### Bibliothèque Dual-GIF (YOKO & TATE)
+- `/gifs/` : Animations optimisées pour le mode paysage (YOKO).
+- `/gifs_tate/` : Animations optimisées pour le mode portrait (TATE).
+- `GifSourceSelector` résout dynamiquement le dossier primaire et le dossier de repli sans dépendance de layout dans `GifEngine`.
 
 ---
 
@@ -323,8 +373,10 @@ AudioHub (État, Génération & Arbitrage)
 | `POST`| `/api/rotation` | Mise à jour de la séquence de rotation. |
 | `GET` | `/api/audio/status` | État de lecture audio, source, volume. |
 | `POST`| `/api/audio/volume` | Réglage du volume audio principal (0-100%). |
-| `GET` | `/api/gyro/status` | Vecteur gravité et orientation suggérée. |
-| `POST`| `/api/display/orientation` | Forçage de rotation ou activation auto-rotation. |
+| `GET` | `/api/gyro/status` | Vecteur gravité, rotation active et effets de transition. |
+| `POST`| `/api/gyro/calibrate` | Calibration du point zéro de référence ($0^\circ$ Normal). |
+| `POST`| `/api/display/orientation` | Forçage de rotation, offset de montage et effet de transition. |
+| `POST`| `/api/display/test-transition` | Déclenche un test visuel de l'effet de transition. |
 
 ---
 

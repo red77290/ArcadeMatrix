@@ -94,6 +94,8 @@ IEngine* RotationManager::getActiveEngine(const String& instanceId) {
         return it->second.get();
     }
     
+    LOGI("RotationManager", "getActiveEngine: lazy-loading instance '%s'", instanceId.c_str());
+    
     // Lazy initialization
     extern ConfigLoader config;
     for (const auto& inst : config.instances) {
@@ -102,15 +104,19 @@ IEngine* RotationManager::getActiveEngine(const String& instanceId) {
             if (desc && desc->factory) {
                 auto engine = desc->factory();
                 if (engine) {
+                    LOGI("RotationManager", "Initializing engine '%s' for instance '%s'...", inst.engine_id.c_str(), instanceId.c_str());
                     engine->initialize(m_ctx, &inst.config);
                     IEngine* ptr = engine.get();
                     activeEngines[instanceId] = std::move(engine);
+                    LOGI("RotationManager", "Instantiated engine '%s' for instance '%s'", inst.engine_id.c_str(), instanceId.c_str());
                     return ptr;
                 }
+            } else {
+                LOGE("RotationManager", "No descriptor or factory for engine '%s'", inst.engine_id.c_str());
             }
         }
     }
-    
+    LOGW("RotationManager", "Instance '%s' not found in config.instances (count: %d)", instanceId.c_str(), (int)config.instances.size());
     return nullptr;
 }
 
@@ -119,7 +125,9 @@ void RotationManager::resetRotation() {
 }
 
 void RotationManager::switchToModule(int index) {
+  LOGI("RotationManager", "switchToModule(index=%d), total rotation entries: %d", index, (int)config.rotation.size());
   if (config.rotation.empty()) {
+    LOGW("RotationManager", "switchToModule: config.rotation is empty!");
     if (currentActiveInstanceId != "") {
       IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
@@ -199,6 +207,13 @@ IEngine* RotationManager::getCurrentActiveEngine() const {
         return it->second.get();
     }
     return nullptr;
+}
+
+void RotationManager::notifyGeometryChanged(const DisplayGeometry& geometry) {
+    IEngine* engine = getCurrentActiveEngine();
+    if (engine) {
+        engine->onDisplayGeometryChanged(geometry);
+    }
 }
 
 void RotationManager::setSuspended(bool susp) {

@@ -21,12 +21,14 @@ public:
     }
 
     void getSystemTime(struct tm* timeinfo) override {
-        getLocalTime(timeinfo);
+        getLocalTime(timeinfo, 0);
     }
 
     bool hasPsram() const override {
         return hardwareHAL.capabilities().hasPsram;
     }
+
+    DisplayGeometry getGeometry() const override;
 
 private:
     MatrixPanel_I2S_DMA* m_matrix;

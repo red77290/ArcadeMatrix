@@ -138,6 +138,8 @@ private:
     String lastPlayedGif;            ///< Tracks last played GIF path to prevent consecutive duplicate playback
     uint32_t m_rotationBudget = 0;
     const EngineConfig* m_instanceConfig = nullptr;
+    EngineContext* m_context = nullptr;
+    String resolveDefaultFolder() const;
     
     void loadNextFileInPlaylist();
     bool playRawFrame();

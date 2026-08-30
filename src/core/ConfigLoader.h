@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <vector>
 #include "DictionaryEngineConfig.h"
 
@@ -85,6 +86,7 @@ public:
     void setDefaults();
     
     bool parseFromJson(const char* jsonContent);
+    bool parseFromJsonDoc(const DynamicJsonDocument& doc);
     String serializeToJson(bool pretty = false) const;
     
     bool loadFromSD(const char* filepath);

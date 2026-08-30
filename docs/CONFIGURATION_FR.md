@@ -290,6 +290,51 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | `speed` | `int` | `50` | `10` à `200` | Millisecondes par pixel de défilement (plus bas = plus rapide ; ignoré en statique). |
 | `font` | `String` | `Default` | Dynamique | Police de caractères depuis `/fonts/`. |
 
+### Moteur : `dashboard` (Master Deck Horizontal & Hub Multi-Widgets)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `clock_mode` | `Options` | `1` | `0:Digital Modern, 1:Pixel-Art Watch Dial, 2:Minimal` | Style visuel de l'horloge principale. |
+| `theme` | `Options` | `0` | `0:Cyberpunk Neon, 1:Arcade Amber HUD, 2:Minimalist Luxury, 3:Matrix Phosphor` | Palette de couleurs des widgets et du cadran. |
+| `show_clock` | `bool` | `true` | `true`, `false` | Affiche l'horloge principale. |
+| `show_world_clock` | `bool` | `true` | `true`, `false` | Affiche le badge des horloges mondiales. |
+| `world_clocks` | `String` (Multi) | `NYC,TYO,LON` | Tags présélectionnés / Saisie libre | Codes de villes/aéroports mondiaux (`NYC`, `TYO`, `LON`, `PAR`, `LAX`, `SFO`, `DXB`, `SIN`, `HKG`, `SYD`, `BER`, `ROM`, `MAD`, `AMS`, `YUL`, `UTC`) ou offsets personnalisés (`REU:+4`, `NYC:-4`). |
+| `show_weather` | `bool` | `true` | `true`, `false` | Affiche la météo et la température extérieure. |
+| `weather_city` | `String` | `Paris` | Texte | Ville pour les prévisions météo. |
+| `weather_api_key` | `String` | `""` | Clé API Optionnelle | Clé API OpenWeatherMap (laisser vide pour basculer automatiquement sur le service gratuit Open-Meteo sans clé). |
+| `show_indoor_temp` | `bool` | `true` | `true`, `false` | Affiche la température et humidité intérieure du capteur SHTC3. |
+| `temp_offset` | `float` | `-3.5` | `-20.0` à `20.0` | Offset de calibration (°C) pour compenser la dissipation thermique du microcontrôleur. |
+| `show_markets` | `bool` | `true` | `true`, `false` | Affiche le bandeau ticker défilant des cryptomonnaies et actions. |
+| `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Tags Top 20 / Saisie libre | Cryptos via Binance (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) et Actions/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
+| `show_sysinfo` | `bool` | `true` | `true`, `false` | Affiche la jauge d'état système (RAM, CPU, WiFi). |
+| `show_date` | `bool` | `true` | `true`, `false` | Affiche le badge jour et date. |
+| `show_seconds` | `bool` | `true` | `true`, `false` | Affiche la trotteuse ou les chiffres des secondes. |
+| `smooth_seconds` | `bool` | `true` | `true`, `false` | Balayage continu fluide de la trotteuse (vs tic-tac net 1s). |
+| `temp_unit` | `Options` | `C` | `C:Celsius (°C), F:Fahrenheit (°F)` | Unité d'affichage de la température. |
+| `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
+| `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
+
+> **Auto-Scaling Dynamique** : Lorsque des widgets sont masqués, l'affichage se redimensionne dynamiquement pour occuper 100% de la matrice sans bande noire ni espace vide.
+
+### Moteur : `visualizer` (Visualiseur Audio Temps Réel)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Mode de rendu : Barres de spectre FFT, Oscilloscope, Cercle Radial ou Flamme Néon. |
+| `gain` | `int` | `24` | `0` à `30` | Gain matériel du microphone en dB (codec ES7210). |
+| `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Dégradé de couleur des barres et ondes. |
+
+### Moteur : `decibel` (Sonomètre Décibel)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `alert_threshold_db` | `int` | `85` | `40` à `120` | Seuil d'alerte visuelle en décibels. |
+| `show_peak` | `bool` | `true` | `true`, `false` | Affiche l'indicateur de niveau crête (peak hold). |
+
+### Moteur : `temp` (Moniteur Climat Intérieur)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `show_humidity` | `bool` | `true` | `true`, `false` | Affiche le pourcentage d'humidité relative. |
+| `temp_unit` | `Options` | `C` | `C`, `F` | Affichage Celsius ou Fahrenheit. |
+| `temp_offset` | `float` | `-3.5` | `-20.0` à `20.0` | Offset de calibration thermique (°C). |
+
 ### Moteur : `marquee`
 | Champ | Type | Défaut | Description |
 | :--- | :--- | :--- | :--- |

@@ -2,13 +2,17 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <mutex>
 #include "../core/AudioHub.h"
 #include <minimp3.h>
 
 /**
  * @class WebRadioService
- * @brief Autonomous background service for streaming Internet Web Radios (Icecast/Shoutcast).
- * Extracts ICY metadata and pushes PCM audio to AudioHub.
+ * @brief Thread-safe, autonomous background audio streaming service.
+ * Completely decoupled from loopTask and executed exclusively on Core 0 worker task.
  */
 class WebRadioService {
 public:
@@ -16,21 +20,19 @@ public:
     ~WebRadioService();
 
     /**
-     * @brief Starts streaming the specified radio URL.
-     * @param url HTTP/HTTPS stream URL
-     * @param stationName Optional station name label
+     * @brief Initializes the dedicated FreeRTOS audio worker task on Core 0.
+     */
+    bool begin();
+
+    /**
+     * @brief Requests streaming of the specified radio URL (thread-safe).
      */
     bool play(const String& url, const String& stationName = "Web Radio");
 
     /**
-     * @brief Stops streaming and releases network connection.
+     * @brief Requests stopping the stream (thread-safe).
      */
     void stop();
-
-    /**
-     * @brief Background loop to read HTTP stream chunks, extract ICY metadata and send audio.
-     */
-    void loop();
 
     /**
      * @brief Returns whether radio is actively streaming.
@@ -40,31 +42,49 @@ public:
     /**
      * @brief Returns current station name.
      */
-    String getStationName() const { return _stationName; }
+    String getStationName();
 
     /**
      * @brief Returns current stream URL.
      */
-    String getStreamUrl() const { return _streamUrl; }
+    String getStreamUrl();
 
 private:
+    std::mutex _mutex;
     WiFiClient _client;
+    WiFiClientSecure _secureClient;
+    WiFiClient* _activeClient;
     String _streamUrl;
     String _stationName;
     String _currentTitle;
-    bool _isPlaying;
+    String _nextUrl;
+    String _nextStation;
+    volatile bool _requestPlay;
+    volatile bool _requestStop;
+    volatile bool _isPlaying;
+    volatile bool _taskRunning;
+    bool _isHttps;
+    bool _isWavStream;
+    bool _wavHeaderParsed;
     int _metaint;
     int _bytesUntilMeta;
-    uint32_t _lastYieldTime;
+    TaskHandle_t _audioTaskHandle;
 
     mp3dec_t _mp3d;
-    uint8_t _streamBuf[4096];
+    mp3dec_frame_info_t _frameInfo;
+    int16_t _pcmDecBuf[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    uint8_t* _streamBuf;
+    size_t _streamBufCapacity;
     size_t _streamBufLen;
+    bool _isBuffering;
 
-    bool connectStream();
-    void parseIcyHeaders();
+    bool connectStreamInternal(const String& url);
+    void handleStream();
     void extractIcyMetadata();
     void decodeAndPlayFrames();
+    void closeActiveClient();
+
+    static void audioTaskStatic(void* pvParameters);
 };
 
 extern WebRadioService webRadioService;

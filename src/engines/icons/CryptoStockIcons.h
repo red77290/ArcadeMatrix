@@ -85,3 +85,26 @@ static const uint16_t ICON_TSLA_8x8[64] = {
     0, 0, 0, C_TESLA, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0
 };
+
+static const uint16_t ICON_MSFT_8x8[64] = {
+    0, RGB565(242, 80, 34), RGB565(242, 80, 34), 0, 0, RGB565(127, 186, 0), RGB565(127, 186, 0), 0,
+    0, RGB565(242, 80, 34), RGB565(242, 80, 34), 0, 0, RGB565(127, 186, 0), RGB565(127, 186, 0), 0,
+    0, RGB565(242, 80, 34), RGB565(242, 80, 34), 0, 0, RGB565(127, 186, 0), RGB565(127, 186, 0), 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, RGB565(0, 164, 239), RGB565(0, 164, 239), 0, 0, RGB565(255, 185, 0), RGB565(255, 185, 0), 0,
+    0, RGB565(0, 164, 239), RGB565(0, 164, 239), 0, 0, RGB565(255, 185, 0), RGB565(255, 185, 0), 0,
+    0, RGB565(0, 164, 239), RGB565(0, 164, 239), 0, 0, RGB565(255, 185, 0), RGB565(255, 185, 0), 0
+};
+
+static const uint16_t ICON_DOGE_8x8[64] = {
+    0, C_DOGE, C_DOGE, C_DOGE, C_DOGE, C_DOGE, 0, 0,
+    C_DOGE, C_DOGE, 0xFFFF, 0xFFFF, C_DOGE, C_DOGE, C_DOGE, 0,
+    C_DOGE, C_DOGE, 0xFFFF, C_DOGE, 0xFFFF, C_DOGE, C_DOGE, 0,
+    C_DOGE, C_DOGE, 0xFFFF, C_DOGE, 0xFFFF, C_DOGE, C_DOGE, 0,
+    C_DOGE, C_DOGE, 0xFFFF, C_DOGE, 0xFFFF, C_DOGE, C_DOGE, 0,
+    C_DOGE, C_DOGE, 0xFFFF, 0xFFFF, C_DOGE, C_DOGE, C_DOGE, 0,
+    0, C_DOGE, C_DOGE, C_DOGE, C_DOGE, C_DOGE, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0
+};
+

@@ -9,6 +9,7 @@ public:
     ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
     void setTheme(PublisherTheme theme);
 
 private:
@@ -23,7 +24,9 @@ private:
     unsigned long lastFrameTime;
 
     void drawStaticTime();
+    void drawTateTime();
     void drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale = 1);
+    void drawStrWithShadow(const char* str, int x, int y, uint16_t textColor, uint16_t shadowColor, int scale = 1);
     void applyThemeFont();
     
     // Animations
