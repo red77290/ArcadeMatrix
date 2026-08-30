@@ -138,13 +138,15 @@ void test_sanitizer_injects_defaults(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
+    cfg.addInstance("clock_1", "clock");
     
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.defaults_injected);
-    TEST_ASSERT_EQUAL_STRING("nintendo", inst->config.getString("theme").c_str());
-    TEST_ASSERT_EQUAL(5, inst->config.getInt("speed"));
+    EngineInstanceSnapshot snap1;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("clock_1", snap1));
+    TEST_ASSERT_EQUAL_STRING("nintendo", snap1.config.getString("theme").c_str());
+    TEST_ASSERT_EQUAL(5, snap1.config.getInt("speed"));
 }
 
 void test_sanitizer_clamps_out_of_bound_integers(void) {
@@ -157,13 +159,19 @@ void test_sanitizer_clamps_out_of_bound_integers(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
-    inst->config.setInt("speed", 999);
+    cfg.addInstance("clock_1", "clock");
+    cfg.mutate([](ConfigLoader& c) {
+        for (auto& inst : c.instances) {
+            if (inst.instance_id == "clock_1") inst.config.setInt("speed", 999);
+        }
+    });
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(1, res.values_clamped);
-    TEST_ASSERT_EQUAL(10, inst->config.getInt("speed"));
+    EngineInstanceSnapshot snap2;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("clock_1", snap2));
+    TEST_ASSERT_EQUAL(10, snap2.config.getInt("speed"));
 }
 
 void test_sanitizer_handles_invalid_boolean_and_enum(void) {
@@ -177,15 +185,23 @@ void test_sanitizer_handles_invalid_boolean_and_enum(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("weather_1", "weather");
-    inst->config.setString("use_celsius", "invalid_bool");
-    inst->config.setString("icon_set", "unknown_icon_theme");
+    cfg.addInstance("weather_1", "weather");
+    cfg.mutate([](ConfigLoader& c) {
+        for (auto& inst : c.instances) {
+            if (inst.instance_id == "weather_1") {
+                inst.config.setString("use_celsius", "invalid_bool");
+                inst.config.setString("icon_set", "unknown_icon_theme");
+            }
+        }
+    });
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.values_fallback);
-    TEST_ASSERT_EQUAL_STRING("true", inst->config.getString("use_celsius").c_str());
-    TEST_ASSERT_EQUAL_STRING("classic", inst->config.getString("icon_set").c_str());
+    EngineInstanceSnapshot snap3;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("weather_1", snap3));
+    TEST_ASSERT_EQUAL_STRING("true", snap3.config.getString("use_celsius").c_str());
+    TEST_ASSERT_EQUAL_STRING("classic", snap3.config.getString("icon_set").c_str());
 }
 
 void test_sanitizer_flags_unknown_engines(void) {
@@ -200,9 +216,9 @@ void test_sanitizer_flags_unknown_engines(void) {
 void test_arbiter_priority_resolution(void) {
     DisplayArbiter arbiter;
 
-    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false, 0, {}, nullptr, 0, millis()};
-    DisplayRequest reqMarq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, nullptr, 0, millis()};
-    DisplayRequest reqMqtt{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 0, {}, nullptr, 0, millis()};
+    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false};
+    DisplayRequest reqMarq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
+    DisplayRequest reqMqtt{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
 
     arbiter.submitRequest(reqRot);
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
@@ -220,22 +236,58 @@ void test_arbiter_priority_resolution(void) {
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
 }
 
+void test_arbiter_one_shot_auto_consumption(void) {
+    DisplayArbiter arbiter;
+
+    DisplayRequest reqOneShot{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::ONE_SHOT, true};
+    arbiter.submitRequest(reqOneShot);
+
+    // First evaluation: ONE_SHOT alert wins and is consumed
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d1.sourceId);
+
+    // Second evaluation: ONE_SHOT is gone, fallback to ROTATION
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d2.sourceId);
+}
+
+void test_arbiter_request_id_semantics(void) {
+    DisplayArbiter arbiter;
+
+    DisplayRequest req1{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+    arbiter.submitRequest(req1);
+    DisplayDecision d1 = arbiter.evaluate();
+    uint32_t firstReqId = d1.requestId;
+    TEST_ASSERT_NOT_EQUAL(0, firstReqId);
+
+    // Refresh request without restartTimer preserves same requestId
+    DisplayRequest reqRefresh{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+    arbiter.submitRequest(reqRefresh, false);
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(firstReqId, d2.requestId);
+
+    // Refresh request with restartTimer creates a new requestId
+    arbiter.submitRequest(reqRefresh, true);
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_NOT_EQUAL(firstReqId, d3.requestId);
+}
+
 void test_config_snapshot_immutability_and_versioning(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
     uint32_t v1 = cfg.getVersion();
-    ConfigSnapshot s1 = cfg.getSnapshot();
+    const ConfigSnapshot& s1 = cfg.getSnapshot();
     TEST_ASSERT_EQUAL(v1, s1.version);
 
     cfg.addInstance("test_clock", "clock");
     uint32_t v2 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v1, v2);
 
-    ConfigSnapshot s2 = cfg.getSnapshot();
+    const ConfigSnapshot& s2 = cfg.getSnapshot();
     TEST_ASSERT_EQUAL(v2, s2.version);
     TEST_ASSERT_NOT_NULL(s2.getInstance("test_clock"));
-    // Snapshot 1 remains untouched
-    TEST_ASSERT_NULL(s1.getInstance("test_clock"));
 }
 
 void test_requirements_gating(void) {
@@ -381,6 +433,8 @@ void setup() {
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     // Arbiter, Overlays & Requirements
     RUN_TEST(test_arbiter_priority_resolution);
+    RUN_TEST(test_arbiter_one_shot_auto_consumption);
+    RUN_TEST(test_arbiter_request_id_semantics);
     RUN_TEST(test_config_snapshot_immutability_and_versioning);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);

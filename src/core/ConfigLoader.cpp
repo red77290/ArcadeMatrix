@@ -9,37 +9,33 @@ ConfigLoader::ConfigLoader() {
     setDefaults();
 }
 
-ConfigSnapshot ConfigLoader::getSnapshot() const {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _publishedSnapshot;
-}
-
-uint32_t ConfigLoader::getVersion() const {
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _version;
-}
-
 void ConfigLoader::publishSnapshot() {
     std::lock_guard<std::mutex> lock(_mutex);
     publishSnapshot_locked();
 }
 
 void ConfigLoader::publishSnapshot_locked() {
-    _publishedSnapshot.version = ++_version;
-    _publishedSnapshot.matrix = matrix;
-    _publishedSnapshot.wifi = wifi;
-    _publishedSnapshot.mqtt = mqtt;
-    _publishedSnapshot.system = system;
-    _publishedSnapshot.rotation = rotation;
-    _publishedSnapshot.instances.clear();
-    _publishedSnapshot.instances.reserve(instances.size());
+    uint8_t nextIndex = 1 - _readIndex.load(std::memory_order_relaxed);
+    ConfigSnapshot& snap = _snapshots[nextIndex];
+
+    uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
+    snap.version = newVer;
+    snap.matrix = matrix;
+    snap.wifi = wifi;
+    snap.mqtt = mqtt;
+    snap.system = system;
+    snap.rotation = rotation;
+    snap.instances.clear();
+    snap.instances.reserve(instances.size());
     for (const auto& inst : instances) {
-        EngineInstanceSnapshot snap;
-        snap.instance_id = inst.instance_id;
-        snap.engine_id = inst.engine_id;
-        snap.config = inst.config;
-        _publishedSnapshot.instances.push_back(snap);
+        EngineInstanceSnapshot s;
+        s.instance_id = inst.instance_id;
+        s.engine_id = inst.engine_id;
+        s.config = inst.config;
+        snap.instances.push_back(s);
     }
+
+    _readIndex.store(nextIndex, std::memory_order_release);
 }
 
 void ConfigLoader::setDefaults() {

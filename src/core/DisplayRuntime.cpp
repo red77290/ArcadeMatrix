@@ -5,6 +5,7 @@ DisplayRuntime::DisplayRuntime()
     : m_ctx(nullptr), m_matrixEngine(nullptr), m_rotationManager(nullptr),
       m_overlayManager(nullptr), m_orientationManager(nullptr), m_arbiter(nullptr),
       m_sessionCounter(0), m_lastReconciledVersion(0) {
+    m_sourceEngines.fill(nullptr);
 }
 
 void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
@@ -17,6 +18,24 @@ void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, Rotation
     m_arbiter = arb;
     m_sessionCounter = 0;
     m_lastReconciledVersion = 0;
+}
+
+void DisplayRuntime::registerSourceEngine(DisplaySourceId sourceId, IEngine* engine) {
+    uint16_t idx = static_cast<uint16_t>(sourceId) / 10;
+    if (idx < m_sourceEngines.size()) {
+        m_sourceEngines[idx] = engine;
+    }
+}
+
+IEngine* DisplayRuntime::getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const {
+    if (sourceId == DisplaySourceId::ROTATION) {
+        return m_rotationManager ? m_rotationManager->getCurrentActiveEngine() : nullptr;
+    }
+    uint16_t idx = static_cast<uint16_t>(sourceId) / 10;
+    if (idx < m_sourceEngines.size()) {
+        return m_sourceEngines[idx];
+    }
+    return nullptr;
 }
 
 void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
@@ -35,9 +54,7 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
 }
 
 void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
-    IEngine* targetEngine = (decision.sourceId != DisplaySourceId::ROTATION)
-        ? decision.engine
-        : (m_rotationManager ? m_rotationManager->getCurrentActiveEngine() : nullptr);
+    IEngine* targetEngine = getEngineForSource(decision.sourceId, decision.engineHandle);
 
     bool isNewSession = (decision.sourceId != m_session.sourceId) ||
                         (decision.requestId != m_session.requestId) ||
@@ -51,6 +68,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
 
         m_session.sessionId = ++m_sessionCounter;
         m_session.sourceId = decision.sourceId;
+        m_session.engineHandle = decision.engineHandle;
         m_session.requestId = decision.requestId;
         m_session.startedAtMs = millis();
         m_session.activeEngine = targetEngine;
@@ -87,10 +105,9 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         return result;
     }
 
-    IEngine* activeEngine = nullptr;
+    IEngine* activeEngine = getEngineForSource(decision.sourceId, decision.engineHandle);
 
-    if (decision.sourceId != DisplaySourceId::ROTATION && decision.engine != nullptr) {
-        activeEngine = decision.engine;
+    if (decision.sourceId != DisplaySourceId::ROTATION && activeEngine != nullptr) {
         if (activeEngine->needsClear()) {
             m_matrixEngine->getDisplay()->fillScreen(0);
         }
@@ -98,35 +115,21 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         activeEngine->render(appCtx);
         result.rendered = true;
         result.framebufferChanged = activeEngine->hasNewFrame();
-    } else {
-        if (m_rotationManager) {
-            activeEngine = m_rotationManager->getCurrentActiveEngine();
-            if (activeEngine && activeEngine->needsClear()) {
-                m_matrixEngine->getDisplay()->fillScreen(0);
-            }
-            bool shouldFlip = m_rotationManager->loop();
-            result.rendered = true;
-            result.framebufferChanged = shouldFlip;
-        }
+    } else if (m_rotationManager) {
+        result.rendered = m_rotationManager->loop();
+        result.framebufferChanged = true;
+        activeEngine = m_rotationManager->getCurrentActiveEngine();
     }
 
-    // Overlay compositing
-    if (m_overlayManager) {
-        if (activeEngine && activeEngine->allowsOverlay() && decision.allowsOverlay) {
-            if (decision.sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
-                m_overlayManager->configure(m_rotationManager->getCurrentOverlays());
-            } else {
-                m_overlayManager->configure({});
-            }
-        } else {
-            m_overlayManager->configure({});
+    // Render Overlays (Fighter etc.) if enabled by decision and active rotation slot
+    if (m_overlayManager && decision.allowsOverlay) {
+        OverlayConfig activeOverlayConfig;
+        if (decision.sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
+            activeOverlayConfig = m_rotationManager->getCurrentOverlays();
         }
-
+        m_overlayManager->configure(activeOverlayConfig);
         m_overlayManager->update();
-        if (m_overlayManager->isActive()) {
-            m_overlayManager->render();
-            result.mustPresent = true;
-        }
+        m_overlayManager->render();
     }
 
     return result;

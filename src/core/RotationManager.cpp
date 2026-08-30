@@ -299,6 +299,6 @@ String RotationManager::getCurrentEngineId() const {
     extern ConfigLoader config;
     if (config.rotation.empty() || currentIndex >= config.rotation.size()) return "";
     String inst_id = config.rotation[currentIndex].instance_id;
-    const auto* inst = config.getInstance(inst_id);
+    const auto* inst = config.getSnapshot().getInstance(inst_id);
     return inst ? inst->engine_id : "";
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <array>
 #include "ConfigLoader.h"
 #include "DisplayArbiter.h"
 #include "RotationManager.h"
@@ -11,7 +12,7 @@
 
 struct RenderSession {
     uint32_t sessionId = 0;
-    EngineHandle engineHandle;
+    EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
     uint32_t requestId = 0;
     uint32_t startedAtMs = 0;
@@ -29,6 +30,9 @@ public:
     
     void begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
                OverlayManager* ov, DisplayOrientationManager* orient, DisplayArbiter* arb);
+
+    void registerSourceEngine(DisplaySourceId sourceId, IEngine* engine);
+    IEngine* getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const;
 
     /**
      * @brief Synchronizes configuration with runtime instances (only if version changed).
@@ -66,6 +70,8 @@ private:
     DisplayOrientationManager* m_orientationManager = nullptr;
     DisplayArbiter* m_arbiter = nullptr;
     FrameScheduler m_scheduler;
+
+    std::array<IEngine*, 16> m_sourceEngines{};
 
     RenderSession m_session;
     uint32_t m_sessionCounter = 0;

@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 #include <vector>
 #include <mutex>
+#include <atomic>
+#include <functional>
 #include "DictionaryEngineConfig.h"
 
 struct EngineInstance {
@@ -126,28 +128,59 @@ public:
     MqttConfig mqtt;
     SystemConfig system;
 
-    ConfigSnapshot getSnapshot() const;
-    uint32_t getVersion() const;
-    void publishSnapshot();
-    
-    EngineInstance* getInstance(const String& instanceId) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        for (auto& inst : instances) {
-            if (inst.instance_id == instanceId) {
-                return &inst;
-            }
-        }
-        return nullptr;
+    /**
+     * @brief Double-buffered lock-free snapshot reader for Core 1 (Zero allocations, zero mutex, zero copy).
+     */
+    inline const ConfigSnapshot& getSnapshot() const {
+        uint8_t idx = _readIndex.load(std::memory_order_acquire);
+        return _snapshots[idx];
     }
 
-    EngineInstance* addInstance(const String& instanceId, const String& engineId) {
+    /**
+     * @brief Returns current configuration generation version lock-free.
+     */
+    inline uint32_t getVersion() const {
+        return _configVersion.load(std::memory_order_relaxed);
+    }
+
+    void publishSnapshot();
+
+    /**
+     * @brief Thread-safe querying of instance snapshot.
+     */
+    bool getInstanceSnapshot(const String& instanceId, EngineInstanceSnapshot& out) const {
+        const ConfigSnapshot& snap = getSnapshot();
+        const EngineInstanceSnapshot* inst = snap.getInstance(instanceId);
+        if (inst) {
+            out = *inst;
+            return true;
+        }
+        return false;
+    }
+
+    bool hasInstance(const String& instanceId) const {
+        const ConfigSnapshot& snap = getSnapshot();
+        return snap.getInstance(instanceId) != nullptr;
+    }
+
+    /**
+     * @brief Thread-safe transactional mutation block. Locks mutex, runs mutation, and publishes.
+     */
+    template <typename F>
+    void mutate(F&& mutator) {
         std::lock_guard<std::mutex> lock(_mutex);
-        for (auto& inst : instances) {
-            if (inst.instance_id == instanceId) return &inst;
+        mutator(*this);
+        publishSnapshot_locked();
+    }
+
+    bool addInstance(const String& instanceId, const String& engineId) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& inst : instances) {
+            if (inst.instance_id == instanceId) return false;
         }
         instances.push_back({instanceId, engineId, {}});
         publishSnapshot_locked();
-        return &instances.back();
+        return true;
     }
 
     bool removeInstance(const String& instanceId) {
@@ -164,9 +197,9 @@ public:
 
 private:
     mutable std::mutex _mutex;
-    uint32_t _version = 1;
-    ConfigSnapshot _publishedSnapshot;
+    std::atomic<uint32_t> _configVersion{1};
+    std::atomic<uint8_t> _readIndex{0};
+    ConfigSnapshot _snapshots[2];
 
     void publishSnapshot_locked();
 };
-

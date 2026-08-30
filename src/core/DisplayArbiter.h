@@ -23,10 +23,10 @@ enum class DisplayPriority : uint8_t {
 };
 
 enum class RequestLifecycle : uint8_t {
-    ONE_SHOT,         // Triggered once, removed immediately after evaluation
+    ONE_SHOT,         // Triggered once, marked inactive immediately after evaluation
     TIMED,            // Stays active until timeout expires
     UNTIL_CANCELLED,  // Stays active until explicitly cancelled
-    PERSISTENT        // Always active, though can be preempted
+    PERSISTENT        // Always active fallback (ROTATION)
 };
 
 struct EngineHandle {
@@ -48,29 +48,31 @@ struct DisplayRequest {
     RequestLifecycle lifecycle = RequestLifecycle::PERSISTENT;
     bool preemptive = false;
     uint32_t requestId = 0;
-    EngineHandle engineHandle;
-    IEngine* engine = nullptr;
+    EngineHandle engineHandle{};
     unsigned long timeout_ms = 0;
     unsigned long created_at = 0;
     bool allowsOverlay = true;
     bool needsClear = true;
     bool isRealtime = false;
-    bool active = false;
 
     DisplayRequest() = default;
     DisplayRequest(DisplaySourceId src, DisplayPriority prio, RequestLifecycle life, bool pre = true,
-                   uint32_t reqId = 0, EngineHandle handle = {}, IEngine* eng = nullptr,
+                   uint32_t reqId = 0, EngineHandle handle = {},
                    unsigned long timeout = 0, unsigned long created = 0,
                    bool allowOv = true, bool clear = true, bool realtime = false)
         : sourceId(src), priority(prio), lifecycle(life), preemptive(pre),
-          requestId(reqId), engineHandle(handle), engine(eng),
+          requestId(reqId), engineHandle(handle),
           timeout_ms(timeout), created_at(created),
-          allowsOverlay(allowOv), needsClear(clear), isRealtime(realtime), active(true) {}
+          allowsOverlay(allowOv), needsClear(clear), isRealtime(realtime) {}
+};
+
+struct DisplayRequestSlot {
+    bool active = false;
+    DisplayRequest request{};
 };
 
 struct DisplayDecision {
-    EngineHandle engineHandle;
-    IEngine* engine = nullptr;
+    EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
     DisplayPriority priority = DisplayPriority::ROTATION;
     uint32_t requestId = 0;
@@ -88,15 +90,15 @@ public:
     DisplayArbiter();
     void submitRequest(const DisplayRequest& request, bool restartTimer = false);
     void cancelRequest(DisplaySourceId sourceId);
-    void cancelRequest(const String& sourceName);
     void clearExpired();
     
-    // Evaluates current winner decision (Pure decision, zero-allocation, does NOT mutate engine state)
+    // Evaluates current winner decision (Pure value-type decision, zero allocations, zero engine pointers)
     DisplayDecision evaluate();
 
     static DisplaySourceId parseSourceId(const String& name);
     
 private:
-    std::array<DisplayRequest, MAX_REQUESTS> requests;
-    std::mutex arbiterMutex;
+    mutable std::mutex arbiterMutex;
+    std::array<DisplayRequestSlot, MAX_REQUESTS> slots{};
+    uint32_t _nextRequestId = 1;
 };
