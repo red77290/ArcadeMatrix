@@ -247,6 +247,7 @@ private:
 
     TaskHandle_t m_fetchTaskHandle;
     volatile bool m_taskRunning;
+    volatile bool m_isActive;
     volatile bool m_forceFetchMarkets;
     volatile bool m_forceFetchWeather;
     static void fetchTaskStatic(void* param);
