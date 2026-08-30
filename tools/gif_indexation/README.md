@@ -14,45 +14,32 @@ Two native scripts are provided - **no Python required**:
 
 ## What it does
 
-It scans one level of subfolders inside your SD card's `gifs/` folder. Each subfolder becomes
-one selectable "playlist" in the Web UI. For example:
-
-```text
-gifs/
-  ├── mario.gif          <- always played, not a playlist (loose files at the gifs/ root)
-  ├── mario/
-  │   ├── walk.gif
-  │   └── jump.gif
-  └── sonic/
-      └── run.gif
-```
-
-Here, `mario/` and `sonic/` become two playlists you can enable/disable from the Web UI.
+It scans subfolders inside your SD card's **`gifs/`** (Horizontal / YOKO) and **`gifs_tate/`** (Vertical / TATE) folders:
+- Each subfolder becomes one selectable playlist in the Web UI.
+- Generates `index.txt` inside each subfolder for $O(1)$ fast random access by the firmware.
+- Generates `playlists.json` at the root of `gifs/` and `gifs_tate/` with animation counts.
 
 ## Usage
 
-Run the script pointing at either your SD card's **root** or its **`gifs/` folder directly**
-- both work, the script auto-detects which one you gave it:
+Run the script pointing at either your SD card's **root** or a specific folder:
 
 ```bash
 # macOS/Linux
-./generate_index.sh /Volumes/SDCARD          # SD root - auto-descends into gifs/
-./generate_index.sh /Volumes/SDCARD/gifs     # or the gifs/ folder itself
+./generate_index.sh /Volumes/SDCARD          # SD root - indexes both gifs/ (YOKO) and gifs_tate/ (TATE)
+./generate_index.sh /Volumes/SDCARD/gifs     # or the gifs/ folder specifically
+./generate_index.sh /Volumes/SDCARD/gifs_tate# or the gifs_tate/ folder specifically
 ```
 
 ```powershell
 # Windows
-.\generate_index.ps1 -Path E:\               # SD root - auto-descends into gifs\
-.\generate_index.ps1 -Path E:\gifs           # or the gifs\ folder itself
+.\generate_index.ps1 -Path E:\               # SD root - indexes both gifs\ (YOKO) and gifs_tate\ (TATE)
+.\generate_index.ps1 -Path E:\gifs           # or the gifs\ folder specifically
+.\generate_index.ps1 -Path E:\gifs_tate      # or the gifs_tate\ folder specifically
 ```
 
-The script always writes the result to **`<sd_card>/gifs/playlists.json`**, which is the exact
-path the firmware expects (`WebServerAPI.cpp` serves `/api/playlists` by reading
-`/gifs/playlists.json` from the SD card). If that file is missing or stale, the Web UI's
-playlist selector will simply show nothing to pick from (GIF playback is unaffected either way).
+The script writes **`<sd_card>/gifs/playlists.json`** and **`<sd_card>/gifs_tate/playlists.json`**, and creates **`index.txt`** inside each subfolder.
 
-**Re-run the script every time you add, remove, or rename a folder inside `gifs/`** so the Web
-UI stays in sync with what's actually on the SD card.
+**Re-run the script every time you add, remove, or rename folders or GIFs** so the Web UI and firmware index stay in sync with what's on the SD card.
 
 ---
 *This tool is open source and designed for the ArcadeMatrix ecosystem.*

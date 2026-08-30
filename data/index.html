@@ -1165,40 +1165,40 @@ select.input option {
         <div class="dashboard-grid">
           <!-- Power Control Card -->
           <div class="card glass shadow">
-            <h3>Matrix Power</h3>
+            <h3 data-i18n="dash_power_title">Matrix Power</h3>
             <div class="power-toggle-container">
-              <button id="btn-power-toggle" class="btn btn-power-on">Turn Panel OFF</button>
+              <button id="btn-power-toggle" class="btn btn-power-on" data-i18n="btn_turn_off">Turn Panel OFF</button>
             </div>
             <div class="slider-group" style="margin-top: 1.5rem;">
-              <label>Matrix Brightness (<span id="val-brightness">40</span>%)</label>
+              <label><span data-i18n="dash_brightness_label">Matrix Brightness</span> (<span id="val-brightness">40</span>%)</label>
               <input type="range" id="slider-brightness" min="1" max="100" value="40">
             </div>
           </div>
 
           <!-- System Metrics Grid -->
           <div class="card glass shadow">
-            <h3>System Hardware & Metrics</h3>
+            <h3 data-i18n="dash_metrics_title">System Hardware & Metrics</h3>
             <div class="metrics-grid">
               <div class="metric-box">
-                <div class="metric-label">Microcontroller</div>
+                <div class="metric-label" data-i18n="metric_mcu_label">Microcontroller</div>
                 <div class="metric-val" style="font-size: 1.1rem; color: #38bdf8;" id="metric-mcu">ESP32-S3 @ 240MHz</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">Temperature & Humidity</div>
+                <div class="metric-label" data-i18n="metric_temp_label">Temperature & Humidity</div>
                 <div class="metric-val" id="metric-temp">-- °C</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">Internal RAM (SRAM)</div>
+                <div class="metric-label" data-i18n="metric_ram_label">Internal RAM (SRAM)</div>
                 <div class="metric-val" id="metric-ram">-- KB Free</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">External Memory (PSRAM)</div>
+                <div class="metric-label" data-i18n="metric_psram_label">External Memory (PSRAM)</div>
                 <div class="metric-val" id="metric-psram">-- MB Free</div>
               </div>
             </div>
 
             <div style="margin-top: 1.25rem; border-top: 1px solid var(--glass-border); padding-top: 1rem;">
-              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;">🔌 Detected Hardware Peripherals & Sensors:</div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;" data-i18n="dash_peripherals_label">🔌 Detected Hardware Peripherals & Sensors:</div>
               <div id="hardware-chips-list" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                 <span class="version-badge" id="badge-hw-temp" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🌡️ SHTC3 Temp/Hum: Detecting...</span>
                 <span class="version-badge" id="badge-hw-mic" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🎙️ ES7210 Mics: Detecting...</span>
@@ -1211,11 +1211,11 @@ select.input option {
 
           <!-- Quick Actions -->
           <div class="card glass shadow">
-            <h3>System Control</h3>
+            <h3 data-i18n="dash_control_title">System Control</h3>
             <div class="action-buttons">
-              <button id="btn-reboot" class="btn btn-warning">Reboot System</button>
-              <button id="btn-restart-app" class="btn btn-primary" style="margin-left: 0.5rem;">Restart App</button>
-              <button id="btn-shutdown" class="btn btn-danger">Shutdown</button>
+              <button id="btn-reboot" class="btn btn-warning" data-i18n="btn_reboot">Reboot System</button>
+              <button id="btn-restart-app" class="btn btn-primary" style="margin-left: 0.5rem;" data-i18n="btn_restart_app">Restart App</button>
+              <button id="btn-shutdown" class="btn btn-danger" data-i18n="btn_shutdown">Shutdown</button>
             </div>
           </div>
         </div>
@@ -1396,32 +1396,89 @@ select.input option {
         </header>
 
         <div class="tabs" style="margin-bottom: 1.5rem;">
-          <button class="tab-btn active" onclick="switchSystemTab('hardware')">⚙️ Hardware</button>
-          <button class="tab-btn" onclick="switchSystemTab('night')">🌙 Night Mode</button>
-          <button class="tab-btn" onclick="switchSystemTab('network')">🌐 Network</button>
-          <button class="tab-btn" onclick="switchSystemTab('mqtt')">🔄 MQTT & API</button>
-          <button class="tab-btn" onclick="switchSystemTab('ota')">🚀 Updates</button>
+          <button class="tab-btn active" onclick="switchSystemTab('general')"><span data-i18n="tab_general">🌐 General</span></button>
+          <button class="tab-btn" onclick="switchSystemTab('hardware')"><span data-i18n="tab_hardware">⚙️ Hardware</span></button>
+          <button class="tab-btn" onclick="switchSystemTab('night')"><span data-i18n="tab_night">🌙 Night Mode</span></button>
+          <button class="tab-btn" onclick="switchSystemTab('network')"><span data-i18n="tab_network">📡 Network</span></button>
+          <button class="tab-btn" onclick="switchSystemTab('mqtt')"><span data-i18n="tab_mqtt">🔄 MQTT & API</span></button>
+          <button class="tab-btn" onclick="switchSystemTab('ota')"><span data-i18n="tab_ota">🚀 Updates</span></button>
         </div>
         
-        <!-- Hardware Settings -->
-        <div id="sys-tab-hardware" class="tab-pane active">
-          <!-- Screen Orientation & Gyroscope Calibration Card -->
+        <!-- General / Regional Settings -->
+        <div id="sys-tab-general" class="tab-pane active">
           <div class="card glass shadow" style="margin-bottom: 1.5rem;">
-            <h3>🧭 Screen Orientation & Gyroscope</h3>
-            <p class="text-muted">Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via onboard Gyroscope/IMU.</p>
+            <h3 data-i18n="gen_title">🌐 System & Regional Preferences</h3>
+            <p class="text-muted" data-i18n="gen_desc">Configure device timezone, time formatting (24h/12h), temperature units and background overlays.</p>
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Screen Rotation / Mounting Offset</label>
-                <select id="hw-screen-rotation" class="input">
-                  <option value="0">0° - Normal (Landscape)</option>
-                  <option value="1">90° - Clockwise (Cable Left / Portrait)</option>
-                  <option value="2">180° - Inverted (Cable Top / Flip)</option>
-                  <option value="3">270° - Counter-Clockwise (Cable Right / Portrait)</option>
+                <label data-i18n="gen_timezone_label">Timezone / Region</label>
+                <select id="sys-timezone" class="input">
+                  <!-- Populated dynamically from GLOBAL_TIMEZONES -->
                 </select>
               </div>
               <div class="form-group">
-                <label>Gyro Auto-Rotation</label>
+                <label data-i18n="gen_timeformat_label">Time Format</label>
+                <select id="sys-format-24h" class="input">
+                  <option value="true" data-i18n="gen_opt_24h">24 Hours (23:00)</option>
+                  <option value="false" data-i18n="gen_opt_12h">12 Hours (11:00 PM)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="gen_unit_label">Temperature Unit</label>
+                <select id="sys-unit" class="input">
+                  <option value="C" data-i18n="gen_unit_c">Celsius (°C)</option>
+                  <option value="F" data-i18n="gen_unit_f">Fahrenheit (°F)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-grid col-2" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label><span data-i18n="gen_temp_offset_label">Temperature Calibration Offset (°C)</span> <span class="tooltip-icon" data-i18n-tooltip="gen_temp_offset_tooltip">?</span></label>
+                <input type="number" id="sys-temp-offset" class="input" value="0.0" min="-20.0" max="20.0" step="0.5">
+              </div>
+              <div class="form-group">
+                <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span></label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="sys-idle-fighter-enabled">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-grid col-2" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</label>
+                <input type="number" id="sys-idle-fighter-interval" class="input" value="60" min="5" max="3600">
+              </div>
+            </div>
+
+            <button id="btn-save-general" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;" data-i18n="gen_btn_save">💾 Save System Preferences</button>
+          </div>
+        </div>
+
+        <!-- Hardware Settings -->
+        <div id="sys-tab-hardware" class="tab-pane">
+          <!-- Screen Orientation & Gyroscope Calibration Card -->
+          <div class="card glass shadow" style="margin-bottom: 1.5rem;">
+            <h3 data-i18n="hw_gyro_title">🧭 Screen Orientation & Gyroscope</h3>
+            <p class="text-muted" data-i18n="hw_gyro_desc">Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via onboard Gyroscope/IMU.</p>
+            
+            <div class="form-grid col-3" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <select id="hw-screen-rotation" class="input">
+                  <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape)</option>
+                  <option value="1" data-i18n="hw_rot_90">90° - Clockwise (Cable Left / Portrait)</option>
+                  <option value="2" data-i18n="hw_rot_180">180° - Inverted (Cable Top / Flip)</option>
+                  <option value="3" data-i18n="hw_rot_270">270° - Counter-Clockwise (Cable Right / Portrait)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-gyro-autorotate" checked>
@@ -1430,63 +1487,63 @@ select.input option {
                 </div>
               </div>
               <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
-                <button id="btn-gyro-calibrate" class="btn btn-secondary" style="width: 100%;">🎯 Set Current as Normal (0°)</button>
+                <button id="btn-gyro-calibrate" class="btn btn-secondary" style="width: 100%;" data-i18n="hw_btn_gyro_calibrate">🎯 Set Current as Normal (0°)</button>
               </div>
             </div>
 
             <!-- Transition Effects Row -->
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Rotation Transition Effect</label>
+                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
                 <select id="hw-rotation-transition" class="input">
-                  <option value="vortex">✨ Particle Vortex (Vortex de Particules)</option>
-                  <option value="glitch">⚡ Cyberpunk Glitch (Glitch Numérique)</option>
-                  <option value="slide">💫 Smooth Slide (Glissement Directionnel)</option>
-                  <option value="zoom">🌀 Tunnel Zoom (Zoom Arcade 3D)</option>
-                  <option value="matrix">🌊 Matrix Rain (Pluie Numérique)</option>
-                  <option value="random">🎲 Random (Aléatoire à chaque rotation)</option>
-                  <option value="none">None (Instant Cut)</option>
+                  <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
+                  <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
+                  <option value="slide" data-i18n="hw_trans_slide">💫 Smooth Slide</option>
+                  <option value="zoom" data-i18n="hw_trans_zoom">🌀 Tunnel Zoom</option>
+                  <option value="matrix" data-i18n="hw_trans_matrix">🌊 Matrix Rain</option>
+                  <option value="random" data-i18n="hw_trans_random">🎲 Random (Every rotation)</option>
+                  <option value="none" data-i18n="hw_trans_none">Instant Cut (None)</option>
                 </select>
               </div>
               <div class="form-group">
-                <label>Transition Duration (ms)</label>
+                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
                 <input type="number" id="hw-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
               <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
-                <button id="btn-test-transition" class="btn btn-secondary" style="width: 100%;">✨ Test Transition FX</button>
+                <button id="btn-test-transition" class="btn btn-secondary" style="width: 100%;" data-i18n="hw_btn_test_transition">✨ Test Transition FX</button>
               </div>
             </div>
 
             <div id="gyro-live-status" style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.85rem; display: flex; gap: 1.5rem; flex-wrap: wrap;">
-              <div><strong>Sensor:</strong> <span id="gyro-sensor-name">Probing...</span></div>
-              <div><strong>Gravity Vector:</strong> <span id="gyro-gravity-val">--</span></div>
-              <div><strong>Active Rotation:</strong> <span id="gyro-active-rot">0°</span></div>
+              <div><strong data-i18n="hw_sensor_label">Sensor:</strong> <span id="gyro-sensor-name">Probing...</span></div>
+              <div><strong data-i18n="hw_gravity_label">Gravity Vector:</strong> <span id="gyro-gravity-val">--</span></div>
+              <div><strong data-i18n="hw_active_rot_label">Active Rotation:</strong> <span id="gyro-active-rot">0°</span></div>
             </div>
           </div>
 
           <div class="card glass shadow">
-            <h3>Matrix Hardware Configuration</h3>
+            <h3 data-i18n="hw_matrix_title">Matrix Hardware Configuration</h3>
             <div class="form-grid col-4">
               <div class="form-group">
-                <label>Rows (Height)</label>
+                <label data-i18n="hw_rows_label">Rows (Height)</label>
                 <input type="number" id="hw-rows" class="input" value="32">
               </div>
               <div class="form-group">
-                <label>Cols (Width)</label>
+                <label data-i18n="hw_cols_label">Cols (Width)</label>
                 <input type="number" id="hw-cols" class="input" value="64">
               </div>
               <div class="form-group">
-                <label>Chain Length <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
+                <label><span data-i18n="hw_chain_label">Chain Length</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
                 <input type="number" id="hw-chain" class="input" value="1">
               </div>
               <div class="form-group">
-                <label>Parallel Chains <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
+                <label><span data-i18n="hw_parallel_label">Parallel Chains</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
                 <input type="number" id="hw-parallel" class="input" value="1">
               </div>
             </div>
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Selectionne le driver materiel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 high-density, ICN2038S, SM16208)">?</span></label>
+                <label><span data-i18n="hw_driver_chip_label">Matrix Driver Chip</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_driver_chip">?</span></label>
                 <select id="hw-driver-chip" class="input">
                   <option value="SHIFTREG">Standard (SHIFTREG)</option>
                   <option value="FM6126A">FM6124 / FM6126A</option>
@@ -1496,7 +1553,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
+                <label><span data-i18n="hw_rgb_label">RGB Sequence</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
                 <select id="hw-rgb" class="input">
                   <option value="RGB">RGB</option>
                   <option value="RBG">RBG</option>
@@ -1507,7 +1564,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>Row Addr Type <span class="tooltip-icon" data-tooltip="Default 0. Set to 1 for AB, 2 for direct, 3 for ABC, 4 for ShiftReg. Used for complex P2 panels.">?</span></label>
+                <label><span data-i18n="hw_row_addr_type_label">Row Addr Type</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_row_addr">?</span></label>
                 <select id="hw-row-addr-type" class="input">
                   <option value="0">0 - Direct Binary (Default)</option>
                   <option value="1">1 - Direct 16 Lines (AB)</option>
@@ -1517,22 +1574,31 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>Multiplexing <span class="tooltip-icon" data-tooltip="Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.">?</span></label>
+                <label><span data-i18n="hw_multiplexing_label">Multiplexing</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_multiplexing">?</span></label>
                 <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
               </div>
             </div>
 
-            <div class="form-grid col-3" style="margin-top: 1rem;">
+            <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Color Depth / PWM Bits <span class="tooltip-icon" data-tooltip="Color depth bits per channel (2-8 on ESP32, 1-11 on RPi)">?</span></label>
+                <label><span data-i18n="hw_color_depth_label">Color Depth / PWM Bits</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
                 <input type="number" id="hw-pwm-bits" class="input" value="8" min="2" max="11">
               </div>
               <div class="form-group">
-                <label>Latch Blanking / LSB (ns) <span class="tooltip-icon" data-tooltip="Blanking time / LSB pulse width for anti-ghosting">?</span></label>
-                <input type="number" id="hw-pwm-lsb" class="input" value="130" min="8" max="3000">
+                <label><span data-i18n="hw_clk_phase_label">Invert CLK Phase (ESP32)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="hw-clk-phase" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
               </div>
               <div class="form-group">
-                <label>Target Refresh Rate (Hz) <span class="tooltip-icon" data-tooltip="Min/Target refresh rate in Hz (0 = unlimited / default 90)">?</span></label>
+                <label><span data-i18n="hw_latch_blanking_label">Latch Blanking (Cycles)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
+                <input type="number" id="hw-latch-blanking" class="input" value="4" min="1" max="32">
+              </div>
+              <div class="form-group">
+                <label><span data-i18n="hw_refresh_rate_label">Target Refresh Rate (Hz)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
                 <input type="number" id="hw-limit-refresh" class="input" value="90" min="0" max="500">
               </div>
             </div>
@@ -1540,7 +1606,11 @@ select.input option {
             <!-- Raspberry Pi Linux Specific Options (Hidden on ESP32/ESP32-S3) -->
             <div id="rpi-hardware-group" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--glass-border);">
               <h4 style="color: var(--accent-info); margin-bottom: 0.75rem;">🍓 Raspberry Pi 40-Pin GPIO Options</h4>
-              <div class="form-grid col-3">
+              <div class="form-grid col-4">
+                <div class="form-group">
+                  <label>PWM LSB (ns) <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pwm_lsb">?</span></label>
+                  <input type="number" id="hw-pwm-lsb" class="input" value="130" min="8" max="3000">
+                </div>
                 <div class="form-group">
                   <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
                   <select id="hw-mapping" class="input">
@@ -1552,11 +1622,11 @@ select.input option {
                   </select>
                 </div>
                 <div class="form-group">
-                  <label>Slowdown GPIO <span class="tooltip-icon" data-tooltip="Slowdown for fast Pi CPUs (Pi 4=4, Pi 5=5)">?</span></label>
+                  <label>Slowdown GPIO <span class="tooltip-icon" data-i18n-tooltip="tt_hw_slowdown">?</span></label>
                   <input type="number" id="hw-slowdown" class="input" value="1" min="0" max="5">
                 </div>
                 <div class="form-group">
-                  <label>Disable Hardware Pulsing <span class="tooltip-icon" data-tooltip="Enable if audio is glitching on Pi ALSA">?</span></label>
+                  <label>Disable Hardware Pulsing <span class="tooltip-icon" data-i18n-tooltip="tt_hw_disable_pulsing">?</span></label>
                   <div style="display: flex; align-items: center; height: 100%;">
                     <label class="switch">
                       <input type="checkbox" id="hw-disable-pulsing">
@@ -1566,19 +1636,19 @@ select.input option {
                 </div>
               </div>
             </div>
-            <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save Hardware Settings</button>
+            <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="hw_btn_save">💾 Save Hardware Settings</button>
           </div>
         </div>
 
         <!-- Night Mode & Standby -->
         <div id="sys-tab-night" class="tab-pane">
           <div class="card glass shadow">
-            <h3>🌙 Night Mode & Standby Schedule</h3>
-            <p class="text-muted">Automatically reduce matrix brightness or completely turn off the display at night.</p>
+            <h3 data-i18n="night_mode_title">🌙 Night Mode & Standby Schedule</h3>
+            <p class="text-muted" data-i18n="night_mode_desc">Automatically reduce matrix brightness or completely turn off the display at night.</p>
             
             <div class="form-grid col-3" style="margin-top: 1.5rem;">
               <div class="form-group">
-                <label>Enable Night Mode</label>
+                <label data-i18n="night_enable_label">Enable Night Mode</label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="cfg-night-mode-enabled">
@@ -1587,128 +1657,128 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label>Turn Off Time (Bedtime)</label>
+                <label data-i18n="night_bedtime_label">Turn Off Time (Bedtime)</label>
                 <input type="time" id="cfg-turn-off-at" class="input" value="23:00">
               </div>
               <div class="form-group">
-                <label>Wake Up Time (Morning)</label>
+                <label data-i18n="night_wakeup_label">Wake Up Time (Morning)</label>
                 <input type="time" id="cfg-wake-up-at" class="input" value="07:00">
               </div>
             </div>
 
             <div class="form-group" style="margin-top: 1.5rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                <label style="margin: 0;">Night Brightness</label>
+                <label style="margin: 0;" data-i18n="night_brightness_label">Night Brightness</label>
                 <span id="night-brightness-val" class="badge" style="font-size: 1rem; font-weight: 700;">10%</span>
               </div>
               <input type="range" id="cfg-night-brightness" min="0" max="100" value="10" step="1" style="width: 100%; accent-color: var(--accent-primary);">
-              <small class="text-muted" style="display: block; margin-top: 0.5rem;">Set to 0% to completely power off the LED panel and pause DMA rendering during night hours.</small>
+              <small class="text-muted" style="display: block; margin-top: 0.5rem;" data-i18n="night_brightness_help">Set to 0% to completely power off the LED panel and pause DMA rendering during night hours.</small>
             </div>
 
-            <button id="btn-save-night" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;">💾 Save Night Mode Settings</button>
+            <button id="btn-save-night" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;" data-i18n="night_btn_save">💾 Save Night Mode Settings</button>
           </div>
         </div>
 
         <!-- Network -->
         <div id="sys-tab-network" class="tab-pane">
           <div class="card glass shadow">
-            <h3>Wi-Fi Configuration</h3>
+            <h3 data-i18n="net_wifi_title">Wi-Fi Configuration</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label>SSID (Network Name)</label>
+                <label data-i18n="net_ssid_label">SSID (Network Name)</label>
                 <input type="text" id="hw-wifi-ssid" class="input" placeholder="Your Network">
               </div>
               <div class="form-group">
-                <label>Password</label>
+                <label data-i18n="net_pass_label">Password</label>
                 <input type="password" id="hw-wifi-pass" class="input" placeholder="••••••••">
               </div>
             </div>
-            <button id="btn-save-wifi" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Connect Wi-Fi</button>
+            <button id="btn-save-wifi" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="net_btn_connect">Connect Wi-Fi</button>
           </div>
         </div>
 
         <!-- MQTT & API -->
         <div id="sys-tab-mqtt" class="tab-pane">
           <div class="card glass shadow" style="margin-bottom: 2rem;">
-            <h3>MQTT Integration</h3>
+            <h3 data-i18n="mqtt_title">MQTT Integration</h3>
             <div class="form-group">
-              <label>Enable MQTT</label>
+              <label data-i18n="mqtt_enable_label">Enable MQTT</label>
               <select id="hw-mqtt-enable" class="input">
-                <option value="0">Disabled</option>
-                <option value="1">Enabled</option>
+                <option value="0" data-i18n="opt_disabled">Disabled</option>
+                <option value="1" data-i18n="opt_enabled">Enabled</option>
               </select>
             </div>
             <div class="form-grid">
               <div class="form-group">
-                <label>Broker IP</label>
+                <label data-i18n="mqtt_broker_label">Broker IP</label>
                 <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
               </div>
               <div class="form-group">
-                <label>Port</label>
+                <label data-i18n="mqtt_port_label">Port</label>
                 <input type="number" id="hw-mqtt-port" class="input" value="1883">
               </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Username</label>
+                <label data-i18n="mqtt_user_label">Username</label>
                 <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
               </div>
               <div class="form-group">
-                <label>Password</label>
+                <label data-i18n="mqtt_pass_label">Password</label>
                 <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
               </div>
             </div>
-            <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save MQTT Settings</button>
+            <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="mqtt_btn_save">Save MQTT Settings</button>
             
             <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
             
-            <h4 style="margin-top: 1.5rem;">Recalbox / Batocera Sync</h4>
-            <p class="text-muted" style="font-size: 0.9em;">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
+            <h4 style="margin-top: 1.5rem;" data-i18n="mqtt_recalbox_title">Recalbox / Batocera Sync</h4>
+            <p class="text-muted" style="font-size: 0.9em;" data-i18n="mqtt_recalbox_desc">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
             <div class="form-group" style="margin-top: 1rem;">
               <label class="toggle-btn" style="display:inline-flex; align-items:center; cursor:pointer;">
                 <input type="checkbox" id="hw-mqtt-custom-auth" style="margin-right:0.5rem; accent-color:var(--primary);">
-                <span>Use custom SSH credentials (Default: root / recalboxroot)</span>
+                <span data-i18n="mqtt_custom_auth_label">Use custom SSH credentials (Default: root / recalboxroot)</span>
               </label>
             </div>
             <div id="mqtt-custom-auth-fields" class="form-grid" style="display: none; margin-top: 0.5rem; margin-bottom: 1rem;">
               <div class="form-group">
-                <label>SSH Username</label>
+                <label data-i18n="mqtt_ssh_user_label">SSH Username</label>
                 <input type="text" id="hw-mqtt-ssh-user" class="input" placeholder="root" value="root">
               </div>
               <div class="form-group">
-                <label>SSH Password</label>
+                <label data-i18n="mqtt_ssh_pass_label">SSH Password</label>
                 <input type="password" id="hw-mqtt-ssh-pass" class="input" placeholder="recalboxroot">
               </div>
             </div>
             <div class="form-grid" style="align-items: end;">
               <div class="form-group">
-                <label>Console IP Address</label>
+                <label data-i18n="mqtt_console_ip_label">Console IP Address</label>
                 <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
               </div>
               <div class="form-group" style="display: flex; gap: 0.5rem;">
-                <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;">Install via SSH</button>
-                <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;">Check Logs</button>
+                <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;" data-i18n="mqtt_btn_install_ssh">Install via SSH</button>
+                <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;" data-i18n="mqtt_btn_check_logs">Check Logs</button>
               </div>
             </div>
             <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
           </div>
           
           <div class="card glass shadow">
-            <h3>API Authentication</h3>
+            <h3 data-i18n="api_auth_title">API Authentication</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label>Require Auth for API</label>
+                <label data-i18n="api_auth_enable_label">Require Auth for API</label>
                 <select id="hw-api-auth" class="input">
-                  <option value="false">Disabled</option>
-                  <option value="true">Enabled</option>
+                  <option value="false" data-i18n="opt_disabled">Disabled</option>
+                  <option value="true" data-i18n="opt_enabled">Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label>API Token</label>
+                <label data-i18n="api_token_label">API Token</label>
                 <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
               </div>
             </div>
-            <button id="btn-save-api" class="btn btn-primary" style="margin-top: 1rem; width: 100%;">Save API Auth</button>
+            <button id="btn-save-api" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="api_btn_save">Save API Auth</button>
           </div>
         </div>
 
@@ -1717,14 +1787,14 @@ select.input option {
           <!-- 1. Online Automatic Update (GitHub Releases) -->
           <div class="card glass shadow ota-card" style="margin-bottom: 1.5rem;">
             <div class="card-header-badge">
-              <h3>🌐 Online Update (GitHub Releases)</h3>
-              <span class="badge badge-accent">1-Click OTA</span>
+              <h3 data-i18n="ota_online_title">🌐 Online Update (GitHub Releases)</h3>
+              <span class="badge badge-accent" data-i18n="ota_1click_badge">1-Click OTA</span>
             </div>
-            <p class="text-muted">Check GitHub Releases for new updates matching your Raspberry Pi architecture and update automatically.</p>
+            <p class="text-muted" data-i18n="ota_online_desc">Check GitHub Releases for new updates matching your device architecture and update automatically.</p>
 
             <div class="ota-info-box" style="margin-bottom: 1rem;">
-              <div>Current Version: <strong id="ota-current-version">v3.0.0</strong></div>
-              <div>System Architecture: <strong id="ota-current-arch">aarch64</strong></div>
+              <div><span data-i18n="ota_current_ver_label">Current Version:</span> <strong id="ota-current-version">v3.0.0</strong></div>
+              <div><span data-i18n="ota_current_arch_label">System Architecture:</span> <strong id="ota-current-arch">aarch64</strong></div>
             </div>
 
             <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
@@ -1744,10 +1814,10 @@ select.input option {
             </div>
 
             <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-              <button id="btn-ota-check" class="btn btn-primary" style="flex: 1;">
+              <button id="btn-ota-check" class="btn btn-primary" style="flex: 1;" data-i18n="ota_btn_check">
                 🔍 Check for Updates
               </button>
-              <button id="btn-ota-auto-install" class="btn btn-warning" style="flex: 1; display: none;">
+              <button id="btn-ota-auto-install" class="btn btn-warning" style="flex: 1; display: none;" data-i18n="ota_btn_download">
                 ⬇️ Download & Install Update
               </button>
             </div>
@@ -1756,10 +1826,10 @@ select.input option {
           <!-- 2. Manual Binary Upload (Offline) -->
           <div class="card glass shadow ota-card">
             <div class="card-header-badge">
-              <h3>📁 Manual File Upload</h3>
-              <span class="badge">Offline / Custom</span>
+              <h3 data-i18n="ota_manual_title">📁 Manual File Upload</h3>
+              <span class="badge" data-i18n="ota_manual_badge">Offline / Custom</span>
             </div>
-            <p class="text-muted">Upload a pre-compiled binary manually if your device is offline or using a custom build.</p>
+            <p class="text-muted" data-i18n="ota_manual_desc">Upload a pre-compiled binary manually if your device is offline or using a custom build.</p>
 
             <div id="ota-drop-zone" class="drop-zone">
               <div class="drop-icon">📁</div>
@@ -1777,7 +1847,7 @@ select.input option {
               <span id="ota-progress-text" class="progress-text">0%</span>
             </div>
 
-            <button id="btn-ota-update" class="btn btn-warning btn-lg" style="margin-top: 1.5rem; width: 100%;" disabled>
+            <button id="btn-ota-update" class="btn btn-warning btn-lg" style="margin-top: 1.5rem; width: 100%;" disabled data-i18n="ota_btn_update">
               Upload & Update Firmware
             </button>
           </div>
@@ -1961,8 +2031,17 @@ const translations = {
     modal_choose_theme: "Theme / Style / Variant:",
     modal_city_label: "City / Location (e.g. Paris, FR or Tokyo, JP):",
     modal_gif_orientation_label: "GIF Orientation Library:",
-    tab_yoko: "Horizontal (YOKO)",
-    tab_tate: "Vertical (TATE)",
+    tab_yoko: "Horizontal (Landscape / YOKO)",
+    tab_tate: "Vertical (Portrait / TATE)",
+    gif_auto_switch_title: "Resolution Detection & Auto Switch:",
+    gif_auto_switch_desc: "ArcadeMatrix automatically switches: in Horizontal (Landscape / YOKO) mode, only horizontal GIF folders are played. In Vertical (Portrait / TATE) mode, only vertical GIF folders are played. If none match, nothing is displayed.",
+    gif_modal_help: "Selected folders or 'all' will auto-switch based on display orientation.",
+    gif_no_yoko: "No horizontal GIF folders found in /gifs",
+    gif_no_tate: "No vertical GIF folders found in /gifs_tate",
+    all_folders_opt: "All Folders (Auto Horizontal / Vertical)",
+    select_all_btn: "Select All",
+    clear_btn: "Clear",
+    folders_count: "folders",
     modal_gif_folder_label: "GIF Playlist Folder:",
     modal_crypto_label: "Crypto Symbols (comma-separated):",
     modal_stock_label: "Stock Tickers (comma-separated):",
@@ -2033,7 +2112,149 @@ const translations = {
     tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
     tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
     tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
+    tt_hw_driver_chip: "Selects hardware driver chip (Standard SHIFTREG, FM6124/FM6126A for P2 high-density panels, ICN2038S, SM16208).",
+    tt_hw_row_addr: "Row addressing mode. 0 for Direct Binary, 1 for 16 lines (AB), 2 for 32 lines (ABC), 3 for 64 lines (ABCD), 4 for ShiftReg.",
+    tt_hw_multiplexing: "Panel multiplexing mode. 0=Direct, 1=Stripe, 2=Checkered.",
+    tt_hw_color_depth: "Color depth bits per channel (2-8 on ESP32, 1-11 on RPi).",
+    tt_hw_clk_phase: "Invert clock phase on CLK line. Recommended ON on ESP32-S3 to eliminate pixel jitter and glitches.",
+    tt_hw_latch_blanking: "Latch blanking clock cycles to prevent ghosting and corner artifacts (Default: 4).",
     
+    // Dashboard & Metrics
+    dash_power_title: "Matrix Power",
+    dash_brightness_label: "Matrix Brightness",
+    btn_turn_off: "Turn Panel OFF",
+    btn_turn_on: "Turn Panel ON",
+    dash_metrics_title: "System Hardware & Metrics",
+    metric_mcu_label: "Microcontroller",
+    metric_temp_label: "Temperature & Humidity",
+    metric_ram_label: "Internal RAM (SRAM)",
+    metric_psram_label: "External Memory (PSRAM)",
+    dash_peripherals_label: "🔌 Detected Hardware Peripherals & Sensors:",
+    dash_control_title: "System Control",
+    btn_reboot: "Reboot System",
+    btn_restart_app: "Restart App",
+    btn_shutdown: "Shutdown",
+
+    // System Tabs
+    tab_general: "🌐 General",
+    tab_hardware: "⚙️ Hardware",
+    tab_night: "🌙 Night Mode",
+    tab_network: "📡 Network",
+    tab_mqtt: "🔄 MQTT & API",
+    tab_ota: "🚀 Updates",
+
+    // General Preferences
+    gen_title: "🌐 System & Regional Preferences",
+    gen_desc: "Configure device timezone, time formatting (24h/12h), temperature units and background overlays.",
+    gen_timezone_label: "Timezone / Region",
+    gen_timeformat_label: "Time Format",
+    gen_opt_24h: "24 Hours (23:00)",
+    gen_opt_12h: "12 Hours (11:00 PM)",
+    gen_unit_label: "Temperature Unit",
+    gen_unit_c: "Celsius (°C)",
+    gen_unit_f: "Fahrenheit (°F)",
+    gen_temp_offset_label: "Temperature Calibration Offset (°C)",
+    gen_temp_offset_tooltip: "Offset added to ambient sensor readings to compensate for internal enclosure heat.",
+    gen_idle_fighter_enable: "Enable Idle Fighter Overlay",
+    gen_idle_fighter_interval: "Interval between fights (seconds)",
+    gen_btn_save: "💾 Save System Preferences",
+
+    // Hardware Settings
+    hw_gyro_title: "🧭 Screen Orientation & Gyroscope",
+    hw_gyro_desc: "Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via onboard Gyroscope/IMU.",
+    hw_screen_rotation_label: "Screen Rotation / Mounting Offset",
+    hw_rot_0: "0° - Normal (Landscape)",
+    hw_rot_90: "90° - Clockwise (Cable Left / Portrait)",
+    hw_rot_180: "180° - Inverted (Cable Top / Flip)",
+    hw_rot_270: "270° - Counter-Clockwise (Cable Right / Portrait)",
+    hw_gyro_autorotate_label: "Gyro Auto-Rotation",
+    hw_btn_gyro_calibrate: "🎯 Set Current as Normal (0°)",
+    hw_rotation_transition_label: "Rotation Transition Effect",
+    hw_trans_vortex: "✨ Particle Vortex",
+    hw_trans_glitch: "⚡ Cyberpunk Glitch",
+    hw_trans_slide: "💫 Smooth Slide",
+    hw_trans_zoom: "🌀 Tunnel Zoom",
+    hw_trans_matrix: "🌊 Matrix Rain",
+    hw_trans_random: "🎲 Random (Every rotation)",
+    hw_trans_none: "Instant Cut (None)",
+    hw_transition_duration_label: "Transition Duration (ms)",
+    hw_btn_test_transition: "✨ Test Transition FX",
+    hw_sensor_label: "Sensor:",
+    hw_gravity_label: "Gravity Vector:",
+    hw_active_rot_label: "Active Rotation:",
+    hw_matrix_title: "Matrix Hardware Configuration",
+    hw_rows_label: "Rows (Height)",
+    hw_cols_label: "Cols (Width)",
+    hw_chain_label: "Chain Length",
+    hw_parallel_label: "Parallel Chains",
+    hw_driver_chip_label: "Matrix Driver Chip",
+    hw_rgb_label: "RGB Sequence",
+    hw_row_addr_type_label: "Row Addr Type",
+    hw_multiplexing_label: "Multiplexing",
+    hw_color_depth_label: "Color Depth / PWM Bits",
+    hw_clk_phase_label: "Invert CLK Phase (ESP32)",
+    hw_latch_blanking_label: "Latch Blanking (Cycles)",
+    hw_refresh_rate_label: "Target Refresh Rate (Hz)",
+    hw_btn_save: "💾 Save Hardware Settings",
+
+    // Night Mode
+    night_mode_title: "🌙 Night Mode & Standby Schedule",
+    night_mode_desc: "Automatically reduce matrix brightness or completely turn off the display at night.",
+    night_enable_label: "Enable Night Mode",
+    night_bedtime_label: "Turn Off Time (Bedtime)",
+    night_wakeup_label: "Wake Up Time (Morning)",
+    night_brightness_label: "Night Brightness",
+    night_brightness_help: "Set to 0% to completely power off the LED panel and pause DMA rendering during night hours.",
+    night_btn_save: "💾 Save Night Mode Settings",
+
+    // Network
+    net_wifi_title: "Wi-Fi Configuration",
+    net_ssid_label: "SSID (Network Name)",
+    net_pass_label: "Password",
+    net_btn_connect: "Connect Wi-Fi",
+
+    // MQTT & API
+    mqtt_title: "MQTT Integration",
+    mqtt_enable_label: "Enable MQTT",
+    mqtt_broker_label: "Broker IP",
+    mqtt_port_label: "Port",
+    mqtt_user_label: "Username",
+    mqtt_pass_label: "Password",
+    mqtt_btn_save: "Save MQTT Settings",
+    mqtt_recalbox_title: "Recalbox / Batocera Sync",
+    mqtt_recalbox_desc: "Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.",
+    mqtt_custom_auth_label: "Use custom SSH credentials (Default: root / recalboxroot)",
+    mqtt_ssh_user_label: "SSH Username",
+    mqtt_ssh_pass_label: "SSH Password",
+    mqtt_console_ip_label: "Console IP Address",
+    mqtt_btn_install_ssh: "Install via SSH",
+    mqtt_btn_check_logs: "Check Logs",
+    api_auth_title: "API Authentication",
+    api_auth_enable_label: "Require Auth for API",
+    api_token_label: "API Token",
+    api_btn_save: "Save API Auth",
+
+    // OTA
+    ota_online_title: "🌐 Online Update (GitHub Releases)",
+    ota_1click_badge: "1-Click OTA",
+    ota_online_desc: "Check GitHub Releases for new updates matching your device architecture and update automatically.",
+    ota_current_ver_label: "Current Version:",
+    ota_current_arch_label: "System Architecture:",
+    ota_btn_check: "🔍 Check for Updates",
+    ota_btn_download: "⬇️ Download & Install Update",
+    ota_manual_title: "📁 Manual File Upload",
+    ota_manual_badge: "Offline / Custom",
+    ota_manual_desc: "Upload a pre-compiled binary manually if your device is offline or using a custom build.",
+    ota_btn_update: "Upload & Update Firmware",
+
+    // Generic Options & Time Formats
+    opt_enabled: "Enabled",
+    opt_disabled: "Disabled",
+    opt_fmt_24h_sec: "24h with Seconds (HH:MM:SS)",
+    opt_fmt_24h: "24h (HH:MM)",
+    opt_fmt_12h_sec: "12h with Seconds (HH:MM:SS AM/PM)",
+    opt_fmt_12h: "12h (HH:MM AM/PM)",
+
     // Directions
     dir_rtl: "Right to Left (RTL)",
     dir_ltr: "Left to Right (LTR)",
@@ -2157,6 +2378,161 @@ const translations = {
     tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
     tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
     tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
+    tt_hw_driver_chip: "Sélectionne le driver matériel des dalles (SHIFTREG standard, FM6124/FM6126A pour dalles P2, ICN2038S, SM16208).",
+    tt_hw_row_addr: "Type d'adressage des lignes. 0=Binaire direct, 1=16 lignes (AB), 2=32 lignes (ABC), 3=64 lignes (ABCD), 4=ShiftReg.",
+    tt_hw_multiplexing: "Multiplexage du panneau. 0=Direct, 1=Stripe, 2=Checkered.",
+    tt_hw_color_depth: "Profondeur de couleur par canal en bits (2-8 sur ESP32, 1-11 sur RPi).",
+    tt_hw_clk_phase: "Inversion de la phase d'horloge CLK. Activé par défaut, indispensable sur ESP32-S3 pour éliminer les parasites et instabilités de pixels.",
+    tt_hw_latch_blanking: "Cycles de masquage de verrouillage (Latch Blanking) pour supprimer le ghosting et les bavures LED (Défaut : 4).",
+
+    // Dashboard & Metrics
+    dash_power_title: "Alimentation Matrice",
+    dash_brightness_label: "Luminosité Matrice",
+    btn_turn_off: "Éteindre la Matrice",
+    btn_turn_on: "Allumer la Matrice",
+    dash_metrics_title: "Matériel & Métriques Système",
+    metric_mcu_label: "Microcontrôleur",
+    metric_temp_label: "Température & Humidité",
+    metric_ram_label: "RAM Interne (SRAM)",
+    metric_psram_label: "Mémoire Externe (PSRAM)",
+    dash_peripherals_label: "🔌 Périphériques & Capteurs Détectés :",
+    dash_control_title: "Contrôle Système",
+    btn_reboot: "Redémarrer le Système",
+    btn_restart_app: "Redémarrer l'App",
+    btn_shutdown: "Éteindre",
+
+    // System Tabs
+    tab_general: "🌐 Général",
+    tab_hardware: "⚙️ Matériel",
+    tab_night: "🌙 Mode Nuit",
+    tab_network: "📡 Réseau",
+    tab_mqtt: "🔄 MQTT & API",
+    tab_ota: "🚀 Mises à jour",
+
+    // General Preferences
+    gen_title: "🌐 Préférences Système & Régionales",
+    gen_desc: "Configurez le fuseau horaire, le format de l'heure (24h/12h), les unités de température et les animations en veille.",
+    gen_timezone_label: "Fuseau Horaire / Région",
+    gen_timeformat_label: "Format de l'Heure",
+    gen_opt_24h: "24 Heures (23:00)",
+    gen_opt_12h: "12 Heures (11:00 PM)",
+    gen_unit_label: "Unité de Température",
+    gen_unit_c: "Celsius (°C)",
+    gen_unit_f: "Fahrenheit (°F)",
+    gen_temp_offset_label: "Décalage d'Étalonnage Température (°C)",
+    gen_temp_offset_tooltip: "Décalage soustrait ou ajouté pour compenser la chauffe interne du boîtier.",
+    gen_idle_fighter_enable: "Activer l'Overlay Combattants en Veille",
+    gen_idle_fighter_interval: "Intervalle entre les combats (secondes)",
+    gen_btn_save: "💾 Enregistrer les Préférences",
+
+    // Hardware Settings
+    hw_gyro_title: "🧭 Orientation de l'Écran & Gyroscope",
+    hw_gyro_desc: "Configurez la rotation d'affichage, le décalage de montage, les effets de transition ou activez l'auto-rotation par Gyroscope/IMU.",
+    hw_screen_rotation_label: "Rotation / Décalage de Montage",
+    hw_rot_0: "0° - Normal (Paysage)",
+    hw_rot_90: "90° - Horaire (Câble à gauche / Portrait)",
+    hw_rot_180: "180° - Inversé (Câble en haut / Flip)",
+    hw_rot_270: "270° - Anti-Horaire (Câble à droite / Portrait)",
+    hw_gyro_autorotate_label: "Auto-Rotation par Gyroscope",
+    hw_btn_gyro_calibrate: "🎯 Définir la position actuelle comme Normale (0°)",
+    hw_rotation_transition_label: "Effet de Transition de Rotation",
+    hw_trans_vortex: "✨ Vortex de Particules",
+    hw_trans_glitch: "⚡ Glitch Cyberpunk",
+    hw_trans_slide: "💫 Glissement Fluide",
+    hw_trans_zoom: "🌀 Zoom Arcade 3D",
+    hw_trans_matrix: "🌊 Pluie Numérique Matrix",
+    hw_trans_random: "🎲 Aléatoire (À chaque rotation)",
+    hw_trans_none: "Coupure Instantanée (Aucun)",
+    hw_transition_duration_label: "Durée de Transition (ms)",
+    hw_btn_test_transition: "✨ Tester l'Effet de Transition",
+    hw_sensor_label: "Capteur :",
+    gen_fighter_idle_label: "Overlay Street Fighter en Mode Veille",
+    gen_fighter_interval_label: "Intervalle d'Apparition du Combattant (sec)",
+    gen_btn_save: "💾 Enregistrer les Préférences Générales",
+
+    // Hardware
+    hw_panel_title: "Géométrie & Matériel du Panneau LED",
+    hw_rows_label: "Lignes (Hauteur)",
+    hw_cols_label: "Colonnes (Largeur)",
+    hw_chain_label: "Longueur de Chaîne (Panneaux)",
+    hw_driver_label: "Puce Driver IC",
+    hw_row_addr_label: "Mode d'Adressage des Lignes",
+    hw_multiplexing_label: "Multiplexage",
+    hw_mapping_label: "Type de Mapping",
+    hw_rgb_label: "Séquence RGB",
+    hw_clk_phase_label: "Inverser la Phase CLK (ESP32)",
+    hw_clk_phase_help: "Inversion du front d'horloge CLK (activé par défaut). Indispensable sur ESP32-S3 pour éliminer les parasites de pixels.",
+    hw_latch_blanking_label: "Latch Blanking (Cycles)",
+    hw_latch_blanking_help: "Nombre de cycles d'horloge pour l'extinction lors du verrouillage (1-32, défaut : 4). Évite le ghosting.",
+    hw_slowdown_label: "Ralentissement GPIO (Raspberry Pi)",
+    hw_pwm_bits_label: "Profondeur de Couleur PWM (Bits)",
+    hw_pwm_lsb_label: "PWM LSB Nanosecondes",
+    hw_disable_pulsing_label: "Désactiver le Pulsing Matériel",
+    hw_limit_refresh_label: "Limite de Rafraîchissement (Hz, 0 = Max)",
+    hw_gyro_title: "Orientation & Gyroscope Live",
+    hw_screen_rotation_label: "Orientation / Rotation Manuelle",
+    hw_gyro_autorotate_label: "Rotation Automatique par Gyroscope",
+    hw_rotation_transition_label: "Effet de Transition de Rotation",
+    hw_transition_duration_label: "Durée de Transition (ms)",
+    hw_btn_test_transition: "✨ Tester la Transition",
+    hw_btn_calibrate_gyro: "🎯 Calibrer Position 0°",
+    hw_btn_save: "💾 Enregistrer la Configuration Matérielle",
+
+    // Night Mode
+    night_title: "Horaires du Mode Nuit (Écran Veille / Dimming)",
+    night_enable_label: "Activer le Mode Nuit Programmé",
+    night_turn_off_label: "Heure d'Extinction / Dimming",
+    night_wake_up_label: "Heure de Réveil",
+    night_brightness_label: "Luminosité Nocturne",
+    night_btn_save: "💾 Enregistrer le Mode Nuit",
+    
+    // Network
+    net_wifi_title: "Configuration Wi-Fi",
+    net_ssid_label: "SSID (Nom du Réseau)",
+    net_pass_label: "Mot de Passe",
+    net_btn_connect: "Connexion Wi-Fi",
+
+    // MQTT & API
+    mqtt_title: "Intégration MQTT",
+    mqtt_enable_label: "Activer MQTT",
+    mqtt_broker_label: "IP du Broker",
+    mqtt_port_label: "Port",
+    mqtt_user_label: "Utilisateur",
+    mqtt_pass_label: "Mot de Passe",
+    mqtt_btn_save: "Enregistrer les Paramètres MQTT",
+    mqtt_recalbox_title: "Synchronisation Recalbox / Batocera",
+    mqtt_recalbox_desc: "Installez automatiquement les scripts de synchronisation MQTT sur votre console de rétro-gaming via SSH.",
+    mqtt_custom_auth_label: "Identifiants SSH personnalisés (Défaut : root / recalboxroot)",
+    mqtt_ssh_user_label: "Utilisateur SSH",
+    mqtt_ssh_pass_label: "Mot de Passe SSH",
+    mqtt_console_ip_label: "Adresse IP de la Console",
+    mqtt_btn_install_ssh: "Installer via SSH",
+    mqtt_btn_check_logs: "Consulter les Logs",
+    api_auth_title: "Authentification API",
+    api_auth_enable_label: "Exiger une Authentification API",
+    api_token_label: "Token API",
+    api_btn_save: "Enregistrer l'Auth API",
+
+    // OTA
+    ota_online_title: "🌐 Mise à Jour en Ligne (Releases GitHub)",
+    ota_1click_badge: "OTA 1-Clic",
+    ota_online_desc: "Vérifie les mises à jour GitHub adaptées à l'architecture de votre appareil et installe automatiquement la dernière version.",
+    ota_current_ver_label: "Version Actuelle :",
+    ota_current_arch_label: "Architecture Système :",
+    ota_btn_check: "🔍 Vérifier les Mises à Jour",
+    ota_btn_download: "⬇️ Télécharger & Mettre à Jour",
+    ota_manual_title: "📁 Téléversement Manuel de Fichier",
+    ota_manual_badge: "Hors-ligne / Personnalisé",
+    ota_manual_desc: "Téléversez manuellement un binaire pré-compilé si votre appareil est hors-ligne ou utilise un build personnalisé.",
+    ota_btn_update: "Téléverser & Flasher le Firmware",
+
+    // Generic Options & Time Formats
+    opt_enabled: "Activé",
+    opt_disabled: "Désactivé",
+    opt_fmt_24h_sec: "24h avec Secondes (HH:MM:SS)",
+    opt_fmt_24h: "24h (HH:MM)",
+    opt_fmt_12h_sec: "12h avec Secondes (HH:MM:SS AM/PM)",
+    opt_fmt_12h: "12h (HH:MM AM/PM)",
     
     // Directions
     dir_rtl: "Droite vers Gauche (RTL)",
@@ -2166,11 +2542,6 @@ const translations = {
     dir_static: "Statique (Sans défilement)",
   },
   es: {
-    nav_dashboard: "Panel",
-    nav_display: "Pantalla",
-    nav_media: "Medios",
-    nav_message: "Mensaje",
-    fighter_title: "Superposición Luchador",
     fighter_desc: "Sprites de luchadores animados superpuestos sobre las pantallas de rotación inactivas. Actívalo por pantalla desde el panel de Rotación.",
     fighter_enabled: "Activado",
     fighter_interval: "Intervalo entre combates (segundos)",
@@ -2281,7 +2652,149 @@ const translations = {
     tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
     tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
     tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
-    
+    tt_hw_driver_chip: "Selecciona el driver de hardware LED (SHIFTREG estándar, FM6124/FM6126A para paneles P2, ICN2038S, SM16208).",
+    tt_hw_row_addr: "Modo de direccionamiento de filas. 0 para Binario directo, 1 para 16 líneas (AB), 2 para 32 líneas (ABC), 3 para 64 líneas (ABCD), 4 para ShiftReg.",
+    tt_hw_multiplexing: "Multiplexado de panel. 0=Directo, 1=Stripe, 2=Checkered.",
+    tt_hw_color_depth: "Profundidad de color por canal en bits (2-8 en ESP32, 1-11 en RPi).",
+    tt_hw_clk_phase: "Invertir fase de reloj CLK. Recomendado activado en ESP32-S3 para eliminar parásitos e inestabilidad de píxeles.",
+    tt_hw_latch_blanking: "Ciclos de apagado de pestillo (Latch Blanking) para evitar el efecto fantasma (Por defecto: 4).",
+
+    // Dashboard & Metrics
+    dash_power_title: "Alimentación de Matriz",
+    dash_brightness_label: "Brillo de Matriz",
+    btn_turn_off: "Apagar Matriz",
+    btn_turn_on: "Encender Matriz",
+    dash_metrics_title: "Hardware y Métricas del Sistema",
+    metric_mcu_label: "Microcontrolador",
+    metric_temp_label: "Temperatura y Humedad",
+    metric_ram_label: "RAM Interna (SRAM)",
+    metric_psram_label: "Memoria Externa (PSRAM)",
+    dash_peripherals_label: "🔌 Periféricos y Sensores Detectados:",
+    dash_control_title: "Control del Sistema",
+    btn_reboot: "Reiniciar Sistema",
+    btn_restart_app: "Reiniciar App",
+    btn_shutdown: "Apagar",
+
+    // System Tabs
+    tab_general: "🌐 General",
+    tab_hardware: "⚙️ Hardware",
+    tab_night: "🌙 Modo Noche",
+    tab_network: "📡 Red",
+    tab_mqtt: "🔄 MQTT y API",
+    tab_ota: "🚀 Actualizaciones",
+
+    // General Preferences
+    gen_title: "🌐 Preferencias del Sistema y Regionales",
+    gen_desc: "Configura zona horaria, formato de hora (24h/12h), unidades de temperatura y superposiciones en espera.",
+    gen_timezone_label: "Zona Horaria / Región",
+    gen_timeformat_label: "Formato de Hora",
+    gen_opt_24h: "24 Horas (23:00)",
+    gen_opt_12h: "12 Horas (11:00 PM)",
+    gen_unit_label: "Unidad de Temperatura",
+    gen_unit_c: "Celsius (°C)",
+    gen_unit_f: "Fahrenheit (°F)",
+    gen_temp_offset_label: "Desplazamiento de Calibración de Temp (°C)",
+    gen_temp_offset_tooltip: "Compensación de temperatura para contrarrestar el calor interno de la carcasa.",
+    gen_idle_fighter_enable: "Activar Superposición de Luchadores en Espera",
+    gen_idle_fighter_interval: "Intervalo entre combates (segundos)",
+    gen_btn_save: "💾 Guardar Preferencias",
+
+    // Hardware Settings
+    hw_gyro_title: "🧭 Orientación de Pantalla y Giroscopio",
+    hw_gyro_desc: "Configura la rotación, desplazamiento de montaje, efectos de transición o activa rotación automática por IMU.",
+    hw_screen_rotation_label: "Rotación / Desplazamiento de Montaje",
+    hw_rot_0: "0° - Normal (Horizontal)",
+    hw_rot_90: "90° - Sentido horario (Cable a la izquierda / Vertical)",
+    hw_rot_180: "180° - Invertido (Cable arriba / Flip)",
+    hw_rot_270: "270° - Sentido antihorario (Cable a la derecha / Vertical)",
+    hw_gyro_autorotate_label: "Rotación Automática por Giroscopio",
+    hw_btn_gyro_calibrate: "🎯 Establecer posición actual como Normal (0°)",
+    hw_rotation_transition_label: "Efecto de Transición de Rotación",
+    hw_trans_vortex: "✨ Vórtice de Partículas",
+    hw_trans_glitch: "⚡ Glitch Cyberpunk",
+    hw_trans_slide: "💫 Deslizamiento Suave",
+    hw_trans_zoom: "🌀 Zoom Arcade 3D",
+    hw_trans_matrix: "🌊 Lluvia Digital Matrix",
+    hw_trans_random: "🎲 Aleatorio (En cada rotación)",
+    hw_trans_none: "Corte Instantáneo (Ninguno)",
+    hw_transition_duration_label: "Duración de Transición (ms)",
+    hw_btn_test_transition: "✨ Probar Efecto de Transición",
+    hw_sensor_label: "Sensor:",
+    hw_gravity_label: "Vector de Gravedad:",
+    hw_active_rot_label: "Rotación Activa:",
+    hw_matrix_title: "Configuración de Hardware de la Matriz",
+    hw_rows_label: "Filas (Alto)",
+    hw_cols_label: "Columnas (Ancho)",
+    hw_chain_label: "Longitud de Cadena",
+    hw_parallel_label: "Cadenas Paralelas",
+    hw_driver_chip_label: "Driver de Hardware LED",
+    hw_rgb_label: "Secuencia RGB",
+    hw_row_addr_type_label: "Tipo de Direccionamiento de Filas",
+    hw_multiplexing_label: "Multiplexado",
+    hw_color_depth_label: "Profundidad de Color / Bits PWM",
+    hw_clk_phase_label: "Invertir Fase de Reloj CLK (ESP32)",
+    hw_latch_blanking_label: "Latch Blanking (Ciclos)",
+    hw_refresh_rate_label: "Tasa de Refresco Objetivo (Hz)",
+    hw_btn_save: "💾 Guardar Ajustes de Hardware",
+
+    // Night Mode
+    night_mode_title: "🌙 Modo Noche y Horario de Espera",
+    night_mode_desc: "Reduce automáticamente el brillo de la matriz o apaga la pantalla por la noche.",
+    night_enable_label: "Activar Modo Noche",
+    night_bedtime_label: "Hora de Apagado (Dormir)",
+    night_wakeup_label: "Hora de Encendido (Mañana)",
+    night_brightness_label: "Brillo Nocturno",
+    night_brightness_help: "Ajusta a 0% para apagar completamente los LEDs y pausar el renderizado DMA durante la noche.",
+    night_btn_save: "💾 Guardar Ajustes de Modo Noche",
+
+    // Network
+    net_wifi_title: "Configuración Wi-Fi",
+    net_ssid_label: "SSID (Nombre de Red)",
+    net_pass_label: "Contraseña",
+    net_btn_connect: "Conectar Wi-Fi",
+
+    // MQTT & API
+    mqtt_title: "Integración MQTT",
+    mqtt_enable_label: "Activar MQTT",
+    mqtt_broker_label: "IP del Broker",
+    mqtt_port_label: "Puerto",
+    mqtt_user_label: "Usuario",
+    mqtt_pass_label: "Contraseña",
+    mqtt_btn_save: "Guardar Ajustes MQTT",
+    mqtt_recalbox_title: "Sincronización Recalbox / Batocera",
+    mqtt_recalbox_desc: "Instala automáticamente los scripts de sincronización MQTT en tu consola retro por SSH.",
+    mqtt_custom_auth_label: "Credenciales SSH personalizadas (Por defecto: root / recalboxroot)",
+    mqtt_ssh_user_label: "Usuario SSH",
+    mqtt_ssh_pass_label: "Contraseña SSH",
+    mqtt_console_ip_label: "Dirección IP de la Consola",
+    mqtt_btn_install_ssh: "Instalar por SSH",
+    mqtt_btn_check_logs: "Ver Registros",
+    api_auth_title: "Autenticación de API",
+    api_auth_enable_label: "Requerir Autenticación para API",
+    api_token_label: "Token de API",
+    api_btn_save: "Guardar Auth API",
+
+    // OTA
+    ota_online_title: "🌐 Actualización en Línea (GitHub Releases)",
+    ota_1click_badge: "OTA 1-Clic",
+    ota_online_desc: "Comprueba las actualizaciones de GitHub adecuadas para tu dispositivo y actualiza automáticamente.",
+    ota_current_ver_label: "Versión Actual:",
+    ota_current_arch_label: "Arquitectura del Sistema:",
+    ota_btn_check: "🔍 Buscar Actualizaciones",
+    ota_btn_download: "⬇️ Descargar e Instalar",
+    ota_manual_title: "📁 Subida Manual de Archivos",
+    ota_manual_badge: "Sin conexión / Personalizado",
+    ota_manual_desc: "Sube un binario precompilado manualmente si tu dispositivo está desconectado o usa una compilación personalizada.",
+    ota_btn_update: "Subir y Actualizar Firmware",
+
+    // Generic Options & Time Formats
+    opt_enabled: "Activado",
+    opt_disabled: "Desactivado",
+    opt_fmt_24h_sec: "24h con Segundos (HH:MM:SS)",
+    opt_fmt_24h: "24h (HH:MM)",
+    opt_fmt_12h_sec: "12h con Segundos (HH:MM:SS AM/PM)",
+    opt_fmt_12h: "12h (HH:MM AM/PM)",
+
     // Directions
     dir_rtl: "Derecha a Izquierda (RTL)",
     dir_ltr: "Izquierda a Derecha (LTR)",
@@ -2464,31 +2977,100 @@ function getSchemaFields(engineDesc) {
   return [];
 }
 
-// Robust helper to parse options from array of objects, array of strings, or comma-separated string
+// Robust helper to parse options from array of objects, dictionary/object, grouped playlists, or comma-separated string
 function parseOptions(rawOptions) {
   if (!rawOptions) return [];
+
+  // 1. Grouped object { yoko: {...} or [...], tate: {...} or [...] }
+  if (typeof rawOptions === 'object' && rawOptions !== null && (rawOptions.yoko !== undefined || rawOptions.tate !== undefined)) {
+    const list = [];
+    if (rawOptions.yoko) {
+      const yokoList = parseOptions(rawOptions.yoko);
+      yokoList.forEach(item => {
+        item.orientation = 'yoko';
+        let val = String(item.value).trim();
+        if (!val.startsWith('/')) val = '/' + val;
+        if (!val.startsWith('/gifs/') && val !== '/gifs') {
+          if (val.startsWith('/gifs_tate/')) val = '/gifs/' + val.substring(11);
+          else val = '/gifs' + val;
+        }
+        item.value = val;
+        list.push(item);
+      });
+    }
+    if (rawOptions.tate) {
+      const tateList = parseOptions(rawOptions.tate);
+      tateList.forEach(item => {
+        item.orientation = 'tate';
+        let val = String(item.value).trim();
+        if (!val.startsWith('/')) val = '/' + val;
+        if (!val.startsWith('/gifs_tate/') && val !== '/gifs_tate') {
+          if (val.startsWith('/gifs/')) val = '/gifs_tate/' + val.substring(6);
+          else val = '/gifs_tate' + val;
+        }
+        item.value = val;
+        list.push(item);
+      });
+    }
+    return list;
+  }
+
+  // 2. Wrapped in { playlists: [...] }
+  if (typeof rawOptions === 'object' && rawOptions !== null && Array.isArray(rawOptions.playlists)) {
+    return parseOptions(rawOptions.playlists);
+  }
+
+  // 3. Array of objects or strings
   if (Array.isArray(rawOptions)) {
     return rawOptions.map(opt => {
       if (typeof opt === 'object' && opt !== null) {
-        const val = opt.value !== undefined ? opt.value : (opt.id !== undefined ? opt.id : (opt.name || ''));
-        const lbl = opt.label !== undefined ? opt.label : (opt.name !== undefined ? opt.name : val);
-        return { value: String(val), label: String(lbl) };
+        const val = opt.path !== undefined ? opt.path : (opt.value !== undefined ? opt.value : (opt.id !== undefined ? opt.id : (opt.name || '')));
+        const lbl = opt.name !== undefined ? opt.name : (opt.label !== undefined ? opt.label : val);
+        const orient = opt.orientation || (String(val).startsWith('/gifs_tate') ? 'tate' : (String(val).startsWith('/gifs') ? 'yoko' : undefined));
+        return { value: String(val), label: String(lbl), orientation: orient, count: opt.count };
       }
       const s = String(opt).trim();
       const col = s.indexOf(':');
-      if (col !== -1) {
-        return { value: s.substring(0, col).trim(), label: s.substring(col + 1).trim() };
+      if (col !== -1 && !s.includes('%') && /^[0-9a-zA-Z_\-]+:/.test(s)) {
+        const v = s.substring(0, col).trim();
+        const orient = v.startsWith('/gifs_tate') ? 'tate' : (v.startsWith('/gifs') ? 'yoko' : undefined);
+        return { value: v, label: s.substring(col + 1).trim(), orientation: orient };
       }
-      return { value: s, label: s };
+      const orient = s.startsWith('/gifs_tate') ? 'tate' : (s.startsWith('/gifs') ? 'yoko' : undefined);
+      return { value: s, label: s, orientation: orient };
     });
   }
+
+  // 4. Object dictionary (e.g. { "mario": { "path": "/gifs/mario", "count": 10 } })
+  if (typeof rawOptions === 'object' && rawOptions !== null) {
+    const list = [];
+    for (const key of Object.keys(rawOptions)) {
+      const item = rawOptions[key];
+      if (typeof item === 'object' && item !== null) {
+        const val = item.path || item.value || item.id || key;
+        const lbl = item.name || item.label || key;
+        const orient = item.orientation || (String(val).startsWith('/gifs_tate') ? 'tate' : (String(val).startsWith('/gifs') ? 'yoko' : undefined));
+        list.push({ value: String(val), label: String(lbl), orientation: orient, count: item.count });
+      } else {
+        const val = String(item);
+        const orient = val.startsWith('/gifs_tate') ? 'tate' : (val.startsWith('/gifs') ? 'yoko' : undefined);
+        list.push({ value: val, label: key, orientation: orient });
+      }
+    }
+    return list;
+  }
+
+  // 5. Comma-separated string
   if (typeof rawOptions === 'string' && rawOptions.trim().length > 0) {
     return rawOptions.split(',').map(s => s.trim()).filter(s => s.length > 0).map(val => {
       const col = val.indexOf(':');
-      if (col !== -1) {
-        return { value: val.substring(0, col).trim(), label: val.substring(col + 1).trim() };
+      if (col !== -1 && !val.includes('%') && /^[0-9a-zA-Z_\-]+:/.test(val)) {
+        const v = val.substring(0, col).trim();
+        const orient = v.startsWith('/gifs_tate') ? 'tate' : (v.startsWith('/gifs') ? 'yoko' : undefined);
+        return { value: v, label: val.substring(col + 1).trim(), orientation: orient };
       }
-      return { value: val, label: val };
+      const orient = val.startsWith('/gifs_tate') ? 'tate' : (val.startsWith('/gifs') ? 'yoko' : undefined);
+      return { value: val, label: val, orientation: orient };
     });
   }
   return [];
@@ -2529,7 +3111,28 @@ function formatOptLabel(fieldId, val, raw) {
   const v = String(val).trim();
   const lower = v.toLowerCase();
 
-  // 1. Direction labels
+  // 1. Date & Clock formats (MUST be checked before raw/label bypass)
+  if (fieldId === 'clock_format' || fieldId === 'format') {
+    if (v === '%H:%M:%S') return dict.opt_fmt_24h_sec || "24h with Seconds (HH:MM:SS)";
+    if (v === '%H:%M') return dict.opt_fmt_24h || "24h (HH:MM)";
+    if (v === '%I:%M:%S %p' || v === '%I:%M:%S%p') return dict.opt_fmt_12h_sec || "12h with Seconds (HH:MM:SS AM/PM)";
+    if (v === '%I:%M %p' || v === '%I:%M%p') return dict.opt_fmt_12h || "12h (HH:MM AM/PM)";
+  }
+  if (fieldId === 'date_format') {
+    if (v === '%d/%m/%Y') return "DD/MM/YYYY (24/08/2026)";
+    if (v === '%Y-%m-%d') return "YYYY-MM-DD (2026-08-24)";
+    if (v === '%d %b %Y') return "DD Mon YYYY (24 Aug 2026)";
+    if (v === '%A %d %B' || v === '%A, %d %B') return "Weekday DD Month (Monday 24 August)";
+  }
+
+  // 2. Units
+  if (fieldId === 'units' || fieldId === 'unit' || fieldId === 'temp_unit') {
+    if (lower === 'c' || lower.startsWith('c') || lower === 'metric') return "Celsius (°C)";
+    if (lower === 'f' || lower.startsWith('f') || lower === 'imperial') return "Fahrenheit (°F)";
+    return raw || val;
+  }
+
+  // 3. Direction labels
   if (fieldId === 'direction' || ['rtl', 'ltr', 'ttb', 'btt', 'static', 'left', 'right', 'up', 'down', 'none'].includes(lower)) {
     if (lower === 'rtl' || lower === 'left') return dict.dir_rtl || "Right to Left (RTL)";
     if (lower === 'ltr' || lower === 'right') return dict.dir_ltr || "Left to Right (LTR)";
@@ -2537,16 +3140,12 @@ function formatOptLabel(fieldId, val, raw) {
     if (lower === 'btt' || lower === 'up') return dict.dir_btt || "Bottom to Top (BTT)";
     if (lower === 'static' || lower === 'none') return dict.dir_static || "Static (No Scroll)";
   }
-  // 2. Units
-  if (fieldId === 'units' || fieldId === 'unit' || fieldId === 'temp_unit') {
-    if (lower === 'c' || lower.startsWith('c') || lower === 'metric') return "Celsius (°C)";
-    if (lower === 'f' || lower.startsWith('f') || lower === 'imperial') return "Fahrenheit (°F)";
-    return raw || val;
-  }
-  if (raw && String(raw).trim() !== v && !['units', 'unit', 'temp_unit', 'direction'].includes(fieldId)) {
+
+  if (raw && String(raw).trim() !== v && !['units', 'unit', 'temp_unit', 'direction', 'clock_format', 'date_format', 'format'].includes(fieldId)) {
     return String(raw).trim();
   }
-  // 3. Languages
+
+  // 4. Languages
   if (fieldId === 'lang') {
     if (lower === 'fr') return "Français (French)";
     if (lower === 'en') return "English";
@@ -2554,39 +3153,26 @@ function formatOptLabel(fieldId, val, raw) {
     if (lower === 'de') return "Deutsch (German)";
     if (lower === 'it') return "Italiano (Italian)";
   }
-  // 4. Timeframes
+  // 5. Timeframes
   if (fieldId === 'chart_timeframe') {
     if (lower === 'hourly') return "Hourly (1h)";
     if (lower === 'daily') return "Daily (24h)";
     if (lower === 'weekly') return "Weekly (7d)";
     if (lower === 'monthly') return "Monthly (30d)";
   }
-  // 5. Currencies
+  // 6. Currencies
   if (fieldId === 'currency') {
     if (lower === 'usd') return "US Dollar ($ USD)";
     if (lower === 'eur') return "Euro (€ EUR)";
     if (lower === 'gbp') return "British Pound (£ GBP)";
     if (lower === 'jpy') return "Japanese Yen (¥ JPY)";
   }
-  // 6. Visualizer styles
+  // 7. Visualizer styles
   if (fieldId === 'style') {
     if (lower === 'spectrum') return "Spectrum Bars";
     if (lower === 'waveform') return "Waveform Oscilloscope";
     if (lower === 'radial') return "Radial Circular";
     if (lower === 'neon_fire') return "Neon Fire";
-  }
-  // 7. Date & Clock formats
-  if (fieldId === 'date_format') {
-    if (v === '%d/%m/%Y') return "DD/MM/YYYY (24/08/2026)";
-    if (v === '%Y-%m-%d') return "YYYY-MM-DD (2026-08-24)";
-    if (v === '%d %b %Y') return "DD Mon YYYY (24 Aug 2026)";
-    if (v === '%A %d %B') return "Weekday DD Month (Monday 24 August)";
-  }
-  if (fieldId === 'clock_format') {
-    if (v === '%H:%M:%S') return "24h with Seconds (HH:MM:SS)";
-    if (v === '%H:%M') return "24h (HH:MM)";
-    if (v === '%I:%M:%S %p') return "12h with Seconds (HH:MM:SS AM/PM)";
-    if (v === '%I:%M %p') return "12h (HH:MM AM/PM)";
   }
   // 8. Theme names
   if (fieldId === 'clock_theme' || fieldId === 'theme') {
@@ -2742,16 +3328,20 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
         </div>
       `;
     } else if (engId === 'gifs') {
-      initialVariant = 'arcade';
+      initialVariant = 'all';
       variantHtml = `
         <div class="form-group" style="margin-top: 1rem;">
           <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_orientation_label">${t('modal_gif_orientation_label', 'GIF Orientation Library:')}</label>
-          <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem; margin-bottom: 0.75rem;">
-            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-yoko" style="flex:1; border: 1px solid var(--accent); font-weight: 600;">${t('tab_yoko', 'Horizontal (YOKO)')}</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-tate" style="flex:1; font-weight: 600; opacity: 0.7;">${t('tab_tate', 'Vertical (TATE)')}</button>
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem; margin-bottom: 0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-yoko" style="flex:1; border: 1px solid var(--accent); font-weight: 700;">🖥️ ${t('tab_yoko', 'Horizontal (Paysage / YOKO)')}</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-tate" style="flex:1; font-weight: 700; opacity: 0.7;">📱 ${t('tab_tate', 'Vertical (Portrait / TATE)')}</button>
           </div>
-          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_folder_label">${t('modal_gif_folder_label', 'GIF Playlist Folder:')}</label>
-          <input type="text" id="modal-field-variant" class="input" placeholder="all, /gifs/arcade, /gifs/nintendo" value="all">
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.5rem;">💡 ${t('gif_modal_help', 'Les dossiers choisis ou \'all\' basculeront automatiquement selon la rotation.')}</div>
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_folder_label">${t('modal_gif_folder_label', 'Dossier / Playlist de GIFs :')}</label>
+          <select id="modal-select-gif-folder" class="input" style="font-weight: 600; margin-bottom: 0.5rem;">
+            <option value="all" selected>🌟 ${t('all_folders_opt', 'Tous les dossiers (Auto Horizontal / Vertical)')}</option>
+          </select>
+          <input type="text" id="modal-field-variant" class="input" placeholder="all, /gifs/arcade, /gifs_tate/shmup" value="all">
         </div>
       `;
     } else if (engId === 'crypto') {
@@ -2880,33 +3470,53 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 
     const tabYoko = overlay.querySelector('#gif-tab-yoko');
     const tabTate = overlay.querySelector('#gif-tab-tate');
-    if (tabYoko && tabTate && variantEl) {
-      tabYoko.onclick = () => {
-        tabYoko.style.border = '1px solid var(--accent)';
-        tabYoko.style.opacity = '1';
-        tabTate.style.border = 'none';
-        tabTate.style.opacity = '0.7';
-        if (variantEl.value.startsWith('/gifs_tate')) {
-          variantEl.value = variantEl.value.replace('/gifs_tate', '/gifs');
-        } else if (variantEl.value === 'all' || variantEl.value === '') {
-          variantEl.value = '/gifs';
-        }
-        variantEl.placeholder = "all, /gifs/arcade, /gifs/nintendo";
-        idInput.value = generateSuggestedId('gifs', variantEl.value);
+    const gifSelect = overlay.querySelector('#modal-select-gif-folder');
+    if (gifSelect && variantEl) {
+      let cachedPlaylists = [];
+      fetchCachedEndpoint('/api/playlists').then(data => {
+        cachedPlaylists = parseOptions(data);
+        populateGifSelect('yoko');
+      }).catch(() => {});
+
+      function populateGifSelect(orientation) {
+        gifSelect.innerHTML = `<option value="all" selected>🌟 ${t('all_folders_opt', 'Tous les dossiers (Auto Horizontal / Vertical)')}</option>`;
+        const filtered = cachedPlaylists.filter(p => p.orientation === orientation || (orientation === 'yoko' ? !p.value.includes('tate') : p.value.includes('tate')));
+        filtered.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.value;
+          const cnt = (p.count !== undefined && p.count > 0) ? ` (${p.count})` : '';
+          opt.textContent = `${p.label}${cnt}`;
+          gifSelect.appendChild(opt);
+        });
+      }
+
+      gifSelect.onchange = () => {
+        variantEl.value = gifSelect.value;
+        if (idInput) idInput.value = generateSuggestedId('gifs', gifSelect.value);
       };
-      tabTate.onclick = () => {
-        tabTate.style.border = '1px solid var(--accent)';
-        tabTate.style.opacity = '1';
-        tabYoko.style.border = 'none';
-        tabYoko.style.opacity = '0.7';
-        if (variantEl.value.startsWith('/gifs')) {
-          variantEl.value = variantEl.value.replace('/gifs', '/gifs_tate');
-        } else if (variantEl.value === 'all' || variantEl.value === '') {
-          variantEl.value = '/gifs_tate';
-        }
-        variantEl.placeholder = "/gifs_tate, /gifs_tate/arcade, /gifs_tate/shmup";
-        idInput.value = generateSuggestedId('gifs', variantEl.value);
-      };
+
+      if (tabYoko && tabTate) {
+        tabYoko.onclick = () => {
+          tabYoko.style.border = '1px solid var(--accent)';
+          tabYoko.style.opacity = '1';
+          tabTate.style.border = 'none';
+          tabTate.style.opacity = '0.7';
+          populateGifSelect('yoko');
+          variantEl.value = 'all';
+          variantEl.placeholder = "all, /gifs/arcade, /gifs/nintendo";
+          if (idInput) idInput.value = generateSuggestedId('gifs', 'all');
+        };
+        tabTate.onclick = () => {
+          tabTate.style.border = '1px solid var(--accent)';
+          tabTate.style.opacity = '1';
+          tabYoko.style.border = 'none';
+          tabYoko.style.opacity = '0.7';
+          populateGifSelect('tate');
+          variantEl.value = 'all';
+          variantEl.placeholder = "all, /gifs_tate/arcade, /gifs_tate/shmup";
+          if (idInput) idInput.value = generateSuggestedId('gifs', 'all');
+        };
+      }
     }
 
     const rotCheck = overlay.querySelector('#modal-check-rotation');
@@ -3570,57 +4180,191 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
 
           function buildMultiSelectGroup(opts, targetFieldId, instId, initVal) {
               const container = document.createElement('div');
-              container.style = 'display: flex; flex-direction: column; gap: 0.5rem; width: 100%;';
-              
-              const tagContainer = document.createElement('div');
-              tagContainer.className = 'rotation-toggles';
-              tagContainer.style = 'display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.2rem;';
-              
+              container.style = 'display: flex; flex-direction: column; gap: 0.75rem; width: 100%;';
+
+              const isFolderField = (targetFieldId === 'folder');
+              const initialTokens = initVal ? String(initVal).split(',').map(s => s.trim().toUpperCase()) : [];
+
               const textInput = document.createElement('input');
               textInput.type = 'text';
               textInput.className = 'input';
               textInput.id = `cfg-dyn-${instId}-${targetFieldId}`;
               textInput.value = initVal || '';
-              textInput.placeholder = 'Sélectionnez des tags ou saisissez librement (séparés par des virgules)...';
-              
+              textInput.placeholder = isFolderField ? 'all, /gifs/arcade, /gifs_tate/shmup...' : 'Sélectionnez des tags ou saisissez librement (séparés par des virgules)...';
+
               function syncTagsFromInput() {
                   const activeTokens = textInput.value.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
-                  const cbs = tagContainer.querySelectorAll(`input[type="checkbox"]`);
+                  const isAll = activeTokens.includes('ALL');
+                  const cbs = container.querySelectorAll(`input[type="checkbox"].multi-cb-${instId}-${targetFieldId}`);
                   cbs.forEach(cb => {
-                      cb.checked = activeTokens.includes(String(cb.value).trim().toUpperCase());
+                      const cbVal = String(cb.value).trim().toUpperCase();
+                      cb.checked = isAll || activeTokens.includes(cbVal) || activeTokens.some(t => cbVal.endsWith('/' + t) || t.endsWith('/' + cbVal));
                   });
               }
 
               function syncInputFromTags() {
-                  const currentTokens = textInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                  const currentTokens = textInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0 && s.toUpperCase() !== 'ALL');
                   const knownTagVals = opts.map(o => String(o.value).trim().toUpperCase());
                   const customTokens = currentTokens.filter(tok => !knownTagVals.includes(tok.toUpperCase()));
                   
-                  const checkedTagVals = Array.from(tagContainer.querySelectorAll(`input[type="checkbox"]:checked`)).map(cb => cb.value);
+                  const checkedTagVals = Array.from(container.querySelectorAll(`input[type="checkbox"].multi-cb-${instId}-${targetFieldId}:checked`)).map(cb => cb.value);
                   const allTokens = [...checkedTagVals, ...customTokens];
-                  textInput.value = allTokens.join(',');
+                  textInput.value = (allTokens.length === 0) ? 'all' : allTokens.join(',');
               }
 
-              const initialTokens = initVal ? String(initVal).split(',').map(s => s.trim().toUpperCase()) : [];
+              if (isFolderField) {
+                  // Separation into YOKO (Horizontal) and TATE (Vertical)
+                  const yokoOpts = opts.filter(o => o.orientation === 'yoko' || (!o.orientation && !o.value.includes('tate') && !o.label.includes('tate')));
+                  const tateOpts = opts.filter(o => o.orientation === 'tate' || o.value.includes('tate') || o.label.includes('tate'));
 
-              opts.forEach(opt => {
-                  const isChecked = initialTokens.includes(String(opt.value).trim().toUpperCase());
-                  const lbl = document.createElement('label');
-                  lbl.className = 'toggle-btn';
-                  lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${formatOptLabel(targetFieldId, opt.value, opt.label)}</span>`;
-                  
-                  const cb = lbl.querySelector('input[type="checkbox"]');
-                  cb.addEventListener('change', () => {
+                  // Helper info card
+                  const infoCard = document.createElement('div');
+                  infoCard.style = 'background: rgba(var(--accent-rgb, 0, 229, 255), 0.08); border-left: 3px solid var(--accent); padding: 0.6rem 0.8rem; border-radius: 4px; font-size: 0.82rem; line-height: 1.35; color: var(--text-secondary);';
+                  infoCard.innerHTML = `<strong>💡 ${t('gif_auto_switch_title', 'Détection & Switch Automatique :')}</strong> ${t('gif_auto_switch_desc', 'L\'ArcadeMatrix bascule automatiquement : en affichage Horizontal (Paysage / YOKO), seuls les dossiers horizontaux sont joués. En affichage Vertical (Portrait / TATE), seuls les dossiers verticaux sont joués.')}`;
+                  container.appendChild(infoCard);
+
+                  // Tab switcher for orientations
+                  const tabNav = document.createElement('div');
+                  tabNav.style = 'display: flex; gap: 0.5rem; margin-top: 0.25rem;';
+                  tabNav.innerHTML = `
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-tab-yoko-${instId}" style="flex:1; border: 1px solid var(--accent); font-weight: 700;">🖥️ ${t('tab_yoko', 'Horizontal (Paysage / YOKO)')} <span class="badge" style="margin-left: 4px; opacity: 0.8;">${yokoOpts.length}</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-tab-tate-${instId}" style="flex:1; font-weight: 700; opacity: 0.7;">📱 ${t('tab_tate', 'Vertical (Portrait / TATE)')} <span class="badge" style="margin-left: 4px; opacity: 0.8;">${tateOpts.length}</span></button>
+                  `;
+                  container.appendChild(tabNav);
+
+                  // Container for YOKO
+                  const yokoContainer = document.createElement('div');
+                  yokoContainer.id = `pane-yoko-${instId}`;
+                  yokoContainer.style = 'display: flex; flex-direction: column; gap: 0.4rem;';
+
+                  const yokoActions = document.createElement('div');
+                  yokoActions.style = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;';
+                  yokoActions.innerHTML = `
+                    <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">🖥️ /gifs/ (${yokoOpts.length} ${t('folders_count', 'dossiers')})</span>
+                    <div style="display: flex; gap: 0.35rem;">
+                      <button type="button" class="btn btn-sm" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" id="btn-sel-all-yoko-${instId}">✅ ${t('select_all_btn', 'Tout cocher')}</button>
+                      <button type="button" class="btn btn-sm" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" id="btn-clr-yoko-${instId}">✖️ ${t('clear_btn', 'Décocher')}</button>
+                    </div>
+                  `;
+                  yokoContainer.appendChild(yokoActions);
+
+                  const yokoTagBox = document.createElement('div');
+                  yokoTagBox.className = 'rotation-toggles';
+                  yokoTagBox.style = 'display: flex; gap: 0.4rem; flex-wrap: wrap; max-height: 180px; overflow-y: auto; padding: 0.25rem; background: rgba(0,0,0,0.15); border-radius: var(--radius-sm); border: 1px solid var(--glass-border);';
+
+                  if (yokoOpts.length === 0) {
+                      yokoTagBox.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); padding: 0.5rem;">${t('gif_no_yoko', 'Aucun dossier horizontal trouvé dans /gifs')}</span>`;
+                  } else {
+                      yokoOpts.forEach(opt => {
+                          const isChecked = initialTokens.includes('ALL') || initialTokens.includes(String(opt.value).trim().toUpperCase()) || initialTokens.includes(String(opt.label).trim().toUpperCase());
+                          const lbl = document.createElement('label');
+                          lbl.className = 'toggle-btn';
+                          const countStr = (opt.count !== undefined && opt.count > 0) ? ` <span style="opacity:0.65; font-size:0.75rem;">(${opt.count})</span>` : '';
+                          lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${opt.label}${countStr}</span>`;
+                          lbl.querySelector('input[type="checkbox"]').addEventListener('change', syncInputFromTags);
+                          yokoTagBox.appendChild(lbl);
+                      });
+                  }
+                  yokoContainer.appendChild(yokoTagBox);
+                  container.appendChild(yokoContainer);
+
+                  // Container for TATE
+                  const tateContainer = document.createElement('div');
+                  tateContainer.id = `pane-tate-${instId}`;
+                  tateContainer.style = 'display: none; flex-direction: column; gap: 0.4rem;';
+
+                  const tateActions = document.createElement('div');
+                  tateActions.style = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;';
+                  tateActions.innerHTML = `
+                    <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">📱 /gifs_tate/ (${tateOpts.length} ${t('folders_count', 'dossiers')})</span>
+                    <div style="display: flex; gap: 0.35rem;">
+                      <button type="button" class="btn btn-sm" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" id="btn-sel-all-tate-${instId}">✅ ${t('select_all_btn', 'Tout cocher')}</button>
+                      <button type="button" class="btn btn-sm" style="font-size: 0.72rem; padding: 0.2rem 0.5rem;" id="btn-clr-tate-${instId}">✖️ ${t('clear_btn', 'Décocher')}</button>
+                    </div>
+                  `;
+                  tateContainer.appendChild(tateActions);
+
+                  const tateTagBox = document.createElement('div');
+                  tateTagBox.className = 'rotation-toggles';
+                  tateTagBox.style = 'display: flex; gap: 0.4rem; flex-wrap: wrap; max-height: 180px; overflow-y: auto; padding: 0.25rem; background: rgba(0,0,0,0.15); border-radius: var(--radius-sm); border: 1px solid var(--glass-border);';
+
+                  if (tateOpts.length === 0) {
+                      tateTagBox.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted); padding: 0.5rem;">${t('gif_no_tate', 'Aucun dossier vertical trouvé dans /gifs_tate')}</span>`;
+                  } else {
+                      tateOpts.forEach(opt => {
+                          const isChecked = initialTokens.includes('ALL') || initialTokens.includes(String(opt.value).trim().toUpperCase()) || initialTokens.includes(String(opt.label).trim().toUpperCase());
+                          const lbl = document.createElement('label');
+                          lbl.className = 'toggle-btn';
+                          const countStr = (opt.count !== undefined && opt.count > 0) ? ` <span style="opacity:0.65; font-size:0.75rem;">(${opt.count})</span>` : '';
+                          lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${opt.label}${countStr}</span>`;
+                          lbl.querySelector('input[type="checkbox"]').addEventListener('change', syncInputFromTags);
+                          tateTagBox.appendChild(lbl);
+                      });
+                  }
+                  tateContainer.appendChild(tateTagBox);
+                  container.appendChild(tateContainer);
+
+                  // Tab click events
+                  const btnTabYoko = tabNav.querySelector(`#btn-tab-yoko-${instId}`);
+                  const btnTabTate = tabNav.querySelector(`#btn-tab-tate-${instId}`);
+                  btnTabYoko.onclick = () => {
+                      btnTabYoko.style.border = '1px solid var(--accent)';
+                      btnTabYoko.style.opacity = '1';
+                      btnTabTate.style.border = 'none';
+                      btnTabTate.style.opacity = '0.7';
+                      yokoContainer.style.display = 'flex';
+                      tateContainer.style.display = 'none';
+                  };
+                  btnTabTate.onclick = () => {
+                      btnTabTate.style.border = '1px solid var(--accent)';
+                      btnTabTate.style.opacity = '1';
+                      btnTabYoko.style.border = 'none';
+                      btnTabYoko.style.opacity = '0.7';
+                      tateContainer.style.display = 'flex';
+                      yokoContainer.style.display = 'none';
+                  };
+
+                  // Select All / Clear handlers
+                  const btnSelYoko = yokoActions.querySelector(`#btn-sel-all-yoko-${instId}`);
+                  const btnClrYoko = yokoActions.querySelector(`#btn-clr-yoko-${instId}`);
+                  if (btnSelYoko) btnSelYoko.onclick = () => {
+                      yokoTagBox.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = true);
                       syncInputFromTags();
+                  };
+                  if (btnClrYoko) btnClrYoko.onclick = () => {
+                      yokoTagBox.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+                      syncInputFromTags();
+                  };
+
+                  const btnSelTate = tateActions.querySelector(`#btn-sel-all-tate-${instId}`);
+                  const btnClrTate = tateActions.querySelector(`#btn-clr-tate-${instId}`);
+                  if (btnSelTate) btnSelTate.onclick = () => {
+                      tateTagBox.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = true);
+                      syncInputFromTags();
+                  };
+                  if (btnClrTate) btnClrTate.onclick = () => {
+                      tateTagBox.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+                      syncInputFromTags();
+                  };
+
+              } else {
+                  // Standard multi-select group
+                  const tagContainer = document.createElement('div');
+                  tagContainer.className = 'rotation-toggles';
+                  tagContainer.style = 'display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.2rem;';
+
+                  opts.forEach(opt => {
+                      const isChecked = initialTokens.includes(String(opt.value).trim().toUpperCase());
+                      const lbl = document.createElement('label');
+                      lbl.className = 'toggle-btn';
+                      lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${formatOptLabel(targetFieldId, opt.value, opt.label)}</span>`;
+                      lbl.querySelector('input[type="checkbox"]').addEventListener('change', syncInputFromTags);
+                      tagContainer.appendChild(lbl);
                   });
-                  tagContainer.appendChild(lbl);
-              });
+                  container.appendChild(tagContainer);
+              }
 
-              textInput.addEventListener('input', () => {
-                  syncTagsFromInput();
-              });
-
-              container.appendChild(tagContainer);
+              textInput.addEventListener('input', syncTagsFromInput);
               container.appendChild(textInput);
               return container;
           }
@@ -3785,9 +4529,14 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
          if (fields && fields.length > 0) {
              fields.forEach(field => {
                 if (field.multiple && field.options_endpoint) {
-                    const checkboxes = document.querySelectorAll(`.multi-cb-${instance.instance_id}-${field.id}:checked`);
-                    const vals = Array.from(checkboxes).map(cb => cb.value);
-                    payload.config[field.id] = vals.join(',');
+                    const el = document.getElementById(`cfg-dyn-${instance.instance_id}-${field.id}`);
+                    if (el && el.value.trim().length > 0) {
+                        payload.config[field.id] = el.value.trim();
+                    } else {
+                        const checkboxes = document.querySelectorAll(`.multi-cb-${instance.instance_id}-${field.id}:checked`);
+                        const vals = Array.from(checkboxes).map(cb => cb.value);
+                        payload.config[field.id] = (vals.length === 0) ? 'all' : vals.join(',');
+                    }
                 } else {
                     const el = document.getElementById(`cfg-dyn-${instance.instance_id}-${field.id}`);
                     if (el) {
@@ -4628,6 +5377,24 @@ async function initSettings() {
       setLanguage(sys.lang);
     }
 
+    // General Preferences
+    const tzSelect = document.getElementById('sys-timezone');
+    if (tzSelect && typeof GLOBAL_TIMEZONES !== 'undefined') {
+      tzSelect.innerHTML = '';
+      GLOBAL_TIMEZONES.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label;
+        tzSelect.appendChild(option);
+      });
+      tzSelect.value = sys.timezone || 'Europe/Paris';
+    }
+    setVal('sys-format-24h', String(sys.format_24h !== false));
+    setVal('sys-unit', sys.unit || 'C');
+    setVal('sys-temp-offset', sys.temp_offset ?? 0.0);
+    setChk('sys-idle-fighter-enabled', sys.idle_fighter_enabled ?? false);
+    setVal('sys-idle-fighter-interval', sys.idle_fighter_interval || 60);
+
     // Dashboard brightness (0-100) is the live daytime brightness (day_brightness).
     const sliderBright = document.getElementById('slider-brightness');
     if (sliderBright) {
@@ -4676,6 +5443,8 @@ async function initSettings() {
     setVal('hw-pwm-lsb', matrix.pwm_lsb_nanoseconds);
     setChk('hw-disable-pulsing', matrix.disable_hardware_pulsing);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz);
+    setChk('hw-clk-phase', matrix.clk_phase !== false);
+    setVal('hw-latch-blanking', matrix.latch_blanking || 4);
     setVal('hw-screen-rotation', matrix.rotation_offset ?? 0);
     setChk('hw-gyro-autorotate', matrix.auto_rotate ?? true);
     setVal('hw-rotation-transition', matrix.rotation_transition || 'vortex');
@@ -4788,6 +5557,35 @@ async function initSettings() {
     });
   }
 
+  // Save General Preferences
+  const btnSaveGeneral = document.getElementById('btn-save-general');
+  if (btnSaveGeneral) {
+    btnSaveGeneral.addEventListener('click', async () => {
+      const tz = document.getElementById('sys-timezone')?.value || 'Europe/Paris';
+      const is24h = document.getElementById('sys-format-24h')?.value === 'true';
+      const unit = document.getElementById('sys-unit')?.value || 'C';
+      const tempOffset = parseFloat(document.getElementById('sys-temp-offset')?.value) || 0.0;
+      const idleFighterEnabled = document.getElementById('sys-idle-fighter-enabled')?.checked || false;
+      const idleFighterInterval = parseInt(document.getElementById('sys-idle-fighter-interval')?.value) || 60;
+
+      try {
+        await API.post('/api/system', {
+          system: {
+            timezone: tz,
+            format_24h: is24h,
+            unit: unit,
+            temp_offset: tempOffset,
+            idle_fighter_enabled: idleFighterEnabled,
+            idle_fighter_interval: idleFighterInterval,
+          }
+        });
+        window.showToast('System preferences saved!', 'success');
+      } catch (e) {
+        window.showToast('Failed to save system preferences', 'error');
+      }
+    });
+  }
+
   // Save Night Mode settings
   const btnSaveNight = document.getElementById('btn-save-night');
   if (btnSaveNight) {
@@ -4830,8 +5628,10 @@ async function initSettings() {
         mapping: document.getElementById('hw-mapping')?.value || 'regular',
         rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
         slowdown: numOr('hw-slowdown', 2),
-        pwm_bits: numOr('hw-pwm-bits', 11),
+        pwm_bits: numOr('hw-pwm-bits', 8),
         pwm_lsb_nanoseconds: numOr('hw-pwm-lsb', 130),
+        clk_phase: document.getElementById('hw-clk-phase')?.checked !== false,
+        latch_blanking: numOr('hw-latch-blanking', 4),
         disable_hardware_pulsing: document.getElementById('hw-disable-pulsing')?.checked || false,
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         rotation_offset: numOr('hw-screen-rotation', 0),

@@ -45,7 +45,8 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 | `disable_hardware_pulsing` | `bool` | Mettre à `true` pour éviter que le DMA n'affame le Wi-Fi interne (léger scintillement). |
 | `limit_refresh_rate_hz` | `int` | Limite le taux de rafraîchissement (`0` = illimité). |
 | `row_address_mode` | `int` | Type d'adressage des lignes pour panneaux exotiques (`0` par défaut). |
-| `multiplexing` | `int` | Type de multiplexage du panneau (`0` par défaut). |
+| `clk_phase` | `bool` | Inverse le front d'horloge CLK (activé par défaut sur ESP32-S3 pour éliminer les parasites et instabilités de pixels). |
+| `latch_blanking` | `int` | Nombre de cycles de masquage de latch (`1`–`4`) pour supprimer le ghosting (lignes fantômes). |
 | `panel_type` | `String` | Chaîne d'initialisation optionnelle du panneau (ex. `FM6126A`), généralement vide. |
 
 > La luminosité de jour en direct **n'est pas** stockée dans ce bloc ; elle est contrôlée à l'exécution depuis la Web UI (curseur du Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). La luminosité de nuit se trouve dans le bloc `system` (§4).
@@ -73,6 +74,8 @@ Vous pouvez aussi pousser des identifiants à l'exécution avec `POST /api/wifi 
 | `timezone` | `String` | Chaîne POSIX (ex. `CET-1CEST,M3.5.0,M10.5.0/3`). |
 | `format_24h` | `bool` | Format de l'heure. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | Langue du système (ex. `en`, `fr`, `es`). |
+| `temp_unit` | `String` | Unité de température préférée (`C` pour Celsius, `F` pour Fahrenheit). |
+| `temp_offset` | `float` | Décalage d'étalonnage en °C appliqué aux capteurs environnementaux. |
 | `night_mode_enabled` | `bool` | Active l'extinction automatique / la réduction de luminosité la nuit. |
 | `turn_off_at` | `String` | Heure de début de la veille (ex. `"23:00"`). |
 | `wake_up_at` | `String` | Heure de réveil (ex. `"07:00"`). |

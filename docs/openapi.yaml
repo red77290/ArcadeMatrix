@@ -373,11 +373,52 @@ paths:
     get:
       tags:
         - Media
-      summary: Get all GIF playlists
-      description: Returns the contents of /gifs/playlists.json containing all indexed animations.
+      summary: Get indexed GIF playlists (Horizontal YOKO and Vertical TATE)
+      description: Returns indexed GIF playlists from SD card storage (/gifs and /gifs_tate). Returns grouped { yoko: {...}, tate: {...} } or orientation-specific playlists when filtered with query parameter.
+      parameters:
+        - name: type
+          in: query
+          description: Optional filter for orientation (all, yoko, tate)
+          required: false
+          schema:
+            type: string
+            enum: [all, yoko, tate]
+        - name: folder
+          in: query
+          description: Optional playlist folder path filter
+          required: false
+          schema:
+            type: string
       responses:
         '200':
-          description: JSON object mapping playlist categories to arrays of GIF file paths.
+          description: Grouped or specific GIF playlists dictionary with path and animation counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  yoko:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          example: "/gifs/arcade"
+                        count:
+                          type: integer
+                          example: 25
+                  tate:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          example: "/gifs_tate/shmup"
+                        count:
+                          type: integer
+                          example: 10
         '404':
           description: Index not generated yet.
 

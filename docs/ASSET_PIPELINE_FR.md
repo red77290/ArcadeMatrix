@@ -40,10 +40,13 @@ python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD
 
 ---
 
-## 🎬 3. Playlists & Animations GIF
+## 🎬 3. Playlists & Animations GIF (Horizontales & Verticales)
 
-- **Découverte Automatique** : Le firmware scanne dynamiquement `/gifs/` et ses sous-dossiers (ex: `/gifs/mario`, `/gifs/sonic`).
-- **Indexation** : Les scripts `generate_index.sh` ou `generate_index.bat` créent un fichier `index.txt` dans chaque dossier GIF pour accélérer le tirage aléatoire et ignorer les fichiers macOS indésirables (`._*`).
+- **Stockage par orientation** :
+  - 🖥️ **Horizontal (YOKO)** : `/gifs/<dossier>/` (ex. `/gifs/arcade`, `/gifs/nintendo`).
+  - 📱 **Vertical (TATE)** : `/gifs_tate/<dossier>/` (ex. `/gifs_tate/shmup`, `/gifs_tate/pinball`).
+- **Basculement automatique** : Le firmware joue automatiquement les animations verticales en affichage portrait/vertical, et horizontales en affichage paysage.
+- **Indexation** : `tools/gif_indexation/generate_index.sh` (ou `.ps1`) génère les fichiers `index.txt` dans chaque sous-dossier pour un accès aléatoire $O(1)$ ultra-rapide, ainsi que les manifestes `playlists.json` pour la Web UI.
 
 ---
 

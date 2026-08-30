@@ -1,17 +1,21 @@
 #include "CoinGeckoProvider.h"
 #include "../core/Logger.h"
+#include <WiFiClientSecure.h>
 
 bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String lowerSymbol = symbol;
     lowerSymbol.toLowerCase();
     
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     // Primary API
     String cgUrl = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&symbols=" + lowerSymbol;
-    if (http.begin(cgUrl)) {
+    if (http.begin(client, cgUrl)) {
         int code = http.GET();
         if (code == 200) {
             String payload = http.getString();
@@ -28,7 +32,7 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
     if (lowerSymbol == "erg") coinId = "ergo";
     
     String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=usd&include_24hr_change=true";
-    if (http.begin(cgSimpleUrl)) {
+    if (http.begin(client, cgSimpleUrl)) {
         int code = http.GET();
         if (code == 200) {
             String payload = http.getString();
@@ -103,11 +107,14 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     String url = "https://api.coingecko.com/api/v3/coins/" + coinId + "/market_chart?vs_currency=usd&days=" + String(days);
 
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
-    if (http.begin(url)) {
+    if (http.begin(client, url)) {
         int code = http.GET();
         if (code == 200) {
             String payload = http.getString();

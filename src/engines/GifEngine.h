@@ -43,6 +43,7 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
     bool isFinished() const override;
     bool isRealtime() const override { return true; }
     bool selfPaced() const override { return true; }
@@ -96,6 +97,11 @@ public:
      */
     bool isActive() const { return isPlaying || playlistMode || hasPendingPlaylists; }
 
+    /**
+     * @brief Determine whether the current active matrix layout is vertical (Portrait / Tate).
+     */
+    bool isDisplayVertical() const;
+
 private:
     AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
     // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
@@ -119,6 +125,7 @@ private:
     // Playlist state
     std::vector<String> playlists;
     std::vector<String> defaultPlaylists;
+    std::vector<String> m_configuredFolders;
     std::vector<String> activeFiles;
     
     FsFile currentFile;              ///< Handle to the currently streaming file (GIF/raw)
@@ -140,6 +147,7 @@ private:
     const EngineConfig* m_instanceConfig = nullptr;
     EngineContext* m_context = nullptr;
     String resolveDefaultFolder() const;
+    void rebuildActivePlaylists();
     
     void loadNextFileInPlaylist();
     bool playRawFrame();
