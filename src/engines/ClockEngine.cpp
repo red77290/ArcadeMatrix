@@ -1,4 +1,5 @@
 #include "ClockEngine.h"
+#include "../core/ConfigLoader.h"
 #include "clocks/ArcadeClock.h"
 #include "clocks/CyberpunkClock.h"
 #include "clocks/FlipClock.h"
@@ -110,7 +111,19 @@ void ClockEngine::update(EngineContext* context) {
     if (context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
-        currentTime.hours = timeinfo.tm_hour;
+        extern ConfigLoader config;
+        bool is24h = config.system.format24h;
+        if (currentConfig) {
+            String fmt = currentConfig->getString("clock_format", "");
+            if (fmt.isEmpty()) fmt = currentConfig->getString("format", "");
+            if (fmt.indexOf("%I") >= 0) is24h = false;
+            else if (fmt.indexOf("%H") >= 0) is24h = true;
+        }
+        int h = timeinfo.tm_hour;
+        if (!is24h) {
+            h = (h % 12 == 0) ? 12 : (h % 12);
+        }
+        currentTime.hours = h;
         currentTime.minutes = timeinfo.tm_min;
         currentTime.seconds = timeinfo.tm_sec;
     }
@@ -151,7 +164,7 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     clockDesc.requirements.needsAudio = false;
     clockDesc.schema.fields = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("clock_format", ConfigType::STRING, "Time Format", "POSIX strftime format", "%H:%M:%S", false, "", "", "", "%H:%M:%S,%H:%M,%I:%M:%S %p,%I:%M %p", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "%H:%M:%S", false, "", "", "", "%H:%M:%S,%H:%M,%I:%M:%S %p,%I:%M %p", "", false, "", ValidationPolicy::Ignore),
         ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "Europe/Paris", false, "", "", "", "", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),

@@ -21,7 +21,10 @@ public:
     }
 
     void getSystemTime(struct tm* timeinfo) override {
-        getLocalTime(timeinfo, 0);
+        if (!timeinfo) return;
+        time_t now = 0;
+        time(&now);
+        localtime_r(&now, timeinfo);
     }
 
     bool hasPsram() const override {

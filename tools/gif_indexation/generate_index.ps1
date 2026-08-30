@@ -22,12 +22,12 @@ function Index-GifDirectory([string]$dirPath) {
 
     Get-ChildItem -Path $dirPath -Directory | ForEach-Object {
         $folderName = $_.Name
-        $files = Get-ChildItem -Path $_.FullName -File | Where-Object { $_.Extension -match "\.(gif|raw)$" } | Select-Object -ExpandProperty Name
+        $files = Get-ChildItem -Path $_.FullName -File | Where-Object { $_.Extension -match "\.(gif|raw|png)$" } | Select-Object -ExpandProperty Name
         
         if ($files.Count -gt 0) {
             $playlists[$folderName] = @{
                 "path" = "/$folderBase/$folderName"
-                "files" = $files
+                "count" = $files.Count
             }
             $totalFiles += $files.Count
 

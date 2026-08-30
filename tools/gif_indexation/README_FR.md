@@ -14,47 +14,32 @@ Deux scripts natifs sont fournis - **aucun Python requis** :
 
 ## Ce qu'il fait
 
-Il scanne un niveau de sous-dossiers à l'intérieur du dossier `gifs/` de ta carte SD. Chaque
-sous-dossier devient une "playlist" sélectionnable dans la Web UI. Par exemple :
-
-```text
-gifs/
-  ├── mario.gif          <- toujours joué, pas une playlist (fichier isolé à la racine de gifs/)
-  ├── mario/
-  │   ├── walk.gif
-  │   └── jump.gif
-  └── sonic/
-      └── run.gif
-```
-
-Ici, `mario/` et `sonic/` deviennent deux playlists activables/désactivables depuis la Web UI.
+Il scanne les sous-dossiers situés dans les répertoires **`gifs/`** (Horizontal / YOKO) et **`gifs_tate/`** (Vertical / TATE) de votre carte SD :
+- Chaque sous-dossier devient une playlist sélectionnable dans la Web UI.
+- Génère un fichier `index.txt` à l'intérieur de chaque sous-dossier pour un accès aléatoire $O(1)$ ultra-rapide par le firmware.
+- Génère `playlists.json` à la racine de `gifs/` et `gifs_tate/` avec le nombre d'animations.
 
 ## Utilisation
 
-Lance le script en pointant soit vers la **racine** de ta carte SD, soit directement vers son
-**dossier `gifs/`** - les deux fonctionnent, le script détecte automatiquement lequel tu lui as
-donné :
+Lancez le script en pointant soit vers la **racine** de votre carte SD, soit vers un dossier spécifique :
 
 ```bash
 # macOS/Linux
-./generate_index.sh /Volumes/SDCARD          # racine SD - descend automatiquement dans gifs/
-./generate_index.sh /Volumes/SDCARD/gifs     # ou le dossier gifs/ directement
+./generate_index.sh /Volumes/SDCARD          # Racine SD - indexe à la fois gifs/ (YOKO) et gifs_tate/ (TATE)
+./generate_index.sh /Volumes/SDCARD/gifs     # ou le dossier gifs/ spécifiquement
+./generate_index.sh /Volumes/SDCARD/gifs_tate# ou le dossier gifs_tate/ spécifiquement
 ```
 
 ```powershell
 # Windows
-.\generate_index.ps1 -Path E:\               # racine SD - descend automatiquement dans gifs\
-.\generate_index.ps1 -Path E:\gifs           # ou le dossier gifs\ directement
+.\generate_index.ps1 -Path E:\               # Racine SD - indexe à la fois gifs\ (YOKO) et gifs_tate\ (TATE)
+.\generate_index.ps1 -Path E:\gifs           # ou le dossier gifs\ spécifiquement
+.\generate_index.ps1 -Path E:\gifs_tate      # ou le dossier gifs_tate\ spécifiquement
 ```
 
-Le script écrit toujours le résultat dans **`<carte_sd>/gifs/playlists.json`**, le chemin exact
-attendu par le firmware (`WebServerAPI.cpp` sert `/api/playlists` en lisant
-`/gifs/playlists.json` sur la carte SD). Si ce fichier est absent ou obsolète, le sélecteur de
-playlists de la Web UI n'affichera simplement rien à choisir (la lecture des GIFs n'est pas
-affectée pour autant).
+Le script génère **`<carte_sd>/gifs/playlists.json`** et **`<carte_sd>/gifs_tate/playlists.json`**, ainsi que les fichiers **`index.txt`** dans chaque sous-dossier.
 
-**Relance le script à chaque fois que tu ajoutes, supprimes ou renommes un dossier dans
-`gifs/`** pour que la Web UI reste synchronisée avec ce qui se trouve réellement sur la carte SD.
+**Relancez le script à chaque fois que vous ajoutez, supprimez ou renommez des dossiers ou des GIFs** pour synchroniser l'interface Web et l'index du firmware.
 
 ---
 *Cet outil est open source et conçu pour l'écosystème ArcadeMatrix.*

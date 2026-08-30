@@ -738,32 +738,51 @@ void WebServerAPI::setupRoutes() {
 
     // API: List GIF Playlists (Direct SD streaming with zero heap allocation, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
-        String targetDir = "/gifs";
-        if (request->hasParam("type") && request->getParam("type")->value().equalsIgnoreCase("tate")) {
-            targetDir = "/gifs_tate";
-        } else if (request->hasParam("folder")) {
-            String f = request->getParam("folder")->value();
-            if (f.indexOf("tate") != -1) targetDir = "/gifs_tate";
-        }
+        String reqType = "";
+        if (request->hasParam("type")) reqType = request->getParam("type")->value();
+        else if (request->hasParam("folder") && request->getParam("folder")->value().indexOf("tate") != -1) reqType = "tate";
 
-        String jsonPath = targetDir + "/playlists.json";
-        bool hasJson = false;
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            hasJson = sd.exists(jsonPath.c_str());
-            xSemaphoreGive(sdMutex);
-        }
-        
-        if (hasJson) {
-            // Stream the JSON file directly from SD to client in chunks (no full file malloc)
-            request->send(new AsyncSdFatResponse(jsonPath.c_str(), "application/json"));
-            return;
-        }
-
-        // Fallback: Dynamic directory scan if playlists.json is absent
-        String content = "{";
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+        auto readOrScan = [](const String& rootDir) -> String {
+            String jsonPath = rootDir + "/playlists.json";
+            if (!sd.exists(jsonPath.c_str()) && rootDir.startsWith("/")) {
+                jsonPath = rootDir.substring(1) + "/playlists.json";
+            }
+            if (sd.exists(jsonPath.c_str())) {
+                FsFile f = sd.open(jsonPath.c_str(), FILE_OPEN_READ);
+                if (f) {
+                    size_t sz = f.size();
+                    if (sz > 0 && sz < 65536) {
+                        char* buf = (char*)malloc(sz + 1);
+                        if (buf) {
+                            size_t n = f.read((uint8_t*)buf, sz);
+                            buf[n] = '\0';
+                            f.close();
+                            char* jsonStart = buf;
+                            while (*jsonStart && *jsonStart != '{') jsonStart++;
+                            char* jsonEnd = buf + n - 1;
+                            while (jsonEnd > jsonStart && *jsonEnd != '}') jsonEnd--;
+                            if (*jsonStart == '{' && *jsonEnd == '}' && jsonEnd > jsonStart) {
+                                *(jsonEnd + 1) = '\0';
+                                String s(jsonStart);
+                                free(buf);
+                                return s;
+                            }
+                            free(buf);
+                        } else {
+                            f.close();
+                        }
+                    } else {
+                        f.close();
+                    }
+                }
+            }
+            // Fallback directory scan
+            String content = "{";
             bool first = true;
-            FsFile dir = sd.open(targetDir.c_str());
+            FsFile dir = sd.open(rootDir.c_str(), FILE_OPEN_READ);
+            if (!dir || !isDirectory(dir)) {
+                if (rootDir.startsWith("/")) dir = sd.open(rootDir.substring(1).c_str(), FILE_OPEN_READ);
+            }
             if (dir && isDirectory(dir)) {
                 FsFile file;
                 while (getNextFile(dir, file)) {
@@ -771,23 +790,73 @@ void WebServerAPI::setupRoutes() {
                         String name = getFileName(file);
                         int lastSlash = name.lastIndexOf('/');
                         if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                        
-                        if (name.length() > 0 && name[0] != '.') {
+                        if (name.length() > 0 && !isMacJunk(name)) {
+                            int count = 0;
+                            String indexPath = rootDir + "/" + name + "/index.txt";
+                            if (!sd.exists(indexPath.c_str()) && rootDir.startsWith("/")) {
+                                indexPath = rootDir.substring(1) + "/" + name + "/index.txt";
+                            }
+                            if (sd.exists(indexPath.c_str())) {
+                                FsFile idx = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+                                if (idx) {
+                                    while (idx.available()) {
+                                        String l = idx.readStringUntil('\n');
+                                        l.trim();
+                                        if (l.length() > 0 && !isMacJunk(l)) count++;
+                                    }
+                                    idx.close();
+                                }
+                            }
                             if (!first) content += ",";
-                            content += "\"" + name + "\":{";
-                            content += "\"path\":\"" + targetDir + "/" + name + "\",";
-                            content += "\"count\":0"; // No count in fallback to prevent WDT crashes
-                            content += "}";
+                            content += "\"" + name + "\":{\"path\":\"" + rootDir + "/" + name + "\",\"count\":" + String(count) + "}";
                             first = false;
                         }
                     }
                 }
+                dir.close();
             }
-            if (dir) dir.close();
-            xSemaphoreGive(sdMutex);
+            content += "}";
+            return content;
+        };
+
+        if (reqType.equalsIgnoreCase("tate")) {
+            String tateContent = "{}";
+            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                tateContent = readOrScan("/gifs_tate");
+                if (tateContent == "{}" && (sd.exists("/gifs/tate") || sd.exists("gifs/tate"))) {
+                    tateContent = readOrScan("/gifs/tate");
+                }
+                if (tateContent == "{}" && (sd.exists("/tate") || sd.exists("tate"))) {
+                    tateContent = readOrScan("/tate");
+                }
+                xSemaphoreGive(sdMutex);
+            }
+            request->send(200, "application/json", tateContent);
+            return;
+        } else if (reqType.equalsIgnoreCase("yoko") || reqType.equalsIgnoreCase("horizontal")) {
+            String yokoContent = "{}";
+            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+                yokoContent = readOrScan("/gifs");
+                xSemaphoreGive(sdMutex);
+            }
+            request->send(200, "application/json", yokoContent);
+            return;
         }
-        content += "}";
-        request->send(200, "application/json", content);
+
+        String jsonCombined = "{\"yoko\":{},\"tate\":{}}";
+        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
+            String yoko = readOrScan("/gifs");
+            String tate = readOrScan("/gifs_tate");
+            if (tate == "{}" && (sd.exists("/gifs/tate") || sd.exists("gifs/tate"))) {
+                tate = readOrScan("/gifs/tate");
+            }
+            if (tate == "{}" && (sd.exists("/tate") || sd.exists("tate"))) {
+                tate = readOrScan("/tate");
+            }
+            xSemaphoreGive(sdMutex);
+            jsonCombined = "{\"yoko\":" + yoko + ",\"tate\":" + tate + "}";
+        }
+        request->send(200, "application/json", jsonCombined);
     });
 
     // API: Play GIF Playlists immediately
@@ -1311,6 +1380,8 @@ void WebServerAPI::setupRoutes() {
         sys["lang"] = config.system.lang.length() > 0 ? config.system.lang : "fr";
         sys["timezone"] = config.system.timezone;
         sys["format_24h"] = config.system.format24h;
+        sys["unit"] = config.system.unit;
+        sys["temp_offset"] = config.system.temp_offset;
         sys["night_mode_enabled"] = config.system.night_mode_enabled;
         sys["turn_off_at"] = config.system.turn_off_at;
         sys["wake_up_at"] = config.system.wake_up_at;
@@ -1335,6 +1406,12 @@ void WebServerAPI::setupRoutes() {
         mat["pwm_lsb_nanoseconds"] = 130;
         mat["disable_hardware_pulsing"] = false;
         mat["limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
+        mat["clk_phase"] = config.matrix.clkPhase;
+        mat["latch_blanking"] = config.matrix.latchBlanking;
+        mat["rotation_offset"] = config.matrix.rotation_offset;
+        mat["auto_rotate"] = config.matrix.auto_rotate;
+        mat["rotation_transition"] = config.matrix.rotation_transition;
+        mat["rotation_transition_duration_ms"] = config.matrix.rotation_transition_duration_ms;
 
         JsonObject mqtt = doc.createNestedObject("mqtt");
         mqtt["enabled"] = config.mqtt.enabled;
@@ -1390,6 +1467,14 @@ void WebServerAPI::setupRoutes() {
             config.system.format24h = sys["format_24h"].as<bool>();
             changed = true;
         }
+        if (!sys["unit"].isNull()) {
+            config.system.unit = sys["unit"].as<String>();
+            changed = true;
+        }
+        if (!sys["temp_offset"].isNull()) {
+            config.system.temp_offset = sys["temp_offset"].as<float>();
+            changed = true;
+        }
         if (!sys["night_mode_enabled"].isNull()) {
             config.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
             changed = true;
@@ -1436,7 +1521,12 @@ void WebServerAPI::setupRoutes() {
             if (!mat["row_address_mode"].isNull()) config.matrix.rowAddressMode = mat["row_address_mode"].as<int>();
             if (!mat["rgb_sequence"].isNull()) config.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
             if (!mat["pwm_bits"].isNull()) config.matrix.colorDepth = mat["pwm_bits"].as<int>();
+            else if (!mat["color_depth"].isNull()) config.matrix.colorDepth = mat["color_depth"].as<int>();
             if (!mat["limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
+            if (!mat["clk_phase"].isNull()) config.matrix.clkPhase = mat["clk_phase"].as<bool>();
+            else if (!mat["clkPhase"].isNull()) config.matrix.clkPhase = mat["clkPhase"].as<bool>();
+            if (!mat["latch_blanking"].isNull()) config.matrix.latchBlanking = mat["latch_blanking"].as<int>();
+            else if (!mat["latchBlanking"].isNull()) config.matrix.latchBlanking = mat["latchBlanking"].as<int>();
             if (!mat["rotation_offset"].isNull()) {
                 config.matrix.rotation_offset = mat["rotation_offset"].as<int>();
                 displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);

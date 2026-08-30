@@ -40,10 +40,13 @@ python3 tools/bdf_to_amfont/bdf_to_amfont.py /Volumes/SDCARD
 
 ---
 
-## 🎬 3. GIF Playlists & Animations
+## 🎬 3. GIF Playlists & Animations (Horizontal & Vertical)
 
-- **Auto-Discovery**: Firmware dynamically scans `/gifs/` and its subfolders (e.g., `/gifs/mario`, `/gifs/sonic`).
-- **Indexing**: `generate_index.sh` or `generate_index.bat` scripts create an `index.txt` file in each GIF directory to speed up randomized playback and ignore macOS junk (`._*`).
+- **Dual Orientation Storage**:
+  - 🖥️ **Horizontal (YOKO)**: `/gifs/<folder>/` (e.g. `/gifs/arcade`, `/gifs/nintendo`).
+  - 📱 **Vertical (TATE)**: `/gifs_tate/<folder>/` (e.g. `/gifs_tate/shmup`, `/gifs_tate/pinball`).
+- **Auto Resolution Switch**: Firmware automatically plays vertical animations on portrait/vertical displays, and horizontal animations on landscape displays.
+- **Indexing**: `tools/gif_indexation/generate_index.sh` (or `.ps1`) creates `index.txt` in each subfolder for $O(1)$ fast random access, and `playlists.json` for the Web UI.
 
 ---
 

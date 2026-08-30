@@ -36,7 +36,7 @@ index_folder() {
         
         files=()
         shopt -s nullglob
-        for ext in gif raw GIF RAW; do
+        for ext in gif raw png GIF RAW PNG; do
             for f in "$dir"/*.$ext; do
                 if [ -f "$f" ]; then
                     base_f="${f##*/}"

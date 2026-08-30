@@ -1,20 +1,24 @@
 #include "YahooFinanceProvider.h"
 #include "../core/Logger.h"
+#include <WiFiClientSecure.h>
 
 bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
     
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     int code = -1;
-    if (http.begin(url)) {
+    if (http.begin(client, url)) {
         code = http.GET();
         if (code != 200) {
             http.end();
             String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
-            if (http.begin(fallbackUrl)) {
+            if (http.begin(client, fallbackUrl)) {
                 code = http.GET();
             }
         }
@@ -80,17 +84,20 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
 
     String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
 
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
     int code = -1;
-    if (http.begin(url)) {
+    if (http.begin(client, url)) {
         code = http.GET();
         if (code != 200) {
             http.end();
             String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
-            if (http.begin(fallbackUrl)) {
+            if (http.begin(client, fallbackUrl)) {
                 code = http.GET();
             }
         }

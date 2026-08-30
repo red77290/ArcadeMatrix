@@ -17,13 +17,95 @@ GifEngine::~GifEngine() {
 
 #include "../core/LayoutHelper.h"
 
-String GifEngine::resolveDefaultFolder() const {
-    DisplayGeometry geom = m_context ? m_context->getGeometry() : DisplayGeometry{};
-    GifPlaylistSelection sel = GifSourceSelector::select(geom);
-    if (sd.exists(sel.primaryPath)) {
-        return sel.primaryPath;
+bool GifEngine::isDisplayVertical() const {
+    if (matrix && matrix->height() > matrix->width()) return true;
+    if (m_context) {
+        DisplayGeometry g = m_context->getGeometry();
+        if (g.height > g.width) return true;
+        if (g.layoutClass == LayoutClass::PORTRAIT || g.layoutClass == LayoutClass::TALL) return true;
     }
-    return sel.fallbackPath;
+    return false;
+}
+
+String GifEngine::resolveDefaultFolder() const {
+    return isDisplayVertical() ? "/gifs_tate" : "/gifs";
+}
+
+void GifEngine::rebuildActivePlaylists() {
+    bool vertical = isDisplayVertical();
+    std::vector<String> filtered;
+
+    bool isAll = m_configuredFolders.empty() || 
+                 (m_configuredFolders.size() == 1 && (m_configuredFolders[0] == "all" || m_configuredFolders[0] == "/gifs" || m_configuredFolders[0] == "/gifs_tate" || m_configuredFolders[0].length() == 0));
+
+    if (vertical) {
+        // VERTICAL (TATE) DISPLAY: Only play /gifs_tate folders!
+        if (isAll) {
+            std::vector<String> input = { "/gifs_tate" };
+            expandPlaylists(input, filtered);
+        } else {
+            for (const String& f : m_configuredFolders) {
+                String clean = sanitizePlaylistPath(f);
+                if (clean == "/gifs_tate") {
+                    std::vector<String> input = { "/gifs_tate" };
+                    expandPlaylists(input, filtered);
+                } else if (clean.startsWith("/gifs_tate/")) {
+                    if (sd.exists(clean.c_str())) filtered.push_back(clean);
+                } else if (clean.startsWith("/gifs/")) {
+                    // Check if matching tate folder exists
+                    String sub = clean.substring(6);
+                    String tatePath = "/gifs_tate/" + sub;
+                    if (sd.exists(tatePath.c_str())) filtered.push_back(tatePath);
+                } else {
+                    String tatePath = "/gifs_tate/" + f;
+                    if (sd.exists(tatePath.c_str())) filtered.push_back(tatePath);
+                }
+            }
+            if (filtered.empty()) {
+                // Fallback to all vertical folders if specific selection had no vertical match
+                std::vector<String> input = { "/gifs_tate" };
+                expandPlaylists(input, filtered);
+            }
+        }
+        if (filtered.empty()) {
+            LOGW("GifEngine", "Vertical (TATE) display active, but NO vertical GIF folders found in /gifs_tate.");
+        }
+    } else {
+        // HORIZONTAL (YOKO) DISPLAY: Only play /gifs folders!
+        if (isAll) {
+            std::vector<String> input = { "/gifs" };
+            expandPlaylists(input, filtered);
+        } else {
+            for (const String& f : m_configuredFolders) {
+                String clean = sanitizePlaylistPath(f);
+                if (clean == "/gifs") {
+                    std::vector<String> input = { "/gifs" };
+                    expandPlaylists(input, filtered);
+                } else if (clean.startsWith("/gifs_tate/")) {
+                    // Check if matching yoko folder exists
+                    String sub = clean.substring(11);
+                    String yokoPath = "/gifs/" + sub;
+                    if (sd.exists(yokoPath.c_str())) filtered.push_back(yokoPath);
+                } else if (clean.startsWith("/gifs/")) {
+                    if (sd.exists(clean.c_str())) filtered.push_back(clean);
+                } else {
+                    String yokoPath = "/gifs/" + f;
+                    if (sd.exists(yokoPath.c_str())) filtered.push_back(yokoPath);
+                }
+            }
+            if (filtered.empty()) {
+                // Fallback to all horizontal folders
+                std::vector<String> input = { "/gifs" };
+                expandPlaylists(input, filtered);
+            }
+        }
+        if (filtered.empty()) {
+            LOGW("GifEngine", "Horizontal (YOKO) display active, but NO horizontal GIF folders found in /gifs.");
+        }
+    }
+
+    defaultPlaylists = filtered;
+    LOGI("GifEngine", "Active playlists rebuilt for %s mode: %u folders.", vertical ? "TATE (Vertical)" : "YOKO (Horizontal)", (unsigned int)defaultPlaylists.size());
 }
 
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
@@ -34,9 +116,8 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
     if (!begin(context->getMatrix())) return EngineError::InitializationFailed;
     if (config) onConfigChanged(config);
     else {
-        std::vector<String> paths;
-        paths.push_back(resolveDefaultFolder());
-        setDefaultPlaylists(paths);
+        m_configuredFolders = { "all" };
+        rebuildActivePlaylists();
     }
     return EngineError::OK;
 }
@@ -49,12 +130,13 @@ void GifEngine::activate() {
         int cfgCount = m_instanceConfig->getInt("gifs_count", 0);
         if (cfgCount > 0) count = cfgCount;
     }
-    if (!hasDefaultPlaylists()) {
-        std::vector<String> paths;
-        paths.push_back(resolveDefaultFolder());
-        setDefaultPlaylists(paths);
+    rebuildActivePlaylists();
+    if (hasDefaultPlaylists()) {
+        playDefaultPlaylists(count);
+    } else {
+        stop();
+        if (matrix) matrix->fillScreen(0);
     }
-    playDefaultPlaylists(count);
 }
 
 void GifEngine::update(EngineContext* context) {
@@ -70,14 +152,12 @@ void GifEngine::deactivate() {
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
     m_instanceConfig = config;
+    m_configuredFolders.clear();
     if (config) {
         String folders = config->getString("folder", "all");
-        std::vector<String> paths;
-        
         if (folders == "all" || folders.isEmpty()) {
-            paths.push_back(resolveDefaultFolder()); // Dynamic primary/fallback selection
+            m_configuredFolders.push_back("all");
         } else {
-            // Split by comma
             int start = 0;
             while (start < folders.length()) {
                 int comma = folders.indexOf(',', start);
@@ -85,14 +165,59 @@ void GifEngine::onConfigChanged(const EngineConfig* config) {
                 String path = folders.substring(start, comma);
                 path.trim();
                 if (path.length() > 0) {
-                    paths.push_back(path);
+                    m_configuredFolders.push_back(path);
                 }
                 start = comma + 1;
             }
         }
+    } else {
+        m_configuredFolders.push_back("all");
+    }
+    rebuildActivePlaylists();
+
+    // Immediately restart playback with newly selected playlists if currently active
+    if (isActive() || isPlaying || playlistMode) {
+        int count = 1;
+        if (m_rotationBudget > 0) {
+            count = (int)m_rotationBudget;
+        } else if (m_instanceConfig) {
+            int cfgCount = m_instanceConfig->getInt("gifs_count", 0);
+            if (cfgCount > 0) count = cfgCount;
+        }
+        stop();
+        if (hasDefaultPlaylists()) {
+            playDefaultPlaylists(count);
+        } else {
+            if (matrix) matrix->fillScreen(0);
+        }
+    }
+}
+
+void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    if (matrix) {
+        size_t matrixPixels = matrix->width() * matrix->height();
+        if (canvasBuffer) {
+            heap_caps_free(canvasBuffer);
+            canvasBuffer = nullptr;
+        }
+        canvasBuffer = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (canvasBuffer) {
+            memset(canvasBuffer, 0, matrixPixels * 2);
+        }
+    }
+    
+    rebuildActivePlaylists();
+    
+    if (isActive() || hasDefaultPlaylists()) {
+        int count = 1;
+        if (m_rotationBudget > 0) count = (int)m_rotationBudget;
+        else if (m_instanceConfig) count = m_instanceConfig->getInt("gifs_count", 0);
         
-        if (!paths.empty()) {
-            setDefaultPlaylists(paths);
+        if (hasDefaultPlaylists()) {
+            playDefaultPlaylists(count > 0 ? count : -1);
+        } else {
+            stop();
+            if (matrix) matrix->fillScreen(0);
         }
     }
 }
@@ -251,39 +376,51 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
             if (sd.exists(plJson.c_str())) {
                 FsFile plFile = sd.open(plJson.c_str(), FILE_OPEN_READ);
                 if (plFile) {
-                    DynamicJsonDocument doc(2048);
-                    DeserializationError err = deserializeJson(doc, plFile);
-                    plFile.close();
-                    if (!err && doc.is<JsonObject>()) {
-                        for (JsonPair kv : doc.as<JsonObject>()) {
-                            if (kv.value().is<JsonObject>()) {
-                                String subPath = kv.value()["path"].as<String>();
-                                if (subPath.length() > 0) {
-                                    outPaths.push_back(subPath);
-                                    loadedFromJson = true;
+                    size_t sz = plFile.size();
+                    if (sz > 0 && sz < 65536) {
+                        char* buf = (char*)malloc(sz + 1);
+                        if (buf) {
+                            size_t n = plFile.read((uint8_t*)buf, sz);
+                            buf[n] = '\0';
+                            char* jsonStart = buf;
+                            while (*jsonStart && *jsonStart != '{') jsonStart++;
+                            DynamicJsonDocument doc(sz + 2048);
+                            DeserializationError err = deserializeJson(doc, jsonStart);
+                            free(buf);
+                            if (!err && doc.is<JsonObject>()) {
+                                for (JsonPair kv : doc.as<JsonObject>()) {
+                                    if (kv.value().is<JsonObject>()) {
+                                        String subPath = kv.value()["path"].as<String>();
+                                        if (subPath.length() > 0) {
+                                            outPaths.push_back(sanitizePlaylistPath(subPath));
+                                            loadedFromJson = true;
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                    plFile.close();
                 }
             }
             if (!loadedFromJson) {
-                // Fallback to SD directory check if playlists.json is absent
+                // Fallback to SD directory check if playlists.json is absent or invalid
                 FsFile dir = sd.open(rootP.c_str(), FILE_OPEN_READ);
+                if (!dir || !isDirectory(dir)) {
+                    if (rootP.startsWith("/")) dir = sd.open(rootP.substring(1).c_str(), FILE_OPEN_READ);
+                }
                 if (dir && isDirectory(dir)) {
-                    FsFile entry = dir.openNextFile();
-                    while (entry) {
+                    FsFile entry;
+                    while (getNextFile(dir, entry)) {
                         if (isDirectory(entry)) {
                             String subName = getFileName(entry);
                             if (!isMacJunk(subName)) {
                                 outPaths.push_back(rootP + "/" + subName);
                             }
                         }
-                        entry.close();
-                        entry = dir.openNextFile();
                     }
+                    dir.close();
                 }
-                if (dir) dir.close();
             }
             continue;
         } else {
@@ -306,6 +443,8 @@ void GifEngine::playPlaylists(std::vector<String> playlistPaths) {
     pendingPlaylists = expanded;
     hasPendingPlaylists = true;
     remainingGifsToPlay = -1;
+    stop();
+    loop();
 }
 
 void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
@@ -316,10 +455,13 @@ void GifEngine::setDefaultPlaylists(std::vector<String> playlistPaths) {
 }
 
 String GifEngine::sanitizePlaylistPath(String p) {
+    p.trim();
     if (!p.startsWith("/")) p = "/" + p;
-    // Exact match ("/gifs" or "/sprites", no trailing slash) must NOT be re-prefixed
-    if (p == "/gifs" || p == "/sprites") return p;
-    if (!p.startsWith("/gifs/") && !p.startsWith("/sprites/")) p = "/gifs" + p;
+    // Exact match ("/gifs", "/gifs_tate" or "/sprites", no trailing slash) must NOT be re-prefixed
+    if (p == "/gifs" || p == "/gifs_tate" || p == "/sprites") return p;
+    if (p.startsWith("/gifs_tate/")) return p;
+    if (p.startsWith("/sprites/")) return p;
+    if (!p.startsWith("/gifs/")) p = "/gifs" + p;
     return p;
 }
 
@@ -361,6 +503,9 @@ void GifEngine::loadNextFileInPlaylist() {
             while (indexFile.available()) {
                 String line = indexFile.readStringUntil('\n');
                 line.trim();
+                while (line.length() > 0 && ((uint8_t)line[0] < 32 || (uint8_t)line[0] > 126)) {
+                    line = line.substring(1);
+                }
                 if (line.length() > 0 && !isMacJunk(line)) {
                     if (line.indexOf("._") == -1 && line.indexOf("System Volume") == -1) {
                         validFiles.push_back(line);
@@ -374,8 +519,8 @@ void GifEngine::loadNextFileInPlaylist() {
         if (validFiles.empty()) {
             FsFile pDir = sd.open(pPath.c_str(), FILE_OPEN_READ);
             if (pDir && isDirectory(pDir)) {
-                FsFile fileEntry = pDir.openNextFile();
-                while (fileEntry) {
+                FsFile fileEntry;
+                while (getNextFile(pDir, fileEntry)) {
                     if (!isDirectory(fileEntry)) {
                         String name = getFileName(fileEntry);
                         if (!isMacJunk(name) && name.indexOf("._") == -1 && name.indexOf("System Volume") == -1) {
@@ -386,8 +531,6 @@ void GifEngine::loadNextFileInPlaylist() {
                             }
                         }
                     }
-                    fileEntry.close();
-                    fileEntry = pDir.openNextFile();
                 }
                 pDir.close();
             }
@@ -788,8 +931,7 @@ EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
     desc_gifs.schema.fields = {
         ConfigField("folder", ConfigType::LIST, "Playlists", "Active GIF playlists", "all", false, "", "", "", "", "/api/playlists", true, "", ValidationPolicy::Ignore),
         ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("shuffle", ConfigType::BOOLEAN, "Shuffle", "Randomize animation order", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("duration_sec", ConfigType::INTEGER, "Duration per GIF", "Seconds per animation", "10", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp)
+        ConfigField("shuffle", ConfigType::BOOLEAN, "Shuffle", "Randomize animation order", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
     };
     desc_gifs.factory = []() { return std::unique_ptr<IEngine>(new GifEngine()); };
     return desc_gifs;
