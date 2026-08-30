@@ -9,7 +9,41 @@ ConfigLoader::ConfigLoader() {
     setDefaults();
 }
 
+ConfigSnapshot ConfigLoader::getSnapshot() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _publishedSnapshot;
+}
+
+uint32_t ConfigLoader::getVersion() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _version;
+}
+
+void ConfigLoader::publishSnapshot() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    publishSnapshot_locked();
+}
+
+void ConfigLoader::publishSnapshot_locked() {
+    _publishedSnapshot.version = ++_version;
+    _publishedSnapshot.matrix = matrix;
+    _publishedSnapshot.wifi = wifi;
+    _publishedSnapshot.mqtt = mqtt;
+    _publishedSnapshot.system = system;
+    _publishedSnapshot.rotation = rotation;
+    _publishedSnapshot.instances.clear();
+    _publishedSnapshot.instances.reserve(instances.size());
+    for (const auto& inst : instances) {
+        EngineInstanceSnapshot snap;
+        snap.instance_id = inst.instance_id;
+        snap.engine_id = inst.engine_id;
+        snap.config = inst.config;
+        _publishedSnapshot.instances.push_back(snap);
+    }
+}
+
 void ConfigLoader::setDefaults() {
+
     instances.clear();
     rotation.clear();
     
@@ -91,6 +125,7 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
+    publishSnapshot_locked();
 }
 
 bool ConfigLoader::parseFromJson(const char* jsonContent) {
@@ -265,6 +300,7 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         }
     }
 
+    publishSnapshot_locked();
     return true;
 }
 
@@ -392,6 +428,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
+    publishSnapshot();
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
         LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
         return false;
