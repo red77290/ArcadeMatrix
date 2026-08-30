@@ -74,3 +74,21 @@ void MarqueeEngine::render(EngineContext* context) {
         }
     }
 }
+
+void MarqueeEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    if (panelWidth != geometry.width || panelHeight != geometry.height) {
+        panelWidth = geometry.width;
+        panelHeight = geometry.height;
+        size_t newSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
+        if (buffer) {
+            if (m_hasPsram) heap_caps_free(buffer);
+            else free(buffer);
+            buffer = nullptr;
+        }
+        if (m_hasPsram) {
+            buffer = (uint16_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
+        } else {
+            buffer = (uint16_t*)malloc(newSize);
+        }
+    }
+}

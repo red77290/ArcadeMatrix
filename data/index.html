@@ -1177,23 +1177,34 @@ select.input option {
 
           <!-- System Metrics Grid -->
           <div class="card glass shadow">
-            <h3>System Metrics</h3>
+            <h3>System Hardware & Metrics</h3>
             <div class="metrics-grid">
               <div class="metric-box">
-                <div class="metric-label">CPU Load</div>
-                <div class="metric-val" id="metric-cpu">-- %</div>
+                <div class="metric-label">Microcontroller</div>
+                <div class="metric-val" style="font-size: 1.1rem; color: #38bdf8;" id="metric-mcu">ESP32-S3 @ 240MHz</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">Temperature</div>
+                <div class="metric-label">Temperature & Humidity</div>
                 <div class="metric-val" id="metric-temp">-- °C</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">RAM Memory</div>
-                <div class="metric-val" id="metric-ram">-- MB</div>
+                <div class="metric-label">Internal RAM (SRAM)</div>
+                <div class="metric-val" id="metric-ram">-- KB Free</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">Disk Storage</div>
-                <div class="metric-val" id="metric-disk">-- GB</div>
+                <div class="metric-label">External Memory (PSRAM)</div>
+                <div class="metric-val" id="metric-psram">-- MB Free</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 1.25rem; border-top: 1px solid var(--glass-border); padding-top: 1rem;">
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;">🔌 Detected Hardware Peripherals & Sensors:</div>
+              <div id="hardware-chips-list" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                <span class="version-badge" id="badge-hw-temp" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🌡️ SHTC3 Temp/Hum: Detecting...</span>
+                <span class="version-badge" id="badge-hw-mic" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🎙️ ES7210 Mics: Detecting...</span>
+                <span class="version-badge" id="badge-hw-dac" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🔊 ES8311 DAC: Detecting...</span>
+                <span class="version-badge" id="badge-hw-gyro" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🧭 QMI8658 IMU: Detecting...</span>
+                <span class="version-badge" id="badge-hw-psram" style="background: rgba(34, 197, 94, 0.15); color: #22c55e;">🧠 16MB OPI PSRAM: Active</span>
               </div>
             </div>
           </div>
@@ -1246,6 +1257,67 @@ select.input option {
             <input type="file" id="marquee-file-input" accept="image/png, image/jpeg, image/gif" style="display: none;">
           </div>
         </div>
+
+        <!-- WebRadio & Audio Streaming Hub Card -->
+        <div class="card glass shadow">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3>📻 <span data-i18n="radio_title">WebRadio & Audio Streaming Hub</span></h3>
+            <span id="audio-live-status-badge" class="version-badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8;">● Idle</span>
+          </div>
+          <p class="text-muted" data-i18n="radio_desc">Stream live Web Radios or broadcast music from your phone/PC via DLNA/UPnP (AudioCast, RiMusic, BubbleUPnP, VLC).</p>
+
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label>📻 Radio Preset</label>
+              <select id="radio-preset-select" class="input">
+                <option value="http://ice1.somafm.com/vaporwaves-128-mp3" data-name="SomaFM Vaporwaves">🕹️ SomaFM Vaporwaves (Synthwave / Retrowave)</option>
+                <option value="http://ice1.somafm.com/groovesalad-128-mp3" data-name="SomaFM Groove Salad">☕ SomaFM Groove Salad (Ambient / Chillout)</option>
+                <option value="http://relay1.slayradio.org:8000/" data-name="SlayRadio C64/Amiga">👾 SlayRadio (Commodore 64 & Amiga Remixes)</option>
+                <option value="http://stream.rainwave.cc:8000/all.mp3" data-name="Rainwave Gaming">🎮 Rainwave (Arcade & Chiptune Gaming)</option>
+                <option value="http://stream.zeno.fm/f3wvbbqmdg8uv" data-name="Lofi Girl">🎧 Lofi Girl / ChilledCow (Lo-Fi Hip Hop)</option>
+                <option value="http://direct.fipradio.fr/live/fip-midfi.mp3" data-name="FIP Radio">🎵 FIP Radio (Éclectique & Jazz/Groove)</option>
+                <option value="http://radionova.ice.infomaniak.ch/radionova-high.mp3" data-name="Radio Nova">🎸 Radio Nova (Groove, Funk & World)</option>
+                <option value="http://tsfjazz.ice.infomaniak.ch/tsfjazz-high.mp3" data-name="TSF Jazz">🎺 TSF Jazz (Jazz & Soul)</option>
+                <option value="http://direct.franceinter.fr/live/franceinter-midfi.mp3" data-name="France Inter">🎙️ France Inter (Actu & Culture)</option>
+                <option value="custom" data-name="Custom Stream">✍️ Custom URL (Flux Personnalisé)...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Station Name / Label</label>
+              <input type="text" id="radio-name-input" class="input" value="SomaFM Vaporwaves" placeholder="Nom de la station">
+            </div>
+          </div>
+
+          <div class="form-group" id="radio-custom-url-group" style="margin-top: 1rem;">
+            <label>Stream URL (HTTP / MP3 / Icecast / Shoutcast)</label>
+            <input type="url" id="radio-url-input" class="input" value="http://ice1.somafm.com/vaporwaves-128-mp3" placeholder="http://stream.example.com/radio.mp3">
+          </div>
+
+          <div class="form-grid col-3" style="margin-top: 1.25rem; align-items: center;">
+            <button id="btn-play-radio" class="btn btn-primary" style="font-weight: 700; font-size: 1rem;">▶️ Play Stream 🚀</button>
+            <button id="btn-stop-radio" class="btn btn-danger" style="font-weight: 700; font-size: 1rem;">⏹️ Stop Audio</button>
+            <div class="slider-group">
+              <label>🔊 Master Volume (<span id="val-audio-volume">80</span>%)</label>
+              <input type="range" id="slider-audio-volume" min="0" max="100" value="80">
+            </div>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: flex-end;">
+            <button id="btn-test-audio" class="btn btn-secondary btn-sm" style="font-weight: 600;">🔊 Tester le Haut-Parleur (Bip 880Hz)</button>
+          </div>
+
+          <!-- Live Now Playing Info Box -->
+          <div id="audio-now-playing-box" style="margin-top: 1.25rem; padding: 1rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Currently Playing</div>
+              <div id="audio-track-title" style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-top: 0.25rem;">No stream active</div>
+              <div id="audio-track-artist" style="font-size: 0.9rem; color: var(--text-muted);">Launch a radio preset or stream via DLNA</div>
+            </div>
+            <div style="text-align: right;">
+              <span id="audio-source-badge" class="version-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent-primary);">DLNA / Radio Ready</span>
+            </div>
+          </div>
+        </div>
+
         <div class="card glass shadow">
           <h3>🥊 <span data-i18n="fighter_title">Fighter Overlay</span></h3>
           <p class="text-muted" data-i18n="fighter_desc">Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.</p>
@@ -1424,16 +1496,6 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
-                <select id="hw-mapping" class="input">
-                  <option value="regular">Regular</option>
-                  <option value="regular-pi1">Regular Pi1</option>
-                  <option value="adafruit-hat">Adafruit HAT</option>
-                  <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
-                  <option value="compute-module">Compute Module</option>
-                </select>
-              </div>
-              <div class="form-group">
                 <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
                 <select id="hw-rgb" class="input">
                   <option value="RGB">RGB</option>
@@ -1459,30 +1521,48 @@ select.input option {
                 <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
               </div>
             </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
+
+            <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Slowdown GPIO <span class="tooltip-icon" data-tooltip="Slowdown for fast Pi CPUs (Pi 4=4, Pi 5=5)">?</span></label>
-                <input type="number" id="hw-slowdown" class="input" value="1" min="0" max="5">
+                <label>Color Depth / PWM Bits <span class="tooltip-icon" data-tooltip="Color depth bits per channel (2-8 on ESP32, 1-11 on RPi)">?</span></label>
+                <input type="number" id="hw-pwm-bits" class="input" value="8" min="2" max="11">
               </div>
               <div class="form-group">
-                <label>PWM Bits <span class="tooltip-icon" data-tooltip="Color depth (1-11)">?</span></label>
-                <input type="number" id="hw-pwm-bits" class="input" value="11" min="1" max="11">
+                <label>Latch Blanking / LSB (ns) <span class="tooltip-icon" data-tooltip="Blanking time / LSB pulse width for anti-ghosting">?</span></label>
+                <input type="number" id="hw-pwm-lsb" class="input" value="130" min="8" max="3000">
               </div>
               <div class="form-group">
-                <label>PWM LSB (ns) <span class="tooltip-icon" data-tooltip="LSB pulse width (130 default)">?</span></label>
-                <input type="number" id="hw-pwm-lsb" class="input" value="130" min="50" max="3000">
+                <label>Target Refresh Rate (Hz) <span class="tooltip-icon" data-tooltip="Min/Target refresh rate in Hz (0 = unlimited / default 90)">?</span></label>
+                <input type="number" id="hw-limit-refresh" class="input" value="90" min="0" max="500">
               </div>
-              <div class="form-group">
-                <label>Limit Refresh (Hz) <span class="tooltip-icon" data-tooltip="Max refresh rate in Hz (0 = unlimited)">?</span></label>
-                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="500">
-              </div>
-              <div class="form-group">
-                <label>Disable Hardware Pulsing <span class="tooltip-icon" data-tooltip="Enable if audio is glitching">?</span></label>
-                <div style="display: flex; align-items: center; height: 100%;">
-                  <label class="switch">
-                    <input type="checkbox" id="hw-disable-pulsing">
-                    <span class="slider"></span>
-                  </label>
+            </div>
+
+            <!-- Raspberry Pi Linux Specific Options (Hidden on ESP32/ESP32-S3) -->
+            <div id="rpi-hardware-group" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--glass-border);">
+              <h4 style="color: var(--accent-info); margin-bottom: 0.75rem;">🍓 Raspberry Pi 40-Pin GPIO Options</h4>
+              <div class="form-grid col-3">
+                <div class="form-group">
+                  <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
+                  <select id="hw-mapping" class="input">
+                    <option value="regular">Regular</option>
+                    <option value="regular-pi1">Regular Pi1</option>
+                    <option value="adafruit-hat">Adafruit HAT</option>
+                    <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
+                    <option value="compute-module">Compute Module</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Slowdown GPIO <span class="tooltip-icon" data-tooltip="Slowdown for fast Pi CPUs (Pi 4=4, Pi 5=5)">?</span></label>
+                  <input type="number" id="hw-slowdown" class="input" value="1" min="0" max="5">
+                </div>
+                <div class="form-group">
+                  <label>Disable Hardware Pulsing <span class="tooltip-icon" data-tooltip="Enable if audio is glitching on Pi ALSA">?</span></label>
+                  <div style="display: flex; align-items: center; height: 100%;">
+                    <label class="switch">
+                      <input type="checkbox" id="hw-disable-pulsing">
+                      <span class="slider"></span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1847,6 +1927,8 @@ const translations = {
     fighter_enabled: "Enabled",
     fighter_interval: "Interval between fights (seconds)",
     fighter_save: "Save Fighter Settings",
+    radio_title: "WebRadio & Audio Streaming Hub",
+    radio_desc: "Stream live Web Radios or broadcast music from your phone/PC via DLNA/UPnP (AudioCast, RiMusic, BubbleUPnP, VLC).",
     nav_system: "System",
     ota_drop: "Drop firmware binary here or click to browse",
     ota_confirm: "This will replace the running firmware and restart the device. Continue?",
@@ -1878,6 +1960,9 @@ const translations = {
     modal_add_title: "Add New Display Screen",
     modal_choose_theme: "Theme / Style / Variant:",
     modal_city_label: "City / Location (e.g. Paris, FR or Tokyo, JP):",
+    modal_gif_orientation_label: "GIF Orientation Library:",
+    tab_yoko: "Horizontal (YOKO)",
+    tab_tate: "Vertical (TATE)",
     modal_gif_folder_label: "GIF Playlist Folder:",
     modal_crypto_label: "Crypto Symbols (comma-separated):",
     modal_stock_label: "Stock Tickers (comma-separated):",
@@ -1966,6 +2051,8 @@ const translations = {
     fighter_enabled: "Activé",
     fighter_interval: "Intervalle entre les combats (secondes)",
     fighter_save: "Enregistrer les paramètres Combattant",
+    radio_title: "WebRadio & Streaming Audio",
+    radio_desc: "Diffusez des web-radios en direct ou envoyez le son de votre smartphone/PC via DLNA (AudioCast, RiMusic, BubbleUPnP, VLC).",
     nav_system: "Système",
     ota_drop: "Glissez le binaire ici ou cliquez pour parcourir",
     ota_confirm: "Cela va remplacer le firmware en cours et redémarrer l'appareil. Continuer ?",
@@ -1997,6 +2084,9 @@ const translations = {
     modal_add_title: "Ajouter un Nouvel Écran",
     modal_choose_theme: "Thème / Style / Variante :",
     modal_city_label: "Ville / Localisation (ex : Paris, FR ou Tokyo, JP) :",
+    modal_gif_orientation_label: "Bibliothèque GIF :",
+    tab_yoko: "Horizontal (YOKO)",
+    tab_tate: "Vertical (TATE)",
     modal_gif_folder_label: "Dossier de GIFs :",
     modal_crypto_label: "Symboles Crypto (séparés par une virgule) :",
     modal_stock_label: "Symboles Bourse (séparés par une virgule) :",
@@ -2085,6 +2175,8 @@ const translations = {
     fighter_enabled: "Activado",
     fighter_interval: "Intervalo entre combates (segundos)",
     fighter_save: "Guardar ajustes de Luchador",
+    radio_title: "WebRadio y Streaming de Audio",
+    radio_desc: "Transmita radios web en vivo o reproduzca audio desde su teléfono/PC mediante DLNA (AudioCast, RiMusic, BubbleUPnP, VLC).",
     nav_system: "Sistema",
     ota_drop: "Arrastra el binario aquí o haz clic para buscar",
     ota_confirm: "Esto reemplazará el firmware y reiniciará el dispositivo. ¿Continuar?",
@@ -2116,6 +2208,9 @@ const translations = {
     modal_add_title: "Añadir Nueva Pantalla",
     modal_choose_theme: "Tema / Estilo / Variante:",
     modal_city_label: "Ciudad / Ubicación (ej: París, FR o Tokio, JP):",
+    modal_gif_orientation_label: "Biblioteca de GIFs:",
+    tab_yoko: "Horizontal (YOKO)",
+    tab_tate: "Vertical (TATE)",
     modal_gif_folder_label: "Carpeta de GIFs:",
     modal_crypto_label: "Símbolos Crypto (separados por comas):",
     modal_stock_label: "Símbolos de Bolsa (separados por comas):",
@@ -2379,11 +2474,22 @@ function parseOptions(rawOptions) {
         const lbl = opt.label !== undefined ? opt.label : (opt.name !== undefined ? opt.name : val);
         return { value: String(val), label: String(lbl) };
       }
-      return { value: String(opt), label: String(opt) };
+      const s = String(opt).trim();
+      const col = s.indexOf(':');
+      if (col !== -1) {
+        return { value: s.substring(0, col).trim(), label: s.substring(col + 1).trim() };
+      }
+      return { value: s, label: s };
     });
   }
   if (typeof rawOptions === 'string' && rawOptions.trim().length > 0) {
-    return rawOptions.split(',').map(s => s.trim()).filter(s => s.length > 0).map(val => ({ value: val, label: val }));
+    return rawOptions.split(',').map(s => s.trim()).filter(s => s.length > 0).map(val => {
+      const col = val.indexOf(':');
+      if (col !== -1) {
+        return { value: val.substring(0, col).trim(), label: val.substring(col + 1).trim() };
+      }
+      return { value: val, label: val };
+    });
   }
   return [];
 }
@@ -2432,9 +2538,13 @@ function formatOptLabel(fieldId, val, raw) {
     if (lower === 'static' || lower === 'none') return dict.dir_static || "Static (No Scroll)";
   }
   // 2. Units
-  if (fieldId === 'units' || fieldId === 'unit') {
-    if (lower === 'c' || lower === 'metric') return "Celsius (°C)";
-    if (lower === 'f' || lower === 'imperial') return "Fahrenheit (°F)";
+  if (fieldId === 'units' || fieldId === 'unit' || fieldId === 'temp_unit') {
+    if (lower === 'c' || lower.startsWith('c') || lower === 'metric') return "Celsius (°C)";
+    if (lower === 'f' || lower.startsWith('f') || lower === 'imperial') return "Fahrenheit (°F)";
+    return raw || val;
+  }
+  if (raw && String(raw).trim() !== v && !['units', 'unit', 'temp_unit', 'direction'].includes(fieldId)) {
+    return String(raw).trim();
   }
   // 3. Languages
   if (fieldId === 'lang') {
@@ -2635,6 +2745,11 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
       initialVariant = 'arcade';
       variantHtml = `
         <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_orientation_label">${t('modal_gif_orientation_label', 'GIF Orientation Library:')}</label>
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem; margin-bottom: 0.75rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-yoko" style="flex:1; border: 1px solid var(--accent); font-weight: 600;">${t('tab_yoko', 'Horizontal (YOKO)')}</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="gif-tab-tate" style="flex:1; font-weight: 600; opacity: 0.7;">${t('tab_tate', 'Vertical (TATE)')}</button>
+          </div>
           <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_gif_folder_label">${t('modal_gif_folder_label', 'GIF Playlist Folder:')}</label>
           <input type="text" id="modal-field-variant" class="input" placeholder="all, /gifs/arcade, /gifs/nintendo" value="all">
         </div>
@@ -2760,6 +2875,37 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
           const optText = variantEl.options[variantEl.selectedIndex].text.replace(/^[^\w\s]+/, '').trim();
           titleInput.value = `${t('sysinfo_name', 'Infos Système')} (${optText})`;
         }
+      };
+    }
+
+    const tabYoko = overlay.querySelector('#gif-tab-yoko');
+    const tabTate = overlay.querySelector('#gif-tab-tate');
+    if (tabYoko && tabTate && variantEl) {
+      tabYoko.onclick = () => {
+        tabYoko.style.border = '1px solid var(--accent)';
+        tabYoko.style.opacity = '1';
+        tabTate.style.border = 'none';
+        tabTate.style.opacity = '0.7';
+        if (variantEl.value.startsWith('/gifs_tate')) {
+          variantEl.value = variantEl.value.replace('/gifs_tate', '/gifs');
+        } else if (variantEl.value === 'all' || variantEl.value === '') {
+          variantEl.value = '/gifs';
+        }
+        variantEl.placeholder = "all, /gifs/arcade, /gifs/nintendo";
+        idInput.value = generateSuggestedId('gifs', variantEl.value);
+      };
+      tabTate.onclick = () => {
+        tabTate.style.border = '1px solid var(--accent)';
+        tabTate.style.opacity = '1';
+        tabYoko.style.border = 'none';
+        tabYoko.style.opacity = '0.7';
+        if (variantEl.value.startsWith('/gifs')) {
+          variantEl.value = variantEl.value.replace('/gifs', '/gifs_tate');
+        } else if (variantEl.value === 'all' || variantEl.value === '') {
+          variantEl.value = '/gifs_tate';
+        }
+        variantEl.placeholder = "/gifs_tate, /gifs_tate/arcade, /gifs_tate/shmup";
+        idInput.value = generateSuggestedId('gifs', variantEl.value);
       };
     }
 
@@ -3422,6 +3568,63 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           let currentVal = configMap[field.id] !== undefined ? configMap[field.id] : field.default_value;
           if (currentVal === undefined || currentVal === null) currentVal = '';
 
+          function buildMultiSelectGroup(opts, targetFieldId, instId, initVal) {
+              const container = document.createElement('div');
+              container.style = 'display: flex; flex-direction: column; gap: 0.5rem; width: 100%;';
+              
+              const tagContainer = document.createElement('div');
+              tagContainer.className = 'rotation-toggles';
+              tagContainer.style = 'display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.2rem;';
+              
+              const textInput = document.createElement('input');
+              textInput.type = 'text';
+              textInput.className = 'input';
+              textInput.id = `cfg-dyn-${instId}-${targetFieldId}`;
+              textInput.value = initVal || '';
+              textInput.placeholder = 'Sélectionnez des tags ou saisissez librement (séparés par des virgules)...';
+              
+              function syncTagsFromInput() {
+                  const activeTokens = textInput.value.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+                  const cbs = tagContainer.querySelectorAll(`input[type="checkbox"]`);
+                  cbs.forEach(cb => {
+                      cb.checked = activeTokens.includes(String(cb.value).trim().toUpperCase());
+                  });
+              }
+
+              function syncInputFromTags() {
+                  const currentTokens = textInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                  const knownTagVals = opts.map(o => String(o.value).trim().toUpperCase());
+                  const customTokens = currentTokens.filter(tok => !knownTagVals.includes(tok.toUpperCase()));
+                  
+                  const checkedTagVals = Array.from(tagContainer.querySelectorAll(`input[type="checkbox"]:checked`)).map(cb => cb.value);
+                  const allTokens = [...checkedTagVals, ...customTokens];
+                  textInput.value = allTokens.join(',');
+              }
+
+              const initialTokens = initVal ? String(initVal).split(',').map(s => s.trim().toUpperCase()) : [];
+
+              opts.forEach(opt => {
+                  const isChecked = initialTokens.includes(String(opt.value).trim().toUpperCase());
+                  const lbl = document.createElement('label');
+                  lbl.className = 'toggle-btn';
+                  lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${formatOptLabel(targetFieldId, opt.value, opt.label)}</span>`;
+                  
+                  const cb = lbl.querySelector('input[type="checkbox"]');
+                  cb.addEventListener('change', () => {
+                      syncInputFromTags();
+                  });
+                  tagContainer.appendChild(lbl);
+              });
+
+              textInput.addEventListener('input', () => {
+                  syncTagsFromInput();
+              });
+
+              container.appendChild(tagContainer);
+              container.appendChild(textInput);
+              return container;
+          }
+
           // 1. Timezone or Options Endpoint (using cached requests)
           if (field.id === 'timezone' || field.options_endpoint === '/api/timezones') {
               input = document.createElement('select');
@@ -3438,19 +3641,7 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
              const data = await fetchCachedEndpoint(field.options_endpoint);
              const normalizedOpts = parseOptions(data);
              if (field.multiple) {
-                 input = document.createElement('div');
-                 input.className = 'rotation-toggles';
-                 input.style = 'display: flex; gap: 0.5rem; flex-wrap: wrap;';
-                 
-                 const selectedValues = currentVal ? String(currentVal).split(',') : [];
-                 
-                 normalizedOpts.forEach(opt => {
-                     const isChecked = selectedValues.includes(opt.value);
-                     const lbl = document.createElement('label');
-                     lbl.className = 'toggle-btn';
-                     lbl.innerHTML = `<input type="checkbox" value="${opt.value}" class="multi-cb-${instance.instance_id}-${field.id}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${formatOptLabel(field.id, opt.value, opt.label)}</span>`;
-                     input.appendChild(lbl);
-                 });
+                 input = buildMultiSelectGroup(normalizedOpts, field.id, instance.instance_id, currentVal);
              } else {
                  input = document.createElement('select');
                  input.className = 'input';
@@ -3464,20 +3655,31 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
                  });
              }
           }
-          // 2. Options / Enum Field (from field.options)
-          else if (isOptionsField(field) || (field.options && field.options.length > 0)) {
-              const opts = parseOptions(field.options);
-              input = document.createElement('select');
-              input.className = 'input';
-              input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
-              
-              opts.forEach(opt => {
-                const option = document.createElement('option');
-                option.value = opt.value;
-                option.innerText = formatOptLabel(field.id, opt.value, opt.label);
-                if (String(opt.value) === String(currentVal)) option.selected = true;
-                input.appendChild(option);
-              });
+          // 2. Options / Enum Field (from field.options or known unit fields)
+          else if (isOptionsField(field) || (field.options && field.options.length > 0) || field.id === 'temp_unit' || field.id === 'units' || field.id === 'unit') {
+              let opts = parseOptions(field.options);
+              if (opts.length === 0) {
+                  if (field.id === 'temp_unit') {
+                      opts = [{ value: 'C', label: 'Celsius (°C)' }, { value: 'F', label: 'Fahrenheit (°F)' }];
+                  } else if (field.id === 'units' || field.id === 'unit') {
+                      opts = [{ value: 'metric', label: 'Celsius (°C)' }, { value: 'imperial', label: 'Fahrenheit (°F)' }];
+                  }
+              }
+              if (field.multiple) {
+                  input = buildMultiSelectGroup(opts, field.id, instance.instance_id, currentVal);
+              } else {
+                  input = document.createElement('select');
+                  input.className = 'input';
+                  input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+                  
+                  opts.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.innerText = formatOptLabel(field.id, opt.value, opt.label);
+                    if (String(opt.value).toUpperCase() === String(currentVal).toUpperCase()) option.selected = true;
+                    input.appendChild(option);
+                  });
+              }
           } 
           // 3. Boolean
           else if (isBooleanField(field)) { 
@@ -3694,6 +3896,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadVersion();
   initCustomMarquee();
   initFighterOverlay();
+  initAudioStreaming();
   initNetworkSettings();
   initSettings();
   initDynamicEngines();
@@ -3752,14 +3955,15 @@ function initNavigation() {
 
 async function loadVersion() {
   try {
-    const data = await API.get('/api/version').catch(() => API.get('/api/stats')).catch(() => ({version: '3.0.0', arch: 'aarch64'}));
+    const data = await API.get('/api/version').catch(() => API.get('/api/stats')).catch(() => ({version: '3.0.0', arch: 'esp32s3'}));
+    window.deviceArch = (data.arch || '').toLowerCase();
     const versionTag = document.getElementById('version-tag');
     const otaVer = document.getElementById('ota-current-version');
     const otaArch = document.getElementById('ota-current-arch');
 
     if (versionTag) versionTag.textContent = `v${data.version}`;
     if (otaVer) otaVer.textContent = `v${data.version}`;
-    if (otaArch) otaArch.textContent = data.arch || 'aarch64';
+    if (otaArch) otaArch.textContent = data.arch || 'esp32s3';
   } catch (e) {
     console.error('Failed to load version:', e);
   }
@@ -3830,18 +4034,46 @@ function initDashboard() {
       const info = await API.get('/api/stats').catch(() => API.get('/api/system_info')).catch(() => null);
       if (!info) return;
 
-      const cpuEl = document.getElementById('metric-cpu');
+      const mcuEl = document.getElementById('metric-mcu');
       const tempEl = document.getElementById('metric-temp');
       const ramEl = document.getElementById('metric-ram');
-      const diskEl = document.getElementById('metric-disk');
+      const psramEl = document.getElementById('metric-psram');
 
-      if (cpuEl && info.cpu_load !== undefined) cpuEl.textContent = `${info.cpu_load.toFixed(1)} %`;
-      if (tempEl && info.temperature_c !== undefined) tempEl.textContent = `${info.temperature_c.toFixed(1)} °C`;
-      if (ramEl) {
-        if (info.ram_used_mb !== undefined) ramEl.textContent = `${typeof info.ram_used_mb === 'number' ? info.ram_used_mb.toFixed(1) : info.ram_used_mb} MB`;
-        else if (info.free_heap !== undefined) ramEl.textContent = `${(info.free_heap / 1024).toFixed(0)} KB Free`;
+      if (mcuEl && info.hardware_profile) mcuEl.textContent = info.hardware_profile;
+      if (tempEl && info.temperature_c !== undefined) {
+        tempEl.textContent = info.humidity > 0 
+          ? `${info.temperature_c.toFixed(1)} °C (${info.humidity.toFixed(0)}% Hum)` 
+          : `${info.temperature_c.toFixed(1)} °C`;
       }
-      if (diskEl && info.disk_free_gb !== undefined) diskEl.textContent = `${typeof info.disk_free_gb === 'number' ? info.disk_free_gb.toFixed(1) : info.disk_free_gb} GB`;
+      if (ramEl && info.free_heap_kb !== undefined) {
+        ramEl.textContent = `${info.free_heap_kb} KB Free / ${info.total_heap_kb || 320} KB`;
+      }
+      if (psramEl && info.psram_free_mb !== undefined) {
+        psramEl.textContent = `${info.psram_free_mb.toFixed(1)} MB Free / ${info.psram_total_mb ? info.psram_total_mb.toFixed(0) : '16'} MB`;
+      }
+
+      // Update Hardware badges
+      const bTemp = document.getElementById('badge-hw-temp');
+      const bMic = document.getElementById('badge-hw-mic');
+      const bDac = document.getElementById('badge-hw-dac');
+      const bGyro = document.getElementById('badge-hw-gyro');
+
+      if (bTemp) {
+        bTemp.textContent = info.has_temp_sensor ? '🌡️ SHTC3 Sensor: ✅ DETECTED' : '🌡️ SHTC3: ❌ Not Found';
+        bTemp.style.color = info.has_temp_sensor ? '#22c55e' : '#ef4444';
+      }
+      if (bMic) {
+        bMic.textContent = info.has_microphone ? '🎙️ ES7210 Mic Array: ✅ DETECTED' : '🎙️ Mic Array: ❌ Not Found';
+        bMic.style.color = info.has_microphone ? '#22c55e' : '#ef4444';
+      }
+      if (bDac) {
+        bDac.textContent = info.has_dac ? '🔊 ES8311 Audio DAC: ✅ DETECTED' : '🔊 Audio DAC: ❌ Not Found';
+        bDac.style.color = info.has_dac ? '#22c55e' : '#ef4444';
+      }
+      if (bGyro) {
+        bGyro.textContent = info.has_gyro ? `🧭 ${info.gyro_sensor || 'QMI8658'} IMU: ✅ DETECTED` : '🧭 Gyro IMU: ❌ Not Found';
+        bGyro.style.color = info.has_gyro ? '#22c55e' : '#ef4444';
+      }
     } catch {}
   };
 
@@ -4114,6 +4346,129 @@ function initFighterOverlay() {
   });
 }
 
+function initAudioStreaming() {
+  const presetSelect = document.getElementById('radio-preset-select');
+  const nameInput = document.getElementById('radio-name-input');
+  const urlInput = document.getElementById('radio-url-input');
+  const playBtn = document.getElementById('btn-play-radio');
+  const stopBtn = document.getElementById('btn-stop-radio');
+  const volSlider = document.getElementById('slider-audio-volume');
+  const volLabel = document.getElementById('val-audio-volume');
+  
+  const statusBadge = document.getElementById('audio-live-status-badge');
+  const trackTitle = document.getElementById('audio-track-title');
+  const trackArtist = document.getElementById('audio-track-artist');
+  const sourceBadge = document.getElementById('audio-source-badge');
+
+  if (!presetSelect || !playBtn) return;
+
+  presetSelect.addEventListener('change', () => {
+    const val = presetSelect.value;
+    const selectedOpt = presetSelect.options[presetSelect.selectedIndex];
+    if (val !== 'custom') {
+      urlInput.value = val;
+      nameInput.value = selectedOpt.getAttribute('data-name') || 'Web Radio';
+    } else {
+      urlInput.value = '';
+      nameInput.value = 'Custom Radio';
+      urlInput.focus();
+    }
+  });
+
+  playBtn.addEventListener('click', async () => {
+    const url = urlInput.value.trim();
+    const name = nameInput.value.trim() || 'Web Radio';
+    if (!url) {
+      window.showToast('Please select or enter a radio stream URL', 'warning');
+      return;
+    }
+    playBtn.disabled = true;
+    playBtn.textContent = 'Connecting...';
+    try {
+      await API.post('/api/audio/radio', { url, name });
+      window.showToast(`Streaming ${name}!`, 'success');
+      fetchAudioStatus();
+    } catch (e) {
+      window.showToast('Failed to start radio stream: ' + (e.message || ''), 'error');
+    } finally {
+      playBtn.disabled = false;
+      playBtn.textContent = '▶️ Play Stream 🚀';
+    }
+  });
+
+  stopBtn.addEventListener('click', async () => {
+    try {
+      await API.post('/api/audio/stop', {});
+      window.showToast('Audio playback stopped', 'info');
+      fetchAudioStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  const testBtn = document.getElementById('btn-test-audio');
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      testBtn.disabled = true;
+      try {
+        await API.post('/api/audio/test', {});
+        window.showToast('Bip de test envoyé au haut-parleur ! 🔊', 'success');
+      } catch (e) {
+        window.showToast('Erreur test audio: ' + (e.message || ''), 'error');
+      } finally {
+        testBtn.disabled = false;
+      }
+    });
+  }
+
+  if (volSlider) {
+    volSlider.addEventListener('input', (e) => {
+      const vol = e.target.value;
+      if (volLabel) volLabel.textContent = vol;
+    });
+    volSlider.addEventListener('change', async (e) => {
+      const vol = parseInt(e.target.value);
+      try {
+        await API.post('/api/audio/volume', { volume: vol });
+      } catch (err) {
+        console.error('Failed to set volume', err);
+      }
+    });
+  }
+
+  async function fetchAudioStatus() {
+    try {
+      const st = await API.get('/api/audio/status');
+      if (!st) return;
+      
+      const isPlaying = st.status === 1; // STATUS_PLAYING
+      if (statusBadge) {
+        statusBadge.textContent = isPlaying ? '● Playing' : '● Idle';
+        statusBadge.style.background = isPlaying ? 'rgba(34, 197, 94, 0.2)' : 'rgba(100, 116, 139, 0.2)';
+        statusBadge.style.color = isPlaying ? '#22c55e' : '#94a3b8';
+      }
+      if (trackTitle) {
+        trackTitle.textContent = st.title || (isPlaying ? 'Active Audio Stream' : 'No stream active');
+      }
+      if (trackArtist) {
+        trackArtist.textContent = st.artist || (isPlaying ? (st.source || 'WebRadio') : 'Launch a radio preset or stream via DLNA');
+      }
+      if (sourceBadge) {
+        sourceBadge.textContent = st.source ? `Source: ${st.source}` : 'DLNA / Radio Ready';
+      }
+      if (volSlider && typeof st.volume === 'number') {
+        volSlider.value = st.volume;
+        if (volLabel) volLabel.textContent = st.volume;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  fetchAudioStatus();
+  setInterval(fetchAudioStatus, 4000);
+}
+
 function initNetworkSettings() {
   const btnSaveWifi = document.getElementById('btn-save-wifi');
   if (btnSaveWifi) {
@@ -4325,6 +4680,13 @@ async function initSettings() {
     setChk('hw-gyro-autorotate', matrix.auto_rotate ?? true);
     setVal('hw-rotation-transition', matrix.rotation_transition || 'vortex');
     setVal('hw-transition-duration', matrix.rotation_transition_duration_ms || 400);
+
+    // Hide Raspberry Pi specific timing options on ESP32 / ESP32-S3
+    const isESP = (!window.deviceArch || window.deviceArch.includes('esp') || window.deviceArch.includes('xtensa') || window.deviceArch.includes('riscv'));
+    const rpiGroup = document.getElementById('rpi-hardware-group');
+    if (rpiGroup) {
+      rpiGroup.style.display = isESP ? 'none' : 'block';
+    }
 
     // Fetch Live Gyroscope status
     try {

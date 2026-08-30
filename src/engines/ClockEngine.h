@@ -21,6 +21,7 @@ public:
     
     // Call frequently for sub-second animations (like matrix rain, sprite interactions)
     virtual void update() = 0; 
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) {}
 
 protected:
     MatrixPanel_I2S_DMA* matrix;
@@ -43,6 +44,7 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
 private:
     ClockFace* activeFace;

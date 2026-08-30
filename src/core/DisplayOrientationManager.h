@@ -3,6 +3,7 @@
 #include <Adafruit_GFX.h>
 #include "../hal/GyroHAL.h"
 #include "RotationTransitionFX.h"
+#include "../../include/core/EngineContract.h"
 
 /**
  * @enum DisplayOrientation
@@ -103,6 +104,11 @@ public:
      */
     DisplayOrientation getOrientation() const { return static_cast<DisplayOrientation>(_currentRotation); }
 
+    /**
+     * @brief Returns current immutable/active display geometry snapshot.
+     */
+    const DisplayGeometry& getGeometry() const { return _geometry; }
+
 private:
     Adafruit_GFX* _display;
     uint8_t _currentRotation;
@@ -111,8 +117,10 @@ private:
     uint32_t _transitionDurationMs;
     uint32_t _lastCheckTime;
     RotationTransitionFX _fx;
+    DisplayGeometry _geometry;
 
     static void onApexReached(uint8_t targetRot);
+    void applyGeometryAndNotify(uint8_t targetRot);
 };
 
 extern DisplayOrientationManager displayOrientationManager;

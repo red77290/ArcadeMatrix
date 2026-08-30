@@ -1,4 +1,5 @@
 #include "DateEngine.h"
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <string.h>
 #include "fonts/ArcadeFonts.h"
 #include "../core/ConfigLoader.h"

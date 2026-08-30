@@ -74,10 +74,14 @@ Adding an engine requires **two simple steps**:
 
 ## 2. The IEngine Contract in Full
 
-Every engine implements the `IEngine` interface (`include/core/EngineContract.h`):
-
 ```cpp
-class IEngine {
+class IDisplayGeometryAware {
+public:
+    virtual ~IDisplayGeometryAware() = default;
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) = 0;
+};
+
+class IEngine : public IDisplayGeometryAware {
 public:
     virtual ~IEngine() = default;
 
@@ -90,6 +94,7 @@ public:
 
     // --- Optional (safe defaults provided) ---
     virtual void onConfigChanged(const EngineConfig* config) {}
+    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
     virtual bool isFinished() const { return false; }
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
@@ -105,6 +110,7 @@ public:
 | `render()` | — | **Always.** Draw pixels into `context->getMatrix()`. |
 | `deactivate()` | — | **Always.** Stop audio/network, close file handles. |
 | `onConfigChanged()` | no-op | **If engine has settings.** Re-read values in place without recreation. |
+| `onDisplayGeometryChanged()` | no-op | **If engine maintains geometry-derived caches** (e.g. column arrays). |
 | `isFinished()` | `false` | If engine has an intrinsic end (e.g. cycle completed) to advance rotation early. |
 | `isRealtime()` | `true` | Return `true` for 60 FPS animations; return `false` for static 20 FPS displays. |
 | `setRotationBudget()`| no-op | If count-based (e.g. play N GIFs). Receives the rotation entry count. |
@@ -546,7 +552,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 15. Rendering into the LED Matrix
+## 15. Rendering into the LED Matrix & Responsive Geometry
 
 Always obtain the matrix pointer via `context->getMatrix()`:
 
@@ -559,6 +565,61 @@ matrix->print("TEXT");
 ```
 *Never call `flipDMABuffer()` inside an engine — the main display loop handles flipping centrally.*
 
+### 15.1 The Golden Rule for Multi-Resolution & TATE Responsive Layouts
+
+ArcadeMatrix displays can run in any resolution and orientation (`64x32`, `128x32`, `256x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+> [!IMPORTANT]
+> **🏆 The Golden Rule of Engine Rendering:**
+> 1. **Renderers must NEVER branch on `LayoutClass` or `if (w == 64 && h == 128)` directly.**
+> 2. Create a companion pure `*LayoutCalculator` (e.g. `MyEngineLayoutCalculator::calculate(geometry)`) that produces a `MyEngineLayout` containing bounded `Rect`s.
+> 3. The `render()` method draws exclusively into the provided `Rect`s.
+
+#### Example: Responsive Music Engine
+```cpp
+// 1. Define bounded layout rectangles
+struct MusicLayout {
+    Rect artworkRect;
+    Rect metadataRect;
+    Rect progressRect;
+    Rect visualizerRect;
+};
+
+// 2. Pure layout calculator
+class MusicLayoutCalculator {
+public:
+    static MusicLayout calculate(const DisplayGeometry& geometry) {
+        MusicLayout layout;
+        if (geometry.layoutClass == LayoutClass::PORTRAIT || geometry.layoutClass == LayoutClass::TALL) {
+            // Stack vertically: Artwork on top, metadata in middle, visualizer at bottom
+            layout.artworkRect = { 2, 2, (uint16_t)(geometry.width - 4), (uint16_t)min((int)geometry.width - 4, (int)(geometry.height * 0.35f)) };
+            layout.metadataRect = { 2, (int16_t)(layout.artworkRect.y + layout.artworkRect.height + 2), (uint16_t)(geometry.width - 4), 16 };
+            layout.progressRect = { 2, (int16_t)(layout.metadataRect.y + 18), (uint16_t)(geometry.width - 4), 3 };
+            layout.visualizerRect = { 2, (int16_t)(geometry.height - 12), (uint16_t)(geometry.width - 4), 10 };
+        } else {
+            // Landscape: Artwork on left, metadata and visualizer on right
+            layout.artworkRect = { 2, 2, (uint16_t)(geometry.height - 4), (uint16_t)(geometry.height - 4) };
+            layout.metadataRect = { (int16_t)(layout.artworkRect.width + 6), 2, (uint16_t)(geometry.width - layout.artworkRect.width - 8), 12 };
+            layout.progressRect = { (int16_t)(layout.artworkRect.width + 6), 16, (uint16_t)(geometry.width - layout.artworkRect.width - 8), 2 };
+            layout.visualizerRect = { (int16_t)(layout.artworkRect.width + 6), (int16_t)(geometry.height - 10), (uint16_t)(geometry.width - layout.artworkRect.width - 8), 8 };
+        }
+        return layout;
+    }
+};
+
+// 3. Renderer consumes purely pre-bounded Rects
+void MusicEngine::render(EngineContext* context) {
+    MusicLayout layout = MusicLayoutCalculator::calculate(context->getGeometry());
+    renderArtwork(layout.artworkRect);
+    renderMetadata(layout.metadataRect);
+    renderProgress(layout.progressRect);
+    renderVisualizer(layout.visualizerRect);
+}
+```
+
+#### Rebuilding Geometry-Derived Caches
+Only implement `onDisplayGeometryChanged(const DisplayGeometry& geometry)` if your engine allocates fixed column counts, FFT arrays, or target grids (e.g. `MatrixRainClock`, `TetrisClock`, `VisualizerEngine`). Reallocate or adjust your caches non-destructively without resetting gameplay, scores, or timers.
+
 ---
 
 ## 16. Testing & Local Compilation
@@ -567,13 +628,13 @@ Compile both board targets locally:
 
 ```bash
 # Standard ESP32
-pio run -e esp32dev
+rtk pio run -e esp32dev
 
 # Waveshare ESP32-S3
-pio run -e esp32s3_waveshare
+rtk pio run -e esp32s3_waveshare
 
 # Run Unit Tests
-pio test -e esp32dev --without-uploading --without-testing
+rtk pio test -e esp32dev --without-uploading --without-testing
 ```
 
 ---

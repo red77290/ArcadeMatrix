@@ -12,14 +12,18 @@ public:
     MatrixRainClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
 private:
-    static const int MAX_COLUMNS = 32; // Covers panels up to 256px wide (256 / 8px per glyph column)
-    int8_t colHead[MAX_COLUMNS];   // Head row (in glyph rows, not pixels) of each column's drop, may be negative (off-screen, not yet visible)
-    int8_t colSpeedDivider[MAX_COLUMNS]; // Larger = slower (drop advances one row every N update() calls)
+    static const int MAX_COLUMNS = 48; // Covers up to 256px wide
+    static const int MAX_ROWS = 32;    // Covers up to 256px tall
+    int8_t colHead[MAX_COLUMNS];       // Primary drop head
+    int8_t colHead2[MAX_COLUMNS];      // Secondary staggered drop head
+    int8_t colSpeedDivider[MAX_COLUMNS]; // Speed divider
     uint8_t colTick[MAX_COLUMNS];
-    uint8_t colGlyphs[MAX_COLUMNS][16]; // Cached glyph index per column/row so the trail doesn't flicker every frame
+    uint8_t colGlyphs[MAX_COLUMNS][MAX_ROWS]; // Living glyph per cell
     int numColumns;
+    int numRows;
     bool initialized;
     TimeData storedTime;
     unsigned long lastFrameTime;

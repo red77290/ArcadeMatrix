@@ -55,6 +55,10 @@ void time_sync_notification_cb(struct timeval *tv) {
 #include "core/AudioHub.h"
 #include "services/WebRadioService.h"
 #include "services/BluetoothAudioService.h"
+#include "services/DLNAService.h"
+#include "services/AirPlayAudioService.h"
+
+static bool g_hasAudioEngine = false;
 
 // Pins definition moved to HardwareProfile.h
 
@@ -229,10 +233,7 @@ void setup() {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
 
-    SanitizeResult sanitizeRes = ConfigSanitizer::sanitizeInstances(config);
-    if (sanitizeRes.modified) {
-        config.saveToSD("/config.json");
-    }
+    ConfigSanitizer::sanitize(config);
 
     // 3. Initialize Matrix
     LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", config.matrix.width, config.matrix.height, config.matrix.chainLength);
@@ -249,6 +250,13 @@ void setup() {
     displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
     displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
     displayOrientationManager.setTransitionDuration(config.matrix.rotation_transition_duration_ms);
+
+    // Initial non-animated rotation matching physical orientation + offset cleanly on boot
+    uint8_t initialRotation = (config.matrix.auto_rotate && gyroHAL.isAvailable()) 
+        ? (gyroHAL.getOrientation().suggestedRotation + config.matrix.rotation_offset) % 4
+        : (config.matrix.rotation_offset % 4);
+    displayOrientationManager.setRotation(initialRotation, false);
+
     audioHub.begin();
 
     // 4. Initialize Engines
@@ -363,6 +371,8 @@ void setup() {
             }
             webServer->setMarqueeEngine(marqueeEngine);
             MDNS.addService("http", "tcp", 80);
+            MDNS.addService("upnp", "tcp", 80);
+            MDNS.addService("mediarenderer", "tcp", 80);
             
             if (config.mqtt.enabled) {
                 frontendListener = new FrontendSyncEngine(config.mqtt, gifEngine, messageEngine);
@@ -429,7 +439,35 @@ void setup() {
     LOGD("System", "Starting rotationManager...");
     rotationManager->begin(config);
     LOGD("System", "rotationManager started.");
-    
+
+    // Start Audio Services ONLY if an audio streaming engine is configured in active rotation
+    g_hasAudioEngine = false;
+    for (const auto& rot : config.rotation) {
+        const auto* inst = config.getInstance(rot.instance_id);
+        if (inst) {
+            if (inst->engine_id == "universal_audio" || inst->engine_id == "music" || 
+                inst->engine_id == "spotify" || inst->engine_id == "webradio" || 
+                inst->engine_id == "airplay" || inst->engine_id == "dlna") {
+                g_hasAudioEngine = true;
+                break;
+            }
+        }
+    }
+
+    if (g_hasAudioEngine) {
+        // Start Bluetooth Audio Service if supported on this hardware
+        bluetoothAudioService.begin("ArcadeMatrix Audio");
+        
+        // Start WebRadio dedicated background streaming worker task
+        webRadioService.begin();
+
+        // Start DLNA / UPnP MediaRenderer service
+        dlnaService.begin();
+
+        // Start Apple AirPlay 1 / RAOP receiver
+        airPlayAudioService.begin();
+    }
+
     TimeData initialTime = {10, 42, 0};
     LOGI("System", "Setup complete. Entering loop().");
 }
@@ -438,9 +476,12 @@ void setup() {
 void loop() {
     esp_task_wdt_reset();
 
-    // 0. Update background audio stream & orientation
+    // 0. Update background audio stream, DLNA discovery, AirPlay & orientation
     displayOrientationManager.update(config.matrix.auto_rotate, config.matrix.rotation_offset);
-    webRadioService.loop();
+    if (g_hasAudioEngine) {
+        dlnaService.loop();
+        airPlayAudioService.loop();
+    }
 
     // 0b. Render active orientation transition animation if running
     if (displayOrientationManager.isTransitioning()) {
@@ -452,7 +493,7 @@ void loop() {
 
     static bool firstLoop = true;
     if (firstLoop) {
-        LOGD("System", "Entered first loop() iteration!");
+        LOGI("System", "Entered first loop() iteration!");
         firstLoop = false;
     }
 
@@ -575,6 +616,7 @@ void loop() {
     IEngine* activeEngine = nullptr;
     
     if (winner.engine != nullptr) {
+        LOGD("System", "DisplayArbiter winner: %s", winner.source.c_str());
         activeEngine = winner.engine;
         if (activeEngine->needsClear()) {
             matrixEngine.getDisplay()->fillScreen(0);

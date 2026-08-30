@@ -16,7 +16,7 @@
  * - Overlay rendering MUST NOT call matrix->clear() or replace the base display.
  * - FighterEngine is lazily instantiated on first demand and preserved in heap to prevent fragmentation.
  */
-class OverlayManager {
+class OverlayManager : public IDisplayGeometryAware {
 public:
     OverlayManager() = default;
     ~OverlayManager() { deactivate(); }
@@ -24,6 +24,12 @@ public:
     void initialize(EngineContext* context, ConfigLoader* config) {
         _context = context;
         _config = config;
+    }
+
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
+        if (_fighterOverlay) {
+            _fighterOverlay->onDisplayGeometryChanged(geometry);
+        }
     }
 
     /**

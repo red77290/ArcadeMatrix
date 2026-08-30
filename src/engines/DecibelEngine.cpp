@@ -249,6 +249,42 @@ void DecibelEngine::render(EngineContext* context) {
 
         matrix->drawRect(4, height - 4, vuWidth, 3, matrix->color565(60, 60, 60));
         matrix->fillRect(4, height - 4, filledWidth, 3, levelCol);
+    } else if (width < 48 || height > (width * 3) / 2) {
+        // Portrait / Tate layout (e.g. 32x64, 32x128, 64x128)
+        matrix->setFont(NULL);
+        matrix->setTextSize(1);
+        matrix->setTextWrap(false);
+
+        // Smiley Icon centered on Top
+        int iconX = (width - 14) / 2;
+        drawSmileyIcon(matrix, iconX, topOffset + 2, currentLevel);
+
+        // dB numeric centered in middle
+        int16_t bx, by;
+        uint16_t bw, bh;
+        matrix->getTextBounds(dbBuf, 0, 0, &bx, &by, &bw, &bh);
+        int dbX = (width - bw) / 2;
+        int dbY = topOffset + 20;
+        matrix->setTextColor(levelCol);
+        matrix->setCursor(dbX, dbY);
+        matrix->print(dbBuf);
+
+        // Status text centered below dB
+        const char* statusTxt = getLevelText(currentLevel);
+        matrix->getTextBounds(statusTxt, 0, 0, &bx, &by, &bw, &bh);
+        int stX = (width - bw) / 2;
+        if (stX < 2) stX = 2;
+        matrix->setTextColor(matrix->color565(180, 185, 200));
+        matrix->setCursor(stX, dbY + 12);
+        matrix->print(statusTxt);
+
+        // Bottom VU Meter
+        int vuWidth = width - 4;
+        int filledWidth = (int)(((currentDb - 30.0f) / 70.0f) * (float)vuWidth);
+        if (filledWidth < 0) filledWidth = 0;
+        if (filledWidth > vuWidth) filledWidth = vuWidth;
+        matrix->drawRect(2, height - 5, vuWidth, 3, matrix->color565(60, 60, 60));
+        matrix->fillRect(2, height - 5, filledWidth, 3, levelCol);
     } else {
         // Standard 64x32 display layout
         matrix->setFont(NULL);

@@ -15,15 +15,27 @@ GifEngine::~GifEngine() {
     delete png;
 }
 
+#include "../core/LayoutHelper.h"
+
+String GifEngine::resolveDefaultFolder() const {
+    DisplayGeometry geom = m_context ? m_context->getGeometry() : DisplayGeometry{};
+    GifPlaylistSelection sel = GifSourceSelector::select(geom);
+    if (sd.exists(sel.primaryPath)) {
+        return sel.primaryPath;
+    }
+    return sel.fallbackPath;
+}
+
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
     if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    m_context = context;
     m_instanceConfig = config;
     m_hasPsram = context->hasPsram();
     if (!begin(context->getMatrix())) return EngineError::InitializationFailed;
     if (config) onConfigChanged(config);
     else {
         std::vector<String> paths;
-        paths.push_back("/gifs");
+        paths.push_back(resolveDefaultFolder());
         setDefaultPlaylists(paths);
     }
     return EngineError::OK;
@@ -39,13 +51,14 @@ void GifEngine::activate() {
     }
     if (!hasDefaultPlaylists()) {
         std::vector<String> paths;
-        paths.push_back("/gifs");
+        paths.push_back(resolveDefaultFolder());
         setDefaultPlaylists(paths);
     }
     playDefaultPlaylists(count);
 }
 
 void GifEngine::update(EngineContext* context) {
+    m_context = context;
     m_lastFrameDrew = loop();
 }
 
@@ -62,7 +75,7 @@ void GifEngine::onConfigChanged(const EngineConfig* config) {
         std::vector<String> paths;
         
         if (folders == "all" || folders.isEmpty()) {
-            paths.push_back("/gifs"); // Fallback
+            paths.push_back(resolveDefaultFolder()); // Dynamic primary/fallback selection
         } else {
             // Split by comma
             int start = 0;
@@ -230,11 +243,13 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
     for (String p : inputPaths) {
         String cleanPath = sanitizePlaylistPath(p);
         
-        // If the path is /gifs or all, load all folders directly from /gifs/playlists.json
-        if (cleanPath == "/gifs" || cleanPath == "/all" || cleanPath == "all") {
+        // If the path is /gifs, /gifs_tate or all, load all folders directly from playlists.json
+        if (cleanPath == "/gifs" || cleanPath == "/gifs_tate" || cleanPath == "/all" || cleanPath == "all") {
+            String rootP = (cleanPath == "/gifs_tate") ? "/gifs_tate" : "/gifs";
+            String plJson = rootP + "/playlists.json";
             bool loadedFromJson = false;
-            if (sd.exists("/gifs/playlists.json")) {
-                FsFile plFile = sd.open("/gifs/playlists.json", FILE_OPEN_READ);
+            if (sd.exists(plJson.c_str())) {
+                FsFile plFile = sd.open(plJson.c_str(), FILE_OPEN_READ);
                 if (plFile) {
                     DynamicJsonDocument doc(2048);
                     DeserializationError err = deserializeJson(doc, plFile);
@@ -254,22 +269,23 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
             }
             if (!loadedFromJson) {
                 // Fallback to SD directory check if playlists.json is absent
-                FsFile dir = sd.open("/gifs", FILE_OPEN_READ);
+                FsFile dir = sd.open(rootP.c_str(), FILE_OPEN_READ);
                 if (dir && isDirectory(dir)) {
                     FsFile entry = dir.openNextFile();
                     while (entry) {
                         if (isDirectory(entry)) {
                             String subName = getFileName(entry);
                             if (!isMacJunk(subName)) {
-                                outPaths.push_back("/gifs/" + subName);
+                                outPaths.push_back(rootP + "/" + subName);
                             }
                         }
                         entry.close();
                         entry = dir.openNextFile();
                     }
-                    dir.close();
                 }
+                if (dir) dir.close();
             }
+            continue;
         } else {
             outPaths.push_back(cleanPath);
         }

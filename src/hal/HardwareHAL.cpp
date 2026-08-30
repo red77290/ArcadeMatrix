@@ -4,6 +4,7 @@
 #include <math.h>
 
 HardwareHAL hardwareHAL;
+std::mutex g_i2cMutex;
 
 #define I2S_PORT I2S_NUM_0
 #define SAMPLE_RATE 22050
@@ -39,6 +40,7 @@ void HardwareHAL::begin() {
     // 1. Initialize I2C Bus & Scan Devices
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000); // 100kHz standard I2C speed
+    Wire.setTimeOut(25);   // 25ms timeout to prevent peripheral lockups
 
     String i2cLog = "I2C Bus Scan: ";
     for (uint8_t addr = 1; addr < 127; addr++) {
@@ -109,6 +111,7 @@ void HardwareHAL::begin() {
 }
 
 bool HardwareHAL::probeSHTC3() {
+    std::lock_guard<std::mutex> lock(g_i2cMutex);
     // SHTC3 Wakeup command: 0x3517
     Wire.beginTransmission(SHTC3_I2C_ADDR);
     Wire.write(0x35);
@@ -146,35 +149,48 @@ bool HardwareHAL::probeSHTC3() {
 }
 
 bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
-    // Wakeup SHTC3
-    Wire.beginTransmission(SHTC3_I2C_ADDR);
-    Wire.write(0x35);
-    Wire.write(0x17);
-    if (Wire.endTransmission() != 0) return false;
-    delay(1);
+    {
+        std::lock_guard<std::mutex> lock(g_i2cMutex);
+        // Wakeup SHTC3
+        Wire.beginTransmission(SHTC3_I2C_ADDR);
+        Wire.write(0x35);
+        Wire.write(0x17);
+        if (Wire.endTransmission() != 0) return false;
+        delay(1);
 
-    // Send Measurement command (Clock Stretching disabled, Normal mode, T first): 0x7866
-    Wire.beginTransmission(SHTC3_I2C_ADDR);
-    Wire.write(0x78);
-    Wire.write(0x66);
-    if (Wire.endTransmission() != 0) {
-        return false;
+        // Send Measurement command (Clock Stretching disabled, Normal mode, T first): 0x7866
+        Wire.beginTransmission(SHTC3_I2C_ADDR);
+        Wire.write(0x78);
+        Wire.write(0x66);
+        if (Wire.endTransmission() != 0) {
+            return false;
+        }
     }
 
-    delay(15); // Wait 15ms for measurement
+    delay(15); // Wait 15ms for measurement (mutex released so other I2C users can proceed)
 
-    Wire.requestFrom((uint8_t)SHTC3_I2C_ADDR, (size_t)6);
-    if (Wire.available() < 6) {
-        return false;
+    uint8_t t1, t2, tempCrc, h1, h2, humCrc;
+    {
+        std::lock_guard<std::mutex> lock(g_i2cMutex);
+        Wire.requestFrom((uint8_t)SHTC3_I2C_ADDR, (size_t)6);
+        if (Wire.available() < 6) {
+            return false;
+        }
+
+        t1 = Wire.read();
+        t2 = Wire.read();
+        tempCrc = Wire.read();
+
+        h1 = Wire.read();
+        h2 = Wire.read();
+        humCrc = Wire.read();
+
+        // Sleep SHTC3 to conserve power
+        Wire.beginTransmission(SHTC3_I2C_ADDR);
+        Wire.write(0xB0);
+        Wire.write(0x98);
+        Wire.endTransmission();
     }
-
-    uint8_t t1 = Wire.read();
-    uint8_t t2 = Wire.read();
-    uint8_t tempCrc = Wire.read();
-
-    uint8_t h1 = Wire.read();
-    uint8_t h2 = Wire.read();
-    uint8_t humCrc = Wire.read();
 
     // Verify CRC8 for temperature and humidity
     uint8_t tData[2] = { t1, t2 };
@@ -192,12 +208,6 @@ bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
 
     if (hum < 0.0f) hum = 0.0f;
     if (hum > 100.0f) hum = 100.0f;
-
-    // Sleep SHTC3 to conserve power
-    Wire.beginTransmission(SHTC3_I2C_ADDR);
-    Wire.write(0xB0);
-    Wire.write(0x98);
-    Wire.endTransmission();
 
     return true;
 }

@@ -39,6 +39,51 @@ void ArcadeClock::draw(const TimeData& t) {
     lastMinute = t.minutes;
 }
 
+void ArcadeClock::drawStrWithShadow(const char* str, int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
+    if (!str || !matrix) return;
+    int currentScale = max(1, scale);
+    int effectDepth = (currentScale >= 5) ? 2 : 1;
+
+    if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
+        matrix->setTextColor(shadowColor);
+        for (int i = 1; i <= effectDepth; i++) {
+            matrix->setCursor(x + i, y); matrix->print(str);
+            matrix->setCursor(x - i, y); matrix->print(str);
+            matrix->setCursor(x, y + i); matrix->print(str);
+            matrix->setCursor(x, y - i); matrix->print(str);
+        }
+    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+        // Arcade 3D Outline Effect
+        matrix->setTextColor(shadowColor);
+        int shadowDepth = effectDepth + 1;
+        for (int i = 1; i <= shadowDepth; i++) {
+            matrix->setCursor(x + i, y + i); matrix->print(str);
+            matrix->setCursor(x + i - 1, y + i); matrix->print(str);
+            matrix->setCursor(x + i, y + i - 1); matrix->print(str);
+        }
+
+        uint16_t outline = matrix->color565(0, 0, 0);
+        matrix->setTextColor(outline);
+        matrix->setCursor(x - 1, y - 1); matrix->print(str);
+        matrix->setCursor(x, y - 1); matrix->print(str);
+        matrix->setCursor(x + 1, y - 1); matrix->print(str);
+        matrix->setCursor(x - 1, y); matrix->print(str);
+        matrix->setCursor(x + 1, y); matrix->print(str);
+        matrix->setCursor(x - 1, y + 1); matrix->print(str);
+        matrix->setCursor(x, y + 1); matrix->print(str);
+        matrix->setCursor(x + 1, y + 1); matrix->print(str);
+    } else if (currentTheme != THEME_FLIP && currentTheme != THEME_NONE) {
+        matrix->setTextColor(shadowColor);
+        matrix->setCursor(x + effectDepth, y + effectDepth); matrix->print(str);
+        matrix->setCursor(x + effectDepth - 1, y + effectDepth); matrix->print(str);
+        matrix->setCursor(x + effectDepth, y + effectDepth - 1); matrix->print(str);
+    }
+
+    matrix->setTextColor(textColor);
+    matrix->setCursor(x, y);
+    matrix->print(str);
+}
+
 void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
     char timeStr[16];
     String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
@@ -48,52 +93,79 @@ void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t 
     } else {
         sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     }
+    drawStrWithShadow(timeStr, x, y, textColor, shadowColor, scale);
+}
 
-    int currentScale = max(1, scale);
-    int effectDepth = (currentScale >= 5) ? 2 : 1;
+void ArcadeClock::drawTateTime() {
+    int w = matrix->width();
+    int h = matrix->height();
 
-    if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
-        matrix->setTextColor(shadowColor);
-        for (int i = 1; i <= effectDepth; i++) {
-            matrix->setCursor(x + i, y); matrix->print(timeStr);
-            matrix->setCursor(x - i, y); matrix->print(timeStr);
-            matrix->setCursor(x, y + i); matrix->print(timeStr);
-            matrix->setCursor(x, y - i); matrix->print(timeStr);
-        }
-    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
-        // Arcade 3D Outline Effect
-        matrix->setTextColor(shadowColor);
-        int shadowDepth = effectDepth + 1;
-        for (int i = 1; i <= shadowDepth; i++) {
-            matrix->setCursor(x + i, y + i); matrix->print(timeStr);
-            matrix->setCursor(x + i - 1, y + i); matrix->print(timeStr);
-            matrix->setCursor(x + i, y + i - 1); matrix->print(timeStr);
-        }
+    uint16_t textColor = matrix->color565(255, 255, 255);
+    uint16_t shadowColor = matrix->color565(0, 0, 0);
 
-        uint16_t outline = matrix->color565(0, 0, 0);
-        matrix->setTextColor(outline);
-        // Black outline remains crisp at 1-pixel thick to avoid looking like a gap
-        matrix->setCursor(x - 1, y - 1); matrix->print(timeStr);
-        matrix->setCursor(x, y - 1); matrix->print(timeStr);
-        matrix->setCursor(x + 1, y - 1); matrix->print(timeStr);
-        matrix->setCursor(x - 1, y); matrix->print(timeStr);
-        matrix->setCursor(x + 1, y); matrix->print(timeStr);
-        matrix->setCursor(x - 1, y + 1); matrix->print(timeStr);
-        matrix->setCursor(x, y + 1); matrix->print(timeStr);
-        matrix->setCursor(x + 1, y + 1); matrix->print(timeStr);
-    } else if (currentTheme != THEME_FLIP) {
-        matrix->setTextColor(shadowColor);
-        matrix->setCursor(x + effectDepth, y + effectDepth); matrix->print(timeStr);
-        matrix->setCursor(x + effectDepth - 1, y + effectDepth); matrix->print(timeStr);
-        matrix->setCursor(x + effectDepth, y + effectDepth - 1); matrix->print(timeStr);
+    switch (currentTheme) {
+        case THEME_NINTENDO: textColor = matrix->color565(228, 0, 15); shadowColor = matrix->color565(255, 255, 255); break;
+        case THEME_CAPCOM: textColor = matrix->color565(255, 215, 0); shadowColor = matrix->color565(0, 75, 175); break;
+        case THEME_TAITO: textColor = matrix->color565(0, 155, 219); shadowColor = matrix->color565(255, 255, 255); break;
+        case THEME_SEGA: textColor = matrix->color565(0, 85, 170); shadowColor = matrix->color565(255, 255, 255); break;
+        case THEME_CAVE: textColor = matrix->color565(138, 43, 226); shadowColor = matrix->color565(255, 255, 0); break;
+        case THEME_KONAMI: textColor = matrix->color565(255, 69, 0); shadowColor = matrix->color565(255, 255, 255); break;
+        case THEME_SNK: textColor = matrix->color565(30, 144, 255); shadowColor = matrix->color565(255, 215, 0); break;
+        case THEME_TECHNOS: textColor = matrix->color565(0, 0, 139); shadowColor = matrix->color565(255, 255, 255); break;
+        case THEME_IGS: textColor = matrix->color565(50, 205, 50); shadowColor = matrix->color565(255, 215, 0); break;
+        case THEME_HUDSON: textColor = matrix->color565(255, 255, 0); shadowColor = matrix->color565(0, 0, 0); break;
+        case THEME_BANPRESTO: case THEME_NAMCO: textColor = matrix->color565(255, 0, 0); shadowColor = matrix->color565(255, 215, 0); break;
+        default: textColor = matrix->color565(0, 220, 255); shadowColor = matrix->color565(0, 50, 120); break;
     }
 
-    matrix->setTextColor(textColor);
-    matrix->setCursor(x, y);
-    matrix->print(timeStr);
+    char hStr[8], mStr[8], sStr[8];
+    sprintf(hStr, "%02d", storedTime.hours);
+    sprintf(mStr, "%02d", storedTime.minutes);
+    sprintf(sStr, "%02d", storedTime.seconds);
+
+    matrix->setFont(nullptr);
+    int scale = (w >= 64) ? 4 : 2;
+    matrix->setTextSize(scale);
+
+    int digitW = 2 * 6 * scale - scale;
+    int digitH = 8 * scale;
+    int drawX = (w - digitW) / 2;
+
+    int offsetX = engineConfig ? engineConfig->getInt("clock_offset_x", engineConfig->getInt("offset_x", 0)) : 0;
+    int offsetY = engineConfig ? engineConfig->getInt("clock_offset_y", engineConfig->getInt("offset_y", 0)) : 0;
+    drawX += offsetX;
+
+    if (h >= 128) {
+        // 3 Tiers (Hours, Minutes, Seconds)
+        int yH = (h / 6) - (digitH / 2) + offsetY;
+        int yM = (h / 2) - (digitH / 2) + offsetY;
+        int yS = (5 * h / 6) - (digitH / 2) + offsetY;
+
+        drawStrWithShadow(hStr, drawX, yH, textColor, shadowColor, scale);
+        drawStrWithShadow(mStr, drawX, yM, textColor, shadowColor, scale);
+        drawStrWithShadow(sStr, drawX, yS, matrix->color565(200, 200, 220), shadowColor, max(1, scale - 1));
+    } else {
+        // 2 Tiers (Hours top, Minutes bottom, pulsing dots in center)
+        int yH = (h / 4) - (digitH / 2) + offsetY + 2;
+        int yM = (3 * h / 4) - (digitH / 2) + offsetY - 2;
+
+        drawStrWithShadow(hStr, drawX, yH, textColor, shadowColor, scale);
+        drawStrWithShadow(mStr, drawX, yM, textColor, shadowColor, scale);
+
+        // Center Pulsing Colon
+        int dotX = (w / 2) - 1 + offsetX;
+        int dotY1 = (h / 2) - 3 + offsetY;
+        int dotY2 = (h / 2) + 2 + offsetY;
+        matrix->fillRect(dotX, dotY1, 2, 2, textColor);
+        matrix->fillRect(dotX, dotY2, 2, 2, textColor);
+    }
 }
 
 void ArcadeClock::drawStaticTime() {
+    if (matrix && matrix->height() > matrix->width()) {
+        drawTateTime();
+        return;
+    }
     int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
     if (logicalSize < 1) logicalSize = 1;
     bool isHD = (matrix->height() >= 64);

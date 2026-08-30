@@ -191,6 +191,61 @@ void SysInfoEngine::renderHudTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, fl
             matrix->setCursor(x2 + 22, y2);
             matrix->print(upBuf);
         }
+    } else if (w < 48 || h > (w * 3) / 2) {
+        // Portrait / Tate Stacked Layout (e.g. 32x64, 32x128, 64x128)
+        int stepY = h / 4;
+        int baseY = 2 + offsetY;
+
+        // Row 1: CPU
+        if (showCpu) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, baseY);
+            matrix->print("CPU");
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%2.0f%%", cpuPct);
+            matrix->setTextColor(cpuColor);
+            matrix->setCursor(w - (strlen(buf) * 6 + 2) + offsetX, baseY);
+            matrix->print(buf);
+            drawGaugeBar(matrix, 2 + offsetX, baseY + 8, w - 4, 3, cpuPct, cpuColor);
+        }
+
+        // Row 2: RAM
+        if (showRam) {
+            int y2 = baseY + stepY;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, y2);
+            matrix->print("RAM");
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%2.0f%%", ramPct);
+            matrix->setTextColor(ramColor);
+            matrix->setCursor(w - (strlen(buf) * 6 + 2) + offsetX, y2);
+            matrix->print(buf);
+            drawGaugeBar(matrix, 2 + offsetX, y2 + 8, w - 4, 3, ramPct, ramColor);
+        }
+
+        // Row 3: TEMP
+        if (showTemp) {
+            int y3 = baseY + stepY * 2;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, y3);
+            matrix->print("TMP");
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(w - (strlen(tBuf) * 6 + 2) + offsetX, y3);
+            matrix->print(tBuf);
+            float tempPct = constrain((tempC - 20.0f) * (100.0f / 60.0f), 0.0f, 100.0f);
+            drawGaugeBar(matrix, 2 + offsetX, y3 + 8, w - 4, 3, tempPct, tempColor);
+        }
+
+        // Row 4: UPTIME
+        if (showUptime) {
+            int y4 = baseY + stepY * 3;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, y4);
+            matrix->print("UPT");
+            matrix->setTextColor(matrix->color565(0, 190, 255));
+            matrix->setCursor(w - (strlen(upBuf) * 6 + 2) + offsetX, y4);
+            matrix->print(upBuf);
+        }
     } else {
         // Compact Screen (64x32): 3 Rows stretched across full width
         int baseX = 2 + offsetX;

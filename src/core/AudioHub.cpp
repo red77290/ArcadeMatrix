@@ -13,12 +13,8 @@ AudioHub::AudioHub()
 
 bool AudioHub::begin() {
     std::lock_guard<std::mutex> lock(_mutex);
-    LOGI("AudioHub", "Initializing AudioHub central service...");
-    bool ok = audioOutputHAL.begin();
-    if (ok) {
-        audioOutputHAL.setVolume(_state.volume);
-    }
-    return ok;
+    LOGI("AudioHub", "Initializing AudioHub central service (playback on-demand)...");
+    return true;
 }
 
 const char* AudioHub::getSourceName(AudioSource src) {
@@ -50,6 +46,10 @@ bool AudioHub::requestPlayback(AudioSource source) {
         _state.status = PlaybackStatus::STATUS_BUFFERING;
         notifyStateChanged();
     }
+    if (hardwareHAL.isAudioSamplingActive()) {
+        hardwareHAL.stopAudioSampling();
+    }
+    audioOutputHAL.preparePlayback();
     return true;
 }
 
@@ -61,6 +61,7 @@ void AudioHub::releasePlayback(AudioSource source) {
         _state.source = AudioSource::NONE;
         _state.status = PlaybackStatus::STATUS_STOPPED;
         notifyStateChanged();
+        audioOutputHAL.stop();
     }
 }
 

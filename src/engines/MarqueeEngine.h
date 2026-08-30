@@ -22,6 +22,7 @@ public:
     void activate() override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* engineConfig) override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     // Copies exactly width*height uint16_t pixels from src and displays them immediately for
     // durationSeconds (default 8s, matching the RPi's typical marquee dwell time).
