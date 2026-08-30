@@ -1,5 +1,6 @@
 #include "BinanceProvider.h"
 #include "../core/Logger.h"
+#include <WiFiClientSecure.h>
 
 bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String apiSymbol = symbol;
@@ -8,11 +9,14 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
     }
     String binanceUrl = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + apiSymbol;
     
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
-    if (http.begin(binanceUrl)) {
+    if (http.begin(client, binanceUrl)) {
         int code = http.GET();
         if (code == 200) {
             String payload = http.getString();
@@ -69,11 +73,14 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
 
     String url = "https://api.binance.com/api/v3/klines?symbol=" + apiSymbol + "&interval=" + String(interval) + "&limit=" + String(limit);
 
+    WiFiClientSecure client;
+    client.setInsecure();
+
     HTTPClient http;
     http.setTimeout(3000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
-    if (http.begin(url)) {
+    if (http.begin(client, url)) {
         int code = http.GET();
         if (code == 200) {
             String payload = http.getString();

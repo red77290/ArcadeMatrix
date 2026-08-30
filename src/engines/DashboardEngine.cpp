@@ -6,6 +6,7 @@
 #include "../api/OpenWeatherMapProvider.h"
 #include "../api/YahooFinanceProvider.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <math.h>
@@ -909,10 +910,12 @@ DashboardEngine::DashboardEngine()
     m_snapshot.marketItems.push_back(MarketItem("ETH", 3300.0f, -1.2f, true));
     m_snapshot.marketItems.push_back(MarketItem("SOL", 190.0f, 5.8f, true));
     m_snapshot.marketItems.push_back(MarketItem("NVDA", 135.0f, 3.4f, true));
+    m_isActive = false;
 }
 
 DashboardEngine::~DashboardEngine() {
     m_taskRunning = false;
+    m_isActive = false;
     if (m_fetchTaskHandle) {
         vTaskDelete(m_fetchTaskHandle);
         m_fetchTaskHandle = nullptr;
@@ -956,11 +959,17 @@ EngineError DashboardEngine::initialize(EngineContext* context, const EngineConf
 
 void DashboardEngine::activate() {
     LOGI("Dashboard", "DashboardEngine::activate called.");
+    m_isActive = true;
+    m_forceFetchWeather = true;
+    m_forceFetchMarkets = true;
     updateSnapshot();
     LOGI("Dashboard", "DashboardEngine::activate complete.");
 }
 
-void DashboardEngine::deactivate() {}
+void DashboardEngine::deactivate() {
+    LOGI("Dashboard", "DashboardEngine::deactivate called.");
+    m_isActive = false;
+}
 
 void DashboardEngine::fetchTaskStatic(void* param) {
     DashboardEngine* self = static_cast<DashboardEngine*>(param);
@@ -975,7 +984,7 @@ void DashboardEngine::fetchTaskLoop() {
     vTaskDelay(pdMS_TO_TICKS(4000)); // Delay initial network queries so boot settles
 
     while (m_taskRunning) {
-        if (WiFi.status() == WL_CONNECTED) {
+        if (m_isActive && WiFi.status() == WL_CONNECTED) {
             uint32_t now = millis();
 
             // Periodic or Forced Weather Fetch (every 15 minutes or on config change)
@@ -993,7 +1002,7 @@ void DashboardEngine::fetchTaskLoop() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     m_fetchTaskHandle = nullptr;
@@ -1312,13 +1321,15 @@ void DashboardEngine::fetchWeather() {
 
     // Geocode city if not default Paris
     if (!city.equalsIgnoreCase("Paris")) {
+        WiFiClientSecure geoClient;
+        geoClient.setInsecure();
         HTTPClient geoHttp;
         geoHttp.setTimeout(3000);
         String encCity = city;
         encCity.trim();
         encCity.replace(" ", "%20");
         String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=fr&format=json";
-        if (geoHttp.begin(geoUrl)) {
+        if (geoHttp.begin(geoClient, geoUrl)) {
             int code = geoHttp.GET();
             if (code == 200) {
                 DynamicJsonDocument geoDoc(2048);
@@ -1334,10 +1345,12 @@ void DashboardEngine::fetchWeather() {
     }
 
     // Fetch current weather from Open-Meteo
+    WiFiClientSecure metClient;
+    metClient.setInsecure();
     HTTPClient metHttp;
     metHttp.setTimeout(3000);
     String metUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat, 4) + "&longitude=" + String(lon, 4) + "&current=temperature_2m,weather_code";
-    if (metHttp.begin(metUrl)) {
+    if (metHttp.begin(metClient, metUrl)) {
         int code = metHttp.GET();
         if (code == 200) {
             DynamicJsonDocument metDoc(2048);
@@ -1386,7 +1399,14 @@ void DashboardEngine::fetchWeather() {
 }
 
 void DashboardEngine::fetchMarkets() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (!m_isActive || WiFi.status() != WL_CONNECTED) return;
+
+#if defined(ESP32)
+    if (ESP.getMaxAllocHeap() < 20000) {
+        LOGW("Dashboard", "Heap fragmented (max alloc: %u), skipping market fetch", ESP.getMaxAllocHeap());
+        return;
+    }
+#endif
 
     std::vector<String> symbols;
     String raw = m_cachedTrackedMarkets;
@@ -1409,14 +1429,17 @@ void DashboardEngine::fetchMarkets() {
     YahooFinanceProvider yahooProvider;
 
     for (const auto& sym : symbols) {
+        if (!m_isActive) break;
         bool itemAdded = false;
 
         // 1. Probe Binance 24hr ticker API (<sym>USDT)
+        WiFiClientSecure binanceClient;
+        binanceClient.setInsecure();
         HTTPClient http;
         http.setTimeout(2500);
         String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
         
-        if (http.begin(url)) {
+        if (http.begin(binanceClient, url)) {
             int code = http.GET();
             if (code == 200) {
                 DynamicJsonDocument doc(1024);
@@ -1431,7 +1454,7 @@ void DashboardEngine::fetchMarkets() {
         }
 
         // 2. If not found on Binance, query Yahoo Finance for Stocks, ETFs or Cryptos
-        if (!itemAdded) {
+        if (!itemAdded && m_isActive) {
             float stockPrice = 0.0f;
             float stockChange = 0.0f;
             String imgUrl = "";
