@@ -290,6 +290,51 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 | `speed` | `int` | `50` | `10` to `200` | Milliseconds per scroll step (lower is faster; ignored when static). |
 | `font` | `String` | `Default` | Dynamic | Font file from `/fonts/`. |
 
+### Engine: `dashboard` (Master Desk Deck & Multi-Widget Hub)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `clock_mode` | `Options` | `1` | `0:Digital Modern, 1:Pixel-Art Watch Dial, 2:Minimal` | Clock display style. |
+| `theme` | `Options` | `0` | `0:Cyberpunk Neon, 1:Arcade Amber HUD, 2:Minimalist Luxury, 3:Matrix Phosphor` | Color palette for widgets and watch bezels. |
+| `show_clock` | `bool` | `true` | `true`, `false` | Display main clock widget. |
+| `show_world_clock` | `bool` | `true` | `true`, `false` | Display world clocks badge. |
+| `world_clocks` | `String` (Multi) | `NYC,TYO,LON` | Preset tags / Free text | Comma-separated list of airport/city codes (`NYC`, `TYO`, `LON`, `PAR`, `LAX`, `SFO`, `DXB`, `SIN`, `HKG`, `SYD`, `BER`, `ROM`, `MAD`, `AMS`, `YUL`, `UTC`) or custom offsets (`REU:+4`, `NYC:-4`). |
+| `show_weather` | `bool` | `true` | `true`, `false` | Display outdoor weather and temperature. |
+| `weather_city` | `String` | `Paris` | Text | City for weather forecasts. |
+| `weather_api_key` | `String` | `""` | Optional API Key | OpenWeatherMap API key (leave blank to automatically use free Open-Meteo service without API key). |
+| `show_indoor_temp` | `bool` | `true` | `true`, `false` | Display onboard SHTC3 indoor room temperature and humidity. |
+| `temp_offset` | `float` | `-3.5` | `-20.0` to `20.0` | Calibration offset (°C) to compensate for CPU heat dissipation. |
+| `show_markets` | `bool` | `true` | `true`, `false` | Display crypto and stock market ticker badges. |
+| `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Top 20 tags / Free text | Cryptos via Binance API (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) and Stocks/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
+| `show_sysinfo` | `bool` | `true` | `true`, `false` | Display RAM, CPU & WiFi vitals gauge. |
+| `show_date` | `bool` | `true` | `true`, `false` | Display day and date badge. |
+| `show_seconds` | `bool` | `true` | `true`, `false` | Display sweeping second hand or seconds digits. |
+| `smooth_seconds` | `bool` | `true` | `true`, `false` | Continuous sweeping second hand vs crisp 1s ticks. |
+| `temp_unit` | `Options` | `C` | `C:Celsius (°C), F:Fahrenheit (°F)` | Temperature display unit. |
+| `offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel offset. |
+| `offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel offset. |
+
+> **Adaptive Auto-Scaling**: When widgets are disabled, remaining widgets dynamically expand horizontally and vertically to take 100% of the display without dead space or black borders.
+
+### Engine: `visualizer` (Live Audio Equalizer)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Visualizer rendering mode: Spectrum Bars, Oscilloscope Waveform, Radial Circular, or Neon Fire. |
+| `gain` | `int` | `24` | `0` to `30` | Microphone hardware gain in dB (ES7210 codec). |
+| `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Color gradient for audio bars and waves. |
+
+### Engine: `decibel` (Sound Level Meter)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `alert_threshold_db` | `int` | `85` | `40` to `120` | Sound pressure level threshold for visual warning. |
+| `show_peak` | `bool` | `true` | `true`, `false` | Display peak hold indicator. |
+
+### Engine: `temp` (Indoor Climate Monitor)
+| Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `show_humidity` | `bool` | `true` | `true`, `false` | Display relative humidity percentage. |
+| `temp_unit` | `Options` | `C` | `C`, `F` | Celsius or Fahrenheit display. |
+| `temp_offset` | `float` | `-3.5` | `-20.0` to `20.0` | Calibration offset (°C). |
+
 ### Engine: `marquee`
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |

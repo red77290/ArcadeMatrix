@@ -836,6 +836,132 @@ paths:
                     type: string
                     example: "esp32s3"
 
+  /api/hardware:
+    get:
+      tags:
+        - System
+      summary: Hardware detection and capabilities
+      description: Returns detected hardware peripherals (sensors, audio codecs, gyroscope, SD card, PSRAM).
+      responses:
+        '200':
+          description: Hardware profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  has_temp_sensor: { type: boolean, example: true }
+                  has_audio_input: { type: boolean, example: true }
+                  has_audio_output: { type: boolean, example: true }
+                  has_gyroscope: { type: boolean, example: true }
+                  has_psram: { type: boolean, example: true }
+                  has_sd: { type: boolean, example: true }
+
+  /api/sensor:
+    get:
+      tags:
+        - System
+      summary: Get live environmental sensor readings (SHTC3)
+      description: Returns temperature (°C and °F) and relative humidity (%) from onboard SHTC3 sensor.
+      responses:
+        '200':
+          description: Sensor data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean, example: true }
+                  temperature_c: { type: number, example: 22.4 }
+                  temperature_f: { type: number, example: 72.3 }
+                  humidity: { type: number, example: 48.6 }
+
+  /api/audio/status:
+    get:
+      tags:
+        - System
+      summary: Get audio subsystem status and gain
+      description: Returns ES7210 microphone codec status, hardware microphone gain, and playback capabilities.
+      responses:
+        '200':
+          description: Audio status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mic_available: { type: boolean, example: true }
+                  mic_gain_db: { type: integer, example: 24 }
+                  out_available: { type: boolean, example: true }
+
+  /api/audio/gain:
+    post:
+      tags:
+        - System
+      summary: Set microphone hardware gain (ES7210)
+      description: Sets the microphone analog/digital gain in dB (0 to 30 dB).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gain
+              properties:
+                gain: { type: integer, minimum: 0, maximum: 30, example: 24 }
+      responses:
+        '200':
+          description: Gain updated
+
+  /api/audio/play:
+    post:
+      tags:
+        - System
+      summary: Play audio effect or tone
+      description: Plays an alert tone or audio asset on the speaker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tone_hz: { type: integer, example: 440 }
+                duration_ms: { type: integer, example: 200 }
+      responses:
+        '200':
+          description: Audio playback started
+
+  /api/gyro/status:
+    get:
+      tags:
+        - System
+      summary: Get gyroscope and orientation sensor status (QMI8658)
+      description: Returns real-time 3-axis accelerometer and gyro data, auto-rotation angle, and tilt calibration status.
+      responses:
+        '200':
+          description: Gyroscope readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean, example: true }
+                  ax: { type: number, example: 0.96 }
+                  ay: { type: number, example: 0.08 }
+                  az: { type: number, example: -0.22 }
+                  rotation_deg: { type: integer, example: 0 }
+
+  /api/gyro/calibrate:
+    post:
+      tags:
+        - System
+      summary: Calibrate gyroscope zero offset
+      responses:
+        '200':
+          description: Gyroscope calibrated successfully
+
   /api/ota:
     post:
       tags:

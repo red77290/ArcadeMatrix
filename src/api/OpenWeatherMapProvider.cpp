@@ -32,6 +32,7 @@ bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& c
     
     String url = "http://api.openweathermap.org/data/2.5/forecast?q=" + encodedCity + "&units=" + reqUnits + "&appid=" + apiKey + "&lang=" + reqLang;
     
+    http.setTimeout(3000);
     http.begin(url);
     int httpCode = http.GET();
     

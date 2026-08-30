@@ -15,5 +15,6 @@ struct SanitizeResult {
 
 class ConfigSanitizer {
 public:
-    static SanitizeResult sanitizeInstances(ConfigLoader& config);
+    static SanitizeResult sanitize(ConfigLoader& config);
+    static SanitizeResult sanitizeInstances(ConfigLoader& config) { return sanitize(config); }
 };

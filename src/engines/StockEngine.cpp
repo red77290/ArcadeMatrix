@@ -477,20 +477,36 @@ void StockEngine::renderQuote(EngineContext* context) {
             }
         }
         
-        // Symbol + Price top line (Size 1)
-        matrix->setTextColor(0xFFFF);
-        matrix->setTextSize(1);
-        matrix->setCursor(20, 4);
-        matrix->print(activeSymbol);
-        
-        matrix->setTextColor(matrix->color565(0, 220, 255));
-        matrix->setCursor(20 + activeSymbol.length() * 6 + 6, 4);
-        matrix->print(priceBuf);
-        
-        // Change Badge bottom line (Size 1)
-        matrix->setTextColor(badgeColor);
-        matrix->setCursor(20, 18);
-        matrix->print(pctBuf);
+        if (mW < 48) {
+            // Narrow / Portrait screen layout (32x64, 32x128)
+            matrix->setTextColor(0xFFFF);
+            matrix->setTextSize(1);
+            matrix->setCursor(20, 2);
+            matrix->print(activeSymbol);
+
+            matrix->setTextColor(matrix->color565(0, 220, 255));
+            matrix->setCursor(2, 18);
+            matrix->print(priceBuf);
+
+            matrix->setTextColor(badgeColor);
+            matrix->setCursor(2, 28);
+            matrix->print(pctBuf);
+        } else {
+            // Standard Landscape layout
+            matrix->setTextColor(0xFFFF);
+            matrix->setTextSize(1);
+            matrix->setCursor(20, 4);
+            matrix->print(activeSymbol);
+            
+            matrix->setTextColor(matrix->color565(0, 220, 255));
+            matrix->setCursor(20 + activeSymbol.length() * 6 + 6, 4);
+            matrix->print(priceBuf);
+            
+            // Change Badge bottom line (Size 1)
+            matrix->setTextColor(badgeColor);
+            matrix->setCursor(20, 18);
+            matrix->print(pctBuf);
+        }
     }
 }
 

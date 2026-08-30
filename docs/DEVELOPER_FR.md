@@ -486,7 +486,7 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ---
 
-## 15. Rendu sur la Matrice LED
+## 15. Rendu sur la Matrice LED & Géométrie Responsif
 
 ```cpp
 MatrixPanel_I2S_DMA* matrix = context->getMatrix();
@@ -495,16 +495,55 @@ matrix->fillRect(x, y, w, h, color);
 ```
 *Ne jamais appeler `flipDMABuffer()` dans le moteur — la boucle principale s'en charge.*
 
+### 15.1 La Règle d'Or du Rendu Responsif Multi-Résolutions & TATE
+
+ArcadeMatrix fonctionne sur toutes les résolutions et orientations (`64x32`, `128x32`, `256x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+> [!IMPORTANT]
+> **🏆 La Règle d'Or du Rendu :**
+> 1. **Les moteurs de rendu ne doivent JAMAIS contenir d'embranchements `if (layoutClass)` directs.**
+> 2. Créer une calculatrice pure associée `*LayoutCalculator` (ex: `MyEngineLayoutCalculator::calculate(geometry)`) retournant une structure `MyEngineLayout` composée de `Rect`s bornés.
+> 3. La méthode `render()` dessine exclusivement à l'intérieur des `Rect`s fournis.
+
+#### Exemple de Calculatrice de Layout Déclarative
+```cpp
+struct MusicLayout {
+    Rect artworkRect;
+    Rect metadataRect;
+    Rect progressRect;
+    Rect visualizerRect;
+};
+
+class MusicLayoutCalculator {
+public:
+    static MusicLayout calculate(const DisplayGeometry& geometry) {
+        MusicLayout layout;
+        if (geometry.layoutClass == LayoutClass::PORTRAIT || geometry.layoutClass == LayoutClass::TALL) {
+            layout.artworkRect = { 2, 2, (uint16_t)(geometry.width - 4), (uint16_t)min((int)geometry.width - 4, (int)(geometry.height * 0.35f)) };
+            layout.metadataRect = { 2, (int16_t)(layout.artworkRect.y + layout.artworkRect.height + 2), (uint16_t)(geometry.width - 4), 16 };
+            layout.progressRect = { 2, (int16_t)(layout.metadataRect.y + 18), (uint16_t)(geometry.width - 4), 3 };
+            layout.visualizerRect = { 2, (int16_t)(geometry.height - 12), (uint16_t)(geometry.width - 4), 10 };
+        } else {
+            layout.artworkRect = { 2, 2, (uint16_t)(geometry.height - 4), (uint16_t)(geometry.height - 4) };
+            layout.metadataRect = { (int16_t)(layout.artworkRect.width + 6), 2, (uint16_t)(geometry.width - layout.artworkRect.width - 8), 12 };
+            layout.progressRect = { (int16_t)(layout.artworkRect.width + 6), 16, (uint16_t)(geometry.width - layout.artworkRect.width - 8), 2 };
+            layout.visualizerRect = { (int16_t)(layout.artworkRect.width + 6), (int16_t)(geometry.height - 10), (uint16_t)(geometry.width - layout.artworkRect.width - 8), 8 };
+        }
+        return layout;
+    }
+};
+```
+
 ---
 
 ## 16. Tests & Compilation Locale
 
 ```bash
 # ESP32 Standard
-pio run -e esp32dev
+rtk pio run -e esp32dev
 
 # Waveshare ESP32-S3
-pio run -e esp32s3_waveshare
+rtk pio run -e esp32s3_waveshare
 ```
 
 ---

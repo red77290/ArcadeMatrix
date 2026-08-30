@@ -185,34 +185,18 @@ void FlipClock::drawPanel(int x, int y, int w, int h, const char* curText, const
 }
 
 void FlipClock::drawTime() {
+    int w = matrix->width();
+    int h = matrix->height();
+    bool isTate = (w < 48 || h > (w * 3) / 2);
+
     uint16_t bgColor  = matrix->color565(245, 245, 245);
     uint16_t textColor = matrix->color565(15, 15, 15);
     uint16_t dotCol    = matrix->color565(210, 210, 210);
     
     int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
-    int spacing = (matrix->width() <= 64) ? 1 : 2;
-    int dotWidth = (matrix->width() <= 64) ? 2 : 3;
-    
-    int maxW = (matrix->width() - (7 * spacing) - (2 * dotWidth)) / 6;
-    int maxH = matrix->height() - 4;
-    if (maxW * 1.4 < maxH) maxH = maxW * 1.4;
-    if (maxH / 1.4 < maxW) maxW = maxH / 1.4;
-    
-    int panelW = 10;
-    int panelH = 14;
-    if (logicalSize >= 5) { panelW = maxW * 1.5; panelH = maxH * 1.5; }
-    else if (logicalSize == 4) { panelW = maxW; panelH = maxH; }
-    else if (logicalSize == 3) { panelW = maxW * 3 / 4; panelH = maxH * 3 / 4; }
-    else if (logicalSize == 2) { panelW = maxW * 2 / 4; panelH = maxH * 2 / 4; }
-    else { panelW = maxW / 4; panelH = maxH / 4; }
-    
-    if (panelW < 4) panelW = 4;
-    if (panelH < 8) panelH = 8;
-    
-    int totalW = (panelW * 6) + (spacing * 6) + (2 * (dotWidth + spacing * 2));
-    int startX = (matrix->width() - totalW) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0);
-    int y = (matrix->height() - panelH) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0);
-    
+    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+
     int curr[6] = {
         storedTime.hours / 10, storedTime.hours % 10,
         storedTime.minutes / 10, storedTime.minutes % 10,
@@ -227,24 +211,94 @@ void FlipClock::drawTime() {
         snprintf(curStr[i], sizeof(curStr[i]), "%d", cDigit);
         snprintf(oldStr[i], sizeof(oldStr[i]), "%d", oDigit);
     }
-    
-    int cx = startX;
-    for (int i = 0; i < 6; i++) {
-        drawPanel(cx, y, panelW, panelH, curStr[i], oldStr[i], bgColor, textColor, flipFrame[i]);
-        cx += panelW + spacing;
+
+    if (isTate) {
+        // Stacked Portrait Layout: 3 Tiers (HH, MM, SS)
+        int spacing = 2;
+        int maxW = (w - 6 - spacing) / 2;
+        int maxH = (h / 3) - 4;
+        if (maxW * 1.4 < maxH) maxH = maxW * 1.4;
+        if (maxH / 1.4 < maxW) maxW = maxH / 1.4;
+
+        int panelW = maxW;
+        int panelH = maxH;
+        if (logicalSize <= 1) { panelW = max(6, maxW * 3 / 4); panelH = max(8, maxH * 3 / 4); }
+        else if (logicalSize >= 3) { panelW = maxW; panelH = maxH; }
+
+        if (panelW < 6) panelW = 6;
+        if (panelH < 8) panelH = 8;
+
+        int totalTierW = (panelW * 2) + spacing;
+        int startX = (w - totalTierW) / 2 + offX;
+
+        int tierY[3] = {
+            (h / 6) - (panelH / 2) + offY,
+            (h / 2) - (panelH / 2) + offY,
+            (5 * h / 6) - (panelH / 2) + offY
+        };
+
+        // Draw Tier 0 (Hours: digits 0, 1)
+        drawPanel(startX, tierY[0], panelW, panelH, curStr[0], oldStr[0], bgColor, textColor, flipFrame[0]);
+        drawPanel(startX + panelW + spacing, tierY[0], panelW, panelH, curStr[1], oldStr[1], bgColor, textColor, flipFrame[1]);
+
+        // Draw Tier 1 (Minutes: digits 2, 3)
+        drawPanel(startX, tierY[1], panelW, panelH, curStr[2], oldStr[2], bgColor, textColor, flipFrame[2]);
+        drawPanel(startX + panelW + spacing, tierY[1], panelW, panelH, curStr[3], oldStr[3], bgColor, textColor, flipFrame[3]);
+
+        // Draw Tier 2 (Seconds: digits 4, 5)
+        drawPanel(startX, tierY[2], panelW, panelH, curStr[4], oldStr[4], bgColor, textColor, flipFrame[4]);
+        drawPanel(startX + panelW + spacing, tierY[2], panelW, panelH, curStr[5], oldStr[5], bgColor, textColor, flipFrame[5]);
+
+        // Colon Dots between tiers
+        int dotSize = (panelW >= 16) ? 2 : 1;
+        int dotX = (w - dotSize) / 2 + offX;
+        int dotY1 = (tierY[0] + panelH + tierY[1]) / 2 - (dotSize / 2);
+        int dotY2 = (tierY[1] + panelH + tierY[2]) / 2 - (dotSize / 2);
+        matrix->fillRect(dotX, dotY1, dotSize, dotSize, dotCol);
+        matrix->fillRect(dotX, dotY2, dotSize, dotSize, dotCol);
+    } else {
+        // Landscape / Widescreen Layout (6 Panels side-by-side)
+        int spacing = (w <= 64) ? 1 : 2;
+        int dotWidth = (w <= 64) ? 2 : 3;
         
-        if (i == 1 || i == 3) {
-            // Perfectly centered 3D colon dots
-            cx += spacing;
-            int dotSize = (panelH >= 16) ? 2 : 1;
-            int dotY1 = y + (panelH / 3) - (dotSize / 2);
-            int dotY2 = y + (2 * panelH / 3) - (dotSize / 2);
-            int dotX  = cx + (dotWidth - dotSize) / 2;
+        int maxW = (w - (7 * spacing) - (2 * dotWidth)) / 6;
+        int maxH = h - 4;
+        if (maxW * 1.4 < maxH) maxH = maxW * 1.4;
+        if (maxH / 1.4 < maxW) maxW = maxH / 1.4;
+        
+        int panelW = 10;
+        int panelH = 14;
+        if (logicalSize >= 5) { panelW = maxW * 1.5; panelH = maxH * 1.5; }
+        else if (logicalSize == 4) { panelW = maxW; panelH = maxH; }
+        else if (logicalSize == 3) { panelW = maxW * 3 / 4; panelH = maxH * 3 / 4; }
+        else if (logicalSize == 2) { panelW = maxW * 2 / 4; panelH = maxH * 2 / 4; }
+        else { panelW = maxW / 4; panelH = maxH / 4; }
+        
+        if (panelW < 4) panelW = 4;
+        if (panelH < 8) panelH = 8;
+        
+        int totalW = (panelW * 6) + (spacing * 6) + (2 * (dotWidth + spacing * 2));
+        int startX = (w - totalW) / 2 + offX;
+        int y = (h - panelH) / 2 + offY;
+        
+        int cx = startX;
+        for (int i = 0; i < 6; i++) {
+            drawPanel(cx, y, panelW, panelH, curStr[i], oldStr[i], bgColor, textColor, flipFrame[i]);
+            cx += panelW + spacing;
             
-            matrix->fillRect(dotX, dotY1, dotSize, dotSize, dotCol);
-            matrix->fillRect(dotX, dotY2, dotSize, dotSize, dotCol);
-            
-            cx += dotWidth + spacing;
+            if (i == 1 || i == 3) {
+                // Perfectly centered 3D colon dots
+                cx += spacing;
+                int dotSize = (panelH >= 16) ? 2 : 1;
+                int dotY1 = y + (panelH / 3) - (dotSize / 2);
+                int dotY2 = y + (2 * panelH / 3) - (dotSize / 2);
+                int dotX  = cx + (dotWidth - dotSize) / 2;
+                
+                matrix->fillRect(dotX, dotY1, dotSize, dotSize, dotCol);
+                matrix->fillRect(dotX, dotY2, dotSize, dotSize, dotCol);
+                
+                cx += dotWidth + spacing;
+            }
         }
     }
 }

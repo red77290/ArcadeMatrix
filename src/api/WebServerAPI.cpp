@@ -15,6 +15,7 @@
 #include "../core/AudioHub.h"
 #include "../services/WebRadioService.h"
 #include "../services/BluetoothAudioService.h"
+#include "../services/DLNAService.h"
 #include "../core/DisplayOrientationManager.h"
 #include "../hal/GyroHAL.h"
 
@@ -188,7 +189,7 @@ void WebServerAPI::setupRoutes() {
                 fieldObj["label"] = field.label;
                 fieldObj["description"] = field.description;
                 fieldObj["default_value"] = field.default_value;
-                if (field.type == ConfigType::ENUM || field.type == ConfigType::LIST) {
+                if (strlen(field.options) > 0) {
                     fieldObj["options"] = field.options;
                 }
                 if (strlen(field.options_endpoint) > 0) {
@@ -593,21 +594,36 @@ void WebServerAPI::setupRoutes() {
 
     // API: System Info & Stats (Dashboard metrics compatibility)
     auto sendSysStats = [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(512);
+        DynamicJsonDocument doc(1024);
         float tempC = 0.0f;
+        float humidity = 0.0f;
         if (hardwareHAL.capabilities().hasTempSensor) {
-            tempC = hardwareHAL.readEnvironment().temperatureC;
+            EnvironmentData env = hardwareHAL.readEnvironment();
+            tempC = env.temperatureC;
+            humidity = env.humidity;
         } else {
             tempC = temperatureRead();
         }
         
         doc["cpu_load"] = 0.0f;
         doc["temperature_c"] = tempC;
+        doc["humidity"] = humidity;
+        doc["free_heap"] = ESP.getFreeHeap();
+        doc["free_heap_kb"] = ESP.getFreeHeap() / 1024;
+        doc["total_heap_kb"] = ESP.getHeapSize() / 1024;
         doc["ram_used_mb"] = (float)(ESP.getHeapSize() - ESP.getFreeHeap()) / (1024.0f * 1024.0f);
         doc["ram_total_mb"] = (float)ESP.getHeapSize() / (1024.0f * 1024.0f);
+        doc["psram_found"] = hardwareHAL.capabilities().hasPsram;
+        doc["psram_free_mb"] = (float)ESP.getFreePsram() / (1024.0f * 1024.0f);
+        doc["psram_total_mb"] = (float)ESP.getPsramSize() / (1024.0f * 1024.0f);
         doc["disk_free_gb"] = 0.0f;
-        doc["free_heap"] = ESP.getFreeHeap();
         doc["uptime_sec"] = millis() / 1000;
+        doc["has_temp_sensor"] = hardwareHAL.capabilities().hasTempSensor;
+        doc["has_microphone"] = hardwareHAL.capabilities().hasMicrophone;
+        doc["has_dac"] = hardwareHAL.capabilities().audio.output;
+        doc["has_gyro"] = gyroHAL.isAvailable();
+        doc["gyro_sensor"] = gyroHAL.getOrientation().sensorName;
+        doc["hardware_profile"] = "Waveshare ESP32-S3 RGB Matrix";
         
         String response;
         serializeJson(doc, response);
@@ -722,15 +738,24 @@ void WebServerAPI::setupRoutes() {
 
     // API: List GIF Playlists (Direct SD streaming with zero heap allocation, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
+        String targetDir = "/gifs";
+        if (request->hasParam("type") && request->getParam("type")->value().equalsIgnoreCase("tate")) {
+            targetDir = "/gifs_tate";
+        } else if (request->hasParam("folder")) {
+            String f = request->getParam("folder")->value();
+            if (f.indexOf("tate") != -1) targetDir = "/gifs_tate";
+        }
+
+        String jsonPath = targetDir + "/playlists.json";
         bool hasJson = false;
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            hasJson = sd.exists("/gifs/playlists.json");
+            hasJson = sd.exists(jsonPath.c_str());
             xSemaphoreGive(sdMutex);
         }
         
         if (hasJson) {
             // Stream the JSON file directly from SD to client in chunks (no full file malloc)
-            request->send(new AsyncSdFatResponse("/gifs/playlists.json", "application/json"));
+            request->send(new AsyncSdFatResponse(jsonPath.c_str(), "application/json"));
             return;
         }
 
@@ -738,7 +763,7 @@ void WebServerAPI::setupRoutes() {
         String content = "{";
         if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
             bool first = true;
-            FsFile dir = sd.open("/gifs");
+            FsFile dir = sd.open(targetDir.c_str());
             if (dir && isDirectory(dir)) {
                 FsFile file;
                 while (getNextFile(dir, file)) {
@@ -750,7 +775,7 @@ void WebServerAPI::setupRoutes() {
                         if (name.length() > 0 && name[0] != '.') {
                             if (!first) content += ",";
                             content += "\"" + name + "\":{";
-                            content += "\"path\":\"/gifs/" + name + "\",";
+                            content += "\"path\":\"" + targetDir + "/" + name + "\",";
                             content += "\"count\":0"; // No count in fallback to prevent WDT crashes
                             content += "}";
                             first = false;
@@ -810,6 +835,10 @@ void WebServerAPI::setupRoutes() {
         doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
         doc["matrix_row_address_mode"] = config.matrix.rowAddressMode;
         doc["matrix_limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
+        doc["rotation_offset"] = config.matrix.rotation_offset;
+        doc["auto_rotate"] = config.matrix.auto_rotate;
+        doc["rotation_transition"] = config.matrix.rotation_transition;
+        doc["rotation_transition_duration_ms"] = config.matrix.rotation_transition_duration_ms;
 
         auto getInst = [&](const String& id) { return config.getInstance(id); };
         
@@ -967,6 +996,21 @@ void WebServerAPI::setupRoutes() {
         if (!doc["matrix_clk_phase"].isNull()) config.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();
         if (!doc["matrix_latch_blanking"].isNull()) config.matrix.latchBlanking = doc["matrix_latch_blanking"].as<int>();
         if (!doc["matrix_row_address_mode"].isNull()) config.matrix.rowAddressMode = doc["matrix_row_address_mode"].as<int>();
+        if (!doc["rotation_offset"].isNull()) {
+            config.matrix.rotation_offset = doc["rotation_offset"].as<int>();
+            displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
+        }
+        if (!doc["auto_rotate"].isNull()) {
+            config.matrix.auto_rotate = doc["auto_rotate"].as<bool>();
+        }
+        if (!doc["rotation_transition"].isNull()) {
+            config.matrix.rotation_transition = doc["rotation_transition"].as<String>();
+            displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
+        }
+        if (!doc["rotation_transition_duration_ms"].isNull()) {
+            config.matrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
+            displayOrientationManager.setTransitionDuration(config.matrix.rotation_transition_duration_ms);
+        }
 
         auto getInst = [&](const String& id) { return config.getInstance(id); };
 
@@ -1393,6 +1437,19 @@ void WebServerAPI::setupRoutes() {
             if (!mat["rgb_sequence"].isNull()) config.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
             if (!mat["pwm_bits"].isNull()) config.matrix.colorDepth = mat["pwm_bits"].as<int>();
             if (!mat["limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
+            if (!mat["rotation_offset"].isNull()) {
+                config.matrix.rotation_offset = mat["rotation_offset"].as<int>();
+                displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
+            }
+            if (!mat["auto_rotate"].isNull()) config.matrix.auto_rotate = mat["auto_rotate"].as<bool>();
+            if (!mat["rotation_transition"].isNull()) {
+                config.matrix.rotation_transition = mat["rotation_transition"].as<String>();
+                displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
+            }
+            if (!mat["rotation_transition_duration_ms"].isNull()) {
+                config.matrix.rotation_transition_duration_ms = mat["rotation_transition_duration_ms"].as<int>();
+                displayOrientationManager.setTransitionDuration(config.matrix.rotation_transition_duration_ms);
+            }
             changed = true;
             willReboot = true;
         }
@@ -1415,6 +1472,7 @@ void WebServerAPI::setupRoutes() {
         }
 
         if (changed) {
+            ConfigSanitizer::sanitize(config);
             config.saveToSD("/config.json");
         }
 
@@ -1664,6 +1722,12 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"success\":true}");
     });
 
+    // API: POST /api/audio/test — Plays a short diagnostic test tone (880 Hz) on the onboard speaker
+    server.on("/api/audio/test", HTTP_POST, [](AsyncWebServerRequest *request){
+        audioOutputHAL.playSine(880.0f, 500);
+        request->send(200, "application/json", "{\"success\":true,\"message\":\"Test tone played\"}");
+    });
+
     // API: GET /api/gyro/status — Returns gravity vector and suggested orientation
     server.on("/api/gyro/status", HTTP_GET, [](AsyncWebServerRequest *request){
         DynamicJsonDocument doc(512);
@@ -1689,6 +1753,10 @@ void WebServerAPI::setupRoutes() {
     // API: POST /api/gyro/calibrate — Calibrates current physical position as 0° reference
     server.on("/api/gyro/calibrate", HTTP_POST, [](AsyncWebServerRequest *request){
         displayOrientationManager.calibrateZeroReference();
+        extern ConfigLoader config;
+        config.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
+        ConfigSanitizer::sanitize(config);
+        config.saveToSD("/config.json");
         DynamicJsonDocument doc(256);
         doc["success"] = true;
         doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
@@ -1719,21 +1787,40 @@ void WebServerAPI::setupRoutes() {
             return;
         }
         JsonObject obj = json.as<JsonObject>();
+        extern ConfigLoader config;
+        bool changed = false;
         if (!obj["manual_rotation"].isNull()) {
             displayOrientationManager.setRotation(obj["manual_rotation"].as<uint8_t>());
         }
+        if (!obj["auto_rotate"].isNull()) {
+            config.matrix.auto_rotate = obj["auto_rotate"].as<bool>();
+            changed = true;
+        }
         if (!obj["rotation_offset"].isNull()) {
-            displayOrientationManager.setRotationOffset(obj["rotation_offset"].as<uint8_t>());
+            config.matrix.rotation_offset = obj["rotation_offset"].as<int>();
+            displayOrientationManager.setRotationOffset((uint8_t)config.matrix.rotation_offset);
+            changed = true;
         }
         if (!obj["transition_effect"].isNull()) {
-            displayOrientationManager.setTransitionEffect(obj["transition_effect"].as<String>());
+            config.matrix.rotation_transition = obj["transition_effect"].as<String>();
+            displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
+            changed = true;
         }
         if (!obj["transition_duration_ms"].isNull()) {
-            displayOrientationManager.setTransitionDuration(obj["transition_duration_ms"].as<uint32_t>());
+            config.matrix.rotation_transition_duration_ms = obj["transition_duration_ms"].as<int>();
+            displayOrientationManager.setTransitionDuration((uint32_t)config.matrix.rotation_transition_duration_ms);
+            changed = true;
+        }
+        if (changed) {
+            ConfigSanitizer::sanitize(config);
+            config.saveToSD("/config.json");
         }
         request->send(200, "application/json", "{\"success\":true}");
     });
     server.addHandler(orientHandler);
+
+    // Register DLNA MediaRenderer description, SCPD and SOAP endpoints
+    dlnaService.registerRoutes(&server);
 
     // Handle Preflight CORS
     server.onNotFound([](AsyncWebServerRequest *request) {

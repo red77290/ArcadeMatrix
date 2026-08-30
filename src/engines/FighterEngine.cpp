@@ -194,6 +194,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
         free(anim.frameDelays);
+        anim.frameDelays = nullptr;
         f.close();
         return false;
     }
@@ -204,6 +205,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
             LOGW("FighterEngine", "Animation too large (%d bytes, free PSRAM: %u) for %s", anim.totalPixelsSize, (uint32_t)freePsram, filepath);
             free(anim.frameDelays);
+            anim.frameDelays = nullptr;
             f.close();
             return false;
         }
@@ -221,6 +223,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
             free(anim.frameDelays);
+            anim.frameDelays = nullptr;
             f.close();
             return false;
         }
@@ -232,11 +235,17 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
 }
 
 void FighterEngine::freeAnim(FgtAnimation& anim) {
-    if (anim.loaded) {
-        if (anim.frameDelays) { free(anim.frameDelays); anim.frameDelays = nullptr; }
-        if (anim.psramBuffer) { heap_caps_free(anim.psramBuffer); anim.psramBuffer = nullptr; }
-        anim.loaded = false;
+    if (anim.frameDelays) {
+        free(anim.frameDelays);
+        anim.frameDelays = nullptr;
     }
+    if (anim.psramBuffer) {
+        heap_caps_free(anim.psramBuffer);
+        anim.psramBuffer = nullptr;
+    }
+    anim.loaded = false;
+    anim.cachedFrameIndex = -1;
+    anim.totalPixelsSize = 0;
 }
 
 void FighterEngine::freeFighter(FighterPlayer& p) {
@@ -247,6 +256,7 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
         p.currentFrameBuffer = nullptr;
         p.currentBufferSize = 0;
     }
+    freeAnim(p.animStand);
     freeAnim(p.animWalk);
     freeAnim(p.animAttack);
     freeAnim(p.animHit);
@@ -259,7 +269,7 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
 void FighterEngine::triggerBackgroundPreload() {
     if (isNextReady || isPreloading || numAvailableFighters < 2) return;
     isPreloading = true;
-    xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 4096, this, 1, &loaderTaskHandle, 0);
+    xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 8192, this, 1, &loaderTaskHandle, 0);
 }
 
 void FighterEngine::loaderTaskFunc(void* param) {
@@ -360,6 +370,7 @@ void FighterEngine::runBackgroundPreload() {
     };
 
     ok &= loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt");
+    loadAnimThreadSafe(nextP1.animStand, dir + "/" + nextP1.name + "/stand.fgt");
     ok &= loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt");
     ok &= loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt");
     ok &= loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt");
@@ -375,6 +386,7 @@ void FighterEngine::runBackgroundPreload() {
     loadAnimThreadSafe(nextP1.animFall, dir + "/" + nextP1.name + "/fall.fgt");
 
     ok &= loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt");
+    loadAnimThreadSafe(nextP2.animStand, dir + "/" + nextP2.name + "/stand.fgt");
     ok &= loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt");
     ok &= loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt");
     ok &= loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt");
@@ -407,6 +419,7 @@ static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
     dest.head_y = src.head_y;
     dest.origin_x = src.origin_x;
     dest.width_px = src.width_px;
+    dest.animStand = src.animStand;
     dest.animWalk = src.animWalk;
     dest.animAttack = src.animAttack;
     dest.animHit = src.animHit;
@@ -425,6 +438,7 @@ static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
     dest.hasHit = src.hasHit;
     dest.isDead = src.isDead;
 
+    src.animStand = FgtAnimation();
     src.animWalk = FgtAnimation();
     src.animAttack = FgtAnimation();
     src.animHit = FgtAnimation();
@@ -434,6 +448,60 @@ static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
     src.animFall = FgtAnimation();
     src.currentFrameBuffer = nullptr;
     src.currentBufferSize = 0;
+}
+
+struct FighterGeometry {
+    Rect arena;
+    Rect hud;
+    int16_t groundY;
+    int16_t p1SpawnX;
+    int16_t p2SpawnX;
+    int scale;
+    bool isTate;
+};
+
+class FighterGeometryAdapter {
+public:
+    static FighterGeometry calculate(const DisplayGeometry& geometry, bool is32pxDir, int p1HeadY, int p1GroundY, int p1Width, int p2GroundY, int p2Width) {
+        FighterGeometry fg;
+        int screenW = geometry.width;
+        int screenH = geometry.height;
+        fg.isTate = (geometry.layoutClass == LayoutClass::PORTRAIT || geometry.layoutClass == LayoutClass::TALL);
+
+        fg.scale = 1;
+        if (!fg.isTate && screenH >= 64 && is32pxDir) {
+            fg.scale = screenH / 32;
+        } else if (fg.isTate && screenW >= 64 && is32pxDir) {
+            fg.scale = screenW / 32;
+        }
+
+        fg.arena = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)screenH };
+        fg.hud = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)(fg.isTate ? 14 : 6) };
+
+        if (fg.isTate) {
+            fg.groundY = screenH - 2;
+            fg.p1SpawnX = -(p1Width * fg.scale);
+            fg.p2SpawnX = screenW;
+        } else {
+            fg.groundY = 1 - p1HeadY + p1GroundY;
+            fg.p1SpawnX = -(p1Width * fg.scale);
+            fg.p2SpawnX = screenW;
+        }
+        return fg;
+    }
+};
+
+void FighterEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    if (!active) return;
+    bool is32 = loadDir.endsWith("32");
+    FighterGeometry fg = FighterGeometryAdapter::calculate(geometry, is32, p1.head_y, p1.ground_y, p1.width_px, p2.ground_y, p2.width_px);
+    if (fg.isTate) {
+        p1.y = fg.groundY - (p1.ground_y * fg.scale);
+        p2.y = fg.groundY - (p2.ground_y * fg.scale);
+    } else {
+        p1.y = (1 - p1.head_y) * fg.scale;
+        p2.y = (fg.groundY - p2.ground_y) * fg.scale;
+    }
 }
 
 void FighterEngine::startFight() {
@@ -449,24 +517,41 @@ void FighterEngine::startFight() {
         isNextReady = false;
 
         loadDir = getFightersDir();
-        int scale = (matrix && matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+        int screenW = matrix ? matrix->width() : 128;
+        int screenH = matrix ? matrix->height() : 32;
 
-        // Place P1 at 1 pixel from the top of the screen
-        p1.direction = 1; 
-        p1.x = -p1.width_px * scale; 
-        p1.y = (1 - p1.head_y) * scale;
-        
-        // Align ground line to P1's physical feet, place P2 on same ground line
-        int ground_y_screen = 1 - p1.head_y + p1.ground_y;
-        p2.direction = -1; 
-        p2.x = matrix ? matrix->width() : 128;
-        p2.y = (ground_y_screen - p2.ground_y) * scale;
+        DisplayGeometry geom;
+        geom.width = screenW;
+        geom.height = screenH;
+        geom.layoutClass = DisplayGeometry::classify(screenW, screenH);
+
+        bool is32 = loadDir.endsWith("32");
+        FighterGeometry fg = FighterGeometryAdapter::calculate(geom, is32, p1.head_y, p1.ground_y, p1.width_px, p2.ground_y, p2.width_px);
+
+        if (fg.isTate) {
+            p1.direction = 1;
+            p1.x = fg.p1SpawnX;
+            p1.y = fg.groundY - (p1.ground_y * fg.scale);
+
+            p2.direction = -1;
+            p2.x = fg.p2SpawnX;
+            p2.y = fg.groundY - (p2.ground_y * fg.scale);
+        } else {
+            p1.direction = 1; 
+            p1.x = fg.p1SpawnX; 
+            p1.y = (1 - p1.head_y) * fg.scale;
+            
+            p2.direction = -1; 
+            p2.x = fg.p2SpawnX;
+            p2.y = (fg.groundY - p2.ground_y) * fg.scale;
+        }
         
         setPlayerState(p1, FIGHTER_WALK);
         setPlayerState(p2, FIGHTER_WALK);
         p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
         fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
-        LOGI("FighterEngine", "🥊 Match -> [P1: %s] (H:%d) vs [P2: %s] (H:%d)", p1.name.c_str(), p1.height, p2.name.c_str(), p2.height);
+        LOGI("FighterEngine", "🥊 Match -> [P1: %s] (H:%d) vs [P2: %s] (H:%d) [%dx%d %s]", 
+             p1.name.c_str(), p1.height, p2.name.c_str(), p2.height, screenW, screenH, fg.isTate ? "TATE" : "LANDSCAPE");
         active = true;
     } else {
         // Not ready yet (e.g. at boot): trigger preload
@@ -486,7 +571,8 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     p.lastFrameTime = millis();
     
     FgtAnimation* anim = nullptr;
-    if (newState == FIGHTER_WALK) anim = &p.animWalk;
+    if (newState == FIGHTER_STAND) anim = p.animStand.loaded ? &p.animStand : &p.animWalk;
+    else if (newState == FIGHTER_WALK) anim = &p.animWalk;
     else if (newState == FIGHTER_ATTACK) anim = &p.animAttack;
     else if (newState == FIGHTER_HIT) anim = &p.animHit;
     else if (newState == FIGHTER_WIN) anim = &p.animWin;
@@ -497,6 +583,7 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     if (p.activeFile) p.activeFile.close();
 
     // Reset frame cache for all animations when changing state so new frames are freshly read
+    p.animStand.cachedFrameIndex = -1;
     p.animWalk.cachedFrameIndex = -1;
     p.animAttack.cachedFrameIndex = -1;
     p.animHit.cachedFrameIndex = -1;
@@ -536,8 +623,10 @@ bool FighterEngine::loop() {
     uint32_t now = millis();
     
     // Update frames
+    // Update frames
     FgtAnimation* anim1 = nullptr;
-    if (p1.state == FIGHTER_WALK) anim1 = &p1.animWalk;
+    if (p1.state == FIGHTER_STAND) anim1 = p1.animStand.loaded ? &p1.animStand : &p1.animWalk;
+    else if (p1.state == FIGHTER_WALK) anim1 = &p1.animWalk;
     else if (p1.state == FIGHTER_ATTACK) anim1 = &p1.animAttack;
     else if (p1.state == FIGHTER_HIT) anim1 = &p1.animHit;
     else if (p1.state == FIGHTER_WIN) anim1 = &p1.animWin;
@@ -552,7 +641,7 @@ bool FighterEngine::loop() {
             p1.currentFrame++;
             p1.lastFrameTime = now;
             if (p1.currentFrame >= anim1->numFrames) {
-                if (p1.state == FIGHTER_WALK) p1.currentFrame = 0; // Loop walk
+                if (p1.state == FIGHTER_WALK || p1.state == FIGHTER_STAND) p1.currentFrame = 0; // Loop walk & stand
                 else if (p1.state == FIGHTER_ATTACK || p1.state == FIGHTER_SPECIAL || p1.state == FIGHTER_SUPER) setPlayerState(p1, FIGHTER_WIN);
                 else if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL) { p1.currentFrame = anim1->numFrames - 1; p1.isDead = true; } // Stay on last hit frame
                 else if (p1.state == FIGHTER_WIN) { p1.currentFrame = anim1->numFrames - 1; } // Stay on last win frame
@@ -561,7 +650,8 @@ bool FighterEngine::loop() {
     }
     
     FgtAnimation* anim2 = nullptr;
-    if (p2.state == FIGHTER_WALK) anim2 = &p2.animWalk;
+    if (p2.state == FIGHTER_STAND) anim2 = p2.animStand.loaded ? &p2.animStand : &p2.animWalk;
+    else if (p2.state == FIGHTER_WALK) anim2 = &p2.animWalk;
     else if (p2.state == FIGHTER_ATTACK) anim2 = &p2.animAttack;
     else if (p2.state == FIGHTER_HIT) anim2 = &p2.animHit;
     else if (p2.state == FIGHTER_WIN) anim2 = &p2.animWin;
@@ -576,7 +666,7 @@ bool FighterEngine::loop() {
             p2.currentFrame++;
             p2.lastFrameTime = now;
             if (p2.currentFrame >= anim2->numFrames) {
-                if (p2.state == FIGHTER_WALK) p2.currentFrame = 0; // Loop walk
+                if (p2.state == FIGHTER_WALK || p2.state == FIGHTER_STAND) p2.currentFrame = 0; // Loop walk & stand
                 else if (p2.state == FIGHTER_ATTACK || p2.state == FIGHTER_SPECIAL || p2.state == FIGHTER_SUPER) setPlayerState(p2, FIGHTER_WIN);
                 else if (p2.state == FIGHTER_HIT || p2.state == FIGHTER_FALL) { p2.currentFrame = anim2->numFrames - 1; p2.isDead = true; } // Stay on last hit frame
                 else if (p2.state == FIGHTER_WIN) { p2.currentFrame = anim2->numFrames - 1; } // Stay on last win frame
@@ -584,36 +674,66 @@ bool FighterEngine::loop() {
         }
     }
     
-    // Combat Logic
-    if (p1.state == FIGHTER_WALK && p2.state == FIGHTER_WALK) {
-        // Move towards each other
+    // Combat Logic (Approach & Engagement)
+    if ((p1.state == FIGHTER_WALK || p1.state == FIGHTER_STAND) && 
+        (p2.state == FIGHTER_WALK || p2.state == FIGHTER_STAND) && 
+        !p1.isDead && !p2.isDead) {
+
+        int screenW = matrix ? matrix->width() : 128;
+        int screenH = matrix ? matrix->height() : 32;
+        bool isTate = (screenW < 48 || screenH > (screenW * 3) / 2);
+        int scale = (screenH >= 64 && loadDir.endsWith("32")) ? (screenH / 32) : 1;
+        if (isTate && screenW >= 64 && loadDir.endsWith("32")) scale = screenW / 32;
+
+        int engage_dist = isTate ? max(6, 6 * scale) : ((screenW >= 128) ? (20 * scale) : (14 * scale));
+        int centerX = screenW / 2;
+
+        int p1_target_x = centerX - (engage_dist / 2) - (p1.origin_x * scale);
+        int p2_target_x = centerX + (engage_dist / 2) - ((p2.width_px - p2.origin_x) * scale);
+
+        // Move towards center target
         uint32_t elapsed = now - lastMoveTime;
         if (elapsed >= 35) { // Speed throttle (1 pixel per 35ms -> ~28 FPS)
-            int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
-            int pixelsToMove = (elapsed / 35) * scale;
-            p1.x += pixelsToMove;
-            p2.x -= pixelsToMove;
-            lastMoveTime += (elapsed / 35) * 35; // Correctly advance time
+            int steps = (elapsed / 35);
+            lastMoveTime += steps * 35;
+
+            for (int s = 0; s < steps; s++) {
+                if (p1.x < p1_target_x) {
+                    p1.x += max(1, scale);
+                    if (p1.x > p1_target_x) p1.x = p1_target_x;
+                }
+                if (p2.x > p2_target_x) {
+                    p2.x -= max(1, scale);
+                    if (p2.x < p2_target_x) p2.x = p2_target_x;
+                }
+            }
         }
-        
-        // Collision detection (simple distance using origins)
-        int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+
+        // Switch to standing idle stance when reached center target
+        if (p1.x >= p1_target_x && p1.state == FIGHTER_WALK) {
+            setPlayerState(p1, FIGHTER_STAND);
+        }
+        if (p2.x <= p2_target_x && p2.state == FIGHTER_WALK) {
+            setPlayerState(p2, FIGHTER_STAND);
+        }
+
+        // Check if both combatants are ready or within engagement distance
+        bool p1Ready = (p1.x >= p1_target_x);
+        bool p2Ready = (p2.x <= p2_target_x);
+
         int p1_world_origin = p1.x + (p1.origin_x * scale);
         int p2_world_origin = p2.x + ((p2.width_px - p2.origin_x) * scale);
         int dist = p2_world_origin - p1_world_origin;
-        
-        // Engaging distance based on sprite size, not screen width
-        int engage_dist = 18 * scale;
-        
-        if (dist <= engage_dist) {
+
+        if ((p1Ready && p2Ready) || (dist <= engage_dist)) {
             // Fight! Random winner
             FighterPlayer* attacker = ((esp_random() % 2) == 0) ? &p1 : &p2;
             FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
-            
+
             FighterState atkState = FIGHTER_ATTACK;
             FighterState tgtState = FIGHTER_HIT;
             bool isHeavy = false;
-            
+
             int rnd = esp_random() % 100;
             if (attacker->animSuper.loaded && rnd < 50) {
                 atkState = FIGHTER_SUPER;
@@ -624,10 +744,10 @@ bool FighterEngine::loop() {
                 tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
                 isHeavy = true;
             }
-            
+
             setPlayerState(*attacker, atkState);
             setPlayerState(*target, tgtState);
-            
+
             if (isHeavy) {
                 hitStopUntilMillis = millis() + 150;
                 shakeRemainingFrames = 10;
@@ -661,7 +781,8 @@ bool FighterEngine::loop() {
 
 void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     FgtAnimation* anim = nullptr;
-    if (p.state == FIGHTER_WALK) anim = &p.animWalk;
+    if (p.state == FIGHTER_STAND) anim = p.animStand.loaded ? &p.animStand : &p.animWalk;
+    else if (p.state == FIGHTER_WALK) anim = &p.animWalk;
     else if (p.state == FIGHTER_ATTACK) anim = &p.animAttack;
     else if (p.state == FIGHTER_HIT) anim = &p.animHit;
     else if (p.state == FIGHTER_WIN) anim = &p.animWin;
@@ -727,7 +848,7 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
 }
 
 void FighterEngine::draw() {
-    if (!active) return;
+    if (!active || !matrix) return;
     
     int globalOffsetY = 0;
     if (shakeRemainingFrames > 0) {
@@ -735,6 +856,10 @@ void FighterEngine::draw() {
         shakeRemainingFrames--;
     }
     
+    int screenW = matrix->width();
+    int screenH = matrix->height();
+    bool isTateMode = (screenH > screenW);
+
     // Draw the dead player first (background), then the winner (foreground)
     if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL || p1.isDead) {
         drawPlayer(p1, globalOffsetY);
@@ -742,5 +867,45 @@ void FighterEngine::draw() {
     } else {
         drawPlayer(p2, globalOffsetY);
         drawPlayer(p1, globalOffsetY);
+    }
+
+    // Responsive Arcade HUD in Tate mode / Large screens
+    if (isTateMode && screenH >= 64) {
+        int barW = (screenW - 10) / 2;
+        if (barW > 2) {
+            // Player 1 Health Bar (Left)
+            uint16_t p1Color = (p1.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
+            matrix->drawRect(1, 2, barW, 4, matrix->color565(50, 50, 60));
+            matrix->fillRect(2, 3, p1.isDead ? 1 : (barW - 2), 2, p1Color);
+
+            // VS Badge in Center
+            int vsX = (screenW / 2) - 2;
+            matrix->drawPixel(vsX, 3, matrix->color565(255, 60, 60));
+            matrix->drawPixel(vsX + 1, 4, matrix->color565(255, 220, 0));
+
+            // Player 2 Health Bar (Right)
+            uint16_t p2Color = (p2.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
+            int p2BarX = screenW - 1 - barW;
+            matrix->drawRect(p2BarX, 2, barW, 4, matrix->color565(50, 50, 60));
+            matrix->fillRect(p2BarX + 1, 3, p2.isDead ? 1 : (barW - 2), 2, p2Color);
+        }
+
+        // On ultra-tall screens (32x128, 64x256), draw MUGEN arcade banner
+        if (screenH >= 128) {
+            matrix->setFont(nullptr);
+            matrix->setTextSize(1);
+            matrix->setTextColor(matrix->color565(255, 215, 0));
+            String p1Tag = p1.name.substring(0, 3);
+            p1Tag.toUpperCase();
+            matrix->setCursor(2, 8);
+            matrix->print(p1Tag);
+
+            matrix->setTextColor(matrix->color565(0, 200, 255));
+            String p2Tag = p2.name.substring(0, 3);
+            p2Tag.toUpperCase();
+            int p2TagX = max(2, screenW - (int)(p2Tag.length() * 6) - 2);
+            matrix->setCursor(p2TagX, 8);
+            matrix->print(p2Tag);
+        }
     }
 }

@@ -68,7 +68,7 @@ void RotationTransitionFX::initParticles(int16_t w, int16_t h, bool clockwise) {
     }
 }
 
-void RotationTransitionFX::start(uint8_t fromRot, uint8_t toRot, RotationEffect effect, uint32_t durationMs) {
+void RotationTransitionFX::start(uint8_t fromRot, uint8_t toRot, RotationEffect effect, uint32_t durationMs, int16_t w, int16_t h) {
     if (effect == RotationEffect::NONE || durationMs == 0) {
         _active = false;
         return;
@@ -92,7 +92,7 @@ void RotationTransitionFX::start(uint8_t fromRot, uint8_t toRot, RotationEffect 
     // Direction (clockwise vs counter-clockwise)
     int diff = (_toRot - _fromRot + 4) % 4;
     bool clockwise = (diff == 1 || diff == 2);
-    initParticles(64, 32, clockwise);
+    initParticles(w, h, clockwise);
 }
 
 void RotationTransitionFX::stop() {
@@ -112,6 +112,7 @@ bool RotationTransitionFX::render(Adafruit_GFX* display, void (*onApexReached)(u
             _apexApplied = true;
         }
         _active = false;
+        display->fillScreen(0x0000);
         return false;
     }
 

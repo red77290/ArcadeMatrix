@@ -1,4 +1,5 @@
 #include "GyroHAL.h"
+#include "HardwareHAL.h"
 #include "../core/Logger.h"
 
 GyroHAL gyroHAL;
@@ -15,35 +16,52 @@ bool GyroHAL::begin(TwoWire* wire) {
     _type = GyroType::NONE;
     _i2cAddr = 0;
 
-    // 1. Probe MPU6050 / MPU6500 (0x68 / 0x69)
+    bool detected = false;
     if (probeMPU6050()) {
         _type = GyroType::MPU6050;
         _lastOrientation.sensorName = "MPU6050/6500";
-        LOGI("GyroHAL", "Detected MPU6050/MPU6500 Accelerometer at 0x%02X", _i2cAddr);
-        return true;
-    }
-
-    // 2. Probe QMI8658 (0x6B / 0x6A)
-    if (probeQMI8658()) {
+        detected = true;
+    } else if (probeQMI8658()) {
         _type = GyroType::QMI8658;
         _lastOrientation.sensorName = "QMI8658";
-        LOGI("GyroHAL", "Detected QMI8658 Accelerometer at 0x%02X", _i2cAddr);
-        return true;
-    }
-
-    // 3. Probe LSM6DS3 (0x6A / 0x6B)
-    if (probeLSM6DS3()) {
+        detected = true;
+    } else if (probeLSM6DS3()) {
         _type = GyroType::LSM6DS3;
         _lastOrientation.sensorName = "LSM6DS3";
-        LOGI("GyroHAL", "Detected LSM6DS3 Accelerometer at 0x%02X", _i2cAddr);
-        return true;
-    }
-
-    // 4. Probe LIS3DHTR (0x18 / 0x19)
-    if (probeLIS3DHTR()) {
+        detected = true;
+    } else if (probeLIS3DHTR()) {
         _type = GyroType::LIS3DHTR;
         _lastOrientation.sensorName = "LIS3DHTR";
-        LOGI("GyroHAL", "Detected LIS3DHTR Accelerometer at 0x%02X", _i2cAddr);
+        detected = true;
+    }
+
+    if (detected) {
+        LOGI("GyroHAL", "Detected %s Accelerometer at 0x%02X", _lastOrientation.sensorName, _i2cAddr);
+        // Immediate physical settling on boot (bypass 500ms debounce)
+        delay(10);
+        float ax = 0.0f, ay = 0.0f, az = 0.0f;
+        bool ok = false;
+        if (_type == GyroType::MPU6050) ok = readRawMPU6050(ax, ay, az);
+        else if (_type == GyroType::QMI8658) ok = readRawQMI8658(ax, ay, az);
+        else if (_type == GyroType::LSM6DS3) ok = readRawLSM6DS3(ax, ay, az);
+        else if (_type == GyroType::LIS3DHTR) ok = readRawLIS3DHTR(ax, ay, az);
+
+        if (ok) {
+            uint8_t initRot = 0;
+            if (ay < -0.55f) initRot = 0;
+            else if (ax > 0.55f) initRot = 1;
+            else if (ay > 0.55f) initRot = 2;
+            else if (ax < -0.55f) initRot = 3;
+            _stableRotation = initRot;
+            _candidateRotation = initRot;
+            _candidateStartTime = millis();
+            _lastOrientation.available = true;
+            _lastOrientation.suggestedRotation = initRot;
+            _lastOrientation.ax = ax;
+            _lastOrientation.ay = ay;
+            _lastOrientation.az = az;
+            LOGI("GyroHAL", "Initial physical orientation settled -> Rotation %d (ax: %.2f, ay: %.2f)", initRot, ax, ay);
+        }
         return true;
     }
 
@@ -53,6 +71,7 @@ bool GyroHAL::begin(TwoWire* wire) {
 
 bool GyroHAL::writeReg(uint8_t reg, uint8_t val) {
     if (!_wire || _i2cAddr == 0) return false;
+    std::lock_guard<std::mutex> lock(g_i2cMutex);
     _wire->beginTransmission(_i2cAddr);
     _wire->write(reg);
     _wire->write(val);
@@ -67,11 +86,12 @@ uint8_t GyroHAL::readReg(uint8_t reg) {
 
 bool GyroHAL::readRegs(uint8_t reg, uint8_t* buffer, size_t len) {
     if (!_wire || _i2cAddr == 0 || !buffer || len == 0) return false;
+    std::lock_guard<std::mutex> lock(g_i2cMutex);
     _wire->beginTransmission(_i2cAddr);
     _wire->write(reg);
-    if (_wire->endTransmission(false) != 0) return false;
+    if (_wire->endTransmission(true) != 0) return false;
 
-    size_t count = _wire->requestFrom(_i2cAddr, (uint8_t)len);
+    size_t count = _wire->requestFrom(_i2cAddr, (uint8_t)len, (uint8_t)true);
     if (count < len) return false;
 
     for (size_t i = 0; i < len; i++) {
