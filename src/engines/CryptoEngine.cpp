@@ -295,8 +295,10 @@ void CryptoEngine::renderChart(EngineContext* context) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.0f", currentPrice);
     } else if (currentPrice >= 1.0f) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
-    } else {
+    } else if (currentPrice >= 0.001f) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.4f", currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.6f", currentPrice);
     }
 
     char pctBuf[32];
@@ -394,8 +396,10 @@ void CryptoEngine::renderQuote(EngineContext* context) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.0f", currentPrice);
     } else if (currentPrice >= 1.0f) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
-    } else {
+    } else if (currentPrice >= 0.001f) {
         snprintf(priceBuf, sizeof(priceBuf), "$%.4f", currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "$%.6f", currentPrice);
     }
     
     char pctBuf[32];
