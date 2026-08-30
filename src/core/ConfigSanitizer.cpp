@@ -40,6 +40,11 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config) {
         result.values_clamped++;
         result.modified = true;
     }
+    if (config.matrix.latchBlanking < 1 || config.matrix.latchBlanking > 32) {
+        config.matrix.latchBlanking = 4;
+        result.values_clamped++;
+        result.modified = true;
+    }
     if (config.matrix.rotation_transition_duration_ms < 50 || config.matrix.rotation_transition_duration_ms > 3000) {
         config.matrix.rotation_transition_duration_ms = constrain(config.matrix.rotation_transition_duration_ms, 100, 2000);
         result.values_clamped++;
