@@ -4,7 +4,7 @@
 DisplayRuntime::DisplayRuntime()
     : m_ctx(nullptr), m_matrixEngine(nullptr), m_rotationManager(nullptr),
       m_overlayManager(nullptr), m_orientationManager(nullptr), m_arbiter(nullptr),
-      m_registeredSourceCount(0), m_preemptedEngine(nullptr),
+      m_registeredSourceCount(0), m_preemptionDepth(0),
       m_sessionCounter(0), m_lastReconciledVersion(0) {
 }
 
@@ -17,7 +17,7 @@ void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, Rotation
     m_orientationManager = orient;
     m_arbiter = arb;
     m_registeredSourceCount = 0;
-    m_preemptedEngine = nullptr;
+    m_preemptionDepth = 0;
     m_sessionCounter = 0;
     m_lastReconciledVersion = 0;
 }
@@ -85,26 +85,62 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     if (isNewSession) {
         IEngine* oldEngine = m_session.activeEngine;
 
-        // Check if this is a temporary preemption (e.g. alert/message interrupting rotation)
-        bool isPreemption = (decision.sourceId != DisplaySourceId::ROTATION &&
-                             m_session.sourceId == DisplaySourceId::ROTATION);
-
-        // Check if this is returning from preemption back to rotation
-        bool isReturningFromPreemption = (decision.sourceId == DisplaySourceId::ROTATION &&
-                                          m_session.sourceId != DisplaySourceId::ROTATION &&
-                                          m_preemptedEngine != nullptr);
-
-        if (oldEngine && oldEngine != targetEngine) {
-            if (isPreemption) {
-                // Pause baseline engine during temporary preemption
-                oldEngine->pause();
-                m_preemptedEngine = oldEngine;
-            } else {
-                // Deactivate engine on normal rotation transition or end of alert
-                oldEngine->deactivate();
-                if (oldEngine == m_preemptedEngine) {
-                    m_preemptedEngine = nullptr;
+        switch (decision.transitionMode) {
+            case TransitionMode::PREEMPT: {
+                if (m_preemptionDepth >= MAX_PREEMPTION_DEPTH) {
+                    LOGW("DisplayRuntime", "Preemption stack full (%u), rejecting preemption", m_preemptionDepth);
+                    return; // Deterministic rejection: protect baseline session without corruption
                 }
+                if (oldEngine) {
+                    oldEngine->pause();
+                    m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
+                        m_session.engineHandle,
+                        m_session.sourceId,
+                        m_session.requestId
+                    };
+                }
+                if (targetEngine) {
+                    targetEngine->activate();
+                }
+                break;
+            }
+            case TransitionMode::RESUME: {
+                if (oldEngine) {
+                    oldEngine->deactivate();
+                }
+                
+                // Resilient unwinding: skip and clean up intermediate sessions that expired while submerged
+                IEngine* resumeEngine = nullptr;
+                while (m_preemptionDepth > 0) {
+                    PreemptionEntry entry = m_preemptionStack[--m_preemptionDepth];
+                    if (entry.handle == decision.engineHandle || entry.sourceId == DisplaySourceId::ROTATION) {
+                        resumeEngine = resolveEngine(entry.handle, entry.sourceId);
+                        break;
+                    }
+                    // Clean up submerged expired intermediate session
+                    IEngine* expiredEngine = resolveEngine(entry.handle, entry.sourceId);
+                    if (expiredEngine) {
+                        expiredEngine->deactivate();
+                    }
+                }
+
+                if (resumeEngine) {
+                    resumeEngine->resume();
+                    targetEngine = resumeEngine;
+                } else if (targetEngine) {
+                    targetEngine->activate();
+                }
+                break;
+            }
+            case TransitionMode::REPLACE:
+            default: {
+                if (oldEngine && oldEngine != targetEngine) {
+                    oldEngine->deactivate();
+                }
+                if (targetEngine) {
+                    targetEngine->activate();
+                }
+                break;
             }
         }
 
@@ -118,17 +154,6 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_session.allowsOverlay = decision.allowsOverlay;
         m_session.isRealtime = decision.isRealtime;
         m_session.lifecycle = decision.lifecycle;
-
-        if (targetEngine) {
-            if (isReturningFromPreemption && targetEngine == m_preemptedEngine) {
-                // Resume previously paused baseline engine
-                targetEngine->resume();
-                m_preemptedEngine = nullptr;
-            } else {
-                // Activate new engine
-                targetEngine->activate();
-            }
-        }
     }
 }
 

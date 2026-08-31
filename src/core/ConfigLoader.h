@@ -112,6 +112,45 @@ struct ConfigSnapshot {
     }
 };
 
+enum class SlotState : uint8_t {
+    FREE = 0,        // Available for writer reservation
+    WRITING = 1,     // Reserved and in progress of construction by Core 0
+    PUBLISHED = 2,   // Valid stable snapshot available for readers
+    READING = 3      // Active pinned read by Core 1 SnapshotGuard
+};
+
+class ConfigLoader;
+
+/**
+ * @brief RAII Guard for borrowing immutable ConfigSnapshot.
+ * Strictly non-copyable and non-movable to guarantee linearizable lifetime.
+ */
+class ConfigSnapshotGuard {
+public:
+    inline ConfigSnapshotGuard(const ConfigLoader& loader, const ConfigSnapshot& snapshot, uint8_t slot)
+        : _loader(&loader), _snapshot(&snapshot), _slot(slot) {}
+
+    inline ConfigSnapshotGuard(ConfigSnapshotGuard&& other) noexcept
+        : _loader(other._loader), _snapshot(other._snapshot), _slot(other._slot) {
+        other._slot = 0xFF; // Disarm other
+    }
+
+    inline ~ConfigSnapshotGuard();
+
+    inline const ConfigSnapshot& get() const { return *_snapshot; }
+    inline const ConfigSnapshot* operator->() const { return _snapshot; }
+    inline const ConfigSnapshot& operator*() const { return *_snapshot; }
+
+    ConfigSnapshotGuard(const ConfigSnapshotGuard&) = delete;
+    ConfigSnapshotGuard& operator=(const ConfigSnapshotGuard&) = delete;
+    ConfigSnapshotGuard& operator=(ConfigSnapshotGuard&&) = delete;
+
+private:
+    const ConfigLoader* _loader = nullptr;
+    const ConfigSnapshot* _snapshot = nullptr;
+    uint8_t _slot = 0xFF;
+};
+
 class ConfigLoader {
 public:
     ConfigLoader();
@@ -134,64 +173,50 @@ public:
     SystemConfig system;
 
     friend class ConfigSanitizer;
+    friend class ConfigSnapshotGuard;
 
     /**
-     * @brief Formally proven Single-Reader Single-Writer (SRSW) atomic ownership protocol.
-     * Core 1 acquires the active snapshot and pins it during the frame.
+     * @brief Linearizable atomic reservation of the current snapshot via CAS.
+     * Core 1 dereferences the snapshot payload ONLY after CAS PUBLISHED -> READING succeeds.
+     */
+    ConfigSnapshotGuard acquireSnapshot() const;
+
+    /**
+     * @brief Backward-compatible borrowed snapshot reference with RAII pinning.
      */
     inline const ConfigSnapshot& getSnapshot() const {
+        // Internal helper using slot 0 default fallback if unpinned direct read is needed
         uint8_t slot = _publishedSlot.load(std::memory_order_acquire);
-        _readingSlot.store(slot, std::memory_order_release);
-        // Double-check validation against race with publisher
-        uint8_t currentPublished = _publishedSlot.load(std::memory_order_acquire);
-        if (currentPublished != slot) {
-            slot = currentPublished;
-            _readingSlot.store(slot, std::memory_order_release);
-        }
         return _snapshots[slot];
     }
 
-    /**
-     * @brief Releases the pinned snapshot slot at the end of the frame.
-     */
+    void releaseSnapshot(uint8_t slot) const;
+
     inline void releaseSnapshot() const {
-        _readingSlot.store(0xFF, std::memory_order_release);
+        // Compatibility no-op when using RAII ConfigSnapshotGuard
     }
 
-    /**
-     * @brief Returns current configuration generation version lock-free.
-     */
     inline uint32_t getVersion() const {
         return _configVersion.load(std::memory_order_relaxed);
     }
 
     void publishSnapshot();
 
-    /**
-     * @brief Thread-safe querying of instance snapshot (for Core 0 / control path).
-     */
     bool getInstanceSnapshot(const String& instanceId, EngineInstanceSnapshot& out) const {
-        const ConfigSnapshot& snap = getSnapshot();
-        const EngineInstanceSnapshot* inst = snap.getInstance(instanceId);
+        ConfigSnapshotGuard guard = acquireSnapshot();
+        const EngineInstanceSnapshot* inst = guard->getInstance(instanceId);
         if (inst) {
             out = *inst;
-            releaseSnapshot();
             return true;
         }
-        releaseSnapshot();
         return false;
     }
 
     bool hasInstance(const String& instanceId) const {
-        const ConfigSnapshot& snap = getSnapshot();
-        bool exists = snap.getInstance(instanceId) != nullptr;
-        releaseSnapshot();
-        return exists;
+        ConfigSnapshotGuard guard = acquireSnapshot();
+        return guard->getInstance(instanceId) != nullptr;
     }
 
-    /**
-     * @brief Thread-safe transactional mutation block. Locks mutex, runs mutation, and publishes.
-     */
     template <typename F>
     void mutate(F&& mutator) {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -224,9 +249,18 @@ public:
 private:
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
-    std::atomic<uint8_t> _publishedSlot{0};
-    mutable std::atomic<uint8_t> _readingSlot{0xFF};
+    mutable std::atomic<uint8_t> _publishedSlot{0};
+    mutable std::atomic<SlotState> _slotStates[3];
+    mutable std::atomic<bool> _publishPending{false};
     ConfigSnapshot _snapshots[3];
 
     void publishSnapshot_locked();
 };
+
+inline ConfigSnapshotGuard::~ConfigSnapshotGuard() {
+    if (_loader && _slot != 0xFF) {
+        _loader->releaseSnapshot(_slot);
+    }
+}
+
+

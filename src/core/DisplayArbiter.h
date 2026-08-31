@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <cstring>
 #include "../../include/core/EngineContract.h"
 
@@ -84,12 +85,19 @@ struct DisplayRequestSlot {
     DisplayRequest request{};
 };
 
+enum class TransitionMode : uint8_t {
+    REPLACE = 0,  // Standard carousel rotation: deactivate(old) -> activate(new)
+    PREEMPT = 1,  // Priority interruption: pause(old) -> push(old) -> activate(new)
+    RESUME = 2    // End of interruption: deactivate(old) -> pop(prev) -> resume(prev)
+};
+
 struct DisplayDecision {
     EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
     DisplayPriority priority = DisplayPriority::ROTATION;
     uint32_t requestId = 0;
     RequestLifecycle lifecycle = RequestLifecycle::PERSISTENT;
+    TransitionMode transitionMode = TransitionMode::REPLACE;
     bool allowsOverlay = true;
     bool needsClear = true;
     bool isRealtime = false;
@@ -151,7 +159,7 @@ public:
 
     DisplayArbiter();
 
-    // Core 0 producer: submits non-blocking command into lock-free SPSC queue
+    // Core 0 producers: serialized through _producerMutex, pushes non-blocking into SPSC queue
     void submitRequest(const DisplayRequest& request, bool restartTimer = false);
     void cancelRequest(DisplaySourceId sourceId);
     void clearExpired();
@@ -162,10 +170,14 @@ public:
     static DisplaySourceId parseSourceId(const String& name);
     
 private:
+    mutable std::mutex _producerMutex;
     LockFreeSPSCQueue<ArbiterCommand, QUEUE_CAPACITY> _commandQueue;
     std::array<DisplayRequestSlot, MAX_REQUESTS> slots{};
     uint32_t _nextRequestId = 1;
+    DisplayPriority _lastPriority = DisplayPriority::ROTATION;
+    DisplaySourceId _lastSourceId = DisplaySourceId::ROTATION;
 
     void applySubmit(const DisplayRequest& request, bool restartTimer);
     void applyCancel(DisplaySourceId sourceId);
 };
+
