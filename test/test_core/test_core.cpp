@@ -299,16 +299,20 @@ void test_config_snapshot_immutability_and_versioning(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
     uint32_t v1 = cfg.getVersion();
-    const ConfigSnapshot& s1 = cfg.getSnapshot();
-    TEST_ASSERT_EQUAL(v1, s1.version);
+    {
+        ConfigSnapshotGuard s1 = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(v1, s1->version);
+    }
 
     cfg.addInstance("test_clock", "clock");
     uint32_t v2 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v1, v2);
 
-    const ConfigSnapshot& s2 = cfg.getSnapshot();
-    TEST_ASSERT_EQUAL(v2, s2.version);
-    TEST_ASSERT_NOT_NULL(s2.getInstance("test_clock"));
+    {
+        ConfigSnapshotGuard s2 = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(v2, s2->version);
+        TEST_ASSERT_NOT_NULL(s2->getInstance("test_clock"));
+    }
 }
 
 void test_triple_buffer_snapshot_publication_and_versioning(void) {
@@ -320,23 +324,22 @@ void test_triple_buffer_snapshot_publication_and_versioning(void) {
     cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_1"; });
     uint32_t v1 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v0, v1);
-    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_1", cfg.getSnapshot().wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_1", cfg.acquireSnapshot()->wifi.ssid.c_str());
 
     cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_2"; });
     uint32_t v2 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v1, v2);
-    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_2", cfg.getSnapshot().wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_2", cfg.acquireSnapshot()->wifi.ssid.c_str());
 
     cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_3"; });
     uint32_t v3 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v2, v3);
-    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_3", cfg.getSnapshot().wifi.ssid.c_str());
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_3", cfg.acquireSnapshot()->wifi.ssid.c_str());
 
     cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_4"; });
     uint32_t v4 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v3, v4);
-    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.getSnapshot().wifi.ssid.c_str());
-    cfg.releaseSnapshot();
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.acquireSnapshot()->wifi.ssid.c_str());
 }
 
 void test_snapshot_publication_linearizability(void) {
@@ -349,12 +352,11 @@ void test_snapshot_publication_linearizability(void) {
             c.wifi.ssid = String("WiFi_Network_") + String(i);
         });
 
-        // Core 1 reader acquire
-        const ConfigSnapshot& snap = cfg.getSnapshot();
-        uint32_t expectedChecksum = (snap.version ^ 0x5A5A5A5A) + (uint32_t)snap.instances.size();
-        TEST_ASSERT_EQUAL_HEX32(expectedChecksum, snap.checksum);
-        TEST_ASSERT_TRUE(snap.wifi.ssid.startsWith("WiFi_Network_"));
-        cfg.releaseSnapshot();
+        // Core 1 reader acquire via RAII guard
+        ConfigSnapshotGuard snap = cfg.acquireSnapshot();
+        uint32_t expectedChecksum = (snap->version ^ 0x5A5A5A5A) + (uint32_t)snap->instances.size();
+        TEST_ASSERT_EQUAL_HEX32(expectedChecksum, snap->checksum);
+        TEST_ASSERT_TRUE(snap->wifi.ssid.startsWith("WiFi_Network_"));
     }
 }
 
@@ -674,7 +676,7 @@ void test_preemption_intermediate_expiration_unwinding(void) {
 
     // 1. Initial baseline display: ROTATION
     ConfigLoader cfg;
-    DisplayDecision d1 = runtime.update(cfg.getSnapshot());
+    DisplayDecision d1 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d1.sourceId);
     TEST_ASSERT_EQUAL(1, clockEngine.activateCalls);
     TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
@@ -684,7 +686,7 @@ void test_preemption_intermediate_expiration_unwinding(void) {
     mqttReq.engineHandle = EngineHandle("message", "message_main");
     arbiter.submitRequest(mqttReq);
 
-    DisplayDecision d2 = runtime.update(cfg.getSnapshot());
+    DisplayDecision d2 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, d2.sourceId);
     TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d2.transitionMode);
     TEST_ASSERT_EQUAL(1, clockEngine.pauseCalls);
@@ -697,7 +699,7 @@ void test_preemption_intermediate_expiration_unwinding(void) {
     alertReq.timeout_ms = 5000;
     arbiter.submitRequest(alertReq);
 
-    DisplayDecision d3 = runtime.update(cfg.getSnapshot());
+    DisplayDecision d3 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d3.sourceId);
     TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d3.transitionMode);
     TEST_ASSERT_EQUAL(1, mqttEngine.pauseCalls);
@@ -710,7 +712,7 @@ void test_preemption_intermediate_expiration_unwinding(void) {
     // 5. Alert concludes: Arbiter falls back to ROTATION (RESUME mode)
     arbiter.cancelRequest(DisplaySourceId::ALERT);
 
-    DisplayDecision d4 = runtime.update(cfg.getSnapshot());
+    DisplayDecision d4 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d4.sourceId);
     TEST_ASSERT_EQUAL(TransitionMode::RESUME, d4.transitionMode);
     TEST_ASSERT_EQUAL(1, alertEngine.deactivateCalls);
@@ -733,7 +735,7 @@ void test_preemption_stack_overflow_rejection(void) {
     runtime.registerSourceEngine(DisplaySourceId::ROTATION, &eng0, EngineHandle("eng0", "0"));
 
     ConfigLoader cfg;
-    runtime.update(cfg.getSnapshot()); // Base depth 0
+    runtime.update(cfg.acquireSnapshot().get()); // Base depth 0
 
     // Fill stack to max capacity 4
     for (uint8_t i = 1; i <= 4; ++i) {

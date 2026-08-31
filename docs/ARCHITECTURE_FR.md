@@ -285,10 +285,10 @@ ArcadeMatrix sépare strictement la décision d'arbitrage de l'exécution du cyc
 ## 13. Configuration Lock-Free SRSW Prouvée Formellement (`ConfigSnapshot`)
 
 Pour éliminer les courses entre cœurs et éviter tout mutex sur la boucle de rendu critique du Cœur 1 :
-- **Triple Buffering SRSW (Single-Reader Single-Writer) :** `ConfigLoader` maintient `ConfigSnapshot _snapshots[3]`, `std::atomic<uint8_t> _publishedSlot{0}`, et `mutable std::atomic<uint8_t> _readingSlot{0xFF}`.
-- **Protocole d'Ownership & Double-Check (Cœur 1) :** Au début de chaque trame, `getSnapshot()` lit `_publishedSlot`, publie `_readingSlot = slot` et effectue un double-check de validation. Il lit l'instantané de manière 100% immuable sans copie et le libère avec `releaseSnapshot()` en fin de trame.
-- **Règle d'Exclusion d'Écriture (Cœur 0) :** Lors de la publication d'une mutation, le Cœur 0 sélectionne un `targetSlot` $\in \{0, 1, 2\}$ tel que $\text{targetSlot} \neq \text{published} \land \text{targetSlot} \neq \text{reading}$. Avec 3 buffers physiques, au moins un slot est **strictement et mathématiquement garanti** disponible, éliminant tout risque de corruption de données.
-- **Linéarité & Checksum :** Chaque publication incrémente une version monotone et calcule `checksum = (version ^ 0x5A5A5A5A) + instances.size()`.
+- **Machine à 4 États Atomiques (`SlotState`) :** `ConfigLoader` gère 3 buffers physiques de snapshots via des états atomiques explicites : `FREE`, `WRITING`, `PUBLISHED` et `READING`.
+- **Réservation Linéarisable par Boucle CAS (Cœur 1) :** `ConfigSnapshotGuard guard = config.acquireSnapshot();` exécute une boucle CAS atomique : `_slotStates[slot].compare_exchange_weak(PUBLISHED, READING)` avec sémantique acquire. L'accès au payload `_snapshots[slot]` est **strictement impossible avant le succès du CAS**. Le guard RAII (move-only) gère la restitution automatique de l'état du slot à sa destruction.
+- **Recyclage Sécurisé & Publication Différée (Cœur 0) :** Le writer réserve dynamiquement un slot `FREE` ou recycle un ancien `PUBLISHED` via `compare_exchange_strong(PUBLISHED, FREE)`. Si les 3 slots sont occupés (`READING + PUBLISHED + WRITING`), `_publishPending = true;` est positionné et le writer **retourne immédiatement sans attente active ni `yield()`**, garantissant la publication consolidée de la version la plus récente dès qu'un slot redevient `FREE`.
+- **Linéarité & Intégrité CRC :** Version monotone avec double-magic et intégrité CRC garantissant une cohérence absolue entre threads.
 - **Mutations Transactionnelles :** Toutes les modifications provenant du Cœur 0 transitent par `config.mutate([&](ConfigLoader& cfg) { ... })`.
 
 ---

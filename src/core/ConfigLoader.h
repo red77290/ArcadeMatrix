@@ -122,8 +122,8 @@ enum class SlotState : uint8_t {
 class ConfigLoader;
 
 /**
- * @brief RAII Guard for borrowing immutable ConfigSnapshot.
- * Strictly non-copyable and non-movable to guarantee linearizable lifetime.
+ * @brief Move-only RAII Guard for borrowing immutable ConfigSnapshot.
+ * Strictly non-copyable with explicit ownership disarming on move, guaranteeing linearizable lifetime.
  */
 class ConfigSnapshotGuard {
 public:
@@ -178,23 +178,11 @@ public:
     /**
      * @brief Linearizable atomic reservation of the current snapshot via CAS.
      * Core 1 dereferences the snapshot payload ONLY after CAS PUBLISHED -> READING succeeds.
+     * This is the EXCLUSIVE public accessor to ConfigSnapshot.
      */
     ConfigSnapshotGuard acquireSnapshot() const;
 
-    /**
-     * @brief Backward-compatible borrowed snapshot reference with RAII pinning.
-     */
-    inline const ConfigSnapshot& getSnapshot() const {
-        // Internal helper using slot 0 default fallback if unpinned direct read is needed
-        uint8_t slot = _publishedSlot.load(std::memory_order_acquire);
-        return _snapshots[slot];
-    }
-
     void releaseSnapshot(uint8_t slot) const;
-
-    inline void releaseSnapshot() const {
-        // Compatibility no-op when using RAII ConfigSnapshotGuard
-    }
 
     inline uint32_t getVersion() const {
         return _configVersion.load(std::memory_order_relaxed);

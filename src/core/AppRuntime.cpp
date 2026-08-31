@@ -185,9 +185,8 @@ void AppRuntime::initialize() {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
 
-    ConfigSanitizer::sanitize(config);
-
-    ConfigSnapshot snapshot = config.getSnapshot();
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const ConfigSnapshot& snapshot = guard.get();
 
     LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength);
     if (!matrixEngine.begin(snapshot.matrix)) {
@@ -381,7 +380,6 @@ void AppRuntime::initialize() {
     m_lastReconciledVersion = snapshot.version;
     evaluateDisplayRequests(snapshot);
 
-    config.releaseSnapshot();
     LOGI("System", "Setup complete. Entering loop().");
 }
 

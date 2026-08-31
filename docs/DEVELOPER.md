@@ -154,7 +154,7 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
 1. **Golden Rule #1 — Zero Heap Allocation in Hot Loop:**
    Never instantiate `String`, `std::vector`, or call `malloc`/`new` inside `update()` or `render()`. Pre-allocate all buffers in `initialize()` and mutate in place.
 2. **Golden Rule #2 — Lock-Free Hot Path & Zero Mutex on Core 1:**
-   Core 1 runs `update() -> evaluate() -> render()` completely lock-free. Configuration is read via the Single-Reader Single-Writer (SRSW) Triple-Buffering protocol (`const ConfigSnapshot& snapshot = config.getSnapshot(); ... config.releaseSnapshot();`).
+   Core 1 runs `update() -> evaluate() -> render()` completely lock-free. Configuration is accessed exclusively via the linearizable Single-Reader Single-Writer (SRSW) CAS protocol (`ConfigSnapshotGuard guard = config.acquireSnapshot(); const auto& snapshot = guard.get();`).
 3. **Golden Rule #3 — Single Producer SPSC Cross-Core Commands:**
    Core 0 submits display requests via `m_displayArbiter.submitRequest(req)`. Core 1 owns the arbiter slots exclusively and drains commands in $O(1)$ without mutex contention.
 4. **Golden Rule #4 — In-Place Hot Reload:**
