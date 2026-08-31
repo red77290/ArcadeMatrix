@@ -913,7 +913,8 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        const ConfigSnapshot& snap = config.getSnapshot();
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
 
         // Matrix
         doc["brightness_limit"] = snap.matrix.powerLimitPercent;
@@ -1403,7 +1404,7 @@ void WebServerAPI::setupRoutes() {
         }
         DynamicJsonDocument resp(1024);
         resp["status"] = "success";
-        resp["matrix_power"] = config.getSnapshot().matrix.matrix_power;
+        resp["matrix_power"] = config.acquireSnapshot()->matrix.matrix_power;
         String response;
         serializeJson(resp, response);
         request->send(200, "application/json", response);
@@ -1413,7 +1414,8 @@ void WebServerAPI::setupRoutes() {
     // API: System settings (GET /api/system)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        const ConfigSnapshot& snap = config.getSnapshot();
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
         DynamicJsonDocument doc(4096);
         JsonObject sys = doc.createNestedObject("system");
         sys["lang"] = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
@@ -1604,14 +1606,15 @@ void WebServerAPI::setupRoutes() {
         }
 
         if (langChanged && rotationManager) {
-            for (const auto& inst : config.getSnapshot().instances) {
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            for (const auto& inst : guard->instances) {
                 rotationManager->notifyConfigChanged(inst.instance_id);
             }
         }
 
         DynamicJsonDocument resp(512);
         resp["status"] = willReboot ? "rebooting" : "success";
-        resp["lang"] = config.getSnapshot().system.lang;
+        resp["lang"] = config.acquireSnapshot()->system.lang;
         String response;
         serializeJson(resp, response);
         request->send(200, "application/json", response);

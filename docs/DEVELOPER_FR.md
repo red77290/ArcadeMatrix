@@ -129,7 +129,7 @@ Le `DisplayArbiter` résout les sources d'affichage de manière déterministe vi
 ### Règles d'Or pour le C++ Embarqué
 
 1. **Règle d'Or #1 — Zéro Allocation dans la Boucle Chaude :** Ne jamais instancier de `String`, de `std::vector` ou appeler `malloc`/`new` dans `update()` ou `render()`. Pré-allouez vos structures dans `initialize()`.
-2. **Règle d'Or #2 — Hot Path Lock-Free & Zéro Mutex sur Core 1 :** Le Core 1 exécute `update() -> evaluate() -> render()` de manière totalement lock-free. La configuration est lue via le protocole Single-Reader Single-Writer (SRSW) Triple-Buffer (`const ConfigSnapshot& snapshot = config.getSnapshot(); ... config.releaseSnapshot();`).
+2. **Règle d'Or #2 — Hot Path Lock-Free & Zéro Mutex sur Core 1 :** Le Core 1 exécute `update() -> evaluate() -> render()` de manière totalement lock-free. La configuration est accédée exclusivement via le protocole Single-Reader Single-Writer (SRSW) CAS linéarisable (`ConfigSnapshotGuard guard = config.acquireSnapshot(); const auto& snapshot = guard.get();`).
 3. **Règle d'Or #3 — File de Commandes SPSC Cross-Core :** Le Core 0 soumet les requêtes d'affichage via `m_displayArbiter.submitRequest(req)`. Le Core 1 possède exclusivement les slots d'arbitrage et dépile les commandes en $O(1)$ sans verrouillage mutex.
 4. **Règle d'Or #4 — Hot Reload sur Place :** Dans `onConfigChanged()`, mettez à jour les variables internes directement. L'instance n'est **pas** détruite ni recréée.
 5. **Règle d'Or #5 — Verrous de Bus SD :** Les lectures d'assets sur carte SD doivent utiliser le sémaphore `sdMutex`.

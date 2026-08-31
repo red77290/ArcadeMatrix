@@ -365,10 +365,10 @@ ArcadeMatrix completely decouples display decision resolution from engine lifecy
 ## 13. Formally Proven SRSW Lock-Free Configuration (`ConfigSnapshot`)
 
 To eliminate cross-core race conditions and avoid holding mutexes on Core 1's time-critical render hot path:
-- **Single-Reader Single-Writer (SRSW) Triple Buffering:** `ConfigLoader` maintains `ConfigSnapshot _snapshots[3]`, `std::atomic<uint8_t> _publishedSlot{0}`, and `mutable std::atomic<uint8_t> _readingSlot{0xFF}`.
-- **Reader Pinning & Double-Check Protocol (Core 1):** When Core 1 starts a frame, `getSnapshot()` acquires `_publishedSlot`, publishes `_readingSlot = slot`, and double-checks for concurrent publication. It accesses the immutable snapshot with zero allocations and releases it via `releaseSnapshot()` at frame end.
-- **Writer Exclusion Invariant (Core 0):** When publishing mutations, Core 0 selects a `targetSlot` $\in \{0, 1, 2\}$ such that $\text{targetSlot} \neq \text{published} \land \text{targetSlot} \neq \text{reading}$. With 3 physical buffers, at least one free slot is **strictly and mathematically guaranteed** available, making data corruption impossible even during infinite rapid WebUI writes.
-- **Linearizability & Checksum:** Each publication increments a monotonic version and computes `checksum = (version ^ 0x5A5A5A5A) + instances.size()`, ensuring linear consistency across threads.
+- **Atomic 4-State Machine (`SlotState`):** `ConfigLoader` manages 3 physical snapshot buffers through explicit atomic states: `FREE`, `WRITING`, `PUBLISHED`, and `READING`.
+- **Linearizable CAS Reader Pinning (`Core 1`):** `ConfigSnapshotGuard guard = config.acquireSnapshot();` executes an atomic CAS loop: `_slotStates[slot].compare_exchange_weak(PUBLISHED, READING)` with acquire semantics. Access to `_snapshots[slot]` is **strictly impossible prior to CAS success**. The move-only RAII guard automatically transitions the slot upon destruction.
+- **Safe Reclamation & Deferred Publication (`Core 0`):** The writer dynamically reserves a `FREE` slot or reclaims an old `PUBLISHED` slot via `compare_exchange_strong(PUBLISHED, FREE)`. If all 3 slots are occupied (`READING + PUBLISHED + WRITING`), `_publishPending = true;` is set and the writer **returns immediately without busy-waiting or `yield()`**, ensuring consolidated publication on the next frame.
+- **Linearizability & CRC Validation:** Monotonic versioning with double-magic and CRC integrity validation ensures linear consistency across threads.
 - **Transactional Mutations:** All configuration modifications from Core 0 pass through `config.mutate([&](ConfigLoader& cfg) { ... })`.
 
 ---

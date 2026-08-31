@@ -176,6 +176,8 @@ private:
     uint32_t _nextRequestId = 1;
     DisplayPriority _lastPriority = DisplayPriority::ROTATION;
     DisplaySourceId _lastSourceId = DisplaySourceId::ROTATION;
+    uint32_t _lastRequestId = 0;
+    bool _lastWasPreemptive = false;
 
     void applySubmit(const DisplayRequest& request, bool restartTimer);
     void applyCancel(DisplaySourceId sourceId);
