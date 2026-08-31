@@ -238,7 +238,7 @@ private:
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
     mutable std::atomic<uint8_t> _publishedSlot{0};
-    mutable std::atomic<SlotState> _slotStates[3];
+    mutable std::atomic<uint32_t> _readers[3];
     mutable std::atomic<bool> _publishPending{false};
     ConfigSnapshot _snapshots[3];
 

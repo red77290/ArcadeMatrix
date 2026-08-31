@@ -269,6 +269,9 @@ bool RotationManager::loop() {
   IEngine* activeEngine = getActiveEngine(inst_id);
   bool shouldFlip = true;
   if (activeEngine) {
+      if (activeEngine->needsClear() && m_ctx && m_ctx->getMatrix()) {
+          m_ctx->getMatrix()->fillScreen(0);
+      }
       activeEngine->update(m_ctx);
       activeEngine->render(m_ctx);
       shouldFlip = activeEngine->hasNewFrame();

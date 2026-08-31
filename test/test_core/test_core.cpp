@@ -661,6 +661,27 @@ void test_snapshot_cas_state_machine_and_interleaving(void) {
     }
 }
 
+void test_snapshot_reentrant_and_multi_reader(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+
+    // Nested/re-entrant acquisitions on the same thread
+    ConfigSnapshotGuard outerGuard = cfg.acquireSnapshot();
+    TEST_ASSERT_EQUAL(1, outerGuard->version);
+
+    {
+        ConfigSnapshotGuard innerGuard1 = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(1, innerGuard1->version);
+        {
+            ConfigSnapshotGuard innerGuard2 = cfg.acquireSnapshot();
+            TEST_ASSERT_EQUAL(1, innerGuard2->version);
+        }
+    }
+
+    // Outer guard remains valid and safely pinned
+    TEST_ASSERT_EQUAL(1, outerGuard->version);
+}
+
 void test_preemption_intermediate_expiration_unwinding(void) {
     TrackingMockEngine clockEngine("clock_engine");
     TrackingMockEngine mqttEngine("mqtt_engine");
@@ -784,6 +805,7 @@ void setup() {
     RUN_TEST(test_triple_buffer_snapshot_publication_and_versioning);
     RUN_TEST(test_snapshot_publication_linearizability);
     RUN_TEST(test_snapshot_cas_state_machine_and_interleaving);
+    RUN_TEST(test_snapshot_reentrant_and_multi_reader);
     RUN_TEST(test_display_runtime_lifecycle_centralization);
     RUN_TEST(test_display_runtime_preemption_lifecycle);
     RUN_TEST(test_preemption_intermediate_expiration_unwinding);
