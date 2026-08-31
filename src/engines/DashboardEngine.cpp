@@ -942,7 +942,7 @@ EngineError DashboardEngine::initialize(EngineContext* context, const EngineConf
         BaseType_t ret = xTaskCreatePinnedToCore(
             fetchTaskStatic,
             "DashFetch",
-            6144,
+            10240,
             this,
             1,
             &m_fetchTaskHandle,

@@ -43,7 +43,8 @@ public:
         }
 
         // Global master switch + per-rotation entry switch
-        bool globalEnabled = _config->system.idle_fighter_enabled;
+        ConfigSnapshotGuard guard = _config->acquireSnapshot();
+        bool globalEnabled = guard->system.idle_fighter_enabled;
         bool requested = overlays.fighter;
         bool shouldBeActive = globalEnabled && requested;
 
