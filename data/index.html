@@ -1435,8 +1435,8 @@ select.input option {
 
             <div class="form-grid col-2" style="margin-top: 1rem;">
               <div class="form-group">
-                <label><span data-i18n="gen_temp_offset_label">Temperature Calibration Offset (°C)</span> <span class="tooltip-icon" data-i18n-tooltip="gen_temp_offset_tooltip">?</span></label>
-                <input type="number" id="sys-temp-offset" class="input" value="0.0" min="-20.0" max="20.0" step="0.5">
+                <label><span data-i18n="gen_temp_offset_label">Temperature Calibration Offset</span> <span class="tooltip-icon" data-i18n-tooltip="gen_temp_offset_tooltip">?</span></label>
+                <input type="number" id="sys-temp-offset" class="input" value="0.0" min="-30.0" max="30.0" step="0.5">
               </div>
               <div class="form-group">
                 <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span></label>
@@ -2153,11 +2153,12 @@ const translations = {
     gen_unit_label: "Temperature Unit",
     gen_unit_c: "Celsius (°C)",
     gen_unit_f: "Fahrenheit (°F)",
-    gen_temp_offset_label: "Temperature Calibration Offset (°C)",
+    gen_temp_offset_label: "Temperature Calibration Offset",
     gen_temp_offset_tooltip: "Offset added to ambient sensor readings to compensate for internal enclosure heat.",
     gen_idle_fighter_enable: "Enable Idle Fighter Overlay",
     gen_idle_fighter_interval: "Interval between fights (seconds)",
     gen_btn_save: "💾 Save System Preferences",
+    opt_system: "System (General)",
 
     // Hardware Settings
     hw_gyro_title: "🧭 Screen Orientation & Gyroscope",
@@ -2419,11 +2420,12 @@ const translations = {
     gen_unit_label: "Unité de Température",
     gen_unit_c: "Celsius (°C)",
     gen_unit_f: "Fahrenheit (°F)",
-    gen_temp_offset_label: "Décalage d'Étalonnage Température (°C)",
+    gen_temp_offset_label: "Décalage d'Étalonnage Température",
     gen_temp_offset_tooltip: "Décalage soustrait ou ajouté pour compenser la chauffe interne du boîtier.",
     gen_idle_fighter_enable: "Activer l'Overlay Combattants en Veille",
     gen_idle_fighter_interval: "Intervalle entre les combats (secondes)",
     gen_btn_save: "💾 Enregistrer les Préférences",
+    opt_system: "Système (Général)",
 
     // Hardware Settings
     hw_gyro_title: "🧭 Orientation de l'Écran & Gyroscope",
@@ -2693,11 +2695,12 @@ const translations = {
     gen_unit_label: "Unidad de Temperatura",
     gen_unit_c: "Celsius (°C)",
     gen_unit_f: "Fahrenheit (°F)",
-    gen_temp_offset_label: "Desplazamiento de Calibración de Temp (°C)",
+    gen_temp_offset_label: "Desplazamiento de Calibración de Temp",
     gen_temp_offset_tooltip: "Compensación de temperatura para contrarrestar el calor interno de la carcasa.",
     gen_idle_fighter_enable: "Activar Superposición de Luchadores en Espera",
     gen_idle_fighter_interval: "Intervalo entre combates (segundos)",
     gen_btn_save: "💾 Guardar Preferencias",
+    opt_system: "Sistema (General)",
 
     // Hardware Settings
     hw_gyro_title: "🧭 Orientación de Pantalla y Giroscopio",
@@ -3111,12 +3114,23 @@ function formatOptLabel(fieldId, val, raw) {
   const v = String(val).trim();
   const lower = v.toLowerCase();
 
-  // 1. Date & Clock formats (MUST be checked before raw/label bypass)
+  // 1. System option
+  if (v.toLowerCase() === 'system') {
+    return (dict && dict.opt_system) ? dict.opt_system : "Système (Général)";
+  }
+
+  // 1b. Date & Clock formats (MUST be checked before raw/label bypass)
   if (fieldId === 'clock_format' || fieldId === 'format') {
     if (v === '%H:%M:%S') return dict.opt_fmt_24h_sec || "24h with Seconds (HH:MM:SS)";
     if (v === '%H:%M') return dict.opt_fmt_24h || "24h (HH:MM)";
     if (v === '%I:%M:%S %p' || v === '%I:%M:%S%p') return dict.opt_fmt_12h_sec || "12h with Seconds (HH:MM:SS AM/PM)";
     if (v === '%I:%M %p' || v === '%I:%M%p') return dict.opt_fmt_12h || "12h (HH:MM AM/PM)";
+  }
+  if (fieldId === 'format_24h') {
+    if (lower === 'system') return (dict && dict.opt_system) ? dict.opt_system : "Système (Général)";
+    if (lower === '24h' || lower === 'true' || lower === '1') return "24 Heures (23:59)";
+    if (lower === '12h' || lower === 'false' || lower === '0') return "12 Heures (11:59 PM)";
+    return raw || val;
   }
   if (fieldId === 'date_format') {
     if (v === '%d/%m/%Y') return "DD/MM/YYYY (24/08/2026)";
@@ -3127,6 +3141,7 @@ function formatOptLabel(fieldId, val, raw) {
 
   // 2. Units
   if (fieldId === 'units' || fieldId === 'unit' || fieldId === 'temp_unit') {
+    if (lower === 'system') return (dict && dict.opt_system) ? dict.opt_system : "Système (Général)";
     if (lower === 'c' || lower.startsWith('c') || lower === 'metric') return "Celsius (°C)";
     if (lower === 'f' || lower.startsWith('f') || lower === 'imperial') return "Fahrenheit (°F)";
     return raw || val;
@@ -3141,12 +3156,13 @@ function formatOptLabel(fieldId, val, raw) {
     if (lower === 'static' || lower === 'none') return dict.dir_static || "Static (No Scroll)";
   }
 
-  if (raw && String(raw).trim() !== v && !['units', 'unit', 'temp_unit', 'direction', 'clock_format', 'date_format', 'format'].includes(fieldId)) {
+  if (raw && String(raw).trim() !== v && !['units', 'unit', 'temp_unit', 'direction', 'clock_format', 'date_format', 'format', 'format_24h'].includes(fieldId)) {
     return String(raw).trim();
   }
 
   // 4. Languages
-  if (fieldId === 'lang') {
+  if (fieldId === 'lang' || fieldId === 'date_lang') {
+    if (lower === 'system') return (dict && dict.opt_system) ? dict.opt_system : "Système (Général)";
     if (lower === 'fr') return "Français (French)";
     if (lower === 'en') return "English";
     if (lower === 'es') return "Español (Spanish)";
@@ -3369,6 +3385,19 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
             <option value="0" selected>${t('theme_hud_bars', '📊 HUD Bars & Gauges')}</option>
             <option value="1">${t('theme_cyberpunk_neon', '🌆 Cyberpunk Neon')}</option>
             <option value="2">${t('theme_compact_grid', '📱 Compact Grid (2x2)')}</option>
+          </select>
+        </div>
+      `;
+    } else if (engId === 'dashboard') {
+      initialVariant = '0';
+      variantHtml = `
+        <div class="form-group" style="margin-top: 1rem;">
+          <label style="font-size: 0.85rem; font-weight: 600;" data-i18n="modal_choose_theme">${t('modal_choose_theme', 'Theme / Style / Variant:')}</label>
+          <select id="modal-field-variant" class="input" style="font-weight: 600;">
+            <option value="0" selected>🌆 Cyberpunk Neon</option>
+            <option value="1">📟 Amber HUD / Tactical</option>
+            <option value="2">❄️ Minimalist Luxury</option>
+            <option value="3">💻 Matrix Phosphor</option>
           </select>
         </div>
       `;
@@ -4374,6 +4403,11 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
               input = document.createElement('select');
               input.className = 'input';
               input.id = `cfg-dyn-${instance.instance_id}-${field.id}`;
+              const optSys = document.createElement('option');
+              optSys.value = 'system';
+              optSys.innerText = (typeof translations !== 'undefined' && translations && translations[localStorage.getItem('lang') || 'en'] && translations[localStorage.getItem('lang') || 'en'].opt_system) ? translations[localStorage.getItem('lang') || 'en'].opt_system : 'Système (Général)';
+              if (String(currentVal) === 'system' || String(currentVal) === '' || currentVal === undefined || currentVal === null) optSys.selected = true;
+              input.appendChild(optSys);
               GLOBAL_TIMEZONES.forEach(opt => {
                   const option = document.createElement('option');
                   option.value = opt.value;
@@ -4400,13 +4434,17 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
              }
           }
           // 2. Options / Enum Field (from field.options or known unit fields)
-          else if (isOptionsField(field) || (field.options && field.options.length > 0) || field.id === 'temp_unit' || field.id === 'units' || field.id === 'unit') {
+          else if (isOptionsField(field) || (field.options && field.options.length > 0) || field.id === 'temp_unit' || field.id === 'units' || field.id === 'unit' || field.id === 'format_24h' || field.id === 'lang' || field.id === 'date_lang') {
               let opts = parseOptions(field.options);
               if (opts.length === 0) {
                   if (field.id === 'temp_unit') {
-                      opts = [{ value: 'C', label: 'Celsius (°C)' }, { value: 'F', label: 'Fahrenheit (°F)' }];
+                      opts = [{ value: 'system', label: 'Système (Général)' }, { value: 'C', label: 'Celsius (°C)' }, { value: 'F', label: 'Fahrenheit (°F)' }];
                   } else if (field.id === 'units' || field.id === 'unit') {
-                      opts = [{ value: 'metric', label: 'Celsius (°C)' }, { value: 'imperial', label: 'Fahrenheit (°F)' }];
+                      opts = [{ value: 'system', label: 'Système (Général)' }, { value: 'metric', label: 'Celsius (°C)' }, { value: 'imperial', label: 'Fahrenheit (°F)' }];
+                  } else if (field.id === 'format_24h') {
+                      opts = [{ value: 'system', label: 'Système (Général)' }, { value: '24h', label: '24 Heures (23:59)' }, { value: '12h', label: '12 Heures (11:59 PM)' }];
+                  } else if (field.id === 'lang' || field.id === 'date_lang') {
+                      opts = [{ value: 'system', label: 'Système (Général)' }, { value: 'en', label: 'English' }, { value: 'fr', label: 'Français' }, { value: 'es', label: 'Español' }, { value: 'de', label: 'Deutsch' }, { value: 'it', label: 'Italiano' }];
                   }
               }
               if (field.multiple) {
@@ -4420,7 +4458,23 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
                     const option = document.createElement('option');
                     option.value = opt.value;
                     option.innerText = formatOptLabel(field.id, opt.value, opt.label);
-                    if (String(opt.value).toUpperCase() === String(currentVal).toUpperCase()) option.selected = true;
+                    let isMatch = (String(opt.value).toUpperCase() === String(currentVal).toUpperCase());
+                    if (!isMatch) {
+                      if (field.id === 'format_24h') {
+                        if ((opt.value === '24h' && (currentVal === true || currentVal === 'true' || currentVal === '1')) ||
+                            (opt.value === '12h' && (currentVal === false || currentVal === 'false' || currentVal === '0')) ||
+                            (opt.value === 'system' && (currentVal === 'system' || currentVal === '' || currentVal === undefined || currentVal === null))) {
+                          isMatch = true;
+                        }
+                      } else if (field.id === 'temp_unit' || field.id === 'units' || field.id === 'unit') {
+                        if ((opt.value === 'C' || opt.value === 'metric') && (currentVal === 'C' || currentVal === 'metric' || currentVal === 'c')) isMatch = true;
+                        else if ((opt.value === 'F' || opt.value === 'imperial') && (currentVal === 'F' || currentVal === 'imperial' || currentVal === 'f')) isMatch = true;
+                        else if (opt.value === 'system' && (currentVal === 'system' || currentVal === '' || currentVal === undefined || currentVal === null)) isMatch = true;
+                      } else if (field.id === 'lang' || field.id === 'date_lang') {
+                        if (opt.value === 'system' && (currentVal === 'system' || currentVal === '' || currentVal === undefined || currentVal === null)) isMatch = true;
+                      }
+                    }
+                    if (isMatch) option.selected = true;
                     input.appendChild(option);
                   });
               }

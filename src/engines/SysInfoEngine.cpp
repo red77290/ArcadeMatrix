@@ -29,8 +29,10 @@ void SysInfoEngine::onConfigChanged(const EngineConfig* engineConfig) {
         showRam = engineConfig->getBool("show_ram", true);
         showTemp = engineConfig->getBool("show_temp", true);
         showUptime = engineConfig->getBool("show_uptime", true);
-        String u = engineConfig->getString("temp_unit", sysUnit.c_str());
-        useFahrenheit = u.equalsIgnoreCase("F");
+        String u = engineConfig->getString("temp_unit", "system");
+        if (u.isEmpty() || u.equalsIgnoreCase("system")) u = engineConfig->getString("units", "system");
+        if (u.isEmpty() || u.equalsIgnoreCase("system")) u = sysUnit;
+        useFahrenheit = u.equalsIgnoreCase("F") || u.equalsIgnoreCase("imperial") || u.equalsIgnoreCase("fahrenheit");
         offsetX = engineConfig->getInt("offset_x", 0);
         offsetY = engineConfig->getInt("offset_y", 0);
     } else {
@@ -533,7 +535,7 @@ EngineDescriptor SysInfoEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_ram", ConfigType::BOOLEAN, "Show RAM", "Display memory usage percentage & gauge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_temp", ConfigType::BOOLEAN, "Show Temperature", "Display core/environment temperature", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_uptime", ConfigType::BOOLEAN, "Show Uptime", "Display running uptime counter", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "C", false, "", "", "", "C,F", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "system", false, "", "", "", "system:Système (Général),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

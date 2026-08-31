@@ -25,7 +25,10 @@ const char* I18n::getLangCode(Lang l) {
 }
 
 const char* I18n::getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow) {
-    Lang l = getLang();
+    return getWeatherDayLabel(dayOfWeek, isToday, isTomorrow, getLang());
+}
+
+const char* I18n::getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow, Lang l) {
     if (isToday) {
         switch (l) {
             case Lang::EN: return "TODAY";
@@ -58,9 +61,12 @@ const char* I18n::getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorro
 }
 
 String I18n::getWeatherCondition(const String& raw) {
+    return getWeatherCondition(raw, getLang());
+}
+
+String I18n::getWeatherCondition(const String& raw, Lang l) {
     String lower = raw;
     lower.toLowerCase();
-    Lang l = getLang();
     
     switch (l) {
         case Lang::EN: {
@@ -102,6 +108,29 @@ String I18n::getWeatherCondition(const String& raw) {
             if (lower.indexOf("fog") >= 0) return "Brouill.";
             return "Variable";
         }
+    }
+}
+
+const char* I18n::getOutdoorLabel(Lang l) {
+    switch (l) {
+        case Lang::EN: return "OUTDOOR";
+        case Lang::ES: return "EXTERIOR";
+        default: return "EXTERIEUR";
+    }
+}
+
+const char* I18n::getIndoorLabel(Lang l) {
+    switch (l) {
+        case Lang::EN: return "IN:";
+        default: return "INT:";
+    }
+}
+
+const char* I18n::getClimateLabel(Lang l) {
+    switch (l) {
+        case Lang::EN: return "CLIMATE";
+        case Lang::ES: return "CLIMA";
+        default: return "METEO";
     }
 }
 

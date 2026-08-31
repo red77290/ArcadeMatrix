@@ -77,7 +77,7 @@ void TempEngine::render(EngineContext* context) {
 
     matrix->fillScreen(0);
 
-    EnvironmentData envData = hardwareHAL.readEnvironment(tempOffset);
+    EnvironmentData envData = hardwareHAL.readEnvironment(0.0f);
     if (!envData.available) {
         // Fallback or warning if sensor not detected
         matrix->setTextSize(1);
@@ -87,8 +87,10 @@ void TempEngine::render(EngineContext* context) {
         return;
     }
 
-    float displayTemp = useFahrenheit ? envData.temperatureF : envData.temperatureC;
-    uint16_t tempColor = getTemperatureColor(matrix, envData.temperatureC);
+    float rawTemp = useFahrenheit ? envData.temperatureF : envData.temperatureC;
+    float displayTemp = rawTemp + tempOffset;
+    float tempCForColor = useFahrenheit ? ((displayTemp - 32.0f) * 5.0f / 9.0f) : displayTemp;
+    uint16_t tempColor = getTemperatureColor(matrix, tempCForColor);
     uint16_t humColor = matrix->color565(0, 200, 255);
 
     int width = matrix->width();
@@ -169,8 +171,8 @@ EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
     desc_temp.capabilities.realtime = false;
     desc_temp.requirements.needsTempSensor = false;
     desc_temp.schema.fields = {
-        ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "system", false, "", "", "", "system:Système (Général),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_offset", ConfigType::FLOAT, "Calibration Offset (°C)", "Calibration offset in °C added to raw sensor reading", "0.0", false, "-20.0", "20.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "system", false, "", "", "", "system:System (General),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_offset", ConfigType::FLOAT, "Calibration Offset", "Calibration offset in selected temperature unit added to raw sensor reading", "0.0", false, "-30.0", "30.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

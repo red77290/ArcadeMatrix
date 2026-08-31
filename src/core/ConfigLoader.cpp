@@ -189,7 +189,8 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
         else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
         system.lang = sys["lang"] | system.lang;
-        system.unit = sys["unit"] | system.unit;
+        if (sys.containsKey("unit")) system.unit = sys["unit"].as<String>();
+        else if (sys.containsKey("temp_unit")) system.unit = sys["temp_unit"].as<String>();
         system.temp_offset = sys["temp_offset"] | system.temp_offset;
         system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
         system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;

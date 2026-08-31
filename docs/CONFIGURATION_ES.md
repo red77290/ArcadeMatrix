@@ -75,7 +75,7 @@ También puedes enviar credenciales en tiempo de ejecución con `POST /api/wifi 
 | `format_24h` | `bool` | Formato de hora. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | Idioma del sistema (ej. `en`, `fr`, `es`). |
 | `temp_unit` | `String` | Unidad de temperatura preferida (`C` para Celsius, `F` para Fahrenheit). |
-| `temp_offset` | `float` | Compensación de calibración en °C aplicada a los sensores ambientales. |
+| `temp_offset` | `float` | Compensación de calibración aplicada a los sensores ambientales (en la unidad de temperatura configurada). |
 | `night_mode_enabled` | `bool` | Activa el apagado automático / la reducción de brillo por la noche. |
 | `turn_off_at` | `String` | Hora de inicio de espera (ej. `"23:00"`). |
 | `wake_up_at` | `String` | Hora de despertar (ej. `"07:00"`). |
