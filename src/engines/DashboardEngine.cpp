@@ -1395,6 +1395,7 @@ void DashboardEngine::fetchWeather() {
             }
         }
         metHttp.end();
+        metClient.stop();
     }
 }
 
@@ -1452,6 +1453,7 @@ void DashboardEngine::fetchMarkets() {
             }
             http.end();
         }
+        binanceClient.stop(); // Free TLS/SSL memory buffer immediately
 
         // 2. If not found on Binance, query Yahoo Finance for Stocks, ETFs or Cryptos
         if (!itemAdded && m_isActive) {

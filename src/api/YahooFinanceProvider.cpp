@@ -30,10 +30,12 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
                 lowerSymbol.toLowerCase();
                 outImageUrl = "https://eodhd.com/img/logos/US/" + lowerSymbol + ".png";
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     return false;

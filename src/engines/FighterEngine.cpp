@@ -69,40 +69,44 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    FsFile f;
-    if (sd.exists(indexPath)) {
-        f = sd.open(indexPath, FILE_OPEN_READ);
-    }
-    if (!f) {
-        Serial.println("FighterEngine: No index.txt found!");
-        return;
-    }
-    
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
-        line.trim();
-        if (line.length() > 0 && !isMacJunk(line)) {
-            numAvailableFighters++;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        FsFile f;
+        if (sd.exists(indexPath)) {
+            f = sd.open(indexPath, FILE_OPEN_READ);
         }
-    }
-    
-    if (numAvailableFighters > 0) {
-        if (fighterOffsets) free(fighterOffsets);
-        fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+        if (!f) {
+            xSemaphoreGive(sdMutex);
+            Serial.println("FighterEngine: No index.txt found!");
+            return;
+        }
         
-        f.seek(0);
-        int idx = 0;
-        while (f.available() && idx < numAvailableFighters) {
-            uint32_t pos = f.position();
+        while (f.available()) {
             String line = f.readStringUntil('\n');
             line.trim();
             if (line.length() > 0 && !isMacJunk(line)) {
-                fighterOffsets[idx++] = pos;
+                numAvailableFighters++;
             }
         }
+        
+        if (numAvailableFighters > 0) {
+            if (fighterOffsets) free(fighterOffsets);
+            fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+            
+            f.seek(0);
+            int idx = 0;
+            while (f.available() && idx < numAvailableFighters) {
+                uint32_t pos = f.position();
+                String line = f.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0 && !isMacJunk(line)) {
+                    fighterOffsets[idx++] = pos;
+                }
+            }
+        }
+        
+        f.close();
+        xSemaphoreGive(sdMutex);
     }
-    
-    f.close();
     LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
 }
 
@@ -110,33 +114,35 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
-    FsFile f = sd.open(indexPath, FILE_OPEN_READ);
-    if (!f) return false;
-    
-    int targetLine = esp_random() % numAvailableFighters;
-    f.seek(fighterOffsets[targetLine]);
-    String result = f.readStringUntil('\n');
-    result.trim();
-    f.close();
-    
-    // Format: name,height,ground_y,origin_x,width,head_y
-    int comma1 = result.indexOf(',');
-    int comma2 = result.indexOf(',', comma1 + 1);
-    int comma3 = result.indexOf(',', comma2 + 1);
-    int comma4 = result.indexOf(',', comma3 + 1);
-    int comma5 = result.indexOf(',', comma4 + 1);
+    bool success = false;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        FsFile f = sd.open(indexPath, FILE_OPEN_READ);
+        if (f) {
+            int targetLine = esp_random() % numAvailableFighters;
+            f.seek(fighterOffsets[targetLine]);
+            String result = f.readStringUntil('\n');
+            result.trim();
+            f.close();
+            
+            int comma1 = result.indexOf(',');
+            int comma2 = result.indexOf(',', comma1 + 1);
+            int comma3 = result.indexOf(',', comma2 + 1);
+            int comma4 = result.indexOf(',', comma3 + 1);
+            int comma5 = result.indexOf(',', comma4 + 1);
 
-    if (comma1 > 0) {
-        p.name = result.substring(0, comma1);
-        p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
-        p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
-        p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
-        p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
-        p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
-        return true;
+            if (comma1 > 0) {
+                p.name = result.substring(0, comma1);
+                p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
+                p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
+                p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
+                p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
+                p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
+                success = true;
+            }
+        }
+        xSemaphoreGive(sdMutex);
     }
-    
-    return false;
+    return success;
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
@@ -214,7 +220,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 65536) ? 65536 : toRead;
+                size_t chunk = (toRead > 8192) ? 8192 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
@@ -361,7 +367,7 @@ void FighterEngine::runBackgroundPreload() {
 
     auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
         bool res = false;
-        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(200))) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             res = loadFighterAnim(anim, path.c_str());
             xSemaphoreGive(sdMutex);
         }
@@ -606,7 +612,10 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             }
             p.currentBufferSize = newSize;
         }
-        p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
+            xSemaphoreGive(sdMutex);
+        }
     }
 }
 
@@ -803,9 +812,12 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
         if (p.currentFrame != anim->cachedFrameIndex) {
             if (p.activeFile && p.currentFrameBuffer) {
                 uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-                p.activeFile.seek(offset);
-                p.activeFile.read(p.currentFrameBuffer, frameSize);
-                anim->cachedFrameIndex = p.currentFrame;
+                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    p.activeFile.seek(offset);
+                    p.activeFile.read(p.currentFrameBuffer, frameSize);
+                    xSemaphoreGive(sdMutex);
+                    anim->cachedFrameIndex = p.currentFrame;
+                }
             } else {
                 return;
             }
