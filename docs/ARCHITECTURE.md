@@ -368,7 +368,7 @@ To eliminate cross-core race conditions and avoid holding mutexes on Core 1's ti
 - **Atomic 4-State Machine (`SlotState`):** `ConfigLoader` manages 3 physical snapshot buffers through explicit atomic states: `FREE`, `WRITING`, `PUBLISHED`, and `READING`.
 - **Linearizable CAS Reader Pinning (`Core 1`):** `ConfigSnapshotGuard guard = config.acquireSnapshot();` executes an atomic CAS loop: `_slotStates[slot].compare_exchange_weak(PUBLISHED, READING)` with acquire semantics. Access to `_snapshots[slot]` is **strictly impossible prior to CAS success**. The move-only RAII guard automatically transitions the slot upon destruction.
 - **Safe Reclamation & Deferred Publication (`Core 0`):** The writer dynamically reserves a `FREE` slot or reclaims an old `PUBLISHED` slot via `compare_exchange_strong(PUBLISHED, FREE)`. If all 3 slots are occupied (`READING + PUBLISHED + WRITING`), `_publishPending = true;` is set and the writer **returns immediately without busy-waiting or `yield()`**, ensuring consolidated publication on the next frame.
-- **Linearizability & CRC Validation:** Monotonic versioning with double-magic and CRC integrity validation ensures linear consistency across threads.
+- **Linearizability & Checksum Validation:** Monotonic versioning with double-magic and checksum integrity validation ensures linear consistency across threads.
 - **Transactional Mutations:** All configuration modifications from Core 0 pass through `config.mutate([&](ConfigLoader& cfg) { ... })`.
 
 ---

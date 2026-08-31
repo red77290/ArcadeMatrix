@@ -432,6 +432,7 @@ void test_display_runtime_preemption_lifecycle(void) {
     dAlert.sourceId = DisplaySourceId::ALERT;
     dAlert.engineHandle = EngineHandle("alert", "alert_main");
     dAlert.requestId = 2;
+    dAlert.preemptive = true;
     runtime.transitionSession(dAlert);
 
     TEST_ASSERT_EQUAL(1, rotationEngine.pauseCalls);
@@ -701,6 +702,7 @@ void test_preemption_intermediate_expiration_unwinding(void) {
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d1.sourceId);
     TEST_ASSERT_EQUAL(1, clockEngine.activateCalls);
     TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    uint32_t baselineSessionId = runtime.getCurrentSession().sessionId;
 
     // 2. Preemption Level 1: MQTT message arrives
     DisplayRequest mqttReq{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
@@ -709,7 +711,6 @@ void test_preemption_intermediate_expiration_unwinding(void) {
 
     DisplayDecision d2 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, d2.sourceId);
-    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d2.transitionMode);
     TEST_ASSERT_EQUAL(1, clockEngine.pauseCalls);
     TEST_ASSERT_EQUAL(1, mqttEngine.activateCalls);
     TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
@@ -722,24 +723,133 @@ void test_preemption_intermediate_expiration_unwinding(void) {
 
     DisplayDecision d3 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d3.sourceId);
-    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d3.transitionMode);
     TEST_ASSERT_EQUAL(1, mqttEngine.pauseCalls);
     TEST_ASSERT_EQUAL(1, alertEngine.activateCalls);
     TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
 
-    // 4. Submerged session expiration: MQTT expires/cancelled while Alert is displaying
+    // 4. Submerged session expiration: MQTT cancelled while Alert is displaying
     arbiter.cancelRequest(DisplaySourceId::MQTT);
 
-    // 5. Alert concludes: Arbiter falls back to ROTATION (RESUME mode)
+    // 5. Alert concludes: Arbiter falls back to ROTATION
     arbiter.cancelRequest(DisplaySourceId::ALERT);
 
     DisplayDecision d4 = runtime.update(cfg.acquireSnapshot().get());
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d4.sourceId);
-    TEST_ASSERT_EQUAL(TransitionMode::RESUME, d4.transitionMode);
     TEST_ASSERT_EQUAL(1, alertEngine.deactivateCalls);
     TEST_ASSERT_EQUAL(1, mqttEngine.deactivateCalls); // Submerged MQTT cleaned up
     TEST_ASSERT_EQUAL(1, clockEngine.resumeCalls);    // Baseline Clock safely restored
+    TEST_ASSERT_EQUAL(baselineSessionId, runtime.getCurrentSession().sessionId);
     TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+}
+
+void test_preemption_refresh_does_not_push_same_engine(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine clockEngine("clock");
+    TrackingMockEngine mqttEngine("mqtt");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEngine, EngineHandle("clock", "clock_main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttEngine, EngineHandle("message", "mqtt_main"));
+
+    // Base rotation
+    DisplayDecision dRot;
+    dRot.valid = true;
+    dRot.sourceId = DisplaySourceId::ROTATION;
+    dRot.engineHandle = EngineHandle("clock", "clock_main");
+    dRot.requestId = 1;
+    runtime.transitionSession(dRot);
+
+    // Preempt with MQTT
+    DisplayDecision dMqtt;
+    dMqtt.valid = true;
+    dMqtt.sourceId = DisplaySourceId::MQTT;
+    dMqtt.engineHandle = EngineHandle("message", "mqtt_main");
+    dMqtt.preemptive = true;
+    dMqtt.requestId = 101;
+    runtime.transitionSession(dMqtt);
+
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(1, clockEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(1, mqttEngine.activateCalls);
+    uint32_t activeSessionId = runtime.getCurrentSession().sessionId;
+
+    // Refresh MQTT x3 with restartTimer=true (new request IDs)
+    for (uint32_t req = 102; req <= 104; ++req) {
+        dMqtt.requestId = req;
+        runtime.transitionSession(dMqtt);
+        TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+        TEST_ASSERT_EQUAL(1, clockEngine.pauseCalls);
+        TEST_ASSERT_EQUAL(1, mqttEngine.activateCalls);
+        TEST_ASSERT_EQUAL(0, mqttEngine.deactivateCalls);
+        TEST_ASSERT_EQUAL(0, clockEngine.resumeCalls);
+        TEST_ASSERT_EQUAL(activeSessionId, runtime.getCurrentSession().sessionId);
+        TEST_ASSERT_EQUAL(req, runtime.getCurrentSession().requestId);
+    }
+}
+
+void test_same_source_different_instance_replaces_without_preemption(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine mqttA("mqttA");
+    TrackingMockEngine mqttB("mqttB");
+
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttA, EngineHandle("message", "instA"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttB, EngineHandle("message", "instB"));
+
+    DisplayDecision d1;
+    d1.valid = true;
+    d1.sourceId = DisplaySourceId::MQTT;
+    d1.engineHandle = EngineHandle("message", "instA");
+    d1.requestId = 1;
+    runtime.transitionSession(d1);
+
+    TEST_ASSERT_EQUAL(1, mqttA.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+
+    DisplayDecision d2;
+    d2.valid = true;
+    d2.sourceId = DisplaySourceId::MQTT;
+    d2.engineHandle = EngineHandle("message", "instB");
+    d2.requestId = 2;
+    runtime.transitionSession(d2);
+
+    TEST_ASSERT_EQUAL(1, mqttA.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, mqttB.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(0, mqttA.pauseCalls);
+}
+
+void test_runtime_transactional_rejection_preserves_lifecycle(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine activeEng("active");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &activeEng, EngineHandle("clock", "main"));
+
+    DisplayDecision dBase;
+    dBase.valid = true;
+    dBase.sourceId = DisplaySourceId::ROTATION;
+    dBase.engineHandle = EngineHandle("clock", "main");
+    dBase.requestId = 1;
+    runtime.transitionSession(dBase);
+
+    uint32_t origSessionId = runtime.getCurrentSession().sessionId;
+    uint32_t origStarted = runtime.getCurrentSession().startedAtMs;
+
+    // Submit invalid handle (unresolvable)
+    DisplayDecision dInvalid;
+    dInvalid.valid = true;
+    dInvalid.sourceId = DisplaySourceId::ALERT;
+    dInvalid.engineHandle = EngineHandle("unknown_desc", "unknown_inst");
+    dInvalid.preemptive = true;
+    dInvalid.requestId = 999;
+    runtime.transitionSession(dInvalid);
+
+    // Assert session and engine lifecycle are 100% intact
+    TEST_ASSERT_EQUAL_PTR(&activeEng, runtime.getCurrentSession().activeEngine);
+    TEST_ASSERT_EQUAL(origSessionId, runtime.getCurrentSession().sessionId);
+    TEST_ASSERT_EQUAL(origStarted, runtime.getCurrentSession().startedAtMs);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(1, activeEng.activateCalls);
+    TEST_ASSERT_EQUAL(0, activeEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(0, activeEng.pauseCalls);
 }
 
 void test_preemption_stack_overflow_rejection(void) {
@@ -748,36 +858,170 @@ void test_preemption_stack_overflow_rejection(void) {
     TrackingMockEngine eng2("eng2");
     TrackingMockEngine eng3("eng3");
     TrackingMockEngine eng4("eng4");
+    TrackingMockEngine eng5("eng5");
 
     DisplayRuntime runtime;
-    DisplayArbiter arbiter;
-    runtime.begin(nullptr, nullptr, nullptr, nullptr, nullptr, &arbiter);
-
     runtime.registerSourceEngine(DisplaySourceId::ROTATION, &eng0, EngineHandle("eng0", "0"));
+    runtime.registerSourceEngine(DisplaySourceId::GIF, &eng1, EngineHandle("eng1", "1"));
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &eng2, EngineHandle("eng2", "2"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &eng3, EngineHandle("eng3", "3"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &eng4, EngineHandle("eng4", "4"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &eng5, EngineHandle("eng5", "5"));
 
-    ConfigLoader cfg;
-    runtime.update(cfg.acquireSnapshot().get()); // Base depth 0
+    DisplayDecision dec0;
+    dec0.valid = true;
+    dec0.sourceId = DisplaySourceId::ROTATION;
+    dec0.engineHandle = EngineHandle("eng0", "0");
+    runtime.transitionSession(dec0);
 
-    // Fill stack to max capacity 4
-    for (uint8_t i = 1; i <= 4; ++i) {
+    // Preempt 4 times to fill stack
+    DisplaySourceId sources[] = {DisplaySourceId::GIF, DisplaySourceId::MARQUEE, DisplaySourceId::MQTT, DisplaySourceId::VISUALIZER};
+    const char* names[] = {"eng1", "eng2", "eng3", "eng4"};
+    for (int i = 0; i < 4; ++i) {
         DisplayDecision dec;
-        dec.sourceId = static_cast<DisplaySourceId>(10 + i * 10);
-        dec.priority = static_cast<DisplayPriority>(10 + i * 10);
-        dec.engineHandle = EngineHandle("test", String(i).c_str());
-        dec.transitionMode = TransitionMode::PREEMPT;
+        dec.valid = true;
+        dec.sourceId = sources[i];
+        dec.engineHandle = EngineHandle(names[i], names[i]);
+        dec.preemptive = true;
+        dec.requestId = 10 + i;
         runtime.transitionSession(dec);
     }
     TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
 
     // 5th preemption must be rejected deterministically without stack overflow
     DisplayDecision overflowDec;
+    overflowDec.valid = true;
     overflowDec.sourceId = DisplaySourceId::ALERT;
-    overflowDec.priority = DisplayPriority::ALERT;
-    overflowDec.engineHandle = EngineHandle("overflow", "5");
-    overflowDec.transitionMode = TransitionMode::PREEMPT;
+    overflowDec.engineHandle = EngineHandle("eng5", "5");
+    overflowDec.preemptive = true;
+    overflowDec.requestId = 99;
     runtime.transitionSession(overflowDec);
 
     TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(0, eng5.activateCalls);
+    TEST_ASSERT_EQUAL(1, eng4.activateCalls);
+}
+
+void test_arbiter_stateless_no_phantom_state_on_runtime_rejection(void) {
+    DisplayArbiter arbiter;
+    DisplayRuntime runtime;
+    TrackingMockEngine clockEng("clock");
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEng, EngineHandle("clock", "main"));
+
+    ConfigLoader cfg;
+    DisplayDecision d1 = runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d1.sourceId);
+
+    // Submit request that runtime cannot resolve
+    DisplayRequest badReq{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::TIMED, true, 50, EngineHandle("nonexistent", "inst")};
+    arbiter.submitRequest(badReq);
+
+    // Tick 1: Arbiter emits Alert decision, Runtime rejects it
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d2.sourceId);
+    runtime.transitionSession(d2);
+    TEST_ASSERT_EQUAL_PTR(&clockEng, runtime.getCurrentSession().activeEngine);
+
+    // Tick 2: Arbiter evaluates again, still produces Alert, no phantom state, runtime continues Clock
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d3.sourceId);
+    runtime.transitionSession(d3);
+    TEST_ASSERT_EQUAL_PTR(&clockEng, runtime.getCurrentSession().activeEngine);
+}
+
+void test_preemption_child_refresh_preserves_single_stack_entry(void) {
+    TrackingMockEngine clockEng("clock");
+    TrackingMockEngine mqttEng("mqtt");
+    TrackingMockEngine alertEng("alert");
+
+    DisplayRuntime runtime;
+    DisplayArbiter arbiter;
+    runtime.begin(nullptr, nullptr, nullptr, nullptr, nullptr, &arbiter);
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttEng, EngineHandle("message", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertEng, EngineHandle("alert", "main"));
+
+    ConfigLoader cfg;
+    runtime.update(cfg.acquireSnapshot().get()); // Base clock
+
+    DisplayRequest mqttReq{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 10, EngineHandle("message", "main")};
+    arbiter.submitRequest(mqttReq);
+    runtime.update(cfg.acquireSnapshot().get()); // Preempt to MQTT (depth 1)
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    DisplayRequest alertReq{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::UNTIL_CANCELLED, true, 20, EngineHandle("alert", "main")};
+    arbiter.submitRequest(alertReq);
+    runtime.update(cfg.acquireSnapshot().get()); // Preempt to Alert (depth 2)
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+    // Refresh Alert child x2 with restartTimer
+    arbiter.submitRequest(alertReq, true);
+    runtime.update(cfg.acquireSnapshot().get());
+    arbiter.submitRequest(alertReq, true);
+    runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+    // Alert cancelled -> MQTT resumes
+    arbiter.cancelRequest(DisplaySourceId::ALERT);
+    runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(1, mqttEng.resumeCalls);
+    TEST_ASSERT_EQUAL(1, alertEng.deactivateCalls);
+}
+
+void test_rotation_manager_bounded_lookup(void) {
+    RotationManager rot;
+    ConfigLoader cfg;
+    rot.begin(cfg);
+
+    // 1. Absent lookup returns nullptr with 0 allocation
+    TEST_ASSERT_NULL(rot.findActiveEngine("nonexistent"));
+    TEST_ASSERT_NULL(rot.findActiveEngine(""));
+    TEST_ASSERT_NULL(rot.findActiveEngine(nullptr));
+
+    // 2. Reject instances > 31 chars
+    const char* tooLong = "12345678901234567890123456789012"; // 32 chars
+    TEST_ASSERT_NULL(rot.getOrCreateEngine(tooLong));
+
+    const char* exact31 = "1234567890123456789012345678901"; // 31 chars
+    TEST_ASSERT_NULL(rot.findActiveEngine(exact31)); // Not in config, returns nullptr safely
+}
+
+void test_registrar_capability_truth_table(void) {
+    // 1. None required -> satisfied
+    EngineRequirements reqEmpty;
+    TEST_ASSERT_TRUE(EngineRegistrar::checkRequirements(reqEmpty).satisfied);
+
+    // 2. PSRAM
+    EngineRequirements reqPsram;
+    reqPsram.needsPsram = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasPsram, EngineRegistrar::checkRequirements(reqPsram).satisfied);
+
+    // 3. Audio / Microphone
+    EngineRequirements reqAudio;
+    reqAudio.needsAudio = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasMicrophone, EngineRegistrar::checkRequirements(reqAudio).satisfied);
+
+    // 4. Temp sensor
+    EngineRequirements reqTemp;
+    reqTemp.needsTempSensor = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasTempSensor, EngineRegistrar::checkRequirements(reqTemp).satisfied);
+
+    // 5. Gyroscope
+    EngineRequirements reqGyro;
+    reqGyro.needsGyroscope = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasGyroscope, EngineRegistrar::checkRequirements(reqGyro).satisfied);
+
+    // 6. Network
+    EngineRequirements reqNet;
+    reqNet.needsNetwork = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasNetwork, EngineRegistrar::checkRequirements(reqNet).satisfied);
+
+    // 7. SD card
+    EngineRequirements reqSd;
+    reqSd.needsSd = true;
+    TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasSd, EngineRegistrar::checkRequirements(reqSd).satisfied);
 }
 
 void setup() {
@@ -808,8 +1052,15 @@ void setup() {
     RUN_TEST(test_snapshot_reentrant_and_multi_reader);
     RUN_TEST(test_display_runtime_lifecycle_centralization);
     RUN_TEST(test_display_runtime_preemption_lifecycle);
+    RUN_TEST(test_preemption_refresh_does_not_push_same_engine);
+    RUN_TEST(test_same_source_different_instance_replaces_without_preemption);
+    RUN_TEST(test_runtime_transactional_rejection_preserves_lifecycle);
     RUN_TEST(test_preemption_intermediate_expiration_unwinding);
     RUN_TEST(test_preemption_stack_overflow_rejection);
+    RUN_TEST(test_arbiter_stateless_no_phantom_state_on_runtime_rejection);
+    RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
+    RUN_TEST(test_rotation_manager_bounded_lookup);
+    RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
     RUN_TEST(test_canonical_overlays_schema_and_migration);
