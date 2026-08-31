@@ -253,6 +253,10 @@ public:
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
     
+    // Optional preemption lifecycle hooks (defaults to no-op for backward compatibility)
+    virtual void pause() {}
+    virtual void resume() {}
+    
     // Dynamic Configuration
     virtual void onConfigChanged(const EngineConfig* config) {}
     

@@ -112,7 +112,7 @@ void ClockEngine::update(EngineContext* context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
         extern ConfigLoader config;
-        bool is24h = config.system.format24h;
+        bool is24h = config.acquireSnapshot()->system.format24h;
         if (currentConfig) {
             String fmt = currentConfig->getString("clock_format", "");
             if (fmt.isEmpty()) fmt = currentConfig->getString("format", "");

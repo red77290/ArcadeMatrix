@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <mutex>
+#include <atomic>
+#include <functional>
 #include "DictionaryEngineConfig.h"
 
 struct EngineInstance {
@@ -79,6 +82,75 @@ struct SystemConfig {
     int idle_fighter_interval = 60;
 };
 
+struct EngineInstanceSnapshot {
+    String instance_id;
+    String engine_id;
+    DictionaryEngineConfig config;
+};
+
+struct ConfigSnapshot {
+    uint32_t version = 1;
+    uint32_t checksum = 0;
+    MatrixConfig matrix;
+    WifiConfig wifi;
+    MqttConfig mqtt;
+    SystemConfig system;
+    std::vector<RotationEntry> rotation;
+    std::vector<EngineInstanceSnapshot> instances;
+
+    ConfigSnapshot clone() const {
+        return *this;
+    }
+
+    const EngineInstanceSnapshot* getInstance(const String& instanceId) const {
+        for (const auto& inst : instances) {
+            if (inst.instance_id == instanceId) {
+                return &inst;
+            }
+        }
+        return nullptr;
+    }
+};
+
+enum class SlotState : uint8_t {
+    FREE = 0,        // Available for writer reservation
+    WRITING = 1,     // Reserved and in progress of construction by Core 0
+    PUBLISHED = 2,   // Valid stable snapshot available for readers
+    READING = 3      // Active pinned read by Core 1 SnapshotGuard
+};
+
+class ConfigLoader;
+
+/**
+ * @brief Move-only RAII Guard for borrowing immutable ConfigSnapshot.
+ * Strictly non-copyable with explicit ownership disarming on move, guaranteeing linearizable lifetime.
+ */
+class ConfigSnapshotGuard {
+public:
+    inline ConfigSnapshotGuard(const ConfigLoader& loader, const ConfigSnapshot& snapshot, uint8_t slot)
+        : _loader(&loader), _snapshot(&snapshot), _slot(slot) {}
+
+    inline ConfigSnapshotGuard(ConfigSnapshotGuard&& other) noexcept
+        : _loader(other._loader), _snapshot(other._snapshot), _slot(other._slot) {
+        other._slot = 0xFF; // Disarm other
+    }
+
+    inline ~ConfigSnapshotGuard();
+
+    inline const ConfigSnapshot& get() const { return *_snapshot; }
+    inline const ConfigSnapshot* operator->() const { return _snapshot; }
+    inline const ConfigSnapshot& operator*() const { return *_snapshot; }
+
+    ConfigSnapshotGuard(const ConfigSnapshotGuard&) = delete;
+    ConfigSnapshotGuard& operator=(const ConfigSnapshotGuard&) = delete;
+    ConfigSnapshotGuard& operator=(ConfigSnapshotGuard&&) = delete;
+
+private:
+    const ConfigLoader* _loader = nullptr;
+    const ConfigSnapshot* _snapshot = nullptr;
+    uint8_t _slot = 0xFF;
+};
+
 class ConfigLoader {
 public:
     ConfigLoader();
@@ -99,30 +171,84 @@ public:
     WifiConfig wifi;
     MqttConfig mqtt;
     SystemConfig system;
-    
-    EngineInstance* getInstance(const String& instanceId) {
-        for (auto& inst : instances) {
-            if (inst.instance_id == instanceId) {
-                return &inst;
-            }
-        }
-        return nullptr;
+
+    friend class ConfigSanitizer;
+    friend class ConfigSnapshotGuard;
+
+    /**
+     * @brief Linearizable atomic reservation of the current snapshot via CAS.
+     * Core 1 dereferences the snapshot payload ONLY after CAS PUBLISHED -> READING succeeds.
+     * This is the EXCLUSIVE public accessor to ConfigSnapshot.
+     */
+    ConfigSnapshotGuard acquireSnapshot() const;
+
+    inline uint32_t getVersion() const {
+        return _configVersion.load(std::memory_order_relaxed);
     }
 
-    EngineInstance* addInstance(const String& instanceId, const String& engineId) {
-        EngineInstance* existing = getInstance(instanceId);
-        if (existing) return existing;
+    void publishSnapshot();
+
+    bool getInstanceSnapshot(const String& instanceId, EngineInstanceSnapshot& out) const {
+        ConfigSnapshotGuard guard = acquireSnapshot();
+        const EngineInstanceSnapshot* inst = guard->getInstance(instanceId);
+        if (inst) {
+            out = *inst;
+            return true;
+        }
+        return false;
+    }
+
+    bool hasInstance(const String& instanceId) const {
+        ConfigSnapshotGuard guard = acquireSnapshot();
+        return guard->getInstance(instanceId) != nullptr;
+    }
+
+    template <typename F>
+    void mutate(F&& mutator) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        mutator(*this);
+        publishSnapshot_locked();
+    }
+
+    bool addInstance(const String& instanceId, const String& engineId) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& inst : instances) {
+            if (inst.instance_id == instanceId) return false;
+        }
         instances.push_back({instanceId, engineId, {}});
-        return &instances.back();
+        publishSnapshot_locked();
+        return true;
     }
 
     bool removeInstance(const String& instanceId) {
+        std::lock_guard<std::mutex> lock(_mutex);
         for (auto it = instances.begin(); it != instances.end(); ++it) {
             if (it->instance_id == instanceId) {
                 instances.erase(it);
+                publishSnapshot_locked();
                 return true;
             }
         }
         return false;
     }
+
+private:
+    void releaseSnapshot(uint8_t slot) const;
+
+    mutable std::mutex _mutex;
+    std::atomic<uint32_t> _configVersion{1};
+    mutable std::atomic<uint8_t> _publishedSlot{0};
+    mutable std::atomic<SlotState> _slotStates[3];
+    mutable std::atomic<bool> _publishPending{false};
+    ConfigSnapshot _snapshots[3];
+
+    void publishSnapshot_locked();
 };
+
+inline ConfigSnapshotGuard::~ConfigSnapshotGuard() {
+    if (_loader && _slot != 0xFF) {
+        _loader->releaseSnapshot(_slot);
+    }
+}
+
+

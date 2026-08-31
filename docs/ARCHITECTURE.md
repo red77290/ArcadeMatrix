@@ -328,55 +328,74 @@ ArcadeMatrix supports multilingual operations (English, French, Spanish) across 
 
 ---
 
-## 12. The Display Arbiter: Multi-Source Priority Resolution
+## 12. The Display Arbiter & Display Runtime (`DisplayArbiter`, `DisplayRuntime`)
 
-`DisplayArbiter` decides what content owns the matrix at any moment:
+ArcadeMatrix completely decouples display decision resolution from engine lifecycle execution:
 
 ```text
-[ Emergency Alerts / OTA ] (Priority 100)
+[ Emergency Alerts / OTA ] (Priority 100, ONE_SHOT / UNTIL_CANCELLED)
              ↓
 [ Real-time Interruption: MQTT Marquee / Live Alert ] (Priority 75)
+             ↓
+[ Audio Visualizer / Active Engine Request ] (Priority 60)
              ↓
 [ Active Carousel Rotation: Clock / Weather / MusicEngine ] (Priority 50)
              ↓
 [ Fallback Screen: Default Digital Clock ] (Priority 10)
 ```
 
-Audio playback continues independently in the background even if a higher-priority visual source preempts the display.
+### Deterministic Zero-Allocation & SPSC Lock-Free Architecture
+- **Single Producer, Single Consumer (SPSC) Command Queue:** Core 0 (Web server, MQTT listener, AudioHub) submits requests asynchronously via `m_displayArbiter.submitRequest(request)` and `cancelRequest(sourceId)`. These commands are pushed into a lock-free circular buffer (`LockFreeSPSCQueue<ArbiterCommand, 16>`).
+- **Single Owner on Core 1:** Core 1 is the **sole owner** of the static slot array (`std::array<DisplayRequestSlot, 8>`). At the beginning of `DisplayArbiter::evaluate()`, Core 1 drains pending commands and resolves priorities in $O(1)$ with **ZERO mutex locking** and **ZERO heap allocations**.
+- **Pure Decision Contract:** `DisplayArbiter::evaluate()` returns a lightweight `DisplayDecision` struct containing only semantic IDs (`sourceId`, `engineHandle`, `priority`, `requestId`, `needsClear`, `allowsOverlay`, `isRealtime`), completely free of raw `IEngine*` pointers.
+- **Canonical `EngineHandle` Identity:** Instances are identified by a POD `EngineHandle` (`descriptorId[32]`, `instanceId[32]`) avoiding dynamic String allocations. `DisplayRuntime::resolveEngine()` resolves engines canonically without heuristics (`sourceId / 10`).
+- **Auto-Consumed `ONE_SHOT`:** Non-recurring alerts (e.g. startup banner, system notifications) are atomically cleared upon evaluation.
+- **Request ID Preservation:** Request refreshes preserve their unique `requestId` unless an explicit timer restart is requested.
+
+### Centralized Display Lifecycle & Preemption Matrix (`DisplayRuntime`)
+- **Exclusive Lifecycle Owner:** `DisplayRuntime` is the **sole owner** of display engine lifecycle transitions (`activate()`, `deactivate()`, `pause()`, `resume()`).
+- **Preemption vs Rotation Lifecycle Semantics:**
+  - **Temporary Preemption (e.g. MQTT Message over Clock):** Outgoing engine receives `pause()`, incoming alert receives `activate()`.
+  - **End of Preemption (Return to Baseline):** Completed alert receives `deactivate()`, paused baseline engine receives `resume()`, preserving internal state and animation phase.
+  - **Carousel Transition (e.g. Clock → Weather):** Outgoing engine receives `deactivate()`, incoming engine receives `activate()`.
+- **Preemption & Overlay Compositing:** If the active session permits overlays (`decision.allowsOverlay == true`), `OverlayManager` composites transverse effects (e.g. MUGEN Fighters) seamlessly on top of the rendered frame.
 
 ---
 
-## 13. The Transverse Overlay Compositor (`OverlayManager`)
+## 13. Formally Proven SRSW Lock-Free Configuration (`ConfigSnapshot`)
+
+To eliminate cross-core race conditions and avoid holding mutexes on Core 1's time-critical render hot path:
+- **Atomic 4-State Machine (`SlotState`):** `ConfigLoader` manages 3 physical snapshot buffers through explicit atomic states: `FREE`, `WRITING`, `PUBLISHED`, and `READING`.
+- **Linearizable CAS Reader Pinning (`Core 1`):** `ConfigSnapshotGuard guard = config.acquireSnapshot();` executes an atomic CAS loop: `_slotStates[slot].compare_exchange_weak(PUBLISHED, READING)` with acquire semantics. Access to `_snapshots[slot]` is **strictly impossible prior to CAS success**. The move-only RAII guard automatically transitions the slot upon destruction.
+- **Safe Reclamation & Deferred Publication (`Core 0`):** The writer dynamically reserves a `FREE` slot or reclaims an old `PUBLISHED` slot via `compare_exchange_strong(PUBLISHED, FREE)`. If all 3 slots are occupied (`READING + PUBLISHED + WRITING`), `_publishPending = true;` is set and the writer **returns immediately without busy-waiting or `yield()`**, ensuring consolidated publication on the next frame.
+- **Linearizability & CRC Validation:** Monotonic versioning with double-magic and CRC integrity validation ensures linear consistency across threads.
+- **Transactional Mutations:** All configuration modifications from Core 0 pass through `config.mutate([&](ConfigLoader& cfg) { ... })`.
+
+---
+
+## 14. Transverse Overlay Compositor (`OverlayManager`)
 
 Transverse visual effects (such as **MUGEN Fighters**) composite on top of the active background engine:
 - `OverlayManager` renders after the active engine's `render()` pass.
 - Fighters read `.fgt.gz` compressed sprite sequences from LittleFS/SD.
 - Any engine (`Clock`, `Weather`, `GIF`, `MusicEngine`) can have the Fighter overlay enabled per rotation item in `config.rotation[i].overlays.fighter`.
-- **Fighter is an overlay, NOT an engine in `EngineRegistry`.**
+- **Fighter is an overlay, NOT an engine in `EngineRegistry`.** When a priority source (e.g. Marquee or MQTT alert) preempts rotation, `DisplayRuntime` passes an empty overlay config, safely suspending overlay execution without tearing down background assets.
 
 ---
 
-## 14. Dual-Core Runtime & FreeRTOS Task Isolation
+## 15. Dual-Core Runtime & FreeRTOS Task Isolation
 
 - **Core 0 (Services & Networking):**
-  - `AsyncWebServer` handling HTTP requests.
-  - Background audio tasks (`WebRadioService`, `BluetoothAudioService`, `SpotifyConnectService`, `AirPlayAudioService`).
+  - `AsyncWebServer` handling HTTP requests and REST API mutations.
+  - Background audio sessions (`AudioSessionManager`, `WebRadioService`, `BluetoothAudioService`).
   - Audio analysis (`AudioAnalysisService` FFT calculation).
   - Sensor polling (`HardwareHAL`, `GyroHAL`).
 - **Core 1 (Realtime Graphics):**
-  - Display Arbiter evaluation.
+  - `DisplayRuntime::update()` & `DisplayArbiter::evaluate()`.
+  - Frame pacing via `FrameScheduler` (60 FPS for realtime engines, 20-30 FPS for static screens).
   - Active engine `update()` & `render()`.
-  - Transverse Overlay compositing.
+  - Transverse Overlay compositing (`OverlayManager::render()`).
   - HUB75 DMA buffer swap.
-
----
-
-## 15. Frame Pacing & DMA Double-Buffering
-
-The rendering loop on Core 1 targets steady 60 FPS for realtime engines (`isRealtime() == true`) and 20 FPS for static screens, utilizing hardware DMA- **Allocate once, mutate in place:** Buffers, animation arrays, and strings are allocated during `initialize()` and reused each frame (`clear()`, pointer reuse).
-- **Lazy-Once Instance Lifecycle:** An engine is instantiated only when its configured instance is first displayed, then cached for the lifetime of the firmware ("Lazy-Once").
-- **Core Isolation:** Core 1 runs the high-priority rendering loop (`DisplayArbiter`, active engine `update()`/`render()`, `OverlayManager`, DMA swap), while Core 0 handles network I/O, AsyncWebServer, mDNS, background audio decoders, and sensor polling.
-- **Transverse Features are Overlays, NOT Engines:** Features that visually composite on top of other content (like MUGEN Fighters) live in `OverlayManager`, keeping `EngineRegistry` purely for main content engines.
 
 ### Deep Memory Management & Hardware Partitioning (ESP32 vs ESP32-S3 PSRAM)
 
