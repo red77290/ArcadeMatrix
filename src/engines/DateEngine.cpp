@@ -48,7 +48,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     shadowColor = matrix->color565(0, 0, 0);
 
     m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-    m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+    m_config.format = config->getString("date_format", config->getString("format", "system").c_str());
+    m_config.lang = config->getString("date_lang", config->getString("lang", "system").c_str());
     m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
     m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
     m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
@@ -67,7 +68,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
 void DateEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-        m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+        m_config.format = config->getString("date_format", config->getString("format", "system").c_str());
+        m_config.lang = config->getString("date_lang", config->getString("lang", "system").c_str());
         m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
         m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
         m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
@@ -144,12 +146,15 @@ void DateEngine::update(EngineContext* context) {
         context->getSystemTime(&timeinfo);
         currentDateData = {(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)};
         
-        String format = m_config.format;
-        if (format.isEmpty()) format = "%a %d %b";
-
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
-        String lang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+        String format = m_config.format;
+        if (format.isEmpty() || format.equalsIgnoreCase("system")) format = "%d/%m/%Y";
+
+        String lang = m_config.lang;
+        if (lang.isEmpty() || lang.equalsIgnoreCase("system")) {
+            lang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+        }
         formatLocalizedDate(currentDate, sizeof(currentDate), format, &timeinfo, lang);
         
         // Handle random theme changes per day if THEME_NONE
@@ -606,9 +611,10 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     desc_date.requirements.needsNetwork = false;
     desc_date.schema.fields = {
         ConfigField("date_theme", ConfigType::ENUM, "Date Theme", "Visual theme for date", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("date_format", ConfigType::STRING, "Date Format", "Format for date display", "%d/%m/%Y", false, "", "", "", "%d/%m/%Y,%Y-%m-%d,%d %b %Y,%A %d %B", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:Système (Général),%d/%m/%Y:Jour/Mois/Année (%d/%m/%Y),%m/%d/%Y:Mois/Jour/Année (%m/%d/%Y),%Y-%m-%d:Année-Mois-Jour (%Y-%m-%d),%a %d %b:Court avec jour (%a %d %b),%A %d %B:Complet (%A %d %B)", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("date_lang", ConfigType::ENUM, "Language", "Date display language", "system", false, "", "", "", "system:Système (Général),fr:Français,en:English,es:Español,de:Deutsch,it:Italiano", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "Europe/Paris", false, "", "", "", "", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:Système (Général)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "1", false, "1", "3", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("date_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Ignore),
         ConfigField("date_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#00ffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Ignore),

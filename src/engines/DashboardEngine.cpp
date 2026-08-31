@@ -1055,18 +1055,37 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     m_config.trackedMarkets = engineConfig->getString("tracked_markets", "BTC,ETH,SOL,NVDA");
     m_cachedTrackedMarkets = m_config.trackedMarkets;
 
-    // Unit: instance override or fallback to global system preference
-    String unit = engineConfig->getString("temp_unit", sysUnit.c_str());
-    m_config.useFahrenheit = unit.equalsIgnoreCase("F");
+    // Unit: instance override or fallback to global system preference ("system" by default)
+    String unit = engineConfig->getString("temp_unit", "system");
+    if (unit.isEmpty() || unit.equalsIgnoreCase("system")) {
+        unit = sysUnit;
+    }
+    m_config.useFahrenheit = unit.equalsIgnoreCase("F") || unit.equalsIgnoreCase("imperial") || unit.equalsIgnoreCase("fahrenheit");
 
     // Temp offset: instance override or fallback to global system preference
-    m_config.tempOffset = engineConfig->getFloat("temp_offset", sysTempOffset);
+    float tempOff = engineConfig->getFloat("temp_offset", -999.0f);
+    if (tempOff < -50.0f) {
+        m_config.tempOffset = sysTempOffset;
+    } else {
+        m_config.tempOffset = tempOff;
+    }
 
-    // Language: instance override or fallback to global system preference
-    m_config.lang = engineConfig->getString("lang", sysLang.c_str());
+    // Language: instance override or fallback to global system preference ("system" by default)
+    String lang = engineConfig->getString("lang", "system");
+    if (lang.isEmpty() || lang.equalsIgnoreCase("system")) {
+        lang = sysLang;
+    }
+    m_config.lang = lang;
 
-    // 24H format: instance override or fallback to global system preference
-    m_config.format24h = engineConfig->getBool("format_24h", sysFormat24h);
+    // 24H format: instance override or fallback to global system preference ("system" by default)
+    String fmt24 = engineConfig->getString("format_24h", "system");
+    if (fmt24.isEmpty() || fmt24.equalsIgnoreCase("system")) {
+        m_config.format24h = sysFormat24h;
+    } else if (fmt24.equalsIgnoreCase("12h") || fmt24.equalsIgnoreCase("false") || fmt24.equalsIgnoreCase("0")) {
+        m_config.format24h = false;
+    } else {
+        m_config.format24h = true;
+    }
 
     m_weatherApiKey = engineConfig->getString("weather_api_key", "");
     m_weatherCity = engineConfig->getString("weather_city", "");
@@ -1121,7 +1140,7 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
         }
     }
 
-    if (oldCity != m_weatherCity || oldApiKey != m_weatherApiKey) {
+    if (oldCity != m_weatherCity || oldApiKey != m_weatherApiKey || oldLang != m_config.lang || oldFahrenheit != m_config.useFahrenheit) {
         m_forceFetchWeather = true;
         m_lastWeatherFetch = 0;
     }
@@ -1129,6 +1148,7 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     m_cachedLayout = DashboardLayoutCalculator::calculate(m_geometry, m_config);
     m_layoutDirty = false;
     updateWorldTimes();
+    updateSnapshot();
 }
 
 void DashboardEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
@@ -1398,41 +1418,20 @@ void DashboardEngine::fetchWeather() {
 
                 WeatherData wd;
                 wd.temp = temp;
-                wd.label = city;
+                wd.iconCode = "01d";
+                wd.description = "Clear";
 
-                bool isFr = lang.startsWith("fr");
-                bool isEs = lang.startsWith("es");
-
-                if (wCode == 0) {
-                    wd.iconCode = "01d";
-                    wd.description = isFr ? "Ensoleillé" : (isEs ? "Soleado" : "Sunny");
-                } else if (wCode <= 3) {
-                    wd.iconCode = "02d";
-                    wd.description = isFr ? "Nuageux" : (isEs ? "Nublado" : "Cloudy");
-                } else if (wCode <= 48) {
-                    wd.iconCode = "50d";
-                    wd.description = isFr ? "Brouillard" : (isEs ? "Niebla" : "Fog");
-                } else if (wCode <= 67) {
-                    wd.iconCode = "10d";
-                    wd.description = isFr ? "Pluie" : (isEs ? "Lluvia" : "Rain");
-                } else if (wCode <= 77) {
-                    wd.iconCode = "13d";
-                    wd.description = isFr ? "Neige" : (isEs ? "Nieve" : "Snow");
-                } else if (wCode <= 82) {
-                    wd.iconCode = "09d";
-                    wd.description = isFr ? "Averses" : (isEs ? "Chubascos" : "Showers");
-                } else if (wCode <= 99) {
-                    wd.iconCode = "11d";
-                    wd.description = isFr ? "Orage" : (isEs ? "Tormenta" : "Storm");
-                } else {
-                    wd.iconCode = "01d";
-                    wd.description = isFr ? "Clair" : (isEs ? "Despejado" : "Clear");
-                }
+                if (wCode >= 1 && wCode <= 3) { wd.iconCode = "02d"; wd.description = "Cloudy"; }
+                else if (wCode >= 45 && wCode <= 48) { wd.iconCode = "50d"; wd.description = "Fog"; }
+                else if (wCode >= 51 && wCode <= 67) { wd.iconCode = "10d"; wd.description = "Rain"; }
+                else if (wCode >= 71 && wCode <= 77) { wd.iconCode = "13d"; wd.description = "Snow"; }
+                else if (wCode >= 80 && wCode <= 82) { wd.iconCode = "09d"; wd.description = "Showers"; }
+                else if (wCode >= 95) { wd.iconCode = "11d"; wd.description = "Storm"; }
 
                 std::lock_guard<std::mutex> lock(m_snapshotMutex);
                 m_snapshot.weather = wd;
                 m_snapshot.weatherValid = true;
-                LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s - %s)", wd.temp, wd.label.c_str(), wd.description.c_str());
+                LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s)", wd.temp, wd.description.c_str());
             }
         }
         metHttp.end();
@@ -1441,31 +1440,24 @@ void DashboardEngine::fetchWeather() {
 }
 
 void DashboardEngine::fetchMarkets() {
-    if (!m_isActive || WiFi.status() != WL_CONNECTED) return;
-
-#if defined(ESP32)
-    if (ESP.getMaxAllocHeap() < 20000) {
-        LOGW("Dashboard", "Heap fragmented (max alloc: %u), skipping market fetch", ESP.getMaxAllocHeap());
-        return;
-    }
-#endif
+    if (WiFi.status() != WL_CONNECTED) return;
 
     std::vector<String> symbols;
-    String raw = m_cachedTrackedMarkets;
-    int start = 0;
-    while (start < (int)raw.length()) {
-        int comma = raw.indexOf(',', start);
-        String token = (comma == -1) ? raw.substring(start) : raw.substring(start, comma);
-        token.trim();
-        token.toUpperCase();
-        if (token.length() > 0) symbols.push_back(token);
-        if (comma == -1) break;
-        start = comma + 1;
+    {
+        String raw = m_cachedTrackedMarkets;
+        int start = 0;
+        while (start < (int)raw.length()) {
+            int comma = raw.indexOf(',', start);
+            String token = (comma == -1) ? raw.substring(start) : raw.substring(start, comma);
+            token.trim();
+            token.toUpperCase();
+            if (token.length() > 0) symbols.push_back(token);
+            if (comma == -1) break;
+            start = comma + 1;
+        }
     }
 
-    if (symbols.empty()) {
-        symbols = {"BTC", "ETH", "SOL", "NVDA"};
-    }
+    if (symbols.empty()) return;
 
     std::vector<MarketItem> updatedItems;
     YahooFinanceProvider yahooProvider;
@@ -1474,7 +1466,7 @@ void DashboardEngine::fetchMarkets() {
         if (!m_isActive) break;
         bool itemAdded = false;
 
-        // 1. Probe Binance 24hr ticker API (<sym>USDT)
+        // 1. Check Binance (fast crypto API)
         WiFiClientSecure binanceClient;
         binanceClient.setInsecure();
         HTTPClient http;
@@ -1494,9 +1486,9 @@ void DashboardEngine::fetchMarkets() {
             }
             http.end();
         }
-        binanceClient.stop(); // Free TLS/SSL memory buffer immediately
+        binanceClient.stop(); // Free TLS/SSL buffer immediately
 
-        // 2. If not found on Binance, query Yahoo Finance for Stocks, ETFs or Cryptos
+        // 2. Check Yahoo Finance (Stocks & other Cryptos)
         if (!itemAdded && m_isActive) {
             float stockPrice = 0.0f;
             float stockChange = 0.0f;
@@ -1509,7 +1501,7 @@ void DashboardEngine::fetchMarkets() {
                 itemAdded = true;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(150)); // Gentle spacing between ticker queries
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 
     if (!updatedItems.empty()) {
@@ -1665,7 +1657,9 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_date", ConfigType::BOOLEAN, "Show Date", "Display day and date badge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_seconds", ConfigType::BOOLEAN, "Show Seconds", "Display sweeping second hand or seconds digits", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("smooth_seconds", ConfigType::BOOLEAN, "Smooth Sweeping Seconds", "Continuous sweeping second hand vs crisp 1s ticks", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "C", false, "", "", "", "C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("format_24h", ConfigType::ENUM, "Time Format", "24H or 12H time format", "system", false, "", "", "", "system:Système (Général),24h:24 Heures (23:59),12h:12 Heures (11:59 PM)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "system", false, "", "", "", "system:Système (Général),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("lang", ConfigType::ENUM, "Language", "Language for labels and dates", "system", false, "", "", "", "system:Système (Général),en:English,fr:Français,es:Español,de:Deutsch,it:Italiano", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
