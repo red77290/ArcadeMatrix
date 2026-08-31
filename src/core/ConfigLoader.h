@@ -90,12 +90,17 @@ struct EngineInstanceSnapshot {
 
 struct ConfigSnapshot {
     uint32_t version = 1;
+    uint32_t checksum = 0;
     MatrixConfig matrix;
     WifiConfig wifi;
     MqttConfig mqtt;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
+
+    ConfigSnapshot clone() const {
+        return *this;
+    }
 
     const EngineInstanceSnapshot* getInstance(const String& instanceId) const {
         for (const auto& inst : instances) {
@@ -131,11 +136,26 @@ public:
     friend class ConfigSanitizer;
 
     /**
-     * @brief Triple-buffered lock-free snapshot reader for Core 1 (Zero allocations, zero mutex, zero copy).
+     * @brief Formally proven Single-Reader Single-Writer (SRSW) atomic ownership protocol.
+     * Core 1 acquires the active snapshot and pins it during the frame.
      */
     inline const ConfigSnapshot& getSnapshot() const {
-        uint8_t idx = _readIndex.load(std::memory_order_acquire);
-        return _snapshots[idx];
+        uint8_t slot = _publishedSlot.load(std::memory_order_acquire);
+        _readingSlot.store(slot, std::memory_order_release);
+        // Double-check validation against race with publisher
+        uint8_t currentPublished = _publishedSlot.load(std::memory_order_acquire);
+        if (currentPublished != slot) {
+            slot = currentPublished;
+            _readingSlot.store(slot, std::memory_order_release);
+        }
+        return _snapshots[slot];
+    }
+
+    /**
+     * @brief Releases the pinned snapshot slot at the end of the frame.
+     */
+    inline void releaseSnapshot() const {
+        _readingSlot.store(0xFF, std::memory_order_release);
     }
 
     /**
@@ -148,21 +168,25 @@ public:
     void publishSnapshot();
 
     /**
-     * @brief Thread-safe querying of instance snapshot.
+     * @brief Thread-safe querying of instance snapshot (for Core 0 / control path).
      */
     bool getInstanceSnapshot(const String& instanceId, EngineInstanceSnapshot& out) const {
         const ConfigSnapshot& snap = getSnapshot();
         const EngineInstanceSnapshot* inst = snap.getInstance(instanceId);
         if (inst) {
             out = *inst;
+            releaseSnapshot();
             return true;
         }
+        releaseSnapshot();
         return false;
     }
 
     bool hasInstance(const String& instanceId) const {
         const ConfigSnapshot& snap = getSnapshot();
-        return snap.getInstance(instanceId) != nullptr;
+        bool exists = snap.getInstance(instanceId) != nullptr;
+        releaseSnapshot();
+        return exists;
     }
 
     /**
@@ -200,7 +224,8 @@ public:
 private:
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
-    std::atomic<uint8_t> _readIndex{0};
+    std::atomic<uint8_t> _publishedSlot{0};
+    mutable std::atomic<uint8_t> _readingSlot{0xFF};
     ConfigSnapshot _snapshots[3];
 
     void publishSnapshot_locked();

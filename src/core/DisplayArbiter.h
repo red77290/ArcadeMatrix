@@ -1,7 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <array>
-#include <mutex>
+#include <atomic>
+#include <cstring>
 #include "../../include/core/EngineContract.h"
 
 enum class DisplaySourceId : uint16_t {
@@ -29,17 +30,29 @@ enum class RequestLifecycle : uint8_t {
     PERSISTENT        // Always active fallback (ROTATION)
 };
 
+/**
+ * @brief Canonical identity struct for an engine / instance (zero heap allocations, POD).
+ */
 struct EngineHandle {
-    uint16_t descriptorId = 0;
-    uint16_t instanceId = 0;
+    char descriptorId[32]{0};
+    char instanceId[32]{0};
 
-    constexpr EngineHandle() = default;
-    constexpr EngineHandle(uint16_t descId, uint16_t instId) : descriptorId(descId), instanceId(instId) {}
-
-    constexpr bool operator==(const EngineHandle& o) const {
-        return descriptorId == o.descriptorId && instanceId == o.instanceId;
+    EngineHandle() = default;
+    EngineHandle(const char* descId, const char* instId = "") {
+        if (descId) strncpy(descriptorId, descId, sizeof(descriptorId) - 1);
+        if (instId) strncpy(instanceId, instId, sizeof(instanceId) - 1);
     }
-    constexpr bool operator!=(const EngineHandle& o) const { return !(*this == o); }
+    EngineHandle(const String& descId, const String& instId = "") {
+        strncpy(descriptorId, descId.c_str(), sizeof(descriptorId) - 1);
+        strncpy(instanceId, instId.c_str(), sizeof(instanceId) - 1);
+    }
+
+    bool operator==(const EngineHandle& o) const {
+        return strncmp(descriptorId, o.descriptorId, sizeof(descriptorId)) == 0 &&
+               strncmp(instanceId, o.instanceId, sizeof(instanceId)) == 0;
+    }
+    bool operator!=(const EngineHandle& o) const { return !(*this == o); }
+    bool isEmpty() const { return descriptorId[0] == '\0' && instanceId[0] == '\0'; }
 };
 
 struct DisplayRequest {
@@ -83,22 +96,76 @@ struct DisplayDecision {
     bool valid = false;
 };
 
+enum class ArbiterCommandType : uint8_t {
+    SUBMIT,
+    CANCEL
+};
+
+struct ArbiterCommand {
+    ArbiterCommandType type = ArbiterCommandType::SUBMIT;
+    DisplayRequest request{};
+    bool restartTimer = false;
+};
+
+template <typename T, size_t Capacity>
+class LockFreeSPSCQueue {
+public:
+    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
+
+    bool push(const T& item) {
+        size_t head = _head.load(std::memory_order_relaxed);
+        size_t tail = _tail.load(std::memory_order_acquire);
+        if ((head - tail) >= Capacity) {
+            return false; // Full
+        }
+        _buffer[head & (Capacity - 1)] = item;
+        _head.store(head + 1, std::memory_order_release);
+        return true;
+    }
+
+    bool pop(T& item) {
+        size_t tail = _tail.load(std::memory_order_relaxed);
+        size_t head = _head.load(std::memory_order_acquire);
+        if (tail == head) {
+            return false; // Empty
+        }
+        item = _buffer[tail & (Capacity - 1)];
+        _tail.store(tail + 1, std::memory_order_release);
+        return true;
+    }
+
+    bool empty() const {
+        return _head.load(std::memory_order_relaxed) == _tail.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::array<T, Capacity> _buffer{};
+    std::atomic<size_t> _head{0};
+    std::atomic<size_t> _tail{0};
+};
+
 class DisplayArbiter {
 public:
     static constexpr size_t MAX_REQUESTS = 8;
+    static constexpr size_t QUEUE_CAPACITY = 16;
 
     DisplayArbiter();
+
+    // Core 0 producer: submits non-blocking command into lock-free SPSC queue
     void submitRequest(const DisplayRequest& request, bool restartTimer = false);
     void cancelRequest(DisplaySourceId sourceId);
     void clearExpired();
     
-    // Evaluates current winner decision (Pure value-type decision, zero allocations, zero engine pointers)
+    // Core 1 consumer: drains command queue and evaluates highest priority decision with ZERO mutex and ZERO allocations
     DisplayDecision evaluate();
 
     static DisplaySourceId parseSourceId(const String& name);
     
 private:
-    mutable std::mutex arbiterMutex;
+    LockFreeSPSCQueue<ArbiterCommand, QUEUE_CAPACITY> _commandQueue;
     std::array<DisplayRequestSlot, MAX_REQUESTS> slots{};
     uint32_t _nextRequestId = 1;
+
+    void applySubmit(const DisplayRequest& request, bool restartTimer);
+    void applyCancel(DisplaySourceId sourceId);
 };

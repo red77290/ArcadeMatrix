@@ -92,6 +92,10 @@ public:
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
 
+    // --- Preemption lifecycle (optional hooks for temporary interruptions) ---
+    virtual void pause() {}
+    virtual void resume() {}
+
     // --- Optional (safe defaults provided) ---
     virtual void onConfigChanged(const EngineConfig* config) {}
     virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
@@ -108,7 +112,9 @@ public:
 | `activate()` | — | **Always.** Cheap reset of transient state (chronometers, frame index). |
 | `update()` | — | **Always.** Business and animation logic each frame. |
 | `render()` | — | **Always.** Draw pixels into `context->getMatrix()`. |
-| `deactivate()` | — | **Always.** Stop audio/network, close file handles. |
+| `deactivate()` | — | **Always.** Stop audio/network, close file handles when exiting rotation slot. |
+| `pause()` | no-op | **Optional.** Called when temporarily preempted by a high-priority alert or message. Preserves internal state. |
+| `resume()` | no-op | **Optional.** Called when returning from a temporary preemption without losing animation phase or timers. |
 | `onConfigChanged()` | no-op | **If engine has settings.** Re-read values in place without recreation. |
 | `onDisplayGeometryChanged()` | no-op | **If engine maintains geometry-derived caches** (e.g. column arrays). |
 | `isFinished()` | `false` | If engine has an intrinsic end (e.g. cycle completed) to advance rotation early. |
@@ -123,24 +129,40 @@ public:
 ```mermaid
 stateDiagram-v2
     [*] --> Initialized : factory() + initialize() (Once on first display)
-    Initialized --> Active : activate()
+    Initialized --> Active : activate() (Rotation transition)
     Active --> Active : update() + render() (60 FPS Hot Loop)
     Active --> Active : onConfigChanged() (Live WebUI edit)
-    Active --> Standby : deactivate()
+    Active --> Paused : pause() (Temporary high-priority preemption)
+    Paused --> Active : resume() (Returning from preemption)
+    Active --> Standby : deactivate() (Rotation slot end)
     Standby --> Active : activate()
     Active --> [*] : isFinished() / timeout advances rotation
 ```
+
+### Display Decision, Lifecycle & Preemption Matrix
+
+The `DisplayArbiter` resolves display sources deterministically via a static priority scale and dispatches decisions to `DisplayRuntime`:
+
+| Scenario | Action on Outgoing Engine | Action on Incoming Engine | Session State |
+| :--- | :--- | :--- | :--- |
+| **Temporary Preemption** (e.g. MQTT Alert on Clock) | `oldEngine->pause()` | `alertEngine->activate()` | Session ID increments; previous engine pinned for resume |
+| **End of Preemption** (Returning to Clock) | `alertEngine->deactivate()` | `oldEngine->resume()` | Session ID increments; baseline engine resumed in-place |
+| **Carousel Rotation** (e.g. Clock → Weather) | `oldEngine->deactivate()` | `newEngine->activate()` | Session ID increments; previous session cleanly torn down |
 
 ### Golden Rules for Embedded C++
 
 1. **Golden Rule #1 — Zero Heap Allocation in Hot Loop:**
    Never instantiate `String`, `std::vector`, or call `malloc`/`new` inside `update()` or `render()`. Pre-allocate all buffers in `initialize()` and mutate in place.
-2. **Golden Rule #2 — In-Place Hot Reload:**
+2. **Golden Rule #2 — Lock-Free Hot Path & Zero Mutex on Core 1:**
+   Core 1 runs `update() -> evaluate() -> render()` completely lock-free. Configuration is read via the Single-Reader Single-Writer (SRSW) Triple-Buffering protocol (`const ConfigSnapshot& snapshot = config.getSnapshot(); ... config.releaseSnapshot();`).
+3. **Golden Rule #3 — Single Producer SPSC Cross-Core Commands:**
+   Core 0 submits display requests via `m_displayArbiter.submitRequest(req)`. Core 1 owns the arbiter slots exclusively and drains commands in $O(1)$ without mutex contention.
+4. **Golden Rule #4 — In-Place Hot Reload:**
    In `onConfigChanged()`, update internal variables directly. The instance is **not** destroyed or recreated.
-3. **Golden Rule #3 — Respect Bus Locks:**
+5. **Golden Rule #5 — Respect Bus Locks:**
    SD card access must be protected with `sdMutex` when reading streaming assets.
-4. **Golden Rule #4 — Overlays vs Selectable Engines:**
-   - **Selectable Engine:** Replaces the primary framebuffer (e.g. Clock, Weather, GIF, Crypto). Registered in `EngineRegistry` with a descriptor and factory.
+6. **Golden Rule #6 — Overlays vs Selectable Engines:**
+   - **Selectable Engine:** Replaces the primary framebuffer (e.g. Clock, Weather, GIF, Crypto). Registered in `EngineRegistry` with a descriptor, factory, and canonical `EngineHandle`.
    - **Transverse Overlay:** Composites additively on top of any active display source (e.g. Fighter). Managed exclusively by `OverlayManager`, enabled per rotation slot (`overlays.fighter: true`), never registered in `EngineRegistry`.
 
 ---

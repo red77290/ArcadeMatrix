@@ -223,7 +223,7 @@ void AppRuntime::initialize() {
         auto visPtr = desc->factory();
         visualizerEngine = static_cast<VisualizerEngine*>(visPtr.release());
         visualizerEngine->initialize(m_appCtx, nullptr);
-        m_displayRuntime.registerSourceEngine(DisplaySourceId::VISUALIZER, visualizerEngine);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::VISUALIZER, visualizerEngine, EngineHandle("audiovisualizer", "visualizer_main"));
     }
 
     auto msgDesc = EngineRegistry::getDescriptor("message");
@@ -231,7 +231,7 @@ void AppRuntime::initialize() {
         auto msgPtr = msgDesc->factory();
         m_messageEngine = static_cast<MessageEngine*>(msgPtr.release());
         m_messageEngine->initialize(m_appCtx, nullptr);
-        m_displayRuntime.registerSourceEngine(DisplaySourceId::MQTT, m_messageEngine);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::MQTT, m_messageEngine, EngineHandle("message", "message_main"));
     }
 
     auto gifDesc = EngineRegistry::getDescriptor("gifs");
@@ -239,7 +239,7 @@ void AppRuntime::initialize() {
         auto gifPtr = gifDesc->factory();
         gifEngine = static_cast<GifEngine*>(gifPtr.release());
         gifEngine->initialize(m_appCtx, nullptr);
-        m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine, EngineHandle("gifs", "gifs_main"));
     }
 
     const auto* clockInst = snapshot.getInstance("clock_main");
@@ -305,7 +305,7 @@ void AppRuntime::initialize() {
                 m_marqueeEngine->initialize(m_appCtx, nullptr);
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
-            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
+            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
             MDNS.addService("http", "tcp", 80);
             MDNS.addService("upnp", "tcp", 80);
             MDNS.addService("mediarenderer", "tcp", 80);
@@ -330,7 +330,7 @@ void AppRuntime::initialize() {
                 auto marqPtr = marqueeDesc->factory();
                 m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
                 m_marqueeEngine->initialize(m_appCtx, nullptr);
-                m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
+                m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
         }
@@ -349,7 +349,7 @@ void AppRuntime::initialize() {
             auto marqPtr = marqueeDesc->factory();
             m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
             m_marqueeEngine->initialize(m_appCtx, nullptr);
-            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine);
+            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
         }
         m_webServer->setMarqueeEngine(m_marqueeEngine);
     }
@@ -378,6 +378,10 @@ void AppRuntime::initialize() {
     audioSessionManager.begin();
     audioSessionManager.update(snapshot);
 
+    m_lastReconciledVersion = snapshot.version;
+    evaluateDisplayRequests(snapshot);
+
+    config.releaseSnapshot();
     LOGI("System", "Setup complete. Entering loop().");
 }
 
@@ -428,20 +432,23 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
         lastMqttTopicRecal = snapshot.mqtt.topic_recalbox;
 
         if (snapshot.mqtt.enabled) {
-            if (!m_frontendListener) {
-                m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+            if (m_frontendListener) {
+                delete m_frontendListener;
+                m_frontendListener = nullptr;
             }
+            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
             m_frontendListener->begin();
             if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
         } else {
             if (m_frontendListener) {
-                m_frontendListener->stop();
+                delete m_frontendListener;
+                m_frontendListener = nullptr;
+                if (m_appCtx) m_appCtx->setEventBus(nullptr);
             }
-            if (m_appCtx) m_appCtx->setEventBus(nullptr);
         }
     }
 
-    if (m_frontendListener && snapshot.mqtt.enabled) {
+    if (m_frontendListener) {
         m_frontendListener->loop();
     }
 }
@@ -462,6 +469,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
         if (visEnabled) {
             if (activeInst) visualizerEngine->onConfigChanged(&activeInst->config);
             DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
+            req.engineHandle = EngineHandle("audiovisualizer", activeInst ? activeInst->instance_id.c_str() : "visualizer_main");
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::VISUALIZER);
@@ -471,6 +479,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     if (m_marqueeEngine) {
         if (m_marqueeEngine->isActive()) {
             DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
+            req.engineHandle = EngineHandle("marquee", "marquee_main");
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::MARQUEE);
@@ -479,6 +488,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     if (m_messageEngine) {
         if (m_messageEngine->isActive()) {
             DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+            req.engineHandle = EngineHandle("message", "message_main");
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::MQTT);
@@ -487,6 +497,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     if (gifEngine) {
         if (gifEngine->isActive()) {
             DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true};
+            req.engineHandle = EngineHandle("gifs", "gifs_main");
             m_displayArbiter.submitRequest(req);
         } else {
             m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
@@ -497,7 +508,15 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
 void AppRuntime::update() {
     esp_task_wdt_reset();
 
-    ConfigSnapshot snapshot = config.getSnapshot();
+    const ConfigSnapshot& snapshot = config.getSnapshot();
+
+    if (snapshot.version != m_lastReconciledVersion) {
+        m_lastReconciledVersion = snapshot.version;
+        syncMqtt(snapshot);
+        evaluateDisplayRequests(snapshot);
+    } else if (m_frontendListener) {
+        m_frontendListener->loop();
+    }
 
     audioSessionManager.update(snapshot);
 
@@ -505,6 +524,7 @@ void AppRuntime::update() {
         m_displayRuntime.renderTransition();
         matrixEngine.getDisplay()->flipDMABuffer();
         m_displayRuntime.getScheduler().delayUntilNextFrame(true);
+        config.releaseSnapshot();
         return;
     }
 
@@ -521,13 +541,11 @@ void AppRuntime::update() {
             matrixEngine.getDisplay()->flipDMABuffer();
             m_wasPoweredOn = false;
         }
+        config.releaseSnapshot();
         delay(100);
         return;
     }
     m_wasPoweredOn = true;
-
-    syncMqtt(snapshot);
-    evaluateDisplayRequests(snapshot);
 
     DisplayDecision decision = m_displayRuntime.update(snapshot);
     FrameRenderResult renderResult = m_displayRuntime.render(decision, m_appCtx);
@@ -540,4 +558,6 @@ void AppRuntime::update() {
 
     bool isRealtime = decision.isRealtime || (rotationManager && rotationManager->isCurrentRealtime());
     m_displayRuntime.getScheduler().delayUntilNextFrame(isRealtime);
+
+    config.releaseSnapshot();
 }

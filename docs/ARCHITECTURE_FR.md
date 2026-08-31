@@ -264,24 +264,32 @@ ArcadeMatrix sépare strictement la décision d'arbitrage de l'exécution du cyc
 [ Écran de Repli : Horloge Digitale par Défaut ] (Priorité 10)
 ```
 
-### Évaluation Déterministe Zéro-Allocation
-- **Architecture par Slots :** `DisplayArbiter` s'appuie sur un tableau statique `std::array<DisplayRequestSlot, 8>` avec zéro allocation dynamique (`malloc`, `vector::push_back`, `String`) sur le hot path d'évaluation.
+### Architecture SPSC Lock-Free & Déterministe Zéro-Allocation
+- **File de Commandes SPSC (Single Producer, Single Consumer) :** Le Cœur 0 (serveur Web, écouteur MQTT, AudioHub) émet ses requêtes de manière asynchrone via `m_displayArbiter.submitRequest(request)` et `cancelRequest(sourceId)`. Ces commandes sont poussées dans un ring-buffer lock-free (`LockFreeSPSCQueue<ArbiterCommand, 16>`).
+- **Propriétaire Unique sur Cœur 1 :** Le Cœur 1 est le **seul propriétaire** du tableau statique de slots (`std::array<DisplayRequestSlot, 8>`). Au début de `DisplayArbiter::evaluate()`, le Cœur 1 dépile les commandes en attente et évalue les priorités en $O(1)$ avec **ZÉRO mutex** et **ZÉRO allocation dynamique**.
 - **Contrat Décisionnel Pur :** `DisplayArbiter::evaluate()` retourne une structure `DisplayDecision` légère contenant uniquement des identifiants sémantiques (`sourceId`, `engineHandle`, `priority`, `requestId`, `needsClear`, `allowsOverlay`, `isRealtime`), sans aucun pointeur brut `IEngine*`.
+- **Identité Canonique `EngineHandle` :** Les instances sont identifiées par une structure POD `EngineHandle` (`descriptorId[32]`, `instanceId[32]`) sans allocation de `String`. `DisplayRuntime::resolveEngine()` résout les moteurs de façon canonique sans heuristique (`sourceId / 10`).
 - **Auto-Consommation `ONE_SHOT` :** Les alertes non récurrentes sont consommées de manière atomique lors de leur évaluation.
 - **Préservation des Request IDs :** Le rafraîchissement d'une requête préserve son `requestId` unique sauf demande explicite de réinitialisation de timer.
 
-### Centralisation du Cycle de Vie (`DisplayRuntime`)
-- **Propriétaire Unique du Cycle de Vie :** `DisplayRuntime` est le **seul propriétaire** de l'activation/désactivation des moteurs d'affichage. Lors d'un changement de décision (`decision.sourceId != m_session.sourceId` ou `decision.requestId != m_session.requestId`), `DisplayRuntime::transitionSession()` invoque automatiquement `oldEngine->deactivate()` et `newEngine->activate()`.
+### Centralisation du Cycle de Vie & Préemption (`DisplayRuntime`)
+- **Propriétaire Unique du Cycle de Vie :** `DisplayRuntime` est le **seul propriétaire** des transitions de cycle de vie (`activate()`, `deactivate()`, `pause()`, `resume()`).
+- **Sémantique Préemption vs Transition :**
+  - **Préemption Temporaire (ex. Alerte MQTT sur Horloge) :** Le moteur sortant reçoit `pause()`, l'alerte entrante reçoit `activate()`.
+  - **Fin de Préemption (Retour au carrousel) :** L'alerte terminée reçoit `deactivate()`, l'horloge en pause reçoit `resume()`, préservant intacts son état interne et son animation.
+  - **Transition de Carrousel (ex. Horloge → Météo) :** Le moteur sortant reçoit `deactivate()`, le moteur entrant reçoit `activate()`.
 - **Préemption & Composition d'Overlays :** Si la décision autorise les overlays (`decision.allowsOverlay == true`), `OverlayManager` superpose les effets transverses (combattants MUGEN) par-dessus l'affichage.
 
 ---
 
-## 13. Configuration Triple-Buffer Sans Verrou (`ConfigSnapshot`)
+## 13. Configuration Lock-Free SRSW Prouvée Formellement (`ConfigSnapshot`)
 
 Pour éliminer les courses entre cœurs et éviter tout mutex sur la boucle de rendu critique du Cœur 1 :
-- **Triple Buffering (`ConfigSnapshot _snapshots[3]`) :** Le Cœur 0 (serveur Web / API REST) prépare les mises à jour dans un buffer hors-ligne et avance atomiquement l'index de lecture `_readIndex` via `std::memory_order_release`.
-- **Lectures Zéro-Mutex Zéro-Allocation :** Le Cœur 1 lit l'instantané actif via `config.getSnapshot()` avec `std::memory_order_acquire`. Même lors d'écritures successives très rapides sur l'API, les lecteurs conservant une référence bénéficient d'une cohérence parfaite sans copie ni verrou.
-- **Mutations Transactionnelles :** Toutes les modifications provenant du Cœur 0 transitent par `config.mutate([&](ConfigLoader& cfg) { ... })`, garantissant l'atomicité, la validation et la publication immédiate du snapshot.
+- **Triple Buffering SRSW (Single-Reader Single-Writer) :** `ConfigLoader` maintient `ConfigSnapshot _snapshots[3]`, `std::atomic<uint8_t> _publishedSlot{0}`, et `mutable std::atomic<uint8_t> _readingSlot{0xFF}`.
+- **Protocole d'Ownership & Double-Check (Cœur 1) :** Au début de chaque trame, `getSnapshot()` lit `_publishedSlot`, publie `_readingSlot = slot` et effectue un double-check de validation. Il lit l'instantané de manière 100% immuable sans copie et le libère avec `releaseSnapshot()` en fin de trame.
+- **Règle d'Exclusion d'Écriture (Cœur 0) :** Lors de la publication d'une mutation, le Cœur 0 sélectionne un `targetSlot` $\in \{0, 1, 2\}$ tel que $\text{targetSlot} \neq \text{published} \land \text{targetSlot} \neq \text{reading}$. Avec 3 buffers physiques, au moins un slot est **strictement et mathématiquement garanti** disponible, éliminant tout risque de corruption de données.
+- **Linéarité & Checksum :** Chaque publication incrémente une version monotone et calcule `checksum = (version ^ 0x5A5A5A5A) + instances.size()`.
+- **Mutations Transactionnelles :** Toutes les modifications provenant du Cœur 0 transitent par `config.mutate([&](ConfigLoader& cfg) { ... })`.
 
 ---
 

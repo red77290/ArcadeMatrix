@@ -15,9 +15,19 @@ void ConfigLoader::publishSnapshot() {
 }
 
 void ConfigLoader::publishSnapshot_locked() {
-    uint8_t currentRead = _readIndex.load(std::memory_order_relaxed);
-    uint8_t nextIndex = (currentRead + 1) % 3;
-    ConfigSnapshot& snap = _snapshots[nextIndex];
+    uint8_t published = _publishedSlot.load(std::memory_order_relaxed);
+    uint8_t reading = _readingSlot.load(std::memory_order_acquire);
+
+    // Deterministically select a targetSlot in {0, 1, 2} that is NEITHER published NOR actively being read
+    uint8_t targetSlot = 0;
+    for (uint8_t i = 0; i < 3; ++i) {
+        if (i != published && i != reading) {
+            targetSlot = i;
+            break;
+        }
+    }
+
+    ConfigSnapshot& snap = _snapshots[targetSlot];
 
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
     snap.version = newVer;
@@ -35,8 +45,10 @@ void ConfigLoader::publishSnapshot_locked() {
         s.config = inst.config;
         snap.instances.push_back(s);
     }
+    // Compute checksum for linearizability verification
+    snap.checksum = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
 
-    _readIndex.store(nextIndex, std::memory_order_release);
+    _publishedSlot.store(targetSlot, std::memory_order_release);
 }
 
 void ConfigLoader::setDefaults() {

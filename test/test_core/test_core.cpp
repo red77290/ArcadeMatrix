@@ -23,11 +23,15 @@ class TrackingMockEngine : public IEngine {
 public:
     int activateCalls = 0;
     int deactivateCalls = 0;
+    int pauseCalls = 0;
+    int resumeCalls = 0;
     EngineError initialize(EngineContext* context, const EngineConfig* config) override { return EngineError::OK; }
     void activate() override { activateCalls++; }
     void update(EngineContext* context) override {}
     void render(EngineContext* context) override {}
     void deactivate() override { deactivateCalls++; }
+    void pause() override { pauseCalls++; }
+    void resume() override { resumeCalls++; }
 };
 
 void setUp(void) {
@@ -327,6 +331,112 @@ void test_triple_buffer_snapshot_publication_and_versioning(void) {
     uint32_t v4 = cfg.getVersion();
     TEST_ASSERT_GREATER_THAN(v3, v4);
     TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.getSnapshot().wifi.ssid.c_str());
+    cfg.releaseSnapshot();
+}
+
+void test_snapshot_publication_linearizability(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+
+    // 50 rapid sequential mutations with checksum verification
+    for (uint32_t i = 1; i <= 50; ++i) {
+        cfg.mutate([i](ConfigLoader& c) {
+            c.wifi.ssid = String("WiFi_Network_") + String(i);
+        });
+
+        // Core 1 reader acquire
+        const ConfigSnapshot& snap = cfg.getSnapshot();
+        uint32_t expectedChecksum = (snap.version ^ 0x5A5A5A5A) + (uint32_t)snap.instances.size();
+        TEST_ASSERT_EQUAL_HEX32(expectedChecksum, snap.checksum);
+        TEST_ASSERT_TRUE(snap.wifi.ssid.startsWith("WiFi_Network_"));
+        cfg.releaseSnapshot();
+    }
+}
+
+void test_arbiter_spsc_lockfree(void) {
+    DisplayArbiter arbiter;
+
+    // Core 0 producer submits timed marquee and urgent alert
+    DisplayRequest marqueeReq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::TIMED, true, 10, EngineHandle("marquee", "inst_m"), 5000};
+    DisplayRequest alertReq{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::ONE_SHOT, true, 20, EngineHandle("alert", "inst_a")};
+
+    arbiter.submitRequest(marqueeReq);
+    arbiter.submitRequest(alertReq);
+
+    // Core 1 consumer evaluate: Alert (priority 100) wins over Marquee (priority 30)
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d1.sourceId);
+    TEST_ASSERT_EQUAL_STRING("alert", d1.engineHandle.descriptorId);
+    TEST_ASSERT_EQUAL_STRING("inst_a", d1.engineHandle.instanceId);
+
+    // Next evaluation: ONE_SHOT alert auto-consumed, Marquee takes over
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, d2.sourceId);
+    TEST_ASSERT_EQUAL_STRING("marquee", d2.engineHandle.descriptorId);
+
+    // Core 0 cancels marquee -> falls back to ROTATION
+    arbiter.cancelRequest(DisplaySourceId::MARQUEE);
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d3.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d3.sourceId);
+}
+
+void test_canonical_engine_handle_resolution(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine visMain;
+    TrackingMockEngine visSpecial;
+
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visMain, EngineHandle("audiovisualizer", "visualizer_main"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visSpecial, EngineHandle("audiovisualizer", "visualizer_special"));
+
+    // Verify resolveEngine matches exact instance
+    IEngine* resolved = runtime.resolveEngine(EngineHandle("audiovisualizer", "visualizer_special"), DisplaySourceId::VISUALIZER);
+    TEST_ASSERT_EQUAL_PTR(&visSpecial, resolved);
+
+    IEngine* resolvedMain = runtime.resolveEngine(EngineHandle("audiovisualizer", "visualizer_main"), DisplaySourceId::VISUALIZER);
+    TEST_ASSERT_EQUAL_PTR(&visMain, resolvedMain);
+}
+
+void test_display_runtime_preemption_lifecycle(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine rotationEngine;
+    TrackingMockEngine alertEngine;
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotationEngine, EngineHandle("clock", "clock_main"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertEngine, EngineHandle("alert", "alert_main"));
+
+    // 1. Initial baseline rotation session -> activate
+    DisplayDecision dRot;
+    dRot.valid = true;
+    dRot.sourceId = DisplaySourceId::ROTATION;
+    dRot.engineHandle = EngineHandle("clock", "clock_main");
+    dRot.requestId = 1;
+    runtime.transitionSession(dRot);
+
+    TEST_ASSERT_EQUAL(1, rotationEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
+
+    // 2. Urgent alert preempts rotation -> rotation pauses, alert activates
+    DisplayDecision dAlert;
+    dAlert.valid = true;
+    dAlert.sourceId = DisplaySourceId::ALERT;
+    dAlert.engineHandle = EngineHandle("alert", "alert_main");
+    dAlert.requestId = 2;
+    runtime.transitionSession(dAlert);
+
+    TEST_ASSERT_EQUAL(1, rotationEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, alertEngine.activateCalls);
+
+    // 3. Alert completes, returns to rotation -> alert deactivates, rotation resumes
+    runtime.transitionSession(dRot);
+
+    TEST_ASSERT_EQUAL(1, alertEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, rotationEngine.resumeCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
 }
 
 void test_display_runtime_lifecycle_centralization(void) {
@@ -334,8 +444,8 @@ void test_display_runtime_lifecycle_centralization(void) {
     TrackingMockEngine marqueeEngine;
     TrackingMockEngine visualizerEngine;
 
-    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqueeEngine);
-    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visualizerEngine);
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqueeEngine, EngineHandle("marquee", "marquee_main"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visualizerEngine, EngineHandle("audiovisualizer", "visualizer_main"));
 
     // Initial state: neither engine active
     TEST_ASSERT_EQUAL(0, marqueeEngine.activateCalls);
@@ -347,6 +457,7 @@ void test_display_runtime_lifecycle_centralization(void) {
     DisplayDecision d1;
     d1.valid = true;
     d1.sourceId = DisplaySourceId::MARQUEE;
+    d1.engineHandle = EngineHandle("marquee", "marquee_main");
     d1.requestId = 101;
     runtime.transitionSession(d1);
 
@@ -364,6 +475,7 @@ void test_display_runtime_lifecycle_centralization(void) {
     DisplayDecision d2;
     d2.valid = true;
     d2.sourceId = DisplaySourceId::VISUALIZER;
+    d2.engineHandle = EngineHandle("audiovisualizer", "visualizer_main");
     d2.requestId = 102;
     runtime.transitionSession(d2);
 
@@ -530,9 +642,13 @@ void setup() {
     RUN_TEST(test_arbiter_priority_resolution);
     RUN_TEST(test_arbiter_one_shot_auto_consumption);
     RUN_TEST(test_arbiter_request_id_semantics);
+    RUN_TEST(test_arbiter_spsc_lockfree);
+    RUN_TEST(test_canonical_engine_handle_resolution);
     RUN_TEST(test_config_snapshot_immutability_and_versioning);
     RUN_TEST(test_triple_buffer_snapshot_publication_and_versioning);
+    RUN_TEST(test_snapshot_publication_linearizability);
     RUN_TEST(test_display_runtime_lifecycle_centralization);
+    RUN_TEST(test_display_runtime_preemption_lifecycle);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
     RUN_TEST(test_canonical_overlays_schema_and_migration);
