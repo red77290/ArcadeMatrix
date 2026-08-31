@@ -328,55 +328,66 @@ ArcadeMatrix supports multilingual operations (English, French, Spanish) across 
 
 ---
 
-## 12. The Display Arbiter: Multi-Source Priority Resolution
+## 12. The Display Arbiter & Display Runtime (`DisplayArbiter`, `DisplayRuntime`)
 
-`DisplayArbiter` decides what content owns the matrix at any moment:
+ArcadeMatrix completely decouples display decision resolution from engine lifecycle execution:
 
 ```text
-[ Emergency Alerts / OTA ] (Priority 100)
+[ Emergency Alerts / OTA ] (Priority 100, ONE_SHOT / UNTIL_CANCELLED)
              ↓
 [ Real-time Interruption: MQTT Marquee / Live Alert ] (Priority 75)
+             ↓
+[ Audio Visualizer / Active Engine Request ] (Priority 60)
              ↓
 [ Active Carousel Rotation: Clock / Weather / MusicEngine ] (Priority 50)
              ↓
 [ Fallback Screen: Default Digital Clock ] (Priority 10)
 ```
 
-Audio playback continues independently in the background even if a higher-priority visual source preempts the display.
+### Deterministic Zero-Allocation Evaluation
+- **Slot-Based Architecture:** `DisplayArbiter` uses a fixed-size `std::array<DisplayRequestSlot, 8>` with zero dynamic allocations (`malloc`, `vector::push_back`, `String`) on the hot evaluation path.
+- **Pure Decision Contract:** `DisplayArbiter::evaluate()` returns a lightweight `DisplayDecision` struct containing only semantic IDs (`sourceId`, `engineHandle`, `priority`, `requestId`, `needsClear`, `allowsOverlay`, `isRealtime`), completely free of raw `IEngine*` pointers.
+- **Auto-Consumed `ONE_SHOT`:** Non-recurring alerts (e.g. startup banner, system notifications) are atomically cleared upon evaluation.
+- **Request ID Preservation:** Request refreshes preserve their unique `requestId` unless an explicit timer restart is requested.
+
+### Centralized Display Lifecycle (`DisplayRuntime`)
+- **Exclusive Lifecycle Owner:** `DisplayRuntime` is the **sole owner** of display engine activation and deactivation. When the arbiter resolves a new decision (`decision.sourceId != m_session.sourceId` or `decision.requestId != m_session.requestId`), `DisplayRuntime::transitionSession()` automatically calls `oldEngine->deactivate()` and `newEngine->activate()`.
+- **Preemption & Overlay Compositing:** If the active session permits overlays (`decision.allowsOverlay == true`), `OverlayManager` composites transverse effects (e.g. MUGEN Fighters) seamlessly on top of the rendered frame.
 
 ---
 
-## 13. The Transverse Overlay Compositor (`OverlayManager`)
+## 13. Lock-Free Triple-Buffered Configuration (`ConfigSnapshot`)
+
+To eliminate cross-core race conditions and avoid holding mutexes on Core 1's time-critical render hot path:
+- **Triple Buffering (`ConfigSnapshot _snapshots[3]`):** Core 0 (Web server / REST API) publishes updates to an off-screen snapshot buffer and atomically advances the active read index via `std::atomic<uint8_t> _readIndex` with `std::memory_order_release`.
+- **Zero-Mutex, Zero-Allocation Readers:** Core 1 reads the active snapshot via `config.getSnapshot()` using `std::memory_order_acquire`. Even during rapid successive API writes, a reader holding a snapshot reference is guaranteed complete data consistency without torn reads or allocation overhead.
+- **Transactional Mutations:** All configuration modifications from Core 0 pass through `config.mutate([&](ConfigLoader& cfg) { ... })`, enforcing atomic updates, validation, and snapshot publication.
+
+---
+
+## 14. Transverse Overlay Compositor (`OverlayManager`)
 
 Transverse visual effects (such as **MUGEN Fighters**) composite on top of the active background engine:
 - `OverlayManager` renders after the active engine's `render()` pass.
 - Fighters read `.fgt.gz` compressed sprite sequences from LittleFS/SD.
 - Any engine (`Clock`, `Weather`, `GIF`, `MusicEngine`) can have the Fighter overlay enabled per rotation item in `config.rotation[i].overlays.fighter`.
-- **Fighter is an overlay, NOT an engine in `EngineRegistry`.**
+- **Fighter is an overlay, NOT an engine in `EngineRegistry`.** When a priority source (e.g. Marquee or MQTT alert) preempts rotation, `DisplayRuntime` passes an empty overlay config, safely suspending overlay execution without tearing down background assets.
 
 ---
 
-## 14. Dual-Core Runtime & FreeRTOS Task Isolation
+## 15. Dual-Core Runtime & FreeRTOS Task Isolation
 
 - **Core 0 (Services & Networking):**
-  - `AsyncWebServer` handling HTTP requests.
-  - Background audio tasks (`WebRadioService`, `BluetoothAudioService`, `SpotifyConnectService`, `AirPlayAudioService`).
+  - `AsyncWebServer` handling HTTP requests and REST API mutations.
+  - Background audio sessions (`AudioSessionManager`, `WebRadioService`, `BluetoothAudioService`).
   - Audio analysis (`AudioAnalysisService` FFT calculation).
   - Sensor polling (`HardwareHAL`, `GyroHAL`).
 - **Core 1 (Realtime Graphics):**
-  - Display Arbiter evaluation.
+  - `DisplayRuntime::update()` & `DisplayArbiter::evaluate()`.
+  - Frame pacing via `FrameScheduler` (60 FPS for realtime engines, 20-30 FPS for static screens).
   - Active engine `update()` & `render()`.
-  - Transverse Overlay compositing.
+  - Transverse Overlay compositing (`OverlayManager::render()`).
   - HUB75 DMA buffer swap.
-
----
-
-## 15. Frame Pacing & DMA Double-Buffering
-
-The rendering loop on Core 1 targets steady 60 FPS for realtime engines (`isRealtime() == true`) and 20 FPS for static screens, utilizing hardware DMA- **Allocate once, mutate in place:** Buffers, animation arrays, and strings are allocated during `initialize()` and reused each frame (`clear()`, pointer reuse).
-- **Lazy-Once Instance Lifecycle:** An engine is instantiated only when its configured instance is first displayed, then cached for the lifetime of the firmware ("Lazy-Once").
-- **Core Isolation:** Core 1 runs the high-priority rendering loop (`DisplayArbiter`, active engine `update()`/`render()`, `OverlayManager`, DMA swap), while Core 0 handles network I/O, AsyncWebServer, mDNS, background audio decoders, and sensor polling.
-- **Transverse Features are Overlays, NOT Engines:** Features that visually composite on top of other content (like MUGEN Fighters) live in `OverlayManager`, keeping `EngineRegistry` purely for main content engines.
 
 ### Deep Memory Management & Hardware Partitioning (ESP32 vs ESP32-S3 PSRAM)
 

@@ -62,6 +62,8 @@ public:
         }
     }
 
+    void transitionSession(const DisplayDecision& decision);
+
 private:
     AppEngineContext* m_ctx = nullptr;
     MatrixEngine* m_matrixEngine = nullptr;
@@ -76,6 +78,4 @@ private:
     RenderSession m_session;
     uint32_t m_sessionCounter = 0;
     uint32_t m_lastReconciledVersion = 0;
-
-    void transitionSession(const DisplayDecision& decision);
 };

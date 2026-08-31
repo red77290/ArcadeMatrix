@@ -248,37 +248,62 @@ Prise en charge native de l'anglais, du français et de l'espagnol :
 
 ---
 
-## 12. L'Arbitre d'Affichage (`DisplayArbiter`)
+## 12. L'Arbitre d'Affichage & Runtime d'Affichage (`DisplayArbiter`, `DisplayRuntime`)
 
-Résolution stricte des priorités d'affichage :
-1. **Alertes d'Urgence / OTA** (Priorité 100).
-2. **Interruptions Temps Réel (Messages MQTT / Alertes Live)** (Priorité 75).
-3. **Carrousel de Rotation Actif (Horloge, Météo, Musique)** (Priorité 50).
-4. **Écran de Repli (Horloge Digitale)** (Priorité 10).
+ArcadeMatrix sépare strictement la décision d'arbitrage de l'exécution du cycle de vie des moteurs :
 
-L'audio d'arrière-plan continue de jouer même si un message prioritaire prend le contrôle de l'écran.
+```text
+[ Alertes d'Urgence / OTA ] (Priorité 100, ONE_SHOT / UNTIL_CANCELLED)
+             ↓
+[ Interruptions Temps Réel : Marquee MQTT / Alertes Live ] (Priorité 75)
+             ↓
+[ Visualiseur Audio / Requête Moteur Actif ] (Priorité 60)
+             ↓
+[ Carrousel de Rotation Actif : Horloge, Météo, Musique ] (Priorité 50)
+             ↓
+[ Écran de Repli : Horloge Digitale par Défaut ] (Priorité 10)
+```
+
+### Évaluation Déterministe Zéro-Allocation
+- **Architecture par Slots :** `DisplayArbiter` s'appuie sur un tableau statique `std::array<DisplayRequestSlot, 8>` avec zéro allocation dynamique (`malloc`, `vector::push_back`, `String`) sur le hot path d'évaluation.
+- **Contrat Décisionnel Pur :** `DisplayArbiter::evaluate()` retourne une structure `DisplayDecision` légère contenant uniquement des identifiants sémantiques (`sourceId`, `engineHandle`, `priority`, `requestId`, `needsClear`, `allowsOverlay`, `isRealtime`), sans aucun pointeur brut `IEngine*`.
+- **Auto-Consommation `ONE_SHOT` :** Les alertes non récurrentes sont consommées de manière atomique lors de leur évaluation.
+- **Préservation des Request IDs :** Le rafraîchissement d'une requête préserve son `requestId` unique sauf demande explicite de réinitialisation de timer.
+
+### Centralisation du Cycle de Vie (`DisplayRuntime`)
+- **Propriétaire Unique du Cycle de Vie :** `DisplayRuntime` est le **seul propriétaire** de l'activation/désactivation des moteurs d'affichage. Lors d'un changement de décision (`decision.sourceId != m_session.sourceId` ou `decision.requestId != m_session.requestId`), `DisplayRuntime::transitionSession()` invoque automatiquement `oldEngine->deactivate()` et `newEngine->activate()`.
+- **Préemption & Composition d'Overlays :** Si la décision autorise les overlays (`decision.allowsOverlay == true`), `OverlayManager` superpose les effets transverses (combattants MUGEN) par-dessus l'affichage.
 
 ---
 
-## 13. Le Compositeur d'Overlay Transverse (`OverlayManager`)
+## 13. Configuration Triple-Buffer Sans Verrou (`ConfigSnapshot`)
+
+Pour éliminer les courses entre cœurs et éviter tout mutex sur la boucle de rendu critique du Cœur 1 :
+- **Triple Buffering (`ConfigSnapshot _snapshots[3]`) :** Le Cœur 0 (serveur Web / API REST) prépare les mises à jour dans un buffer hors-ligne et avance atomiquement l'index de lecture `_readIndex` via `std::memory_order_release`.
+- **Lectures Zéro-Mutex Zéro-Allocation :** Le Cœur 1 lit l'instantané actif via `config.getSnapshot()` avec `std::memory_order_acquire`. Même lors d'écritures successives très rapides sur l'API, les lecteurs conservant une référence bénéficient d'une cohérence parfaite sans copie ni verrou.
+- **Mutations Transactionnelles :** Toutes les modifications provenant du Cœur 0 transitent par `config.mutate([&](ConfigLoader& cfg) { ... })`, garantissant l'atomicité, la validation et la publication immédiate du snapshot.
+
+---
+
+## 14. Le Compositeur d'Overlay Transverse (`OverlayManager`)
 
 - Rendus superposés après la passe graphique du moteur d'arrière-plan.
 - Décodage des sprites animés `.fgt.gz` pour les combattants MUGEN.
 - Activation par rotation dans `config.rotation[i].overlays.fighter`.
-- **Fighter est un overlay transverse, PAS un engine dans `EngineRegistry`.**
+- **Fighter est un overlay transverse, PAS un engine dans `EngineRegistry`.** En cas de préemption par une alerte prioritaire, `DisplayRuntime` suspend l'overlay en douceur sans détruire les assets d'arrière-plan.
 
 ---
 
-## 14. Exécution Double-Cœur & Isolation FreeRTOS
+## 15. Exécution Double-Cœur & Isolation FreeRTOS
 
-- **Cœur 0 :** Tâches asynchrones (Web, Audio, Capteurs, Analyse FFT).
-- **Cœur 1 :** Rendu LED 60 FPS, DMA, Overlay, Logique d'affichage.
-
----
-
-## 15. Régulation de Cadence & Double-Buffering DMA
-
-Maintien d'un framerate stable à 60 FPS pour les animations temps réel avec double-buffering DMA matériel.
+- **Cœur 0 (Services & Réseau) :**
+  - `AsyncWebServer` (requêtes HTTP et mutations de configuration).
+  - Sessions audio (`AudioSessionManager`, `WebRadioService`, `BluetoothAudioService`).
+  - Analyse audio FFT et sondes de capteurs.
+- **Cœur 1 (Graphisme Temps Réel) :**
+  - Évaluation de l'arbitre (`DisplayRuntime::update()`).
+  - Régulation de cadence via `FrameScheduler` (60 FPS pour les moteurs temps réel, 20-30 FPS pour les écrans statiques).
+  - Rendu moteur actif (`update()` / `render()`), passe d'overlay (`OverlayManager`) et DMA flip buffer.
 
 ---
 

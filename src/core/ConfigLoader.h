@@ -128,8 +128,10 @@ public:
     MqttConfig mqtt;
     SystemConfig system;
 
+    friend class ConfigSanitizer;
+
     /**
-     * @brief Double-buffered lock-free snapshot reader for Core 1 (Zero allocations, zero mutex, zero copy).
+     * @brief Triple-buffered lock-free snapshot reader for Core 1 (Zero allocations, zero mutex, zero copy).
      */
     inline const ConfigSnapshot& getSnapshot() const {
         uint8_t idx = _readIndex.load(std::memory_order_acquire);
@@ -199,7 +201,7 @@ private:
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
     std::atomic<uint8_t> _readIndex{0};
-    ConfigSnapshot _snapshots[2];
+    ConfigSnapshot _snapshots[3];
 
     void publishSnapshot_locked();
 };

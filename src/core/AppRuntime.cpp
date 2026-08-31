@@ -460,17 +460,11 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
             }
         }
         if (visEnabled) {
-            if (!visualizerEngine->isActive()) {
-                if (activeInst) visualizerEngine->onConfigChanged(&activeInst->config);
-                visualizerEngine->activate();
-                DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
-                m_displayArbiter.submitRequest(req);
-            }
+            if (activeInst) visualizerEngine->onConfigChanged(&activeInst->config);
+            DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
+            m_displayArbiter.submitRequest(req);
         } else {
-            if (visualizerEngine->isActive()) {
-                visualizerEngine->deactivate();
-                m_displayArbiter.cancelRequest(DisplaySourceId::VISUALIZER);
-            }
+            m_displayArbiter.cancelRequest(DisplaySourceId::VISUALIZER);
         }
     }
 
@@ -483,7 +477,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
         }
     }
     if (m_messageEngine) {
-        if (m_messageEngine->isActive() && rotationManager && rotationManager->getCurrentEngineId() != "message") {
+        if (m_messageEngine->isActive()) {
             DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
             m_displayArbiter.submitRequest(req);
         } else {
