@@ -193,6 +193,16 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     if (oldEngine && !sameEngine) {
         oldEngine->deactivate();
     }
+    // If replacing baseline without preemption, unwind any orphaned preemption entries safely
+    if (!decision.preemptive && m_preemptionDepth > 0) {
+        for (int i = (int)m_preemptionDepth - 1; i >= 0; --i) {
+            IEngine* orphan = resolveEngine(m_preemptionStack[i].handle, m_preemptionStack[i].sourceId);
+            if (orphan && orphan != targetEngine && orphan != oldEngine) {
+                orphan->deactivate();
+            }
+        }
+        m_preemptionDepth = 0;
+    }
     if (targetEngine && !sameEngine) {
         targetEngine->activate();
     }

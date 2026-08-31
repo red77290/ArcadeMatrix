@@ -1024,6 +1024,52 @@ void test_registrar_capability_truth_table(void) {
     TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasSd, EngineRegistrar::checkRequirements(reqSd).satisfied);
 }
 
+void test_preemption_replace_unwinds_orphaned_stack(void) {
+    TrackingMockEngine clockEng("clock");
+    TrackingMockEngine alertEng("alert");
+    TrackingMockEngine marqueeEng("marquee");
+
+    DisplayRuntime runtime;
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertEng, EngineHandle("alert", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqueeEng, EngineHandle("marquee", "main"));
+
+    // 1. Baseline rotation
+    DisplayDecision d1;
+    d1.valid = true;
+    d1.sourceId = DisplaySourceId::ROTATION;
+    d1.engineHandle = EngineHandle("clock", "main");
+    runtime.transitionSession(d1);
+
+    // 2. Preempt with Alert (depth 1)
+    DisplayDecision d2;
+    d2.valid = true;
+    d2.sourceId = DisplaySourceId::ALERT;
+    d2.engineHandle = EngineHandle("alert", "main");
+    d2.preemptive = true;
+    d2.requestId = 10;
+    runtime.transitionSession(d2);
+
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(1, clockEng.pauseCalls);
+
+    // 3. Marquee switch (non-preemptive REPLACE)
+    DisplayDecision d3;
+    d3.valid = true;
+    d3.sourceId = DisplaySourceId::MARQUEE;
+    d3.engineHandle = EngineHandle("marquee", "main");
+    d3.preemptive = false;
+    d3.requestId = 20;
+    runtime.transitionSession(d3);
+
+    // Alert deactivated, orphaned Clock in stack deactivated, depth reset to 0, Marquee active
+    TEST_ASSERT_EQUAL(1, alertEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, clockEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, marqueeEng.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL_PTR(&marqueeEng, runtime.getCurrentSession().activeEngine);
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -1057,6 +1103,7 @@ void setup() {
     RUN_TEST(test_runtime_transactional_rejection_preserves_lifecycle);
     RUN_TEST(test_preemption_intermediate_expiration_unwinding);
     RUN_TEST(test_preemption_stack_overflow_rejection);
+    RUN_TEST(test_preemption_replace_unwinds_orphaned_stack);
     RUN_TEST(test_arbiter_stateless_no_phantom_state_on_runtime_rejection);
     RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
     RUN_TEST(test_rotation_manager_bounded_lookup);
