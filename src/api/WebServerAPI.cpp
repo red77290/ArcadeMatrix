@@ -153,7 +153,7 @@ void WebServerAPI::setupRoutes() {
         response->print("[");
         
         for (size_t i = 0; i < count; i++) {
-            DynamicJsonDocument doc(2048);
+            DynamicJsonDocument doc(4096);
             JsonObject obj = doc.to<JsonObject>();
             obj["metadata"]["id"] = descriptors[i].metadata.id;
             obj["metadata"]["name"] = descriptors[i].metadata.name;
@@ -1153,6 +1153,7 @@ void WebServerAPI::setupRoutes() {
             }
 
             if (!doc["temp_unit"].isNull()) cfg.system.unit = doc["temp_unit"].as<String>();
+            if (!doc["unit"].isNull()) cfg.system.unit = doc["unit"].as<String>();
             if (!doc["temp_offset"].isNull()) cfg.system.temp_offset = doc["temp_offset"].as<float>();
 
             auto visInst = getInst("visualizer_main");
@@ -1423,6 +1424,7 @@ void WebServerAPI::setupRoutes() {
         sys["timezone"] = snap.system.timezone;
         sys["format_24h"] = snap.system.format24h;
         sys["unit"] = snap.system.unit;
+        sys["temp_unit"] = snap.system.unit;
         sys["temp_offset"] = snap.system.temp_offset;
         sys["night_mode_enabled"] = snap.system.night_mode_enabled;
         sys["turn_off_at"] = snap.system.turn_off_at;
@@ -1511,6 +1513,10 @@ void WebServerAPI::setupRoutes() {
             }
             if (!sys["unit"].isNull()) {
                 cfg.system.unit = sys["unit"].as<String>();
+                changed = true;
+            }
+            if (!sys["temp_unit"].isNull()) {
+                cfg.system.unit = sys["temp_unit"].as<String>();
                 changed = true;
             }
             if (!sys["temp_offset"].isNull()) {

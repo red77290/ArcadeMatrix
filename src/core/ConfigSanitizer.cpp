@@ -67,8 +67,8 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config) {
         result.values_fallback++;
         result.modified = true;
     }
-    if (config.system.temp_offset < -20.0f || config.system.temp_offset > 20.0f) {
-        config.system.temp_offset = constrain(config.system.temp_offset, -20.0f, 20.0f);
+    if (config.system.temp_offset < -30.0f || config.system.temp_offset > 30.0f) {
+        config.system.temp_offset = constrain(config.system.temp_offset, -30.0f, 30.0f);
         result.values_clamped++;
         result.modified = true;
     }

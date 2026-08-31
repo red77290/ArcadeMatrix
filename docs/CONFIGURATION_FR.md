@@ -75,7 +75,7 @@ Vous pouvez aussi pousser des identifiants à l'exécution avec `POST /api/wifi 
 | `format_24h` | `bool` | Format de l'heure. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | Langue du système (ex. `en`, `fr`, `es`). |
 | `temp_unit` | `String` | Unité de température préférée (`C` pour Celsius, `F` pour Fahrenheit). |
-| `temp_offset` | `float` | Décalage d'étalonnage en °C appliqué aux capteurs environnementaux. |
+| `temp_offset` | `float` | Décalage d'étalonnage appliqué aux capteurs environnementaux (dans l'unité de température configurée). |
 | `night_mode_enabled` | `bool` | Active l'extinction automatique / la réduction de luminosité la nuit. |
 | `turn_off_at` | `String` | Heure de début de la veille (ex. `"23:00"`). |
 | `wake_up_at` | `String` | Heure de réveil (ex. `"07:00"`). |
@@ -305,7 +305,7 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | `weather_city` | `String` | `Paris` | Texte | Ville pour les prévisions météo. |
 | `weather_api_key` | `String` | `""` | Clé API Optionnelle | Clé API OpenWeatherMap (laisser vide pour basculer automatiquement sur le service gratuit Open-Meteo sans clé). |
 | `show_indoor_temp` | `bool` | `true` | `true`, `false` | Affiche la température et humidité intérieure du capteur SHTC3. |
-| `temp_offset` | `float` | `-3.5` | `-20.0` à `20.0` | Offset de calibration (°C) pour compenser la dissipation thermique du microcontrôleur. |
+| `temp_offset` | `float` | `-3.5` | `-30.0` à `30.0` | Offset de calibration pour compenser la dissipation thermique du microcontrôleur (dans l'unité de température configurée). |
 | `show_markets` | `bool` | `true` | `true`, `false` | Affiche le bandeau ticker défilant des cryptomonnaies et actions. |
 | `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Tags Top 20 / Saisie libre | Cryptos via Binance (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) et Actions/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
 | `show_sysinfo` | `bool` | `true` | `true`, `false` | Affiche la jauge d'état système (RAM, CPU, WiFi). |
@@ -336,7 +336,7 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | :--- | :--- | :--- | :--- | :--- |
 | `show_humidity` | `bool` | `true` | `true`, `false` | Affiche le pourcentage d'humidité relative. |
 | `temp_unit` | `Options` | `C` | `C`, `F` | Affichage Celsius ou Fahrenheit. |
-| `temp_offset` | `float` | `-3.5` | `-20.0` à `20.0` | Offset de calibration thermique (°C). |
+| `temp_offset` | `float` | `-3.5` | `-30.0` à `30.0` | Offset de calibration thermique (dans l'unité configurée). |
 
 ### Moteur : `marquee`
 | Champ | Type | Défaut | Description |
