@@ -2,25 +2,168 @@
 #include "../core/Logger.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
+#include <vector>
+
+struct CastMessage {
+    int protocolVersion = 0;
+    String sourceId;
+    String destinationId;
+    String namespaceUri;
+    String payloadUtf8;
+};
+
+static void encodeVarint(uint64_t val, std::vector<uint8_t>& buf) {
+    while (val >= 0x80) {
+        buf.push_back((uint8_t)((val & 0x7F) | 0x80));
+        val >>= 7;
+    }
+    buf.push_back((uint8_t)val);
+}
+
+static void encodeString(uint8_t tag, const String& str, std::vector<uint8_t>& buf) {
+    buf.push_back(tag);
+    encodeVarint(str.length(), buf);
+    const uint8_t* p = (const uint8_t*)str.c_str();
+    buf.insert(buf.end(), p, p + str.length());
+}
+
+static std::vector<uint8_t> encodeCastMessage(const String& sourceId, const String& destinationId, const String& namespaceUri, const String& payloadUtf8) {
+    std::vector<uint8_t> payload;
+    // 1: protocol_version = 0 (tag = 8)
+    payload.push_back(8);
+    encodeVarint(0, payload);
+
+    // 2: source_id (tag = 18)
+    encodeString(18, sourceId, payload);
+
+    // 3: destination_id (tag = 26)
+    encodeString(26, destinationId, payload);
+
+    // 4: namespace (tag = 34)
+    encodeString(34, namespaceUri, payload);
+
+    // 5: payload_type = 0 (tag = 40)
+    payload.push_back(40);
+    encodeVarint(0, payload);
+
+    // 6: payload_utf8 (tag = 50)
+    encodeString(50, payloadUtf8, payload);
+
+    // Prefix with 4-byte big-endian length
+    uint32_t len = payload.size();
+    std::vector<uint8_t> frame;
+    frame.reserve(4 + len);
+    frame.push_back((len >> 24) & 0xFF);
+    frame.push_back((len >> 16) & 0xFF);
+    frame.push_back((len >> 8) & 0xFF);
+    frame.push_back(len & 0xFF);
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+static bool decodeVarint(const uint8_t* bytes, size_t len, size_t& idx, uint64_t& result) {
+    result = 0;
+    int shift = 0;
+    while (idx < len) {
+        uint8_t b = bytes[idx++];
+        result |= (uint64_t)(b & 0x7F) << shift;
+        if ((b & 0x80) == 0) return true;
+        shift += 7;
+        if (shift >= 64) return false;
+    }
+    return false;
+}
+
+static bool decodeCastMessage(const uint8_t* bytes, size_t len, CastMessage& msg) {
+    size_t idx = 0;
+    while (idx < len) {
+        uint64_t tagWire = 0;
+        if (!decodeVarint(bytes, len, idx, tagWire)) return false;
+        uint32_t fieldNum = tagWire >> 3;
+        uint32_t wireType = tagWire & 7;
+
+        if (wireType == 0) { // Varint
+            uint64_t val = 0;
+            if (!decodeVarint(bytes, len, idx, val)) return false;
+            if (fieldNum == 1) msg.protocolVersion = (int)val;
+        } else if (wireType == 2) { // Length-delimited string/bytes
+            uint64_t strLen = 0;
+            if (!decodeVarint(bytes, len, idx, strLen)) return false;
+            if (idx + strLen > len) return false;
+            String val = "";
+            val.concat((const char*)&bytes[idx], (unsigned int)strLen);
+            idx += strLen;
+
+            if (fieldNum == 2) msg.sourceId = val;
+            else if (fieldNum == 3) msg.destinationId = val;
+            else if (fieldNum == 4) msg.namespaceUri = val;
+            else if (fieldNum == 6) msg.payloadUtf8 = val;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool readCastMessage(WiFiClientSecure& client, CastMessage& msg, uint32_t timeoutMs = 800) {
+    uint32_t start = millis();
+    while (client.connected() && client.available() < 4) {
+        if (millis() - start > timeoutMs) return false;
+        delay(5);
+    }
+    if (client.available() < 4) return false;
+
+    uint8_t lenBuf[4];
+    if (client.read(lenBuf, 4) != 4) return false;
+    uint32_t len = ((uint32_t)lenBuf[0] << 24) | ((uint32_t)lenBuf[1] << 16) | ((uint32_t)lenBuf[2] << 8) | (uint32_t)lenBuf[3];
+
+    if (len == 0 || len > 32768) return false;
+
+    std::vector<uint8_t> payload(len);
+    size_t bytesRead = 0;
+    while (client.connected() && bytesRead < len) {
+        int avail = client.available();
+        if (avail > 0) {
+            int toRead = min((int)(len - bytesRead), avail);
+            int r = client.read(&payload[bytesRead], toRead);
+            if (r > 0) bytesRead += r;
+        } else {
+            if (millis() - start > timeoutMs) return false;
+            delay(5);
+        }
+    }
+    if (bytesRead < len) return false;
+
+    return decodeCastMessage(payload.data(), payload.size(), msg);
+}
 
 GoogleCastEngine::GoogleCastEngine() {
 }
 
 void GoogleCastEngine::applyConfig(const EngineConfig* config) {
     if (!config) return;
+    String oldIp = m_deviceIp;
+    String oldName = m_deviceName;
     m_deviceIp = config->getString("device_ip", "");
     m_deviceName = config->getString("device_name", "");
     m_showAlbumArt = config->getBool("show_album_art", true);
     m_showProgress = config->getBool("show_progress", true);
     m_showVolume = config->getBool("show_volume", true);
     m_showVisualizer = config->getBool("show_visualizer", true);
+
+    if (oldIp != m_deviceIp || oldName != m_deviceName) {
+        m_resolvedIp = m_deviceIp;
+        m_lastMdnsQuery = 0;
+    }
 }
 
 EngineError GoogleCastEngine::initialize(EngineContext* context, const EngineConfig* config) {
     applyConfig(config);
     m_hasPsram = context ? context->hasPsram() : false;
-    LOGI("GoogleCast", "Initialized. PSRAM Mode: %s, Device IP: %s", m_hasPsram ? "ENABLED" : "DISABLED", m_deviceIp.c_str());
+    LOGI("GoogleCast", "Initialized. PSRAM Mode: %s, Device IP: %s, Device Name: '%s'",
+         m_hasPsram ? "ENABLED" : "DISABLED", m_deviceIp.c_str(), m_deviceName.c_str());
     return EngineError::OK;
 }
 
@@ -28,6 +171,7 @@ void GoogleCastEngine::activate() {
     m_marqueeOffset = 0;
     m_lastMarqueeTick = millis();
     m_lastAnimTick = millis();
+    m_lastMdnsQuery = 0;
     pollCastStatus();
 }
 
@@ -36,26 +180,175 @@ void GoogleCastEngine::deactivate() {
 
 void GoogleCastEngine::onConfigChanged(const EngineConfig* config) {
     applyConfig(config);
+    pollCastStatus();
+}
+
+void GoogleCastEngine::discoverDevice() {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    if (!m_deviceIp.isEmpty()) {
+        m_resolvedIp = m_deviceIp;
+        m_resolvedPort = 8009;
+        return;
+    }
+
+    LOGI("GoogleCast", "Running mDNS query for Google Cast devices (target name: '%s')...", m_deviceName.c_str());
+    int count = MDNS.queryService("googlecast", "tcp");
+    if (count <= 0) {
+        LOGW("GoogleCast", "No Google Cast devices discovered via mDNS");
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        String fn = MDNS.txt(i, "fn");
+        String host = MDNS.hostname(i);
+        IPAddress ip = MDNS.IP(i);
+        uint16_t port = MDNS.port(i);
+        if (port == 0) port = 8009;
+
+        LOGI("GoogleCast", "Found Cast device #%d: '%s' (%s) at %s:%u", i, fn.c_str(), host.c_str(), ip.toString().c_str(), port);
+
+        if (m_deviceName.isEmpty() || fn.equalsIgnoreCase(m_deviceName) || host.equalsIgnoreCase(m_deviceName) || fn.indexOf(m_deviceName) != -1 || host.indexOf(m_deviceName) != -1) {
+            m_resolvedIp = ip.toString();
+            m_resolvedPort = port;
+            LOGI("GoogleCast", "Matched target Cast device '%s' -> %s:%u", m_deviceName.c_str(), m_resolvedIp.c_str(), m_resolvedPort);
+            return;
+        }
+    }
+
+    if (count > 0 && m_resolvedIp.isEmpty()) {
+        m_resolvedIp = MDNS.IP(0).toString();
+        m_resolvedPort = MDNS.port(0) > 0 ? MDNS.port(0) : 8009;
+        LOGI("GoogleCast", "Fallback to first discovered Cast device '%s' -> %s:%u", MDNS.txt(0, "fn").c_str(), m_resolvedIp.c_str(), m_resolvedPort);
+    }
 }
 
 void GoogleCastEngine::pollCastStatus() {
     if (WiFi.status() != WL_CONNECTED) return;
-    m_state.lastPollTime = millis();
+    uint32_t now = millis();
+    m_state.lastPollTime = now;
 
-    // If no IP is configured yet, keep state in ready mode
-    if (m_deviceIp.isEmpty()) {
+    if (m_resolvedIp.isEmpty() || (now - m_lastMdnsQuery >= 60000UL)) {
+        m_lastMdnsQuery = now;
+        discoverDevice();
+    }
+
+    if (m_resolvedIp.isEmpty()) {
         return;
     }
 
-    // Cast protocol connection test over TLS
     WiFiClientSecure client;
     client.setInsecure();
     client.setTimeout(1200);
 
-    if (client.connect(m_deviceIp.c_str(), 8009)) {
-        // Cast V2 connection established
-        client.stop();
+    if (!client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+        return;
     }
+
+    // 1. Send CONNECT to receiver-0
+    auto connMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
+    client.write(connMsg.data(), connMsg.size());
+
+    // 2. Send GET_STATUS to receiver-0
+    m_requestId++;
+    String getStatus = "{\"type\":\"GET_STATUS\",\"requestId\":" + String(m_requestId) + "}";
+    auto reqMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.receiver", getStatus);
+    client.write(reqMsg.data(), reqMsg.size());
+
+    String transportId = "";
+    String appName = "";
+    float volumeLevel = 0.5f;
+
+    // Read receiver status responses (up to 4 frames)
+    for (int i = 0; i < 4; i++) {
+        CastMessage resp;
+        if (!readCastMessage(client, resp, 600)) break;
+
+        if (resp.namespaceUri == "urn:x-cast:com.google.cast.tp.heartbeat" && resp.payloadUtf8.indexOf("PING") != -1) {
+            auto pong = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PONG\"}");
+            client.write(pong.data(), pong.size());
+        } else if (resp.namespaceUri == "urn:x-cast:com.google.cast.receiver") {
+            DynamicJsonDocument doc(4096);
+            if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
+                if (doc["status"]["volume"].is<JsonObject>()) {
+                    volumeLevel = doc["status"]["volume"]["level"] | 0.5f;
+                }
+                if (doc["status"]["applications"].is<JsonArray>()) {
+                    for (JsonObject app : doc["status"]["applications"].as<JsonArray>()) {
+                        bool isIdle = app["isIdleScreen"] | false;
+                        const char* appId = app["appId"] | "";
+                        const char* tId = app["transportId"] | "";
+                        if (!isIdle && strcmp(appId, "E8C28D3C") != 0 && strlen(tId) > 0) {
+                            transportId = String(tId);
+                            appName = app["displayName"] | "";
+                            break;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    if (!transportId.isEmpty()) {
+        // 3. Send CONNECT to transportId
+        auto tConn = encodeCastMessage("sender-0", transportId, "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
+        client.write(tConn.data(), tConn.size());
+
+        // 4. Send GET_STATUS to transportId on media namespace
+        m_requestId++;
+        String getMediaStatus = "{\"type\":\"GET_STATUS\",\"requestId\":" + String(m_requestId) + "}";
+        auto mReq = encodeCastMessage("sender-0", transportId, "urn:x-cast:com.google.cast.media", getMediaStatus);
+        client.write(mReq.data(), mReq.size());
+
+        for (int i = 0; i < 6; i++) {
+            CastMessage resp;
+            if (!readCastMessage(client, resp, 600)) break;
+
+            if (resp.namespaceUri == "urn:x-cast:com.google.cast.media") {
+                DynamicJsonDocument doc(4096);
+                if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
+                    if (doc["status"].is<JsonArray>() && doc["status"].size() > 0) {
+                        JsonObject mediaStat = doc["status"][0];
+                        String playerState = mediaStat["playerState"] | "";
+                        bool isPlaying = (playerState == "PLAYING" || playerState == "BUFFERING");
+
+                        m_state.isActive = true;
+                        m_state.isPlaying = isPlaying;
+                        m_state.currentTimeSec = mediaStat["currentTime"] | 0.0f;
+                        m_state.volumeLevel = volumeLevel;
+                        m_state.appName = appName;
+
+                        if (mediaStat["media"].is<JsonObject>()) {
+                            JsonObject media = mediaStat["media"];
+                            m_state.durationSec = media["duration"] | 0.0f;
+                            if (media["metadata"].is<JsonObject>()) {
+                                JsonObject meta = media["metadata"];
+                                m_state.title = meta["title"] | (meta["songName"] | (media["customData"]["title"] | ""));
+                                m_state.artist = meta["artist"] | (meta["subtitle"] | (meta["artistName"] | (meta["albumArtist"] | "")));
+                                m_state.album = meta["albumName"] | (meta["albumTitle"] | "");
+                                if (meta["images"].is<JsonArray>() && meta["images"].size() > 0) {
+                                    m_state.imageUrl = meta["images"][0]["url"] | "";
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        if (!m_state.isActive && !appName.isEmpty()) {
+            m_state.isActive = true;
+            m_state.appName = appName;
+            if (m_state.title.isEmpty()) m_state.title = appName;
+        }
+    } else {
+        m_state.isActive = false;
+        m_state.isPlaying = false;
+    }
+
+    client.stop();
 }
 
 void GoogleCastEngine::update(EngineContext* context) {
@@ -131,7 +424,7 @@ void GoogleCastEngine::render(EngineContext* context) {
     if (!m_state.isActive || m_state.title.isEmpty()) {
         // Idle screen
         String title = "Google Cast";
-        String subtitle = !m_deviceName.isEmpty() ? ("Ready to stream • " + m_deviceName) : "Ready to stream";
+        String subtitle = !m_deviceName.isEmpty() ? ("Ready to stream - " + m_deviceName) : "Ready to stream";
 
         int titleW = title.length() * 6;
         int yIdleTitle = (h >= 64) ? ((h / 2) - 10) : 4;

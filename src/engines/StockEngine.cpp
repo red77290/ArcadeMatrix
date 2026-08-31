@@ -106,9 +106,11 @@ void StockEngine::fetchQuote(const String& symbol) {
         String sdPath = "/stock_icons/" + symbol + ".png";
         if (!sd.exists(sdPath)) {
             String proxyUrl = "https://wsrv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
+            WiFiClientSecure imgClient;
+            imgClient.setInsecure();
             HTTPClient httpImg;
             httpImg.setTimeout(5000);
-            if (httpImg.begin(proxyUrl)) {
+            if (httpImg.begin(imgClient, proxyUrl)) {
                 int code = httpImg.GET();
                 if (code == 200) {
                     if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
@@ -119,6 +121,7 @@ void StockEngine::fetchQuote(const String& symbol) {
                     }
                 }
                 httpImg.end();
+                imgClient.stop();
             }
         }
         

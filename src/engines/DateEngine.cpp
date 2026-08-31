@@ -86,6 +86,58 @@ void DateEngine::onConfigChanged(const EngineConfig* config) {
 
 void DateEngine::activate() {}
 
+static void formatLocalizedDate(char* dest, size_t maxLen, const String& format, const struct tm* timeinfo, const String& lang) {
+    char buf[128];
+    strftime(buf, sizeof(buf), format.c_str(), timeinfo);
+    
+    bool isFr = lang.startsWith("fr") || lang.startsWith("FR");
+    bool isEs = lang.startsWith("es") || lang.startsWith("ES");
+    if (!isFr && !isEs) {
+        strncpy(dest, buf, maxLen);
+        dest[maxLen - 1] = '\0';
+        return;
+    }
+
+    static const char* DAYS_SHORT_EN[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char* DAYS_LONG_EN[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    static const char* MONTHS_SHORT_EN[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_EN[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+
+    static const char* DAYS_SHORT_FR[] = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
+    static const char* DAYS_LONG_FR[] = {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"};
+    static const char* MONTHS_SHORT_FR[] = {"Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aout", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_FR[] = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
+
+    static const char* DAYS_SHORT_ES[] = {"Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"};
+    static const char* DAYS_LONG_ES[] = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
+    static const char* MONTHS_SHORT_ES[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
+    static const char* MONTHS_LONG_ES[] = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
+
+    String res = String(buf);
+    int wday = timeinfo->tm_wday;
+    int mon = timeinfo->tm_mon;
+    if (wday >= 0 && wday < 7) {
+        if (isFr) {
+            res.replace(DAYS_LONG_EN[wday], DAYS_LONG_FR[wday]);
+            res.replace(DAYS_SHORT_EN[wday], DAYS_SHORT_FR[wday]);
+        } else if (isEs) {
+            res.replace(DAYS_LONG_EN[wday], DAYS_LONG_ES[wday]);
+            res.replace(DAYS_SHORT_EN[wday], DAYS_SHORT_ES[wday]);
+        }
+    }
+    if (mon >= 0 && mon < 12) {
+        if (isFr) {
+            res.replace(MONTHS_LONG_EN[mon], MONTHS_LONG_FR[mon]);
+            res.replace(MONTHS_SHORT_EN[mon], MONTHS_SHORT_FR[mon]);
+        } else if (isEs) {
+            res.replace(MONTHS_LONG_EN[mon], MONTHS_LONG_ES[mon]);
+            res.replace(MONTHS_SHORT_EN[mon], MONTHS_SHORT_ES[mon]);
+        }
+    }
+    strncpy(dest, res.c_str(), maxLen);
+    dest[maxLen - 1] = '\0';
+}
+
 void DateEngine::update(EngineContext* context) {
     if (context) {
         struct tm timeinfo;
@@ -94,7 +146,11 @@ void DateEngine::update(EngineContext* context) {
         
         String format = m_config.format;
         if (format.isEmpty()) format = "%a %d %b";
-        strftime(currentDate, sizeof(currentDate), format.c_str(), &timeinfo);
+
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        String lang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+        formatLocalizedDate(currentDate, sizeof(currentDate), format, &timeinfo, lang);
         
         // Handle random theme changes per day if THEME_NONE
         if (m_config.theme == THEME_NONE) {

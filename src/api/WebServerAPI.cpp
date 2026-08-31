@@ -1282,9 +1282,10 @@ void WebServerAPI::setupRoutes() {
         config.saveToSD("/config.json");
 
         if (rotationManager && !willReboot) {
-            if (cryptoChanged) rotationManager->notifyConfigChanged("crypto_main");
-            if (stockChanged) rotationManager->notifyConfigChanged("stock_main");
-            if (fighterChanged) rotationManager->notifyConfigChanged("fighter_main");
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            for (const auto& inst : guard->instances) {
+                rotationManager->notifyConfigChanged(inst.instance_id);
+            }
         }
 
         if (willReboot) {
@@ -1605,7 +1606,7 @@ void WebServerAPI::setupRoutes() {
             config.saveToSD("/config.json");
         }
 
-        if (langChanged && rotationManager) {
+        if ((changed || langChanged) && rotationManager && !willReboot) {
             ConfigSnapshotGuard guard = config.acquireSnapshot();
             for (const auto& inst : guard->instances) {
                 rotationManager->notifyConfigChanged(inst.instance_id);

@@ -33,6 +33,10 @@ public:
 private:
     String m_deviceIp = "";
     String m_deviceName = "";
+    String m_resolvedIp = "";
+    uint16_t m_resolvedPort = 8009;
+    uint32_t m_lastMdnsQuery = 0;
+    uint32_t m_requestId = 1;
     bool m_showAlbumArt = true;
     bool m_showProgress = true;
     bool m_showVolume = true;
@@ -49,6 +53,7 @@ private:
     String m_lastLoggedTrack = "";
 
     void applyConfig(const EngineConfig* config);
+    void discoverDevice();
     void pollCastStatus();
 };
 

@@ -78,9 +78,11 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
     memset(_bitmapBuffer, 0, bufSize);
 
     // Download artwork from HTTP stream
+    WiFiClientSecure client;
+    client.setInsecure();
     HTTPClient http;
     http.setTimeout(3000);
-    if (!http.begin(url)) {
+    if (!http.begin(client, url)) {
         LOGW("ArtworkService", "HTTP begin failed for URL: %s", url.c_str());
         return "";
     }
@@ -89,18 +91,21 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
     if (httpCode != HTTP_CODE_OK) {
         LOGW("ArtworkService", "HTTP GET failed with code: %d", httpCode);
         http.end();
+        client.stop();
         return "";
     }
 
     int len = http.getSize();
     if (len <= 0 || len > (128 * 1024)) { // Max 128KB image safety bound
         http.end();
+        client.stop();
         return "";
     }
 
     uint8_t* imgData = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!imgData) {
         http.end();
+        client.stop();
         return "";
     }
 
@@ -115,6 +120,7 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
         delay(1);
     }
     http.end();
+    client.stop();
 
     // Decode PNG image into RGB565 bitmap buffer
     s_targetBuf = _bitmapBuffer;

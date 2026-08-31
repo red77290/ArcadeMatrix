@@ -21,10 +21,12 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
             String payload = http.getString();
             if (parsePrimary(payload, outPrice, outChange, outImageUrl)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     // Simple API fallback
@@ -38,10 +40,12 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
             String payload = http.getString();
             if (parseSimple(payload, coinId, outPrice, outChange)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     return false;
@@ -120,10 +124,12 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
             String payload = http.getString();
             if (parseMarketChart(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     return false;
 }

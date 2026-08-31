@@ -72,15 +72,16 @@ void WeatherEngine::deactivate() {}
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
+
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysLang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+    String sysUnits = guard->system.unit.equalsIgnoreCase("F") ? "imperial" : "metric";
+
     String newKey = engineConfig->getString("api_key", "");
     String newCity = engineConfig->getString("city", "");
-    String newLang = engineConfig->getString("lang", "");
-    if (newLang.isEmpty()) {
-        extern ConfigLoader config;
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        newLang = guard->system.lang.length() > 0 ? guard->system.lang : "fr";
-    }
-    String newUnits = engineConfig->getString("units", "metric");
+    String newLang = engineConfig->getString("lang", sysLang.c_str());
+    String newUnits = engineConfig->getString("units", sysUnits.c_str());
     
     if (newKey != config_api_key || newCity != config_city || newLang != config_lang || newUnits != config_units) {
         config_api_key = newKey;

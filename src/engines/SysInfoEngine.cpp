@@ -19,13 +19,17 @@ void SysInfoEngine::activate() {}
 void SysInfoEngine::deactivate() {}
 
 void SysInfoEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysUnit = guard->system.unit.length() > 0 ? guard->system.unit : "C";
+
     if (engineConfig) {
         theme = engineConfig->getInt("theme", 0);
         showCpu = engineConfig->getBool("show_cpu", true);
         showRam = engineConfig->getBool("show_ram", true);
         showTemp = engineConfig->getBool("show_temp", true);
         showUptime = engineConfig->getBool("show_uptime", true);
-        String u = engineConfig->getString("temp_unit", config.system.unit.c_str());
+        String u = engineConfig->getString("temp_unit", sysUnit.c_str());
         useFahrenheit = u.equalsIgnoreCase("F");
         offsetX = engineConfig->getInt("offset_x", 0);
         offsetY = engineConfig->getInt("offset_y", 0);
@@ -35,7 +39,7 @@ void SysInfoEngine::onConfigChanged(const EngineConfig* engineConfig) {
         showRam = true;
         showTemp = true;
         showUptime = true;
-        useFahrenheit = config.system.unit.equalsIgnoreCase("F");
+        useFahrenheit = sysUnit.equalsIgnoreCase("F");
         offsetX = 0;
         offsetY = 0;
     }

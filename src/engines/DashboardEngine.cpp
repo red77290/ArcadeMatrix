@@ -380,14 +380,14 @@ void PixelClockWidget::renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rec
     }
 }
 
-void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city) {
+void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city, bool format24h) {
     if (!matrix || rect.width < 20 || rect.height < 12) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
 
     int textY = rect.y + 3;
-    if (rect.height >= 32) {
+    if (rect.height >= 32 && !city.isEmpty()) {
         matrix->setFont(nullptr);
         matrix->setTextSize(1);
         matrix->setTextColor(theme.secondary);
@@ -397,11 +397,22 @@ void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& re
         textY += 10;
     }
 
-    char timeBuf[12];
-    if (showSeconds) {
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", time.hours, time.minutes, time.seconds);
+    char timeBuf[16];
+    if (format24h) {
+        if (showSeconds) {
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", time.hours, time.minutes, time.seconds);
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", time.hours, time.minutes);
+        }
     } else {
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", time.hours, time.minutes);
+        int h12 = time.hours % 12;
+        if (h12 == 0) h12 = 12;
+        const char* ampm = (time.hours >= 12) ? "PM" : "AM";
+        if (showSeconds) {
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d:%02d%s", h12, time.minutes, time.seconds, (time.hours >= 12) ? "p" : "a");
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d %s", h12, time.minutes, ampm);
+        }
     }
 
     matrix->setFont(nullptr);
@@ -610,8 +621,11 @@ static void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int m
     }
 }
 
-void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit) {
+void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
     if (!matrix || rect.width < 20 || rect.height < 14) return;
+
+    bool isFr = lang.startsWith("fr") || lang.startsWith("FR");
+    bool isEs = lang.startsWith("es") || lang.startsWith("ES");
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
@@ -644,7 +658,7 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
 
             if (rect.height >= 26) {
                 String desc = weather.description;
-                if (desc.isEmpty()) desc = "OUTDOOR";
+                if (desc.isEmpty()) desc = isFr ? "EXTERIEUR" : (isEs ? "EXTERIOR" : "OUTDOOR");
                 desc.toUpperCase();
                 drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, baseY + 11, minX, maxX, minY, maxY, theme.textDim);
             }
@@ -652,7 +666,8 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
             float inT = indoor.temperatureC + tempOffset;
             if (useFahrenheit) inT = inT * 1.8f + 32.0f;
             char inBuf[16];
-            snprintf(inBuf, sizeof(inBuf), "IN:%.1f`", inT);
+            const char* inLabel = isFr ? "INT:" : (isEs ? "INT:" : "IN:");
+            snprintf(inBuf, sizeof(inBuf), "%s%.1f`", inLabel, inT);
             drawClippedString(matrix, inBuf, rect.x + 3, baseY, minX, maxX, minY, maxY, theme.accent);
 
             if (rect.height >= 24) {
@@ -669,7 +684,8 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
                 }
             }
         } else {
-            drawClippedString(matrix, "CLIMATE", rect.x + 3, baseY, minX, maxX, minY, maxY, theme.textDim);
+            const char* climLabel = isFr ? "METEO" : (isEs ? "CLIMA" : "CLIMATE");
+            drawClippedString(matrix, climLabel, rect.x + 3, baseY, minX, maxX, minY, maxY, theme.textDim);
         }
     };
 
@@ -1011,9 +1027,18 @@ void DashboardEngine::fetchTaskLoop() {
 void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
 
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysUnit = guard->system.unit.length() > 0 ? guard->system.unit : "C";
+    String sysLang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+    float sysTempOffset = guard->system.temp_offset;
+    bool sysFormat24h = guard->system.format24h;
+
     String oldMarkets = m_cachedTrackedMarkets;
     String oldCity = m_weatherCity;
     String oldApiKey = m_weatherApiKey;
+    String oldLang = m_config.lang;
+    bool oldFahrenheit = m_config.useFahrenheit;
 
     m_config.clockMode = static_cast<ClockMode>(engineConfig->getInt("clock_mode", 1)); // Default Analog
     m_config.theme = engineConfig->getInt("theme", 0);
@@ -1026,29 +1051,39 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     m_config.smoothSeconds = engineConfig->getBool("smooth_seconds", true);
     m_config.showWorldClock = engineConfig->getBool("show_world_clock", true);
     m_config.showMarkets = engineConfig->getBool("show_markets", true);
-    m_config.tempOffset = engineConfig->getFloat("temp_offset", -3.5f);
     m_config.worldClocks = engineConfig->getString("world_clocks", "NYC,TYO,LON");
     m_config.trackedMarkets = engineConfig->getString("tracked_markets", "BTC,ETH,SOL,NVDA");
     m_cachedTrackedMarkets = m_config.trackedMarkets;
 
-    String unit = engineConfig->getString("temp_unit", "C");
+    // Unit: instance override or fallback to global system preference
+    String unit = engineConfig->getString("temp_unit", sysUnit.c_str());
     m_config.useFahrenheit = unit.equalsIgnoreCase("F");
+
+    // Temp offset: instance override or fallback to global system preference
+    m_config.tempOffset = engineConfig->getFloat("temp_offset", sysTempOffset);
+
+    // Language: instance override or fallback to global system preference
+    m_config.lang = engineConfig->getString("lang", sysLang.c_str());
+
+    // 24H format: instance override or fallback to global system preference
+    m_config.format24h = engineConfig->getBool("format_24h", sysFormat24h);
 
     m_weatherApiKey = engineConfig->getString("weather_api_key", "");
     m_weatherCity = engineConfig->getString("weather_city", "");
-    m_weatherUnits = engineConfig->getString("weather_units", "metric");
+    m_weatherUnits = engineConfig->getString("weather_units", m_config.useFahrenheit ? "imperial" : "metric");
 
     if (m_weatherApiKey.isEmpty() || m_weatherCity.isEmpty()) {
-        extern ConfigLoader config;
-        for (const auto& inst : config.instances) {
+        for (const auto& inst : guard->instances) {
             if (inst.engine_id == "weather") {
                 if (m_weatherApiKey.isEmpty()) m_weatherApiKey = inst.config.getString("api_key", "");
                 if (m_weatherCity.isEmpty()) m_weatherCity = inst.config.getString("city", "");
-                if (m_weatherUnits.isEmpty()) m_weatherUnits = inst.config.getString("units", "metric");
+                if (m_weatherUnits.isEmpty()) m_weatherUnits = inst.config.getString("units", m_config.useFahrenheit ? "imperial" : "metric");
                 break;
             }
         }
     }
+
+    m_config.city = m_weatherCity.isEmpty() ? "PARIS" : m_weatherCity;
 
     if (oldMarkets != m_cachedTrackedMarkets || m_config.showMarkets) {
         m_forceFetchMarkets = true;
@@ -1298,18 +1333,20 @@ void DashboardEngine::fetchWeather() {
 
     String apiKey = m_weatherApiKey;
     String city = m_weatherCity.isEmpty() ? "Paris" : m_weatherCity;
-    String units = m_weatherUnits.isEmpty() ? "metric" : m_weatherUnits;
+    String lang = m_config.lang.length() > 0 ? m_config.lang : "en";
+    lang.toLowerCase();
+    String units = m_config.useFahrenheit ? "imperial" : "metric";
 
     // 1. Try OpenWeatherMap if key is provided
     if (m_weatherProvider && apiKey.length() > 5) {
         WeatherData fc[1];
         int numFc = 0;
-        if (m_weatherProvider->fetchForecast(apiKey, city, "fr", units, fc, 1, numFc)) {
+        if (m_weatherProvider->fetchForecast(apiKey, city, lang, units, fc, 1, numFc)) {
             if (numFc > 0) {
                 std::lock_guard<std::mutex> lock(m_snapshotMutex);
                 m_snapshot.weather = fc[0];
                 m_snapshot.weatherValid = true;
-                LOGI("Dashboard", "Weather updated (OpenWeatherMap): %.1f°C (%s)", m_snapshot.weather.temp, m_snapshot.weather.description.c_str());
+                LOGI("Dashboard", "Weather updated (OpenWeatherMap): %.1f°%s (%s)", m_snapshot.weather.temp, m_config.useFahrenheit ? "F" : "C", m_snapshot.weather.description.c_str());
                 return;
             }
         }
@@ -1328,7 +1365,7 @@ void DashboardEngine::fetchWeather() {
         String encCity = city;
         encCity.trim();
         encCity.replace(" ", "%20");
-        String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=fr&format=json";
+        String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=" + lang + "&format=json";
         if (geoHttp.begin(geoClient, geoUrl)) {
             int code = geoHttp.GET();
             if (code == 200) {
@@ -1341,6 +1378,7 @@ void DashboardEngine::fetchWeather() {
                 }
             }
             geoHttp.end();
+            geoClient.stop();
         }
     }
 
@@ -1362,30 +1400,33 @@ void DashboardEngine::fetchWeather() {
                 wd.temp = temp;
                 wd.label = city;
 
+                bool isFr = lang.startsWith("fr");
+                bool isEs = lang.startsWith("es");
+
                 if (wCode == 0) {
                     wd.iconCode = "01d";
-                    wd.description = "Ensoleillé";
+                    wd.description = isFr ? "Ensoleillé" : (isEs ? "Soleado" : "Sunny");
                 } else if (wCode <= 3) {
                     wd.iconCode = "02d";
-                    wd.description = "Nuageux";
+                    wd.description = isFr ? "Nuageux" : (isEs ? "Nublado" : "Cloudy");
                 } else if (wCode <= 48) {
                     wd.iconCode = "50d";
-                    wd.description = "Brouillard";
+                    wd.description = isFr ? "Brouillard" : (isEs ? "Niebla" : "Fog");
                 } else if (wCode <= 67) {
                     wd.iconCode = "10d";
-                    wd.description = "Pluie";
+                    wd.description = isFr ? "Pluie" : (isEs ? "Lluvia" : "Rain");
                 } else if (wCode <= 77) {
                     wd.iconCode = "13d";
-                    wd.description = "Neige";
+                    wd.description = isFr ? "Neige" : (isEs ? "Nieve" : "Snow");
                 } else if (wCode <= 82) {
                     wd.iconCode = "09d";
-                    wd.description = "Averses";
+                    wd.description = isFr ? "Averses" : (isEs ? "Chubascos" : "Showers");
                 } else if (wCode <= 99) {
                     wd.iconCode = "11d";
-                    wd.description = "Orage";
+                    wd.description = isFr ? "Orage" : (isEs ? "Tormenta" : "Storm");
                 } else {
                     wd.iconCode = "01d";
-                    wd.description = "Clair";
+                    wd.description = isFr ? "Clair" : (isEs ? "Despejado" : "Clear");
                 }
 
                 std::lock_guard<std::mutex> lock(m_snapshotMutex);
@@ -1570,7 +1611,7 @@ void DashboardEngine::render(EngineContext* context) {
         if (m_config.clockMode == ClockMode::MODE_ANALOG) {
             PixelClockWidget::renderAnalog(matrix, m_cachedLayout.clockRect, snap.time, snap.subSecondFraction, theme, m_config.showSeconds, m_config.showDate);
         } else {
-            PixelClockWidget::renderDigital(matrix, m_cachedLayout.clockRect, snap.time, theme, m_config.showSeconds, m_config.showDate, "PARIS");
+            PixelClockWidget::renderDigital(matrix, m_cachedLayout.clockRect, snap.time, theme, m_config.showSeconds, m_config.showDate, m_config.city, m_config.format24h);
         }
     }
 
@@ -1581,7 +1622,7 @@ void DashboardEngine::render(EngineContext* context) {
 
     // 3. Climate Widget (Outdoor + Calibrated Indoor Sensor)
     if (m_cachedLayout.hasClimate) {
-        ClimateWidget::render(matrix, m_cachedLayout.climateRect, snap.weather, snap.weatherValid, snap.indoor, m_config.tempOffset, theme, m_config.useFahrenheit);
+        ClimateWidget::render(matrix, m_cachedLayout.climateRect, snap.weather, snap.weatherValid, snap.indoor, m_config.tempOffset, theme, m_config.useFahrenheit, m_config.lang);
     }
 
     // 4. Market Widget (Crypto + Stock Quotes)

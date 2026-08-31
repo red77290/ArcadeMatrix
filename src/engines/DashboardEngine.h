@@ -136,6 +136,9 @@ struct DashboardConfigParams {
     float tempOffset = -3.5f; // Calibration offset (°C) for CPU heating
     String worldClocks = "NYC,TYO,LON";
     String trackedMarkets = "BTC,ETH,SOL,NVDA";
+    String lang = "en";
+    bool format24h = true;
+    String city = "PARIS";
     int offsetX = 0;
     int offsetY = 0;
 };
@@ -179,7 +182,7 @@ public:
 class PixelClockWidget {
 public:
     static void renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate);
-    static void renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS");
+    static void renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS", bool format24h = true);
 };
 
 class WorldClockWidget {
@@ -189,7 +192,7 @@ public:
 
 class ClimateWidget {
 public:
-    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit);
+    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang = "en");
 };
 
 class MarketWidget {

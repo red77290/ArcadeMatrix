@@ -22,10 +22,12 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
             String payload = http.getString();
             if (parsePayload(payload, outPrice, outChange)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     return false;
@@ -86,10 +88,12 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
             String payload = http.getString();
             if (parseKlines(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     return false;
 }
