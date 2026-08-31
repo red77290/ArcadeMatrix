@@ -137,7 +137,7 @@ void ConfigLoader::setDefaults() {
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
-    matrix.clkPhase = true;
+    matrix.clkPhase = false;
     matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
     matrix.matrix_power = true;
