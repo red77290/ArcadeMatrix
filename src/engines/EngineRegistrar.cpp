@@ -33,6 +33,12 @@ RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequiremen
     if (req.needsGyroscope && !caps.hasGyroscope) {
         return {false, "Requires gyroscope"};
     }
+    if (req.needsNetwork && !caps.hasNetwork) {
+        return {false, "Requires network/WiFi connection"};
+    }
+    if (req.needsSd && !caps.hasSd) {
+        return {false, "Requires SD card"};
+    }
     return {true, ""};
 }
 

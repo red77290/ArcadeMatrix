@@ -38,7 +38,10 @@ void DisplayRuntime::registerSourceEngine(DisplaySourceId sourceId, IEngine* eng
 IEngine* DisplayRuntime::resolveEngine(const EngineHandle& handle, DisplaySourceId sourceId) const {
     // 1. If explicit instanceId is provided in handle, resolve via RotationManager
     if (handle.instanceId[0] != '\0' && m_rotationManager) {
-        IEngine* instEngine = m_rotationManager->getActiveEngine(handle.instanceId);
+        IEngine* instEngine = m_rotationManager->findActiveEngine(handle.instanceId);
+        if (!instEngine) {
+            instEngine = m_rotationManager->getOrCreateEngine(handle.instanceId);
+        }
         if (instEngine) return instEngine;
     }
 
@@ -76,74 +79,54 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
 }
 
 void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
+    // PHASE 1: Resolve target engine
     IEngine* targetEngine = resolveEngine(decision.engineHandle, decision.sourceId);
 
-    bool isNewSession = (decision.sourceId != m_session.sourceId) ||
-                        (decision.requestId != m_session.requestId) ||
-                        (targetEngine != m_session.activeEngine);
+    // PHASE 2: Validate target (reject if unresolvable for non-rotation request)
+    if (!targetEngine && decision.sourceId != DisplaySourceId::ROTATION) {
+        LOGW("DisplayRuntime", "Cannot transition to unresolved engine handle, rejecting transition and keeping active session");
+        return; // Session and stack remain 100% intact
+    }
 
-    if (isNewSession) {
-        IEngine* oldEngine = m_session.activeEngine;
+    IEngine* oldEngine = m_session.activeEngine;
+    const bool sameEngine = (oldEngine == targetEngine);
+    const bool sameSource = (decision.sourceId == m_session.sourceId);
+    const bool sameHandle = (decision.engineHandle == m_session.engineHandle);
 
-        switch (decision.transitionMode) {
-            case TransitionMode::PREEMPT: {
-                if (m_preemptionDepth >= MAX_PREEMPTION_DEPTH) {
-                    LOGW("DisplayRuntime", "Preemption stack full (%u), rejecting preemption", m_preemptionDepth);
-                    return; // Deterministic rejection: protect baseline session without corruption
-                }
-                if (oldEngine) {
-                    oldEngine->pause();
-                    m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
-                        m_session.engineHandle,
-                        m_session.sourceId,
-                        m_session.requestId
-                    };
-                }
-                if (targetEngine) {
-                    targetEngine->activate();
-                }
-                break;
-            }
-            case TransitionMode::RESUME: {
-                if (oldEngine) {
-                    oldEngine->deactivate();
-                }
-                
-                // Resilient unwinding: skip and clean up intermediate sessions that expired while submerged
-                IEngine* resumeEngine = nullptr;
-                while (m_preemptionDepth > 0) {
-                    PreemptionEntry entry = m_preemptionStack[--m_preemptionDepth];
-                    if (entry.handle == decision.engineHandle || entry.sourceId == DisplaySourceId::ROTATION) {
-                        resumeEngine = resolveEngine(entry.handle, entry.sourceId);
-                        break;
-                    }
-                    // Clean up submerged expired intermediate session
-                    IEngine* expiredEngine = resolveEngine(entry.handle, entry.sourceId);
-                    if (expiredEngine) {
-                        expiredEngine->deactivate();
-                    }
-                }
+    // PHASE 3: CLASSIFY & EXECUTE FSM
 
-                if (resumeEngine) {
-                    resumeEngine->resume();
-                    targetEngine = resumeEngine;
-                } else if (targetEngine) {
-                    targetEngine->activate();
-                }
-                break;
-            }
-            case TransitionMode::REPLACE:
-            default: {
-                if (oldEngine && oldEngine != targetEngine) {
-                    oldEngine->deactivate();
-                }
-                if (targetEngine) {
-                    targetEngine->activate();
-                }
-                break;
-            }
+    // CASE 1: REFRESH IN-PLACE (sameSource && sameHandle && sameEngine)
+    if (sameSource && sameHandle && sameEngine) {
+        m_session.requestId = decision.requestId;
+        m_session.startedAtMs = millis();
+        return; // Zero lifecycle, sessionId and stack preserved
+    }
+
+    // CASE 2: PREEMPTION (preemptive && not rotation && new source)
+    if (decision.preemptive && decision.sourceId != DisplaySourceId::ROTATION && !sameSource) {
+        if (m_preemptionDepth >= MAX_PREEMPTION_DEPTH) {
+            LOGW("DisplayRuntime", "Preemption stack full (%u), rejecting preemption", (unsigned)m_preemptionDepth);
+            return; // Deterministic rejection: protect baseline session without corruption
         }
-
+        if (oldEngine && !sameEngine) {
+            oldEngine->pause();
+        }
+        m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
+            m_session.engineHandle,
+            m_session.sourceId,
+            (m_session.sourceId == DisplaySourceId::ROTATION) ? DisplayPriority::ROTATION : DisplayPriority::ALERT,
+            m_session.requestId,
+            m_session.sessionId,
+            m_session.startedAtMs,
+            m_session.allowsOverlay,
+            m_session.isRealtime,
+            m_session.requiresClear,
+            m_session.lifecycle
+        };
+        if (targetEngine && !sameEngine) {
+            targetEngine->activate();
+        }
+        
         m_session.sessionId = ++m_sessionCounter;
         m_session.sourceId = decision.sourceId;
         m_session.engineHandle = decision.engineHandle;
@@ -154,7 +137,75 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_session.allowsOverlay = decision.allowsOverlay;
         m_session.isRealtime = decision.isRealtime;
         m_session.lifecycle = decision.lifecycle;
+        return;
     }
+
+    // CASE 3: RESUME (Matches parent in PreemptionStack)
+    int parentIdx = -1;
+    for (int i = (int)m_preemptionDepth - 1; i >= 0; --i) {
+        if (m_preemptionStack[i].sourceId == decision.sourceId &&
+            (decision.sourceId == DisplaySourceId::ROTATION || m_preemptionStack[i].handle == decision.engineHandle)) {
+            parentIdx = i;
+            break;
+        }
+    }
+
+    if (parentIdx >= 0) {
+        // Phase A: Pre-validate parent and cleanup targets BEFORE any side effects
+        IEngine* resumeEngine = resolveEngine(m_preemptionStack[parentIdx].handle, m_preemptionStack[parentIdx].sourceId);
+        if (!resumeEngine) {
+            LOGW("DisplayRuntime", "Parent engine could not be resolved, rejecting RESUME");
+            return; // Session and stack remain 100% intact
+        }
+
+        // Phase B: Execute lifecycle transitions
+        if (oldEngine) {
+            oldEngine->deactivate();
+        }
+        // Cleanup expired intermediate submerged sessions
+        for (int i = (int)m_preemptionDepth - 1; i > parentIdx; --i) {
+            IEngine* expiredEngine = resolveEngine(m_preemptionStack[i].handle, m_preemptionStack[i].sourceId);
+            if (expiredEngine) {
+                expiredEngine->deactivate();
+            }
+        }
+
+        PreemptionEntry parent = m_preemptionStack[parentIdx];
+        m_preemptionDepth = (uint8_t)parentIdx; // Secure unwinding
+
+        resumeEngine->resume();
+
+        // Restore complete parent session snapshot
+        m_session.sessionId = parent.sessionId;
+        m_session.sourceId = parent.sourceId;
+        m_session.engineHandle = parent.handle;
+        m_session.requestId = parent.requestId;
+        m_session.startedAtMs = parent.startedAtMs;
+        m_session.activeEngine = resumeEngine;
+        m_session.requiresClear = parent.requiresClear;
+        m_session.allowsOverlay = parent.allowsOverlay;
+        m_session.isRealtime = parent.isRealtime;
+        m_session.lifecycle = parent.lifecycle;
+        return;
+    }
+
+    // CASE 4: REPLACE
+    if (oldEngine && !sameEngine) {
+        oldEngine->deactivate();
+    }
+    if (targetEngine && !sameEngine) {
+        targetEngine->activate();
+    }
+    m_session.sessionId = ++m_sessionCounter;
+    m_session.sourceId = decision.sourceId;
+    m_session.engineHandle = decision.engineHandle;
+    m_session.requestId = decision.requestId;
+    m_session.startedAtMs = millis();
+    m_session.activeEngine = targetEngine;
+    m_session.requiresClear = decision.needsClear;
+    m_session.allowsOverlay = decision.allowsOverlay;
+    m_session.isRealtime = decision.isRealtime;
+    m_session.lifecycle = decision.lifecycle;
 }
 
 DisplayDecision DisplayRuntime::update(const ConfigSnapshot& snapshot) {

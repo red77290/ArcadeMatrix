@@ -40,6 +40,8 @@ struct HardwareCapabilities {
     bool hasMicrophone = false;
     bool hasTempSensor = false;
     bool hasGyroscope = false;
+    bool hasNetwork = true;
+    bool hasSd = true;
 
     AudioCapabilities audio;
 

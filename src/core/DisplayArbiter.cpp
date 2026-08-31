@@ -156,31 +156,10 @@ DisplayDecision DisplayArbiter::evaluate() {
     decision.allowsOverlay = slots[bestSlot].request.allowsOverlay;
     decision.needsClear = slots[bestSlot].request.needsClear;
     decision.isRealtime = slots[bestSlot].request.isRealtime;
+    decision.preemptive = slots[bestSlot].request.preemptive;
     decision.valid = true;
 
-    // 4. Compute deterministic TransitionMode based on request semantics
-    const bool isPreemptive = slots[bestSlot].request.preemptive && (decision.sourceId != DisplaySourceId::ROTATION);
-
-    if (isPreemptive) {
-        if (decision.sourceId != _lastSourceId || decision.requestId != _lastRequestId) {
-            decision.transitionMode = TransitionMode::PREEMPT;
-        } else {
-            decision.transitionMode = TransitionMode::REPLACE;
-        }
-    } else {
-        if (_lastWasPreemptive) {
-            decision.transitionMode = TransitionMode::RESUME;
-        } else {
-            decision.transitionMode = TransitionMode::REPLACE;
-        }
-    }
-
-    _lastWasPreemptive = isPreemptive;
-    _lastPriority = decision.priority;
-    _lastSourceId = decision.sourceId;
-    _lastRequestId = decision.requestId;
-
-    // 5. Auto-consume ONE_SHOT requests
+    // 4. Auto-consume ONE_SHOT requests
     if (bestSlot > 0 && decision.lifecycle == RequestLifecycle::ONE_SHOT) {
         slots[bestSlot].active = false;
     }

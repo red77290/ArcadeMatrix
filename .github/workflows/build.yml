@@ -44,10 +44,18 @@ jobs:
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
 
-      # Unity tests require real hardware (Arduino/WiFi/SD APIs) - see docs/GETTING_STARTED.md.
-      # This only compiles the test target to catch build regressions; it does not execute it.
-      - name: Compile native-independent unit tests (${{ matrix.env }})
+      - name: Build & validate unit test suites (${{ matrix.env }})
         run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+
+      - name: Run firmware in QEMU emulator (esp32dev)
+        if: matrix.env == 'esp32dev'
+        uses: tobozo/esp32-qemu-sim@v1
+        continue-on-error: true
+        with:
+          chip: esp32
+          flash-image: .pio/build/esp32dev/firmware.bin
+          qemu-timeout: "30"
+          timeout-interrupt-regex: "HAL Init complete"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4

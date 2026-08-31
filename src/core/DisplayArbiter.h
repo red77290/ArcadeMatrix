@@ -85,19 +85,13 @@ struct DisplayRequestSlot {
     DisplayRequest request{};
 };
 
-enum class TransitionMode : uint8_t {
-    REPLACE = 0,  // Standard carousel rotation: deactivate(old) -> activate(new)
-    PREEMPT = 1,  // Priority interruption: pause(old) -> push(old) -> activate(new)
-    RESUME = 2    // End of interruption: deactivate(old) -> pop(prev) -> resume(prev)
-};
-
 struct DisplayDecision {
     EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
     DisplayPriority priority = DisplayPriority::ROTATION;
     uint32_t requestId = 0;
     RequestLifecycle lifecycle = RequestLifecycle::PERSISTENT;
-    TransitionMode transitionMode = TransitionMode::REPLACE;
+    bool preemptive = false;
     bool allowsOverlay = true;
     bool needsClear = true;
     bool isRealtime = false;
@@ -174,10 +168,6 @@ private:
     LockFreeSPSCQueue<ArbiterCommand, QUEUE_CAPACITY> _commandQueue;
     std::array<DisplayRequestSlot, MAX_REQUESTS> slots{};
     uint32_t _nextRequestId = 1;
-    DisplayPriority _lastPriority = DisplayPriority::ROTATION;
-    DisplaySourceId _lastSourceId = DisplaySourceId::ROTATION;
-    uint32_t _lastRequestId = 0;
-    bool _lastWasPreemptive = false;
 
     void applySubmit(const DisplayRequest& request, bool restartTimer);
     void applyCancel(DisplaySourceId sourceId);
