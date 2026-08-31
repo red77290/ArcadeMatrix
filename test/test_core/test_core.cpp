@@ -4,6 +4,7 @@
 #include "core/ConfigSanitizer.h"
 #include "core/ConfigLoader.h"
 #include "core/DisplayArbiter.h"
+#include "core/DisplayRuntime.h"
 #include "core/OverlayManager.h"
 #include "engines/EngineRegistrar.h"
 #include "hal/HardwareHAL.h"
@@ -16,6 +17,17 @@ public:
     void update(EngineContext* context) override {}
     void render(EngineContext* context) override {}
     void deactivate() override {}
+};
+
+class TrackingMockEngine : public IEngine {
+public:
+    int activateCalls = 0;
+    int deactivateCalls = 0;
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override { return EngineError::OK; }
+    void activate() override { activateCalls++; }
+    void update(EngineContext* context) override {}
+    void render(EngineContext* context) override {}
+    void deactivate() override { deactivateCalls++; }
 };
 
 void setUp(void) {
@@ -290,6 +302,89 @@ void test_config_snapshot_immutability_and_versioning(void) {
     TEST_ASSERT_NOT_NULL(s2.getInstance("test_clock"));
 }
 
+void test_triple_buffer_snapshot_publication_and_versioning(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+    uint32_t v0 = cfg.getVersion();
+
+    // 4 sequential mutations covering all 3 slots and wrapping around
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_1"; });
+    uint32_t v1 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v0, v1);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_1", cfg.getSnapshot().wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_2"; });
+    uint32_t v2 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v1, v2);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_2", cfg.getSnapshot().wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_3"; });
+    uint32_t v3 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v2, v3);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_3", cfg.getSnapshot().wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_4"; });
+    uint32_t v4 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v3, v4);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.getSnapshot().wifi.ssid.c_str());
+}
+
+void test_display_runtime_lifecycle_centralization(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine marqueeEngine;
+    TrackingMockEngine visualizerEngine;
+
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqueeEngine);
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visualizerEngine);
+
+    // Initial state: neither engine active
+    TEST_ASSERT_EQUAL(0, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 1. Transition to MARQUEE decision -> DisplayRuntime activates marquee
+    DisplayDecision d1;
+    d1.valid = true;
+    d1.sourceId = DisplaySourceId::MARQUEE;
+    d1.requestId = 101;
+    runtime.transitionSession(d1);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 2. Refresh same MARQUEE session -> No redundant activate/deactivate
+    runtime.transitionSession(d1);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+
+    // 3. Transition to VISUALIZER decision -> DisplayRuntime deactivates marquee and activates visualizer
+    DisplayDecision d2;
+    d2.valid = true;
+    d2.sourceId = DisplaySourceId::VISUALIZER;
+    d2.requestId = 102;
+    runtime.transitionSession(d2);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 4. Transition to ROTATION decision -> DisplayRuntime deactivates visualizer
+    DisplayDecision d3;
+    d3.valid = true;
+    d3.sourceId = DisplaySourceId::ROTATION;
+    d3.requestId = 103;
+    runtime.transitionSession(d3);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.deactivateCalls);
+}
+
 void test_requirements_gating(void) {
     EngineRequirements reqPsram;
     reqPsram.needsPsram = true;
@@ -436,6 +531,8 @@ void setup() {
     RUN_TEST(test_arbiter_one_shot_auto_consumption);
     RUN_TEST(test_arbiter_request_id_semantics);
     RUN_TEST(test_config_snapshot_immutability_and_versioning);
+    RUN_TEST(test_triple_buffer_snapshot_publication_and_versioning);
+    RUN_TEST(test_display_runtime_lifecycle_centralization);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
     RUN_TEST(test_canonical_overlays_schema_and_migration);

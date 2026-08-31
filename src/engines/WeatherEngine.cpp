@@ -37,7 +37,8 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
     } else {
         // Fallback: query active instance from global config
         extern ConfigLoader config;
-        for (const auto& inst : config.instances) {
+        const auto& snap = config.getSnapshot();
+        for (const auto& inst : snap.instances) {
             if (inst.engine_id == "weather") {
                 onConfigChanged(&inst.config);
                 break;
@@ -51,7 +52,8 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
 void WeatherEngine::activate() {
     if (config_api_key.isEmpty() || config_city.isEmpty()) {
         extern ConfigLoader config;
-        for (const auto& inst : config.instances) {
+        const auto& snap = config.getSnapshot();
+        for (const auto& inst : snap.instances) {
             if (inst.engine_id == "weather") {
                 onConfigChanged(&inst.config);
                 break;
@@ -75,7 +77,8 @@ void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     String newLang = engineConfig->getString("lang", "");
     if (newLang.isEmpty()) {
         extern ConfigLoader config;
-        newLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+        const auto& snap = config.getSnapshot();
+        newLang = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
     }
     String newUnits = engineConfig->getString("units", "metric");
     
@@ -136,7 +139,7 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city, cons
     
     // Invalidate if system language changed
     extern ConfigLoader config;
-    String sysLang = config.system.lang.length() > 0 ? config.system.lang : "fr";
+    String sysLang = config.getSnapshot().system.lang.length() > 0 ? config.getSnapshot().system.lang : "fr";
     if (sysLang != config_lang) {
         config_lang = sysLang;
         validData = false;

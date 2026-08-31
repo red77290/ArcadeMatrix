@@ -913,25 +913,26 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        // Matrix
-        doc["brightness_limit"] = config.matrix.powerLimitPercent;
-        doc["color_depth"] = config.matrix.colorDepth;
-        doc["matrix_chain"] = config.matrix.chainLength;
-        doc["matrix_rows"] = config.matrix.height;
-        doc["matrix_cols"] = config.matrix.width;
-        doc["matrix_rgb_sequence"] = config.matrix.rgbSequence;
-        doc["matrix_force_single_buffer"] = config.matrix.forceSingleBuffer;
-        doc["matrix_driver_chip"] = config.matrix.driverChip;
-        doc["matrix_clk_phase"] = config.matrix.clkPhase;
-        doc["matrix_latch_blanking"] = config.matrix.latchBlanking;
-        doc["matrix_row_address_mode"] = config.matrix.rowAddressMode;
-        doc["matrix_limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
-        doc["rotation_offset"] = config.matrix.rotation_offset;
-        doc["auto_rotate"] = config.matrix.auto_rotate;
-        doc["rotation_transition"] = config.matrix.rotation_transition;
-        doc["rotation_transition_duration_ms"] = config.matrix.rotation_transition_duration_ms;
-
         const ConfigSnapshot& snap = config.getSnapshot();
+
+        // Matrix
+        doc["brightness_limit"] = snap.matrix.powerLimitPercent;
+        doc["color_depth"] = snap.matrix.colorDepth;
+        doc["matrix_chain"] = snap.matrix.chainLength;
+        doc["matrix_rows"] = snap.matrix.height;
+        doc["matrix_cols"] = snap.matrix.width;
+        doc["matrix_rgb_sequence"] = snap.matrix.rgbSequence;
+        doc["matrix_force_single_buffer"] = snap.matrix.forceSingleBuffer;
+        doc["matrix_driver_chip"] = snap.matrix.driverChip;
+        doc["matrix_clk_phase"] = snap.matrix.clkPhase;
+        doc["matrix_latch_blanking"] = snap.matrix.latchBlanking;
+        doc["matrix_row_address_mode"] = snap.matrix.rowAddressMode;
+        doc["matrix_limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
+        doc["rotation_offset"] = snap.matrix.rotation_offset;
+        doc["auto_rotate"] = snap.matrix.auto_rotate;
+        doc["rotation_transition"] = snap.matrix.rotation_transition;
+        doc["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
+
         auto getInst = [&](const String& id) { return snap.getInstance(id); };
         
         // Crypto
@@ -955,12 +956,12 @@ void WebServerAPI::setupRoutes() {
 
         // Idle rotation
         String rotStr = "";
-        for (const auto& r : config.rotation) rotStr += r.instance_id + ",";
+        for (const auto& r : snap.rotation) rotStr += r.instance_id + ",";
         if (rotStr.endsWith(",")) rotStr.remove(rotStr.length()-1);
         doc["rotation"] = rotStr;
         
         auto getRot = [&](const String& id) {
-            for (const auto& r : config.rotation) if (r.instance_id == id) return r.duration_sec;
+            for (const auto& r : snap.rotation) if (r.instance_id == id) return r.duration_sec;
             return 15;
         };
         doc["clock_duration_sec"] = getRot("clock_main");
@@ -976,8 +977,8 @@ void WebServerAPI::setupRoutes() {
         }
 
         // Environment & Audio
-        doc["temp_unit"] = config.system.unit;
-        doc["temp_offset"] = config.system.temp_offset;
+        doc["temp_unit"] = snap.system.unit;
+        doc["temp_offset"] = snap.system.temp_offset;
         
         auto visInst = getInst("visualizer_main");
         if (visInst) {
@@ -1030,32 +1031,32 @@ void WebServerAPI::setupRoutes() {
         }
 
         // System / Time
-        doc["lang"] = config.system.lang;
-        doc["timezone"] = config.system.timezone;
-        doc["format_24h"] = config.system.format24h;
+        doc["lang"] = snap.system.lang;
+        doc["timezone"] = snap.system.timezone;
+        doc["format_24h"] = snap.system.format24h;
 
         // Standby
-        doc["night_mode_enabled"] = config.system.night_mode_enabled;
-        doc["turn_off_at"] = config.system.turn_off_at;
-        doc["wake_up_at"] = config.system.wake_up_at;
-        doc["night_brightness"] = config.system.night_brightness;
-        doc["idle_fighter_enabled"] = config.system.idle_fighter_enabled;
-        doc["idle_fighter_interval"] = config.system.idle_fighter_interval;
-        doc["matrix_power"] = config.matrix.matrix_power;
+        doc["night_mode_enabled"] = snap.system.night_mode_enabled;
+        doc["turn_off_at"] = snap.system.turn_off_at;
+        doc["wake_up_at"] = snap.system.wake_up_at;
+        doc["night_brightness"] = snap.system.night_brightness;
+        doc["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
+        doc["idle_fighter_interval"] = snap.system.idle_fighter_interval;
+        doc["matrix_power"] = snap.matrix.matrix_power;
 
         // WiFi
-        doc["wifi_ssid"] = config.wifi.ssid;
-        doc["wifi_hostname"] = config.wifi.hostname;
+        doc["wifi_ssid"] = snap.wifi.ssid;
+        doc["wifi_hostname"] = snap.wifi.hostname;
 
         // MQTT
-        doc["mqtt_enabled"] = config.mqtt.enabled;
-        doc["mqtt_broker"] = config.mqtt.broker;
-        doc["mqtt_port"] = config.mqtt.port;
-        doc["mqtt_user"] = config.mqtt.user;
-        doc["mqtt_pass"] = config.mqtt.pass;
-        doc["mqtt_topic_bato"] = config.mqtt.topic_batocera;
-        doc["mqtt_topic_recal"] = config.mqtt.topic_recalbox;
-        doc["mqtt_device"] = config.mqtt.deviceName;
+        doc["mqtt_enabled"] = snap.mqtt.enabled;
+        doc["mqtt_broker"] = snap.mqtt.broker;
+        doc["mqtt_port"] = snap.mqtt.port;
+        doc["mqtt_user"] = snap.mqtt.user;
+        doc["mqtt_pass"] = snap.mqtt.pass;
+        doc["mqtt_topic_bato"] = snap.mqtt.topic_batocera;
+        doc["mqtt_topic_recal"] = snap.mqtt.topic_recalbox;
+        doc["mqtt_device"] = snap.mqtt.deviceName;
 
         response->setLength();
         request->send(response);
@@ -1396,11 +1397,13 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         
         if (!doc["state"].isNull()) {
-            config.matrix.matrix_power = doc["state"].as<bool>();
+            config.mutate([&](ConfigLoader& cfg) {
+                cfg.matrix.matrix_power = doc["state"].as<bool>();
+            });
         }
         DynamicJsonDocument resp(1024);
         resp["status"] = "success";
-        resp["matrix_power"] = config.matrix.matrix_power;
+        resp["matrix_power"] = config.getSnapshot().matrix.matrix_power;
         String response;
         serializeJson(resp, response);
         request->send(200, "application/json", response);
@@ -1410,57 +1413,58 @@ void WebServerAPI::setupRoutes() {
     // API: System settings (GET /api/system)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
+        const ConfigSnapshot& snap = config.getSnapshot();
         DynamicJsonDocument doc(4096);
         JsonObject sys = doc.createNestedObject("system");
-        sys["lang"] = config.system.lang.length() > 0 ? config.system.lang : "fr";
-        sys["timezone"] = config.system.timezone;
-        sys["format_24h"] = config.system.format24h;
-        sys["unit"] = config.system.unit;
-        sys["temp_offset"] = config.system.temp_offset;
-        sys["night_mode_enabled"] = config.system.night_mode_enabled;
-        sys["turn_off_at"] = config.system.turn_off_at;
-        sys["wake_up_at"] = config.system.wake_up_at;
-        sys["night_brightness"] = config.system.night_brightness;
-        sys["day_brightness"] = config.matrix.powerLimitPercent;
-        sys["brightness_limit"] = config.matrix.powerLimitPercent;
-        sys["idle_fighter_enabled"] = config.system.idle_fighter_enabled;
-        sys["idle_fighter_interval"] = config.system.idle_fighter_interval;
+        sys["lang"] = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
+        sys["timezone"] = snap.system.timezone;
+        sys["format_24h"] = snap.system.format24h;
+        sys["unit"] = snap.system.unit;
+        sys["temp_offset"] = snap.system.temp_offset;
+        sys["night_mode_enabled"] = snap.system.night_mode_enabled;
+        sys["turn_off_at"] = snap.system.turn_off_at;
+        sys["wake_up_at"] = snap.system.wake_up_at;
+        sys["night_brightness"] = snap.system.night_brightness;
+        sys["day_brightness"] = snap.matrix.powerLimitPercent;
+        sys["brightness_limit"] = snap.matrix.powerLimitPercent;
+        sys["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
+        sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
 
         JsonObject mat = doc.createNestedObject("matrix");
-        mat["height"] = config.matrix.height;
-        mat["width"] = config.matrix.width;
-        mat["chain_length"] = config.matrix.chainLength;
+        mat["height"] = snap.matrix.height;
+        mat["width"] = snap.matrix.width;
+        mat["chain_length"] = snap.matrix.chainLength;
         mat["parallel"] = 1;
-        mat["driver_chip"] = config.matrix.driverChip;
-        mat["row_address_mode"] = config.matrix.rowAddressMode;
+        mat["driver_chip"] = snap.matrix.driverChip;
+        mat["row_address_mode"] = snap.matrix.rowAddressMode;
         mat["multiplexing"] = 0;
         mat["mapping"] = "regular";
-        mat["rgb_sequence"] = config.matrix.rgbSequence;
+        mat["rgb_sequence"] = snap.matrix.rgbSequence;
         mat["slowdown"] = 1;
-        mat["pwm_bits"] = config.matrix.colorDepth;
+        mat["pwm_bits"] = snap.matrix.colorDepth;
         mat["pwm_lsb_nanoseconds"] = 130;
         mat["disable_hardware_pulsing"] = false;
-        mat["limit_refresh_rate_hz"] = config.matrix.limitRefreshRateHz;
-        mat["clk_phase"] = config.matrix.clkPhase;
-        mat["latch_blanking"] = config.matrix.latchBlanking;
-        mat["rotation_offset"] = config.matrix.rotation_offset;
-        mat["auto_rotate"] = config.matrix.auto_rotate;
-        mat["rotation_transition"] = config.matrix.rotation_transition;
-        mat["rotation_transition_duration_ms"] = config.matrix.rotation_transition_duration_ms;
+        mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
+        mat["clk_phase"] = snap.matrix.clkPhase;
+        mat["latch_blanking"] = snap.matrix.latchBlanking;
+        mat["rotation_offset"] = snap.matrix.rotation_offset;
+        mat["auto_rotate"] = snap.matrix.auto_rotate;
+        mat["rotation_transition"] = snap.matrix.rotation_transition;
+        mat["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
 
         JsonObject mqtt = doc.createNestedObject("mqtt");
-        mqtt["enabled"] = config.mqtt.enabled;
-        mqtt["broker"] = config.mqtt.broker;
-        mqtt["port"] = config.mqtt.port;
-        mqtt["user"] = config.mqtt.user;
-        mqtt["pass"] = config.mqtt.pass;
-        mqtt["topic_batocera"] = config.mqtt.topic_batocera;
-        mqtt["topic_recalbox"] = config.mqtt.topic_recalbox;
-        mqtt["device_name"] = config.mqtt.deviceName;
+        mqtt["enabled"] = snap.mqtt.enabled;
+        mqtt["broker"] = snap.mqtt.broker;
+        mqtt["port"] = snap.mqtt.port;
+        mqtt["user"] = snap.mqtt.user;
+        mqtt["pass"] = snap.mqtt.pass;
+        mqtt["topic_batocera"] = snap.mqtt.topic_batocera;
+        mqtt["topic_recalbox"] = snap.mqtt.topic_recalbox;
+        mqtt["device_name"] = snap.mqtt.deviceName;
 
         JsonObject wifi = doc.createNestedObject("wifi");
-        wifi["ssid"] = config.wifi.ssid;
-        wifi["hostname"] = config.wifi.hostname;
+        wifi["ssid"] = snap.wifi.ssid;
+        wifi["hostname"] = snap.wifi.hostname;
 
         doc["api_auth_enabled"] = false;
         doc["api_token"] = "";
@@ -1479,131 +1483,135 @@ void WebServerAPI::setupRoutes() {
         JsonObject doc = json.as<JsonObject>();
         extern ConfigLoader config;
         bool changed = false;
-
-        JsonObject sys = doc.containsKey("system") ? doc["system"].as<JsonObject>() : doc;
-        if (!sys["lang"].isNull()) {
-            String newLang = sys["lang"].as<String>();
-            if (newLang != config.system.lang) {
-                config.system.lang = newLang;
-                changed = true;
-                if (rotationManager) {
-                    for (const auto& inst : config.instances) {
-                        rotationManager->notifyConfigChanged(inst.instance_id);
-                    }
-                }
-            }
-        }
-        if (!sys["timezone"].isNull()) {
-            config.system.timezone = sys["timezone"].as<String>();
-            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
-            changed = true;
-        }
-        if (!sys["format_24h"].isNull()) {
-            config.system.format24h = sys["format_24h"].as<bool>();
-            changed = true;
-        }
-        if (!sys["unit"].isNull()) {
-            config.system.unit = sys["unit"].as<String>();
-            changed = true;
-        }
-        if (!sys["temp_offset"].isNull()) {
-            config.system.temp_offset = sys["temp_offset"].as<float>();
-            changed = true;
-        }
-        if (!sys["night_mode_enabled"].isNull()) {
-            config.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
-            changed = true;
-        }
-        if (!sys["turn_off_at"].isNull()) {
-            config.system.turn_off_at = sys["turn_off_at"].as<String>();
-            changed = true;
-        }
-        if (!sys["wake_up_at"].isNull()) {
-            config.system.wake_up_at = sys["wake_up_at"].as<String>();
-            changed = true;
-        }
-        if (!sys["night_brightness"].isNull()) {
-            config.system.night_brightness = sys["night_brightness"].as<int>();
-            changed = true;
-        }
-        if (!sys["brightness_limit"].isNull() || !sys["brightness"].isNull() || !sys["day_brightness"].isNull()) {
-            int b = !sys["brightness_limit"].isNull() ? sys["brightness_limit"].as<int>() : (!sys["brightness"].isNull() ? sys["brightness"].as<int>() : sys["day_brightness"].as<int>());
-            if (b < 1) b = 1;
-            if (b > 100) b = 100;
-            config.matrix.powerLimitPercent = b;
-            extern MatrixEngine matrixEngine;
-            matrixEngine.setBrightness(b);
-            changed = true;
-        }
-        if (!sys["idle_fighter_enabled"].isNull()) {
-            config.system.idle_fighter_enabled = sys["idle_fighter_enabled"].as<bool>();
-            changed = true;
-        }
-        if (!sys["idle_fighter_interval"].isNull()) {
-            config.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
-            changed = true;
-        }
-
         bool willReboot = false;
         if (doc.containsKey("reboot") && doc["reboot"].as<bool>()) willReboot = true;
+        bool langChanged = false;
 
-        if (doc.containsKey("matrix")) {
-            JsonObject mat = doc["matrix"].as<JsonObject>();
-            if (!mat["height"].isNull()) config.matrix.height = mat["height"].as<int>();
-            if (!mat["width"].isNull()) config.matrix.width = mat["width"].as<int>();
-            if (!mat["chain_length"].isNull()) config.matrix.chainLength = mat["chain_length"].as<int>();
-            if (!mat["driver_chip"].isNull()) config.matrix.driverChip = mat["driver_chip"].as<String>();
-            if (!mat["row_address_mode"].isNull()) config.matrix.rowAddressMode = mat["row_address_mode"].as<int>();
-            if (!mat["rgb_sequence"].isNull()) config.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
-            if (!mat["pwm_bits"].isNull()) config.matrix.colorDepth = mat["pwm_bits"].as<int>();
-            else if (!mat["color_depth"].isNull()) config.matrix.colorDepth = mat["color_depth"].as<int>();
-            if (!mat["limit_refresh_rate_hz"].isNull()) config.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
-            if (!mat["clk_phase"].isNull()) config.matrix.clkPhase = mat["clk_phase"].as<bool>();
-            else if (!mat["clkPhase"].isNull()) config.matrix.clkPhase = mat["clkPhase"].as<bool>();
-            if (!mat["latch_blanking"].isNull()) config.matrix.latchBlanking = mat["latch_blanking"].as<int>();
-            else if (!mat["latchBlanking"].isNull()) config.matrix.latchBlanking = mat["latchBlanking"].as<int>();
-            if (!mat["rotation_offset"].isNull()) {
-                config.matrix.rotation_offset = mat["rotation_offset"].as<int>();
-                displayOrientationManager.setRotationOffset(config.matrix.rotation_offset);
+        config.mutate([&](ConfigLoader& cfg) {
+            JsonObject sys = doc.containsKey("system") ? doc["system"].as<JsonObject>() : doc;
+            if (!sys["lang"].isNull()) {
+                String newLang = sys["lang"].as<String>();
+                if (newLang != cfg.system.lang) {
+                    cfg.system.lang = newLang;
+                    changed = true;
+                    langChanged = true;
+                }
             }
-            if (!mat["auto_rotate"].isNull()) config.matrix.auto_rotate = mat["auto_rotate"].as<bool>();
-            if (!mat["rotation_transition"].isNull()) {
-                config.matrix.rotation_transition = mat["rotation_transition"].as<String>();
-                displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
+            if (!sys["timezone"].isNull()) {
+                cfg.system.timezone = sys["timezone"].as<String>();
+                configTzTime(getPosixTimezone(cfg.system.timezone).c_str(), "pool.ntp.org");
+                changed = true;
             }
-            if (!mat["rotation_transition_duration_ms"].isNull()) {
-                config.matrix.rotation_transition_duration_ms = mat["rotation_transition_duration_ms"].as<int>();
-                displayOrientationManager.setTransitionDuration(config.matrix.rotation_transition_duration_ms);
+            if (!sys["format_24h"].isNull()) {
+                cfg.system.format24h = sys["format_24h"].as<bool>();
+                changed = true;
             }
-            changed = true;
-            willReboot = true;
-        }
+            if (!sys["unit"].isNull()) {
+                cfg.system.unit = sys["unit"].as<String>();
+                changed = true;
+            }
+            if (!sys["temp_offset"].isNull()) {
+                cfg.system.temp_offset = sys["temp_offset"].as<float>();
+                changed = true;
+            }
+            if (!sys["night_mode_enabled"].isNull()) {
+                cfg.system.night_mode_enabled = sys["night_mode_enabled"].as<bool>();
+                changed = true;
+            }
+            if (!sys["turn_off_at"].isNull()) {
+                cfg.system.turn_off_at = sys["turn_off_at"].as<String>();
+                changed = true;
+            }
+            if (!sys["wake_up_at"].isNull()) {
+                cfg.system.wake_up_at = sys["wake_up_at"].as<String>();
+                changed = true;
+            }
+            if (!sys["night_brightness"].isNull()) {
+                cfg.system.night_brightness = sys["night_brightness"].as<int>();
+                changed = true;
+            }
+            if (!sys["brightness_limit"].isNull() || !sys["brightness"].isNull() || !sys["day_brightness"].isNull()) {
+                int b = !sys["brightness_limit"].isNull() ? sys["brightness_limit"].as<int>() : (!sys["brightness"].isNull() ? sys["brightness"].as<int>() : sys["day_brightness"].as<int>());
+                if (b < 1) b = 1;
+                if (b > 100) b = 100;
+                cfg.matrix.powerLimitPercent = b;
+                extern MatrixEngine matrixEngine;
+                matrixEngine.setBrightness(b);
+                changed = true;
+            }
+            if (!sys["idle_fighter_enabled"].isNull()) {
+                cfg.system.idle_fighter_enabled = sys["idle_fighter_enabled"].as<bool>();
+                changed = true;
+            }
+            if (!sys["idle_fighter_interval"].isNull()) {
+                cfg.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
+                changed = true;
+            }
 
-        if (doc.containsKey("mqtt")) {
-            JsonObject mq = doc["mqtt"].as<JsonObject>();
-            bool prevMqtt = config.mqtt.enabled;
-            if (!mq["enabled"].isNull()) config.mqtt.enabled = mq["enabled"].as<bool>();
-            if (!mq["broker"].isNull()) config.mqtt.broker = mq["broker"].as<String>();
-            if (!mq["port"].isNull()) config.mqtt.port = mq["port"].as<int>();
-            if (!mq["user"].isNull()) config.mqtt.user = mq["user"].as<String>();
-            if (!mq["pass"].isNull()) config.mqtt.pass = mq["pass"].as<String>();
-            if (!mq["topic_batocera"].isNull()) config.mqtt.topic_batocera = mq["topic_batocera"].as<String>();
-            if (!mq["topic_recalbox"].isNull()) config.mqtt.topic_recalbox = mq["topic_recalbox"].as<String>();
-            if (!mq["device_name"].isNull()) config.mqtt.deviceName = mq["device_name"].as<String>();
-            changed = true;
-            if (prevMqtt != config.mqtt.enabled) {
+            if (doc.containsKey("matrix")) {
+                JsonObject mat = doc["matrix"].as<JsonObject>();
+                if (!mat["height"].isNull()) cfg.matrix.height = mat["height"].as<int>();
+                if (!mat["width"].isNull()) cfg.matrix.width = mat["width"].as<int>();
+                if (!mat["chain_length"].isNull()) cfg.matrix.chainLength = mat["chain_length"].as<int>();
+                if (!mat["driver_chip"].isNull()) cfg.matrix.driverChip = mat["driver_chip"].as<String>();
+                if (!mat["row_address_mode"].isNull()) cfg.matrix.rowAddressMode = mat["row_address_mode"].as<int>();
+                if (!mat["rgb_sequence"].isNull()) cfg.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
+                if (!mat["pwm_bits"].isNull()) cfg.matrix.colorDepth = mat["pwm_bits"].as<int>();
+                else if (!mat["color_depth"].isNull()) cfg.matrix.colorDepth = mat["color_depth"].as<int>();
+                if (!mat["limit_refresh_rate_hz"].isNull()) cfg.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
+                if (!mat["clk_phase"].isNull()) cfg.matrix.clkPhase = mat["clk_phase"].as<bool>();
+                else if (!mat["clkPhase"].isNull()) cfg.matrix.clkPhase = mat["clkPhase"].as<bool>();
+                if (!mat["latch_blanking"].isNull()) cfg.matrix.latchBlanking = mat["latch_blanking"].as<int>();
+                else if (!mat["latchBlanking"].isNull()) cfg.matrix.latchBlanking = mat["latchBlanking"].as<int>();
+                if (!mat["rotation_offset"].isNull()) {
+                    cfg.matrix.rotation_offset = mat["rotation_offset"].as<int>();
+                    displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);
+                }
+                if (!mat["auto_rotate"].isNull()) cfg.matrix.auto_rotate = mat["auto_rotate"].as<bool>();
+                if (!mat["rotation_transition"].isNull()) {
+                    cfg.matrix.rotation_transition = mat["rotation_transition"].as<String>();
+                    displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
+                }
+                if (!mat["rotation_transition_duration_ms"].isNull()) {
+                    cfg.matrix.rotation_transition_duration_ms = mat["rotation_transition_duration_ms"].as<int>();
+                    displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
+                }
+                changed = true;
                 willReboot = true;
             }
-        }
+
+            if (doc.containsKey("mqtt")) {
+                JsonObject mq = doc["mqtt"].as<JsonObject>();
+                bool prevMqtt = cfg.mqtt.enabled;
+                if (!mq["enabled"].isNull()) cfg.mqtt.enabled = mq["enabled"].as<bool>();
+                if (!mq["broker"].isNull()) cfg.mqtt.broker = mq["broker"].as<String>();
+                if (!mq["port"].isNull()) cfg.mqtt.port = mq["port"].as<int>();
+                if (!mq["user"].isNull()) cfg.mqtt.user = mq["user"].as<String>();
+                if (!mq["pass"].isNull()) cfg.mqtt.pass = mq["pass"].as<String>();
+                if (!mq["topic_batocera"].isNull()) cfg.mqtt.topic_batocera = mq["topic_batocera"].as<String>();
+                if (!mq["topic_recalbox"].isNull()) cfg.mqtt.topic_recalbox = mq["topic_recalbox"].as<String>();
+                if (!mq["device_name"].isNull()) cfg.mqtt.deviceName = mq["device_name"].as<String>();
+                changed = true;
+                if (prevMqtt != cfg.mqtt.enabled) {
+                    willReboot = true;
+                }
+            }
+        });
 
         if (changed) {
             ConfigSanitizer::sanitize(config);
             config.saveToSD("/config.json");
         }
 
+        if (langChanged && rotationManager) {
+            for (const auto& inst : config.getSnapshot().instances) {
+                rotationManager->notifyConfigChanged(inst.instance_id);
+            }
+        }
+
         DynamicJsonDocument resp(512);
         resp["status"] = willReboot ? "rebooting" : "success";
-        resp["lang"] = config.system.lang;
+        resp["lang"] = config.getSnapshot().system.lang;
         String response;
         serializeJson(resp, response);
         request->send(200, "application/json", response);

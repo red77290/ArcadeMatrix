@@ -15,7 +15,8 @@ void ConfigLoader::publishSnapshot() {
 }
 
 void ConfigLoader::publishSnapshot_locked() {
-    uint8_t nextIndex = 1 - _readIndex.load(std::memory_order_relaxed);
+    uint8_t currentRead = _readIndex.load(std::memory_order_relaxed);
+    uint8_t nextIndex = (currentRead + 1) % 3;
     ConfigSnapshot& snap = _snapshots[nextIndex];
 
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
