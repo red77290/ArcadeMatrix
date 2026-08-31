@@ -182,8 +182,6 @@ public:
      */
     ConfigSnapshotGuard acquireSnapshot() const;
 
-    void releaseSnapshot(uint8_t slot) const;
-
     inline uint32_t getVersion() const {
         return _configVersion.load(std::memory_order_relaxed);
     }
@@ -235,6 +233,8 @@ public:
     }
 
 private:
+    void releaseSnapshot(uint8_t slot) const;
+
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
     mutable std::atomic<uint8_t> _publishedSlot{0};
