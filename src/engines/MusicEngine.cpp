@@ -83,34 +83,55 @@ uint16_t MusicEngine::getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* di
     }
 }
 
+#include <glcdfont.c>
+
 static void drawClippedText(MatrixPanel_I2S_DMA* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
     if (!display || text.isEmpty()) return;
     int curX = x;
     for (size_t i = 0; i < text.length(); i++) {
         char c = text[i];
-        if (curX + 6 > clipMinX && curX < clipMaxX) {
+        if (curX >= clipMinX && curX + 6 <= clipMaxX) {
             display->drawChar(curX, y, c, color, 0, 1);
+        } else if (curX + 6 > clipMinX && curX < clipMaxX) {
+            for (int col = 0; col < 5; col++) {
+                int px = curX + col;
+                if (px >= clipMinX && px < clipMaxX) {
+                    uint8_t line = pgm_read_byte(&font[c * 5 + col]);
+                    for (int row = 0; row < 8; row++) {
+                        if (line & 1) {
+                            display->drawPixel(px, y + row, color);
+                        }
+                        line >>= 1;
+                    }
+                }
+            }
         }
         curX += 6;
     }
 }
 
 void MusicEngine::renderMarqueeText(MatrixPanel_I2S_DMA* display, const String& text, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || text.isEmpty()) return;
     int availW = clipMaxX - clipMinX;
     int textW = (int)text.length() * 6;
-    int drawX = clipMinX;
 
-    if (textW > availW) {
-        int overflow = textW - availW + 12;
-        int pauseStart = 30; // ~1s pause before start
-        int pauseEnd = 20;   // ~0.7s pause at end
-        int cycle = max(1, pauseStart + overflow + pauseEnd);
-        int phase = (_marqueeOffset % cycle + cycle) % cycle;
-        int dx = (phase < pauseStart) ? 0 : (phase < pauseStart + overflow ? (phase - pauseStart) : overflow);
-        drawX = clipMinX - dx;
+    if (textW <= availW) {
+        drawClippedText(display, text, clipMinX, y, clipMinX, clipMaxX, color);
+    } else {
+        int gap = 20; // 20px seamless spacing between loop repetitions (matches RPi)
+        int totalW = textW + gap;
+        int dx = (_marqueeOffset % totalW + totalW) % totalW;
+
+        // Draw primary text instance
+        int drawX1 = clipMinX - dx;
+        drawClippedText(display, text, drawX1, y, clipMinX, clipMaxX, color);
+
+        // Draw trailing secondary instance for circular looping
+        int drawX2 = drawX1 + totalW;
+        if (drawX2 < clipMaxX) {
+            drawClippedText(display, text, drawX2, y, clipMinX, clipMaxX, color);
+        }
     }
-
-    drawClippedText(display, text, drawX, y, clipMinX, clipMaxX, color);
 }
 
 #include "../services/AudioAnalysisService.h"

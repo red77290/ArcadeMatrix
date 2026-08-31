@@ -1,11 +1,21 @@
 #include "SpotifyEngine.h"
 #include "../core/Logger.h"
+#include "../services/ArtworkService.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 SpotifyEngine::SpotifyEngine() {
+}
+
+SpotifyEngine::~SpotifyEngine() {
+    m_taskRunning = false;
+    m_isActive = false;
+    if (m_pollTaskHandle) {
+        vTaskDelete(m_pollTaskHandle);
+        m_pollTaskHandle = nullptr;
+    }
 }
 
 void SpotifyEngine::applyConfig(const EngineConfig* config) {
@@ -21,9 +31,45 @@ void SpotifyEngine::applyConfig(const EngineConfig* config) {
     m_tokenExpiry = 0;
 }
 
+void SpotifyEngine::pollTaskStatic(void* pvParameters) {
+    auto* self = static_cast<SpotifyEngine*>(pvParameters);
+    if (self) {
+        self->pollTaskLoop();
+    }
+    vTaskDelete(NULL);
+}
+
+void SpotifyEngine::pollTaskLoop() {
+    while (m_taskRunning) {
+        if (m_isActive && WiFi.status() == WL_CONNECTED) {
+            pollSpotifyStatus();
+        }
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+}
+
 EngineError SpotifyEngine::initialize(EngineContext* context, const EngineConfig* config) {
     applyConfig(config);
-    LOGI("Spotify", "Initialized with client_id: %s", m_clientId.c_str());
+    m_hasPsram = (context && context->hasPsram()) || psramFound();
+
+    if (!m_pollTaskHandle) {
+        m_taskRunning = true;
+        BaseType_t ret = xTaskCreatePinnedToCore(
+            pollTaskStatic,
+            "SpotPoll",
+            8192,
+            this,
+            1,
+            &m_pollTaskHandle,
+            0
+        );
+        if (ret != pdPASS) {
+            LOGE("Spotify", "Failed to create SpotPoll worker task!");
+            m_taskRunning = false;
+        }
+    }
+
+    LOGI("Spotify", "Initialized with client_id: %s (PSRAM: %s)", m_clientId.c_str(), m_hasPsram ? "ENABLED" : "DISABLED");
     return EngineError::OK;
 }
 
@@ -31,10 +77,11 @@ void SpotifyEngine::activate() {
     m_marqueeOffset = 0;
     m_lastMarqueeTick = millis();
     m_lastAnimTick = millis();
-    pollSpotifyStatus();
+    m_isActive = true;
 }
 
 void SpotifyEngine::deactivate() {
+    m_isActive = false;
 }
 
 void SpotifyEngine::onConfigChanged(const EngineConfig* config) {
@@ -79,9 +126,6 @@ bool SpotifyEngine::refreshAccessToken() {
 }
 
 void SpotifyEngine::pollSpotifyStatus() {
-    if (WiFi.status() != WL_CONNECTED) return;
-    m_state.lastPollTime = millis();
-
     if (!refreshAccessToken()) return;
 
     WiFiClientSecure client;
@@ -93,11 +137,15 @@ void SpotifyEngine::pollSpotifyStatus() {
 
     int httpCode = http.GET();
     if (httpCode == 204) {
-        // No music currently playing
         m_state.isActive = false;
         m_state.isPlaying = false;
         http.end();
         client.stop();
+
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            m_renderState = m_state;
+        }
         return;
     }
 
@@ -137,13 +185,33 @@ void SpotifyEngine::pollSpotifyStatus() {
 
     http.end();
     client.stop();
+
+    if (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty()) {
+        if (m_state.imageUrl != m_loadedImageUrl) {
+            m_loadedImageUrl = m_state.imageUrl;
+            int imgSize = 52;
+            m_artworkId = artworkService.loadArtwork(m_loadedImageUrl, imgSize, imgSize);
+        }
+    } else if (m_state.imageUrl.isEmpty()) {
+        m_artworkId = "";
+        m_loadedImageUrl = "";
+    }
+
+    m_state.localTimestampMs = millis();
+
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        m_renderState = m_state;
+    }
 }
 
 void SpotifyEngine::update(EngineContext* context) {
     uint32_t now = millis();
 
-    if (now - m_state.lastPollTime >= 2000) {
-        pollSpotifyStatus();
+    SpotifyMediaState st;
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        st = m_renderState;
     }
 
     if (now - m_lastMarqueeTick >= 40) {
@@ -151,37 +219,59 @@ void SpotifyEngine::update(EngineContext* context) {
         m_lastMarqueeTick = now;
     }
 
-    if (m_state.isPlaying && (now - m_lastAnimTick >= 80)) {
+    if (st.isPlaying && (now - m_lastAnimTick >= 80)) {
         m_animFrame = (m_animFrame + 1) % 100;
         m_lastAnimTick = now;
     }
 }
+
+#include <glcdfont.c>
 
 static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
     if (!display || text.isEmpty()) return;
     int curX = x;
     for (size_t i = 0; i < text.length(); i++) {
         char c = text[i];
-        if (curX + 6 > clipMinX && curX < clipMaxX) {
+        if (curX >= clipMinX && curX + 6 <= clipMaxX) {
             display->drawChar(curX, y, c, color, 0, 1);
+        } else if (curX + 6 > clipMinX && curX < clipMaxX) {
+            for (int col = 0; col < 5; col++) {
+                int px = curX + col;
+                if (px >= clipMinX && px < clipMaxX) {
+                    uint8_t line = pgm_read_byte(&font[c * 5 + col]);
+                    for (int row = 0; row < 8; row++) {
+                        if (line & 1) {
+                            display->drawPixel(px, y + row, color);
+                        }
+                        line >>= 1;
+                    }
+                }
+            }
         }
         curX += 6;
     }
 }
 
 static void renderMarquee(Adafruit_GFX* display, const String& text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
+    if (!display || text.isEmpty()) return;
     int textW = text.length() * 6;
-    int drawX = clipMinX;
-    if (textW > availW) {
-        int overflow = textW - availW + 12;
-        int pauseStart = 35; // ~1.2s initial pause
-        int pauseEnd = 20;   // ~0.7s pause at end
-        int cycle = max(1, pauseStart + overflow + pauseEnd);
-        int phase = (offset % cycle + cycle) % cycle;
-        int dx = (phase < pauseStart) ? 0 : (phase < pauseStart + overflow ? (phase - pauseStart) : overflow);
-        drawX = clipMinX - dx;
+    if (textW <= availW) {
+        drawClippedString(display, text, clipMinX, y, clipMinX, clipMaxX, color);
+    } else {
+        int gap = 20; // 20px seamless spacing between loop repetitions (matches RPi)
+        int totalW = textW + gap;
+        int dx = (offset % totalW + totalW) % totalW;
+
+        // Draw primary text instance
+        int drawX1 = clipMinX - dx;
+        drawClippedString(display, text, drawX1, y, clipMinX, clipMaxX, color);
+
+        // Draw trailing secondary instance for circular looping
+        int drawX2 = drawX1 + totalW;
+        if (drawX2 < clipMaxX) {
+            drawClippedString(display, text, drawX2, y, clipMinX, clipMaxX, color);
+        }
     }
-    drawClippedString(display, text, drawX, y, clipMinX, clipMaxX, color);
 }
 
 void SpotifyEngine::render(EngineContext* context) {
@@ -192,7 +282,13 @@ void SpotifyEngine::render(EngineContext* context) {
     int w = display->width();
     int h = display->height();
 
-    if (!m_state.isActive || m_state.title.isEmpty()) {
+    SpotifyMediaState st;
+    {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        st = m_renderState;
+    }
+
+    if (!st.isActive || st.title.isEmpty()) {
         String title = "Spotify";
         String subtitle = "Ready to stream";
 
@@ -222,27 +318,35 @@ void SpotifyEngine::render(EngineContext* context) {
     }
 
     int textX = 2;
-    bool hasArt = (m_showAlbumArt && !m_state.imageUrl.isEmpty());
+    bool hasArt = (m_hasPsram && m_showAlbumArt && !st.imageUrl.isEmpty());
 
-    // 1. Album Cover Art frame
     if (hasArt) {
         int imgSize = (h >= 64) ? 52 : 24;
         int imgX = 1;
         int imgY = (h >= 64) ? ((h - 4 - imgSize) / 2) : max(1, (h - 3 - imgSize) / 2);
 
         display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(30, 45, 35));
-        textX = imgX + imgSize + 3;
+
+        if (!m_artworkId.isEmpty()) {
+            int artW = 0, artH = 0;
+            const uint16_t* artBmp = artworkService.getArtworkBitmap(m_artworkId, artW, artH);
+            if (artBmp && artW > 0 && artH > 0) {
+                int drawW = min(imgSize, artW);
+                int drawH = min(imgSize, artH);
+                display->drawRGBBitmap(imgX, imgY, artBmp, drawW, drawH);
+            }
+        }
+        textX = imgX + imgSize + 4;
     }
 
     bool isCompact = (w <= 64);
     int rightReserved = 2;
-    if (m_showVisualizer && m_state.isPlaying) {
+    if (m_showVisualizer && st.isPlaying) {
         rightReserved = (isCompact && hasArt) ? 8 : 15;
-    } else if (m_showVolume && m_state.volumePercent > 0) {
+    } else if (m_showVolume && st.volumePercent > 0) {
         rightReserved = 24;
     }
 
-    // Strict viewport for text
     int clipMinX = textX;
     int clipMaxX = w - rightReserved;
     int availW = max(16, clipMaxX - clipMinX);
@@ -250,19 +354,15 @@ void SpotifyEngine::render(EngineContext* context) {
     int yTitle = (h >= 64) ? 8 : 3;
     int yArtist = (h >= 64) ? 22 : 13;
 
-    // 2. Title (Marquee)
-    renderMarquee(display, m_state.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
+    renderMarquee(display, st.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
 
-    // 3. Artist / Album (Marquee)
-    String artistStr = !m_state.artist.isEmpty() ? m_state.artist : (!m_state.album.isEmpty() ? m_state.album : "Spotify");
+    String artistStr = !st.artist.isEmpty() ? st.artist : (!st.album.isEmpty() ? st.album : "Spotify");
     renderMarquee(display, artistStr, yArtist, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(30, 215, 96));
 
-    // 4. Equalizer Visualizer on the right
-    if (m_showVisualizer && m_state.isPlaying) {
+    if (m_showVisualizer && st.isPlaying) {
         int eqBaseY = (h >= 64) ? 44 : 21;
 
         if (isCompact && hasArt) {
-            // 3 compact bars (2px wide each, 1px spacing)
             int eqX = w - 7;
             int barHeights[3] = {
                 (int)((m_animFrame * 4) % 7 + 2),
@@ -282,7 +382,6 @@ void SpotifyEngine::render(EngineContext* context) {
                 }
             }
         } else {
-            // 4 wide bars (2px wide + 1px spacing)
             int eqX = w - 13;
             int barHeights[4] = {
                 (int)((m_animFrame * 4) % 8 + 2),
@@ -304,26 +403,29 @@ void SpotifyEngine::render(EngineContext* context) {
                 }
             }
         }
-    } else if (m_showVolume && m_state.volumePercent > 0) {
+    } else if (m_showVolume && st.volumePercent > 0) {
         char vBuf[8];
-        snprintf(vBuf, sizeof(vBuf), "%d%%", m_state.volumePercent);
+        snprintf(vBuf, sizeof(vBuf), "%d%%", st.volumePercent);
         int vLen = strlen(vBuf);
         display->setTextColor(display->color565(180, 180, 180));
         display->setCursor(w - (vLen * 6) - 1, yTitle);
         display->print(vBuf);
     }
 
-    // 5. Progress Bar (Bottom 2 pixels)
-    if (m_showProgress && m_state.durationMs > 0) {
-        float progress = constrain((float)m_state.progressMs / (float)m_state.durationMs, 0.0f, 1.0f);
+    if (m_showProgress && st.durationMs > 0) {
+        uint32_t curMs = st.progressMs;
+        if (st.isPlaying && st.localTimestampMs > 0) {
+            curMs += (millis() - st.localTimestampMs);
+        }
+        float progress = constrain((float)curMs / (float)st.durationMs, 0.0f, 1.0f);
         int barW = (int)((w - 2) * progress);
 
-        display->drawFastHLine(1, h - 2, w - 2, display->color565(30, 35, 30));
-        display->drawFastHLine(1, h - 1, w - 2, display->color565(18, 22, 18));
+        display->drawFastHLine(1, h - 2, w - 2, display->color565(35, 45, 35));
+        display->drawFastHLine(1, h - 1, w - 2, display->color565(20, 30, 20));
 
         if (barW > 0) {
             display->drawFastHLine(1, h - 2, barW, display->color565(30, 215, 96));
-            display->drawFastHLine(1, h - 1, barW, display->color565(20, 150, 65));
+            display->drawFastHLine(1, h - 1, barW, display->color565(15, 140, 60));
         }
     }
 }
@@ -336,16 +438,16 @@ EngineDescriptor SpotifyDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
 
     desc.requirements.needsNetwork = true;
-    desc.requirements.needsPsram = true; // Requires PSRAM (ESP32-S3)
+    desc.requirements.needsPsram = false;
 
     desc.schema.fields = {
-        ConfigField("client_id", ConfigType::STRING, "Spotify Client ID", "Your Spotify Developer API Client ID.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("client_secret", ConfigType::STRING, "Spotify Client Secret", "Your Spotify Developer API Client Secret.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("refresh_token", ConfigType::STRING, "Spotify Refresh Token", "Your OAuth2 Refresh Token for continuous playback sync.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("show_album_art", ConfigType::BOOLEAN, "Show Album Cover", "Display Spotify album cover art on the matrix.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_progress", ConfigType::BOOLEAN, "Show Progress Bar", "Render track playback progress bar at the bottom.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_visualizer", ConfigType::BOOLEAN, "Animated Equalizer", "Display dancing equalizer frequency bars while music is playing.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("show_volume", ConfigType::BOOLEAN, "Show Volume Indicator", "Display Spotify active playback volume percentage.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
+        ConfigField("client_id", ConfigType::STRING, "Client ID", "Spotify Developer Client ID.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("client_secret", ConfigType::STRING, "Client Secret", "Spotify Developer Client Secret.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("refresh_token", ConfigType::STRING, "Refresh Token", "Spotify OAuth2 Refresh Token.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("show_album_art", ConfigType::BOOLEAN, "Show Album Art", "Download and display Spotify album cover art (requires PSRAM).", "true", false, "", "", "", "", "", false, "psram=true", ValidationPolicy::FallbackDefault),
+        ConfigField("show_progress", ConfigType::BOOLEAN, "Show Progress Bar", "Render playback progress bar at the bottom.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("show_visualizer", ConfigType::BOOLEAN, "Animated Equalizer", "Display equalizer frequency bars while music is playing.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("show_volume", ConfigType::BOOLEAN, "Show Volume Indicator", "Display current Spotify device volume level.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault)
     };
 
     desc.factory = []() {
