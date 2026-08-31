@@ -69,10 +69,12 @@ bool SpotifyEngine::refreshAccessToken() {
         uint32_t expiresIn = doc["expires_in"] | 3600;
         m_tokenExpiry = millis() + (expiresIn * 1000) - 60000;
         http.end();
+        client.stop();
         return true;
     }
 
     http.end();
+    client.stop();
     return false;
 }
 
@@ -95,6 +97,7 @@ void SpotifyEngine::pollSpotifyStatus() {
         m_state.isActive = false;
         m_state.isPlaying = false;
         http.end();
+        client.stop();
         return;
     }
 
@@ -133,6 +136,7 @@ void SpotifyEngine::pollSpotifyStatus() {
     }
 
     http.end();
+    client.stop();
 }
 
 void SpotifyEngine::update(EngineContext* context) {

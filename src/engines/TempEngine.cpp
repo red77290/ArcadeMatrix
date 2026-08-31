@@ -50,15 +50,20 @@ void TempEngine::update(EngineContext* context) {
 void TempEngine::activate() {}
 void TempEngine::deactivate() {}
 void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysUnit = guard->system.unit.length() > 0 ? guard->system.unit : "C";
+    float sysOffset = guard->system.temp_offset;
+
     if (engineConfig) {
-        String u = engineConfig->getString("units", config.system.unit.c_str());
+        String u = engineConfig->getString("units", sysUnit.c_str());
         setUnit(u);
-        tempOffset = engineConfig->getFloat("temp_offset", config.system.temp_offset);
+        tempOffset = engineConfig->getFloat("temp_offset", sysOffset);
         offsetX = engineConfig->getInt("temp_offset_x", 0);
         offsetY = engineConfig->getInt("temp_offset_y", 0);
     } else {
-        setUnit(config.system.unit);
-        tempOffset = config.system.temp_offset;
+        setUnit(sysUnit);
+        tempOffset = sysOffset;
         offsetX = 0;
         offsetY = 0;
     }

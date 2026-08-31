@@ -108,10 +108,12 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
             String payload = http.getString();
             if (parseChart(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     return false;
 }
