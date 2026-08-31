@@ -45,7 +45,7 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `disable_hardware_pulsing` | `bool` | Ponlo en `true` para evitar que DMA asfixie el Wi-Fi interno (ligero parpadeo). |
 | `limit_refresh_rate_hz` | `int` | Limita la frecuencia de refresco (`0` = sin límite). |
 | `row_address_mode` | `int` | Tipo de direccionamiento de filas para paneles exóticos (`0` por defecto). |
-| `clk_phase` | `bool` | Invierte la fase de reloj CLK (habilitado por defecto en ESP32-S3 para suprimir ruidos de píxeles e inestabilidades de DMA). |
+| `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto para alineación estándar de columnas de píxeles; habilitar a `true` si el panel lo requiere). |
 | `latch_blanking` | `int` | Ciclos de ocultación de latch (`1`–`4`) para reducir el ghosting (líneas fantasma). |
 | `panel_type` | `String` | Cadena opcional de inicialización del panel (ej. `FM6126A`), normalmente vacía. |
 

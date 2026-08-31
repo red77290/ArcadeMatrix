@@ -45,7 +45,7 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `disable_hardware_pulsing` | `bool` | Set `true` to stop DMA starving the internal Wi-Fi (slight flicker). |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
 | `row_address_mode` | `int` | Row addressing type for exotic panels (`0` default). |
-| `clk_phase` | `bool` | Invert CLK clock phase (default `true` on ESP32-S3 to suppress pixel noise and DMA jitter). |
+| `clk_phase` | `bool` | Invert CLK clock phase (`false` default for standard pixel alignment; set `true` if your panel requires inverted clock latching). |
 | `latch_blanking` | `int` | Latch blanking cycles (`1`–`4`) for ghosting/phantom line reduction. |
 | `panel_type` | `String` | Optional panel init string (e.g. `FM6126A`), usually empty. |
 
