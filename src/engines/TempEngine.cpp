@@ -56,9 +56,11 @@ void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
     float sysOffset = guard->system.temp_offset;
 
     if (engineConfig) {
-        String u = engineConfig->getString("units", sysUnit.c_str());
+        String u = engineConfig->getString("units", "system");
+        if (u.isEmpty() || u.equalsIgnoreCase("system")) u = sysUnit;
         setUnit(u);
-        tempOffset = engineConfig->getFloat("temp_offset", sysOffset);
+        float off = engineConfig->getFloat("temp_offset", -999.0f);
+        tempOffset = (off < -50.0f) ? sysOffset : off;
         offsetX = engineConfig->getInt("temp_offset_x", 0);
         offsetY = engineConfig->getInt("temp_offset_y", 0);
     } else {
@@ -167,7 +169,7 @@ EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
     desc_temp.capabilities.realtime = false;
     desc_temp.requirements.needsTempSensor = false;
     desc_temp.schema.fields = {
-        ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "C", false, "", "", "", "C,F", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "system", false, "", "", "", "system:Système (Général),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("temp_offset", ConfigType::FLOAT, "Calibration Offset (°C)", "Calibration offset in °C added to raw sensor reading", "0.0", false, "-20.0", "20.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("temp_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)

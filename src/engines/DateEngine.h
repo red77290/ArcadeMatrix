@@ -38,6 +38,7 @@ enum PublisherTheme {
 struct DateConfig {
     int theme;
     String format;
+    String lang;
     String date_font;
     int date_size;
     int date_offset_x;

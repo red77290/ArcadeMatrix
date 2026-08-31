@@ -8,14 +8,16 @@ PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* confi
     strcpy(newTimeStr, "");
     lastMinute = -1;
     transitioning = false;
-    pacX = -30.0f;
+    pacX = -40.0f;
     animFrame = 0;
     lastFrameTime = 0;
     
-    ghostColors[0] = matrix->color565(255, 0, 0);       // Blinky
-    ghostColors[1] = matrix->color565(255, 184, 255);   // Pinky
-    ghostColors[2] = matrix->color565(0, 255, 255);     // Inky
-    ghostColors[3] = matrix->color565(255, 184, 82);    // Clyde
+    if (matrix) {
+        ghostColors[0] = matrix->color565(255, 0, 0);       // Blinky
+        ghostColors[1] = matrix->color565(255, 184, 255);   // Pinky
+        ghostColors[2] = matrix->color565(0, 255, 255);     // Inky
+        ghostColors[3] = matrix->color565(255, 184, 82);    // Clyde
+    }
 }
 
 void PacmanClock::draw(const TimeData& t) {
@@ -23,6 +25,10 @@ void PacmanClock::draw(const TimeData& t) {
 }
 
 void PacmanClock::drawPacman(int px, int py, int radius, int mouthAngle, bool facingRight) {
+    if (!matrix || radius < 2) return;
+    int w = matrix->width();
+    if (px + radius < 0 || px - radius >= w) return;
+    
     uint16_t yellow = matrix->color565(255, 255, 0);
     uint16_t black = 0;
     
@@ -42,7 +48,9 @@ void PacmanClock::drawPacman(int px, int py, int radius, int mouthAngle, bool fa
 }
 
 void PacmanClock::drawGhost(int px, int py, int radius, uint16_t color, int tickCount) {
-    if (radius < 2) return;
+    if (!matrix || radius < 2) return;
+    int w = matrix->width();
+    if (px + radius < 0 || px - radius >= w) return;
     
     // Body top (semi-circle)
     matrix->fillCircle(px, py, radius, color);
@@ -82,6 +90,7 @@ void PacmanClock::drawGhost(int px, int py, int radius, uint16_t color, int tick
 }
 
 void PacmanClock::update() {
+    if (!matrix) return;
     char timeStr[12];
     sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
     
@@ -94,6 +103,7 @@ void PacmanClock::update() {
         strcpy(newTimeStr, timeStr);
         pacX = -40.0f;
     }
+
     int w = matrix->width();
     int h = matrix->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
@@ -106,13 +116,13 @@ void PacmanClock::update() {
     int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
     
     uint16_t color1 = matrix->color565(255, 255, 255);
-    if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[0] == '#') {
-        long c1 = strtol(&(engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[1], NULL, 16);
+    const char* colStr = engineConfig ? engineConfig->getString("clock_color_1", "").c_str() : "";
+    if (colStr[0] == '#') {
+        long c1 = strtol(&colStr[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
     if (color1 == 0) color1 = matrix->color565(255, 255, 255);
 
-    // Compute text bounds and dynamic Pacman radius ensuring Pacman is larger than the digits
     int scale = 1;
     uint16_t bw = 0, bh = 0;
     int16_t bx = 0, by = 0;
@@ -128,26 +138,28 @@ void PacmanClock::update() {
         scale = gfxSize;
         matrix->setTextSize(scale);
         matrix->getTextBounds(newTimeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0) bw = 30;
+        if (bw == 0) bw = 30 * scale;
         if (bh == 0) bh = 7 * scale;
     }
 
     int maxPacRadius = isTate ? min((w / 2) - 2, (h / 4) - 2) : ((h / 2) - 1);
-    // Diameter is ~1.4x the digit height (bh) so Pacman is visibly larger than the numbers
     int targetPacRadius = (int)(bh * 0.70f) + 1;
     int pacRadius = max(4, min(targetPacRadius, maxPacRadius));
     int ghostRadius = max(3, (int)(pacRadius * 0.85f));
     int ghostSpacing = (int)(pacRadius * 2.2f);
     
-    lastFrameTime = millis();
+    uint32_t now = millis();
+    float dt = (lastFrameTime > 0) ? constrain((now - lastFrameTime) / 1000.0f, 0.005f, 0.050f) : 0.016f;
+    lastFrameTime = now;
     animFrame++;
     
     if (transitioning) {
-        float pacSpeed = isTate ? max(2.2f, 3.2f * w / 64.0f) : max(1.2f, 1.8f * w / 64.0f);
+        float legLen = w + pacRadius * 4.0f + 4.0f * ghostSpacing;
+        float maxPath = isTate ? (3.0f * legLen) : legLen;
+        float transitionDuration = isTate ? 4.5f : 2.5f; // Duration in seconds
+        float pacSpeed = (maxPath / transitionDuration) * dt;
         pacX += pacSpeed;
         
-        float legLen = w + pacRadius * 4.0f + 4 * ghostSpacing;
-        float maxPath = isTate ? (3.0f * legLen) : legLen;
         if (pacX >= maxPath) {
             transitioning = false;
             lastMinute = storedTime.minutes;
@@ -177,7 +189,6 @@ void PacmanClock::update() {
         };
 
         if (!transitioning) {
-            // Outline & Text
             matrix->setTextColor(0);
             matrix->setCursor(tx - 1, tyH); matrix->print(hNew);
             matrix->setCursor(tx + 1, tyH); matrix->print(hNew);
@@ -192,27 +203,23 @@ void PacmanClock::update() {
             matrix->setCursor(tx, tyM + 1); matrix->print(mNew);
             matrix->setCursor(tx, tyM); matrix->setTextColor(color1); matrix->print(mNew);
 
-            // 3 Middle dots
             for (int i = 0; i < 3; i++) {
                 matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
             }
         } else {
-            int mouthAngle = (int)(abs(sin(animFrame * 1.0f)) * 45);
+            int mouthAngle = (int)(abs(sin(animFrame * 0.25f)) * 45);
             float legLen = w + pacRadius * 4.0f + 4 * ghostSpacing;
 
             if (pacX < legLen) {
-                // ── Tier 1: Hours line (Left -> Right) ───────────────────────────
+                // Tier 1: Hours line (Left -> Right)
                 float currentPacX = -pacRadius * 2.0f + pacX;
 
-                // Draw old hours
                 matrix->setTextColor(matrix->color565(100, 100, 100));
                 matrix->setCursor(tx, tyH); matrix->print(hOld);
 
-                // Erase eaten part
                 if (currentPacX > 0) {
-                    matrix->fillRect(0, tyH - 2, (int)currentPacX, bh + 4, 0);
+                    matrix->fillRect(0, tyH - 2, min(w, (int)currentPacX), bh + 4, 0);
                 }
-                // Reveal new hours
                 int revealX = (int)currentPacX - (pacRadius * 3 + 4 * ghostSpacing);
                 if (revealX > 0) {
                     matrix->setTextColor(color1);
@@ -222,16 +229,13 @@ void PacmanClock::update() {
                     }
                 }
 
-                // Middle dots still intact
                 for (int i = 0; i < 3; i++) {
                     matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
                 }
 
-                // Minutes still old
                 matrix->setTextColor(matrix->color565(100, 100, 100));
                 matrix->setCursor(tx, tyM); matrix->print(mOld);
 
-                // Draw Pacman & Ghosts on Tier 1 (facing right)
                 drawPacman((int)currentPacX, tyH + bh / 2, pacRadius, mouthAngle, true);
                 for (int i = 0; i < 4; i++) {
                     float gx = currentPacX - (pacRadius * 2.5f) - (i * ghostSpacing);
@@ -239,15 +243,13 @@ void PacmanClock::update() {
                     drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
                 }
             } else if (pacX < 2.0f * legLen) {
-                // ── Tier 2: Middle dots (Right -> Left) ──────────────────────────
+                // Tier 2: Middle dots (Right -> Left)
                 float progress = pacX - legLen;
                 float currentPacX = (w + pacRadius * 2.0f) - progress;
 
-                // Hours fully revealed
                 matrix->setTextColor(color1);
                 matrix->setCursor(tx, tyH); matrix->print(hNew);
 
-                // Middle dots: eaten as Pacman passes right-to-left
                 for (int i = 0; i < 3; i++) {
                     int px = dotX[i];
                     if (px < (currentPacX - pacRadius)) {
@@ -257,11 +259,9 @@ void PacmanClock::update() {
                     }
                 }
 
-                // Minutes still old
                 matrix->setTextColor(matrix->color565(100, 100, 100));
                 matrix->setCursor(tx, tyM); matrix->print(mOld);
 
-                // Draw Pacman & Ghosts on Tier 2 (facing left)
                 drawPacman((int)currentPacX, dotY, pacRadius, mouthAngle, false);
                 for (int i = 0; i < 4; i++) {
                     float gx = currentPacX + (pacRadius * 2.5f) + (i * ghostSpacing);
@@ -269,28 +269,23 @@ void PacmanClock::update() {
                     drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
                 }
             } else {
-                // ── Tier 3: Minutes line (Left -> Right) ─────────────────────────
+                // Tier 3: Minutes line (Left -> Right)
                 float progress = pacX - 2.0f * legLen;
                 float currentPacX = -pacRadius * 2.0f + progress;
 
-                // Hours fully revealed
                 matrix->setTextColor(color1);
                 matrix->setCursor(tx, tyH); matrix->print(hNew);
 
-                // Middle dots fully restored
                 for (int i = 0; i < 3; i++) {
                     matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
                 }
 
-                // Draw old minutes
                 matrix->setTextColor(matrix->color565(100, 100, 100));
                 matrix->setCursor(tx, tyM); matrix->print(mOld);
 
-                // Erase eaten part
                 if (currentPacX > 0) {
-                    matrix->fillRect(0, tyM - 2, (int)currentPacX, bh + 4, 0);
+                    matrix->fillRect(0, tyM - 2, min(w, (int)currentPacX), bh + 4, 0);
                 }
-                // Reveal new minutes
                 int revealX = (int)currentPacX - (pacRadius * 3 + 4 * ghostSpacing);
                 if (revealX > 0) {
                     matrix->setTextColor(color1);
@@ -300,7 +295,6 @@ void PacmanClock::update() {
                     }
                 }
 
-                // Draw Pacman & Ghosts on Tier 3 (facing right)
                 drawPacman((int)currentPacX, tyM + bh / 2, pacRadius, mouthAngle, true);
                 for (int i = 0; i < 4; i++) {
                     float gx = currentPacX - (pacRadius * 2.5f) - (i * ghostSpacing);
@@ -315,7 +309,6 @@ void PacmanClock::update() {
         int ty = (h - bh) / 2 + offY;
         
         if (!transitioning) {
-            // Black outline for crisp visibility
             matrix->setTextColor(0);
             matrix->setCursor(tx - 1, ty); matrix->print(newTimeStr);
             matrix->setCursor(tx + 1, ty); matrix->print(newTimeStr);
@@ -326,7 +319,6 @@ void PacmanClock::update() {
             matrix->setCursor(tx, ty);
             matrix->print(newTimeStr);
             
-            // Random pulsing dots
             uint16_t dotColor = matrix->color565(255, 183, 174);
             for (int i = 0; i < 5; i++) {
                 float px = (sin(animFrame * 0.1f + i) * w / 2) + w / 2;
@@ -334,27 +326,29 @@ void PacmanClock::update() {
                 matrix->drawPixel((int)px, (int)py, dotColor);
             }
         } else {
-            int mouthAngle = (int)(abs(sin(animFrame * 1.0f)) * 45);
+            int mouthAngle = (int)(abs(sin(animFrame * 0.25f)) * 45);
             
-            // Draw old time
+            // Draw old time being eaten
             matrix->setCursor(tx, ty);
             matrix->setTextColor(matrix->color565(100, 100, 100));
             matrix->print(oldTimeStr);
             
             // Cover eaten part (left of pacman)
             if (pacX > 0) {
-                matrix->fillRect(0, 0, (int)pacX, h, 0);
+                matrix->fillRect(0, 0, min(w, (int)pacX), h, 0);
             }
             
-            // Draw new time
-            matrix->setCursor(tx, ty);
-            matrix->setTextColor(color1);
-            matrix->print(newTimeStr);
-            
-            // Cover uneaten part (right of reveal wave)
-            int revealX = (int)pacX - pacRadius * 4;
-            if (revealX > 0 && revealX < w) {
-                matrix->fillRect(revealX, 0, w - revealX, h, 0);
+            // Draw new time revealed behind pacman
+            int revealX = (int)(pacX - (pacRadius * 2.5f + 4 * ghostSpacing));
+            if (revealX > 0) {
+                matrix->setCursor(tx, ty);
+                matrix->setTextColor(color1);
+                matrix->print(newTimeStr);
+                
+                // Cover uneaten part (right of reveal wave)
+                if (revealX < w) {
+                    matrix->fillRect(revealX, 0, w - revealX, h, 0);
+                }
             }
             
             // Draw Pacman
@@ -363,7 +357,7 @@ void PacmanClock::update() {
             // Draw Ghosts
             for (int i = 0; i < 4; i++) {
                 float gx = pacX - (pacRadius * 2.5f) - (i * ghostSpacing);
-                float gy = h / 2 + sin(animFrame * 0.4f + i) * (pacRadius / 3.0f);
+                float gy = (h / 2) + sin(animFrame * 0.4f + i) * (pacRadius / 3.0f);
                 drawGhost((int)gx, (int)gy, ghostRadius, ghostColors[i], animFrame);
             }
         }
