@@ -47,15 +47,18 @@ jobs:
       - name: Build & validate unit test suites (${{ matrix.env }})
         run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
 
-      - name: Run firmware in QEMU emulator (esp32dev)
+      - name: Install QEMU ESP32 (esp32dev)
         if: matrix.env == 'esp32dev'
-        uses: tobozo/esp32-qemu-sim@v1
-        continue-on-error: true
-        with:
-          chip: esp32
-          flash-image: .pio/build/esp32dev/firmware.bin
-          qemu-timeout: "30"
-          timeout-interrupt-regex: "HAL Init complete"
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+          mkdir -p $HOME/.qemu-xtensa
+          curl -sSL https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20250122/qemu-xtensa-esp-develop-9.2.2-20250122-x86_64-linux-gnu.tar.xz | tar -xJ -C $HOME/.qemu-xtensa --strip-components=1
+          echo "$HOME/.qemu-xtensa/bin" >> $GITHUB_PATH
+
+      - name: Execute unit test suites in QEMU (esp32dev)
+        if: matrix.env == 'esp32dev'
+        run: python3 scripts/run_qemu_tests.py
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
