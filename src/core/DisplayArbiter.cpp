@@ -1,75 +1,189 @@
 #include "DisplayArbiter.h"
 
+DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
+    if (name.equalsIgnoreCase("VISUALIZER") || name.equalsIgnoreCase("AUDIOVISUALIZER")) {
+        return DisplaySourceId::VISUALIZER;
+    }
+    if (name.equalsIgnoreCase("MESSAGE") || name.equalsIgnoreCase("MQTT")) {
+        return DisplaySourceId::MQTT;
+    }
+    if (name.equalsIgnoreCase("MARQUEE")) {
+        return DisplaySourceId::MARQUEE;
+    }
+    if (name.equalsIgnoreCase("GIF") || name.equalsIgnoreCase("GIFS")) {
+        return DisplaySourceId::GIF;
+    }
+    if (name.equalsIgnoreCase("ALERT")) {
+        return DisplaySourceId::ALERT;
+    }
+    return DisplaySourceId::ROTATION;
+}
+
 DisplayArbiter::DisplayArbiter() {
-    // Add default persistent rotation request as fallback
+    for (size_t i = 0; i < MAX_REQUESTS; ++i) {
+        slots[i].active = false;
+        slots[i].request = DisplayRequest{};
+    }
+    
+    // Add default persistent rotation request as fallback in slot 0
     DisplayRequest rotReq;
-    rotReq.source = "ROTATION";
+    rotReq.sourceId = DisplaySourceId::ROTATION;
     rotReq.priority = DisplayPriority::ROTATION;
     rotReq.lifecycle = RequestLifecycle::PERSISTENT;
     rotReq.preemptive = false;
-    rotReq.instance_id = "rotation_manager";
+    rotReq.requestId = _nextRequestId++;
     rotReq.timeout_ms = 0;
     rotReq.created_at = millis();
-    requests.push_back(rotReq);
+    slots[0].request = rotReq;
+    slots[0].active = true;
 }
 
-void DisplayArbiter::submitRequest(const DisplayRequest& request) {
-    std::lock_guard<std::mutex> lock(arbiterMutex);
+void DisplayArbiter::submitRequest(const DisplayRequest& request, bool restartTimer) {
+    std::lock_guard<std::mutex> lock(_producerMutex);
+    ArbiterCommand cmd;
+    cmd.type = ArbiterCommandType::SUBMIT;
+    cmd.request = request;
+    cmd.restartTimer = restartTimer;
+    _commandQueue.push(cmd);
+}
+
+void DisplayArbiter::cancelRequest(DisplaySourceId sourceId) {
+    if (sourceId == DisplaySourceId::ROTATION) {
+        return; // Fallback rotation request cannot be cancelled
+    }
+    std::lock_guard<std::mutex> lock(_producerMutex);
+    ArbiterCommand cmd;
+    cmd.type = ArbiterCommandType::CANCEL;
+    cmd.request.sourceId = sourceId;
+    _commandQueue.push(cmd);
+}
+
+void DisplayArbiter::applySubmit(const DisplayRequest& request, bool restartTimer) {
+    int foundIndex = -1;
+    int firstFreeIndex = -1;
     
-    // Check if source already has a request, if so update it
-    bool found = false;
-    for (auto& req : requests) {
-        if (req.source == request.source) {
-            req = request;
-            req.created_at = millis();
-            found = true;
+    for (size_t i = 0; i < MAX_REQUESTS; ++i) {
+        if (slots[i].active && slots[i].request.sourceId == request.sourceId) {
+            foundIndex = (int)i;
             break;
+        }
+        if (!slots[i].active && firstFreeIndex == -1 && i > 0) {
+            firstFreeIndex = (int)i;
         }
     }
     
-    if (!found) {
-        DisplayRequest newReq = request;
-        newReq.created_at = millis();
-        requests.push_back(newReq);
+    if (foundIndex != -1) {
+        unsigned long prevCreated = slots[foundIndex].request.created_at;
+        uint32_t prevReqId = slots[foundIndex].request.requestId;
+        slots[foundIndex].request = request;
+        slots[foundIndex].active = true;
+        
+        // Retain existing requestId unless caller explicitly passed a new one or restartTimer is requested
+        if (request.requestId != 0) {
+            slots[foundIndex].request.requestId = request.requestId;
+        } else if (restartTimer) {
+            slots[foundIndex].request.requestId = _nextRequestId++;
+        } else {
+            slots[foundIndex].request.requestId = prevReqId;
+        }
+        
+        if (!restartTimer) {
+            slots[foundIndex].request.created_at = prevCreated;
+        } else {
+            slots[foundIndex].request.created_at = millis();
+        }
+    } else if (firstFreeIndex != -1) {
+        slots[firstFreeIndex].request = request;
+        slots[firstFreeIndex].active = true;
+        if (slots[firstFreeIndex].request.requestId == 0) {
+            slots[firstFreeIndex].request.requestId = _nextRequestId++;
+        }
+        slots[firstFreeIndex].request.created_at = millis();
     }
 }
 
-void DisplayArbiter::cancelRequest(const String& source) {
-    std::lock_guard<std::mutex> lock(arbiterMutex);
-    for (auto it = requests.begin(); it != requests.end(); ) {
-        if (it->source == source) {
-            it = requests.erase(it);
-        } else {
-            ++it;
+void DisplayArbiter::applyCancel(DisplaySourceId sourceId) {
+    for (size_t i = 1; i < MAX_REQUESTS; ++i) {
+        if (slots[i].active && slots[i].request.sourceId == sourceId) {
+            slots[i].active = false;
         }
     }
 }
 
 void DisplayArbiter::clearExpired() {
     unsigned long now = millis();
-    for (auto it = requests.begin(); it != requests.end(); ) {
-        if (it->lifecycle == RequestLifecycle::TIMED) {
-            if (it->timeout_ms > 0 && (now - it->created_at >= it->timeout_ms)) {
-                it = requests.erase(it);
-                continue;
+    for (size_t i = 1; i < MAX_REQUESTS; ++i) {
+        if (slots[i].active && slots[i].request.lifecycle == RequestLifecycle::TIMED) {
+            if (slots[i].request.timeout_ms > 0 &&
+                (now - slots[i].request.created_at >= slots[i].request.timeout_ms)) {
+                slots[i].active = false;
             }
         }
-        ++it;
     }
 }
 
-DisplayRequest DisplayArbiter::evaluate() {
-    std::lock_guard<std::mutex> lock(arbiterMutex);
-    clearExpired();
-    
-    DisplayRequest winner;
-    winner.priority = static_cast<DisplayPriority>(0); // Lowest
-    
-    for (const auto& req : requests) {
-        if (static_cast<int>(req.priority) > static_cast<int>(winner.priority)) {
-            winner = req;
+DisplayDecision DisplayArbiter::evaluate() {
+    // 1. Drain pending cross-core commands from SPSC queue into Core 1 local slots (100% lock-free)
+    ArbiterCommand cmd;
+    while (_commandQueue.pop(cmd)) {
+        if (cmd.type == ArbiterCommandType::SUBMIT) {
+            applySubmit(cmd.request, cmd.restartTimer);
+        } else if (cmd.type == ArbiterCommandType::CANCEL) {
+            applyCancel(cmd.request.sourceId);
         }
     }
-    
-    return winner;
+
+    // 2. Clear expired timed requests
+    clearExpired();
+
+    // 3. Find active request with highest priority
+    int bestSlot = 0; // Default to ROTATION fallback
+    for (size_t i = 1; i < MAX_REQUESTS; ++i) {
+        if (slots[i].active) {
+            if (static_cast<uint8_t>(slots[i].request.priority) >
+                static_cast<uint8_t>(slots[bestSlot].request.priority)) {
+                bestSlot = (int)i;
+            }
+        }
+    }
+
+    DisplayDecision decision;
+    decision.sourceId = slots[bestSlot].request.sourceId;
+    decision.priority = slots[bestSlot].request.priority;
+    decision.requestId = slots[bestSlot].request.requestId;
+    decision.engineHandle = slots[bestSlot].request.engineHandle;
+    decision.lifecycle = slots[bestSlot].request.lifecycle;
+    decision.allowsOverlay = slots[bestSlot].request.allowsOverlay;
+    decision.needsClear = slots[bestSlot].request.needsClear;
+    decision.isRealtime = slots[bestSlot].request.isRealtime;
+    decision.valid = true;
+
+    // 4. Compute deterministic TransitionMode based on request semantics
+    const bool isPreemptive = slots[bestSlot].request.preemptive && (decision.sourceId != DisplaySourceId::ROTATION);
+
+    if (isPreemptive) {
+        if (decision.sourceId != _lastSourceId || decision.requestId != _lastRequestId) {
+            decision.transitionMode = TransitionMode::PREEMPT;
+        } else {
+            decision.transitionMode = TransitionMode::REPLACE;
+        }
+    } else {
+        if (_lastWasPreemptive) {
+            decision.transitionMode = TransitionMode::RESUME;
+        } else {
+            decision.transitionMode = TransitionMode::REPLACE;
+        }
+    }
+
+    _lastWasPreemptive = isPreemptive;
+    _lastPriority = decision.priority;
+    _lastSourceId = decision.sourceId;
+    _lastRequestId = decision.requestId;
+
+    // 5. Auto-consume ONE_SHOT requests
+    if (bestSlot > 0 && decision.lifecycle == RequestLifecycle::ONE_SHOT) {
+        slots[bestSlot].active = false;
+    }
+
+    return decision;
 }

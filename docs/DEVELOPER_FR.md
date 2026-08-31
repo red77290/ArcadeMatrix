@@ -86,6 +86,10 @@ public:
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
 
+    // --- Cycle de vie de préemption (optionnel) ---
+    virtual void pause() {}
+    virtual void resume() {}
+
     // --- Optionnels (comportements par défaut fournis) ---
     virtual void onConfigChanged(const EngineConfig* config) {}
     virtual bool isFinished() const { return false; }
@@ -99,11 +103,38 @@ public:
 
 ## 3. Le Cycle de Vie & Règles d'Or
 
+```mermaid
+stateDiagram-v2
+    [*] --> Initialisé : factory() + initialize() (Une fois au premier affichage)
+    Initialisé --> Actif : activate() (Transition de rotation)
+    Actif --> Actif : update() + render() (Boucle Chaude 60 FPS)
+    Actif --> Actif : onConfigChanged() (Édition WebUI à chaud)
+    Actif --> EnPause : pause() (Préemption temporaire haute priorité)
+    EnPause --> Actif : resume() (Retour de préemption)
+    Actif --> Veille : deactivate() (Fin du slot de rotation)
+    Veille --> Actif : activate()
+    Actif --> [*] : isFinished() / expiration du timer
+```
+
+### Matrice de Décision d'Affichage & Cycle de Vie
+
+Le `DisplayArbiter` résout les sources d'affichage de manière déterministe via une échelle statique de priorités et transmet ses décisions au `DisplayRuntime` :
+
+| Scénario | Action sur l'Ancien Moteur | Action sur le Nouveau Moteur | État de la Session |
+| :--- | :--- | :--- | :--- |
+| **Préemption Temporaire** (ex. Alerte MQTT sur Horloge) | `oldEngine->pause()` | `alertEngine->activate()` | Nouvel identifiant de session ; ancien moteur conservé pour reprise |
+| **Fin de Préemption** (Retour à l'Horloge) | `alertEngine->deactivate()` | `oldEngine->resume()` | Reprise transparente de l'horloge sans perte d'état ni d'animation |
+| **Rotation Carrousel** (ex. Horloge → Météo) | `oldEngine->deactivate()` | `newEngine->activate()` | Démarrage propre du nouveau slot de carrousel |
+
+### Règles d'Or pour le C++ Embarqué
+
 1. **Règle d'Or #1 — Zéro Allocation dans la Boucle Chaude :** Ne jamais instancier de `String`, de `std::vector` ou appeler `malloc`/`new` dans `update()` ou `render()`. Pré-allouez vos structures dans `initialize()`.
-2. **Règle d'Or #2 — Hot Reload sur Place :** Dans `onConfigChanged()`, mettez à jour les variables internes directement. L'instance n'est **pas** détruite ni recréée.
-3. **Règle d'Or #3 — Verrous de Bus SD :** Les lectures d'assets sur carte SD doivent utiliser le sémaphore `sdMutex`.
-4. **Règle d'Or #4 — Overlays vs Moteurs Sélectionnables :**
-   - **Moteur Sélectionnable (Engine) :** Remplace le framebuffer principal (ex: Horloge, Météo, GIF, Crypto). Enregistré dans `EngineRegistry` avec un descripteur et une fabrique.
+2. **Règle d'Or #2 — Hot Path Lock-Free & Zéro Mutex sur Core 1 :** Le Core 1 exécute `update() -> evaluate() -> render()` de manière totalement lock-free. La configuration est accédée exclusivement via le protocole Single-Reader Single-Writer (SRSW) CAS linéarisable (`ConfigSnapshotGuard guard = config.acquireSnapshot(); const auto& snapshot = guard.get();`).
+3. **Règle d'Or #3 — File de Commandes SPSC Cross-Core :** Le Core 0 soumet les requêtes d'affichage via `m_displayArbiter.submitRequest(req)`. Le Core 1 possède exclusivement les slots d'arbitrage et dépile les commandes en $O(1)$ sans verrouillage mutex.
+4. **Règle d'Or #4 — Hot Reload sur Place :** Dans `onConfigChanged()`, mettez à jour les variables internes directement. L'instance n'est **pas** détruite ni recréée.
+5. **Règle d'Or #5 — Verrous de Bus SD :** Les lectures d'assets sur carte SD doivent utiliser le sémaphore `sdMutex`.
+6. **Règle d'Or #6 — Overlays vs Moteurs Sélectionnables :**
+   - **Moteur Sélectionnable (Engine) :** Remplace le framebuffer principal (ex: Horloge, Météo, GIF, Crypto). Enregistré dans `EngineRegistry` avec un descripteur, une fabrique et un `EngineHandle` canonique.
    - **Overlay Transverse :** Compose de manière additive au-dessus de la source active (ex: Fighter). Géré exclusivement par `OverlayManager`, activé par entrée de rotation (`overlays.fighter: true`), jamais enregistré dans `EngineRegistry`.
 
 ---

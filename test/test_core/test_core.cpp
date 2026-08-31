@@ -4,6 +4,7 @@
 #include "core/ConfigSanitizer.h"
 #include "core/ConfigLoader.h"
 #include "core/DisplayArbiter.h"
+#include "core/DisplayRuntime.h"
 #include "core/OverlayManager.h"
 #include "engines/EngineRegistrar.h"
 #include "hal/HardwareHAL.h"
@@ -16,6 +17,26 @@ public:
     void update(EngineContext* context) override {}
     void render(EngineContext* context) override {}
     void deactivate() override {}
+};
+
+class TrackingMockEngine : public IEngine {
+public:
+    String name;
+    int activateCalls = 0;
+    int deactivateCalls = 0;
+    int pauseCalls = 0;
+    int resumeCalls = 0;
+
+    TrackingMockEngine() = default;
+    explicit TrackingMockEngine(const String& n) : name(n) {}
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override { return EngineError::OK; }
+    void activate() override { activateCalls++; }
+    void update(EngineContext* context) override {}
+    void render(EngineContext* context) override {}
+    void deactivate() override { deactivateCalls++; }
+    void pause() override { pauseCalls++; }
+    void resume() override { resumeCalls++; }
 };
 
 void setUp(void) {
@@ -138,13 +159,15 @@ void test_sanitizer_injects_defaults(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
+    cfg.addInstance("clock_1", "clock");
     
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.defaults_injected);
-    TEST_ASSERT_EQUAL_STRING("nintendo", inst->config.getString("theme").c_str());
-    TEST_ASSERT_EQUAL(5, inst->config.getInt("speed"));
+    EngineInstanceSnapshot snap1;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("clock_1", snap1));
+    TEST_ASSERT_EQUAL_STRING("nintendo", snap1.config.getString("theme").c_str());
+    TEST_ASSERT_EQUAL(5, snap1.config.getInt("speed"));
 }
 
 void test_sanitizer_clamps_out_of_bound_integers(void) {
@@ -157,13 +180,19 @@ void test_sanitizer_clamps_out_of_bound_integers(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("clock_1", "clock");
-    inst->config.setInt("speed", 999);
+    cfg.addInstance("clock_1", "clock");
+    cfg.mutate([](ConfigLoader& c) {
+        for (auto& inst : c.instances) {
+            if (inst.instance_id == "clock_1") inst.config.setInt("speed", 999);
+        }
+    });
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(1, res.values_clamped);
-    TEST_ASSERT_EQUAL(10, inst->config.getInt("speed"));
+    EngineInstanceSnapshot snap2;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("clock_1", snap2));
+    TEST_ASSERT_EQUAL(10, snap2.config.getInt("speed"));
 }
 
 void test_sanitizer_handles_invalid_boolean_and_enum(void) {
@@ -177,15 +206,23 @@ void test_sanitizer_handles_invalid_boolean_and_enum(void) {
     EngineRegistry::registerEngine(desc);
 
     ConfigLoader cfg;
-    EngineInstance* inst = cfg.addInstance("weather_1", "weather");
-    inst->config.setString("use_celsius", "invalid_bool");
-    inst->config.setString("icon_set", "unknown_icon_theme");
+    cfg.addInstance("weather_1", "weather");
+    cfg.mutate([](ConfigLoader& c) {
+        for (auto& inst : c.instances) {
+            if (inst.instance_id == "weather_1") {
+                inst.config.setString("use_celsius", "invalid_bool");
+                inst.config.setString("icon_set", "unknown_icon_theme");
+            }
+        }
+    });
 
     SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
     TEST_ASSERT_TRUE(res.modified);
     TEST_ASSERT_EQUAL(2, res.values_fallback);
-    TEST_ASSERT_EQUAL_STRING("true", inst->config.getString("use_celsius").c_str());
-    TEST_ASSERT_EQUAL_STRING("classic", inst->config.getString("icon_set").c_str());
+    EngineInstanceSnapshot snap3;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("weather_1", snap3));
+    TEST_ASSERT_EQUAL_STRING("true", snap3.config.getString("use_celsius").c_str());
+    TEST_ASSERT_EQUAL_STRING("classic", snap3.config.getString("icon_set").c_str());
 }
 
 void test_sanitizer_flags_unknown_engines(void) {
@@ -200,24 +237,271 @@ void test_sanitizer_flags_unknown_engines(void) {
 void test_arbiter_priority_resolution(void) {
     DisplayArbiter arbiter;
 
-    DisplayRequest reqRot{"ROTATION", DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false, "", 0, millis()};
-    DisplayRequest reqMarq{"MARQUEE", DisplayPriority::MARQUEE, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
-    DisplayRequest reqMqtt{"MESSAGE", DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, true, "", 0, millis()};
+    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false};
+    DisplayRequest reqMarq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
+    DisplayRequest reqMqtt{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
 
     arbiter.submitRequest(reqRot);
-    TEST_ASSERT_EQUAL_STRING("ROTATION", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
 
     arbiter.submitRequest(reqMarq);
-    TEST_ASSERT_EQUAL_STRING("MARQUEE", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, arbiter.evaluate().sourceId);
 
     arbiter.submitRequest(reqMqtt);
-    TEST_ASSERT_EQUAL_STRING("MESSAGE", arbiter.evaluate().source.c_str());
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, arbiter.evaluate().sourceId);
 
-    arbiter.cancelRequest("MESSAGE");
-    TEST_ASSERT_EQUAL_STRING("MARQUEE", arbiter.evaluate().source.c_str());
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, arbiter.evaluate().sourceId);
 
-    arbiter.cancelRequest("MARQUEE");
-    TEST_ASSERT_EQUAL_STRING("ROTATION", arbiter.evaluate().source.c_str());
+    arbiter.cancelRequest(DisplaySourceId::MARQUEE);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
+}
+
+void test_arbiter_one_shot_auto_consumption(void) {
+    DisplayArbiter arbiter;
+
+    DisplayRequest reqOneShot{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::ONE_SHOT, true};
+    arbiter.submitRequest(reqOneShot);
+
+    // First evaluation: ONE_SHOT alert wins and is consumed
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d1.sourceId);
+
+    // Second evaluation: ONE_SHOT is gone, fallback to ROTATION
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d2.sourceId);
+}
+
+void test_arbiter_request_id_semantics(void) {
+    DisplayArbiter arbiter;
+
+    DisplayRequest req1{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+    arbiter.submitRequest(req1);
+    DisplayDecision d1 = arbiter.evaluate();
+    uint32_t firstReqId = d1.requestId;
+    TEST_ASSERT_NOT_EQUAL(0, firstReqId);
+
+    // Refresh request without restartTimer preserves same requestId
+    DisplayRequest reqRefresh{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+    arbiter.submitRequest(reqRefresh, false);
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(firstReqId, d2.requestId);
+
+    // Refresh request with restartTimer creates a new requestId
+    arbiter.submitRequest(reqRefresh, true);
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_NOT_EQUAL(firstReqId, d3.requestId);
+}
+
+void test_config_snapshot_immutability_and_versioning(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+    uint32_t v1 = cfg.getVersion();
+    {
+        ConfigSnapshotGuard s1 = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(v1, s1->version);
+    }
+
+    cfg.addInstance("test_clock", "clock");
+    uint32_t v2 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v1, v2);
+
+    {
+        ConfigSnapshotGuard s2 = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(v2, s2->version);
+        TEST_ASSERT_NOT_NULL(s2->getInstance("test_clock"));
+    }
+}
+
+void test_triple_buffer_snapshot_publication_and_versioning(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+    uint32_t v0 = cfg.getVersion();
+
+    // 4 sequential mutations covering all 3 slots and wrapping around
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_1"; });
+    uint32_t v1 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v0, v1);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_1", cfg.acquireSnapshot()->wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_2"; });
+    uint32_t v2 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v1, v2);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_2", cfg.acquireSnapshot()->wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_3"; });
+    uint32_t v3 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v2, v3);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_3", cfg.acquireSnapshot()->wifi.ssid.c_str());
+
+    cfg.mutate([](ConfigLoader& c) { c.wifi.ssid = "WiFi_Slot_4"; });
+    uint32_t v4 = cfg.getVersion();
+    TEST_ASSERT_GREATER_THAN(v3, v4);
+    TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.acquireSnapshot()->wifi.ssid.c_str());
+}
+
+void test_snapshot_publication_linearizability(void) {
+    ConfigLoader cfg;
+    cfg.setDefaults();
+
+    // 50 rapid sequential mutations with checksum verification
+    for (uint32_t i = 1; i <= 50; ++i) {
+        cfg.mutate([i](ConfigLoader& c) {
+            c.wifi.ssid = String("WiFi_Network_") + String(i);
+        });
+
+        // Core 1 reader acquire via RAII guard
+        ConfigSnapshotGuard snap = cfg.acquireSnapshot();
+        uint32_t expectedChecksum = (snap->version ^ 0x5A5A5A5A) + (uint32_t)snap->instances.size();
+        TEST_ASSERT_EQUAL_HEX32(expectedChecksum, snap->checksum);
+        TEST_ASSERT_TRUE(snap->wifi.ssid.startsWith("WiFi_Network_"));
+    }
+}
+
+void test_arbiter_spsc_lockfree(void) {
+    DisplayArbiter arbiter;
+
+    // Core 0 producer submits timed marquee and urgent alert
+    DisplayRequest marqueeReq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::TIMED, true, 10, EngineHandle("marquee", "inst_m"), 5000};
+    DisplayRequest alertReq{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::ONE_SHOT, true, 20, EngineHandle("alert", "inst_a")};
+
+    arbiter.submitRequest(marqueeReq);
+    arbiter.submitRequest(alertReq);
+
+    // Core 1 consumer evaluate: Alert (priority 100) wins over Marquee (priority 30)
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d1.sourceId);
+    TEST_ASSERT_EQUAL_STRING("alert", d1.engineHandle.descriptorId);
+    TEST_ASSERT_EQUAL_STRING("inst_a", d1.engineHandle.instanceId);
+
+    // Next evaluation: ONE_SHOT alert auto-consumed, Marquee takes over
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::MARQUEE, d2.sourceId);
+    TEST_ASSERT_EQUAL_STRING("marquee", d2.engineHandle.descriptorId);
+
+    // Core 0 cancels marquee -> falls back to ROTATION
+    arbiter.cancelRequest(DisplaySourceId::MARQUEE);
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d3.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d3.sourceId);
+}
+
+void test_canonical_engine_handle_resolution(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine visMain;
+    TrackingMockEngine visSpecial;
+
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visMain, EngineHandle("audiovisualizer", "visualizer_main"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visSpecial, EngineHandle("audiovisualizer", "visualizer_special"));
+
+    // Verify resolveEngine matches exact instance
+    IEngine* resolved = runtime.resolveEngine(EngineHandle("audiovisualizer", "visualizer_special"), DisplaySourceId::VISUALIZER);
+    TEST_ASSERT_EQUAL_PTR(&visSpecial, resolved);
+
+    IEngine* resolvedMain = runtime.resolveEngine(EngineHandle("audiovisualizer", "visualizer_main"), DisplaySourceId::VISUALIZER);
+    TEST_ASSERT_EQUAL_PTR(&visMain, resolvedMain);
+}
+
+void test_display_runtime_preemption_lifecycle(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine rotationEngine;
+    TrackingMockEngine alertEngine;
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotationEngine, EngineHandle("clock", "clock_main"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertEngine, EngineHandle("alert", "alert_main"));
+
+    // 1. Initial baseline rotation session -> activate
+    DisplayDecision dRot;
+    dRot.valid = true;
+    dRot.sourceId = DisplaySourceId::ROTATION;
+    dRot.engineHandle = EngineHandle("clock", "clock_main");
+    dRot.requestId = 1;
+    runtime.transitionSession(dRot);
+
+    TEST_ASSERT_EQUAL(1, rotationEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
+
+    // 2. Urgent alert preempts rotation -> rotation pauses, alert activates
+    DisplayDecision dAlert;
+    dAlert.valid = true;
+    dAlert.sourceId = DisplaySourceId::ALERT;
+    dAlert.engineHandle = EngineHandle("alert", "alert_main");
+    dAlert.requestId = 2;
+    runtime.transitionSession(dAlert);
+
+    TEST_ASSERT_EQUAL(1, rotationEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, alertEngine.activateCalls);
+
+    // 3. Alert completes, returns to rotation -> alert deactivates, rotation resumes
+    runtime.transitionSession(dRot);
+
+    TEST_ASSERT_EQUAL(1, alertEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, rotationEngine.resumeCalls);
+    TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
+}
+
+void test_display_runtime_lifecycle_centralization(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine marqueeEngine;
+    TrackingMockEngine visualizerEngine;
+
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqueeEngine, EngineHandle("marquee", "marquee_main"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visualizerEngine, EngineHandle("audiovisualizer", "visualizer_main"));
+
+    // Initial state: neither engine active
+    TEST_ASSERT_EQUAL(0, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 1. Transition to MARQUEE decision -> DisplayRuntime activates marquee
+    DisplayDecision d1;
+    d1.valid = true;
+    d1.sourceId = DisplaySourceId::MARQUEE;
+    d1.engineHandle = EngineHandle("marquee", "marquee_main");
+    d1.requestId = 101;
+    runtime.transitionSession(d1);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 2. Refresh same MARQUEE session -> No redundant activate/deactivate
+    runtime.transitionSession(d1);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqueeEngine.deactivateCalls);
+
+    // 3. Transition to VISUALIZER decision -> DisplayRuntime deactivates marquee and activates visualizer
+    DisplayDecision d2;
+    d2.valid = true;
+    d2.sourceId = DisplaySourceId::VISUALIZER;
+    d2.engineHandle = EngineHandle("audiovisualizer", "visualizer_main");
+    d2.requestId = 102;
+    runtime.transitionSession(d2);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, visualizerEngine.deactivateCalls);
+
+    // 4. Transition to ROTATION decision -> DisplayRuntime deactivates visualizer
+    DisplayDecision d3;
+    d3.valid = true;
+    d3.sourceId = DisplaySourceId::ROTATION;
+    d3.requestId = 103;
+    runtime.transitionSession(d3);
+
+    TEST_ASSERT_EQUAL(1, marqueeEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, marqueeEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, visualizerEngine.deactivateCalls);
 }
 
 void test_requirements_gating(void) {
@@ -346,6 +630,135 @@ void test_overlay_preemption_by_arbiter(void) {
     TEST_ASSERT_TRUE(overlay.isActive());
 }
 
+void test_snapshot_cas_state_machine_and_interleaving(void) {
+    ConfigLoader cfg;
+    cfg.addInstance("clock_main", "clock");
+
+    // 1. Core 1 acquires snapshot in RAII guard (slot pinned in state READING)
+    {
+        ConfigSnapshotGuard guard = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(2, guard->version); // version was incremented on addInstance
+        TEST_ASSERT_EQUAL(1, guard->instances.size());
+        TEST_ASSERT_EQUAL_STRING("clock_main", guard->instances[0].instance_id.c_str());
+
+        // 2. Core 0 publishes 5 successive mutations while guard is actively pinned
+        for (int i = 0; i < 5; ++i) {
+            cfg.mutate([i](ConfigLoader& c) {
+                c.matrix.powerLimitPercent = 50 + i;
+            });
+        }
+
+        // Reader still observes its pinned snapshot safely without mutation corruption
+        TEST_ASSERT_EQUAL(1, guard->instances.size());
+        TEST_ASSERT_EQUAL_STRING("clock_main", guard->instances[0].instance_id.c_str());
+    }
+
+    // 3. After guard destruction, acquiring new snapshot yields latest consolidated version
+    {
+        ConfigSnapshotGuard newGuard = cfg.acquireSnapshot();
+        TEST_ASSERT_EQUAL(7, newGuard->version);
+        TEST_ASSERT_EQUAL(54, newGuard->matrix.powerLimitPercent);
+    }
+}
+
+void test_preemption_intermediate_expiration_unwinding(void) {
+    TrackingMockEngine clockEngine("clock_engine");
+    TrackingMockEngine mqttEngine("mqtt_engine");
+    TrackingMockEngine alertEngine("alert_engine");
+
+    DisplayRuntime runtime;
+    DisplayArbiter arbiter;
+    runtime.begin(nullptr, nullptr, nullptr, nullptr, nullptr, &arbiter);
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEngine, EngineHandle("clock", "clock_main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttEngine, EngineHandle("message", "message_main"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertEngine, EngineHandle("alert", "alert_main"));
+
+    // 1. Initial baseline display: ROTATION
+    ConfigLoader cfg;
+    DisplayDecision d1 = runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d1.sourceId);
+    TEST_ASSERT_EQUAL(1, clockEngine.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+
+    // 2. Preemption Level 1: MQTT message arrives
+    DisplayRequest mqttReq{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+    mqttReq.engineHandle = EngineHandle("message", "message_main");
+    arbiter.submitRequest(mqttReq);
+
+    DisplayDecision d2 = runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, d2.sourceId);
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d2.transitionMode);
+    TEST_ASSERT_EQUAL(1, clockEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(1, mqttEngine.activateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    // 3. Preemption Level 2: Critical Alert arrives
+    DisplayRequest alertReq{DisplaySourceId::ALERT, DisplayPriority::ALERT, RequestLifecycle::TIMED, true};
+    alertReq.engineHandle = EngineHandle("alert", "alert_main");
+    alertReq.timeout_ms = 5000;
+    arbiter.submitRequest(alertReq);
+
+    DisplayDecision d3 = runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ALERT, d3.sourceId);
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, d3.transitionMode);
+    TEST_ASSERT_EQUAL(1, mqttEngine.pauseCalls);
+    TEST_ASSERT_EQUAL(1, alertEngine.activateCalls);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+    // 4. Submerged session expiration: MQTT expires/cancelled while Alert is displaying
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+
+    // 5. Alert concludes: Arbiter falls back to ROTATION (RESUME mode)
+    arbiter.cancelRequest(DisplaySourceId::ALERT);
+
+    DisplayDecision d4 = runtime.update(cfg.acquireSnapshot().get());
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d4.sourceId);
+    TEST_ASSERT_EQUAL(TransitionMode::RESUME, d4.transitionMode);
+    TEST_ASSERT_EQUAL(1, alertEngine.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, mqttEngine.deactivateCalls); // Submerged MQTT cleaned up
+    TEST_ASSERT_EQUAL(1, clockEngine.resumeCalls);    // Baseline Clock safely restored
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+}
+
+void test_preemption_stack_overflow_rejection(void) {
+    TrackingMockEngine eng0("eng0");
+    TrackingMockEngine eng1("eng1");
+    TrackingMockEngine eng2("eng2");
+    TrackingMockEngine eng3("eng3");
+    TrackingMockEngine eng4("eng4");
+
+    DisplayRuntime runtime;
+    DisplayArbiter arbiter;
+    runtime.begin(nullptr, nullptr, nullptr, nullptr, nullptr, &arbiter);
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &eng0, EngineHandle("eng0", "0"));
+
+    ConfigLoader cfg;
+    runtime.update(cfg.acquireSnapshot().get()); // Base depth 0
+
+    // Fill stack to max capacity 4
+    for (uint8_t i = 1; i <= 4; ++i) {
+        DisplayDecision dec;
+        dec.sourceId = static_cast<DisplaySourceId>(10 + i * 10);
+        dec.priority = static_cast<DisplayPriority>(10 + i * 10);
+        dec.engineHandle = EngineHandle("test", String(i).c_str());
+        dec.transitionMode = TransitionMode::PREEMPT;
+        runtime.transitionSession(dec);
+    }
+    TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
+
+    // 5th preemption must be rejected deterministically without stack overflow
+    DisplayDecision overflowDec;
+    overflowDec.sourceId = DisplaySourceId::ALERT;
+    overflowDec.priority = DisplayPriority::ALERT;
+    overflowDec.engineHandle = EngineHandle("overflow", "5");
+    overflowDec.transitionMode = TransitionMode::PREEMPT;
+    runtime.transitionSession(overflowDec);
+
+    TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -363,6 +776,18 @@ void setup() {
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     // Arbiter, Overlays & Requirements
     RUN_TEST(test_arbiter_priority_resolution);
+    RUN_TEST(test_arbiter_one_shot_auto_consumption);
+    RUN_TEST(test_arbiter_request_id_semantics);
+    RUN_TEST(test_arbiter_spsc_lockfree);
+    RUN_TEST(test_canonical_engine_handle_resolution);
+    RUN_TEST(test_config_snapshot_immutability_and_versioning);
+    RUN_TEST(test_triple_buffer_snapshot_publication_and_versioning);
+    RUN_TEST(test_snapshot_publication_linearizability);
+    RUN_TEST(test_snapshot_cas_state_machine_and_interleaving);
+    RUN_TEST(test_display_runtime_lifecycle_centralization);
+    RUN_TEST(test_display_runtime_preemption_lifecycle);
+    RUN_TEST(test_preemption_intermediate_expiration_unwinding);
+    RUN_TEST(test_preemption_stack_overflow_rejection);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
     RUN_TEST(test_canonical_overlays_schema_and_migration);
@@ -373,3 +798,4 @@ void setup() {
 }
 
 void loop() {}
+

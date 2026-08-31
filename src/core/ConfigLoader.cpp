@@ -6,10 +6,115 @@
 extern SemaphoreHandle_t sdMutex;
 
 ConfigLoader::ConfigLoader() {
+    _slotStates[0].store(SlotState::PUBLISHED, std::memory_order_relaxed);
+    _slotStates[1].store(SlotState::FREE, std::memory_order_relaxed);
+    _slotStates[2].store(SlotState::FREE, std::memory_order_relaxed);
     setDefaults();
 }
 
+ConfigSnapshotGuard ConfigLoader::acquireSnapshot() const {
+    for (;;) {
+        const uint8_t slot = _publishedSlot.load(std::memory_order_acquire);
+        SlotState expected = SlotState::PUBLISHED;
+
+        // Atomically pin slot via CAS.
+        // Core 1 accesses the snapshot payload ONLY after this CAS succeeds!
+        if (_slotStates[slot].compare_exchange_weak(
+                expected,
+                SlotState::READING,
+                std::memory_order_acquire,
+                std::memory_order_relaxed)) {
+            return ConfigSnapshotGuard(*this, _snapshots[slot], slot);
+        }
+        // CAS failed due to concurrent publication/recycling: retry immediately with the latest published slot
+    }
+}
+
+void ConfigLoader::releaseSnapshot(uint8_t slot) const {
+    if (slot >= 3) return;
+
+    // If this slot is still the current published snapshot, return to PUBLISHED state
+    if (slot == _publishedSlot.load(std::memory_order_acquire)) {
+        SlotState expected = SlotState::READING;
+        _slotStates[slot].compare_exchange_strong(expected, SlotState::PUBLISHED,
+                                                 std::memory_order_release,
+                                                 std::memory_order_relaxed);
+    } else {
+        // A newer slot was published while we were reading; release this slot to FREE
+        _slotStates[slot].store(SlotState::FREE, std::memory_order_release);
+    }
+}
+
+void ConfigLoader::publishSnapshot() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    publishSnapshot_locked();
+}
+
+void ConfigLoader::publishSnapshot_locked() {
+    uint8_t published = _publishedSlot.load(std::memory_order_acquire);
+    int8_t targetSlot = -1;
+
+    // 1. Try to find a slot in state FREE
+    for (uint8_t i = 0; i < 3; ++i) {
+        SlotState expected = SlotState::FREE;
+        if (_slotStates[i].compare_exchange_strong(expected, SlotState::WRITING,
+                                                   std::memory_order_acquire,
+                                                   std::memory_order_relaxed)) {
+            targetSlot = i;
+            break;
+        }
+    }
+
+    // 2. If no FREE slot found, attempt to reclaim an old PUBLISHED slot (not currently published & not READING)
+    if (targetSlot < 0) {
+        for (uint8_t i = 0; i < 3; ++i) {
+            if (i != published) {
+                SlotState expected = SlotState::PUBLISHED;
+                if (_slotStates[i].compare_exchange_strong(expected, SlotState::WRITING,
+                                                           std::memory_order_acquire,
+                                                           std::memory_order_relaxed)) {
+                    targetSlot = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. If all slots are occupied (e.g. extreme WebUI burst during active frame), defer publication non-blockingly
+    if (targetSlot < 0) {
+        _publishPending.store(true, std::memory_order_release);
+        return;
+    }
+
+    ConfigSnapshot& snap = _snapshots[targetSlot];
+
+    uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
+    snap.version = newVer;
+    snap.matrix = matrix;
+    snap.wifi = wifi;
+    snap.mqtt = mqtt;
+    snap.system = system;
+    snap.rotation = rotation;
+    snap.instances.clear();
+    snap.instances.reserve(instances.size());
+    for (const auto& inst : instances) {
+        EngineInstanceSnapshot s;
+        s.instance_id = inst.instance_id;
+        s.engine_id = inst.engine_id;
+        s.config = inst.config;
+        snap.instances.push_back(s);
+    }
+    // Compute checksum for linearizability verification
+    snap.checksum = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+
+    // 4. Publish snapshot atomically
+    _slotStates[targetSlot].store(SlotState::PUBLISHED, std::memory_order_release);
+    _publishedSlot.store(static_cast<uint8_t>(targetSlot), std::memory_order_release);
+    _publishPending.store(false, std::memory_order_release);
+}
+
 void ConfigLoader::setDefaults() {
+
     instances.clear();
     rotation.clear();
     
@@ -91,6 +196,7 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
+    publishSnapshot_locked();
 }
 
 bool ConfigLoader::parseFromJson(const char* jsonContent) {
@@ -265,6 +371,7 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         }
     }
 
+    publishSnapshot_locked();
     return true;
 }
 
@@ -392,6 +499,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
+    publishSnapshot();
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
         LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
         return false;

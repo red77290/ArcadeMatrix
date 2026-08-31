@@ -19,7 +19,7 @@
 // MessageEngine) if no matching artwork is found on the SD card.
 class FrontendSyncEngine {
 public:
-    FrontendSyncEngine(MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine = nullptr);
+    FrontendSyncEngine(const MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine = nullptr);
     void begin();
     bool loop();
     void stop();
@@ -34,9 +34,9 @@ public:
     static std::map<String, std::vector<String>> loadMappingsFromSD();
 
 private:
-    MqttConfig& mqttConfig;
+    MqttConfig mqttConfig;
     GifEngine* gif;
-        MessageEngine* message;
+    MessageEngine* message;
     WiFiClient espClient;
     PubSubClient mqttClient;
     PicoMQTT::Server* internalBroker = nullptr;

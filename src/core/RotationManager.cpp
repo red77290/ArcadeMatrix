@@ -56,9 +56,10 @@ void RotationManager::processPendingActions() {
     for (const auto& p : actionsToProcess) {
         if (p.first == RotationAction::NOTIFY_CONFIG_CHANGED) {
             extern ConfigLoader config;
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
             auto it = activeEngines.find(p.second);
             if (it != activeEngines.end()) {
-                for (auto& inst : config.instances) {
+                for (const auto& inst : guard->instances) {
                     if (inst.instance_id == p.second) {
                         it->second->onConfigChanged(&inst.config);
                         break;
@@ -98,7 +99,8 @@ IEngine* RotationManager::getActiveEngine(const String& instanceId) {
     
     // Lazy initialization
     extern ConfigLoader config;
-    for (const auto& inst : config.instances) {
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    for (const auto& inst : guard->instances) {
         if (inst.instance_id == instanceId) {
             auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
             if (desc && desc->factory) {
@@ -116,7 +118,7 @@ IEngine* RotationManager::getActiveEngine(const String& instanceId) {
             }
         }
     }
-    LOGW("RotationManager", "Instance '%s' not found in config.instances (count: %d)", instanceId.c_str(), (int)config.instances.size());
+    LOGW("RotationManager", "Instance '%s' not found in config instances (count: %d)", instanceId.c_str(), (int)guard->instances.size());
     return nullptr;
 }
 
@@ -125,9 +127,11 @@ void RotationManager::resetRotation() {
 }
 
 void RotationManager::switchToModule(int index) {
-  LOGI("RotationManager", "switchToModule(index=%d), total rotation entries: %d", index, (int)config.rotation.size());
-  if (config.rotation.empty()) {
-    LOGW("RotationManager", "switchToModule: config.rotation is empty!");
+  extern ConfigLoader config;
+  ConfigSnapshotGuard guard = config.acquireSnapshot();
+  LOGI("RotationManager", "switchToModule(index=%d), total rotation entries: %d", index, (int)guard->rotation.size());
+  if (guard->rotation.empty()) {
+    LOGW("RotationManager", "switchToModule: rotation is empty!");
     if (currentActiveInstanceId != "") {
       IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
@@ -139,18 +143,18 @@ void RotationManager::switchToModule(int index) {
   }
 
   static int switchDepth = 0;
-  if (switchDepth > (int)config.rotation.size()) {
+  if (switchDepth > (int)guard->rotation.size()) {
     switchDepth = 0;
     return; // Infinite skip loop protection
   }
   switchDepth++;
 
   moduleStartTime = millis();
-  String newInstanceId = config.rotation[index].instance_id;
-  uint32_t dur = config.rotation[index].duration_sec;
+  String newInstanceId = guard->rotation[index].instance_id;
+  uint32_t dur = guard->rotation[index].duration_sec;
   
   String mod = newInstanceId; // Default to instance_id for legacy compatibility
-  for (const auto& inst : config.instances) {
+  for (const auto& inst : guard->instances) {
       if (inst.instance_id == newInstanceId) {
           mod = inst.engine_id;
           break;
@@ -194,10 +198,11 @@ bool RotationManager::isCurrentRealtime() const {
 
 OverlayConfig RotationManager::getCurrentOverlays() const {
     extern ConfigLoader config;
-    if (config.rotation.empty() || currentIndex >= config.rotation.size()) {
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    if (guard->rotation.empty() || currentIndex >= guard->rotation.size()) {
         return OverlayConfig{};
     }
-    return config.rotation[currentIndex].overlays;
+    return guard->rotation[currentIndex].overlays;
 }
 
 IEngine* RotationManager::getCurrentActiveEngine() const {
@@ -240,7 +245,10 @@ void RotationManager::setSuspended(bool susp) {
 bool RotationManager::loop() {
     processPendingActions();
 
-    if (suspended || config.rotation.empty()) {
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+
+    if (suspended || guard->rotation.empty()) {
         if (currentActiveInstanceId != "") {
             IEngine* oldEngine = getActiveEngine(currentActiveInstanceId);
             if (oldEngine) {
@@ -252,11 +260,11 @@ bool RotationManager::loop() {
     }
 
   uint32_t now = millis();
-  String inst_id = config.rotation[currentIndex].instance_id;
-  uint32_t dur = config.rotation[currentIndex].duration_sec;
+  String inst_id = guard->rotation[currentIndex].instance_id;
+  uint32_t dur = guard->rotation[currentIndex].duration_sec;
   
   bool advance = false;
-  bool isSoloMode = (config.rotation.size() == 1);
+  bool isSoloMode = (guard->rotation.size() == 1);
 
   IEngine* activeEngine = getActiveEngine(inst_id);
   bool shouldFlip = true;
@@ -284,7 +292,7 @@ bool RotationManager::loop() {
   }
 
   if (advance && !isSoloMode) {
-    currentIndex = (currentIndex + 1) % config.rotation.size();
+    currentIndex = (currentIndex + 1) % guard->rotation.size();
     switchToModule(currentIndex);
   }
   return shouldFlip;
@@ -292,13 +300,15 @@ bool RotationManager::loop() {
 
 String RotationManager::getCurrentInstanceId() const {
     extern ConfigLoader config;
-    return config.rotation.empty() ? "" : config.rotation[currentIndex].instance_id;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    return guard->rotation.empty() ? "" : guard->rotation[currentIndex].instance_id;
 }
 
 String RotationManager::getCurrentEngineId() const {
     extern ConfigLoader config;
-    if (config.rotation.empty() || currentIndex >= config.rotation.size()) return "";
-    String inst_id = config.rotation[currentIndex].instance_id;
-    const auto* inst = config.getInstance(inst_id);
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    if (guard->rotation.empty() || currentIndex >= guard->rotation.size()) return "";
+    String inst_id = guard->rotation[currentIndex].instance_id;
+    const auto* inst = guard->getInstance(inst_id);
     return inst ? inst->engine_id : "";
 }
