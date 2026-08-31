@@ -42,6 +42,7 @@ private:
     bool m_wasPoweredOn = true;
     bool m_firstLoop = true;
     int m_lastSec = -1;
+    uint32_t m_lastReconciledVersion = 0;
 
     void handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);

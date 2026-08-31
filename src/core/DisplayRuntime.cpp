@@ -4,8 +4,8 @@
 DisplayRuntime::DisplayRuntime()
     : m_ctx(nullptr), m_matrixEngine(nullptr), m_rotationManager(nullptr),
       m_overlayManager(nullptr), m_orientationManager(nullptr), m_arbiter(nullptr),
+      m_registeredSourceCount(0), m_preemptedEngine(nullptr),
       m_sessionCounter(0), m_lastReconciledVersion(0) {
-    m_sourceEngines.fill(nullptr);
 }
 
 void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
@@ -16,25 +16,47 @@ void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, Rotation
     m_overlayManager = ov;
     m_orientationManager = orient;
     m_arbiter = arb;
+    m_registeredSourceCount = 0;
+    m_preemptedEngine = nullptr;
     m_sessionCounter = 0;
     m_lastReconciledVersion = 0;
 }
 
-void DisplayRuntime::registerSourceEngine(DisplaySourceId sourceId, IEngine* engine) {
-    uint16_t idx = static_cast<uint16_t>(sourceId) / 10;
-    if (idx < m_sourceEngines.size()) {
-        m_sourceEngines[idx] = engine;
+void DisplayRuntime::registerSourceEngine(DisplaySourceId sourceId, IEngine* engine, const EngineHandle& handle) {
+    for (size_t i = 0; i < m_registeredSourceCount; ++i) {
+        if (m_registeredSources[i].sourceId == sourceId) {
+            m_registeredSources[i].engine = engine;
+            m_registeredSources[i].handle = handle;
+            return;
+        }
+    }
+    if (m_registeredSourceCount < m_registeredSources.size()) {
+        m_registeredSources[m_registeredSourceCount++] = {sourceId, handle, engine};
     }
 }
 
-IEngine* DisplayRuntime::getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const {
+IEngine* DisplayRuntime::resolveEngine(const EngineHandle& handle, DisplaySourceId sourceId) const {
+    // 1. If explicit instanceId is provided in handle, resolve via RotationManager
+    if (handle.instanceId[0] != '\0' && m_rotationManager) {
+        IEngine* instEngine = m_rotationManager->getActiveEngine(handle.instanceId);
+        if (instEngine) return instEngine;
+    }
+
+    // 2. If sourceId is ROTATION, active rotation engine
     if (sourceId == DisplaySourceId::ROTATION) {
         return m_rotationManager ? m_rotationManager->getCurrentActiveEngine() : nullptr;
     }
-    uint16_t idx = static_cast<uint16_t>(sourceId) / 10;
-    if (idx < m_sourceEngines.size()) {
-        return m_sourceEngines[idx];
+
+    // 3. Resolve registered specialized source engines
+    for (size_t i = 0; i < m_registeredSourceCount; ++i) {
+        if (m_registeredSources[i].sourceId == sourceId) {
+            return m_registeredSources[i].engine;
+        }
+        if (!handle.isEmpty() && m_registeredSources[i].handle == handle) {
+            return m_registeredSources[i].engine;
+        }
     }
+
     return nullptr;
 }
 
@@ -54,16 +76,36 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
 }
 
 void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
-    IEngine* targetEngine = getEngineForSource(decision.sourceId, decision.engineHandle);
+    IEngine* targetEngine = resolveEngine(decision.engineHandle, decision.sourceId);
 
     bool isNewSession = (decision.sourceId != m_session.sourceId) ||
                         (decision.requestId != m_session.requestId) ||
                         (targetEngine != m_session.activeEngine);
 
     if (isNewSession) {
-        // Deactivate previous engine session if it changed
-        if (m_session.activeEngine && m_session.activeEngine != targetEngine) {
-            m_session.activeEngine->deactivate();
+        IEngine* oldEngine = m_session.activeEngine;
+
+        // Check if this is a temporary preemption (e.g. alert/message interrupting rotation)
+        bool isPreemption = (decision.sourceId != DisplaySourceId::ROTATION &&
+                             m_session.sourceId == DisplaySourceId::ROTATION);
+
+        // Check if this is returning from preemption back to rotation
+        bool isReturningFromPreemption = (decision.sourceId == DisplaySourceId::ROTATION &&
+                                          m_session.sourceId != DisplaySourceId::ROTATION &&
+                                          m_preemptedEngine != nullptr);
+
+        if (oldEngine && oldEngine != targetEngine) {
+            if (isPreemption) {
+                // Pause baseline engine during temporary preemption
+                oldEngine->pause();
+                m_preemptedEngine = oldEngine;
+            } else {
+                // Deactivate engine on normal rotation transition or end of alert
+                oldEngine->deactivate();
+                if (oldEngine == m_preemptedEngine) {
+                    m_preemptedEngine = nullptr;
+                }
+            }
         }
 
         m_session.sessionId = ++m_sessionCounter;
@@ -78,7 +120,14 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_session.lifecycle = decision.lifecycle;
 
         if (targetEngine) {
-            targetEngine->activate();
+            if (isReturningFromPreemption && targetEngine == m_preemptedEngine) {
+                // Resume previously paused baseline engine
+                targetEngine->resume();
+                m_preemptedEngine = nullptr;
+            } else {
+                // Activate new engine
+                targetEngine->activate();
+            }
         }
     }
 }

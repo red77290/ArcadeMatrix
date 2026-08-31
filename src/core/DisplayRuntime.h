@@ -31,8 +31,11 @@ public:
     void begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
                OverlayManager* ov, DisplayOrientationManager* orient, DisplayArbiter* arb);
 
-    void registerSourceEngine(DisplaySourceId sourceId, IEngine* engine);
-    IEngine* getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const;
+    void registerSourceEngine(DisplaySourceId sourceId, IEngine* engine, const EngineHandle& handle = {});
+    IEngine* resolveEngine(const EngineHandle& handle, DisplaySourceId sourceId) const;
+    inline IEngine* getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const {
+        return resolveEngine(handle, sourceId);
+    }
 
     /**
      * @brief Synchronizes configuration with runtime instances (only if version changed).
@@ -65,6 +68,16 @@ public:
     void transitionSession(const DisplayDecision& decision);
 
 private:
+    struct SourceEngineRegistration {
+        DisplaySourceId sourceId = DisplaySourceId::ROTATION;
+        EngineHandle handle{};
+        IEngine* engine = nullptr;
+
+        SourceEngineRegistration() = default;
+        SourceEngineRegistration(DisplaySourceId src, const EngineHandle& h, IEngine* eng)
+            : sourceId(src), handle(h), engine(eng) {}
+    };
+
     AppEngineContext* m_ctx = nullptr;
     MatrixEngine* m_matrixEngine = nullptr;
     RotationManager* m_rotationManager = nullptr;
@@ -73,9 +86,11 @@ private:
     DisplayArbiter* m_arbiter = nullptr;
     FrameScheduler m_scheduler;
 
-    std::array<IEngine*, 16> m_sourceEngines{};
+    std::array<SourceEngineRegistration, 16> m_registeredSources{};
+    size_t m_registeredSourceCount = 0;
 
     RenderSession m_session;
+    IEngine* m_preemptedEngine = nullptr;
     uint32_t m_sessionCounter = 0;
     uint32_t m_lastReconciledVersion = 0;
 };
