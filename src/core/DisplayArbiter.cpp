@@ -39,6 +39,7 @@ DisplayArbiter::DisplayArbiter() {
 }
 
 void DisplayArbiter::submitRequest(const DisplayRequest& request, bool restartTimer) {
+    std::lock_guard<std::mutex> lock(_producerMutex);
     ArbiterCommand cmd;
     cmd.type = ArbiterCommandType::SUBMIT;
     cmd.request = request;
@@ -50,6 +51,7 @@ void DisplayArbiter::cancelRequest(DisplaySourceId sourceId) {
     if (sourceId == DisplaySourceId::ROTATION) {
         return; // Fallback rotation request cannot be cancelled
     }
+    std::lock_guard<std::mutex> lock(_producerMutex);
     ArbiterCommand cmd;
     cmd.type = ArbiterCommandType::CANCEL;
     cmd.request.sourceId = sourceId;
@@ -121,7 +123,7 @@ void DisplayArbiter::clearExpired() {
 }
 
 DisplayDecision DisplayArbiter::evaluate() {
-    // 1. Drain pending cross-core commands from SPSC queue into Core 1 local slots
+    // 1. Drain pending cross-core commands from SPSC queue into Core 1 local slots (100% lock-free)
     ArbiterCommand cmd;
     while (_commandQueue.pop(cmd)) {
         if (cmd.type == ArbiterCommandType::SUBMIT) {
@@ -156,7 +158,19 @@ DisplayDecision DisplayArbiter::evaluate() {
     decision.isRealtime = slots[bestSlot].request.isRealtime;
     decision.valid = true;
 
-    // 4. Auto-consume ONE_SHOT requests
+    // 4. Compute deterministic TransitionMode
+    if (decision.priority > _lastPriority && decision.sourceId != DisplaySourceId::ROTATION) {
+        decision.transitionMode = TransitionMode::PREEMPT;
+    } else if (decision.priority < _lastPriority) {
+        decision.transitionMode = TransitionMode::RESUME;
+    } else {
+        decision.transitionMode = TransitionMode::REPLACE;
+    }
+
+    _lastPriority = decision.priority;
+    _lastSourceId = decision.sourceId;
+
+    // 5. Auto-consume ONE_SHOT requests
     if (bestSlot > 0 && decision.lifecycle == RequestLifecycle::ONE_SHOT) {
         slots[bestSlot].active = false;
     }

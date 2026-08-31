@@ -508,7 +508,8 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
 void AppRuntime::update() {
     esp_task_wdt_reset();
 
-    const ConfigSnapshot& snapshot = config.getSnapshot();
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const ConfigSnapshot& snapshot = guard.get();
 
     if (snapshot.version != m_lastReconciledVersion) {
         m_lastReconciledVersion = snapshot.version;
@@ -524,7 +525,6 @@ void AppRuntime::update() {
         m_displayRuntime.renderTransition();
         matrixEngine.getDisplay()->flipDMABuffer();
         m_displayRuntime.getScheduler().delayUntilNextFrame(true);
-        config.releaseSnapshot();
         return;
     }
 
@@ -541,7 +541,6 @@ void AppRuntime::update() {
             matrixEngine.getDisplay()->flipDMABuffer();
             m_wasPoweredOn = false;
         }
-        config.releaseSnapshot();
         delay(100);
         return;
     }
@@ -558,6 +557,4 @@ void AppRuntime::update() {
 
     bool isRealtime = decision.isRealtime || (rotationManager && rotationManager->isCurrentRealtime());
     m_displayRuntime.getScheduler().delayUntilNextFrame(isRealtime);
-
-    config.releaseSnapshot();
 }

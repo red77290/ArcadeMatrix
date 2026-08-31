@@ -24,8 +24,20 @@ struct RenderSession {
     IEngine* activeEngine = nullptr;
 };
 
+struct PreemptionEntry {
+    EngineHandle handle{};
+    DisplaySourceId sourceId = DisplaySourceId::ROTATION;
+    uint32_t requestId = 0;
+
+    PreemptionEntry() = default;
+    PreemptionEntry(const EngineHandle& h, DisplaySourceId s = DisplaySourceId::ROTATION, uint32_t req = 0)
+        : handle(h), sourceId(s), requestId(req) {}
+};
+
 class DisplayRuntime {
 public:
+    static constexpr size_t MAX_PREEMPTION_DEPTH = 4;
+
     DisplayRuntime();
     
     void begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
@@ -54,6 +66,7 @@ public:
 
     inline FrameScheduler& getScheduler() { return m_scheduler; }
     inline const RenderSession& getCurrentSession() const { return m_session; }
+    inline uint8_t getPreemptionDepth() const { return m_preemptionDepth; }
 
     bool isTransitioning() const {
         return m_orientationManager && m_orientationManager->isTransitioning();
@@ -90,7 +103,9 @@ private:
     size_t m_registeredSourceCount = 0;
 
     RenderSession m_session;
-    IEngine* m_preemptedEngine = nullptr;
+    std::array<PreemptionEntry, MAX_PREEMPTION_DEPTH> m_preemptionStack{};
+    uint8_t m_preemptionDepth = 0;
     uint32_t m_sessionCounter = 0;
     uint32_t m_lastReconciledVersion = 0;
 };
+
