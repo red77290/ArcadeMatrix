@@ -453,52 +453,98 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
 
 void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     if (visualizerEngine) {
-        bool visEnabled = false;
+        bool visRequested = false;
         const EngineInstanceSnapshot* activeInst = nullptr;
         for (const auto& inst : snapshot.instances) {
             if (inst.engine_id == "audiovisualizer" || inst.engine_id == "visualizer") {
-                if (inst.config.getBool("priority_mode", false) || inst.config.getBool("enabled", false)) {
-                    visEnabled = true;
+                bool enabled = inst.config.getBool("enabled", true);
+                bool priorityMode = inst.config.getBool("priority_mode", false);
+                bool autoOnAudio = inst.config.getBool("auto_on_audio", false);
+                bool isAudioStreaming = (audioSessionManager.getActiveSession().state == AudioSessionState::STREAMING);
+                if (enabled && (priorityMode || (autoOnAudio && isAudioStreaming))) {
+                    visRequested = true;
                     activeInst = &inst;
                     break;
                 }
             }
         }
-        if (visEnabled) {
+
+        EngineHandle handle = EngineHandle("audiovisualizer", activeInst ? activeInst->instance_id.c_str() : "visualizer_main");
+        if (visRequested) {
             if (activeInst) visualizerEngine->onConfigChanged(&activeInst->config);
-            DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
-            req.engineHandle = EngineHandle("audiovisualizer", activeInst ? activeInst->instance_id.c_str() : "visualizer_main");
-            m_displayArbiter.submitRequest(req);
+            if (!m_syncVis.active || m_syncVis.handle != handle) {
+                m_syncVis.active = true;
+                m_syncVis.handle = handle;
+                DisplayRequest req{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                m_displayArbiter.submitRequest(req);
+            }
         } else {
-            m_displayArbiter.cancelRequest(DisplaySourceId::VISUALIZER);
+            if (m_syncVis.active) {
+                m_syncVis.active = false;
+                m_syncVis.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::VISUALIZER);
+            }
         }
     }
 
     if (m_marqueeEngine) {
-        if (m_marqueeEngine->isActive()) {
-            DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
-            req.engineHandle = EngineHandle("marquee", "marquee_main");
-            m_displayArbiter.submitRequest(req);
+        bool active = m_marqueeEngine->isActive();
+        EngineHandle handle("marquee", "marquee_main");
+        if (active) {
+            if (!m_syncMarquee.active || m_syncMarquee.handle != handle) {
+                m_syncMarquee.active = true;
+                m_syncMarquee.handle = handle;
+                DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                m_displayArbiter.submitRequest(req);
+            }
         } else {
-            m_displayArbiter.cancelRequest(DisplaySourceId::MARQUEE);
+            if (m_syncMarquee.active) {
+                m_syncMarquee.active = false;
+                m_syncMarquee.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::MARQUEE);
+            }
         }
     }
+
     if (m_messageEngine) {
-        if (m_messageEngine->isActive()) {
-            DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
-            req.engineHandle = EngineHandle("message", "message_main");
-            m_displayArbiter.submitRequest(req);
+        bool active = m_messageEngine->isActive();
+        EngineHandle handle("message", "message_main");
+        if (active) {
+            if (!m_syncMqtt.active || m_syncMqtt.handle != handle) {
+                m_syncMqtt.active = true;
+                m_syncMqtt.handle = handle;
+                DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                m_displayArbiter.submitRequest(req);
+            }
         } else {
-            m_displayArbiter.cancelRequest(DisplaySourceId::MQTT);
+            if (m_syncMqtt.active) {
+                m_syncMqtt.active = false;
+                m_syncMqtt.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::MQTT);
+            }
         }
     }
+
     if (gifEngine) {
-        if (gifEngine->isActive()) {
-            DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true};
-            req.engineHandle = EngineHandle("gifs", "gifs_main");
-            m_displayArbiter.submitRequest(req);
+        bool active = gifEngine->isActive();
+        EngineHandle handle("gifs", "gifs_main");
+        if (active) {
+            if (!m_syncGif.active || m_syncGif.handle != handle) {
+                m_syncGif.active = true;
+                m_syncGif.handle = handle;
+                DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                m_displayArbiter.submitRequest(req);
+            }
         } else {
-            m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
+            if (m_syncGif.active) {
+                m_syncGif.active = false;
+                m_syncGif.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
+            }
         }
     }
 }
@@ -512,10 +558,11 @@ void AppRuntime::update() {
     if (snapshot.version != m_lastReconciledVersion) {
         m_lastReconciledVersion = snapshot.version;
         syncMqtt(snapshot);
-        evaluateDisplayRequests(snapshot);
-    } else if (m_frontendListener) {
+    }
+    if (m_frontendListener) {
         m_frontendListener->loop();
     }
+    evaluateDisplayRequests(snapshot);
 
     audioSessionManager.update(snapshot);
 

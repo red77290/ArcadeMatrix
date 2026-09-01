@@ -44,6 +44,17 @@ private:
     int m_lastSec = -1;
     uint32_t m_lastReconciledVersion = 0;
 
+    struct ProducerSyncState {
+        bool active = false;
+        uint32_t requestId = 0;
+        EngineHandle handle;
+    };
+
+    ProducerSyncState m_syncMqtt;
+    ProducerSyncState m_syncMarquee;
+    ProducerSyncState m_syncGif;
+    ProducerSyncState m_syncVis;
+
     void handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);
     void evaluateDisplayRequests(const ConfigSnapshot& snapshot);

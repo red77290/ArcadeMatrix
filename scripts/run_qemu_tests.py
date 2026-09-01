@@ -72,13 +72,17 @@ def build_test(suite, verbose=False):
     print(f"🔧 Compiling Test Suite: {suite}")
     print(f"=======================================================")
     cmd = ["pio", "test", "-e", "esp32dev", "-f", suite, "--without-uploading", "--without-testing"]
-    res = subprocess.run(cmd, capture_output=not verbose, text=True)
-    if res.returncode != 0:
-        print(f"❌ Compilation failed for suite {suite}")
-        if not verbose and res.stderr:
-            print(res.stderr)
+    try:
+        res = subprocess.run(cmd, capture_output=not verbose, text=True, timeout=120)
+        if res.returncode != 0:
+            print(f"❌ Compilation failed for suite {suite}")
+            if not verbose and res.stderr:
+                print(res.stderr)
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        print(f"⏰ Compilation timeout (120s) reached for {suite}")
         return False
-    return True
 
 def merge_flash(suite, esptool_cmd, boot_app0, verbose=False):
     build_dir = os.path.join(".pio", "build", "esp32dev")
@@ -113,7 +117,7 @@ def merge_flash(suite, esptool_cmd, boot_app0, verbose=False):
         return None
     return merged_output
 
-def run_qemu_suite(qemu_bin, flash_path, suite, verbose=False, timeout_sec=90):
+def run_qemu_suite(qemu_bin, flash_path, suite, verbose=False, timeout_sec=45):
     print(f"🚀 Executing {suite} in QEMU emulator...")
     cmd = [
         qemu_bin,
@@ -121,64 +125,59 @@ def run_qemu_suite(qemu_bin, flash_path, suite, verbose=False, timeout_sec=90):
         "-monitor", "null",
         "-serial", "stdio",
         "-machine", "esp32",
+        "-smp", "2",
+        "-m", "4M",
         "-drive", f"file={flash_path},if=mtd,format=raw",
         "-no-reboot"
     ]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
+    stdout_data = ""
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        stdout_data, _ = proc.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            stdout_data, _ = proc.communicate(timeout=5)
+        except Exception:
+            pass
+        print(f"⏰ Timeout ({timeout_sec}s) reached for {suite}")
 
-    start_time = time.time()
+    captured_lines = stdout_data.splitlines() if stdout_data else []
     passed = False
     failed = False
     tests_run = 0
     tests_failed = 0
-    captured_lines = []
 
-    while True:
-        if time.time() - start_time > timeout_sec:
-            proc.kill()
-            print(f"⏰ Timeout ({timeout_sec}s) reached for {suite}")
-            break
+    for line in captured_lines:
+        stripped = line.strip()
+        if verbose:
+            print("    " + stripped)
+        else:
+            if ":" in stripped and ("PASSED" in stripped or "FAILED" in stripped):
+                print("  " + stripped)
+            elif "Tests " in stripped and "Failures " in stripped:
+                print("  🏁 " + stripped)
 
-        line = proc.stdout.readline()
-        if not line and proc.poll() is not None:
-            break
-
-        if line:
-            captured_lines.append(line)
-            stripped = line.strip()
-            if verbose:
-                print("    " + stripped)
+        m = re.search(r"(\d+)\s+Tests\s+(\d+)\s+Failures", stripped)
+        if m:
+            tests_run = int(m.group(1))
+            tests_failed = int(m.group(2))
+            if tests_failed == 0 and tests_run > 0:
+                passed = True
             else:
-                if ":" in stripped and ("PASSED" in stripped or "FAILED" in stripped):
-                    print("  " + stripped)
-                elif "Tests " in stripped and "Failures " in stripped:
-                    print("  🏁 " + stripped)
-
-            m = re.search(r"(\d+)\s+Tests\s+(\d+)\s+Failures", stripped)
-            if m:
-                tests_run = int(m.group(1))
-                tests_failed = int(m.group(2))
-                if tests_failed == 0 and tests_run > 0:
-                    passed = True
-                else:
-                    failed = True
-                proc.kill()
-                break
-
-    proc.poll()
+                failed = True
 
     if not passed and not verbose:
         print(f"\n--- [QEMU Output Dump for {suite}] ---")
         for l in captured_lines:
             print("  | " + l.rstrip())
-        print("--------------------------------------")
+        print("--------------------------------------\n")
 
     return passed and not failed
 

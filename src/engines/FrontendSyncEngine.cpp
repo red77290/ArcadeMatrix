@@ -117,7 +117,7 @@ bool FrontendSyncEngine::loop() {
         hasPendingEvent = false;
         uint32_t reqId = currentRequestId;
         handleGameEvent(pendingPayload, reqId);
-    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message && millis() > 12000) {
+    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message) {
         waitingDisplayed = true;
         MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "rtl", 40, 0 };
         message->displayMessage(cfg);

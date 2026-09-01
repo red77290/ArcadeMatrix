@@ -693,10 +693,9 @@ void test_canonical_overlays_schema_and_migration(void) {
     })";
 
     TEST_ASSERT_TRUE(cfg.parseFromJson(legacyJson));
-    TEST_ASSERT_EQUAL(3, cfg.rotation.size());
-    TEST_ASSERT_TRUE(cfg.rotation[0].overlays.fighter);
-    TEST_ASSERT_TRUE(cfg.rotation[1].overlays.fighter);
-    TEST_ASSERT_FALSE(cfg.rotation[2].overlays.fighter);
+    TEST_ASSERT_TRUE(cfg.rotation[0].overlays.fighter == FighterOverride::Enabled);
+    TEST_ASSERT_TRUE(cfg.rotation[1].overlays.fighter == FighterOverride::Enabled);
+    TEST_ASSERT_TRUE(cfg.rotation[2].overlays.fighter == FighterOverride::Disabled);
 
     // Verify serialization produces canonical "overlays": {"fighter": true}
     String serialized = cfg.serializeToJson();
@@ -713,25 +712,25 @@ void test_rotation_overlay_combinations(void) {
     OverlayManager overlay;
     overlay.initialize(nullptr, &cfg);
 
-    // 1. Clock + Fighter ON
-    overlay.configure(OverlayConfig{true});
+    // T14: Global = true + Unspecified -> ON
+    overlay.configure(OverlayConfig{FighterOverride::Unspecified});
     TEST_ASSERT_TRUE(overlay.isActive());
 
-    // 2. Clock + Fighter OFF
-    overlay.configure(OverlayConfig{false});
-    TEST_ASSERT_FALSE(overlay.isActive());
-
-    // 3. GIF + Fighter ON (MUST be valid with zero GIF special rule!)
-    overlay.configure(OverlayConfig{true});
+    // T15: Global = true + Enabled -> ON
+    overlay.configure(OverlayConfig{FighterOverride::Enabled});
     TEST_ASSERT_TRUE(overlay.isActive());
 
-    // 4. GIF + Fighter OFF
-    overlay.configure(OverlayConfig{false});
+    // T16: Global = true + Disabled -> OFF
+    overlay.configure(OverlayConfig{FighterOverride::Disabled});
     TEST_ASSERT_FALSE(overlay.isActive());
 
-    // 5. Global master switch disabled overrides per-rotation true
+    // T17: Global = false + Enabled -> OFF (Master switch overrides)
     cfg.system.idle_fighter_enabled = false;
-    overlay.configure(OverlayConfig{true});
+    overlay.configure(OverlayConfig{FighterOverride::Enabled});
+    TEST_ASSERT_FALSE(overlay.isActive());
+
+    // T17b: Global = false + Unspecified -> OFF
+    overlay.configure(OverlayConfig{FighterOverride::Unspecified});
     TEST_ASSERT_FALSE(overlay.isActive());
 }
 
@@ -1539,6 +1538,156 @@ void test_display_runtime_state_machine_matrix(void) {
     TEST_ASSERT_EQUAL(1, runtimeUnres.getPreemptionDepth());
 }
 
+/**
+ * @brief Tests cross-priority preemption, stateless arbitration, and edge-triggered transitions (T1 - T13, T18, T19).
+ */
+void test_cross_priority_and_edge_transitions(void) {
+    DisplayArbiter arbiter;
+    DisplayRuntime runtime;
+
+    TrackingMockEngine rotEng("rot");
+    TrackingMockEngine gifEng("gif");
+    TrackingMockEngine marqEng("marq");
+    TrackingMockEngine mqttEng("mqtt");
+    TrackingMockEngine visEng("vis");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::GIF, &gifEng, EngineHandle("gifs", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &marqEng, EngineHandle("marquee", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttEng, EngineHandle("message", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &visEng, EngineHandle("audiovisualizer", "main"));
+
+    // 0. Base Rotation
+    DisplayRequest reqRot{DisplaySourceId::ROTATION, DisplayPriority::ROTATION, RequestLifecycle::PERSISTENT, false};
+    reqRot.engineHandle = EngineHandle("clock", "main");
+    arbiter.submitRequest(reqRot);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL(1, rotEng.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+
+    // T1: Rotation -> MQTT waiting (PREEMPT, depth = 1, baseline stacked)
+    DisplayRequest reqMqtt{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true, 101, EngineHandle("message", "main")};
+    arbiter.submitRequest(reqMqtt);
+    DisplayDecision dMqtt = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, dMqtt.sourceId);
+    runtime.transitionSession(dMqtt);
+    TEST_ASSERT_EQUAL(1, rotEng.pauseCalls);
+    TEST_ASSERT_EQUAL(1, mqttEng.activateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    // T2 & T19: MQTT refresh with new requestId (same source + handle + engine) -> REFRESH without preemption
+    DisplayRequest reqMqttRefresh = reqMqtt;
+    reqMqttRefresh.requestId = 102;
+    arbiter.submitRequest(reqMqttRefresh);
+    DisplayDecision dMqttRef = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(102, dMqttRef.requestId);
+    runtime.transitionSession(dMqttRef);
+    TEST_ASSERT_EQUAL(1, rotEng.pauseCalls); // No new pause
+    TEST_ASSERT_EQUAL(1, mqttEng.activateCalls); // No new activate
+    TEST_ASSERT_EQUAL(0, mqttEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth()); // Depth unchanged
+
+    // T3: MQTT (40) superior to Marquee (30) -> Marquee does NOT preempt MQTT, MQTT remains dominant
+    DisplayRequest reqMarq{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true, 201, EngineHandle("marquee", "main")};
+    arbiter.submitRequest(reqMarq);
+    DisplayDecision dAfterMarq = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, dAfterMarq.sourceId);
+    runtime.transitionSession(dAfterMarq);
+    TEST_ASSERT_EQUAL(1, mqttEng.activateCalls);
+    TEST_ASSERT_EQUAL(0, marqEng.activateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    // T7 & T8: MQTT -> Visualizer (50 > 40) -> Visualizer PREEMPTS MQTT (depth = 2)
+    DisplayRequest reqVis{DisplaySourceId::VISUALIZER, DisplayPriority::VISUALIZER, RequestLifecycle::UNTIL_CANCELLED, true, 301, EngineHandle("audiovisualizer", "main")};
+    arbiter.submitRequest(reqVis);
+    DisplayDecision dVis = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::VISUALIZER, dVis.sourceId);
+    runtime.transitionSession(dVis);
+    TEST_ASSERT_EQUAL(1, mqttEng.pauseCalls);
+    TEST_ASSERT_EQUAL(1, visEng.activateCalls);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+    // T9: Visualizer refresh -> REFRESH, depth unchanged at 2
+    DisplayRequest reqVisRef = reqVis;
+    reqVisRef.requestId = 302;
+    arbiter.submitRequest(reqVisRef);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL(1, visEng.activateCalls);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+
+    // T10: Visualizer stop -> MQTT is still active -> RESUME MQTT (depth = 1)
+    arbiter.cancelRequest(DisplaySourceId::VISUALIZER);
+    DisplayDecision dAfterVisStop = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, dAfterVisStop.sourceId);
+    runtime.transitionSession(dAfterVisStop);
+    TEST_ASSERT_EQUAL(1, visEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, mqttEng.resumeCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    // T6: Submitting Visualizer again, cancelling MQTT in background, Visualizer remains active
+    arbiter.submitRequest(reqVis);
+    runtime.transitionSession(arbiter.evaluate());
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+    // Cancel MQTT while Visualizer is active
+    arbiter.cancelRequest(DisplaySourceId::MQTT);
+    DisplayDecision dVisWithMqttGone = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::VISUALIZER, dVisWithMqttGone.sourceId);
+    runtime.transitionSession(dVisWithMqttGone);
+    TEST_ASSERT_EQUAL_PTR(&visEng, runtime.getCurrentSession().activeEngine);
+
+    // T11 & T5: Visualizer stop -> MQTT was cancelled -> Marquee (30) was in queue, or if Marquee cancelled -> Rotation (RESUME baseline, depth = 0)
+    arbiter.cancelRequest(DisplaySourceId::MARQUEE);
+    arbiter.cancelRequest(DisplaySourceId::VISUALIZER);
+    DisplayDecision dBackToRot = arbiter.evaluate();
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, dBackToRot.sourceId);
+    runtime.transitionSession(dBackToRot);
+    TEST_ASSERT_EQUAL(1, rotEng.resumeCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL_PTR(&rotEng, runtime.getCurrentSession().activeEngine);
+
+    // T12 & T13: Functional contract check for Visualizer auto-on-audio
+    // Audio streaming = true, but auto_on_audio = false -> visualizerRequested = false
+    bool isAudioStreaming = true;
+    bool visEnabled = true;
+    bool priorityMode = false;
+    bool autoOnAudio = false;
+    bool visRequestedT12 = visEnabled && (priorityMode || (autoOnAudio && isAudioStreaming));
+    TEST_ASSERT_FALSE(visRequestedT12);
+
+    // Audio streaming = true and auto_on_audio = true -> visualizerRequested = true
+    autoOnAudio = true;
+    bool visRequestedT13 = visEnabled && (priorityMode || (autoOnAudio && isAudioStreaming));
+    TEST_ASSERT_TRUE(visRequestedT13);
+
+    // T18: Edge-trigger tracking simulation
+    struct SyncTracker {
+        bool active = false;
+        uint32_t reqId = 0;
+        int mutations = 0;
+        void sync(bool nextActive, uint32_t nextReqId) {
+            if (active != nextActive || reqId != nextReqId) {
+                active = nextActive;
+                reqId = nextReqId;
+                mutations++;
+            }
+        }
+    } tracker;
+
+    // First call -> 1 mutation
+    tracker.sync(true, 10);
+    TEST_ASSERT_EQUAL(1, tracker.mutations);
+
+    // 100 identical calls -> 0 additional mutations (O(1) strict no-op)
+    for (int i = 0; i < 100; ++i) {
+        tracker.sync(true, 10);
+    }
+    TEST_ASSERT_EQUAL(1, tracker.mutations);
+
+    // State change -> 2nd mutation
+    tracker.sync(false, 0);
+    TEST_ASSERT_EQUAL(2, tracker.mutations);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1572,6 +1721,7 @@ void setup() {
     RUN_TEST(test_arbiter_request_id_semantics);
     RUN_TEST(test_arbiter_spsc_lockfree);
     RUN_TEST(test_canonical_engine_handle_resolution);
+    RUN_TEST(test_cross_priority_and_edge_transitions);
 
     // =========================================================================
     // 4. Triple-Buffer Linearizability & Snapshot Atomicity

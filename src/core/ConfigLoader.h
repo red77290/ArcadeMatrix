@@ -13,11 +13,18 @@ struct EngineInstance {
     DictionaryEngineConfig config;
 };
 
-struct OverlayConfig {
-    bool fighter;
+enum class FighterOverride : uint8_t {
+    Unspecified = 0, ///< Field absent in playlist entry: inherit global setting
+    Disabled    = 1, ///< Field explicitly "fighter": false in item
+    Enabled     = 2  ///< Field explicitly "fighter": true in item
+};
 
-    OverlayConfig() : fighter(false) {}
-    explicit OverlayConfig(bool f) : fighter(f) {}
+struct OverlayConfig {
+    FighterOverride fighter;
+
+    OverlayConfig() : fighter(FighterOverride::Unspecified) {}
+    explicit OverlayConfig(FighterOverride f) : fighter(f) {}
+    explicit OverlayConfig(bool f) : fighter(f ? FighterOverride::Enabled : FighterOverride::Disabled) {}
 };
 
 struct RotationEntry {

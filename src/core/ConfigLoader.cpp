@@ -286,12 +286,12 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
             RotationEntry entry;
             entry.instance_id = rotObj["instance_id"] | "";
             entry.duration_sec = rotObj["duration_sec"] | 15;
-            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObjectConst>()) {
-                entry.overlays.fighter = rotObj["overlays"]["fighter"] | false;
+            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObjectConst>() && rotObj["overlays"].containsKey("fighter")) {
+                entry.overlays.fighter = rotObj["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else if (rotObj.containsKey("fighter_overlay")) {
-                entry.overlays.fighter = rotObj["fighter_overlay"] | false;
+                entry.overlays.fighter = rotObj["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else {
-                entry.overlays.fighter = false;
+                entry.overlays.fighter = FighterOverride::Unspecified;
             }
             rotation.push_back(entry);
         }
@@ -406,8 +406,10 @@ String ConfigLoader::serializeToJson(bool pretty) const {
         JsonObject rObj = rotArr.createNestedObject();
         rObj["instance_id"] = rot.instance_id;
         rObj["duration_sec"] = rot.duration_sec;
-        JsonObject ovObj = rObj.createNestedObject("overlays");
-        ovObj["fighter"] = rot.overlays.fighter;
+        if (rot.overlays.fighter != FighterOverride::Unspecified) {
+            JsonObject ovObj = rObj.createNestedObject("overlays");
+            ovObj["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
+        }
     }
 
     JsonArray instArr = doc.createNestedArray("instances");

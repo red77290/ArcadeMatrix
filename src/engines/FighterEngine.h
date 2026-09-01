@@ -183,6 +183,8 @@ private:
     int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake
     
     String loadDir;
+    String cachedFightersDir;
+    int cachedScaleClass = 0;
     bool m_hasPsram = false;
 };
 

@@ -548,8 +548,10 @@ void WebServerAPI::setupRoutes() {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = rot.instance_id;
             obj["duration_sec"] = rot.duration_sec;
-            JsonObject ovObj = obj.createNestedObject("overlays");
-            ovObj["fighter"] = rot.overlays.fighter;
+            if (rot.overlays.fighter != FighterOverride::Unspecified) {
+                JsonObject ovObj = obj.createNestedObject("overlays");
+                ovObj["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
+            }
         }
         String response;
         serializeJson(doc, response);
@@ -571,12 +573,12 @@ void WebServerAPI::setupRoutes() {
             RotationEntry re;
             re.instance_id = entry["instance_id"].as<String>();
             re.duration_sec = entry["duration_sec"] | 15;
-            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>()) {
-                re.overlays.fighter = entry["overlays"]["fighter"] | false;
+            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>() && entry["overlays"].containsKey("fighter")) {
+                re.overlays.fighter = entry["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else if (entry.containsKey("fighter_overlay")) {
-                re.overlays.fighter = entry["fighter_overlay"] | false;
+                re.overlays.fighter = entry["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else {
-                re.overlays.fighter = false;
+                re.overlays.fighter = FighterOverride::Unspecified;
             }
             if (!re.instance_id.isEmpty()) {
                 config.rotation.push_back(re);
