@@ -1321,7 +1321,7 @@ select.input option {
         <div class="card glass shadow">
           <h3>🥊 <span data-i18n="fighter_title">Fighter Overlay</span></h3>
           <p class="text-muted" data-i18n="fighter_desc">Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.</p>
-          <div class="form-grid col-2" style="margin-top: 1rem;">
+          <div class="form-grid col-3" style="margin-top: 1rem;">
             <div class="form-group">
               <label data-i18n="fighter_enabled">Enabled</label>
               <label class="switch">
@@ -1332,6 +1332,10 @@ select.input option {
             <div class="form-group">
               <label data-i18n="fighter_interval">Interval between fights (seconds)</label>
               <input type="number" id="fighter-interval" class="input" value="10" min="1">
+            </div>
+            <div class="form-group">
+              <label><span data-i18n="fighter_speed">Animation Speed</span> (<span id="val-fighter-speed">100</span>%)</label>
+              <input type="range" id="fighter-speed" min="25" max="200" value="100" step="5" class="input" style="height: 38px; padding: 0.2rem;">
             </div>
           </div>
           <button id="btn-save-fighter" class="btn btn-primary" style="margin-top: 1.5rem;" data-i18n="fighter_save">Save Fighter Settings</button>
@@ -1453,6 +1457,10 @@ select.input option {
               <div class="form-group">
                 <label data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</label>
                 <input type="number" id="sys-idle-fighter-interval" class="input" value="60" min="5" max="3600">
+              </div>
+              <div class="form-group">
+                <label><span data-i18n="gen_idle_fighter_speed">Fighter Speed</span> (<span id="val-sys-fighter-speed">100</span>%)</label>
+                <input type="range" id="sys-idle-fighter-speed" min="25" max="200" value="100" step="5" class="input" style="height: 38px; padding: 0.2rem;">
               </div>
             </div>
 
@@ -1996,6 +2004,7 @@ const translations = {
     fighter_desc: "Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.",
     fighter_enabled: "Enabled",
     fighter_interval: "Interval between fights (seconds)",
+    fighter_speed: "Animation Speed",
     fighter_save: "Save Fighter Settings",
     radio_title: "WebRadio & Audio Streaming Hub",
     radio_desc: "Stream live Web Radios or broadcast music from your phone/PC via DLNA/UPnP (AudioCast, RiMusic, BubbleUPnP, VLC).",
@@ -2272,6 +2281,7 @@ const translations = {
     fighter_desc: "Sprites de combattants animés superposés sur les écrans de rotation en veille. À activer par écran depuis le panneau Rotation.",
     fighter_enabled: "Activé",
     fighter_interval: "Intervalle entre les combats (secondes)",
+    fighter_speed: "Vitesse d'Animation",
     fighter_save: "Enregistrer les paramètres Combattant",
     radio_title: "WebRadio & Streaming Audio",
     radio_desc: "Diffusez des web-radios en direct ou envoyez le son de votre smartphone/PC via DLNA (AudioCast, RiMusic, BubbleUPnP, VLC).",
@@ -5117,8 +5127,17 @@ function initCustomMarquee() {
 function initFighterOverlay() {
   const enabledEl = document.getElementById('fighter-enabled');
   const intervalEl = document.getElementById('fighter-interval');
+  const speedEl = document.getElementById('fighter-speed');
+  const valSpeedEl = document.getElementById('val-fighter-speed');
   const saveBtn = document.getElementById('btn-save-fighter');
   if (!enabledEl || !intervalEl || !saveBtn) return;
+
+  if (speedEl && valSpeedEl && !speedEl._boundInput) {
+    speedEl._boundInput = true;
+    speedEl.addEventListener('input', (e) => {
+      valSpeedEl.textContent = e.target.value;
+    });
+  }
 
   // Load current values from the canonical system config.
   (async () => {
@@ -5131,6 +5150,10 @@ function initFighterOverlay() {
       if (typeof sys.idle_fighter_interval === 'number') {
         intervalEl.value = sys.idle_fighter_interval;
       }
+      if (typeof sys.idle_fighter_speed === 'number' && speedEl) {
+        speedEl.value = sys.idle_fighter_speed;
+        if (valSpeedEl) valSpeedEl.textContent = String(sys.idle_fighter_speed);
+      }
     } catch (e) {
       console.error('Failed to load fighter settings', e);
     }
@@ -5141,6 +5164,7 @@ function initFighterOverlay() {
       await API.post('/api/system', {
         idle_fighter_enabled: enabledEl.checked,
         idle_fighter_interval: parseInt(intervalEl.value) || 1,
+        idle_fighter_speed: parseInt(speedEl?.value) || 100,
       });
       window.showToast('Fighter overlay settings saved!', 'success');
     } catch (e) {
@@ -5448,6 +5472,17 @@ async function initSettings() {
     setVal('sys-temp-offset', sys.temp_offset ?? 0.0);
     setChk('sys-idle-fighter-enabled', sys.idle_fighter_enabled ?? false);
     setVal('sys-idle-fighter-interval', sys.idle_fighter_interval || 60);
+    setVal('sys-idle-fighter-speed', sys.idle_fighter_speed || 100);
+
+    const sysFighterSpeedEl = document.getElementById('sys-idle-fighter-speed');
+    const valSysFighterSpeed = document.getElementById('val-sys-fighter-speed');
+    if (valSysFighterSpeed) valSysFighterSpeed.textContent = String(sys.idle_fighter_speed || 100);
+    if (sysFighterSpeedEl && valSysFighterSpeed && !sysFighterSpeedEl._boundInput) {
+      sysFighterSpeedEl._boundInput = true;
+      sysFighterSpeedEl.addEventListener('input', (e) => {
+        valSysFighterSpeed.textContent = e.target.value;
+      });
+    }
 
     // Dashboard brightness (0-100) is the live daytime brightness (day_brightness).
     const sliderBright = document.getElementById('slider-brightness');
@@ -5621,6 +5656,7 @@ async function initSettings() {
       const tempOffset = parseFloat(document.getElementById('sys-temp-offset')?.value) || 0.0;
       const idleFighterEnabled = document.getElementById('sys-idle-fighter-enabled')?.checked || false;
       const idleFighterInterval = parseInt(document.getElementById('sys-idle-fighter-interval')?.value) || 60;
+      const idleFighterSpeed = parseInt(document.getElementById('sys-idle-fighter-speed')?.value) || 100;
 
       try {
         await API.post('/api/system', {
@@ -5631,6 +5667,7 @@ async function initSettings() {
             temp_offset: tempOffset,
             idle_fighter_enabled: idleFighterEnabled,
             idle_fighter_interval: idleFighterInterval,
+            idle_fighter_speed: idleFighterSpeed,
           }
         });
         window.showToast('System preferences saved!', 'success');

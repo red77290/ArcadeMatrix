@@ -87,6 +87,7 @@ struct SystemConfig {
     int night_brightness;
     bool idle_fighter_enabled = false;
     int idle_fighter_interval = 60;
+    int idle_fighter_speed = 100;
 };
 
 struct EngineInstanceSnapshot {
