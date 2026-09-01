@@ -1088,6 +1088,63 @@ void test_runtime_resolve_does_not_create_instance(void) {
     TEST_ASSERT_EQUAL(countBefore, rot.getActiveEngineCount());
 }
 
+void test_preemptive_same_session_refresh_is_not_preemption(void) {
+    DisplayArbiter arbiter;
+    DisplayRuntime runtime;
+    TrackingMockEngine clockEng("clock");
+    TrackingMockEngine mqttEng("mqtt");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mqttEng, EngineHandle("message", "main"));
+
+    // 1. Clock active
+    DisplayDecision d1 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d1.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d1.sourceId);
+    runtime.transitionSession(d1);
+    TEST_ASSERT_EQUAL(1, clockEng.activateCalls);
+
+    // 2. MQTT becomes active (preemptive)
+    DisplayRequest mqttReq;
+    mqttReq.sourceId = DisplaySourceId::MQTT;
+    mqttReq.priority = DisplayPriority::MQTT;
+    mqttReq.engineHandle = EngineHandle("message", "main");
+    mqttReq.preemptive = true;
+    mqttReq.requestId = 101;
+    mqttReq.lifecycle = RequestLifecycle::UNTIL_CANCELLED;
+    arbiter.submitRequest(mqttReq);
+
+    DisplayDecision d2 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d2.valid);
+    TEST_ASSERT_EQUAL(DisplaySourceId::MQTT, d2.sourceId);
+    TEST_ASSERT_TRUE(d2.preemptive);
+    runtime.transitionSession(d2);
+
+    // Baseline clock paused, MQTT activated
+    TEST_ASSERT_EQUAL(1, clockEng.pauseCalls);
+    TEST_ASSERT_EQUAL(1, mqttEng.activateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
+
+    // 3. MQTT refresh with new requestId
+    DisplayRequest mqttRefresh = mqttReq;
+    mqttRefresh.requestId = 102;
+    arbiter.submitRequest(mqttRefresh);
+
+    DisplayDecision d3 = arbiter.evaluate();
+    TEST_ASSERT_TRUE(d3.valid);
+    TEST_ASSERT_EQUAL(102, d3.requestId);
+    runtime.transitionSession(d3);
+
+    // Assert: zero new pauses, zero new activates, zero deactivates, depth intact at 1, TransitionMode is REFRESH
+    TEST_ASSERT_EQUAL(1, clockEng.pauseCalls);
+    TEST_ASSERT_EQUAL(1, mqttEng.activateCalls);
+    TEST_ASSERT_EQUAL(0, mqttEng.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(102, runtime.getCurrentSession().requestId);
+    TEST_ASSERT_EQUAL(TransitionMode::REFRESH, runtime.getCurrentSession().lastTransitionMode);
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -1126,6 +1183,7 @@ void setup() {
     RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
     RUN_TEST(test_rotation_manager_bounded_lookup);
     RUN_TEST(test_runtime_resolve_does_not_create_instance);
+    RUN_TEST(test_preemptive_same_session_refresh_is_not_preemption);
     RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);

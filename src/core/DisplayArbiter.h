@@ -85,6 +85,14 @@ struct DisplayRequestSlot {
     DisplayRequest request{};
 };
 
+enum class TransitionMode : uint8_t {
+    NONE = 0,
+    REPLACE,
+    PREEMPT,
+    RESUME,
+    REFRESH
+};
+
 struct DisplayDecision {
     EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
