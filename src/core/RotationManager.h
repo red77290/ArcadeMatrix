@@ -36,7 +36,8 @@ public:
     // Reset to start of rotation (e.g. after manual interruption)
     void resetRotation();
     
-    String getCurrentInstanceId() const;
+    const char* getCurrentInstanceIdCStr() const { return currentActiveInstanceId; }
+    String getCurrentInstanceId() const { return String(currentActiveInstanceId); }
     String getCurrentEngineId() const;
     void setSuspended(bool suspended);
     bool isSuspended() const { return suspended; }
@@ -88,7 +89,7 @@ private:
     uint32_t moduleStartTime = 0;
     uint8_t switchDepth = 0;
     bool suspended = false;
-    String currentActiveInstanceId = "";
+    char currentActiveInstanceId[32]{0};
 
     void switchToModule(int index);
 };
