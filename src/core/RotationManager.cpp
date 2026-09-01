@@ -201,8 +201,8 @@ void RotationManager::switchToModule(int index) {
   }
 
   // Deactivate old engine
-  if (!currentActiveInstanceId.isEmpty() && currentActiveInstanceId != newInstanceId) {
-      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId.c_str());
+  if (currentActiveInstanceId[0] != '\0' && strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0) {
+      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
           oldEngine->deactivate();
       }
@@ -214,12 +214,13 @@ void RotationManager::switchToModule(int index) {
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
-      if (currentActiveInstanceId != newInstanceId) {
+      if (strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0) {
           newEngine->activate();
       }
   }
   
-  currentActiveInstanceId = newInstanceId;
+  strncpy(currentActiveInstanceId, newInstanceId.c_str(), sizeof(currentActiveInstanceId) - 1);
+  currentActiveInstanceId[sizeof(currentActiveInstanceId) - 1] = '\0';
   
   LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
       mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
@@ -227,8 +228,8 @@ void RotationManager::switchToModule(int index) {
 }
 
 bool RotationManager::isCurrentRealtime() const {
-    if (currentActiveInstanceId.isEmpty()) return false;
-    IEngine* engine = findActiveEngine(currentActiveInstanceId.c_str());
+    if (currentActiveInstanceId[0] == '\0') return false;
+    IEngine* engine = findActiveEngine(currentActiveInstanceId);
     return engine ? engine->isRealtime() : false;
 }
 
@@ -242,8 +243,8 @@ OverlayConfig RotationManager::getCurrentOverlays() const {
 }
 
 IEngine* RotationManager::getCurrentActiveEngine() const {
-    if (currentActiveInstanceId.isEmpty()) return nullptr;
-    return findActiveEngine(currentActiveInstanceId.c_str());
+    if (currentActiveInstanceId[0] == '\0') return nullptr;
+    return findActiveEngine(currentActiveInstanceId);
 }
 
 void RotationManager::notifyGeometryChanged(const DisplayGeometry& geometry) {
@@ -258,15 +259,15 @@ void RotationManager::setSuspended(bool susp) {
     suspended = susp;
     
     if (suspended) {
-        if (!currentActiveInstanceId.isEmpty()) {
-            IEngine* engine = findActiveEngine(currentActiveInstanceId.c_str());
+        if (currentActiveInstanceId[0] != '\0') {
+            IEngine* engine = findActiveEngine(currentActiveInstanceId);
             if (engine) engine->deactivate();
         }
         LOGI("RotationManager", "Rotation Manager SUSPENDED.");
     } else {
         LOGI("RotationManager", "Rotation Manager RESUMED.");
-        if (!currentActiveInstanceId.isEmpty()) {
-            IEngine* engine = findActiveEngine(currentActiveInstanceId.c_str());
+        if (currentActiveInstanceId[0] != '\0') {
+            IEngine* engine = findActiveEngine(currentActiveInstanceId);
             if (engine) engine->activate();
         } else {
             resetRotation();
@@ -281,12 +282,12 @@ bool RotationManager::loop() {
     ConfigSnapshotGuard guard = config.acquireSnapshot();
 
     if (suspended || guard->rotation.empty()) {
-        if (!currentActiveInstanceId.isEmpty()) {
-            IEngine* oldEngine = findActiveEngine(currentActiveInstanceId.c_str());
+        if (currentActiveInstanceId[0] != '\0') {
+            IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
             if (oldEngine) {
                 oldEngine->deactivate();
             }
-            currentActiveInstanceId = "";
+            currentActiveInstanceId[0] = '\0';
         }
         return true;
     }
