@@ -218,11 +218,18 @@ void ArcadeClock::drawStaticTime() {
     int16_t bx = 0, by = 0;
     uint16_t bw = 0, bh = 0;
     int gfxSize = 1;
+
+    char refStr[32];
+    size_t tLen = strlen(timeStr);
+    for (size_t i = 0; i < tLen && i < sizeof(refStr) - 1; i++) {
+        refStr[i] = (timeStr[i] >= '0' && timeStr[i] <= '9') ? '8' : timeStr[i];
+    }
+    refStr[tLen] = '\0';
     
     if (chosenFont != nullptr) {
         matrix->setFont(chosenFont);
         matrix->setTextSize(1);
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
         
         if (bw > matrix->width() || bh > matrix->height()) {
             // If font overflows screen at 1x size, fallback to 5x7 default font
@@ -234,21 +241,21 @@ void ArcadeClock::drawStaticTime() {
             int sMax = min(sMaxW, sMaxH);
             gfxSize = min(max(1, logicalSize), max(1, sMax));
             matrix->setTextSize(gfxSize);
-            matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+            matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
         }
     }
     
     if (chosenFont == nullptr) {
         matrix->setFont(nullptr);
         matrix->setTextSize(1);
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0 || bh == 0) { bw = strlen(timeStr) * 6; bh = 8; }
+        matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = strlen(refStr) * 6; bh = 8; }
         int sMaxW = bw > 0 ? (matrix->width() / bw) : 1;
         int sMaxH = bh > 0 ? (matrix->height() / bh) : 1;
         int sMax = min(sMaxW, sMaxH);
         gfxSize = min(max(1, logicalSize), max(1, sMax));
         matrix->setTextSize(gfxSize);
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
     }
     
     int effectDepth = (gfxSize >= 5) ? 2 : 1;

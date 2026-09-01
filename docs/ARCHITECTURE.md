@@ -368,7 +368,7 @@ To eliminate cross-core race conditions and avoid holding mutexes on Core 1's ti
 - **Atomic 4-State Machine (`SlotState`):** `ConfigLoader` manages 3 physical snapshot buffers through explicit atomic states: `FREE`, `WRITING`, `PUBLISHED`, and `READING`.
 - **Linearizable CAS Reader Pinning (`Core 1`):** `ConfigSnapshotGuard guard = config.acquireSnapshot();` executes an atomic CAS loop: `_slotStates[slot].compare_exchange_weak(PUBLISHED, READING)` with acquire semantics. Access to `_snapshots[slot]` is **strictly impossible prior to CAS success**. The move-only RAII guard automatically transitions the slot upon destruction.
 - **Safe Reclamation & Deferred Publication (`Core 0`):** The writer dynamically reserves a `FREE` slot or reclaims an old `PUBLISHED` slot via `compare_exchange_strong(PUBLISHED, FREE)`. If all 3 slots are occupied (`READING + PUBLISHED + WRITING`), `_publishPending = true;` is set and the writer **returns immediately without busy-waiting or `yield()`**, ensuring consolidated publication on the next frame.
-- **Linearizability & CRC Validation:** Monotonic versioning with double-magic and CRC integrity validation ensures linear consistency across threads.
+- **Linearizability & Checksum Validation:** Monotonic versioning with double-magic and checksum integrity validation ensures linear consistency across threads.
 - **Transactional Mutations:** All configuration modifications from Core 0 pass through `config.mutate([&](ConfigLoader& cfg) { ... })`.
 
 ---
@@ -572,3 +572,84 @@ enum class LayoutClass : uint8_t {
 ## 19. Build Metadata & Telemetry
 
 The `/api/v1/system/version` endpoint exposes the exact build fingerprint (`git_commit`, `build_timestamp`, `firmware_version`), ensuring traceability between source code and running firmware.
+
+---
+
+## 21. Ownership Contract & Control-Plane Boundaries
+
+ArcadeMatrix enforces a strict multi-core separation between asynchronous control planes and the real-time display hot path:
+
+```text
+DisplayArbiter
+    └── calculates dominant intent only (pure stateless decision engine)
+
+DisplayRuntime
+    ├── owns active session state
+    ├── owns lifecycle transitions (activate, pause, resume, deactivate)
+    ├── owns preemption stack (PreemptionStack<PreemptionEntry, 4>)
+    └── classifies internal REFRESH vs external PREEMPT / RESUME / REPLACE
+
+RotationManager
+    ├── owns selectable engine instances (MAX_ACTIVE_ENGINES = 32)
+    ├── creates engine instances on cold path (REST API / configuration)
+    └── exposes allocation-free lookup on hot path (findActiveEngine())
+
+AppRuntime
+    └── owns event-driven engine instances (Pixelcade, Audio, MQTT handlers)
+```
+
+### 21.1 Comprehensive Display FSM Transition Matrix
+
+| Transition Sequence | Classification | Lifecycle Side Effects | Stack & Depth State |
+| :--- | :--- | :--- | :--- |
+| **A $\to$ A (same req/source)** | Internal `REFRESH` | `0` (no pause, no activate, in-place metadata update) | Depth unchanged |
+| **A $\to$ B (normal rotation)** | `REPLACE` | `deactivate(A) → activate(B)` | Depth = 0 |
+| **A $\to$ B (preemptive alert)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
+| **A $\to$ B $\to$ B refresh** | Internal `REFRESH` | `0` (updates `requestId` in-place) | Depth unchanged |
+| **A $\to$ B $\to$ C (stacked alert)**| `PREEMPT` | `pause(B) → push(B) → activate(C)` | Depth = 2 |
+| **A $\to$ B $\to$ C $\to$ C refresh**| Internal `REFRESH` | `0` (updates `requestId` in-place) | Depth = 2 |
+| **A $\to$ B $\to$ C $\to$ C timeout**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Depth = 1 |
+| **A $\to$ B $\to$ cancel B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Depth = 0 |
+| **A $\to$ B $\to$ cancel A** | None | `0` (submerged A discarded from stack if expired) | B remains active |
+| **A $\to$ Target Invalide** | Rejet Transactionnel| `0` (transition rejected silently, A intact) | Depth unchanged |
+| **Stack saturée (depth=4) $\to$ Nouvel Alert** | Rejet Transactionnel| `0` (preemption rejected cleanly, top session intact)| Depth = 4 |
+| **Parent non résolvable $\to$ RESUME** | Rejet Transactionnel| `0` (RESUME rejected without corrupting active child)| Child remains active |
+| **REPLACE indépendant sur stack active** | `REPLACE` | `deactivate(All) → activate(New)` | Depth reset to 0 |
+| **Priorité A(10) vs B(5)** | Dominance A | `0` (A stays active) | Depth unchanged |
+| **Priorité A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
+
+---
+
+## 22. Validation Architecture & Testing Framework
+
+ArcadeMatrix features a comprehensive 3-tier validation pipeline ensuring 100% test coverage and zero regressions:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       3-Tier Validation Pipeline                            │
+├──────────────────────┬───────────────────────────────┬──────────────────────┤
+│ Tier 1: Local PIO    │ Tier 2: QEMU Emulation CI     │ Tier 3: Dual-Target  │
+│ Unit Test Suites     │ Hardware Emulated Execution   │ Compilation          │
+├──────────────────────┼───────────────────────────────┼──────────────────────┤
+│ • test_core          │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_config        │ • ESP32 dual-core bootloader  │ • esp32s3_waveshare  │
+│ • test_engines       │ • UART Unity test runner      │ • Full static check  │
+│ • test_utils         │ • Zero host device dependency │ • Binary size check  │
+│ • test_matrix        │ • Automated GitHub Actions CI │                      │
+│ • test_retrofrontend │                               │                      │
+│ • test_spotify       │                               │                      │
+└──────────────────────┴───────────────────────────────┴──────────────────────┘
+```
+
+1. **Tier 1 — Local PlatformIO Compilation (`pio test`):** 7 comprehensive test suites compiling test firmware binaries with `Unity` test assertions to verify symbol resolution and type contracts without requiring a physical board attached.
+2. **Tier 2 — QEMU Hardware Emulation Execution (`scripts/run_qemu_tests.py`):** Automated test harness booting each compiled test firmware image inside an emulated ESP32 CPU (Espressif QEMU), capturing and evaluating the UART serial output for `UNITY_END()` success codes.
+3. **Tier 3 — Dual-Target Compilation:** Ensures complete firmware build compatibility across classic ESP32 Dual-Core (I2S DMA) and ESP32-S3 (LCD DMA) target hardware platforms.
+
+### 22.1 ValidationPolicy Contract as a Violation Handler
+
+In ArcadeMatrix, `ValidationPolicy` defines the deterministic recovery action executed whenever a configuration field fails validation constraints:
+
+- `Clamp`: Constrains out-of-bounds numeric values to `[min_val, max_val]`.
+- `FallbackDefault`: Restores the field value to `field.default_value` upon constraint violation.
+- `Accept`: Accepts custom/unconstrained user values as-is (used for freeform text or unconstrained URLs).
+- `Reject`: Discards the invalid configuration and restores the documented default.

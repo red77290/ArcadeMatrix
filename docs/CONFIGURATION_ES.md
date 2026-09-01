@@ -45,7 +45,7 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `disable_hardware_pulsing` | `bool` | Ponlo en `true` para evitar que DMA asfixie el Wi-Fi interno (ligero parpadeo). |
 | `limit_refresh_rate_hz` | `int` | Limita la frecuencia de refresco (`0` = sin límite). |
 | `row_address_mode` | `int` | Tipo de direccionamiento de filas para paneles exóticos (`0` por defecto). |
-| `clk_phase` | `bool` | Invierte la fase de reloj CLK (habilitado por defecto en ESP32-S3 para suprimir ruidos de píxeles e inestabilidades de DMA). |
+| `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto para alineación estándar de columnas de píxeles; habilitar a `true` si el panel lo requiere). |
 | `latch_blanking` | `int` | Ciclos de ocultación de latch (`1`–`4`) para reducir el ghosting (líneas fantasma). |
 | `panel_type` | `String` | Cadena opcional de inicialización del panel (ej. `FM6126A`), normalmente vacía. |
 
@@ -75,7 +75,7 @@ También puedes enviar credenciales en tiempo de ejecución con `POST /api/wifi 
 | `format_24h` | `bool` | Formato de hora. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | Idioma del sistema (ej. `en`, `fr`, `es`). |
 | `temp_unit` | `String` | Unidad de temperatura preferida (`C` para Celsius, `F` para Fahrenheit). |
-| `temp_offset` | `float` | Compensación de calibración en °C aplicada a los sensores ambientales. |
+| `temp_offset` | `float` | Compensación de calibración aplicada a los sensores ambientales (en la unidad de temperatura configurada). |
 | `night_mode_enabled` | `bool` | Activa el apagado automático / la reducción de brillo por la noche. |
 | `turn_off_at` | `String` | Hora de inicio de espera (ej. `"23:00"`). |
 | `wake_up_at` | `String` | Hora de despertar (ej. `"07:00"`). |

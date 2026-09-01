@@ -6,42 +6,33 @@
 extern SemaphoreHandle_t sdMutex;
 
 ConfigLoader::ConfigLoader() {
-    _slotStates[0].store(SlotState::PUBLISHED, std::memory_order_relaxed);
-    _slotStates[1].store(SlotState::FREE, std::memory_order_relaxed);
-    _slotStates[2].store(SlotState::FREE, std::memory_order_relaxed);
+    _readers[0].store(0, std::memory_order_relaxed);
+    _readers[1].store(0, std::memory_order_relaxed);
+    _readers[2].store(0, std::memory_order_relaxed);
     setDefaults();
 }
 
 ConfigSnapshotGuard ConfigLoader::acquireSnapshot() const {
     for (;;) {
         const uint8_t slot = _publishedSlot.load(std::memory_order_acquire);
-        SlotState expected = SlotState::PUBLISHED;
+        if (slot >= 3) continue;
 
-        // Atomically pin slot via CAS.
-        // Core 1 accesses the snapshot payload ONLY after this CAS succeeds!
-        if (_slotStates[slot].compare_exchange_weak(
-                expected,
-                SlotState::READING,
-                std::memory_order_acquire,
-                std::memory_order_relaxed)) {
+        // Increment reader counter on target slot
+        _readers[slot].fetch_add(1, std::memory_order_acquire);
+
+        // Linearizability verification: ensure slot is still the published slot
+        if (_publishedSlot.load(std::memory_order_acquire) == slot) {
             return ConfigSnapshotGuard(*this, _snapshots[slot], slot);
         }
-        // CAS failed due to concurrent publication/recycling: retry immediately with the latest published slot
+
+        // Slot changed concurrently: release and retry
+        _readers[slot].fetch_sub(1, std::memory_order_release);
     }
 }
 
 void ConfigLoader::releaseSnapshot(uint8_t slot) const {
-    if (slot >= 3) return;
-
-    // If this slot is still the current published snapshot, return to PUBLISHED state
-    if (slot == _publishedSlot.load(std::memory_order_acquire)) {
-        SlotState expected = SlotState::READING;
-        _slotStates[slot].compare_exchange_strong(expected, SlotState::PUBLISHED,
-                                                 std::memory_order_release,
-                                                 std::memory_order_relaxed);
-    } else {
-        // A newer slot was published while we were reading; release this slot to FREE
-        _slotStates[slot].store(SlotState::FREE, std::memory_order_release);
+    if (slot < 3) {
+        _readers[slot].fetch_sub(1, std::memory_order_release);
     }
 }
 
@@ -54,33 +45,15 @@ void ConfigLoader::publishSnapshot_locked() {
     uint8_t published = _publishedSlot.load(std::memory_order_acquire);
     int8_t targetSlot = -1;
 
-    // 1. Try to find a slot in state FREE
+    // Pick a slot that is neither the current published slot nor actively pinned by readers
     for (uint8_t i = 0; i < 3; ++i) {
-        SlotState expected = SlotState::FREE;
-        if (_slotStates[i].compare_exchange_strong(expected, SlotState::WRITING,
-                                                   std::memory_order_acquire,
-                                                   std::memory_order_relaxed)) {
+        if (i != published && _readers[i].load(std::memory_order_acquire) == 0) {
             targetSlot = i;
             break;
         }
     }
 
-    // 2. If no FREE slot found, attempt to reclaim an old PUBLISHED slot (not currently published & not READING)
-    if (targetSlot < 0) {
-        for (uint8_t i = 0; i < 3; ++i) {
-            if (i != published) {
-                SlotState expected = SlotState::PUBLISHED;
-                if (_slotStates[i].compare_exchange_strong(expected, SlotState::WRITING,
-                                                           std::memory_order_acquire,
-                                                           std::memory_order_relaxed)) {
-                    targetSlot = i;
-                    break;
-                }
-            }
-        }
-    }
-
-    // 3. If all slots are occupied (e.g. extreme WebUI burst during active frame), defer publication non-blockingly
+    // If all alternative slots are occupied by active readers, defer publication non-blockingly
     if (targetSlot < 0) {
         _publishPending.store(true, std::memory_order_release);
         return;
@@ -89,6 +62,7 @@ void ConfigLoader::publishSnapshot_locked() {
     ConfigSnapshot& snap = _snapshots[targetSlot];
 
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
+    snap.magic_start = ConfigSnapshot::MAGIC_START;
     snap.version = newVer;
     snap.matrix = matrix;
     snap.wifi = wifi;
@@ -104,11 +78,11 @@ void ConfigLoader::publishSnapshot_locked() {
         s.config = inst.config;
         snap.instances.push_back(s);
     }
-    // Compute checksum for linearizability verification
-    snap.checksum = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    // Compute crc32 structural checksum for linearizability verification
+    snap.crc32 = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    snap.magic_end = ConfigSnapshot::MAGIC_END;
 
-    // 4. Publish snapshot atomically
-    _slotStates[targetSlot].store(SlotState::PUBLISHED, std::memory_order_release);
+    // Publish snapshot atomically
     _publishedSlot.store(static_cast<uint8_t>(targetSlot), std::memory_order_release);
     _publishPending.store(false, std::memory_order_release);
 }
@@ -165,7 +139,7 @@ void ConfigLoader::setDefaults() {
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
-    matrix.clkPhase = true;
+    matrix.clkPhase = false;
     matrix.latchBlanking = 4;
     matrix.rowAddressMode = 0;
     matrix.matrix_power = true;
@@ -217,7 +191,8 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         if (sys.containsKey("format_24h")) system.format24h = sys["format_24h"].as<bool>();
         else if (sys.containsKey("format24h")) system.format24h = sys["format24h"].as<bool>();
         system.lang = sys["lang"] | system.lang;
-        system.unit = sys["unit"] | system.unit;
+        if (sys.containsKey("unit")) system.unit = sys["unit"].as<String>();
+        else if (sys.containsKey("temp_unit")) system.unit = sys["temp_unit"].as<String>();
         system.temp_offset = sys["temp_offset"] | system.temp_offset;
         system.night_mode_enabled = sys["night_mode_enabled"] | system.night_mode_enabled;
         system.turn_off_at = sys["turn_off_at"] | system.turn_off_at;
@@ -311,12 +286,12 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
             RotationEntry entry;
             entry.instance_id = rotObj["instance_id"] | "";
             entry.duration_sec = rotObj["duration_sec"] | 15;
-            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObjectConst>()) {
-                entry.overlays.fighter = rotObj["overlays"]["fighter"] | false;
+            if (rotObj.containsKey("overlays") && rotObj["overlays"].is<JsonObjectConst>() && rotObj["overlays"].containsKey("fighter")) {
+                entry.overlays.fighter = rotObj["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else if (rotObj.containsKey("fighter_overlay")) {
-                entry.overlays.fighter = rotObj["fighter_overlay"] | false;
+                entry.overlays.fighter = rotObj["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else {
-                entry.overlays.fighter = false;
+                entry.overlays.fighter = FighterOverride::Unspecified;
             }
             rotation.push_back(entry);
         }
@@ -431,13 +406,16 @@ String ConfigLoader::serializeToJson(bool pretty) const {
         JsonObject rObj = rotArr.createNestedObject();
         rObj["instance_id"] = rot.instance_id;
         rObj["duration_sec"] = rot.duration_sec;
-        JsonObject ovObj = rObj.createNestedObject("overlays");
-        ovObj["fighter"] = rot.overlays.fighter;
+        if (rot.overlays.fighter != FighterOverride::Unspecified) {
+            JsonObject ovObj = rObj.createNestedObject("overlays");
+            ovObj["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
+        }
     }
 
-    JsonObject engObj = doc.createNestedObject("engines");
+    JsonArray instArr = doc.createNestedArray("instances");
     for (const auto& inst : instances) {
-        JsonObject instNode = engObj.createNestedObject(inst.instance_id);
+        JsonObject instNode = instArr.createNestedObject();
+        instNode["instance_id"] = inst.instance_id;
         instNode["engine_id"] = inst.engine_id;
         
         JsonObject confNode = instNode.createNestedObject("config");

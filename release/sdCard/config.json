@@ -10,7 +10,7 @@
         "rgb_sequence": "RGB",
         "limit_refresh_rate_hz": 90,
         "driver_chip": "SHIFTREG",
-        "clk_phase": true,
+        "clk_phase": false,
         "latch_blanking": 4,
         "row_address_mode": 0
     },

@@ -5,6 +5,12 @@
 void setUp(void) {}
 void tearDown(void) {}
 
+/**
+ * @brief Tests sanitization and stripping of verbose system strings from Recalbox/Batocera MQTT events.
+ *
+ * Verifies that prefixes like "Arcade manufacturer " or "Arcade System " are cleanly removed
+ * to produce canonical system identifiers matching the SD card filesystem directory structure.
+ */
 void test_clean_system_name(void) {
     TEST_ASSERT_EQUAL_STRING("Toaplan", FrontendSyncEngine::cleanSystemName("Arcade manufacturer Toaplan").c_str());
     TEST_ASSERT_EQUAL_STRING("Atari", FrontendSyncEngine::cleanSystemName("Arcade Manufacturer Atari").c_str());
@@ -12,11 +18,19 @@ void test_clean_system_name(void) {
     TEST_ASSERT_EQUAL_STRING("CPS1", FrontendSyncEngine::cleanSystemName("Arcade System CPS1").c_str());
 }
 
+/**
+ * @brief Tests lookup priority and variant generation for Pixelcade artwork on SD card.
+ *
+ * Verifies that given a system identifier (e.g. "snes"), the generator creates all expected
+ * fallback paths in the correct priority order:
+ * 1. "console/default-<system>"
+ * 2. "console/<system>"
+ */
 void test_system_name_variants_priority(void) {
     std::vector<FrontendSyncEngine::SystemVariant> variants = FrontendSyncEngine::getSystemNameVariants("snes");
     TEST_ASSERT_TRUE(variants.size() > 0);
     
-    // First variant must be in "console" folder
+    // First variant must be the standard default console logo
     TEST_ASSERT_EQUAL_STRING("console", variants[0].folder.c_str());
     TEST_ASSERT_EQUAL_STRING("default-snes", variants[0].name.c_str());
 
@@ -30,6 +44,12 @@ void test_system_name_variants_priority(void) {
     TEST_ASSERT_TRUE(foundConsoleSnes);
 }
 
+/**
+ * @brief Tests variant generation for arcade manufacturer strings with casing variations.
+ *
+ * Verifies that arcade manufacturers (e.g. "Arcade manufacturer Toaplan" and "Arcade Manufacturer Atari")
+ * resolve to their appropriate default artwork paths and system aliases.
+ */
 void test_arcade_manufacturer_cleaning(void) {
     std::vector<FrontendSyncEngine::SystemVariant> variants = FrontendSyncEngine::getSystemNameVariants("Arcade manufacturer Toaplan");
     bool foundDefaultToaplan = false;
@@ -53,7 +73,8 @@ void test_arcade_manufacturer_cleaning(void) {
 }
 
 void setup() {
-    delay(2000);
+    Serial.begin(115200);
+    delay(100);
     UNITY_BEGIN();
     RUN_TEST(test_clean_system_name);
     RUN_TEST(test_system_name_variants_priority);

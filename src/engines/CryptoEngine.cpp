@@ -1,9 +1,11 @@
 #include "CryptoEngine.h"
 #include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
+#include "../core/SDUtils.h"
 #include "../api/CoinGeckoProvider.h"
 #include "../api/BinanceProvider.h"
 #include <HTTPClient.h>
+#include <WiFiClient.h>
 
 CryptoEngine* CryptoEngine::instance = nullptr;
 
@@ -54,7 +56,11 @@ void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
     symbolsShownThisCycle = 0;
     if (!symbolList.empty()) {
-        fetchQuote(symbolList[currentSymbolIndex % symbolList.size()]);
+        String sym = symbolList[currentSymbolIndex % symbolList.size()];
+        fetchQuote(sym);
+        if (config_show_chart) {
+            fetchHistory(sym, config_chart_timeframe);
+        }
     }
 }
 
@@ -67,7 +73,6 @@ void CryptoEngine::fetchQuote(const String& symbol) {
     
     uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
     
-    // 1. Check if cache is fresh (< config_cache_ttl_min minutes old)
     if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
@@ -81,22 +86,27 @@ void CryptoEngine::fetchQuote(const String& symbol) {
     String newImgUrl = "";
     bool fetched = false;
     
-    // Try each provider until one succeeds
-    for (ICryptoProvider* provider : providers) {
+    for (size_t i = 0; i < providers.size(); i++) {
+        size_t idx = (config_provider == "binance") ? (providers.size() - 1 - i) : i;
+        ICryptoProvider* provider = providers[idx];
+        provider->setCurrency(config_currency);
         if (provider->fetchQuote(symbol, newPrice, newChange, newImgUrl)) {
             fetched = true;
             break;
         }
     }
     
-    // Download and Cache Icon
     if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
-        String sdPath = "/crypto_icons/" + symbol + ".png";
+        String safeName = symbol;
+        safeName.toLowerCase();
+        String sdPath = "/crypto_icons/" + safeName + ".png";
+        
         if (!sd.exists(sdPath)) {
-            String proxyUrl = "https://wsrv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
             HTTPClient httpImg;
+            WiFiClient imgClient;
+            String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
             httpImg.setTimeout(5000);
-            if (httpImg.begin(proxyUrl)) {
+            if (httpImg.begin(imgClient, proxyUrl)) {
                 int code = httpImg.GET();
                 if (code == 200) {
                     if (!sd.exists("/crypto_icons")) sd.mkdir("/crypto_icons");
@@ -107,10 +117,10 @@ void CryptoEngine::fetchQuote(const String& symbol) {
                     }
                 }
                 httpImg.end();
+                imgClient.stop();
             }
         }
         
-        // Load into RAM
         if (sd.exists(sdPath)) {
             FsFile f = sd.open(sdPath, FILE_OPEN_READ);
             if (f) {
@@ -142,7 +152,6 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         }
     }
     
-    // Update cache if successful
     if (fetched && newPrice > 0.0f) {
         cache.price = newPrice;
         cache.changePercent24h = newChange;
@@ -155,7 +164,6 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         fetchSuccess = true;
         LOGI("CryptoEngine", "[Fetch Success] Updated cache for %s: $%.4f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
     } else if (cache.hasData) {
-        // Fallback to last known cached price for THIS symbol if HTTP failed (e.g. Rate Limit 429)
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
@@ -178,16 +186,14 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
     if (y >= 16) return 0;
     
     uint16_t lineBuffer[16];
-    // We decode to RGB565. Transparency will be handled by drawing only non-black or by PNG library.
-    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
+    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
     
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
-        // Only save non-black pixels (assuming black is background/transparent)
         if (color != 0) {
             instance->currentDecodeBuffer[y * 16 + x] = color;
         } else {
-            instance->currentDecodeBuffer[y * 16 + x] = 0x0000; // Transparent indicator
+            instance->currentDecodeBuffer[y * 16 + x] = 0x0000;
         }
     }
     return 1;
@@ -195,26 +201,25 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
 
 void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
     uint32_t now = millis();
-    AssetHistoryCache& cache = historyCache[symbol];
-
-    uint32_t ttlMs = 5 * 60 * 1000;
-    switch (tf) {
-        case Timeframe::Hourly: ttlMs = 60 * 1000; break;
-        case Timeframe::Daily: ttlMs = 5 * 60 * 1000; break;
-        case Timeframe::Weekly: ttlMs = 30 * 60 * 1000; break;
-        case Timeframe::Monthly: ttlMs = 120 * 60 * 1000; break;
-    }
-
+    String histKey = symbol + "_" + timeframeLabel(tf);
+    AssetHistoryCache& cache = historyCache[histKey];
+    
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+    
     if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
+        LOGI("CryptoEngine", "[Cache Hit] Using cached history for %s (%s)", symbol.c_str(), timeframeLabel(tf));
         return;
     }
-
+    
     float points[64];
     size_t count = 0;
     float minP = 0.0f;
     float maxP = 0.0f;
-
-    for (ICryptoProvider* provider : providers) {
+    
+    for (size_t i = 0; i < providers.size(); i++) {
+        size_t idx = (config_provider == "binance") ? (providers.size() - 1 - i) : i;
+        ICryptoProvider* provider = providers[idx];
+        provider->setCurrency(config_currency);
         if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
             memcpy(cache.points, points, count * sizeof(float));
             cache.count = count;
@@ -230,12 +235,23 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
 
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    auto* matrix = context ? context->getMatrix() : nullptr;
+    int mH = matrix ? matrix->height() : 32;
     
     uint32_t now = millis();
     uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
-        if (config_show_chart) {
+        if (mH >= 64 || !config_show_chart) {
+            currentPage = DisplayPage::Info;
+            symbolsShownThisCycle++;
+            currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+            String nextSym = symbolList[currentSymbolIndex];
+            fetchQuote(nextSym);
+            if (config_show_chart) {
+                fetchHistory(nextSym, config_chart_timeframe);
+            }
+        } else {
             if (currentPage == DisplayPage::Info) {
                 currentPage = DisplayPage::Chart;
                 fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
@@ -245,11 +261,6 @@ void CryptoEngine::update(EngineContext* context) {
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 fetchQuote(symbolList[currentSymbolIndex]);
             }
-        } else {
-            currentPage = DisplayPage::Info;
-            symbolsShownThisCycle++;
-            currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
-            fetchQuote(symbolList[currentSymbolIndex]);
         }
     }
 }
@@ -261,14 +272,41 @@ bool CryptoEngine::isFinished() const {
 
 void CryptoEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    if (currentPage == DisplayPage::Info) {
-        renderQuote(context);
+    auto* matrix = context->getMatrix();
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    if (!config_show_chart) {
+        if (mH >= 64) {
+            renderFullScreenQuote(context);
+        } else {
+            renderQuote(context);
+        }
     } else {
-        renderChart(context);
+        if (mH >= 64) {
+            if (mW <= 64) {
+                renderUnifiedVertical(context);
+            } else {
+                renderUnifiedWide(context);
+            }
+        } else {
+            if (currentPage == DisplayPage::Info) {
+                renderQuote(context);
+            } else {
+                renderChart(context);
+            }
+        }
     }
 }
 
 void CryptoEngine::deactivate() {
+}
+
+static const char* getCurrencyPrefix(const String& currency) {
+    if (currency == "EUR") return "E";
+    if (currency == "GBP") return "L";
+    if (currency == "JPY") return "Y";
+    return "$";
 }
 
 void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
@@ -278,27 +316,64 @@ void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
     config_cache_ttl_min = engineConfig->getInt("cache_ttl_min", 15);
     config_show_chart = engineConfig->getBool("show_chart", true);
     config_chart_timeframe = timeframeFromString(engineConfig->getString("chart_timeframe", "daily"));
+    
+    Timeframe prevTf = config_chart_timeframe;
+    config_chart_timeframe = timeframeFromString(engineConfig->getString("chart_timeframe", "daily"));
+    
+    String prevCurrency = config_currency;
+    config_currency = engineConfig->getString("currency", "USD");
+    config_currency.toUpperCase();
+    if (config_currency.isEmpty()) config_currency = "USD";
+
+    String prevProvider = config_provider;
+    config_provider = engineConfig->getString("provider", "coingecko");
+    config_provider.toLowerCase();
+    if (config_provider.isEmpty()) config_provider = "coingecko";
+
     String syms = engineConfig->getString("symbols", "BTC,ETH,SOL");
     parseSymbols(syms);
+
+    bool needQuoteFetch = (config_currency != prevCurrency || config_provider != prevProvider);
+    bool needHistFetch = needQuoteFetch || (config_chart_timeframe != prevTf);
+
+    if (needQuoteFetch) {
+        LOGI("CryptoEngine", "Config hot-reloaded: currency=%s (was %s), provider=%s (was %s). Flushing cache.", 
+             config_currency.c_str(), prevCurrency.c_str(), config_provider.c_str(), prevProvider.c_str());
+        quoteCache.clear();
+        historyCache.clear();
+        fetchSuccess = false;
+        currentPrice = 0.0f;
+    }
+
+    if (needHistFetch && !symbolList.empty()) {
+        String sym = symbolList[currentSymbolIndex % symbolList.size()];
+        if (needQuoteFetch) {
+            fetchQuote(sym);
+        }
+        if (config_show_chart) {
+            fetchHistory(sym, config_chart_timeframe);
+        }
+    }
 }
 
-void CryptoEngine::renderChart(EngineContext* context) {
+void CryptoEngine::renderUnifiedVertical(EngineContext* context) {
     auto* matrix = context->getMatrix();
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
 
+    const char* curSym = getCurrencyPrefix(config_currency);
     char priceBuf[32];
     if (!fetchSuccess || currentPrice <= 0.0f) {
         snprintf(priceBuf, sizeof(priceBuf), "Loading...");
     } else if (currentPrice >= 1000.0f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.0f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.0f", curSym, currentPrice);
     } else if (currentPrice >= 1.0f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.2f", curSym, currentPrice);
     } else if (currentPrice >= 0.001f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.4f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.4f", curSym, currentPrice);
     } else {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.6f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.6f", curSym, currentPrice);
     }
 
     char pctBuf[32];
@@ -309,71 +384,270 @@ void CryptoEngine::renderChart(EngineContext* context) {
     }
     uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
 
-    const char* tfLabel = timeframeLabel(config_chart_timeframe);
-    AssetHistoryCache& hist = historyCache[activeSymbol];
+    const uint16_t* icon = ICON_BTC_8x8;
+    if (activeSymbol == "ETH") icon = ICON_ETH_8x8;
+    else if (activeSymbol == "SOL") icon = ICON_SOL_8x8;
 
-    if (mH >= 64) {
-        // Header
-        matrix->setTextColor(0xFFFF);
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    const char* tfLabel = timeframeLabel(config_chart_timeframe);
+    String histKey = activeSymbol + "_" + tfLabel;
+    AssetHistoryCache& hist = historyCache[histKey];
+
+    if (mW >= 48) {
+        int iconX = 2;
+        int iconY = 2;
+
+        if (cache.hasIcon) {
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    uint16_t color = cache.iconPixels[y * 16 + x];
+                    if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                }
+            }
+        }
+
         matrix->setTextSize(1);
-        matrix->setCursor(6, 4);
-        matrix->printf("%s (%s)", activeSymbol.c_str(), tfLabel);
+        matrix->setTextColor(0xFFFF);
+        matrix->setCursor(20, 2);
+        matrix->print(activeSymbol);
+
+        matrix->setTextColor(matrix->color565(140, 140, 140));
+        int tfX = mW - (strlen(tfLabel) * 6 + 2);
+        if (tfX < 20 + (int)activeSymbol.length() * 6 + 4) tfX = 20 + activeSymbol.length() * 6 + 4;
+        matrix->setCursor(tfX, 2);
+        matrix->print(tfLabel);
 
         matrix->setTextColor(matrix->color565(255, 215, 0));
-        int priceX = mW - (strlen(priceBuf) * 6 + 6);
-        if (priceX < 6 + (int)(activeSymbol.length() + 5) * 6) priceX = 6 + (activeSymbol.length() + 5) * 6;
-        matrix->setCursor(priceX, 4);
+        matrix->setCursor(20, 10);
         matrix->print(priceBuf);
 
-        // Subheader % change
         matrix->setTextColor(badgeColor);
-        matrix->setCursor(6, 14);
+        matrix->setCursor(2, 19);
+        if (fetchSuccess && currentPrice > 0.0f) {
+            matrix->print(changePercent24h >= 0 ? "^" : "v");
+        }
         matrix->print(pctBuf);
 
-        // Sparkline
-        int sparkX = 4;
-        int sparkY = 25;
-        int sparkW = mW - 8;
-        int sparkH = 35;
-
-        if (hist.hasData && hist.count > 1) {
-            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
-            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
-            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
-            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
-        } else {
-            matrix->setTextColor(matrix->color565(120, 120, 120));
-            matrix->setCursor(6, sparkY + 10);
-            matrix->print("Loading chart...");
-        }
-    } else {
-        // 32px height panel
-        matrix->setTextColor(0xFFFF);
-        matrix->setTextSize(1);
-        matrix->setCursor(2, 1);
-        matrix->printf("%s %s", activeSymbol.c_str(), tfLabel);
-
-        matrix->setTextColor(matrix->color565(255, 215, 0));
-        int priceX = mW - (strlen(priceBuf) * 6 + 2);
-        if (priceX < 2 + (int)(activeSymbol.length() + 4) * 6) priceX = 2 + (activeSymbol.length() + 4) * 6;
-        matrix->setCursor(priceX, 1);
-        matrix->print(priceBuf);
+        matrix->drawFastHLine(2, 28, mW - 4, matrix->color565(50, 50, 50));
 
         int sparkX = 2;
-        int sparkY = 12;
+        int sparkY = 30;
         int sparkW = mW - 4;
-        int sparkH = 19;
+        int sparkH = mH - 32;
 
         if (hist.hasData && hist.count > 1) {
             bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
             uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
-            uint16_t fillColor = isUp ? matrix->color565(0, 30, 10) : matrix->color565(35, 10, 10);
+            uint16_t fillColor = isUp ? matrix->color565(0, 35, 12) : matrix->color565(40, 12, 12);
             SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
         } else {
             matrix->setTextColor(matrix->color565(120, 120, 120));
-            matrix->setCursor(4, sparkY + 4);
+            matrix->setCursor(4, sparkY + (sparkH / 2) - 3);
             matrix->print("Loading...");
         }
+    } else {
+        int iconX = 1;
+        int iconY = 1;
+        if (cache.hasIcon) {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
+                    if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+                }
+            }
+        } else {
+            for (int y = 0; y < 8; y++) {
+                for (int x = 0; x < 8; x++) {
+                    uint16_t color = icon[y * 8 + x];
+                    if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+                }
+            }
+        }
+
+        matrix->setTextSize(1);
+        matrix->setTextColor(0xFFFF);
+        matrix->setCursor(11, 2);
+        matrix->print(activeSymbol);
+
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        matrix->setCursor(1, 11);
+        matrix->print(priceBuf);
+
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(1, 20);
+        matrix->print(pctBuf);
+
+        matrix->drawFastHLine(1, 28, mW - 2, matrix->color565(50, 50, 50));
+
+        int sparkX = 1;
+        int sparkY = 30;
+        int sparkW = mW - 2;
+        int sparkH = mH - 32;
+
+        if (hist.hasData && hist.count > 1) {
+            bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+            uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+            uint16_t fillColor = isUp ? matrix->color565(0, 35, 12) : matrix->color565(40, 12, 12);
+            SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+        } else {
+            matrix->setTextColor(matrix->color565(120, 120, 120));
+            matrix->setCursor(2, sparkY + (sparkH / 2) - 3);
+            matrix->print("...");
+        }
+    }
+}
+
+void CryptoEngine::renderUnifiedWide(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    matrix->fillScreen(0);
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    const char* curSym = getCurrencyPrefix(config_currency);
+    char priceBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "Loading...");
+    } else if (currentPrice >= 1000.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.0f", curSym, currentPrice);
+    } else if (currentPrice >= 1.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.2f", curSym, currentPrice);
+    } else if (currentPrice >= 0.001f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.4f", curSym, currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.6f", curSym, currentPrice);
+    }
+
+    char pctBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(pctBuf, sizeof(pctBuf), "--");
+    } else {
+        snprintf(pctBuf, sizeof(pctBuf), "%s%.2f%%", changePercent24h >= 0 ? "+" : "", changePercent24h);
+    }
+    uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
+
+    const uint16_t* icon = ICON_BTC_8x8;
+    if (activeSymbol == "ETH") icon = ICON_ETH_8x8;
+    else if (activeSymbol == "SOL") icon = ICON_SOL_8x8;
+
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    const char* tfLabel = timeframeLabel(config_chart_timeframe);
+    String histKey = activeSymbol + "_" + tfLabel;
+    AssetHistoryCache& hist = historyCache[histKey];
+
+    int iconX = 4;
+    int iconY = 4;
+    if (cache.hasIcon) {
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                uint16_t color = cache.iconPixels[y * 16 + x];
+                if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+            }
+        }
+    } else {
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                uint16_t color = icon[y * 8 + x];
+                if (color != 0) matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+            }
+        }
+    }
+
+    matrix->setTextSize(1);
+    matrix->setTextColor(0xFFFF);
+    matrix->setCursor(24, 4);
+    matrix->print(activeSymbol);
+
+    matrix->setTextColor(matrix->color565(140, 140, 140));
+    matrix->setCursor(24, 13);
+    matrix->print(tfLabel);
+
+    matrix->setTextColor(matrix->color565(255, 215, 0));
+    matrix->setCursor(4, 24);
+    matrix->print(priceBuf);
+
+    matrix->setTextColor(badgeColor);
+    matrix->setCursor(4, 35);
+    if (fetchSuccess && currentPrice > 0.0f) {
+        matrix->print(changePercent24h >= 0 ? "^ " : "v ");
+    }
+    matrix->print(pctBuf);
+
+    int divX = 58;
+    matrix->drawFastVLine(divX, 4, mH - 8, matrix->color565(50, 50, 50));
+
+    int sparkX = 62;
+    int sparkY = 6;
+    int sparkW = mW - 66;
+    int sparkH = mH - 12;
+
+    if (hist.hasData && hist.count > 1) {
+        bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+        uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+        uint16_t fillColor = isUp ? matrix->color565(0, 35, 12) : matrix->color565(40, 12, 12);
+        SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+    } else {
+        matrix->setTextColor(matrix->color565(120, 120, 120));
+        matrix->setCursor(sparkX + 4, sparkY + (sparkH / 2) - 3);
+        matrix->print("Loading chart...");
+    }
+}
+
+void CryptoEngine::renderChart(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    matrix->fillScreen(0);
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    const char* curSym = getCurrencyPrefix(config_currency);
+    char priceBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "Loading...");
+    } else if (currentPrice >= 1000.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.0f", curSym, currentPrice);
+    } else if (currentPrice >= 1.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.2f", curSym, currentPrice);
+    } else if (currentPrice >= 0.001f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.4f", curSym, currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.6f", curSym, currentPrice);
+    }
+
+    const char* tfLabel = timeframeLabel(config_chart_timeframe);
+    String histKey = activeSymbol + "_" + tfLabel;
+    AssetHistoryCache& hist = historyCache[histKey];
+
+    matrix->setTextColor(0xFFFF);
+    matrix->setTextSize(1);
+    matrix->setCursor(2, 1);
+    matrix->printf("%s %s", activeSymbol.c_str(), tfLabel);
+
+    matrix->setTextColor(matrix->color565(255, 215, 0));
+    int priceX = mW - (strlen(priceBuf) * 6 + 2);
+    if (priceX < 2 + (int)(activeSymbol.length() + 4) * 6) priceX = 2 + (activeSymbol.length() + 4) * 6;
+    matrix->setCursor(priceX, 1);
+    matrix->print(priceBuf);
+
+    int sparkX = 2;
+    int sparkY = 11;
+    int sparkW = mW - 4;
+    int sparkH = mH - 13;
+
+    if (hist.hasData && hist.count > 1) {
+        bool isUp = (hist.points[hist.count - 1] >= hist.points[0]);
+        uint16_t lineColor = isUp ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60);
+        uint16_t fillColor = isUp ? matrix->color565(0, 35, 12) : matrix->color565(40, 12, 12);
+        SparklineRenderer::drawSparkline(matrix, hist.points, hist.count, hist.minPrice, hist.maxPrice, sparkX, sparkY, sparkW, sparkH, lineColor, fillColor);
+    } else {
+        matrix->setTextColor(matrix->color565(120, 120, 120));
+        matrix->setCursor(4, sparkY + 4);
+        matrix->print("Loading...");
     }
 }
 
@@ -383,23 +657,22 @@ void CryptoEngine::renderQuote(EngineContext* context) {
     int mW = matrix->width();
     int mH = matrix->height();
     
-    // Select Icon
     const uint16_t* icon = ICON_BTC_8x8;
     if (activeSymbol == "ETH") icon = ICON_ETH_8x8;
     else if (activeSymbol == "SOL") icon = ICON_SOL_8x8;
     
-    // Format Price & Change strings safely
+    const char* curSym = getCurrencyPrefix(config_currency);
     char priceBuf[32];
     if (!fetchSuccess || currentPrice <= 0.0f) {
         snprintf(priceBuf, sizeof(priceBuf), "Loading...");
     } else if (currentPrice >= 1000.0f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.0f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.0f", curSym, currentPrice);
     } else if (currentPrice >= 1.0f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.2f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.2f", curSym, currentPrice);
     } else if (currentPrice >= 0.001f) {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.4f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.4f", curSym, currentPrice);
     } else {
-        snprintf(priceBuf, sizeof(priceBuf), "$%.6f", currentPrice);
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.6f", curSym, currentPrice);
     }
     
     char pctBuf[32];
@@ -410,118 +683,244 @@ void CryptoEngine::renderQuote(EngineContext* context) {
     }
     uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
 
-    if (mH >= 64) {
-        // High Resolution (64px high, e.g. 128x64 or 256x64) - Large Prominent Layout
-        // 1. Draw 16x16 Scaled Icon (2x scale)
-        int iconX = 6;
-        int iconY = 6;
+    int iconX = 2;
+    int iconY = (mH - 16) / 2;
+    if (iconY < 0) iconY = 0;
+    
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    if (cache.hasIcon) {
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
+                if (color != 0) {
+                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                }
+            }
+        }
+    } else {
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                uint16_t color = icon[y * 8 + x];
+                if (color != 0) {
+                    matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+                }
+            }
+        }
+    }
+    
+    if (mW < 48) {
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(18, 2);
+        matrix->print(activeSymbol);
+
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        matrix->setCursor(2, 12);
+        matrix->print(priceBuf);
+
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(2, 22);
+        matrix->print(pctBuf);
+    } else {
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        matrix->setCursor(20, 4);
+        matrix->print(activeSymbol);
         
-        AssetQuoteCache& cache = quoteCache[activeSymbol];
-        if (cache.hasIcon) {
-            for (int y = 0; y < 16; y++) {
-                for (int x = 0; x < 16; x++) {
-                    uint16_t color = cache.iconPixels[y * 16 + x];
-                    if (color != 0) {
-                        matrix->drawPixel(iconX + x, iconY + y, color);
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        matrix->setCursor(20 + activeSymbol.length() * 6 + 6, 4);
+        matrix->print(priceBuf);
+        
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(20, 18);
+        matrix->print(pctBuf);
+    }
+}
+
+void CryptoEngine::renderFullScreenQuote(EngineContext* context) {
+    auto* matrix = context->getMatrix();
+    matrix->fillScreen(0);
+    int mW = matrix->width();
+    int mH = matrix->height();
+
+    const char* curSym = getCurrencyPrefix(config_currency);
+    char priceBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "Loading...");
+    } else if (currentPrice >= 1000.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.0f", curSym, currentPrice);
+    } else if (currentPrice >= 1.0f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.2f", curSym, currentPrice);
+    } else if (currentPrice >= 0.001f) {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.4f", curSym, currentPrice);
+    } else {
+        snprintf(priceBuf, sizeof(priceBuf), "%s%.6f", curSym, currentPrice);
+    }
+
+    char pctBuf[32];
+    if (!fetchSuccess || currentPrice <= 0.0f) {
+        snprintf(pctBuf, sizeof(pctBuf), "--");
+    } else {
+        snprintf(pctBuf, sizeof(pctBuf), "%s%.2f%%", changePercent24h >= 0 ? "+" : "", changePercent24h);
+    }
+    uint16_t badgeColor = (!fetchSuccess || currentPrice <= 0.0f) ? matrix->color565(150, 150, 150) : (changePercent24h >= 0 ? matrix->color565(0, 255, 120) : matrix->color565(255, 60, 60));
+
+    const uint16_t* icon = ICON_BTC_8x8;
+    if (activeSymbol == "ETH") icon = ICON_ETH_8x8;
+    else if (activeSymbol == "SOL") icon = ICON_SOL_8x8;
+
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+
+    if (mW <= 64) {
+        // Vertical / Square display without chart (64x64, 32x64, 64x128)
+        int iconSize = (mW >= 48) ? 16 : 8;
+        int iconX = (mW - iconSize) / 2;
+        int priceLen = strlen(priceBuf);
+        bool useBigPrice = (mW >= 64 && priceLen * 12 <= mW - 4);
+        
+        int totalH = useBigPrice ? (iconSize + 3 + 8 + 4 + 16 + 4 + 9) : (iconSize + 4 + 8 + 4 + 8 + 4 + 9);
+        int startY = (mH > totalH) ? ((mH - totalH) / 2) : 2;
+
+        int iconY = startY;
+        if (iconSize == 16) {
+            if (cache.hasIcon) {
+                for (int y = 0; y < 16; y++) {
+                    for (int x = 0; x < 16; x++) {
+                        uint16_t color = cache.iconPixels[y * 16 + x];
+                        if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+                    }
+                }
+            } else {
+                for (int y = 0; y < 8; y++) {
+                    for (int x = 0; x < 8; x++) {
+                        uint16_t color = icon[y * 8 + x];
+                        if (color != 0) matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
                     }
                 }
             }
         } else {
-            for (int y = 0; y < 8; y++) {
-                for (int x = 0; x < 8; x++) {
-                    uint16_t color = icon[y * 8 + x];
-                    if (color != 0) {
-                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
+            if (cache.hasIcon) {
+                for (int y = 0; y < 8; y++) {
+                    for (int x = 0; x < 8; x++) {
+                        uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
+                        if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
+                    }
+                }
+            } else {
+                for (int y = 0; y < 8; y++) {
+                    for (int x = 0; x < 8; x++) {
+                        uint16_t color = icon[y * 8 + x];
+                        if (color != 0) matrix->drawPixel(iconX + x, iconY + y, color);
                     }
                 }
             }
         }
-        
-        // 2. Draw Symbol (Size 2 = 12x16px per char)
-        matrix->setTextColor(0xFFFF); // Bright White
-        matrix->setTextSize(2);
-        matrix->setCursor(28, 6);
+
+        // Symbol centered
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(1);
+        int symX = (mW - (int)activeSymbol.length() * 6) / 2;
+        if (symX < 0) symX = 0;
+        int symY = iconY + iconSize + (useBigPrice ? 3 : 4);
+        matrix->setCursor(symX, symY);
         matrix->print(activeSymbol);
-        
-        // 3. Draw Price (Size 2 = 12x16px per char)
-        matrix->setTextColor(matrix->color565(255, 215, 0)); // Bright Gold
-        int priceX = mW - (strlen(priceBuf) * 12 + 6);
-        if (priceX < 28 + (int)activeSymbol.length() * 12 + 8) {
-            priceX = 28 + activeSymbol.length() * 12 + 8;
+
+        // Price centered
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        int priceY = symY + 8 + 4;
+        if (useBigPrice) {
+            matrix->setTextSize(2);
+            int pX = (mW - priceLen * 12) / 2;
+            matrix->setCursor(pX, priceY);
+            matrix->print(priceBuf);
+            priceY += 16 + 4;
+        } else {
+            matrix->setTextSize(1);
+            int pX = (mW - priceLen * 6) / 2;
+            if (pX < 0) pX = 0;
+            matrix->setCursor(pX, priceY);
+            matrix->print(priceBuf);
+            priceY += 8 + 4;
         }
-        matrix->setCursor(priceX, 6);
-        matrix->print(priceBuf);
-        
-        // 4. Subtle horizontal divider line
-        matrix->drawFastHLine(6, 28, mW - 12, matrix->color565(60, 60, 60));
-        
-        // 5. Bottom Row: 24h Change Badge (Size 2)
+
+        // 24h change badge with pill background
+        matrix->setTextSize(1);
+        int arrowLen = (fetchSuccess && currentPrice > 0.0f) ? 2 : 0;
+        int pctLen = strlen(pctBuf) + arrowLen;
+        int pctW = pctLen * 6;
+        int pctX = (mW - pctW) / 2;
+        if (pctX < 2) pctX = 2;
+        int pctY = priceY;
+        if (pctY > mH - 10) pctY = mH - 10;
+
+        uint16_t pillBg = changePercent24h >= 0 ? matrix->color565(0, 35, 12) : matrix->color565(45, 10, 10);
+        uint16_t pillBorder = changePercent24h >= 0 ? matrix->color565(0, 80, 25) : matrix->color565(90, 20, 20);
+        matrix->fillRoundRect(pctX - 3, pctY - 1, pctW + 6, 10, 2, pillBg);
+        matrix->drawRoundRect(pctX - 3, pctY - 1, pctW + 6, 10, 2, pillBorder);
+
         matrix->setTextColor(badgeColor);
-        matrix->setTextSize(2);
-        matrix->setCursor(6, 36);
+        matrix->setCursor(pctX, pctY);
         if (fetchSuccess && currentPrice > 0.0f) {
             matrix->print(changePercent24h >= 0 ? "^ " : "v ");
         }
         matrix->print(pctBuf);
-        
     } else {
-        // Standard Resolution (32px high, e.g. 128x32 or 64x32)
-        int iconX = 2;
-        int iconY = (mH - 16) / 2;
-        if (iconY < 0) iconY = 0;
-        
-        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        // Widescreen display without chart (128x64, 256x64)
+        int iconX = (mW / 4) - 16;
+        if (iconX < 4) iconX = 4;
+        int iconY = (mH - 32) / 2;
+        if (iconY < 2) iconY = 2;
+
         if (cache.hasIcon) {
-            // Draw 16x16 scaled down to 8x8 by dropping every other pixel
-            for (int y = 0; y < 8; y++) {
-                for (int x = 0; x < 8; x++) {
-                    uint16_t color = cache.iconPixels[(y * 2) * 16 + (x * 2)];
-                    if (color != 0) {
-                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
-                    }
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    uint16_t color = cache.iconPixels[y * 16 + x];
+                    if (color != 0) matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
                 }
             }
         } else {
             for (int y = 0; y < 8; y++) {
                 for (int x = 0; x < 8; x++) {
                     uint16_t color = icon[y * 8 + x];
-                    if (color != 0) {
-                        matrix->fillRect(iconX + (x * 2), iconY + (y * 2), 2, 2, color);
-                    }
+                    if (color != 0) matrix->fillRect(iconX + (x * 4), iconY + (y * 4), 4, 4, color);
                 }
             }
         }
-        
-        if (mW < 48) {
-            // Narrow / Portrait screen layout (32x64, 32x128)
-            matrix->setTextColor(0xFFFF);
-            matrix->setTextSize(1);
-            matrix->setCursor(20, 2);
-            matrix->print(activeSymbol);
 
-            matrix->setTextColor(matrix->color565(255, 215, 0));
-            matrix->setCursor(2, 18);
-            matrix->print(priceBuf);
+        matrix->drawFastVLine(mW / 2 - 2, 8, mH - 16, matrix->color565(40, 40, 40));
 
-            matrix->setTextColor(badgeColor);
-            matrix->setCursor(2, 28);
-            matrix->print(pctBuf);
-        } else {
-            // Standard Landscape layout
-            matrix->setTextColor(0xFFFF);
-            matrix->setTextSize(1);
-            matrix->setCursor(20, 4);
-            matrix->print(activeSymbol);
-            
-            matrix->setTextColor(matrix->color565(255, 215, 0));
-            matrix->setCursor(20 + activeSymbol.length() * 6 + 6, 4);
-            matrix->print(priceBuf);
-            
-            // Change Badge bottom line (Size 1)
-            matrix->setTextColor(badgeColor);
-            matrix->setCursor(20, 18);
-            matrix->print(pctBuf);
+        int textX = mW / 2 + 8;
+        int totalH = 16 + 4 + 16 + 4 + 10;
+        int startY = (mH > totalH) ? ((mH - totalH) / 2) : 4;
+
+        matrix->setTextColor(0xFFFF);
+        matrix->setTextSize(2);
+        matrix->setCursor(textX, startY);
+        matrix->print(activeSymbol);
+
+        matrix->setTextColor(matrix->color565(255, 215, 0));
+        matrix->setCursor(textX, startY + 19);
+        matrix->print(priceBuf);
+
+        int pctY = startY + 38;
+        int arrowLen = (fetchSuccess && currentPrice > 0.0f) ? 2 : 0;
+        int pctLen = strlen(pctBuf) + arrowLen;
+        int pctW = pctLen * 6;
+        uint16_t pillBg = changePercent24h >= 0 ? matrix->color565(0, 35, 12) : matrix->color565(45, 10, 10);
+        uint16_t pillBorder = changePercent24h >= 0 ? matrix->color565(0, 80, 25) : matrix->color565(90, 20, 20);
+        matrix->fillRoundRect(textX - 2, pctY - 1, pctW + 4, 10, 2, pillBg);
+        matrix->drawRoundRect(textX - 2, pctY - 1, pctW + 4, 10, 2, pillBorder);
+
+        matrix->setTextSize(1);
+        matrix->setTextColor(badgeColor);
+        matrix->setCursor(textX, pctY);
+        if (fetchSuccess && currentPrice > 0.0f) {
+            matrix->print(changePercent24h >= 0 ? "^ " : "v ");
         }
+        matrix->print(pctBuf);
+        matrix->setTextColor(matrix->color565(140, 140, 140));
+        matrix->setCursor(textX + pctW + 6, pctY);
+        matrix->print("24h");
     }
 }
 
@@ -532,7 +931,7 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     desc_crypto.requirements.needsPsram = true;
     desc_crypto.requirements.needsNetwork = true;
     desc_crypto.schema.fields = {
-        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("duration_sec", ConfigType::INTEGER, "Page Duration (s)", "Seconds to dwell on each view", "5", false, "3", "30", "1", "", "", false, "", ValidationPolicy::Clamp),

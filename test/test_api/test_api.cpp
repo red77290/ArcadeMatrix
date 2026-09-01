@@ -5,7 +5,11 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-// Test helper: RGB565 conversion logic matching MessageEngine/WebServerAPI
+/**
+ * @brief Test helper: Converts standard CSS hex color strings (#RRGGBB) to RGB565 format.
+ *
+ * Matches the color transformation logic used in WebServerAPI and MessageEngine.
+ */
 static uint16_t hexToRGB565(const char* hexStr) {
     if (!hexStr || hexStr[0] != '#' || strlen(hexStr) < 7) return 0xFFFF; // Default white
     long number = strtol(hexStr + 1, NULL, 16);
@@ -15,7 +19,10 @@ static uint16_t hexToRGB565(const char* hexStr) {
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
-// Test helper: direction alias mapping matching MessageEngine
+/**
+ * @brief Test helper: Maps user-friendly scroll directions ("left", "right", "up", "down")
+ * to internal directional acronyms ("rtl", "ltr", "btt", "ttb").
+ */
 static String mapDirectionAlias(String dir) {
     dir.toLowerCase();
     if (dir == "left") return "rtl";
@@ -25,6 +32,11 @@ static String mapDirectionAlias(String dir) {
     return dir;
 }
 
+/**
+ * @brief Tests 24-bit hex RGB to 16-bit RGB565 packed format conversion.
+ *
+ * Verifies primary and boundary colors (White, Black, Red, Green, Blue) across casing.
+ */
 void test_color_hex_parsing(void) {
     // #FFFFFF -> RGB565 0xFFFF
     TEST_ASSERT_EQUAL_UINT16(0xFFFF, hexToRGB565("#FFFFFF"));
@@ -43,6 +55,9 @@ void test_color_hex_parsing(void) {
     TEST_ASSERT_EQUAL_UINT16(0x001F, hexToRGB565("#0000FF"));
 }
 
+/**
+ * @brief Tests scrolling text direction alias mapping and case insensitivity.
+ */
 void test_direction_mapping(void) {
     TEST_ASSERT_EQUAL_STRING("rtl", mapDirectionAlias("left").c_str());
     TEST_ASSERT_EQUAL_STRING("ltr", mapDirectionAlias("right").c_str());
@@ -51,6 +66,9 @@ void test_direction_mapping(void) {
     TEST_ASSERT_EQUAL_STRING("rtl", mapDirectionAlias("rtl").c_str());
 }
 
+/**
+ * @brief Verifies JSON structure and fields of the WebServer `/api/status` response.
+ */
 void test_api_status_json_structure(void) {
     StaticJsonDocument<512> doc;
     doc["status"] = "online";
@@ -67,6 +85,9 @@ void test_api_status_json_structure(void) {
     TEST_ASSERT_TRUE(jsonStr.indexOf("\"min_free_heap\":150000") != -1);
 }
 
+/**
+ * @brief Tests JSON deserialization robustness and validation on settings payloads.
+ */
 void test_api_settings_validation(void) {
     // Valid JSON settings
     const char* validJson = "{\"brightness_limit\":80, \"clock_theme\":20}";
@@ -84,7 +105,8 @@ void test_api_settings_validation(void) {
 }
 
 void setup() {
-    delay(2000);
+    Serial.begin(115200);
+    delay(100);
     UNITY_BEGIN();
     RUN_TEST(test_color_hex_parsing);
     RUN_TEST(test_direction_mapping);

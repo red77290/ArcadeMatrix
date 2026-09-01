@@ -22,16 +22,30 @@ struct RenderSession {
     bool allowsOverlay = true;
     bool isRealtime = false;
     IEngine* activeEngine = nullptr;
+    TransitionMode lastTransitionMode = TransitionMode::NONE;
 };
 
 struct PreemptionEntry {
     EngineHandle handle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
+    DisplayPriority priority = DisplayPriority::ROTATION;
     uint32_t requestId = 0;
+    uint32_t sessionId = 0;
+    uint32_t startedAtMs = 0;
+    bool allowsOverlay = true;
+    bool isRealtime = false;
+    bool requiresClear = true;
+    RequestLifecycle lifecycle = RequestLifecycle::PERSISTENT;
 
     PreemptionEntry() = default;
-    PreemptionEntry(const EngineHandle& h, DisplaySourceId s = DisplaySourceId::ROTATION, uint32_t req = 0)
-        : handle(h), sourceId(s), requestId(req) {}
+    PreemptionEntry(const EngineHandle& h, DisplaySourceId s = DisplaySourceId::ROTATION,
+                    DisplayPriority p = DisplayPriority::ROTATION, uint32_t req = 0,
+                    uint32_t sess = 0, uint32_t started = 0,
+                    bool allowOv = true, bool realtime = false, bool clear = true,
+                    RequestLifecycle life = RequestLifecycle::PERSISTENT)
+        : handle(h), sourceId(s), priority(p), requestId(req), sessionId(sess),
+          startedAtMs(started), allowsOverlay(allowOv), isRealtime(realtime),
+          requiresClear(clear), lifecycle(life) {}
 };
 
 class DisplayRuntime {

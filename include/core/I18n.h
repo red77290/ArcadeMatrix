@@ -16,9 +16,14 @@ public:
     static Lang parseLang(const String& code);
     static const char* getLangCode(Lang l);
     
-    // Weather
+    // Weather & Climate
     static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow);
+    static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow, Lang l);
     static String getWeatherCondition(const String& raw);
+    static String getWeatherCondition(const String& raw, Lang l);
+    static const char* getOutdoorLabel(Lang l);
+    static const char* getIndoorLabel(Lang l);
+    static const char* getClimateLabel(Lang l);
     
     // WordClock
     static std::vector<String> getWordClockLines(int hours, int minutes);

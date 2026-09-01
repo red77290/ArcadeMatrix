@@ -48,7 +48,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     shadowColor = matrix->color565(0, 0, 0);
 
     m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-    m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+    m_config.format = config->getString("date_format", config->getString("format", "system").c_str());
+    m_config.lang = config->getString("date_lang", config->getString("lang", "system").c_str());
     m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
     m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
     m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
@@ -67,7 +68,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
 void DateEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         m_config.theme = config->getInt("date_theme", config->getInt("theme", 0));
-        m_config.format = config->getString("date_format", config->getString("format", "%d/%m/%Y").c_str());
+        m_config.format = config->getString("date_format", config->getString("format", "system").c_str());
+        m_config.lang = config->getString("date_lang", config->getString("lang", "system").c_str());
         m_config.date_font = config->getString("date_font", config->getString("font", "Default").c_str());
         m_config.date_size = config->getInt("date_size", config->getInt("size", 1));
         m_config.date_offset_x = config->getInt("date_offset_x", config->getInt("offset_x", 0));
@@ -86,15 +88,74 @@ void DateEngine::onConfigChanged(const EngineConfig* config) {
 
 void DateEngine::activate() {}
 
+static void formatLocalizedDate(char* dest, size_t maxLen, const String& format, const struct tm* timeinfo, const String& lang) {
+    char buf[128];
+    strftime(buf, sizeof(buf), format.c_str(), timeinfo);
+    
+    bool isFr = lang.startsWith("fr") || lang.startsWith("FR");
+    bool isEs = lang.startsWith("es") || lang.startsWith("ES");
+    if (!isFr && !isEs) {
+        strncpy(dest, buf, maxLen);
+        dest[maxLen - 1] = '\0';
+        return;
+    }
+
+    static const char* DAYS_SHORT_EN[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char* DAYS_LONG_EN[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    static const char* MONTHS_SHORT_EN[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_EN[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+
+    static const char* DAYS_SHORT_FR[] = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
+    static const char* DAYS_LONG_FR[] = {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"};
+    static const char* MONTHS_SHORT_FR[] = {"Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aout", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_FR[] = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
+
+    static const char* DAYS_SHORT_ES[] = {"Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"};
+    static const char* DAYS_LONG_ES[] = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
+    static const char* MONTHS_SHORT_ES[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
+    static const char* MONTHS_LONG_ES[] = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
+
+    String res = String(buf);
+    int wday = timeinfo->tm_wday;
+    int mon = timeinfo->tm_mon;
+    if (wday >= 0 && wday < 7) {
+        if (isFr) {
+            res.replace(DAYS_LONG_EN[wday], DAYS_LONG_FR[wday]);
+            res.replace(DAYS_SHORT_EN[wday], DAYS_SHORT_FR[wday]);
+        } else if (isEs) {
+            res.replace(DAYS_LONG_EN[wday], DAYS_LONG_ES[wday]);
+            res.replace(DAYS_SHORT_EN[wday], DAYS_SHORT_ES[wday]);
+        }
+    }
+    if (mon >= 0 && mon < 12) {
+        if (isFr) {
+            res.replace(MONTHS_LONG_EN[mon], MONTHS_LONG_FR[mon]);
+            res.replace(MONTHS_SHORT_EN[mon], MONTHS_SHORT_FR[mon]);
+        } else if (isEs) {
+            res.replace(MONTHS_LONG_EN[mon], MONTHS_LONG_ES[mon]);
+            res.replace(MONTHS_SHORT_EN[mon], MONTHS_SHORT_ES[mon]);
+        }
+    }
+    strncpy(dest, res.c_str(), maxLen);
+    dest[maxLen - 1] = '\0';
+}
+
 void DateEngine::update(EngineContext* context) {
     if (context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
         currentDateData = {(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)};
         
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
         String format = m_config.format;
-        if (format.isEmpty()) format = "%a %d %b";
-        strftime(currentDate, sizeof(currentDate), format.c_str(), &timeinfo);
+        if (format.isEmpty() || format.equalsIgnoreCase("system")) format = "%d/%m/%Y";
+
+        String lang = m_config.lang;
+        if (lang.isEmpty() || lang.equalsIgnoreCase("system")) {
+            lang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+        }
+        formatLocalizedDate(currentDate, sizeof(currentDate), format, &timeinfo, lang);
         
         // Handle random theme changes per day if THEME_NONE
         if (m_config.theme == THEME_NONE) {
@@ -550,12 +611,12 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     desc_date.requirements.needsNetwork = false;
     desc_date.schema.fields = {
         ConfigField("date_theme", ConfigType::ENUM, "Date Theme", "Visual theme for date", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("date_format", ConfigType::STRING, "Date Format", "Format for date display", "%d/%m/%Y", false, "", "", "", "%d/%m/%Y,%Y-%m-%d,%d %b %Y,%A %d %B", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:Système (Général),%d/%m/%Y:Jour/Mois/Année (%d/%m/%Y),%m/%d/%Y:Mois/Jour/Année (%m/%d/%Y),%Y-%m-%d:Année-Mois-Jour (%Y-%m-%d),%a %d %b:Court avec jour (%a %d %b),%A %d %B:Complet (%A %d %B)", "", false, "", ValidationPolicy::Accept),
         ConfigField("date_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "Europe/Paris", false, "", "", "", "", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("date_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "1", false, "1", "3", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("date_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Ignore),
-        ConfigField("date_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#00ffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Ignore),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:Système (Général)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("date_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "1", false, "1", "4", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("date_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),
+        ConfigField("date_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#00ffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),
         ConfigField("date_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("date_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

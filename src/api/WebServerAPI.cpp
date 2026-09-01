@@ -153,7 +153,7 @@ void WebServerAPI::setupRoutes() {
         response->print("[");
         
         for (size_t i = 0; i < count; i++) {
-            DynamicJsonDocument doc(2048);
+            DynamicJsonDocument doc(4096);
             JsonObject obj = doc.to<JsonObject>();
             obj["metadata"]["id"] = descriptors[i].metadata.id;
             obj["metadata"]["name"] = descriptors[i].metadata.name;
@@ -548,8 +548,10 @@ void WebServerAPI::setupRoutes() {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = rot.instance_id;
             obj["duration_sec"] = rot.duration_sec;
-            JsonObject ovObj = obj.createNestedObject("overlays");
-            ovObj["fighter"] = rot.overlays.fighter;
+            if (rot.overlays.fighter != FighterOverride::Unspecified) {
+                JsonObject ovObj = obj.createNestedObject("overlays");
+                ovObj["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
+            }
         }
         String response;
         serializeJson(doc, response);
@@ -571,12 +573,12 @@ void WebServerAPI::setupRoutes() {
             RotationEntry re;
             re.instance_id = entry["instance_id"].as<String>();
             re.duration_sec = entry["duration_sec"] | 15;
-            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>()) {
-                re.overlays.fighter = entry["overlays"]["fighter"] | false;
+            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>() && entry["overlays"].containsKey("fighter")) {
+                re.overlays.fighter = entry["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else if (entry.containsKey("fighter_overlay")) {
-                re.overlays.fighter = entry["fighter_overlay"] | false;
+                re.overlays.fighter = entry["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
             } else {
-                re.overlays.fighter = false;
+                re.overlays.fighter = FighterOverride::Unspecified;
             }
             if (!re.instance_id.isEmpty()) {
                 config.rotation.push_back(re);
@@ -1153,6 +1155,7 @@ void WebServerAPI::setupRoutes() {
             }
 
             if (!doc["temp_unit"].isNull()) cfg.system.unit = doc["temp_unit"].as<String>();
+            if (!doc["unit"].isNull()) cfg.system.unit = doc["unit"].as<String>();
             if (!doc["temp_offset"].isNull()) cfg.system.temp_offset = doc["temp_offset"].as<float>();
 
             auto visInst = getInst("visualizer_main");
@@ -1282,9 +1285,10 @@ void WebServerAPI::setupRoutes() {
         config.saveToSD("/config.json");
 
         if (rotationManager && !willReboot) {
-            if (cryptoChanged) rotationManager->notifyConfigChanged("crypto_main");
-            if (stockChanged) rotationManager->notifyConfigChanged("stock_main");
-            if (fighterChanged) rotationManager->notifyConfigChanged("fighter_main");
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            for (const auto& inst : guard->instances) {
+                rotationManager->notifyConfigChanged(inst.instance_id);
+            }
         }
 
         if (willReboot) {
@@ -1422,6 +1426,7 @@ void WebServerAPI::setupRoutes() {
         sys["timezone"] = snap.system.timezone;
         sys["format_24h"] = snap.system.format24h;
         sys["unit"] = snap.system.unit;
+        sys["temp_unit"] = snap.system.unit;
         sys["temp_offset"] = snap.system.temp_offset;
         sys["night_mode_enabled"] = snap.system.night_mode_enabled;
         sys["turn_off_at"] = snap.system.turn_off_at;
@@ -1510,6 +1515,10 @@ void WebServerAPI::setupRoutes() {
             }
             if (!sys["unit"].isNull()) {
                 cfg.system.unit = sys["unit"].as<String>();
+                changed = true;
+            }
+            if (!sys["temp_unit"].isNull()) {
+                cfg.system.unit = sys["temp_unit"].as<String>();
                 changed = true;
             }
             if (!sys["temp_offset"].isNull()) {
@@ -1605,7 +1614,7 @@ void WebServerAPI::setupRoutes() {
             config.saveToSD("/config.json");
         }
 
-        if (langChanged && rotationManager) {
+        if ((changed || langChanged) && rotationManager && !willReboot) {
             ConfigSnapshotGuard guard = config.acquireSnapshot();
             for (const auto& inst : guard->instances) {
                 rotationManager->notifyConfigChanged(inst.instance_id);
