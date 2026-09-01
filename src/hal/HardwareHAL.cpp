@@ -93,6 +93,8 @@ void HardwareHAL::begin() {
 
     // Populate Capabilities Snapshot
     _capabilities.hasGyroscope = false;
+    _capabilities.hasNetwork = true;
+    _capabilities.hasSd = true;
 
     if (psramFound()) {
         _capabilities.hasPsram = true;

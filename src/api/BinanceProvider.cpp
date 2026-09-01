@@ -4,8 +4,14 @@
 
 bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String apiSymbol = symbol;
-    if (!apiSymbol.endsWith("USDT") && !apiSymbol.endsWith("USD")) {
-        apiSymbol += "USDT";
+    String quotePair = m_currency;
+    quotePair.toUpperCase();
+    if (quotePair.isEmpty() || quotePair == "USD") {
+        quotePair = "USDT";
+    }
+
+    if (!apiSymbol.endsWith(quotePair)) {
+        apiSymbol += quotePair;
     }
     String binanceUrl = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + apiSymbol;
     
@@ -13,7 +19,7 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
     client.setInsecure();
 
     HTTPClient http;
-    http.setTimeout(3000);
+    http.setTimeout(5000);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     if (http.begin(client, binanceUrl)) {
@@ -22,21 +28,23 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
             String payload = http.getString();
             if (parsePayload(payload, outPrice, outChange)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     return false;
 }
 
 bool BinanceProvider::parsePayload(const String& payload, float& outPrice, float& outChange) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
     DeserializationError err = deserializeJson(doc, payload);
     if (!err) {
-        outPrice = doc["lastPrice"] | 0.0f;
-        outChange = doc["priceChangePercent"] | 0.0f;
+        outPrice = doc["lastPrice"].as<float>();
+        outChange = doc["priceChangePercent"].as<float>();
         return (outPrice > 0.0f);
     }
     return false;
@@ -46,8 +54,14 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
     if (!outPoints || maxPoints == 0) return false;
 
     String apiSymbol = symbol;
-    if (!apiSymbol.endsWith("USDT") && !apiSymbol.endsWith("USD")) {
-        apiSymbol += "USDT";
+    String quotePair = m_currency;
+    quotePair.toUpperCase();
+    if (quotePair.isEmpty() || quotePair == "USD") {
+        quotePair = "USDT";
+    }
+
+    if (!apiSymbol.endsWith(quotePair)) {
+        apiSymbol += quotePair;
     }
 
     const char* interval = "1h";
@@ -86,10 +100,12 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
             String payload = http.getString();
             if (parseKlines(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     return false;
 }

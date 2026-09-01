@@ -13,11 +13,18 @@ struct EngineInstance {
     DictionaryEngineConfig config;
 };
 
-struct OverlayConfig {
-    bool fighter;
+enum class FighterOverride : uint8_t {
+    Unspecified = 0, ///< Field absent in playlist entry: inherit global setting
+    Disabled    = 1, ///< Field explicitly "fighter": false in item
+    Enabled     = 2  ///< Field explicitly "fighter": true in item
+};
 
-    OverlayConfig() : fighter(false) {}
-    explicit OverlayConfig(bool f) : fighter(f) {}
+struct OverlayConfig {
+    FighterOverride fighter;
+
+    OverlayConfig() : fighter(FighterOverride::Unspecified) {}
+    explicit OverlayConfig(FighterOverride f) : fighter(f) {}
+    explicit OverlayConfig(bool f) : fighter(f ? FighterOverride::Enabled : FighterOverride::Disabled) {}
 };
 
 struct RotationEntry {
@@ -89,14 +96,23 @@ struct EngineInstanceSnapshot {
 };
 
 struct ConfigSnapshot {
+    static constexpr uint32_t MAGIC_START = 0x5A5A5A5A;
+    static constexpr uint32_t MAGIC_END = 0xA5A5A5A5;
+
+    uint32_t magic_start = MAGIC_START;
     uint32_t version = 1;
-    uint32_t checksum = 0;
+    uint32_t crc32 = 0;
     MatrixConfig matrix;
     WifiConfig wifi;
     MqttConfig mqtt;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
+    uint32_t magic_end = MAGIC_END;
+
+    bool isValid() const {
+        return magic_start == MAGIC_START && magic_end == MAGIC_END;
+    }
 
     ConfigSnapshot clone() const {
         return *this;
@@ -238,7 +254,7 @@ private:
     mutable std::mutex _mutex;
     std::atomic<uint32_t> _configVersion{1};
     mutable std::atomic<uint8_t> _publishedSlot{0};
-    mutable std::atomic<SlotState> _slotStates[3];
+    mutable std::atomic<uint32_t> _readers[3];
     mutable std::atomic<bool> _publishPending{false};
     ConfigSnapshot _snapshots[3];
 

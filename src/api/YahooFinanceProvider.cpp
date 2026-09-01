@@ -30,10 +30,12 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
                 lowerSymbol.toLowerCase();
                 outImageUrl = "https://eodhd.com/img/logos/US/" + lowerSymbol + ".png";
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     
     return false;
@@ -106,10 +108,12 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
             String payload = http.getString();
             if (parseChart(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
                 http.end();
+                client.stop();
                 return true;
             }
         }
         http.end();
+        client.stop();
     }
     return false;
 }

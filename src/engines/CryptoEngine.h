@@ -65,6 +65,8 @@ private:
     bool config_enabled = true;
     int config_cache_ttl_min = 15;
     bool config_show_chart = true;
+    String config_currency = "USD";
+    String config_provider = "coingecko";
     Timeframe config_chart_timeframe = Timeframe::Daily;
     
     std::vector<String> symbolList;
@@ -98,6 +100,9 @@ private:
     void fetchHistory(const String& symbol, Timeframe tf);
     void renderQuote(EngineContext* context);
     void renderChart(EngineContext* context);
+    void renderUnifiedVertical(EngineContext* context);
+    void renderUnifiedWide(EngineContext* context);
+    void renderFullScreenQuote(EngineContext* context);
 };
 
 class CryptoEngineDescriptorHandler : public IEngineDescriptorHandler {

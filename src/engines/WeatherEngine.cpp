@@ -72,15 +72,18 @@ void WeatherEngine::deactivate() {}
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
+
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysLang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+    String sysUnits = guard->system.unit.equalsIgnoreCase("F") ? "imperial" : "metric";
+
     String newKey = engineConfig->getString("api_key", "");
     String newCity = engineConfig->getString("city", "");
-    String newLang = engineConfig->getString("lang", "");
-    if (newLang.isEmpty()) {
-        extern ConfigLoader config;
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        newLang = guard->system.lang.length() > 0 ? guard->system.lang : "fr";
-    }
-    String newUnits = engineConfig->getString("units", "metric");
+    String newLang = engineConfig->getString("lang", "system");
+    if (newLang.isEmpty() || newLang.equalsIgnoreCase("system")) newLang = sysLang;
+    String newUnits = engineConfig->getString("units", "system");
+    if (newUnits.isEmpty() || newUnits.equalsIgnoreCase("system")) newUnits = sysUnits;
     
     if (newKey != config_api_key || newCity != config_city || newLang != config_lang || newUnits != config_units) {
         config_api_key = newKey;
@@ -477,9 +480,10 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     desc_weather.requirements.needsAudio = false;
     desc_weather.requirements.needsNetwork = true;
     desc_weather.schema.fields = {
-        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "metric", false, "", "", "", "metric,imperial", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "system", false, "", "", "", "system:Système (Général),metric:Celsius (°C),imperial:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("lang", ConfigType::ENUM, "Language", "Weather description language", "system", false, "", "", "", "system:Système (Général),en:English,fr:Français,es:Español,de:Deutsch,it:Italiano", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("weather_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

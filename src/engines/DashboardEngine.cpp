@@ -3,6 +3,7 @@
 #include "icons/CryptoStockIcons.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
+#include "../core/I18n.h"
 #include "../api/OpenWeatherMapProvider.h"
 #include "../api/YahooFinanceProvider.h"
 #include <WiFi.h>
@@ -380,14 +381,14 @@ void PixelClockWidget::renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rec
     }
 }
 
-void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city) {
+void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city, bool format24h) {
     if (!matrix || rect.width < 20 || rect.height < 12) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
 
     int textY = rect.y + 3;
-    if (rect.height >= 32) {
+    if (rect.height >= 32 && !city.isEmpty()) {
         matrix->setFont(nullptr);
         matrix->setTextSize(1);
         matrix->setTextColor(theme.secondary);
@@ -397,11 +398,22 @@ void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& re
         textY += 10;
     }
 
-    char timeBuf[12];
-    if (showSeconds) {
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", time.hours, time.minutes, time.seconds);
+    char timeBuf[16];
+    if (format24h) {
+        if (showSeconds) {
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", time.hours, time.minutes, time.seconds);
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", time.hours, time.minutes);
+        }
     } else {
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", time.hours, time.minutes);
+        int h12 = time.hours % 12;
+        if (h12 == 0) h12 = 12;
+        const char* ampm = (time.hours >= 12) ? "PM" : "AM";
+        if (showSeconds) {
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d:%02d%s", h12, time.minutes, time.seconds, (time.hours >= 12) ? "p" : "a");
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), "%d:%02d %s", h12, time.minutes, ampm);
+        }
     }
 
     matrix->setFont(nullptr);
@@ -436,6 +448,7 @@ static void drawClippedPixel(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX
 static void drawClippedChar(MatrixPanel_I2S_DMA* matrix, int x, int y, unsigned char c, int minX, int maxX, int minY, int maxY, uint16_t color) {
     if (!matrix) return;
     if (x + 5 < minX || x >= maxX || y + 7 < minY || y >= maxY) return;
+    if (c == '`' || c == 0xF7 || c == 0xF8 || (uint8_t)c == 0xB0) c = 247;
 
     for (int8_t i = 0; i < 5; i++) {
         int px = x + i;
@@ -610,8 +623,10 @@ static void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int m
     }
 }
 
-void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit) {
+void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
     if (!matrix || rect.width < 20 || rect.height < 14) return;
+
+    Lang l = I18n::parseLang(lang);
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
@@ -639,20 +654,19 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
             drawMiniWeatherIcon(matrix, rect.x + 3, baseY, minX, maxX, minY, maxY, weather.iconCode);
             char outBuf[12];
             float outT = useFahrenheit ? (weather.temp * 1.8f + 32.0f) : weather.temp;
-            snprintf(outBuf, sizeof(outBuf), "%.0f`%s", outT, useFahrenheit ? "F" : "C");
+            snprintf(outBuf, sizeof(outBuf), "%.0f%s", outT, useFahrenheit ? "F" : "C");
             drawClippedString(matrix, outBuf, rect.x + 13, baseY, minX, maxX, minY, maxY, theme.primary);
 
             if (rect.height >= 26) {
-                String desc = weather.description;
-                if (desc.isEmpty()) desc = "OUTDOOR";
+                String desc = I18n::getWeatherCondition(weather.description, l);
+                if (desc.isEmpty()) desc = I18n::getOutdoorLabel(l);
                 desc.toUpperCase();
                 drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, baseY + 11, minX, maxX, minY, maxY, theme.textDim);
             }
         } else if (indoor.valid) {
-            float inT = indoor.temperatureC + tempOffset;
-            if (useFahrenheit) inT = inT * 1.8f + 32.0f;
+            float inT = useFahrenheit ? (indoor.temperatureF + tempOffset) : (indoor.temperatureC + tempOffset);
             char inBuf[16];
-            snprintf(inBuf, sizeof(inBuf), "IN:%.1f`", inT);
+            snprintf(inBuf, sizeof(inBuf), "%s%.1f%s", I18n::getIndoorLabel(l), inT, useFahrenheit ? "F" : "C");
             drawClippedString(matrix, inBuf, rect.x + 3, baseY, minX, maxX, minY, maxY, theme.accent);
 
             if (rect.height >= 24) {
@@ -669,7 +683,7 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
                 }
             }
         } else {
-            drawClippedString(matrix, "CLIMATE", rect.x + 3, baseY, minX, maxX, minY, maxY, theme.textDim);
+            drawClippedString(matrix, I18n::getClimateLabel(l), rect.x + 3, baseY, minX, maxX, minY, maxY, theme.textDim);
         }
     };
 
@@ -891,7 +905,7 @@ void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
 
 DashboardEngine::DashboardEngine()
     : matrix(nullptr), m_layoutDirty(true), m_weatherProvider(nullptr),
-      m_lastWeatherFetch(0), m_lastSensorFetch(0), m_lastSystemFetch(0), m_lastMarketFetch(0),
+      m_lastBatchFetch(0), m_lastWeatherFetch(0), m_lastSensorFetch(0), m_lastSystemFetch(0), m_lastMarketFetch(0),
       m_lastSecondSeen(-1), m_secondStartMillis(0),
       m_weatherApiKey(""), m_weatherCity("Paris"), m_weatherUnits("metric"),
       m_cachedTrackedMarkets("BTC,ETH,SOL,NVDA"),
@@ -903,7 +917,7 @@ DashboardEngine::DashboardEngine()
     m_snapshot.weather.temp = 21.0f;
     m_snapshot.weather.label = "PARIS";
     m_snapshot.weather.iconCode = "01d";
-    m_snapshot.weather.description = "Ensoleillé";
+    m_snapshot.weather.description = "Sunny";
     m_snapshot.weatherValid = true;
 
     m_snapshot.marketItems.push_back(MarketItem("BTC", 90000.0f, 2.5f, true));
@@ -942,7 +956,7 @@ EngineError DashboardEngine::initialize(EngineContext* context, const EngineConf
         BaseType_t ret = xTaskCreatePinnedToCore(
             fetchTaskStatic,
             "DashFetch",
-            6144,
+            10240,
             this,
             1,
             &m_fetchTaskHandle,
@@ -986,19 +1000,29 @@ void DashboardEngine::fetchTaskLoop() {
     while (m_taskRunning) {
         if (m_isActive && WiFi.status() == WL_CONNECTED) {
             uint32_t now = millis();
+            uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
 
-            // Periodic or Forced Weather Fetch (every 15 minutes or on config change)
-            if (m_config.showWeather && (m_forceFetchWeather || m_lastWeatherFetch == 0 || (now - m_lastWeatherFetch >= 900000UL))) {
+            bool shouldFetch = m_forceFetchWeather || m_forceFetchMarkets || (m_lastBatchFetch == 0) || (now - m_lastBatchFetch >= intervalMs);
+
+            if (shouldFetch) {
                 m_forceFetchWeather = false;
-                m_lastWeatherFetch = now;
-                fetchWeather();
-            }
-
-            // Periodic or Forced Crypto/Market Fetch (every 60 seconds or on config change)
-            if (m_config.showMarkets && (m_forceFetchMarkets || m_lastMarketFetch == 0 || (now - m_lastMarketFetch >= 60000UL))) {
                 m_forceFetchMarkets = false;
-                m_lastMarketFetch = now;
-                fetchMarkets();
+                m_lastBatchFetch = now;
+                LOGI("Dashboard", "Executing sequential synchronized data fetch (interval=%d min)...", m_config.refreshIntervalMin);
+
+                // 1. Fetch Weather first (à la queue-leu-leu)
+                if (m_config.showWeather && m_isActive) {
+                    fetchWeather();
+                    vTaskDelay(pdMS_TO_TICKS(500)); // Yield to let Core 0 network memory settle
+                }
+
+                // 2. Fetch Market items strictly one by one (à la queue-leu-leu)
+                if (m_config.showMarkets && m_isActive) {
+                    fetchMarkets();
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                }
+
+                LOGI("Dashboard", "Sequential data fetch completed. Next refresh in %d min.", m_config.refreshIntervalMin);
             }
         }
 
@@ -1011,9 +1035,18 @@ void DashboardEngine::fetchTaskLoop() {
 void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
 
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String sysUnit = guard->system.unit.length() > 0 ? guard->system.unit : "C";
+    String sysLang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
+    float sysTempOffset = guard->system.temp_offset;
+    bool sysFormat24h = guard->system.format24h;
+
     String oldMarkets = m_cachedTrackedMarkets;
     String oldCity = m_weatherCity;
     String oldApiKey = m_weatherApiKey;
+    String oldLang = m_config.lang;
+    String oldUnit = m_config.tempUnit;
 
     m_config.clockMode = static_cast<ClockMode>(engineConfig->getInt("clock_mode", 1)); // Default Analog
     m_config.theme = engineConfig->getInt("theme", 0);
@@ -1026,21 +1059,28 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     m_config.smoothSeconds = engineConfig->getBool("smooth_seconds", true);
     m_config.showWorldClock = engineConfig->getBool("show_world_clock", true);
     m_config.showMarkets = engineConfig->getBool("show_markets", true);
-    m_config.tempOffset = engineConfig->getFloat("temp_offset", -3.5f);
     m_config.worldClocks = engineConfig->getString("world_clocks", "NYC,TYO,LON");
     m_config.trackedMarkets = engineConfig->getString("tracked_markets", "BTC,ETH,SOL,NVDA");
     m_cachedTrackedMarkets = m_config.trackedMarkets;
 
-    String unit = engineConfig->getString("temp_unit", "C");
-    m_config.useFahrenheit = unit.equalsIgnoreCase("F");
+    // Unit, temp offset, lang and 24h format stored as configured (supporting dynamic "system" inheritance)
+    String unit = engineConfig->getString("temp_unit", "");
+    if (unit.isEmpty()) unit = engineConfig->getString("units", "system");
+    m_config.tempUnit = unit;
+    m_config.tempOffsetStr = engineConfig->getString("temp_offset", "");
+    m_config.lang = engineConfig->getString("lang", "system");
+    m_config.format24hStr = engineConfig->getString("format_24h", "system");
+
+    // Refresh interval: data update frequency in minutes (default 10 min)
+    m_config.refreshIntervalMin = engineConfig->getInt("refresh_interval", 10);
+    if (m_config.refreshIntervalMin < 1) m_config.refreshIntervalMin = 10;
 
     m_weatherApiKey = engineConfig->getString("weather_api_key", "");
     m_weatherCity = engineConfig->getString("weather_city", "");
     m_weatherUnits = engineConfig->getString("weather_units", "metric");
 
     if (m_weatherApiKey.isEmpty() || m_weatherCity.isEmpty()) {
-        extern ConfigLoader config;
-        for (const auto& inst : config.instances) {
+        for (const auto& inst : guard->instances) {
             if (inst.engine_id == "weather") {
                 if (m_weatherApiKey.isEmpty()) m_weatherApiKey = inst.config.getString("api_key", "");
                 if (m_weatherCity.isEmpty()) m_weatherCity = inst.config.getString("city", "");
@@ -1049,6 +1089,8 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
             }
         }
     }
+
+    m_config.city = m_weatherCity.isEmpty() ? "PARIS" : m_weatherCity;
 
     if (oldMarkets != m_cachedTrackedMarkets || m_config.showMarkets) {
         m_forceFetchMarkets = true;
@@ -1086,7 +1128,7 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
         }
     }
 
-    if (oldCity != m_weatherCity || oldApiKey != m_weatherApiKey) {
+    if (oldCity != m_weatherCity || oldApiKey != m_weatherApiKey || oldLang != m_config.lang || oldUnit != m_config.tempUnit) {
         m_forceFetchWeather = true;
         m_lastWeatherFetch = 0;
     }
@@ -1094,6 +1136,7 @@ void DashboardEngine::onConfigChanged(const EngineConfig* engineConfig) {
     m_cachedLayout = DashboardLayoutCalculator::calculate(m_geometry, m_config);
     m_layoutDirty = false;
     updateWorldTimes();
+    updateSnapshot();
 }
 
 void DashboardEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
@@ -1298,13 +1341,14 @@ void DashboardEngine::fetchWeather() {
 
     String apiKey = m_weatherApiKey;
     String city = m_weatherCity.isEmpty() ? "Paris" : m_weatherCity;
-    String units = m_weatherUnits.isEmpty() ? "metric" : m_weatherUnits;
+    String lang = m_config.lang.length() > 0 ? m_config.lang : "en";
+    lang.toLowerCase();
 
     // 1. Try OpenWeatherMap if key is provided
     if (m_weatherProvider && apiKey.length() > 5) {
         WeatherData fc[1];
         int numFc = 0;
-        if (m_weatherProvider->fetchForecast(apiKey, city, "fr", units, fc, 1, numFc)) {
+        if (m_weatherProvider->fetchForecast(apiKey, city, lang, "metric", fc, 1, numFc)) {
             if (numFc > 0) {
                 std::lock_guard<std::mutex> lock(m_snapshotMutex);
                 m_snapshot.weather = fc[0];
@@ -1328,7 +1372,7 @@ void DashboardEngine::fetchWeather() {
         String encCity = city;
         encCity.trim();
         encCity.replace(" ", "%20");
-        String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=fr&format=json";
+        String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=" + lang + "&format=json";
         if (geoHttp.begin(geoClient, geoUrl)) {
             int code = geoHttp.GET();
             if (code == 200) {
@@ -1341,6 +1385,7 @@ void DashboardEngine::fetchWeather() {
                 }
             }
             geoHttp.end();
+            geoClient.stop();
         }
     }
 
@@ -1358,72 +1403,52 @@ void DashboardEngine::fetchWeather() {
                 float temp = metDoc["current"]["temperature_2m"].as<float>();
                 int wCode = metDoc["current"]["weather_code"].as<int>();
 
+                Lang l = I18n::parseLang(lang);
+
                 WeatherData wd;
                 wd.temp = temp;
-                wd.label = city;
+                wd.iconCode = "01d";
+                wd.description = "Clear";
 
-                if (wCode == 0) {
-                    wd.iconCode = "01d";
-                    wd.description = "Ensoleillé";
-                } else if (wCode <= 3) {
-                    wd.iconCode = "02d";
-                    wd.description = "Nuageux";
-                } else if (wCode <= 48) {
-                    wd.iconCode = "50d";
-                    wd.description = "Brouillard";
-                } else if (wCode <= 67) {
-                    wd.iconCode = "10d";
-                    wd.description = "Pluie";
-                } else if (wCode <= 77) {
-                    wd.iconCode = "13d";
-                    wd.description = "Neige";
-                } else if (wCode <= 82) {
-                    wd.iconCode = "09d";
-                    wd.description = "Averses";
-                } else if (wCode <= 99) {
-                    wd.iconCode = "11d";
-                    wd.description = "Orage";
-                } else {
-                    wd.iconCode = "01d";
-                    wd.description = "Clair";
-                }
+                if (wCode >= 1 && wCode <= 3) { wd.iconCode = "02d"; wd.description = "Clouds"; }
+                else if (wCode >= 45 && wCode <= 48) { wd.iconCode = "50d"; wd.description = "Fog"; }
+                else if (wCode >= 51 && wCode <= 67) { wd.iconCode = "10d"; wd.description = "Rain"; }
+                else if (wCode >= 71 && wCode <= 77) { wd.iconCode = "13d"; wd.description = "Snow"; }
+                else if (wCode >= 80 && wCode <= 82) { wd.iconCode = "09d"; wd.description = "Drizzle"; }
+                else if (wCode >= 95) { wd.iconCode = "11d"; wd.description = "Storm"; }
+
+                wd.description = I18n::getWeatherCondition(wd.description, l);
 
                 std::lock_guard<std::mutex> lock(m_snapshotMutex);
                 m_snapshot.weather = wd;
                 m_snapshot.weatherValid = true;
-                LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s - %s)", wd.temp, wd.label.c_str(), wd.description.c_str());
+                LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s)", wd.temp, wd.description.c_str());
             }
         }
         metHttp.end();
+        metClient.stop();
     }
 }
 
 void DashboardEngine::fetchMarkets() {
-    if (!m_isActive || WiFi.status() != WL_CONNECTED) return;
-
-#if defined(ESP32)
-    if (ESP.getMaxAllocHeap() < 20000) {
-        LOGW("Dashboard", "Heap fragmented (max alloc: %u), skipping market fetch", ESP.getMaxAllocHeap());
-        return;
-    }
-#endif
+    if (WiFi.status() != WL_CONNECTED) return;
 
     std::vector<String> symbols;
-    String raw = m_cachedTrackedMarkets;
-    int start = 0;
-    while (start < (int)raw.length()) {
-        int comma = raw.indexOf(',', start);
-        String token = (comma == -1) ? raw.substring(start) : raw.substring(start, comma);
-        token.trim();
-        token.toUpperCase();
-        if (token.length() > 0) symbols.push_back(token);
-        if (comma == -1) break;
-        start = comma + 1;
+    {
+        String raw = m_cachedTrackedMarkets;
+        int start = 0;
+        while (start < (int)raw.length()) {
+            int comma = raw.indexOf(',', start);
+            String token = (comma == -1) ? raw.substring(start) : raw.substring(start, comma);
+            token.trim();
+            token.toUpperCase();
+            if (token.length() > 0) symbols.push_back(token);
+            if (comma == -1) break;
+            start = comma + 1;
+        }
     }
 
-    if (symbols.empty()) {
-        symbols = {"BTC", "ETH", "SOL", "NVDA"};
-    }
+    if (symbols.empty()) return;
 
     std::vector<MarketItem> updatedItems;
     YahooFinanceProvider yahooProvider;
@@ -1432,7 +1457,7 @@ void DashboardEngine::fetchMarkets() {
         if (!m_isActive) break;
         bool itemAdded = false;
 
-        // 1. Probe Binance 24hr ticker API (<sym>USDT)
+        // 1. Check Binance (fast crypto API)
         WiFiClientSecure binanceClient;
         binanceClient.setInsecure();
         HTTPClient http;
@@ -1452,8 +1477,9 @@ void DashboardEngine::fetchMarkets() {
             }
             http.end();
         }
+        binanceClient.stop(); // Free TLS/SSL buffer immediately
 
-        // 2. If not found on Binance, query Yahoo Finance for Stocks, ETFs or Cryptos
+        // 2. Check Yahoo Finance (Stocks & other Cryptos)
         if (!itemAdded && m_isActive) {
             float stockPrice = 0.0f;
             float stockChange = 0.0f;
@@ -1466,7 +1492,7 @@ void DashboardEngine::fetchMarkets() {
                 itemAdded = true;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(150)); // Gentle spacing between ticker queries
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 
     if (!updatedItems.empty()) {
@@ -1563,12 +1589,29 @@ void DashboardEngine::render(EngineContext* context) {
         snap = m_snapshot;
     }
 
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+
+    bool useFahrenheit = m_config.tempUnit.equalsIgnoreCase("F") || m_config.tempUnit.equalsIgnoreCase("imperial") || 
+                         ((m_config.tempUnit.isEmpty() || m_config.tempUnit.equalsIgnoreCase("system")) && 
+                          (guard->system.unit.equalsIgnoreCase("F") || guard->system.unit.equalsIgnoreCase("imperial")));
+
+    float tempOffset = (m_config.tempOffsetStr.isEmpty() || m_config.tempOffsetStr.equalsIgnoreCase("system")) ? 
+                       guard->system.temp_offset : m_config.tempOffsetStr.toFloat();
+
+    String lang = (m_config.lang.isEmpty() || m_config.lang.equalsIgnoreCase("system")) ? 
+                  (guard->system.lang.length() > 0 ? guard->system.lang : "en") : m_config.lang;
+
+    bool format24h = (m_config.format24hStr.isEmpty() || m_config.format24hStr.equalsIgnoreCase("system")) ? 
+                     guard->system.format24h : 
+                     (m_config.format24hStr.equalsIgnoreCase("24h") || m_config.format24hStr.equalsIgnoreCase("true") || m_config.format24hStr == "1");
+
     // 1. Clock Widget (Analog or Digital)
     if (m_cachedLayout.hasClock) {
         if (m_config.clockMode == ClockMode::MODE_ANALOG) {
             PixelClockWidget::renderAnalog(matrix, m_cachedLayout.clockRect, snap.time, snap.subSecondFraction, theme, m_config.showSeconds, m_config.showDate);
         } else {
-            PixelClockWidget::renderDigital(matrix, m_cachedLayout.clockRect, snap.time, theme, m_config.showSeconds, m_config.showDate, "PARIS");
+            PixelClockWidget::renderDigital(matrix, m_cachedLayout.clockRect, snap.time, theme, m_config.showSeconds, m_config.showDate, m_config.city, format24h);
         }
     }
 
@@ -1579,7 +1622,7 @@ void DashboardEngine::render(EngineContext* context) {
 
     // 3. Climate Widget (Outdoor + Calibrated Indoor Sensor)
     if (m_cachedLayout.hasClimate) {
-        ClimateWidget::render(matrix, m_cachedLayout.climateRect, snap.weather, snap.weatherValid, snap.indoor, m_config.tempOffset, theme, m_config.useFahrenheit);
+        ClimateWidget::render(matrix, m_cachedLayout.climateRect, snap.weather, snap.weatherValid, snap.indoor, tempOffset, theme, useFahrenheit, lang);
     }
 
     // 4. Market Widget (Crypto + Stock Quotes)
@@ -1610,19 +1653,22 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
         ConfigField("theme", ConfigType::ENUM, "Color Theme", "Color palette for dashboard widgets", "0", false, "", "", "", "0:Cyberpunk Neon,1:Arcade Amber HUD,2:Minimalist Luxury,3:Matrix Phosphor", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_clock", ConfigType::BOOLEAN, "Show Clock", "Display main time widget", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_world_clock", ConfigType::BOOLEAN, "Show World Clocks", "Display secondary timezones (NYC, TYO, LON...)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("world_clocks", ConfigType::STRING, "World Timezones", "Sélectionnez les fuseaux horaires ci-dessus ou saisissez vos codes personnalisés de villes/aéroports et offsets (ex: NYC,TYO,LON,PAR,DXB,SIN,LAX,MIA,HKG,SYD,BER,ROM,MAD,AMS,YUL,UTC ou REU:+4)", "NYC,TYO,LON", false, "", "", "", "NYC:New York (NYC),TYO:Tokyo (TYO),LON:London (LON),PAR:Paris (PAR),LAX:Los Angeles (LAX),SFO:San Francisco (SFO),CHI:Chicago (CHI),MIA:Miami (MIA),DXB:Dubai (DXB),SIN:Singapore (SIN),HKG:Hong Kong (HKG),SYD:Sydney (SYD),BER:Berlin (BER),ROM:Rome (ROM),MAD:Madrid (MAD),AMS:Amsterdam (AMS),YUL:Montreal (YUL),UTC:UTC (GMT)", "", true, "", ValidationPolicy::FallbackDefault),
+        ConfigField("world_clocks", ConfigType::STRING, "World Timezones", "Select timezones from the list or enter custom city/airport codes and offsets (e.g. NYC,TYO,LON,PAR,DXB,SIN,LAX,MIA,HKG,SYD,BER,ROM,MAD,AMS,YUL,UTC or REU:+4)", "NYC,TYO,LON", false, "", "", "", "NYC:New York (NYC),TYO:Tokyo (TYO),LON:London (LON),PAR:Paris (PAR),LAX:Los Angeles (LAX),SFO:San Francisco (SFO),CHI:Chicago (CHI),MIA:Miami (MIA),DXB:Dubai (DXB),SIN:Singapore (SIN),HKG:Hong Kong (HKG),SYD:Sydney (SYD),BER:Berlin (BER),ROM:Rome (ROM),MAD:Madrid (MAD),AMS:Amsterdam (AMS),YUL:Montreal (YUL),UTC:UTC (GMT)", "", true, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_weather", ConfigType::BOOLEAN, "Show Weather", "Display outdoor weather & temp", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("weather_city", ConfigType::STRING, "Weather City", "Nom de ville pour les prévisions météo (ex: Paris, London, Tokyo, New York)", "Paris", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("weather_api_key", ConfigType::STRING, "OpenWeatherMap Key (Optional)", "Clé API OpenWeatherMap (laisser vide pour utiliser le service gratuit Open-Meteo sans clé)", "", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("weather_city", ConfigType::STRING, "Weather City", "City name for weather forecasts (e.g. Paris, London, Tokyo, New York)", "Paris", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("weather_api_key", ConfigType::STRING, "OpenWeatherMap Key (Optional)", "OpenWeatherMap API Key (leave empty to use free Open-Meteo service without key)", "", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_indoor_temp", ConfigType::BOOLEAN, "Show Indoor Climate (SHTC3)", "Display room temperature & humidity", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "system", false, "", "", "", "system:System (General),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_offset", ConfigType::FLOAT, "Indoor Temp Offset", "Offset to compensate for CPU heat dissipation in the chosen temperature unit (leave empty to use General System setting)", "", false, "-30.0", "30.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("refresh_interval", ConfigType::ENUM, "Refresh Interval", "Data refresh frequency for weather and markets", "10", false, "", "", "", "1:1 Minute,5:5 Minutes,10:10 Minutes (Recommended),15:15 Minutes,30:30 Minutes,60:60 Minutes", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("format_24h", ConfigType::ENUM, "Time Format", "24H or 12H time format", "system", false, "", "", "", "system:System (General),24h:24 Hours (23:59),12h:12 Hours (11:59 PM)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("lang", ConfigType::ENUM, "Language", "Language for labels and dates", "system", false, "", "", "", "system:System (General),fr:Français,en:English,es:Español", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_markets", ConfigType::BOOLEAN, "Show Markets / Stocks", "Display live crypto and stock ticker badges", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("tracked_markets", ConfigType::STRING, "Tracked Markets (Crypto & Stocks)", "Sélectionnez des tags du Top 20 ci-dessus et/ou saisissez librement vos propres symboles low-cap / mid-cap dans le champ (ex: PEPE, KAS, TAO, RENDER, INJ, SUI, PLTR, MSTR, MC.PA, VOO...). Tout symbole Binance ou Yahoo Finance est supporté.", "BTC,ETH,SOL,NVDA", false, "", "", "", "BTC:Bitcoin (BTC),ETH:Ethereum (ETH),SOL:Solana (SOL),BNB:Binance (BNB),XRP:Ripple (XRP),DOGE:Dogecoin (DOGE),ADA:Cardano (ADA),AVAX:Avalanche (AVAX),LINK:Chainlink (LINK),SUI:Sui (SUI),NEAR:Near (NEAR),PEPE:Pepe (PEPE),SHIB:Shiba (SHIB),TAO:Bittensor (TAO),APT:Aptos (APT),KAS:Kaspa (KAS),RENDER:Render (RENDER),FET:Fetch.ai (FET),INJ:Injective (INJ),BONK:Bonk (BONK),WIF:Dogwifhat (WIF),NVDA:Nvidia (NVDA),AAPL:Apple (AAPL),TSLA:Tesla (TSLA),MSFT:Microsoft (MSFT),GOOG:Alphabet (GOOG),AMZN:Amazon (AMZN),META:Meta (META),AMD:AMD (AMD),PLTR:Palantir (PLTR),MSTR:MicroStrategy (MSTR),COIN:Coinbase (COIN),SPY:S&P 500 (SPY),QQQ:Nasdaq (QQQ)", "", true, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_offset", ConfigType::FLOAT, "Indoor Temp Offset (°C)", "Offset to compensate for CPU heat dissipation (e.g. -3.5)", "-3.5", false, "-20.0", "20.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("tracked_markets", ConfigType::STRING, "Tracked Markets (Crypto & Stocks)", "Select symbols from list or enter custom ticker symbols (e.g. PEPE, KAS, TAO, NVDA, AAPL, MSFT, BTC, ETH, SOL...)", "BTC,ETH,SOL,NVDA", false, "", "", "", "BTC:Bitcoin (BTC),ETH:Ethereum (ETH),SOL:Solana (SOL),BNB:Binance (BNB),XRP:Ripple (XRP),DOGE:Dogecoin (DOGE),ADA:Cardano (ADA),AVAX:Avalanche (AVAX),LINK:Chainlink (LINK),SUI:Sui (SUI),NEAR:Near (NEAR),PEPE:Pepe (PEPE),SHIB:Shiba (SHIB),TAO:Bittensor (TAO),APT:Aptos (APT),KAS:Kaspa (KAS),RENDER:Render (RENDER),FET:Fetch.ai (FET),INJ:Injective (INJ),BONK:Bonk (BONK),WIF:Dogwifhat (WIF),NVDA:Nvidia (NVDA),AAPL:Apple (AAPL),TSLA:Tesla (TSLA),MSFT:Microsoft (MSFT),GOOG:Alphabet (GOOG),AMZN:Amazon (AMZN),META:Meta (META),AMD:AMD (AMD),PLTR:Palantir (PLTR),MSTR:MicroStrategy (MSTR),COIN:Coinbase (COIN),SPY:S&P 500 (SPY),QQQ:Nasdaq (QQQ)", "", true, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_sysinfo", ConfigType::BOOLEAN, "Show System Vitals", "Display RAM, CPU & WiFi gauges", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_date", ConfigType::BOOLEAN, "Show Date", "Display day and date badge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_seconds", ConfigType::BOOLEAN, "Show Seconds", "Display sweeping second hand or seconds digits", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("smooth_seconds", ConfigType::BOOLEAN, "Smooth Sweeping Seconds", "Continuous sweeping second hand vs crisp 1s ticks", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "C", false, "", "", "", "C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

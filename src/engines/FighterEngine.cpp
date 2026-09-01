@@ -55,54 +55,70 @@ void FighterEngine::initialize() {
 }
 
 String FighterEngine::getFightersDir() {
-    if (matrix && matrix->height() <= 32) return "/fighters_32";
-    if (!m_hasPsram) {
-        return "/fighters_32";
+    int targetHeight = (matrix && matrix->height() <= 32) ? 32 : (m_hasPsram ? 64 : 32);
+    if (!cachedFightersDir.isEmpty() && cachedScaleClass == targetHeight) {
+        return cachedFightersDir;
     }
-    if (sd.exists("/fighters_64/index.txt")) {
-        return "/fighters_64";
+    cachedScaleClass = targetHeight;
+
+    if (targetHeight == 64 && sd.exists("/fighters_64/index.txt")) {
+        cachedFightersDir = "/fighters_64";
+        return cachedFightersDir;
     }
-    return "/fighters_32";
+    if (sd.exists("/fighters_32/index.txt")) {
+        cachedFightersDir = "/fighters_32";
+        return cachedFightersDir;
+    }
+    if (sd.exists("/fighters/index.txt")) {
+        cachedFightersDir = "/fighters";
+        return cachedFightersDir;
+    }
+    cachedFightersDir = "/fighters_32";
+    return cachedFightersDir;
 }
 
 void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    FsFile f;
-    if (sd.exists(indexPath)) {
-        f = sd.open(indexPath, FILE_OPEN_READ);
-    }
-    if (!f) {
-        Serial.println("FighterEngine: No index.txt found!");
-        return;
-    }
-    
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
-        line.trim();
-        if (line.length() > 0 && !isMacJunk(line)) {
-            numAvailableFighters++;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        FsFile f;
+        if (sd.exists(indexPath)) {
+            f = sd.open(indexPath, FILE_OPEN_READ);
         }
-    }
-    
-    if (numAvailableFighters > 0) {
-        if (fighterOffsets) free(fighterOffsets);
-        fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+        if (!f) {
+            xSemaphoreGive(sdMutex);
+            Serial.println("FighterEngine: No index.txt found!");
+            return;
+        }
         
-        f.seek(0);
-        int idx = 0;
-        while (f.available() && idx < numAvailableFighters) {
-            uint32_t pos = f.position();
+        while (f.available()) {
             String line = f.readStringUntil('\n');
             line.trim();
             if (line.length() > 0 && !isMacJunk(line)) {
-                fighterOffsets[idx++] = pos;
+                numAvailableFighters++;
             }
         }
+        
+        if (numAvailableFighters > 0) {
+            if (fighterOffsets) free(fighterOffsets);
+            fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+            
+            f.seek(0);
+            int idx = 0;
+            while (f.available() && idx < numAvailableFighters) {
+                uint32_t pos = f.position();
+                String line = f.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0 && !isMacJunk(line)) {
+                    fighterOffsets[idx++] = pos;
+                }
+            }
+        }
+        
+        f.close();
+        xSemaphoreGive(sdMutex);
     }
-    
-    f.close();
     LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
 }
 
@@ -110,33 +126,35 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     if (numAvailableFighters == 0 || !fighterOffsets) return false;
     
     String indexPath = getFightersDir() + "/index.txt";
-    FsFile f = sd.open(indexPath, FILE_OPEN_READ);
-    if (!f) return false;
-    
-    int targetLine = esp_random() % numAvailableFighters;
-    f.seek(fighterOffsets[targetLine]);
-    String result = f.readStringUntil('\n');
-    result.trim();
-    f.close();
-    
-    // Format: name,height,ground_y,origin_x,width,head_y
-    int comma1 = result.indexOf(',');
-    int comma2 = result.indexOf(',', comma1 + 1);
-    int comma3 = result.indexOf(',', comma2 + 1);
-    int comma4 = result.indexOf(',', comma3 + 1);
-    int comma5 = result.indexOf(',', comma4 + 1);
+    bool success = false;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        FsFile f = sd.open(indexPath, FILE_OPEN_READ);
+        if (f) {
+            int targetLine = esp_random() % numAvailableFighters;
+            f.seek(fighterOffsets[targetLine]);
+            String result = f.readStringUntil('\n');
+            result.trim();
+            f.close();
+            
+            int comma1 = result.indexOf(',');
+            int comma2 = result.indexOf(',', comma1 + 1);
+            int comma3 = result.indexOf(',', comma2 + 1);
+            int comma4 = result.indexOf(',', comma3 + 1);
+            int comma5 = result.indexOf(',', comma4 + 1);
 
-    if (comma1 > 0) {
-        p.name = result.substring(0, comma1);
-        p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
-        p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
-        p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
-        p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
-        p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
-        return true;
+            if (comma1 > 0) {
+                p.name = result.substring(0, comma1);
+                p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
+                p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
+                p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
+                p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
+                p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
+                success = true;
+            }
+        }
+        xSemaphoreGive(sdMutex);
     }
-    
-    return false;
+    return success;
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
@@ -214,7 +232,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 65536) ? 65536 : toRead;
+                size_t chunk = (toRead > 8192) ? 8192 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
@@ -283,11 +301,7 @@ void FighterEngine::runBackgroundPreload() {
     freeFighter(nextP1);
     freeFighter(nextP2);
 
-    bool gotP1 = false;
-    if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
-        gotP1 = getRandomFighter(nextP1);
-        xSemaphoreGive(sdMutex);
-    }
+    bool gotP1 = getRandomFighter(nextP1);
     vTaskDelay(pdMS_TO_TICKS(10));
     if (!gotP1) {
         isPreloading = false;
@@ -308,42 +322,39 @@ void FighterEngine::runBackgroundPreload() {
     float bestRatio = 0.0f;
 
     for (int i = 0; i < 40; i++) {
-        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100))) {
-            FighterPlayer tempP;
-            if (getRandomFighter(tempP)) {
-                candMeta.name = tempP.name;
-                candMeta.height = tempP.height;
-                candMeta.ground_y = tempP.ground_y;
-                candMeta.head_y = tempP.head_y;
-                candMeta.origin_x = tempP.origin_x;
-                candMeta.width_px = tempP.width_px;
+        FighterPlayer tempP;
+        if (getRandomFighter(tempP)) {
+            candMeta.name = tempP.name;
+            candMeta.height = tempP.height;
+            candMeta.ground_y = tempP.ground_y;
+            candMeta.head_y = tempP.head_y;
+            candMeta.origin_x = tempP.origin_x;
+            candMeta.width_px = tempP.width_px;
 
-                if (candMeta.name != nextP1.name) {
-                    int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
-                    if (h1 > 0 && h2 > 0) {
-                        float ratio = (float)h2 / (float)h1;
-                        // P2 must be same height or up to 20% smaller (never taller than P1)
-                        if (h2 <= h1) {
-                            if (ratio > bestRatio) {
-                                bestRatio = ratio;
-                                bestMeta = candMeta;
-                            }
-                            if (ratio >= 0.80f) {
-                                nextP2.name = candMeta.name;
-                                nextP2.height = candMeta.height;
-                                nextP2.ground_y = candMeta.ground_y;
-                                nextP2.head_y = candMeta.head_y;
-                                nextP2.origin_x = candMeta.origin_x;
-                                nextP2.width_px = candMeta.width_px;
-                                found = true;
-                            }
+            if (candMeta.name != nextP1.name) {
+                int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
+                if (h1 > 0 && h2 > 0) {
+                    float ratio = (float)h2 / (float)h1;
+                    // P2 must be same height or up to 20% smaller (never taller than P1)
+                    if (h2 <= h1) {
+                        if (ratio > bestRatio) {
+                            bestRatio = ratio;
+                            bestMeta = candMeta;
+                        }
+                        if (ratio >= 0.80f) {
+                            nextP2.name = candMeta.name;
+                            nextP2.height = candMeta.height;
+                            nextP2.ground_y = candMeta.ground_y;
+                            nextP2.head_y = candMeta.head_y;
+                            nextP2.origin_x = candMeta.origin_x;
+                            nextP2.width_px = candMeta.width_px;
+                            found = true;
                         }
                     }
                 }
             }
-            xSemaphoreGive(sdMutex);
-            if (found) break;
         }
+        if (found) break;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
@@ -361,7 +372,7 @@ void FighterEngine::runBackgroundPreload() {
 
     auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
         bool res = false;
-        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(200))) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             res = loadFighterAnim(anim, path.c_str());
             xSemaphoreGive(sdMutex);
         }
@@ -493,7 +504,11 @@ public:
 
 void FighterEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     if (!active) return;
-    bool is32 = loadDir.endsWith("32");
+    int targetHeight = (geometry.height <= 32) ? 32 : (m_hasPsram ? 64 : 32);
+    if (cachedScaleClass != targetHeight) {
+        cachedFightersDir = "";
+    }
+    bool is32 = getFightersDir().endsWith("32");
     FighterGeometry fg = FighterGeometryAdapter::calculate(geometry, is32, p1.head_y, p1.ground_y, p1.width_px, p2.ground_y, p2.width_px);
     if (fg.isTate) {
         p1.y = fg.groundY - (p1.ground_y * fg.scale);
@@ -606,7 +621,10 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             }
             p.currentBufferSize = newSize;
         }
-        p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
+            xSemaphoreGive(sdMutex);
+        }
     }
 }
 
@@ -636,7 +654,11 @@ bool FighterEngine::loop() {
     
     if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames)) {
         uint32_t delay = anim1->frameDelays[p1.currentFrame];
-        if (delay < 30) delay = 30;
+        if (p1.state != FIGHTER_STAND && p1.state != FIGHTER_WIN) {
+            delay = (delay * 3) / 4; // 25% faster combat animation
+            if (delay > 70) delay = 70;
+        }
+        if (delay < 25) delay = 25;
         if (now - p1.lastFrameTime >= delay) {
             p1.currentFrame++;
             p1.lastFrameTime = now;
@@ -661,7 +683,11 @@ bool FighterEngine::loop() {
     
     if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames)) {
         uint32_t delay = anim2->frameDelays[p2.currentFrame];
-        if (delay < 30) delay = 30;
+        if (p2.state != FIGHTER_STAND && p2.state != FIGHTER_WIN) {
+            delay = (delay * 3) / 4; // 25% faster combat animation
+            if (delay > 70) delay = 70;
+        }
+        if (delay < 25) delay = 25;
         if (now - p2.lastFrameTime >= delay) {
             p2.currentFrame++;
             p2.lastFrameTime = now;
@@ -693,9 +719,9 @@ bool FighterEngine::loop() {
 
         // Move towards center target
         uint32_t elapsed = now - lastMoveTime;
-        if (elapsed >= 35) { // Speed throttle (1 pixel per 35ms -> ~28 FPS)
-            int steps = (elapsed / 35);
-            lastMoveTime += steps * 35;
+        if (elapsed >= 20) { // Fluid arcade pace (1 pixel per 20ms -> 50 FPS)
+            int steps = (elapsed / 20);
+            lastMoveTime += steps * 20;
 
             for (int s = 0; s < steps; s++) {
                 if (p1.x < p1_target_x) {
@@ -749,8 +775,8 @@ bool FighterEngine::loop() {
             setPlayerState(*target, tgtState);
 
             if (isHeavy) {
-                hitStopUntilMillis = millis() + 150;
-                shakeRemainingFrames = 10;
+                hitStopUntilMillis = millis() + 60;
+                shakeRemainingFrames = 6;
             }
         }
     }
@@ -768,7 +794,7 @@ bool FighterEngine::loop() {
         fightEndTime = now;
     }
     
-    if (fightEndTime > 0 && now - fightEndTime > 2000) {
+    if (fightEndTime > 0 && now - fightEndTime > 1200) {
         active = false;
         freeFighter(p1);
         freeFighter(p2);
@@ -803,9 +829,12 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
         if (p.currentFrame != anim->cachedFrameIndex) {
             if (p.activeFile && p.currentFrameBuffer) {
                 uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-                p.activeFile.seek(offset);
-                p.activeFile.read(p.currentFrameBuffer, frameSize);
-                anim->cachedFrameIndex = p.currentFrame;
+                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    p.activeFile.seek(offset);
+                    p.activeFile.read(p.currentFrameBuffer, frameSize);
+                    xSemaphoreGive(sdMutex);
+                    anim->cachedFrameIndex = p.currentFrame;
+                }
             } else {
                 return;
             }

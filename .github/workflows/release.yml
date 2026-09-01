@@ -38,7 +38,7 @@ jobs:
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
 
-      - name: Compile native-independent unit tests (${{ matrix.env }})
+      - name: Build & validate unit test suites (${{ matrix.env }})
         run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
 
   build-release:

@@ -8,6 +8,9 @@
 void setUp(void) {}
 void tearDown(void) {}
 
+/**
+ * @brief Tests CoinGecko primary JSON response parsing for spot price and 24h change.
+ */
 void test_parse_coingecko_primary(void) {
     String payload = "[{\"id\":\"bitcoin\",\"symbol\":\"btc\",\"name\":\"Bitcoin\",\"current_price\":61234.56,\"price_change_percentage_24h\":2.45}]";
     float price = 0.0f;
@@ -22,6 +25,9 @@ void test_parse_coingecko_primary(void) {
     TEST_ASSERT_EQUAL_FLOAT(2.45f, change);
 }
 
+/**
+ * @brief Tests CoinGecko simple price JSON endpoint parsing for arbitrary token identifiers.
+ */
 void test_parse_coingecko_simple(void) {
     String payload = "{\"ergo\":{\"usd\":1.23,\"usd_24h_change\":-5.12}}";
     float price = 0.0f;
@@ -35,6 +41,9 @@ void test_parse_coingecko_simple(void) {
     TEST_ASSERT_EQUAL_FLOAT(-5.12f, change);
 }
 
+/**
+ * @brief Tests Binance 24h ticker JSON parsing and string-to-float conversions.
+ */
 void test_parse_binance(void) {
     String payload = "{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"62000.00\",\"priceChangePercent\":\"1.5\"}";
     float price = 0.0f;
@@ -48,6 +57,9 @@ void test_parse_binance(void) {
     TEST_ASSERT_EQUAL_FLOAT(1.5f, change);
 }
 
+/**
+ * @brief Tests Yahoo Finance quote and percentage change calculation from raw market prices.
+ */
 void test_parse_yahoo_finance(void) {
     String payload = "{\"chart\":{\"result\":[{\"meta\":{\"regularMarketPrice\":150.25,\"previousClose\":148.00}}]}}";
     float price = 0.0f;
@@ -61,6 +73,11 @@ void test_parse_yahoo_finance(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.52f, change);
 }
 
+/**
+ * @brief Tests OpenWeatherMap 5-day / 3-hour interval payload extraction into daily forecasts.
+ *
+ * Verifies calculation of daily temperature extremes (min/max) and localized labels.
+ */
 void test_parse_openweathermap(void) {
     String payload = "{\"list\":["
                      "{\"main\":{\"temp\":22.5},\"weather\":[{\"main\":\"Clear\",\"icon\":\"01d\"}]},"
@@ -71,7 +88,15 @@ void test_parse_openweathermap(void) {
                      "{\"main\":{\"temp\":27.0},\"weather\":[{\"main\":\"Clouds\",\"icon\":\"02d\"}]},"
                      "{\"main\":{\"temp\":28.0},\"weather\":[{\"main\":\"Rain\",\"icon\":\"10d\"}]},"
                      "{\"main\":{\"temp\":29.0},\"weather\":[{\"main\":\"Snow\",\"icon\":\"13d\"}]},"
-                     "{\"main\":{\"temp\":30.0},\"weather\":[{\"main\":\"Clear\",\"icon\":\"01d\"}]}"
+                     "{\"main\":{\"temp\":30.0},\"weather\":[{\"main\":\"Clear\",\"icon\":\"01d\"}]},"
+                     "{\"main\":{\"temp\":21.0},\"weather\":[{\"main\":\"Clouds\",\"icon\":\"02d\"}]},"
+                     "{\"main\":{\"temp\":20.0},\"weather\":[{\"main\":\"Rain\",\"icon\":\"10d\"}]},"
+                     "{\"main\":{\"temp\":19.0},\"weather\":[{\"main\":\"Snow\",\"icon\":\"13d\"}]},"
+                     "{\"main\":{\"temp\":18.0},\"weather\":[{\"main\":\"Clear\",\"icon\":\"01d\"}]},"
+                     "{\"main\":{\"temp\":17.0},\"weather\":[{\"main\":\"Clouds\",\"icon\":\"02d\"}]},"
+                     "{\"main\":{\"temp\":16.0},\"weather\":[{\"main\":\"Rain\",\"icon\":\"10d\"}]},"
+                     "{\"main\":{\"temp\":15.0},\"weather\":[{\"main\":\"Snow\",\"icon\":\"13d\"}]},"
+                     "{\"main\":{\"temp\":14.0},\"weather\":[{\"main\":\"Clear\",\"icon\":\"01d\"}]}"
                      "]}";
     
     WeatherData forecasts[3];
@@ -88,6 +113,9 @@ void test_parse_openweathermap(void) {
     TEST_ASSERT_EQUAL_STRING("TODAY", forecasts[0].label.c_str());
 }
 
+/**
+ * @brief Tests CoinGecko parser resilience against unexpected or malformed JSON payloads.
+ */
 void test_parse_coingecko_malformed(void) {
     String badPayload = "{\"invalid_json\": true}";
     float price = 0.0f;
@@ -99,6 +127,9 @@ void test_parse_coingecko_malformed(void) {
     TEST_ASSERT_FALSE(success);
 }
 
+/**
+ * @brief Tests Binance parser rejection of error/rate-limit payloads.
+ */
 void test_parse_binance_malformed(void) {
     String badPayload = "{\"symbol\":\"BTCUSDT\", \"error\":\"Rate limited\"}";
     float price = 0.0f;
@@ -109,6 +140,9 @@ void test_parse_binance_malformed(void) {
     TEST_ASSERT_FALSE(success);
 }
 
+/**
+ * @brief Tests Yahoo Finance parser rejection of empty results payloads.
+ */
 void test_parse_yahoo_malformed(void) {
     String badPayload = "{\"chart\":{\"result\":[]}}";
     float price = 0.0f;
@@ -119,6 +153,9 @@ void test_parse_yahoo_malformed(void) {
     TEST_ASSERT_FALSE(success);
 }
 
+/**
+ * @brief Tests Binance multi-point candlestick (kline) array parsing for historical sparklines.
+ */
 void test_parse_binance_klines(void) {
     String payload = "[[1499040000000,\"0.01634790\",\"0.80000000\",\"0.01575800\",\"0.01577100\",\"148976.11427815\",1499644799999,\"2434.19055334\",308,\"1756.87402397\",\"28.46690204\",\"0\"],[1499040000000,\"0.01577100\",\"0.02000000\",\"0.01500000\",\"0.01900000\",\"148976.11427815\",1499644799999,\"2434.19055334\",308,\"1756.87402397\",\"28.46690204\",\"0\"]]";
     float points[10];
@@ -135,6 +172,9 @@ void test_parse_binance_klines(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.019000f, maxP);
 }
 
+/**
+ * @brief Tests Yahoo Finance chart indicator extraction and null point handling.
+ */
 void test_parse_yahoo_chart(void) {
     String payload = "{\"chart\":{\"result\":[{\"indicators\":{\"quote\":[{\"close\":[150.0, 155.5, null, 160.2]}]}}]}}";
     float points[10];
@@ -152,6 +192,9 @@ void test_parse_yahoo_chart(void) {
     TEST_ASSERT_EQUAL_FLOAT(160.2f, maxP);
 }
 
+/**
+ * @brief Tests CoinGecko historical market chart array extraction with min/max normalization.
+ */
 void test_parse_coingecko_market_chart(void) {
     String payload = "{\"prices\":[[1600000000000, 100.0], [1600003600000, 105.5], [1600007200000, 98.2]]}";
     float points[10];
@@ -170,7 +213,8 @@ void test_parse_coingecko_market_chart(void) {
 }
 
 void setup() {
-    delay(2000);
+    Serial.begin(115200);
+    delay(100);
     UNITY_BEGIN();
     RUN_TEST(test_parse_coingecko_primary);
     RUN_TEST(test_parse_coingecko_simple);

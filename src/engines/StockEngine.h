@@ -96,6 +96,9 @@ private:
     void fetchHistory(const String& symbol, Timeframe tf);
     void renderQuote(EngineContext* context);
     void renderChart(EngineContext* context);
+    void renderUnifiedVertical(EngineContext* context);
+    void renderUnifiedWide(EngineContext* context);
+    void renderFullScreenQuote(EngineContext* context);
 };
 
 class StockEngineDescriptorHandler : public IEngineDescriptorHandler {

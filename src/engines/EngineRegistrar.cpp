@@ -33,6 +33,12 @@ RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequiremen
     if (req.needsGyroscope && !caps.hasGyroscope) {
         return {false, "Requires gyroscope"};
     }
+    if (req.needsNetwork && !caps.hasNetwork) {
+        return {false, "Requires network/WiFi connection"};
+    }
+    if (req.needsSd && !caps.hasSd) {
+        return {false, "Requires SD card"};
+    }
     return {true, ""};
 }
 
@@ -43,9 +49,10 @@ bool EngineRegistrar::meetsRequirements(const EngineRequirements& req) {
 bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {
     EngineDescriptor desc = handler.getDescriptor();
     auto res = checkRequirements(desc.requirements);
+    desc.available = res.satisfied;
+    desc.unavailableReason = res.reason.c_str();
     if (!res.satisfied) {
-        LOGW("Registrar", "Skipping engine %s: %s", desc.metadata.id ? desc.metadata.id : "", res.reason.c_str());
-        return false;
+        LOGW("Registrar", "Engine %s registered as unavailable: %s", desc.metadata.id ? desc.metadata.id : "", desc.unavailableReason);
     }
     return EngineRegistry::registerEngine(desc);
 }

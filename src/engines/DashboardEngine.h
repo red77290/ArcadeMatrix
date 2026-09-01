@@ -132,10 +132,14 @@ struct DashboardConfigParams {
     bool smoothSeconds = true;
     bool showWorldClock = true;
     bool showMarkets = true; // Enabled
-    bool useFahrenheit = false;
-    float tempOffset = -3.5f; // Calibration offset (°C) for CPU heating
+    int refreshIntervalMin = 10; // Data refresh rate in minutes (Default 10 min)
+    String tempUnit = "system";
+    String tempOffsetStr = "";
     String worldClocks = "NYC,TYO,LON";
     String trackedMarkets = "BTC,ETH,SOL,NVDA";
+    String lang = "system";
+    String format24hStr = "system";
+    String city = "PARIS";
     int offsetX = 0;
     int offsetY = 0;
 };
@@ -179,7 +183,7 @@ public:
 class PixelClockWidget {
 public:
     static void renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate);
-    static void renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS");
+    static void renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS", bool format24h = true);
 };
 
 class WorldClockWidget {
@@ -189,7 +193,7 @@ public:
 
 class ClimateWidget {
 public:
-    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit);
+    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang = "en");
 };
 
 class MarketWidget {
@@ -232,6 +236,7 @@ private:
     std::mutex m_snapshotMutex;
 
     IWeatherProvider* m_weatherProvider;
+    uint32_t m_lastBatchFetch;
     uint32_t m_lastWeatherFetch;
     uint32_t m_lastSensorFetch;
     uint32_t m_lastSystemFetch;

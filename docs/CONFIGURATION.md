@@ -45,7 +45,7 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `disable_hardware_pulsing` | `bool` | Set `true` to stop DMA starving the internal Wi-Fi (slight flicker). |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
 | `row_address_mode` | `int` | Row addressing type for exotic panels (`0` default). |
-| `clk_phase` | `bool` | Invert CLK clock phase (default `true` on ESP32-S3 to suppress pixel noise and DMA jitter). |
+| `clk_phase` | `bool` | Invert CLK clock phase (`false` default for standard pixel alignment; set `true` if your panel requires inverted clock latching). |
 | `latch_blanking` | `int` | Latch blanking cycles (`1`–`4`) for ghosting/phantom line reduction. |
 | `panel_type` | `String` | Optional panel init string (e.g. `FM6126A`), usually empty. |
 
@@ -75,7 +75,7 @@ You can also push credentials at runtime with `POST /api/wifi { "ssid": "...", "
 | `format_24h` | `bool` | Time format. `true` = 23:00, `false` = 11:00 PM. |
 | `lang` | `String` | System language (e.g., `en`, `fr`, `es`). |
 | `temp_unit` | `String` | Temperature unit preference (`C` for Celsius, `F` for Fahrenheit). |
-| `temp_offset` | `float` | Offset calibration in °C applied to onboard/environmental sensor. |
+| `temp_offset` | `float` | Offset calibration applied to onboard/environmental sensor (in selected temperature unit). |
 | `night_mode_enabled` | `bool` | Enables automatic turn-off / brightness reduction at night. |
 | `turn_off_at` | `String` | Standby start time (e.g., `"23:00"`). |
 | `wake_up_at` | `String` | Wake-up time (e.g., `"07:00"`). |
@@ -305,7 +305,7 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 | `weather_city` | `String` | `Paris` | Text | City for weather forecasts. |
 | `weather_api_key` | `String` | `""` | Optional API Key | OpenWeatherMap API key (leave blank to automatically use free Open-Meteo service without API key). |
 | `show_indoor_temp` | `bool` | `true` | `true`, `false` | Display onboard SHTC3 indoor room temperature and humidity. |
-| `temp_offset` | `float` | `-3.5` | `-20.0` to `20.0` | Calibration offset (°C) to compensate for CPU heat dissipation. |
+| `temp_offset` | `float` | `-3.5` | `-30.0` to `30.0` | Calibration offset to compensate for CPU heat dissipation (in chosen temperature unit). |
 | `show_markets` | `bool` | `true` | `true`, `false` | Display crypto and stock market ticker badges. |
 | `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Top 20 tags / Free text | Cryptos via Binance API (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) and Stocks/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
 | `show_sysinfo` | `bool` | `true` | `true`, `false` | Display RAM, CPU & WiFi vitals gauge. |
@@ -336,7 +336,7 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 | :--- | :--- | :--- | :--- | :--- |
 | `show_humidity` | `bool` | `true` | `true`, `false` | Display relative humidity percentage. |
 | `temp_unit` | `Options` | `C` | `C`, `F` | Celsius or Fahrenheit display. |
-| `temp_offset` | `float` | `-3.5` | `-20.0` to `20.0` | Calibration offset (°C). |
+| `temp_offset` | `float` | `-3.5` | `-30.0` to `30.0` | Calibration offset (in chosen temperature unit). |
 
 ### Engine: `marquee`
 | Field | Type | Default | Description |

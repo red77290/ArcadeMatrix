@@ -117,7 +117,7 @@ bool FrontendSyncEngine::loop() {
         hasPendingEvent = false;
         uint32_t reqId = currentRequestId;
         handleGameEvent(pendingPayload, reqId);
-    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message && millis() > 12000) {
+    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message) {
         waitingDisplayed = true;
         MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "rtl", 40, 0 };
         message->displayMessage(cfg);
@@ -907,6 +907,8 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
     String dirPath = "/pixelcade/" + folder;
     String savePath = dirPath + "/" + filename;
 
+    WiFiClientSecure client;
+    client.setInsecure();
     HTTPClient http;
     http.setTimeout(4000);
     http.setUserAgent("ArcadeMatrix-ESP32");
@@ -917,7 +919,7 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
     // can block for > 5 seconds on massive GIFs over a slow connection!
     esp_task_wdt_delete(NULL);
     
-    if (http.begin(url)) {
+    if (http.begin(client, url)) {
         LOGI("RetroFrontend", "Starting HTTP GET...");
         int httpCode = http.GET();
         LOGI("RetroFrontend", "HTTP GET returned %d", httpCode);
@@ -981,6 +983,7 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
                             file.close();
                             sd.remove(savePath.c_str());
                             http.end();
+                            client.stop();
                             esp_task_wdt_add(NULL);
                             return false;
                         }
@@ -993,6 +996,7 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
                     if (sd.exists(savePath.c_str()) && sd.open(savePath.c_str(), FILE_OPEN_READ).size() > 100) {
                         outPath = savePath;
                         http.end();
+                        client.stop();
                         LOGI("RetroFrontend", "Successfully downloaded and saved to %s", savePath.c_str());
                         esp_task_wdt_add(NULL); // Re-enable watchdog
                         return true;
@@ -1007,6 +1011,7 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
             LOGI("RetroFrontend", "HTTP GET failed for %s, error: %s", filename.c_str(), http.errorToString(httpCode).c_str());
         }
         http.end();
+        client.stop();
     }
     
     esp_task_wdt_add(NULL); // Re-enable watchdog on failure paths!
