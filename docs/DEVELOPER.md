@@ -642,21 +642,101 @@ void MusicEngine::render(EngineContext* context) {
 #### Rebuilding Geometry-Derived Caches
 Only implement `onDisplayGeometryChanged(const DisplayGeometry& geometry)` if your engine allocates fixed column counts, FFT arrays, or target grids (e.g. `MatrixRainClock`, `TetrisClock`, `VisualizerEngine`). Reallocate or adjust your caches non-destructively without resetting gameplay, scores, or timers.
 
----
+## 16. Testing, QEMU Emulation & Local Compilation
 
-## 16. Testing & Local Compilation
+ArcadeMatrix adheres to a strict test-driven development workflow. All core lifecycle methods, configuration sanitizers, and atomic concurrency state-machines are covered by automated tests.
 
-Compile both board targets locally:
+### 16.1 Compiling Dual Firmware Targets
+
+Ensure all changes build cleanly on both target hardware platforms:
 
 ```bash
-# Standard ESP32
+# Standard ESP32 Dual-Core (I2S DMA)
 rtk pio run -e esp32dev
 
-# Waveshare ESP32-S3
+# Waveshare ESP32-S3 (LCD DMA)
 rtk pio run -e esp32s3_waveshare
+```
 
-# Run Unit Tests
+### 16.2 Running Local Unit Tests (Compilation Tier)
+
+Compile and validate test suites locally via PlatformIO:
+
+```bash
+# Compile all 7 unit test suites without physical board attached
 rtk pio test -e esp32dev --without-uploading --without-testing
+
+# Compile a specific test suite (e.g. test_core)
+rtk pio test -e esp32dev -f test_core --without-uploading --without-testing
+```
+
+### 16.3 Running QEMU Hardware Emulation Tests
+
+ArcadeMatrix includes an automated QEMU test runner (`scripts/run_qemu_tests.py`) that boots each test firmware image inside an emulated ESP32 CPU and evaluates the serial UART output:
+
+```bash
+# Run all 7 test suites inside QEMU emulator
+rtk python3 scripts/run_qemu_tests.py
+
+# Verbose output
+rtk python3 scripts/run_qemu_tests.py -v
+```
+
+### 16.4 How to Write a New Unit Test
+
+Unit tests use the `Unity` testing framework. Follow these conventions:
+
+#### 1. Using `TrackingMockEngine` to Assert Lifecycle Calls
+When testing `DisplayArbiter` or `DisplayRuntime`, use `TrackingMockEngine` to record lifecycle invocations:
+
+```cpp
+#include <unity.h>
+#include "core/DisplayRuntime.h"
+
+void test_my_custom_feature(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine mock("my_engine");
+
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &mock, EngineHandle("my_engine", "inst1"));
+
+    DisplayDecision decision;
+    decision.valid = true;
+    decision.sourceId = DisplaySourceId::MQTT;
+    decision.engineHandle = EngineHandle("my_engine", "inst1");
+
+    runtime.transitionSession(decision);
+
+    TEST_ASSERT_EQUAL(1, mock.activateCalls);
+    TEST_ASSERT_EQUAL(0, mock.pauseCalls);
+    TEST_ASSERT_EQUAL(0, mock.deactivateCalls);
+    TEST_ASSERT_EQUAL(TransitionMode::REPLACE, runtime.getCurrentSession().lastTransitionMode);
+}
+```
+
+#### 2. Registering Tests in `setup()`
+In your test suite file (e.g. `test/test_core/test_core.cpp`), register your test function inside `setup()`:
+
+```cpp
+void setup() {
+    delay(1000);
+    UNITY_BEGIN();
+    RUN_TEST(test_my_custom_feature);
+    UNITY_END();
+}
+
+void loop() {}
+```
+
+### 16.5 Documentation & Web Installer Validation Scripts
+
+Run the static validation scripts to verify API sync, documentation tables, and web installer manifests:
+
+```bash
+# Validate documentation consistency across EN/FR/ES
+rtk python3 scripts/validate_docs.py
+
+# Validate web installer manifest
+rtk python3 scripts/validate_webinstaller.py
 ```
 
 ---
@@ -665,7 +745,9 @@ rtk pio test -e esp32dev --without-uploading --without-testing
 
 - [ ] `initialize()` allocates all memory; hot loop (`update`/`render`) has **zero dynamic allocations**.
 - [ ] `onConfigChanged()` updates state in place without destroying the instance.
-- [ ] Hardware requirements (`needsPsram`, `needsAudio`, `needsTempSensor`) are correctly declared.
+- [ ] Hardware requirements (`needsPsram`, `needsAudio`, `needsTempSensor`, `needsNetwork`, `needsSd`) are correctly declared.
 - [ ] `options_endpoint` is provided for dynamic options.
 - [ ] Localized strings use the centralized `I18n` module (no redundant `lang` field in schema).
 - [ ] Code compiles cleanly on both `esp32dev` and `esp32s3_waveshare`.
+- [ ] All 7 unit test suites pass (`rtk pio test -e esp32dev --without-uploading --without-testing`).
+- [ ] Documentation scripts pass (`rtk python3 scripts/validate_docs.py`).

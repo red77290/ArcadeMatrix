@@ -1210,6 +1210,149 @@ void test_engine_requirement_unavailable_is_registered(void) {
     TEST_ASSERT_EQUAL_STRING("Requires PSRAM", registered->unavailableReason);
 }
 
+void test_display_runtime_state_machine_matrix(void) {
+    DisplayArbiter arbiter;
+    DisplayRuntime runtime;
+    TrackingMockEngine rotA("rotA");
+    TrackingMockEngine rotB("rotB");
+    TrackingMockEngine alertA("alertA");
+    TrackingMockEngine alertB("alertB");
+    TrackingMockEngine alertC("alertC");
+    TrackingMockEngine alertD("alertD");
+    TrackingMockEngine alertE("alertE");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotA, EngineHandle("rotA", "instA"));
+    runtime.registerSourceEngine(DisplaySourceId::ALERT, &alertA, EngineHandle("alertA", "instAA"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &alertB, EngineHandle("alertB", "instBB"));
+    runtime.registerSourceEngine(DisplaySourceId::MARQUEE, &alertC, EngineHandle("alertC", "instCC"));
+    runtime.registerSourceEngine(DisplaySourceId::VISUALIZER, &alertD, EngineHandle("alertD", "instDD"));
+
+    // Scenario 1: Initial start RotA -> Replace with RotB
+    DisplayDecision dRotA;
+    dRotA.valid = true;
+    dRotA.sourceId = DisplaySourceId::ROTATION;
+    dRotA.engineHandle = EngineHandle("rotA", "instA");
+    runtime.transitionSession(dRotA);
+    TEST_ASSERT_EQUAL(1, rotA.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &rotB, EngineHandle("rotB", "instB"));
+    DisplayDecision dRotB;
+    dRotB.valid = true;
+    dRotB.sourceId = DisplaySourceId::ROTATION;
+    dRotB.engineHandle = EngineHandle("rotB", "instB");
+    runtime.transitionSession(dRotB);
+    TEST_ASSERT_EQUAL(1, rotA.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, rotB.activateCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::REPLACE, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 2: Rotation B -> Alert A (PREEMPT)
+    DisplayDecision dAlertA;
+    dAlertA.valid = true;
+    dAlertA.sourceId = DisplaySourceId::ALERT;
+    dAlertA.priority = DisplayPriority::ALERT;
+    dAlertA.preemptive = true;
+    dAlertA.engineHandle = EngineHandle("alertA", "instAA");
+    dAlertA.requestId = 201;
+    runtime.transitionSession(dAlertA);
+    TEST_ASSERT_EQUAL(1, rotB.pauseCalls);
+    TEST_ASSERT_EQUAL(1, alertA.activateCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 3: Alert A -> Alert B (PREEMPT)
+    DisplayDecision dAlertB;
+    dAlertB.valid = true;
+    dAlertB.sourceId = DisplaySourceId::MQTT;
+    dAlertB.priority = DisplayPriority::MQTT;
+    dAlertB.preemptive = true;
+    dAlertB.engineHandle = EngineHandle("alertB", "instBB");
+    dAlertB.requestId = 202;
+    runtime.transitionSession(dAlertB);
+    TEST_ASSERT_EQUAL(1, alertA.pauseCalls);
+    TEST_ASSERT_EQUAL(1, alertB.activateCalls);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 4: Alert B -> Alert B refresh (REFRESH)
+    DisplayDecision dAlertBRefresh = dAlertB;
+    dAlertBRefresh.requestId = 203;
+    runtime.transitionSession(dAlertBRefresh);
+    TEST_ASSERT_EQUAL(1, alertB.activateCalls);
+    TEST_ASSERT_EQUAL(0, alertB.deactivateCalls);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::REFRESH, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 5: Cancel Alert B -> Resume Alert A (RESUME)
+    runtime.transitionSession(dAlertA);
+    TEST_ASSERT_EQUAL(1, alertB.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, alertA.resumeCalls);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::RESUME, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 6: Cancel Alert A -> Resume Rotation B (RESUME)
+    runtime.transitionSession(dRotB);
+    TEST_ASSERT_EQUAL(1, alertA.deactivateCalls);
+    TEST_ASSERT_EQUAL(1, rotB.resumeCalls);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL(TransitionMode::RESUME, runtime.getCurrentSession().lastTransitionMode);
+
+    // Scenario 7: Rotation B -> Unresolvable Target (Rejected Transactionally)
+    DisplayDecision dInvalid;
+    dInvalid.valid = true;
+    dInvalid.sourceId = DisplaySourceId::ROTATION;
+    dInvalid.engineHandle = EngineHandle("invalid_engine", "invalid_inst");
+    runtime.transitionSession(dInvalid);
+    TEST_ASSERT_EQUAL(1, rotB.activateCalls); // No new activate or deactivate
+    TEST_ASSERT_EQUAL(1, rotB.deactivateCalls); // Prior count was 0 + deact in replace = 1
+    TEST_ASSERT_EQUAL_PTR(&rotB, runtime.getCurrentSession().activeEngine);
+
+    // Scenario 8: Preemption Stack Overflow (Depth == 4 rejection)
+    // Push 1: Alert A
+    runtime.transitionSession(dAlertA);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+    // Push 2: Alert B
+    runtime.transitionSession(dAlertB);
+    TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
+    // Push 3: Alert C
+    DisplayDecision dAlertC;
+    dAlertC.valid = true;
+    dAlertC.sourceId = DisplaySourceId::MARQUEE;
+    dAlertC.preemptive = true;
+    dAlertC.engineHandle = EngineHandle("alertC", "instCC");
+    runtime.transitionSession(dAlertC);
+    TEST_ASSERT_EQUAL(3, runtime.getPreemptionDepth());
+    // Push 4: Alert D (Max Depth)
+    DisplayDecision dAlertD;
+    dAlertD.valid = true;
+    dAlertD.sourceId = DisplaySourceId::VISUALIZER;
+    dAlertD.preemptive = true;
+    dAlertD.engineHandle = EngineHandle("alertD", "instDD");
+    runtime.transitionSession(dAlertD);
+    TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
+
+    // Push 5: Alert E (Must be cleanly rejected)
+    DisplayDecision dAlertE;
+    dAlertE.valid = true;
+    dAlertE.sourceId = DisplaySourceId::ALERT; // new alert while stack is 4
+    dAlertE.preemptive = true;
+    dAlertE.engineHandle = EngineHandle("alertA", "instAA");
+    runtime.transitionSession(dAlertE);
+    TEST_ASSERT_EQUAL(4, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL_PTR(&alertD, runtime.getCurrentSession().activeEngine);
+
+    // Scenario 9: Baseline Replace unwinds orphaned stack cleanly
+    DisplayDecision dNewBaseline;
+    dNewBaseline.valid = true;
+    dNewBaseline.sourceId = DisplaySourceId::ROTATION;
+    dNewBaseline.preemptive = false;
+    dNewBaseline.engineHandle = EngineHandle("rotA", "instA");
+    runtime.transitionSession(dNewBaseline);
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+    TEST_ASSERT_EQUAL_PTR(&rotA, runtime.getCurrentSession().activeEngine);
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -1251,6 +1394,7 @@ void setup() {
     RUN_TEST(test_rotation_manager_bounded_lookup);
     RUN_TEST(test_runtime_resolve_does_not_create_instance);
     RUN_TEST(test_preemptive_same_session_refresh_is_not_preemption);
+    RUN_TEST(test_display_runtime_state_machine_matrix);
     RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
