@@ -22,6 +22,7 @@ struct RenderSession {
     bool allowsOverlay = true;
     bool isRealtime = false;
     IEngine* activeEngine = nullptr;
+    TransitionMode lastTransitionMode = TransitionMode::NONE;
 };
 
 struct PreemptionEntry {

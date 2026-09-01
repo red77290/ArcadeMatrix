@@ -96,6 +96,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     if (sameSource && sameHandle && sameEngine) {
         m_session.requestId = decision.requestId;
         m_session.startedAtMs = millis();
+        m_session.lastTransitionMode = TransitionMode::REFRESH;
         return; // Zero lifecycle, sessionId and stack preserved
     }
 
@@ -134,6 +135,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_session.allowsOverlay = decision.allowsOverlay;
         m_session.isRealtime = decision.isRealtime;
         m_session.lifecycle = decision.lifecycle;
+        m_session.lastTransitionMode = TransitionMode::PREEMPT;
         return;
     }
 
@@ -183,6 +185,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_session.allowsOverlay = parent.allowsOverlay;
         m_session.isRealtime = parent.isRealtime;
         m_session.lifecycle = parent.lifecycle;
+        m_session.lastTransitionMode = TransitionMode::RESUME;
         return;
     }
 
@@ -213,6 +216,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     m_session.allowsOverlay = decision.allowsOverlay;
     m_session.isRealtime = decision.isRealtime;
     m_session.lifecycle = decision.lifecycle;
+    m_session.lastTransitionMode = TransitionMode::REPLACE;
 }
 
 DisplayDecision DisplayRuntime::update(const ConfigSnapshot& snapshot) {
