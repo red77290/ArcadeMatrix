@@ -233,6 +233,44 @@ void test_sanitizer_flags_unknown_engines(void) {
     TEST_ASSERT_EQUAL(1, res.invalid_instances);
 }
 
+void test_sanitizer_validation_policy_coverage(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "policy_test";
+    desc.schema.fields = {
+        ConfigField("f_clamp", ConfigType::INTEGER, "Clamp Field", "Clamped", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("f_fallback", ConfigType::INTEGER, "Fallback Field", "Fallback", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("f_accept", ConfigType::STRING, "Accept Field", "Accepted", "default_str", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("f_reject", ConfigType::INTEGER, "Reject Field", "Rejected", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Reject)
+    };
+    desc.factory = []() { return std::unique_ptr<IEngine>(new MockTestEngine()); };
+    EngineRegistry::registerEngine(desc);
+
+    ConfigLoader cfg;
+    cfg.addInstance("policy_1", "policy_test");
+    cfg.mutate([](ConfigLoader& c) {
+        for (auto& inst : c.instances) {
+            if (inst.instance_id == "policy_1") {
+                inst.config.setInt("f_clamp", 100);
+                inst.config.setInt("f_fallback", 100);
+                inst.config.setString("f_accept", "arbitrary_custom_value");
+                inst.config.setInt("f_reject", 100);
+            }
+        }
+    });
+
+    SanitizeResult res = ConfigSanitizer::sanitizeInstances(cfg);
+    TEST_ASSERT_TRUE(res.modified);
+    TEST_ASSERT_EQUAL(1, res.values_clamped);
+    TEST_ASSERT_EQUAL(2, res.values_fallback); // fallback + reject fallback to default
+
+    EngineInstanceSnapshot snap;
+    TEST_ASSERT_TRUE(cfg.getInstanceSnapshot("policy_1", snap));
+    TEST_ASSERT_EQUAL(10, snap.config.getInt("f_clamp"));
+    TEST_ASSERT_EQUAL(5, snap.config.getInt("f_fallback"));
+    TEST_ASSERT_EQUAL_STRING("arbitrary_custom_value", snap.config.getString("f_accept").c_str());
+    TEST_ASSERT_EQUAL(5, snap.config.getInt("f_reject"));
+}
+
 // 3. DisplayArbiter & OverlayManager Tests
 void test_arbiter_priority_resolution(void) {
     DisplayArbiter arbiter;
@@ -1187,6 +1225,7 @@ void setup() {
     RUN_TEST(test_sanitizer_clamps_out_of_bound_integers);
     RUN_TEST(test_sanitizer_handles_invalid_boolean_and_enum);
     RUN_TEST(test_sanitizer_flags_unknown_engines);
+    RUN_TEST(test_sanitizer_validation_policy_coverage);
     // Arbiter, Overlays & Requirements
     RUN_TEST(test_arbiter_priority_resolution);
     RUN_TEST(test_arbiter_one_shot_auto_consumption);

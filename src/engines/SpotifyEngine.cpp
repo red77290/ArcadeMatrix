@@ -441,9 +441,9 @@ EngineDescriptor SpotifyDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false;
 
     desc.schema.fields = {
-        ConfigField("client_id", ConfigType::STRING, "Client ID", "Spotify Developer Client ID.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("client_secret", ConfigType::STRING, "Client Secret", "Spotify Developer Client Secret.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("refresh_token", ConfigType::STRING, "Refresh Token", "Spotify OAuth2 Refresh Token.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("client_id", ConfigType::STRING, "Client ID", "Spotify Developer Client ID.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("client_secret", ConfigType::STRING, "Client Secret", "Spotify Developer Client Secret.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("refresh_token", ConfigType::STRING, "Refresh Token", "Spotify OAuth2 Refresh Token.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_album_art", ConfigType::BOOLEAN, "Show Album Art", "Download and display Spotify album cover art (requires PSRAM).", "true", false, "", "", "", "", "", false, "psram=true", ValidationPolicy::FallbackDefault),
         ConfigField("show_progress", ConfigType::BOOLEAN, "Show Progress Bar", "Render playback progress bar at the bottom.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_visualizer", ConfigType::BOOLEAN, "Animated Equalizer", "Display equalizer frequency bars while music is playing.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),

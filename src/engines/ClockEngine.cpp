@@ -165,12 +165,12 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     clockDesc.requirements.needsAudio = false;
     clockDesc.schema.fields = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "system", false, "", "", "", "system:Système (Général),%H:%M:%S:24h avec secondes (%H:%M:%S),%H:%M:24h sans secondes (%H:%M),%I:%M:%S %p:12h avec secondes (%I:%M:%S %p),%I:%M %p:12h sans secondes (%I:%M %p)", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "system", false, "", "", "", "system:Système (Général),%H:%M:%S:24h avec secondes (%H:%M:%S),%H:%M:24h sans secondes (%H:%M),%I:%M:%S %p:12h avec secondes (%I:%M:%S %p),%I:%M %p:12h sans secondes (%I:%M %p)", "", false, "", ValidationPolicy::Accept),
         ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:Système (Général)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Ignore),
-        ConfigField("clock_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#ff00ff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Ignore),
+        ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
+        ConfigField("clock_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#ff00ff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
         ConfigField("clock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };
