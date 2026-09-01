@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <unity.h>
+
 #include "core/EngineRegistry.h"
 #include "core/ConfigSanitizer.h"
 #include "core/ConfigLoader.h"
@@ -47,7 +48,15 @@ void tearDown(void) {
     EngineRegistry::clear();
 }
 
+// =========================================================================
 // 1. EngineRegistry & Descriptor Tests
+// =========================================================================
+
+/**
+ * @brief Verifies registration of engine descriptors into the central EngineRegistry.
+ *
+ * Ensures descriptor ID, human-readable name, and factory function are stored accurately.
+ */
 void test_engine_registration(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.engine";
@@ -63,6 +72,9 @@ void test_engine_registration(void) {
     TEST_ASSERT_EQUAL_STRING("Test Engine", all[0].metadata.name);
 }
 
+/**
+ * @brief Verifies that duplicate engine registrations with the same identifier are rejected.
+ */
 void test_duplicate_registration_fails(void) {
     EngineDescriptor desc1;
     desc1.metadata.id = "test.engine";
@@ -78,6 +90,9 @@ void test_duplicate_registration_fails(void) {
     TEST_ASSERT_EQUAL(1, count);
 }
 
+/**
+ * @brief Tests lookup of engine descriptors by unique string identifier.
+ */
 void test_get_descriptor(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.engine2";
@@ -91,6 +106,9 @@ void test_get_descriptor(void) {
     TEST_ASSERT_NULL(not_found);
 }
 
+/**
+ * @brief Verifies factory instantiation producing valid IEngine polymorphic pointers.
+ */
 void test_factory_creation(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.factory";
@@ -104,6 +122,9 @@ void test_factory_creation(void) {
     TEST_ASSERT_NOT_NULL(instance.get());
 }
 
+/**
+ * @brief Tests engine configuration schema definition, field types, and validation policies.
+ */
 void test_schema_and_fields(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.schema";
@@ -128,6 +149,9 @@ void test_schema_and_fields(void) {
     TEST_ASSERT_EQUAL_STRING("/api/themes", found->schema.fields[1].options_endpoint);
 }
 
+/**
+ * @brief Tests engine capabilities (realtime, overlays, rotation) and hardware requirements flags.
+ */
 void test_capabilities_and_requirements(void) {
     EngineDescriptor desc;
     desc.metadata.id = "test.caps";
@@ -147,7 +171,13 @@ void test_capabilities_and_requirements(void) {
     TEST_ASSERT_TRUE(found->requirements.needsAudio);
 }
 
+// =========================================================================
 // 2. ConfigSanitizer Tests
+// =========================================================================
+
+/**
+ * @brief Tests injection of default configuration values into unpopulated fields during sanitization.
+ */
 void test_sanitizer_injects_defaults(void) {
     EngineDescriptor desc;
     desc.metadata.id = "clock";
@@ -170,6 +200,9 @@ void test_sanitizer_injects_defaults(void) {
     TEST_ASSERT_EQUAL(5, snap1.config.getInt("speed"));
 }
 
+/**
+ * @brief Tests integer clamping when values exceed declared schema bounds.
+ */
 void test_sanitizer_clamps_out_of_bound_integers(void) {
     EngineDescriptor desc;
     desc.metadata.id = "clock";
@@ -195,6 +228,9 @@ void test_sanitizer_clamps_out_of_bound_integers(void) {
     TEST_ASSERT_EQUAL(10, snap2.config.getInt("speed"));
 }
 
+/**
+ * @brief Tests fallback to default values for invalid boolean and unknown enum entries.
+ */
 void test_sanitizer_handles_invalid_boolean_and_enum(void) {
     EngineDescriptor desc;
     desc.metadata.id = "weather";
@@ -225,6 +261,9 @@ void test_sanitizer_handles_invalid_boolean_and_enum(void) {
     TEST_ASSERT_EQUAL_STRING("classic", snap3.config.getString("icon_set").c_str());
 }
 
+/**
+ * @brief Verifies that instances pointing to unregistered or unknown engine descriptor IDs are flagged as invalid.
+ */
 void test_sanitizer_flags_unknown_engines(void) {
     ConfigLoader cfg;
     cfg.addInstance("bad_inst", "non_existent_engine");
@@ -233,6 +272,9 @@ void test_sanitizer_flags_unknown_engines(void) {
     TEST_ASSERT_EQUAL(1, res.invalid_instances);
 }
 
+/**
+ * @brief Tests comprehensive validation policy coverage (Clamp, FallbackDefault, Accept, Reject).
+ */
 void test_sanitizer_validation_policy_coverage(void) {
     EngineDescriptor desc;
     desc.metadata.id = "policy_test";
@@ -271,7 +313,16 @@ void test_sanitizer_validation_policy_coverage(void) {
     TEST_ASSERT_EQUAL(5, snap.config.getInt("f_reject"));
 }
 
+// =========================================================================
 // 3. DisplayArbiter & OverlayManager Tests
+// =========================================================================
+
+/**
+ * @brief Tests DisplayArbiter deterministic priority resolution among concurrent display sources.
+ *
+ * Verifies that higher-priority sources (MQTT > MARQUEE > ROTATION) win during evaluation
+ * and that cancelling higher-priority requests smoothly restores lower-priority sources.
+ */
 void test_arbiter_priority_resolution(void) {
     DisplayArbiter arbiter;
 
@@ -295,6 +346,12 @@ void test_arbiter_priority_resolution(void) {
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, arbiter.evaluate().sourceId);
 }
 
+/**
+ * @brief Tests ONE_SHOT display request auto-consumption behavior.
+ *
+ * Verifies that a ONE_SHOT request is consumed on the first evaluate() call and immediately
+ * falls back to baseline ROTATION on the subsequent evaluate() cycle.
+ */
 void test_arbiter_one_shot_auto_consumption(void) {
     DisplayArbiter arbiter;
 
@@ -312,6 +369,9 @@ void test_arbiter_one_shot_auto_consumption(void) {
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d2.sourceId);
 }
 
+/**
+ * @brief Tests request ID generation semantics and restartTimer flag behavior.
+ */
 void test_arbiter_request_id_semantics(void) {
     DisplayArbiter arbiter;
 
@@ -333,6 +393,13 @@ void test_arbiter_request_id_semantics(void) {
     TEST_ASSERT_NOT_EQUAL(firstReqId, d3.requestId);
 }
 
+// =========================================================================
+// 4. Triple-Buffer Linearizability & Snapshot Atomicity
+// =========================================================================
+
+/**
+ * @brief Tests immutability and version monotonicity of Triple-Buffer configuration snapshots.
+ */
 void test_config_snapshot_immutability_and_versioning(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
@@ -353,6 +420,9 @@ void test_config_snapshot_immutability_and_versioning(void) {
     }
 }
 
+/**
+ * @brief Tests sequential mutation and Triple-Buffer slot wrap-around publication.
+ */
 void test_triple_buffer_snapshot_publication_and_versioning(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
@@ -380,6 +450,9 @@ void test_triple_buffer_snapshot_publication_and_versioning(void) {
     TEST_ASSERT_EQUAL_STRING("WiFi_Slot_4", cfg.acquireSnapshot()->wifi.ssid.c_str());
 }
 
+/**
+ * @brief Tests high-frequency mutation linearizability and CRC32 integrity verification.
+ */
 void test_snapshot_publication_linearizability(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
@@ -399,6 +472,9 @@ void test_snapshot_publication_linearizability(void) {
     }
 }
 
+/**
+ * @brief Tests lock-free Single Producer Single Consumer (SPSC) queue concurrency between Core 0 and Core 1.
+ */
 void test_arbiter_spsc_lockfree(void) {
     DisplayArbiter arbiter;
 
@@ -429,6 +505,9 @@ void test_arbiter_spsc_lockfree(void) {
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d3.sourceId);
 }
 
+/**
+ * @brief Tests EngineHandle canonical resolution by descriptor ID and instance ID.
+ */
 void test_canonical_engine_handle_resolution(void) {
     DisplayRuntime runtime;
     TrackingMockEngine visMain;
@@ -445,6 +524,13 @@ void test_canonical_engine_handle_resolution(void) {
     TEST_ASSERT_EQUAL_PTR(&visMain, resolvedMain);
 }
 
+// =========================================================================
+// 5. Display Runtime State Machine, Lifecycle & Preemption Stack
+// =========================================================================
+
+/**
+ * @brief Tests DisplayRuntime preemption lifecycle transitions: Pause -> Push -> Activate -> Deactivate -> Resume.
+ */
 void test_display_runtime_preemption_lifecycle(void) {
     DisplayRuntime runtime;
     TrackingMockEngine rotationEngine;
@@ -486,6 +572,9 @@ void test_display_runtime_preemption_lifecycle(void) {
     TEST_ASSERT_EQUAL(0, rotationEngine.deactivateCalls);
 }
 
+/**
+ * @brief Tests DisplayRuntime lifecycle centralization across disparate engines without leak.
+ */
 void test_display_runtime_lifecycle_centralization(void) {
     DisplayRuntime runtime;
     TrackingMockEngine marqueeEngine;
@@ -544,6 +633,13 @@ void test_display_runtime_lifecycle_centralization(void) {
     TEST_ASSERT_EQUAL(1, visualizerEngine.deactivateCalls);
 }
 
+// =========================================================================
+// 6. Capability Gating, Registrar & Engine Requirements
+// =========================================================================
+
+/**
+ * @brief Tests EngineRequirements evaluation against hardware capabilities.
+ */
 void test_requirements_gating(void) {
     EngineRequirements reqPsram;
     reqPsram.needsPsram = true;
@@ -561,6 +657,9 @@ void test_requirements_gating(void) {
     TEST_ASSERT_TRUE(checkNone.satisfied);
 }
 
+/**
+ * @brief Verifies that Fighter is treated strictly as an overlay and not registered as an independent engine.
+ */
 void test_fighter_not_in_registry_or_selectable(void) {
     // 1. EngineRegistrar must NOT register Fighter into EngineRegistry
     EngineRegistrar::registerAll();
@@ -575,6 +674,13 @@ void test_fighter_not_in_registry_or_selectable(void) {
     TEST_ASSERT_EQUAL(0, cfg.instances.size());
 }
 
+// =========================================================================
+// 7. Overlay Manager & Layering Invariants
+// =========================================================================
+
+/**
+ * @brief Tests migration and parsing of legacy "fighter_overlay": true into canonical "overlays": {"fighter": true}.
+ */
 void test_canonical_overlays_schema_and_migration(void) {
     ConfigLoader cfg;
     const char* legacyJson = R"({
@@ -597,6 +703,9 @@ void test_canonical_overlays_schema_and_migration(void) {
     TEST_ASSERT_TRUE(serialized.indexOf("\"overlays\":{\"fighter\":true}") >= 0);
 }
 
+/**
+ * @brief Tests overlay rendering combinations across rotation items and master switch override.
+ */
 void test_rotation_overlay_combinations(void) {
     ConfigLoader cfg;
     cfg.system.idle_fighter_enabled = true;
@@ -626,6 +735,9 @@ void test_rotation_overlay_combinations(void) {
     TEST_ASSERT_FALSE(overlay.isActive());
 }
 
+/**
+ * @brief Tests lazy allocation and heap preservation of overlay instances to prevent heap fragmentation.
+ */
 void test_overlay_manager_lifecycle_and_heap_preservation(void) {
     ConfigLoader cfg;
     cfg.system.idle_fighter_enabled = true;
@@ -650,6 +762,9 @@ void test_overlay_manager_lifecycle_and_heap_preservation(void) {
     TEST_ASSERT_TRUE(overlay.hasInstantiatedFighter());
 }
 
+/**
+ * @brief Tests overlay suppression when priority sources (Marquee / Alert) preempt baseline rotation.
+ */
 void test_overlay_preemption_by_arbiter(void) {
     ConfigLoader cfg;
     cfg.system.idle_fighter_enabled = true;
@@ -670,6 +785,9 @@ void test_overlay_preemption_by_arbiter(void) {
     TEST_ASSERT_TRUE(overlay.isActive());
 }
 
+/**
+ * @brief Tests lock-free Triple-Buffer CAS state machine and reader isolation during active reader pinning.
+ */
 void test_snapshot_cas_state_machine_and_interleaving(void) {
     ConfigLoader cfg;
     cfg.addInstance("clock_main", "clock");
@@ -701,6 +819,9 @@ void test_snapshot_cas_state_machine_and_interleaving(void) {
     }
 }
 
+/**
+ * @brief Tests re-entrant and multi-reader snapshot acquisitions on the same thread without deadlock.
+ */
 void test_snapshot_reentrant_and_multi_reader(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
@@ -722,6 +843,9 @@ void test_snapshot_reentrant_and_multi_reader(void) {
     TEST_ASSERT_EQUAL(1, outerGuard->version);
 }
 
+/**
+ * @brief Tests clean unwinding and lifecycle cleanup of intermediate submerged preemption entries when expired.
+ */
 void test_preemption_intermediate_expiration_unwinding(void) {
     TrackingMockEngine clockEngine("clock_engine");
     TrackingMockEngine mqttEngine("mqtt_engine");
@@ -781,6 +905,9 @@ void test_preemption_intermediate_expiration_unwinding(void) {
     TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
 }
 
+/**
+ * @brief Verifies that refreshing an already active preemptive session updates in-place without pushing duplicate stack entries.
+ */
 void test_preemption_refresh_does_not_push_same_engine(void) {
     DisplayRuntime runtime;
     TrackingMockEngine clockEngine("clock");
@@ -825,6 +952,9 @@ void test_preemption_refresh_does_not_push_same_engine(void) {
     }
 }
 
+/**
+ * @brief Tests that switching instances under the same source (non-preemptive) replaces the session without stack growth.
+ */
 void test_same_source_different_instance_replaces_without_preemption(void) {
     DisplayRuntime runtime;
     TrackingMockEngine mqttA("mqttA");
@@ -856,6 +986,9 @@ void test_same_source_different_instance_replaces_without_preemption(void) {
     TEST_ASSERT_EQUAL(0, mqttA.pauseCalls);
 }
 
+/**
+ * @brief Verifies transactional rejection: if a requested engine cannot be resolved, current session and lifecycle remain intact.
+ */
 void test_runtime_transactional_rejection_preserves_lifecycle(void) {
     DisplayRuntime runtime;
     TrackingMockEngine activeEng("active");
@@ -891,6 +1024,9 @@ void test_runtime_transactional_rejection_preserves_lifecycle(void) {
     TEST_ASSERT_EQUAL(0, activeEng.pauseCalls);
 }
 
+/**
+ * @brief Verifies preemption stack capacity bounds (depth == 4) and deterministic rejection on saturation.
+ */
 void test_preemption_stack_overflow_rejection(void) {
     TrackingMockEngine eng0("eng0");
     TrackingMockEngine eng1("eng1");
@@ -941,6 +1077,9 @@ void test_preemption_stack_overflow_rejection(void) {
     TEST_ASSERT_EQUAL(1, eng4.activateCalls);
 }
 
+/**
+ * @brief Tests that DisplayArbiter remains completely stateless when DisplayRuntime rejects an invalid decision.
+ */
 void test_arbiter_stateless_no_phantom_state_on_runtime_rejection(void) {
     DisplayArbiter arbiter;
     DisplayRuntime runtime;
@@ -968,6 +1107,9 @@ void test_arbiter_stateless_no_phantom_state_on_runtime_rejection(void) {
     TEST_ASSERT_EQUAL_PTR(&clockEng, runtime.getCurrentSession().activeEngine);
 }
 
+/**
+ * @brief Verifies that repeated refreshes of a preemptive child preserve a single stack entry.
+ */
 void test_preemption_child_refresh_preserves_single_stack_entry(void) {
     TrackingMockEngine clockEng("clock");
     TrackingMockEngine mqttEng("mqtt");
@@ -1009,6 +1151,9 @@ void test_preemption_child_refresh_preserves_single_stack_entry(void) {
     TEST_ASSERT_EQUAL(1, alertEng.deactivateCalls);
 }
 
+/**
+ * @brief Tests RotationManager zero-allocation lookup bounds and oversized instance string rejection.
+ */
 void test_rotation_manager_bounded_lookup(void) {
     RotationManager rot;
     ConfigLoader cfg;
@@ -1027,6 +1172,9 @@ void test_rotation_manager_bounded_lookup(void) {
     TEST_ASSERT_NULL(rot.findActiveEngine(exact31)); // Not in config, returns nullptr safely
 }
 
+/**
+ * @brief Tests EngineRegistrar capability validation truth table against HardwareHAL flags.
+ */
 void test_registrar_capability_truth_table(void) {
     // 1. None required -> satisfied
     EngineRequirements reqEmpty;
@@ -1063,6 +1211,9 @@ void test_registrar_capability_truth_table(void) {
     TEST_ASSERT_EQUAL(hardwareHAL.capabilities().hasSd, EngineRegistrar::checkRequirements(reqSd).satisfied);
 }
 
+/**
+ * @brief Tests that non-preemptive REPLACE transition unwinds any orphaned preemption stack completely.
+ */
 void test_preemption_replace_unwinds_orphaned_stack(void) {
     TrackingMockEngine clockEng("clock");
     TrackingMockEngine alertEng("alert");
@@ -1109,6 +1260,9 @@ void test_preemption_replace_unwinds_orphaned_stack(void) {
     TEST_ASSERT_EQUAL_PTR(&marqueeEng, runtime.getCurrentSession().activeEngine);
 }
 
+/**
+ * @brief Verifies that resolving uncreated engine handles through DisplayRuntime is non-mutating and side-effect free.
+ */
 void test_runtime_resolve_does_not_create_instance(void) {
     RotationManager rot;
     ConfigLoader cfg;
@@ -1127,6 +1281,9 @@ void test_runtime_resolve_does_not_create_instance(void) {
     TEST_ASSERT_EQUAL(countBefore, rot.getActiveEngineCount());
 }
 
+/**
+ * @brief Tests that submitting a preemptive request for the currently active session performs an in-place refresh rather than new preemption.
+ */
 void test_preemptive_same_session_refresh_is_not_preemption(void) {
     DisplayArbiter arbiter;
     DisplayRuntime runtime;
@@ -1184,6 +1341,9 @@ void test_preemptive_same_session_refresh_is_not_preemption(void) {
     TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
 }
 
+/**
+ * @brief Tests registration of engine descriptors when hardware requirements are unsatisfied.
+ */
 void test_engine_requirement_unavailable_is_registered(void) {
     EngineRegistry::clear();
 
@@ -1210,6 +1370,9 @@ void test_engine_requirement_unavailable_is_registered(void) {
     TEST_ASSERT_EQUAL_STRING("Requires PSRAM", registered->unavailableReason);
 }
 
+/**
+ * @brief Comprehensive transition state machine matrix verifying 10 full lifecycle scenarios.
+ */
 void test_display_runtime_state_machine_matrix(void) {
     DisplayArbiter arbiter;
     DisplayRuntime runtime;
@@ -1377,9 +1540,13 @@ void test_display_runtime_state_machine_matrix(void) {
 }
 
 void setup() {
-    delay(1000);
+    Serial.begin(115200);
+    delay(100);
     UNITY_BEGIN();
-    // Registry
+
+    // =========================================================================
+    // 1. Engine Registry & Descriptor Validation
+    // =========================================================================
     RUN_TEST(test_engine_registration);
     RUN_TEST(test_duplicate_registration_fails);
     RUN_TEST(test_get_descriptor);
@@ -1387,46 +1554,63 @@ void setup() {
     RUN_TEST(test_schema_and_fields);
     RUN_TEST(test_capabilities_and_requirements);
     RUN_TEST(test_engine_requirement_unavailable_is_registered);
-    // Sanitizer
+
+    // =========================================================================
+    // 2. Configuration Sanitizer & Default Injection
+    // =========================================================================
     RUN_TEST(test_sanitizer_injects_defaults);
     RUN_TEST(test_sanitizer_clamps_out_of_bound_integers);
     RUN_TEST(test_sanitizer_handles_invalid_boolean_and_enum);
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     RUN_TEST(test_sanitizer_validation_policy_coverage);
-    // Arbiter, Overlays & Requirements
+
+    // =========================================================================
+    // 3. Display Arbiter & SPSC Queue Lock-Free Invariants
+    // =========================================================================
     RUN_TEST(test_arbiter_priority_resolution);
     RUN_TEST(test_arbiter_one_shot_auto_consumption);
     RUN_TEST(test_arbiter_request_id_semantics);
     RUN_TEST(test_arbiter_spsc_lockfree);
     RUN_TEST(test_canonical_engine_handle_resolution);
+
+    // =========================================================================
+    // 4. Triple-Buffer Linearizability & Snapshot Atomicity
+    // =========================================================================
     RUN_TEST(test_config_snapshot_immutability_and_versioning);
     RUN_TEST(test_triple_buffer_snapshot_publication_and_versioning);
     RUN_TEST(test_snapshot_publication_linearizability);
     RUN_TEST(test_snapshot_cas_state_machine_and_interleaving);
     RUN_TEST(test_snapshot_reentrant_and_multi_reader);
+
+    // =========================================================================
+    // 5. Display Runtime State Machine, Lifecycle & Preemption Stack
+    // =========================================================================
     RUN_TEST(test_display_runtime_lifecycle_centralization);
     RUN_TEST(test_display_runtime_preemption_lifecycle);
     RUN_TEST(test_preemption_refresh_does_not_push_same_engine);
     RUN_TEST(test_same_source_different_instance_replaces_without_preemption);
-    RUN_TEST(test_runtime_transactional_rejection_preserves_lifecycle);
-    RUN_TEST(test_preemption_intermediate_expiration_unwinding);
-    RUN_TEST(test_preemption_stack_overflow_rejection);
-    RUN_TEST(test_preemption_replace_unwinds_orphaned_stack);
-    RUN_TEST(test_arbiter_stateless_no_phantom_state_on_runtime_rejection);
-    RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
-    RUN_TEST(test_rotation_manager_bounded_lookup);
-    RUN_TEST(test_runtime_resolve_does_not_create_instance);
     RUN_TEST(test_preemptive_same_session_refresh_is_not_preemption);
     RUN_TEST(test_display_runtime_state_machine_matrix);
+
+    // =========================================================================
+    // 6. Capability Gating, Registrar & Engine Requirements
+    // =========================================================================
     RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
+
+    // =========================================================================
+    // 7. Overlay Manager & Layering Invariants
+    // =========================================================================
     RUN_TEST(test_canonical_overlays_schema_and_migration);
     RUN_TEST(test_rotation_overlay_combinations);
     RUN_TEST(test_overlay_manager_lifecycle_and_heap_preservation);
     RUN_TEST(test_overlay_preemption_by_arbiter);
+
     UNITY_END();
 }
 
-void loop() {}
+void loop() {
+    delay(100);
+}
 

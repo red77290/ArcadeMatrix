@@ -7,9 +7,18 @@
 void setUp(void) {}
 void tearDown(void) {}
 
+/**
+ * @brief Tests decibel sound level threshold classification for status indicators.
+ *
+ * Verifies the exact boundary thresholds:
+ * - < 45 dB: Calm
+ * - [45, 65) dB: Normal
+ * - [65, 75) dB: Moderate
+ * - [75, 83) dB: Vigilance
+ * - [83, 88] dB: Limit
+ * - > 88 dB: Alert
+ */
 void test_decibel_status_mapping(void) {
-    // Verify smiley status thresholds:
-    // < 45: Calm, 45-65: Normal, 65-75: Moderate, 75-83: Vigilance, 83-88: Limit, >88: Alert
     float dbCalm = 40.0f;
     float dbNormal = 55.0f;
     float dbModerate = 70.0f;
@@ -25,6 +34,12 @@ void test_decibel_status_mapping(void) {
     TEST_ASSERT_TRUE(dbAlert > 88.0f);
 }
 
+/**
+ * @brief Tests visualizer animation mode string parser.
+ *
+ * Verifies that VisualizerEngine cleanly parses all mode identifiers ("waveform", "radial",
+ * "neon_fire", "spectrum") while maintaining inactive initial state.
+ */
 void test_visualizer_mode_parsing(void) {
     VisualizerEngine engine;
     engine.setMode("waveform");
@@ -35,7 +50,8 @@ void test_visualizer_mode_parsing(void) {
 }
 
 void setup() {
-    delay(1000);
+    Serial.begin(115200);
+    delay(100);
     UNITY_BEGIN();
     RUN_TEST(test_decibel_status_mapping);
     RUN_TEST(test_visualizer_mode_parsing);

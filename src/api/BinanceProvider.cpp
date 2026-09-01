@@ -37,8 +37,8 @@ bool BinanceProvider::parsePayload(const String& payload, float& outPrice, float
     StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, payload);
     if (!err) {
-        outPrice = doc["lastPrice"] | 0.0f;
-        outChange = doc["priceChangePercent"] | 0.0f;
+        outPrice = doc["lastPrice"].as<float>();
+        outChange = doc["priceChangePercent"].as<float>();
         return (outPrice > 0.0f);
     }
     return false;
