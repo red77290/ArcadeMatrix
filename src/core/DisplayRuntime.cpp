@@ -96,8 +96,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     if (sameSource && sameHandle && sameEngine) {
         m_session.requestId = decision.requestId;
         m_session.startedAtMs = millis();
-        m_session.lastTransitionMode = TransitionMode::REFRESH;
-        return; // Zero lifecycle, sessionId and stack preserved
+        return; // Zero lifecycle, sessionId and stack preserved (internal runtime refresh)
     }
 
     // CASE 2: PREEMPTION (preemptive && not rotation && new source)

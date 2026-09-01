@@ -1175,13 +1175,13 @@ void test_preemptive_same_session_refresh_is_not_preemption(void) {
     TEST_ASSERT_EQUAL(102, d3.requestId);
     runtime.transitionSession(d3);
 
-    // Assert: zero new pauses, zero new activates, zero deactivates, depth intact at 1, TransitionMode is REFRESH
+    // Assert: zero new pauses, zero new activates, zero deactivates, depth intact at 1, internal in-place update
     TEST_ASSERT_EQUAL(1, clockEng.pauseCalls);
     TEST_ASSERT_EQUAL(1, mqttEng.activateCalls);
     TEST_ASSERT_EQUAL(0, mqttEng.deactivateCalls);
     TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
     TEST_ASSERT_EQUAL(102, runtime.getCurrentSession().requestId);
-    TEST_ASSERT_EQUAL(TransitionMode::REFRESH, runtime.getCurrentSession().lastTransitionMode);
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
 }
 
 void test_engine_requirement_unavailable_is_registered(void) {
@@ -1275,14 +1275,14 @@ void test_display_runtime_state_machine_matrix(void) {
     TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
     TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
 
-    // Scenario 4: Alert B -> Alert B refresh (REFRESH)
+    // Scenario 4: Alert B -> Alert B refresh (Internal REFRESH)
     DisplayDecision dAlertBRefresh = dAlertB;
     dAlertBRefresh.requestId = 203;
     runtime.transitionSession(dAlertBRefresh);
     TEST_ASSERT_EQUAL(1, alertB.activateCalls);
     TEST_ASSERT_EQUAL(0, alertB.deactivateCalls);
     TEST_ASSERT_EQUAL(2, runtime.getPreemptionDepth());
-    TEST_ASSERT_EQUAL(TransitionMode::REFRESH, runtime.getCurrentSession().lastTransitionMode);
+    TEST_ASSERT_EQUAL(TransitionMode::PREEMPT, runtime.getCurrentSession().lastTransitionMode);
 
     // Scenario 5: Cancel Alert B -> Resume Alert A (RESUME)
     runtime.transitionSession(dAlertA);
@@ -1351,6 +1351,29 @@ void test_display_runtime_state_machine_matrix(void) {
     runtime.transitionSession(dNewBaseline);
     TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
     TEST_ASSERT_EQUAL_PTR(&rotA, runtime.getCurrentSession().activeEngine);
+
+    // Scenario 10: Parent Unresolvable on RESUME -> Rejection without lifecycle corruption
+    DisplayRuntime runtimeUnres;
+    TrackingMockEngine activeChild("child");
+    runtimeUnres.registerSourceEngine(DisplaySourceId::ALERT, &activeChild, EngineHandle("child", "inst_child"));
+
+    // Preempt to child with parent handle that is unresolvable
+    DisplayDecision dPreemptChild;
+    dPreemptChild.valid = true;
+    dPreemptChild.sourceId = DisplaySourceId::ALERT;
+    dPreemptChild.preemptive = true;
+    dPreemptChild.engineHandle = EngineHandle("child", "inst_child");
+    runtimeUnres.transitionSession(dPreemptChild);
+
+    // Attempt to resume unresolvable parent
+    DisplayDecision dResumeUnresolvable;
+    dResumeUnresolvable.valid = true;
+    dResumeUnresolvable.sourceId = DisplaySourceId::ROTATION; // Rot has no engine registered in runtimeUnres
+    runtimeUnres.transitionSession(dResumeUnresolvable);
+
+    // Child must remain active without crash or corrupted lifecycle
+    TEST_ASSERT_EQUAL_PTR(&activeChild, runtimeUnres.getCurrentSession().activeEngine);
+    TEST_ASSERT_EQUAL(1, runtimeUnres.getPreemptionDepth());
 }
 
 void setup() {
