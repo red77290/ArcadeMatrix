@@ -89,14 +89,23 @@ struct EngineInstanceSnapshot {
 };
 
 struct ConfigSnapshot {
+    static constexpr uint32_t MAGIC_START = 0x5A5A5A5A;
+    static constexpr uint32_t MAGIC_END = 0xA5A5A5A5;
+
+    uint32_t magic_start = MAGIC_START;
     uint32_t version = 1;
-    uint32_t checksum = 0;
+    uint32_t crc32 = 0;
     MatrixConfig matrix;
     WifiConfig wifi;
     MqttConfig mqtt;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
+    uint32_t magic_end = MAGIC_END;
+
+    bool isValid() const {
+        return magic_start == MAGIC_START && magic_end == MAGIC_END;
+    }
 
     ConfigSnapshot clone() const {
         return *this;
