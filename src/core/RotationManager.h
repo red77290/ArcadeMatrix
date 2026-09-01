@@ -48,11 +48,21 @@ public:
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
     
-    // Pure lookup (zero allocation, bounded O(32) on hot-path)
+    /**
+     * Hot-path lookup.
+     *
+     * - No allocation
+     * - No instance creation
+     * - No mutex
+     * - Bounded O(MAX_ACTIVE_ENGINES)
+     */
     IEngine* findActiveEngine(const char* instanceId) const;
     
     // Lazy creation/lookup (cold-path only)
     IEngine* getOrCreateEngine(const char* instanceId);
+
+    // Count currently instantiated active engines (for monitoring & tests)
+    size_t getActiveEngineCount() const;
     
     // Backwards compatible overloads
     inline IEngine* getActiveEngine(const char* instanceId) { return getOrCreateEngine(instanceId); }

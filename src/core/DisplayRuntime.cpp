@@ -39,9 +39,6 @@ IEngine* DisplayRuntime::resolveEngine(const EngineHandle& handle, DisplaySource
     // 1. If explicit instanceId is provided in handle, resolve via RotationManager
     if (handle.instanceId[0] != '\0' && m_rotationManager) {
         IEngine* instEngine = m_rotationManager->findActiveEngine(handle.instanceId);
-        if (!instEngine) {
-            instEngine = m_rotationManager->getOrCreateEngine(handle.instanceId);
-        }
         if (instEngine) return instEngine;
     }
 

@@ -1070,6 +1070,24 @@ void test_preemption_replace_unwinds_orphaned_stack(void) {
     TEST_ASSERT_EQUAL_PTR(&marqueeEng, runtime.getCurrentSession().activeEngine);
 }
 
+void test_runtime_resolve_does_not_create_instance(void) {
+    RotationManager rot;
+    ConfigLoader cfg;
+    rot.begin(cfg);
+
+    size_t countBefore = rot.getActiveEngineCount();
+
+    DisplayRuntime runtime;
+    runtime.begin(nullptr, nullptr, &rot, nullptr, nullptr, nullptr);
+
+    // Attempt to resolve a non-existent instance handle through DisplayRuntime
+    EngineHandle uncreatedHandle("clock", "non_existent_instance");
+    IEngine* resolved = runtime.resolveEngine(uncreatedHandle, DisplaySourceId::ROTATION);
+
+    TEST_ASSERT_NULL(resolved);
+    TEST_ASSERT_EQUAL(countBefore, rot.getActiveEngineCount());
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -1107,6 +1125,7 @@ void setup() {
     RUN_TEST(test_arbiter_stateless_no_phantom_state_on_runtime_rejection);
     RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
     RUN_TEST(test_rotation_manager_bounded_lookup);
+    RUN_TEST(test_runtime_resolve_does_not_create_instance);
     RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
