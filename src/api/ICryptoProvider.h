@@ -23,4 +23,12 @@ public:
         (void)symbol; (void)tf; (void)outPoints; (void)maxPoints; (void)outCount; (void)outMin; (void)outMax;
         return false;
     }
+
+    virtual void setCurrency(const String& currency) {
+        m_currency = currency;
+        m_currency.toUpperCase();
+    }
+
+protected:
+    String m_currency = "USD";
 };

@@ -168,7 +168,7 @@ void VersusClock::update() {
         
         int16_t bx, by;
         uint16_t bw, bh;
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds("88:88", 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0) bw = 30; if (bh == 0) bh = 7 * gfxSize;
         
         int tx = (w - bw) / 2 + offX;

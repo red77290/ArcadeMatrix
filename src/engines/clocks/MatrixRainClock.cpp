@@ -100,11 +100,18 @@ void MatrixRainClock::drawTime() {
         timeinfo.tm_isdst = -1;
         strftime(timeStr, sizeof(timeStr), fmt.c_str(), &timeinfo);
 
+        char refStr[32];
+        size_t tLen = strlen(timeStr);
+        for (size_t i = 0; i < tLen && i < sizeof(refStr) - 1; i++) {
+            refStr[i] = (timeStr[i] >= '0' && timeStr[i] <= '9') ? '8' : timeStr[i];
+        }
+        refStr[tLen] = '\0';
+
         matrix->setTextSize(1);
         int16_t bx, by;
         uint16_t bw, bh;
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
-        if (bw == 0 || bh == 0) { bw = strlen(timeStr) * 6; bh = 7; }
+        matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = strlen(refStr) * 6; bh = 7; }
 
         int maxScaleW = (w - 8) / bw;
         int maxScaleH = (h - 6) / bh;
@@ -113,9 +120,9 @@ void MatrixRainClock::drawTime() {
 
         int gfxSize = min(logicalSize, sMax);
         matrix->setTextSize(gfxSize);
-        matrix->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
 
-        int textW = strlen(timeStr) * 6 * gfxSize - gfxSize;
+        int textW = strlen(refStr) * 6 * gfxSize - gfxSize;
         int textH = 8 * gfxSize;
         int x = (w - textW) / 2 + offX;
         int y = (h - textH) / 2 + offY;
