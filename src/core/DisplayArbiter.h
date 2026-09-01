@@ -89,8 +89,7 @@ enum class TransitionMode : uint8_t {
     NONE = 0,
     REPLACE,
     PREEMPT,
-    RESUME,
-    REFRESH
+    RESUME
 };
 
 struct DisplayDecision {

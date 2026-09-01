@@ -575,17 +575,48 @@ The `/api/v1/system/version` endpoint exposes the exact build fingerprint (`git_
 
 ---
 
-## 21. Control-Plane vs Data-Plane Ownership Boundaries
+## 21. Ownership Contract & Control-Plane Boundaries
 
 ArcadeMatrix enforces a strict multi-core separation between asynchronous control planes and the real-time display hot path:
 
-| Domain | Owner Core | Key Responsibilities & Invariants |
-| :--- | :--- | :--- |
-| **Control Plane** | **Core 0** | Processes WebServer REST API requests, MQTT events, audio decoders, SD storage, configuration mutations (`ConfigLoader::mutate()`), and sub-second publishing to the atomic triple-buffer. |
-| **Data Plane (Hot Path)** | **Core 1** | Consumes borrowed `ConfigSnapshotGuard`, evaluates `DisplayArbiter` queue in $O(1)$, drives `DisplayRuntime` lifecycle and preemption stack, renders active engine and overlays into HUB75 framebuffer at steady 60 FPS. **Zero mutex, zero dynamic allocations**. |
-| **`RotationManager`** | **State Owner** | Exclusive owner and lifecycle container of instantiated rotation engines (`MAX_ACTIVE_ENGINES = 32`). Provides bounded $O(N)$ allocation-free lookups (`findActiveEngine()`). |
-| **`DisplayRuntime`** | **Frame Orchestrator** | Pure session orchestrator and preemption stack manager (`PreemptionStack<4>`). Never lazily creates engine instances on the render hot path. |
-| **`DisplayArbiter`** | **Decision Engine** | Pure, stateless decision solver. Evaluates prioritized display requests into unambiguous `DisplayDecision` with `TransitionMode`. |
+```text
+DisplayArbiter
+    └── calculates dominant intent only (pure stateless decision engine)
+
+DisplayRuntime
+    ├── owns active session state
+    ├── owns lifecycle transitions (activate, pause, resume, deactivate)
+    ├── owns preemption stack (PreemptionStack<PreemptionEntry, 4>)
+    └── classifies internal REFRESH vs external PREEMPT / RESUME / REPLACE
+
+RotationManager
+    ├── owns selectable engine instances (MAX_ACTIVE_ENGINES = 32)
+    ├── creates engine instances on cold path (REST API / configuration)
+    └── exposes allocation-free lookup on hot path (findActiveEngine())
+
+AppRuntime
+    └── owns event-driven engine instances (Pixelcade, Audio, MQTT handlers)
+```
+
+### 21.1 Comprehensive Display FSM Transition Matrix
+
+| Transition Sequence | Classification | Lifecycle Side Effects | Stack & Depth State |
+| :--- | :--- | :--- | :--- |
+| **A $\to$ A (same req/source)** | Internal `REFRESH` | `0` (no pause, no activate, in-place metadata update) | Depth unchanged |
+| **A $\to$ B (normal rotation)** | `REPLACE` | `deactivate(A) → activate(B)` | Depth = 0 |
+| **A $\to$ B (preemptive alert)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
+| **A $\to$ B $\to$ B refresh** | Internal `REFRESH` | `0` (updates `requestId` in-place) | Depth unchanged |
+| **A $\to$ B $\to$ C (stacked alert)**| `PREEMPT` | `pause(B) → push(B) → activate(C)` | Depth = 2 |
+| **A $\to$ B $\to$ C $\to$ C refresh**| Internal `REFRESH` | `0` (updates `requestId` in-place) | Depth = 2 |
+| **A $\to$ B $\to$ C $\to$ C timeout**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Depth = 1 |
+| **A $\to$ B $\to$ cancel B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Depth = 0 |
+| **A $\to$ B $\to$ cancel A** | None | `0` (submerged A discarded from stack if expired) | B remains active |
+| **A $\to$ Target Invalide** | Rejet Transactionnel| `0` (transition rejected silently, A intact) | Depth unchanged |
+| **Stack saturée (depth=4) $\to$ Nouvel Alert** | Rejet Transactionnel| `0` (preemption rejected cleanly, top session intact)| Depth = 4 |
+| **Parent non résolvable $\to$ RESUME** | Rejet Transactionnel| `0` (RESUME rejected without corrupting active child)| Child remains active |
+| **REPLACE indépendant sur stack active** | `REPLACE` | `deactivate(All) → activate(New)` | Depth reset to 0 |
+| **Priorité A(10) vs B(5)** | Dominance A | `0` (A stays active) | Depth unchanged |
+| **Priorité A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
 
 ---
 
@@ -610,6 +641,15 @@ ArcadeMatrix features a comprehensive 3-tier validation pipeline ensuring 100% t
 └──────────────────────┴───────────────────────────────┴──────────────────────┘
 ```
 
-1. **Unity Test Suites (`test/`):** 7 comprehensive test suites covering registry contracts, triple-buffer linearizability, preemption stack unwinding, capability truth tables, and sanitizer policies.
-2. **QEMU Hardware Emulation (`scripts/run_qemu_tests.py`):** Runs the firmware test ELF files inside an Espressif QEMU 9.2.2 emulator instance, capturing UART serial output directly to evaluate `UNITY_END()` exit status.
-3. **Dual-Target Verification:** Ensures complete portability across classic ESP32 Dual-Core (I2S DMA) and ESP32-S3 (LCD DMA) architectures.
+1. **Tier 1 — Local PlatformIO Compilation (`pio test`):** 7 comprehensive test suites compiling test firmware binaries with `Unity` test assertions to verify symbol resolution and type contracts without requiring a physical board attached.
+2. **Tier 2 — QEMU Hardware Emulation Execution (`scripts/run_qemu_tests.py`):** Automated test harness booting each compiled test firmware image inside an emulated ESP32 CPU (Espressif QEMU), capturing and evaluating the UART serial output for `UNITY_END()` success codes.
+3. **Tier 3 — Dual-Target Compilation:** Ensures complete firmware build compatibility across classic ESP32 Dual-Core (I2S DMA) and ESP32-S3 (LCD DMA) target hardware platforms.
+
+### 22.1 ValidationPolicy Contract as a Violation Handler
+
+In ArcadeMatrix, `ValidationPolicy` defines the deterministic recovery action executed whenever a configuration field fails validation constraints:
+
+- `Clamp`: Constrains out-of-bounds numeric values to `[min_val, max_val]`.
+- `FallbackDefault`: Restores the field value to `field.default_value` upon constraint violation.
+- `Accept`: Accepts custom/unconstrained user values as-is (used for freeform text or unconstrained URLs).
+- `Reject`: Discards the invalid configuration and restores the documented default.
