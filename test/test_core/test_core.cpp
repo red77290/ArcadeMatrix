@@ -1145,6 +1145,32 @@ void test_preemptive_same_session_refresh_is_not_preemption(void) {
     TEST_ASSERT_EQUAL(TransitionMode::REFRESH, runtime.getCurrentSession().lastTransitionMode);
 }
 
+void test_engine_requirement_unavailable_is_registered(void) {
+    EngineRegistry::clear();
+
+    class UnavailableMockHandler : public IEngineDescriptorHandler {
+    public:
+        EngineDescriptor getDescriptor() const override {
+            EngineDescriptor desc;
+            desc.metadata = {"unavail_mock", "Unavailable Mock", "test", "1.0"};
+            desc.requirements.needsPsram = true;
+            desc.factory = []() { return nullptr; };
+            return desc;
+        }
+    };
+
+    UnavailableMockHandler handler;
+    EngineDescriptor desc = handler.getDescriptor();
+    desc.available = false;
+    desc.unavailableReason = "Requires PSRAM";
+    EngineRegistry::registerEngine(desc);
+
+    const EngineDescriptor* registered = EngineRegistry::getDescriptor("unavail_mock");
+    TEST_ASSERT_NOT_NULL(registered);
+    TEST_ASSERT_FALSE(registered->available);
+    TEST_ASSERT_EQUAL_STRING("Requires PSRAM", registered->unavailableReason);
+}
+
 void setup() {
     delay(1000);
     UNITY_BEGIN();
@@ -1155,6 +1181,7 @@ void setup() {
     RUN_TEST(test_factory_creation);
     RUN_TEST(test_schema_and_fields);
     RUN_TEST(test_capabilities_and_requirements);
+    RUN_TEST(test_engine_requirement_unavailable_is_registered);
     // Sanitizer
     RUN_TEST(test_sanitizer_injects_defaults);
     RUN_TEST(test_sanitizer_clamps_out_of_bound_integers);

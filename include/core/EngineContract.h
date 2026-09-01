@@ -312,6 +312,8 @@ struct EngineDescriptor {
     EngineRequirements requirements;
     ConfigSchema schema;
     EngineFactory factory;
+    bool available = true;
+    const char* unavailableReason = "";
 };
 
 // =======================================================

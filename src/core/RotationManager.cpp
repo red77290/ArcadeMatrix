@@ -39,7 +39,7 @@ void RotationManager::begin(const ConfigLoader &cfg) {
       activeEngines[i].engine.reset();
       activeEngines[i].instanceId[0] = '\0';
   }
-  currentActiveInstanceId = "";
+  currentActiveInstanceId[0] = '\0';
   queueAction(RotationAction::RESET_ROTATION);
 }
 
@@ -72,7 +72,7 @@ void RotationManager::processPendingActions() {
         } else if (p.first == RotationAction::RECREATE_INSTANCE) {
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.second.c_str(), sizeof(activeEngines[i].instanceId)) == 0) {
-                    if (currentActiveInstanceId == p.second) {
+                    if (strcmp(currentActiveInstanceId, p.second.c_str()) == 0) {
                         activeEngines[i].engine->deactivate();
                     }
                     activeEngines[i].engine.reset();
@@ -171,12 +171,12 @@ void RotationManager::switchToModule(int index) {
   LOGI("RotationManager", "switchToModule(index=%d), total rotation entries: %d", index, (int)guard->rotation.size());
   if (guard->rotation.empty()) {
     LOGW("RotationManager", "switchToModule: rotation is empty!");
-    if (!currentActiveInstanceId.isEmpty()) {
-      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId.c_str());
+    if (currentActiveInstanceId[0] != '\0') {
+      IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
         oldEngine->deactivate();
       }
-      currentActiveInstanceId = "";
+      currentActiveInstanceId[0] = '\0';
     }
     return;
   }
@@ -336,12 +336,6 @@ bool RotationManager::loop() {
         switchToModule(currentIndex);
     }
     return shouldFlip;
-}
-
-String RotationManager::getCurrentInstanceId() const {
-    extern ConfigLoader config;
-    ConfigSnapshotGuard guard = config.acquireSnapshot();
-    return guard->rotation.empty() ? "" : guard->rotation[currentIndex].instance_id;
 }
 
 String RotationManager::getCurrentEngineId() const {
