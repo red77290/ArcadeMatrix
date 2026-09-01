@@ -182,6 +182,7 @@ paths:
                       brightness_limit: { type: integer, example: 50 }
                       idle_fighter_enabled: { type: boolean, example: false }
                       idle_fighter_interval: { type: integer, example: 30 }
+                      idle_fighter_speed: { type: integer, example: 100, minimum: 25, maximum: 200 }
                   matrix:
                     type: object
                     properties:

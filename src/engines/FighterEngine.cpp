@@ -639,8 +639,9 @@ bool FighterEngine::loop() {
     }
     
     uint32_t now = millis();
+    extern ConfigLoader config;
+    uint32_t speed = (config.system.idle_fighter_speed >= 25 && config.system.idle_fighter_speed <= 200) ? config.system.idle_fighter_speed : 100;
     
-    // Update frames
     // Update frames
     FgtAnimation* anim1 = nullptr;
     if (p1.state == FIGHTER_STAND) anim1 = p1.animStand.loaded ? &p1.animStand : &p1.animWalk;
@@ -653,12 +654,14 @@ bool FighterEngine::loop() {
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
     if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames)) {
-        uint32_t delay = anim1->frameDelays[p1.currentFrame];
+        uint32_t delay = (anim1->frameDelays[p1.currentFrame] * 100) / speed;
         if (p1.state != FIGHTER_STAND && p1.state != FIGHTER_WIN) {
-            delay = (delay * 3) / 4; // 25% faster combat animation
-            if (delay > 70) delay = 70;
+            delay = (delay * 3) / 4; // faster combat animation
+            uint32_t maxCombat = (70 * 100) / speed;
+            if (delay > maxCombat) delay = maxCombat;
         }
-        if (delay < 25) delay = 25;
+        uint32_t minDelay = (25 * 100) / speed;
+        if (delay < minDelay) delay = minDelay;
         if (now - p1.lastFrameTime >= delay) {
             p1.currentFrame++;
             p1.lastFrameTime = now;
@@ -682,12 +685,14 @@ bool FighterEngine::loop() {
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
     if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames)) {
-        uint32_t delay = anim2->frameDelays[p2.currentFrame];
+        uint32_t delay = (anim2->frameDelays[p2.currentFrame] * 100) / speed;
         if (p2.state != FIGHTER_STAND && p2.state != FIGHTER_WIN) {
-            delay = (delay * 3) / 4; // 25% faster combat animation
-            if (delay > 70) delay = 70;
+            delay = (delay * 3) / 4; // faster combat animation
+            uint32_t maxCombat = (70 * 100) / speed;
+            if (delay > maxCombat) delay = maxCombat;
         }
-        if (delay < 25) delay = 25;
+        uint32_t minDelay = (25 * 100) / speed;
+        if (delay < minDelay) delay = minDelay;
         if (now - p2.lastFrameTime >= delay) {
             p2.currentFrame++;
             p2.lastFrameTime = now;
@@ -718,10 +723,12 @@ bool FighterEngine::loop() {
         int p2_target_x = centerX + (engage_dist / 2) - ((p2.width_px - p2.origin_x) * scale);
 
         // Move towards center target
+        uint32_t stepInterval = (20 * 100) / speed;
+        if (stepInterval < 5) stepInterval = 5;
         uint32_t elapsed = now - lastMoveTime;
-        if (elapsed >= 20) { // Fluid arcade pace (1 pixel per 20ms -> 50 FPS)
-            int steps = (elapsed / 20);
-            lastMoveTime += steps * 20;
+        if (elapsed >= stepInterval) {
+            int steps = (elapsed / stepInterval);
+            lastMoveTime += steps * stepInterval;
 
             for (int s = 0; s < steps; s++) {
                 if (p1.x < p1_target_x) {
