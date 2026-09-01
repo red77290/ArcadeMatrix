@@ -699,8 +699,8 @@ EngineDescriptor GoogleCastDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false; // Adaptive: works on both ESP32 classic and S3!
 
     desc.schema.fields = {
-        ConfigField("device_ip", ConfigType::STRING, "Device IP (Optional)", "Static IP of your Google Home / Nest Audio. Leave empty for automatic discovery.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("device_name", ConfigType::STRING, "Device Name Filter", "Filter by friendly name when discovering Google Nest devices on LAN.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("device_ip", ConfigType::STRING, "Device IP (Optional)", "Static IP of your Google Home / Nest Audio. Leave empty for automatic discovery.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("device_name", ConfigType::STRING, "Device Name Filter", "Filter by friendly name when discovering Google Nest devices on LAN.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_album_art", ConfigType::BOOLEAN, "Show Album Cover", "Download and display album cover art (requires PSRAM).", "true", false, "", "", "", "", "", false, "psram=true", ValidationPolicy::FallbackDefault),
         ConfigField("show_progress", ConfigType::BOOLEAN, "Show Progress Bar", "Render track playback progress bar at the bottom.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_visualizer", ConfigType::BOOLEAN, "Animated Equalizer", "Display dancing equalizer frequency bars while music is playing.", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),

@@ -480,8 +480,8 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     desc_weather.requirements.needsAudio = false;
     desc_weather.requirements.needsNetwork = true;
     desc_weather.schema.fields = {
-        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
-        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Ignore),
+        ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature unit (°C or °F)", "system", false, "", "", "", "system:Système (Général),metric:Celsius (°C),imperial:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("lang", ConfigType::ENUM, "Language", "Weather description language", "system", false, "", "", "", "system:Système (Général),en:English,fr:Français,es:Español,de:Deutsch,it:Italiano", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("weather_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),

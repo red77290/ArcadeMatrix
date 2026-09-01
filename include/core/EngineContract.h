@@ -104,7 +104,8 @@ enum class ConfigType {
 enum class ValidationPolicy {
     Clamp,
     FallbackDefault,
-    Ignore
+    Accept,
+    Reject
 };
 
 // =======================================================
