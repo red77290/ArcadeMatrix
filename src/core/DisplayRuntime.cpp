@@ -79,9 +79,9 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     // PHASE 1: Resolve target engine
     IEngine* targetEngine = resolveEngine(decision.engineHandle, decision.sourceId);
 
-    // PHASE 2: Validate target (reject if unresolvable for non-rotation request)
-    if (!targetEngine && decision.sourceId != DisplaySourceId::ROTATION) {
-        LOGW("DisplayRuntime", "Cannot transition to unresolved engine handle, rejecting transition and keeping active session");
+    // PHASE 2: Validate target (reject transactionally if target is unresolvable)
+    if (!targetEngine) {
+        LOGW("DisplayRuntime", "Rejecting transition: target engine not found");
         return; // Session and stack remain 100% intact
     }
 
