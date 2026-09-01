@@ -62,6 +62,7 @@ void ConfigLoader::publishSnapshot_locked() {
     ConfigSnapshot& snap = _snapshots[targetSlot];
 
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
+    snap.magic_start = ConfigSnapshot::MAGIC_START;
     snap.version = newVer;
     snap.matrix = matrix;
     snap.wifi = wifi;
@@ -77,8 +78,9 @@ void ConfigLoader::publishSnapshot_locked() {
         s.config = inst.config;
         snap.instances.push_back(s);
     }
-    // Compute checksum for linearizability verification
-    snap.checksum = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    // Compute crc32 structural checksum for linearizability verification
+    snap.crc32 = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    snap.magic_end = ConfigSnapshot::MAGIC_END;
 
     // Publish snapshot atomically
     _publishedSlot.store(static_cast<uint8_t>(targetSlot), std::memory_order_release);
@@ -408,9 +410,10 @@ String ConfigLoader::serializeToJson(bool pretty) const {
         ovObj["fighter"] = rot.overlays.fighter;
     }
 
-    JsonObject engObj = doc.createNestedObject("engines");
+    JsonArray instArr = doc.createNestedArray("instances");
     for (const auto& inst : instances) {
-        JsonObject instNode = engObj.createNestedObject(inst.instance_id);
+        JsonObject instNode = instArr.createNestedObject();
+        instNode["instance_id"] = inst.instance_id;
         instNode["engine_id"] = inst.engine_id;
         
         JsonObject confNode = instNode.createNestedObject("config");

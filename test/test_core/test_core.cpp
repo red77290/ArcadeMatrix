@@ -384,7 +384,7 @@ void test_snapshot_publication_linearizability(void) {
     ConfigLoader cfg;
     cfg.setDefaults();
 
-    // 50 rapid sequential mutations with checksum verification
+    // 50 rapid sequential mutations with crc32 verification
     for (uint32_t i = 1; i <= 50; ++i) {
         cfg.mutate([i](ConfigLoader& c) {
             c.wifi.ssid = String("WiFi_Network_") + String(i);
@@ -392,8 +392,9 @@ void test_snapshot_publication_linearizability(void) {
 
         // Core 1 reader acquire via RAII guard
         ConfigSnapshotGuard snap = cfg.acquireSnapshot();
-        uint32_t expectedChecksum = (snap->version ^ 0x5A5A5A5A) + (uint32_t)snap->instances.size();
-        TEST_ASSERT_EQUAL_HEX32(expectedChecksum, snap->checksum);
+        uint32_t expectedCrc32 = (snap->version ^ 0x5A5A5A5A) + (uint32_t)snap->instances.size();
+        TEST_ASSERT_TRUE(snap->isValid());
+        TEST_ASSERT_EQUAL_HEX32(expectedCrc32, snap->crc32);
         TEST_ASSERT_TRUE(snap->wifi.ssid.startsWith("WiFi_Network_"));
     }
 }
