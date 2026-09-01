@@ -106,6 +106,16 @@ IEngine* RotationManager::findActiveEngine(const char* instanceId) const {
     return nullptr;
 }
 
+size_t RotationManager::getActiveEngineCount() const {
+    size_t cnt = 0;
+    for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
+        if (activeEngines[i].engine) {
+            cnt++;
+        }
+    }
+    return cnt;
+}
+
 IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     if (!instanceId || instanceId[0] == '\0') return nullptr;
     if (strlen(instanceId) >= 32) {
