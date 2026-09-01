@@ -572,3 +572,44 @@ enum class LayoutClass : uint8_t {
 ## 19. Build Metadata & Telemetry
 
 The `/api/v1/system/version` endpoint exposes the exact build fingerprint (`git_commit`, `build_timestamp`, `firmware_version`), ensuring traceability between source code and running firmware.
+
+---
+
+## 21. Control-Plane vs Data-Plane Ownership Boundaries
+
+ArcadeMatrix enforces a strict multi-core separation between asynchronous control planes and the real-time display hot path:
+
+| Domain | Owner Core | Key Responsibilities & Invariants |
+| :--- | :--- | :--- |
+| **Control Plane** | **Core 0** | Processes WebServer REST API requests, MQTT events, audio decoders, SD storage, configuration mutations (`ConfigLoader::mutate()`), and sub-second publishing to the atomic triple-buffer. |
+| **Data Plane (Hot Path)** | **Core 1** | Consumes borrowed `ConfigSnapshotGuard`, evaluates `DisplayArbiter` queue in $O(1)$, drives `DisplayRuntime` lifecycle and preemption stack, renders active engine and overlays into HUB75 framebuffer at steady 60 FPS. **Zero mutex, zero dynamic allocations**. |
+| **`RotationManager`** | **State Owner** | Exclusive owner and lifecycle container of instantiated rotation engines (`MAX_ACTIVE_ENGINES = 32`). Provides bounded $O(N)$ allocation-free lookups (`findActiveEngine()`). |
+| **`DisplayRuntime`** | **Frame Orchestrator** | Pure session orchestrator and preemption stack manager (`PreemptionStack<4>`). Never lazily creates engine instances on the render hot path. |
+| **`DisplayArbiter`** | **Decision Engine** | Pure, stateless decision solver. Evaluates prioritized display requests into unambiguous `DisplayDecision` with `TransitionMode`. |
+
+---
+
+## 22. Validation Architecture & Testing Framework
+
+ArcadeMatrix features a comprehensive 3-tier validation pipeline ensuring 100% test coverage and zero regressions:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       3-Tier Validation Pipeline                            │
+├──────────────────────┬───────────────────────────────┬──────────────────────┤
+│ Tier 1: Local PIO    │ Tier 2: QEMU Emulation CI     │ Tier 3: Dual-Target  │
+│ Unit Test Suites     │ Hardware Emulated Execution   │ Compilation          │
+├──────────────────────┼───────────────────────────────┼──────────────────────┤
+│ • test_core          │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_config        │ • ESP32 dual-core bootloader  │ • esp32s3_waveshare  │
+│ • test_engines       │ • UART Unity test runner      │ • Full static check  │
+│ • test_utils         │ • Zero host device dependency │ • Binary size check  │
+│ • test_matrix        │ • Automated GitHub Actions CI │                      │
+│ • test_retrofrontend │                               │                      │
+│ • test_spotify       │                               │                      │
+└──────────────────────┴───────────────────────────────┴──────────────────────┘
+```
+
+1. **Unity Test Suites (`test/`):** 7 comprehensive test suites covering registry contracts, triple-buffer linearizability, preemption stack unwinding, capability truth tables, and sanitizer policies.
+2. **QEMU Hardware Emulation (`scripts/run_qemu_tests.py`):** Runs the firmware test ELF files inside an Espressif QEMU 9.2.2 emulator instance, capturing UART serial output directly to evaluate `UNITY_END()` exit status.
+3. **Dual-Target Verification:** Ensures complete portability across classic ESP32 Dual-Core (I2S DMA) and ESP32-S3 (LCD DMA) architectures.
