@@ -40,6 +40,15 @@ def build_test(suite):
         return False
     return True
 
+def find_esptool():
+    esptool_bin = shutil.which("esptool.py") or shutil.which("esptool")
+    if esptool_bin:
+        return [esptool_bin]
+    candidate = os.path.expanduser("~/.platformio/packages/tool-esptoolpy/esptool.py")
+    if os.path.exists(candidate):
+        return [sys.executable, candidate]
+    return [sys.executable, "-m", "esptool"]
+
 def merge_flash(suite):
     build_dir = os.path.join(".pio", "build", "esp32dev")
     bootloader = os.path.join(build_dir, "bootloader.bin")
@@ -54,8 +63,9 @@ def merge_flash(suite):
         if os.path.exists(pkg_boot_app0):
             boot_app0 = pkg_boot_app0
 
-    merge_cmd = [
-        sys.executable, "-m", "esptool", "--chip", "esp32", "merge_bin",
+    esptool_cmd = find_esptool()
+    merge_cmd = esptool_cmd + [
+        "--chip", "esp32", "merge_bin",
         "-o", merged_output,
         "--flash_mode", "dio",
         "--flash_freq", "40m",
