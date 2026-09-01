@@ -696,7 +696,11 @@ void WebServerAPI::setupRoutes() {
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
         String response;
         serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        AsyncWebServerResponse *res = request->beginResponse(200, "application/json", response);
+        res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res->addHeader("Pragma", "no-cache");
+        res->addHeader("Expires", "0");
+        request->send(res);
     });
 
     // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)

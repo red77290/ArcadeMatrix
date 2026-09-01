@@ -1124,7 +1124,7 @@ select.input option {
     <nav id="sidebar">
       <div class="logo">
         <h2>🎮 ArcadeMatrix</h2>
-        <span id="version-tag" class="version-badge">v3.0.0</span>
+        <span id="version-tag" class="version-badge">--</span>
       </div>
       <ul class="nav-links">
         <li class="nav-item active" data-page="dashboard">
@@ -1793,15 +1793,15 @@ select.input option {
             <p class="text-muted" data-i18n="ota_online_desc">Check GitHub Releases for new updates matching your device architecture and update automatically.</p>
 
             <div class="ota-info-box" style="margin-bottom: 1rem;">
-              <div><span data-i18n="ota_current_ver_label">Current Version:</span> <strong id="ota-current-version">v3.0.0</strong></div>
-              <div><span data-i18n="ota_current_arch_label">System Architecture:</span> <strong id="ota-current-arch">aarch64</strong></div>
+              <div><span data-i18n="ota_current_ver_label">Current Version:</span> <strong id="ota-current-version">--</strong></div>
+              <div><span data-i18n="ota_current_arch_label">System Architecture:</span> <strong id="ota-current-arch">--</strong></div>
             </div>
 
             <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
               <div style="display: flex; align-items: center; justify-content: space-between;">
                 <div>
                   <span id="ota-online-badge" class="badge badge-accent">Update Available</span>
-                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">v3.0.0-beta.3</strong>
+                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">--</strong>
                 </div>
                 <span id="ota-online-size" class="text-muted" style="font-size: 0.85rem;">15 MB</span>
               </div>
@@ -1945,7 +1945,7 @@ const API = {
   },
 
   async checkOtaUpdate() {
-    return this.get('/api/ota/check');
+    return this.get('/api/ota/check?_t=' + Date.now());
   },
 
   async triggerAutoOta(downloadUrl = null) {
@@ -1953,7 +1953,7 @@ const API = {
   },
 
   async getVersion() {
-    return this.get('/api/version').catch(() => this.get('/api/stats')).catch(() => ({ version: '3.0.0' }));
+    return this.get('/api/version?_t=' + Date.now()).catch(() => this.get('/api/stats?_t=' + Date.now())).catch(() => ({ version: '--' }));
   },
 
   async waitForReconnect(timeoutMs = 60000, intervalMs = 2000, expectedVersion = null) {
@@ -1965,7 +1965,7 @@ const API = {
 
     while (Date.now() - start < timeoutMs) {
       try {
-        const res = await fetch('/api/version', { signal: AbortSignal.timeout(1500) });
+        const res = await fetch('/api/version?_t=' + Date.now(), { cache: 'no-store', signal: AbortSignal.timeout(1500) });
         if (res.ok) {
           const data = await res.json();
           // If we expected a new version, make sure it didn't just return the old un-restarted daemon
@@ -4758,7 +4758,7 @@ function initNavigation() {
 
 async function loadVersion() {
   try {
-    const data = await API.get('/api/version').catch(() => API.get('/api/stats')).catch(() => ({version: '3.0.0', arch: 'esp32s3'}));
+    const data = await API.get('/api/version?_t=' + Date.now()).catch(() => API.get('/api/stats?_t=' + Date.now())).catch(() => ({version: '--', arch: 'esp32s3'}));
     window.deviceArch = (data.arch || '').toLowerCase();
     const versionTag = document.getElementById('version-tag');
     const otaVer = document.getElementById('ota-current-version');
