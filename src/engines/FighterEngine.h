@@ -178,6 +178,7 @@ private:
     
     uint32_t fightStartTime;        ///< Timestamp when the fight began
     uint32_t fightEndTime = 0;      ///< Timestamp when the fight concludes
+    uint32_t faceoffStartTime = 0;  ///< Timestamp when both fighters reached the face-off position
     
     uint32_t hitStopUntilMillis = 0; ///< Hit-stop pause end time
     int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake

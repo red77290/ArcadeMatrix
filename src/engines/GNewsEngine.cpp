@@ -151,7 +151,8 @@ void GNewsEngine::render(EngineContext* context) {
     }
     const GNewsArticle& article = snap.articles[currentArticleIndex];
 
-    if (_geometry.layoutClass == LayoutClass::TALL || _geometry.layoutClass == LayoutClass::PORTRAIT || mH > mW) {
+    bool isTate = (_geometry.layoutClass == LayoutClass::TALL || _geometry.layoutClass == LayoutClass::PORTRAIT || mH > (mW * 3) / 2 || mW < 48);
+    if (isTate) {
         renderVertical(context, article, snap.count);
     } else if (mW >= 128) {
         renderWide(context, article, snap.count);
@@ -298,7 +299,10 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
     matrix->setTextSize(1);
     matrix->setTextColor(catColor);
     matrix->setCursor(2, 2);
-    matrix->print("NEWS");
+    String cat = String(article.category);
+    cat.toUpperCase();
+    if (mW < 48 && cat.length() > 4) cat = cat.substring(0, 4);
+    matrix->print(cat.isEmpty() ? "NEWS" : cat);
 
     if (config_show_beacon) {
         uint8_t br = (uint8_t)(beaconPulse * 255.0f);
@@ -310,11 +314,13 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
     // Source
     matrix->setTextColor(matrix->color565(160, 175, 195));
     matrix->setCursor(2, 14);
-    matrix->print(article.source);
+    String src = String(article.source);
+    if (mW < 48 && src.length() > 5) src = src.substring(0, 5);
+    matrix->print(src);
 
     // Multi-line wrapped title
     matrix->setTextColor(0xFFFF);
-    matrix->setCursor(2, 25);
+    matrix->setCursor(2, 24);
     matrix->setTextWrap(true);
     matrix->print(article.title);
     matrix->setTextWrap(false);
