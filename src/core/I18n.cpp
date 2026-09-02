@@ -353,3 +353,44 @@ const char* I18n::getNoiseLevelLabel(int level) {
         }
     }
 }
+
+const char* I18n::getGNewsStatusLabel(uint8_t status) {
+    return getGNewsStatusLabel(status, getLang());
+}
+
+const char* I18n::getGNewsStatusLabel(uint8_t status, Lang l) {
+    switch (status) {
+        case 1: // EMPTY_KEY
+            switch (l) {
+                case Lang::EN: return "API KEY REQUIRED";
+                case Lang::ES: return "CLAVE API REQUERIDA";
+                default: return "CLE API REQUISE";
+            }
+        case 2: // INVALID_KEY
+            switch (l) {
+                case Lang::EN: return "INVALID API KEY";
+                case Lang::ES: return "CLAVE API INVALIDA";
+                default: return "CLE API INVALIDE";
+            }
+        case 3: // RATE_LIMITED
+            switch (l) {
+                case Lang::EN: return "RATE LIMITED";
+                case Lang::ES: return "LIMITE SUPERADO";
+                default: return "LIMITE ATTEINTE";
+            }
+        case 4: // NETWORK_ERROR
+            switch (l) {
+                case Lang::EN: return "NETWORK ERROR";
+                case Lang::ES: return "ERROR DE RED";
+                default: return "ERREUR RESEAU";
+            }
+        case 5: // LOADING
+            switch (l) {
+                case Lang::EN: return "LOADING...";
+                case Lang::ES: return "CARGANDO...";
+                default: return "CHARGEMENT...";
+            }
+        default:
+            return "GNEWS LIVE";
+    }
+}
