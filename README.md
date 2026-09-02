@@ -30,7 +30,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 - **🎛️ Master Desk Deck & Multi-Widget Dashboard (`dashboard`):** Complete horizontal desk clock & dashboard with handcrafted pixel-art watch dials, smooth sweeping second hand, multiple global timezones, outdoor weather (OpenWeatherMap + free Open-Meteo fallback), calibrated SHTC3 indoor climate, live Binance cryptos & Yahoo Finance stocks/ETFs banner, and a 100% responsive auto-scaling dynamic layout!
 - **Massive Animated Clock Selection (`clock`):** Interactive clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)**, and **Versus (Mugen)**!
-- **📻 Autonomous WebRadio & Music Engine (`music`):** Background streaming audio with real-time linear MP3 frame decoding (`minimp3`), high-fidelity Everest ES8311 I2S DAC output, Bluetooth A2DP Sink, full-color PNG album artwork, scrolling artist/title, and dynamic 64-point Cooley-Tukey FFT audio visualizer!
+- **📻 Autonomous WebRadio & Music Engine (`music`):** Background streaming audio with real-time linear MP3 frame decoding (`minimp3`), high-fidelity Everest ES8311 I2S DAC output (WebRadio streaming over Wi-Fi — *note: Bluetooth is BLE 5.0 only for control/setup, no Bluetooth Classic A2DP music streaming*), full-color PNG album artwork, scrolling artist/title, and dynamic 64-point Cooley-Tukey FFT audio visualizer!
 - **🧭 6-Axis Gyroscope Auto-Rotation (`QMI8658` / `GyroHAL`):** Automatic screen orientation ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) detecting physical gravity vector, 500ms anti-vibration hysteresis, custom mounting offset, and 1-click zero calibration from the Web UI!
 - **🎵 Spotify Now Playing (`spotify`):** Real-time track display with full-color album artwork, scrolling artist/title, progress bar, and animated audio equalizer.
 - **📡 Google Cast & Nest (`google_cast`):** Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, progress, and volume display.
@@ -61,7 +61,7 @@ SD:/
           ├─ idle.fgt
           └─ attack.fgt
   └─ fighters_64/
-      └─ (same structure for 64px tall panels)
+      ├─ (same structure for 64px tall panels)
 ```
 *Note: The `www/` folder is no longer required on the SD card as the Web UI is now baked directly into the ESP32 firmware!*
 
@@ -130,8 +130,9 @@ For full details, check `tools/bdf_to_amfont/README.md`.
 | Animations (GIFs) | ✅ Yes | ✅ Yes |
 | MUGEN Engine | ✅ Yes | ✅ Yes |
 | Web UI & Wi-Fi | ✅ Yes | ✅ Yes |
-| **Autonomous WebRadio & MP3 Decoding** | ✅ Yes (Built-in ES8311 DAC & Speaker PA) | ❌ No (Requires I2S DAC & PSRAM) |
-| **Bluetooth A2DP Audio Sink** | ✅ Yes (ESP-IDF Native A2DP Sink) | ⚠️ Limited (Requires external DAC) |
+| **Autonomous WebRadio (Wi-Fi MP3 Streaming)** | ✅ Yes (Built-in ES8311 DAC & Speaker PA) | ❌ No (Requires I2S DAC & PSRAM) |
+| **Bluetooth Audio Streaming (A2DP)** | ❌ No (ESP32-S3 is BLE 5.0 only; no BT Classic Audio) | ❌ No |
+| **Bluetooth 5 (BLE Control/Setup)** | ✅ Yes (Native ESP32-S3 BLE) | ✅ Yes |
 | **6-Axis Gyro Auto-Rotation (`QMI8658`)** | ✅ Yes (Built-in IMU & 1-Click Calibrate) | ❌ No (Requires external I2C sensor) |
 | **Real-Time Crypto** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
 | **Stock Market** | ✅ Yes | ❌ No (Not enough RAM for SSL) |

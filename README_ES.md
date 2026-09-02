@@ -29,7 +29,7 @@
 
 ## Características
 - **Gran selección de relojes animados (`clock`):** relojes interactivos que incluyen Arcade clásico, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** y **Versus (Mugen)**.
-- **📻 WebRadio Autónoma y Motor Musical (`music`):** Streaming de audio en segundo plano con decodificación de tramas MP3 lineal en tiempo real (`minimp3`), salida DAC I2S Everest ES8311 de alta fidelidad, Bluetooth A2DP Sink, carátulas de álbumes PNG a todo color, artista/título desplazable y visualizador de audio FFT de 64 puntos Cooley-Tukey dinámico.
+- **📻 WebRadio Autónoma y Motor Musical (`music`):** Streaming de audio en segundo plano con decodificación de tramas MP3 lineal en tiempo real (`minimp3`), salida DAC I2S Everest ES8311 de alta fidelidad (streaming WebRadio por Wi-Fi — *nota: Bluetooth es solo BLE 5.0 para configuración, sin streaming de audio Bluetooth Classic A2DP*), carátulas de álbumes PNG a todo color, artista/título desplazable y visualizador de audio FFT de 64 puntos Cooley-Tukey dinámico.
 - **🧭 Auto-Rotación de Pantalla Giroscópica de 6 Ejes (`QMI8658` / `GyroHAL`):** Orientación automática de pantalla ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) mediante detección física del vector de gravedad, histéresis antivibración de 500 ms, offset mecánico de montaje y calibración en 1 clic desde la Web UI.
 - **🎵 Spotify Now Playing (`spotify`):** visualización en tiempo real de la pista actual con carátula del álbum a todo color, desplazamiento artista/título, barra de progreso y ecualizador de audio animado.
 - **📡 Google Cast & Nest (`google_cast`):** descubrimiento automático mDNS de altavoces Google Home / Nest Audio y visualización en directo de carátulas, progreso y volumen de reproducción.
@@ -129,8 +129,9 @@ Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 | Animaciones (GIFs) | ✅ Sí | ✅ Sí |
 | Motor MUGEN | ✅ Sí | ✅ Sí |
 | Interfaz Web & Wi-Fi | ✅ Sí | ✅ Sí |
-| **WebRadio Autónoma y Decodificación MP3** | ✅ Sí (DAC ES8311 y Altavoz Integrados) | ❌ No (Requiere DAC I2S y PSRAM) |
-| **Bluetooth Audio A2DP Sink** | ✅ Sí (Stack A2DP Sink ESP-IDF) | ⚠️ Limitado (Requiere DAC externo) |
+| **WebRadio Autónoma (Streaming MP3 Wi-Fi)** | ✅ Sí (DAC ES8311 y Altavoz Integrados) | ❌ No (Requiere DAC I2S y PSRAM) |
+| **Streaming de Audio Bluetooth (A2DP)** | ❌ No (El ESP32-S3 es solo BLE 5.0; sin A2DP audio) | ❌ No |
+| **Bluetooth 5 (BLE Control/Config)** | ✅ Sí (Nativo ESP32-S3 BLE) | ✅ Sí |
 | **Auto-Rotación Giroscópica 6 Ejes (`QMI8658`)** | ✅ Sí (IMU integrado y Calibrate 1-clic) | ❌ No (Requiere sensor I2C externo) |
 | **Criptomonedas en Tiempo Real** | ✅ Sí | ❌ No (Falta RAM para SSL) |
 | **Bolsa de Valores** | ✅ Sí | ❌ No (Falta RAM para SSL) |
