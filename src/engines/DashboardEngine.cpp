@@ -77,6 +77,9 @@ DashboardLayout DashboardLayoutCalculator::calculate(const DisplayGeometry& geom
             } else if (config.showWorldClock && curY < h) {
                 l.hasWorldClock = true;
                 l.worldClockRect = Rect(0, (int16_t)curY, (uint16_t)w, (uint16_t)(h - curY));
+            } else if (config.showSysInfo && curY < h) {
+                l.hasSysInfo = true;
+                l.sysInfoRect = Rect(0, (int16_t)curY, (uint16_t)w, (uint16_t)(h - curY));
             }
         } else {
             // Small 32x64 / 64x64 Tower
@@ -529,7 +532,26 @@ void WorldClockWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, con
 
     uint32_t now = millis();
 
-    if (rect.height <= 20 || rect.width < 60) {
+    if (rect.height >= 24 && rect.width <= 36) {
+        // Vertical stacked layout (e.g. 32x128 mode): [NYC] on top, 14:25 at bottom
+        size_t idx = (now / 3000) % count;
+        const auto& wt = worldTimes[idx];
+        String label = "[" + wt.code + "]";
+        char timeBuf[8];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", wt.hours, wt.minutes);
+
+        int labelW = label.length() * 6 - 1;
+        int timeW = strlen(timeBuf) * 6 - 1;
+
+        int xCode = rect.x + max(1, (rect.width - labelW) / 2);
+        int xTime = rect.x + max(1, (rect.width - timeW) / 2);
+
+        int yCode = rect.y + 4;
+        int yTime = rect.y + 14;
+
+        drawClippedString(matrix, label, xCode, yCode, minX, maxX, minY, maxY, theme.secondary);
+        drawClippedString(matrix, timeBuf, xTime, yTime, minX, maxX, minY, maxY, theme.primary);
+    } else if (rect.height <= 20 || rect.width < 60) {
         // Compact slot mode (e.g. 128x32 top row slots: ~30px wide, 15px high)
         // Cycle through cities every 3 seconds
         size_t idx = (now / 3000) % count;
@@ -674,9 +696,11 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
         slideY = (int)((1.0f - progress) * (rect.height - 4));
     }
 
+    bool isTallNarrow = (rect.height >= 24 && rect.width <= 36);
+
     auto renderSlide = [&](int p, int offsetY) {
-        int textY = rect.y + (rect.height - 7) / 2 + offsetY;
-        int iconY = rect.y + (rect.height - 8) / 2 + offsetY;
+        int textY = isTallNarrow ? (rect.y + 3 + offsetY) : (rect.y + (rect.height - 7) / 2 + offsetY);
+        int iconY = isTallNarrow ? (rect.y + 3 + offsetY) : (rect.y + (rect.height - 8) / 2 + offsetY);
 
         if (p == 0 && weatherValid) {
             drawMiniWeatherIcon(matrix, rect.x + 2, iconY, minX, maxX, minY, maxY, weather.iconCode);
@@ -689,11 +713,12 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
             }
             drawClippedString(matrix, outBuf, rect.x + 11, textY, minX, maxX, minY, maxY, theme.primary);
 
-            if (rect.height >= 26) {
+            if (rect.height >= 24) {
                 String desc = I18n::getWeatherCondition(weather.description, l);
                 if (desc.isEmpty()) desc = I18n::getOutdoorLabel(l);
                 desc.toUpperCase();
-                drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, rect.y + 3 + offsetY + 11, minX, maxX, minY, maxY, theme.textDim);
+                int descY = isTallNarrow ? (rect.y + 13 + offsetY) : (rect.y + 3 + offsetY + 11);
+                drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, descY, minX, maxX, minY, maxY, theme.textDim);
             }
         } else if (indoor.valid) {
             float inT = useFahrenheit ? (indoor.temperatureF + tempOffset) : (indoor.temperatureC + tempOffset);
@@ -710,11 +735,12 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
             if (rect.height >= 24) {
                 char humBuf[12];
                 snprintf(humBuf, sizeof(humBuf), "%.0f%%RH", indoor.humidityPct);
-                drawClippedString(matrix, humBuf, rect.x + 3, rect.y + 3 + offsetY + 11, minX, maxX, minY, maxY, theme.textDim);
+                int humY = isTallNarrow ? (rect.y + 13 + offsetY) : (rect.y + 3 + offsetY + 11);
+                drawClippedString(matrix, humBuf, rect.x + 3, humY, minX, maxX, minY, maxY, theme.textDim);
 
                 int barW = rect.width - 8;
                 int fillW = constrain((int)(barW * (indoor.humidityPct / 100.0f)), 0, barW);
-                int barY = rect.y + 3 + offsetY + 19;
+                int barY = isTallNarrow ? (rect.y + 22 + offsetY) : (rect.y + 3 + offsetY + 19);
                 if (barY < maxY - 1 && barY >= minY) {
                     matrix->drawRect(rect.x + 3, barY, barW, 3, theme.border);
                     matrix->fillRect(rect.x + 4, barY + 1, fillW, 1, theme.accent);
