@@ -30,6 +30,10 @@ public:
     
     // Noise / Decibel
     static const char* getNoiseLevelLabel(int level);
+
+    // GNews Status
+    static const char* getGNewsStatusLabel(uint8_t status);
+    static const char* getGNewsStatusLabel(uint8_t status, Lang l);
 };
 
 #endif // I18N_H

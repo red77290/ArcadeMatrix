@@ -249,17 +249,22 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 | `offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel offset. |
 
 ### Engine: `gnews` (GNews Live Feed & Breaking News Ticker)
+
+The `gnews` engine provides a real-time live news ticker and breaking news bulletin powered by the [GNews.io](https://gnews.io) API. It features multi-account API pooling, automated failover, persistent SD/disk caching, and smart quota budgeting to maximize free-tier usage.
+
 | Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `api_key` | `String` | `""` | Any valid key | GNews.io API key (optional; uses demo articles if empty). |
-| `category` | `Options` | `technology` | `general`, `world`, `nation`, `business`, `technology`, `entertainment`, `sports`, `science`, `health` | Primary news category. |
+| `api_key` | `String` | `""` | Comma-separated keys | GNews.io API keys (supports multiple keys: `key1,key2,key3` for multi-account pool with automatic failover). |
+| `category` | `Options` | `technology` | `general`, `world`, `nation`, `business`, `technology`, `entertainment`, `sports`, `science`, `health` | Primary news category or comma-separated list for round-robin rotation. |
 | `keywords` | `String` | `""` | Text / Query | Custom search query or filter tags (e.g. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Article language (`auto` syncs with system language). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Country edition (`auto` uses local region). |
 | `max_articles` | `int` | `5` | `3` to `15` | Maximum number of headlines cached and rotated per cycle. |
-| `cache_ttl_min` | `int` | `30` | `5` to `120` | Cache refresh interval in minutes between background API queries. |
-| `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `static_paged` | Animation mode (60 FPS smooth horizontal ticker or paged word wrapping). |
-| `scroll_speed` | `int` | `3` | `1` to `5` | Ticker scrolling speed multiplier (1: Slow ~18 px/s to 5: Turbo ~60 px/s). |
+| `requests_per_day` | `int` | `10` | `1` to `100` | Total API requests allocated per 24 hours (Free tier limit: 100/day per API key). |
+| `force_refresh` | `bool` | `false` | `true`, `false` | Action trigger: immediately purges obsolete language cache and queries the API without resetting daily quota counters. |
+| `cache_ttl_min` | `int` | `30` | `5` to `120` | Minimum minutes between API queries when request budgeting is relaxed. |
+| `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Animation style: smooth horizontal ticker, vertical crawl, multi-line static paged, or alternating serpentine flow. |
+| `scroll_speed` | `int` | `3` | `1` to `10` | Ticker scrolling speed (1: Slow crawl to 10: Turbo speed). |
 | `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at headline start before scrolling. |
 | `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of headline before transitioning. |
 | `article_duration_sec` | `int` | `12` | `5` to `60` | Display duration per article in seconds. |
@@ -269,6 +274,25 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 | `show_time_ago` | `bool` | `true` | `true`, `false` | Display relative time badge (`5m ago`, `2h ago`). |
 | `show_beacon` | `bool` | `true` | `true`, `false` | Display pulsing live broadcast beacon dot. |
 | `show_progress_dots` | `bool` | `true` | `true`, `false` | Display headline index dots (`● ○ ○ ○ ○`). |
+
+#### GNews Architecture & Quota Optimization
+1. **Multi-API Key Pooling & Automatic Failover:**
+   - You can enter multiple GNews API keys separated by commas (`api_key: "key1,key2,key3"`).
+   - If an active key is invalid (`HTTP 401/403`) or exhausts its 100 requests/day quota (`HTTP 429/403`), the engine automatically fails over to the next key in the pool and immediately retries.
+   - 2 accounts = 200 requests/day; 3 accounts = 300 requests/day.
+2. **Persistent File Caching (`/gnews_cache.json` on ESP32 SD, `gnews_cache.json` on RPi):**
+   - Articles and request telemetry are persisted to storage. On reboot, headlines display immediately without burning API quota or stalling for network.
+   - If offline or when the daily quota is reached, cached articles are preserved indefinitely and continue scrolling 24/7.
+3. **Daily Quota Budgeting (Default: 10 reqs/day) & Shared-Key Protection:**
+   - While GNews.io free accounts permit up to 100 requests/day per key, users frequently share their API key across other external services or home automations.
+   - To prevent ArcadeMatrix from monopolizing or exhausting the account's external quota, the engine defaults to a conservative **10 requests per day** (`requests_per_day: 10`, spaced evenly every 2 hours 24 minutes: $\Delta t = \frac{86400}{10} = 8640\text{ s}$).
+   - Users can freely customize `requests_per_day` (from `1` to `100`). The Web UI quota telemetry dynamically reports consumption against this configured budget (e.g. `Key 1 (..abcd): 4/10 reqs [Active]`).
+   - If multiple categories are specified (e.g. `technology,world`), queries alternate in round-robin across categories ($\frac{\text{requests\_per\_day}}{N}$ per topic).
+4. **Deferred Updates & Force Refresh:**
+   - Changing parameters in the Web UI takes effect at the next scheduled query cycle to protect the quota.
+   - Setting `force_refresh: true` purges stale articles of previous languages and triggers an immediate fetch while maintaining daily usage counters.
+5. **Midnight UTC Rollover:**
+   - At 00:00 UTC, daily quota consumption counters reset to 0 and rate-limited status flags are automatically cleared.
 
 ### Engine: `fighter` (M.U.G.E.N Combat)
 | Field | Type | Default | Options | Description |
