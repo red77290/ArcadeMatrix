@@ -349,7 +349,7 @@ Sur microcontrôleur, une connexion HTTPS exige d'importants buffers d'échange 
 - **ESP32-S3 :** Allocation systématique en PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`) pour les buffers mbedTLS, MP3 et PNG, réservant la SRAM interne aux interruptions temps réel.
 
 #### Concurrence : Audio Simultané & Rendu 60 FPS
-- **Core 0 :** Décodage MP3 (`minimp3`), Bluetooth A2DP Sink, Wi-Fi et requêtes réseau.
+- **Core 0 :** Décodage MP3 (`minimp3`), gestion des flux audio, Wi-Fi et requêtes réseau.
 - **Core 1 :** Rendu matriciel à 60 FPS ininterrompu et affichage d'overlays.
 - **Communication sans verrou :** `AudioHub` publie des snapshots atomiques `AudioPlaybackState` avec identifiant `generation` incrémental, lus instantanément par le Core 1 sans blocage ni mutex.
 
