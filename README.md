@@ -37,6 +37,7 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **🖥️ System Monitor (`sysinfo`):** Real-time monitoring of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars and visual themes.
 - **🥊 M.U.G.E.N Combat Engine (`fighter`):** Authentic retro sprite battles (Street Fighter, KOF, DBZ, Marvel...) directly extracted in RGB565 format without stutter, playable standalone or as background overlay on clocks.
 - **📈 Real-Time Crypto & Stock Market Tickers (`crypto`, `stock`):** Live price quotes, 24h % badges, and historical sparkline charts from CoinGecko, Binance, and Yahoo Finance with smart TTL caching.
+- **📰 Live Breaking News & GNews Ticker (`gnews`):** Real-time top headlines and curated breaking news with topic categories (Tech, World, Business, Science, Sports...), live pulsing broadcast beacon, customizable sub-pixel 60 FPS scrolling ticker, and multi-language/localization filtering!
 - **🌦️ Dynamic Weather Forecasts (`weather`):** Live weather conditions, temperature, 3-day forecasts, and retro animated icons via OpenWeatherMap.
 - **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and REST endpoint for Home Assistant integration!
 - **🔊 Decibel & Sound Level Meter (Arcade / Gaming Room):** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))

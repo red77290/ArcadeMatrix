@@ -246,7 +246,27 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | `show_uptime` | `bool` | `true` | `true`, `false` | Affiche le temps d'activité (Uptime) en heures/jours. |
 | `temp_unit` | `Options` | `C` | `C`, `F` | Unité de température : Celsius (`C`) ou Fahrenheit (`F`). |
 | `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
-| `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
+### Moteur : `gnews` (Actualités en Direct & Ticker GNews)
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Clé valide | Clé API GNews.io (optionnelle ; utilise des articles de démo si vide). |
+| `category` | `Options` | `technology` | `general`, `world`, `nation`, `business`, `technology`, `entertainment`, `sports`, `science`, `health` | Catégorie thématique principale. |
+| `keywords` | `String` | `""` | Texte / Requête | Mots-clés de recherche ou tags personnalisés (ex. `ai OR arcade`). |
+| `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Langue des articles (`auto` synchronise avec la langue système). |
+| `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Édition régionale du pays. |
+| `max_articles` | `int` | `5` | `3` à `15` | Nombre maximal d'articles mis en cache et alternés par cycle. |
+| `cache_ttl_min` | `int` | `30` | `5` à `120` | Intervalle de rafraîchissement réseau du cache en minutes. |
+| `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `static_paged` | Mode d'animation (défilement sous-pixel fluide à 60 FPS ou pagination multiligne). |
+| `scroll_speed` | `int` | `3` | `1` à `5` | Multiplicateur de vitesse de défilement (1 : Lent ~18 px/s à 5 : Turbo ~60 px/s). |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` à `4000` | Temps de pause fixe (ms) au début du titre avant le défilement. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` à `4000` | Temps de pause fixe (ms) à la fin du titre avant la transition. |
+| `article_duration_sec` | `int` | `12` | `5` à `60` | Durée d'affichage par article en secondes. |
+| `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Schéma de couleurs visuel. |
+| `show_category_badge` | `bool` | `true` | `true`, `false` | Affiche le badge thématique coloré (`[TECH]`, `[WORLD]`, etc.). |
+| `show_source` | `bool` | `true` | `true`, `false` | Affiche le nom de la source d'actualités (`BBC News`, `Reuters`, etc.). |
+| `show_time_ago` | `bool` | `true` | `true`, `false` | Affiche l'ancienneté relative (`5m ago`, `2h ago`). |
+| `show_beacon` | `bool` | `true` | `true`, `false` | Affiche le témoin lumineux de direct clignotant. |
+| `show_progress_dots` | `bool` | `true` | `true`, `false` | Affiche les points indicateurs de progression (`● ○ ○ ○ ○`). |
 
 ### Moteur : `fighter` (Combat M.U.G.E.N)
 | Champ | Type | Défaut | Options | Description |
