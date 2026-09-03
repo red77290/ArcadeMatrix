@@ -160,70 +160,57 @@ void GNewsEngine::distributeTextToRows(const char* text, int numRows) {
     }
 }
 
-void GNewsEngine::renderSerpentine(EngineContext* context, const GNewsArticle& article, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing) {
-    if (!context || !context->getMatrix()) return;
+void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows) {
+    if (!context || !context->getMatrix() || !title || *title == '\0') return;
     auto* matrix = context->getMatrix();
-    int s = scrollPixelOffset;
+
+    int tLen = strlen(title);
+    if (tLen == 0) return;
+
     int charW = 6;
-    int xLeft = clipMinX - charW;
-    int xRight = clipMaxX;
-    int w = max(1, xRight - xLeft);
+    int W = max(1, clipMaxX - clipMinX);
+    if (numRows < 1) numRows = 1;
 
-    for (size_t r = 0; r < cachedLineCount; r++) {
-        const char* line = cachedDisplayLines[r];
-        int len = strlen(line);
-        bool isOdd = (r % 2) != 0;
+    int sepSpaces = 4;
+    int totalUnits = tLen + sepSpaces;
+    int totalPixelLen = totalUnits * charW;
+    int trackLen = numRows * W;
 
-        for (int k = 0; k < len; k++) {
-            char c = line[k];
-            int x0 = clipMinX + 2 + (k * charW);
-            int cx = 0;
-            int cy = 0;
-            bool visible = false;
+    // Ensure loop length spans at least the full serpentine track so all rows are 100% filled
+    int loopPixelLen = totalPixelLen;
+    while (loopPixelLen < trackLen) {
+        loopPixelLen += totalPixelLen;
+    }
 
-            if (!isOdd) {
-                // Even row: travels to the left towards xLeft
-                int d0 = x0 - xLeft;
-                if (s <= d0) {
-                    cx = x0 - s;
-                    cy = bodyY + ((int)r * lineSpacing);
-                    visible = true;
-                } else {
-                    int rem = s - d0;
-                    int levelsUp = 1 + (rem / w);
-                    int curRow = (int)r - levelsUp;
-                    if (curRow >= 0) {
-                        int remInLevel = rem % w;
-                        bool curIsOdd = (curRow % 2) != 0;
-                        cx = curIsOdd ? (xLeft + remInLevel) : (xRight - remInLevel);
-                        cy = bodyY + (curRow * lineSpacing);
-                        visible = true;
-                    }
-                }
-            } else {
-                // Odd row: travels to the right towards xRight
-                int d0 = xRight - x0;
-                if (s <= d0) {
-                    cx = x0 + s;
-                    cy = bodyY + ((int)r * lineSpacing);
-                    visible = true;
-                } else {
-                    int rem = s - d0;
-                    int levelsUp = 1 + (rem / w);
-                    int curRow = (int)r - levelsUp;
-                    if (curRow >= 0) {
-                        int remInLevel = rem % w;
-                        bool curIsOdd = (curRow % 2) != 0;
-                        cx = curIsOdd ? (xLeft + remInLevel) : (xRight - remInLevel);
-                        cy = bodyY + (curRow * lineSpacing);
-                        visible = true;
-                    }
-                }
-            }
+    int s = scrollPixelOffset;
+    int glyphsOnTrack = (trackLen / charW) + 4;
 
-            if (visible && cy + 7 > clipMinY && cy < clipMaxY && cx + 5 > clipMinX && cx < clipMaxX) {
-                matrix->drawChar(cx, cy, c, 0xFFFF, 0x0000, 1);
-            }
+    for (int i = 0; i < glyphsOnTrack; i++) {
+        int u = (i * charW + (s % loopPixelLen)) % loopPixelLen;
+        if (u >= trackLen) continue; // In inter-title separator gap if loop > trackLen
+
+        int r = u / W;
+        if (r >= numRows) continue;
+
+        int rem = u % W;
+        int cx = 0;
+        // Bottom-most row is (numRows - 1 - r) so text ascends smoothly from bottom to top
+        int displayRow = numRows - 1 - r;
+        int cy = bodyY + (displayRow * lineSpacing);
+
+        if ((displayRow % 2) == 0) {
+            // Even rows (including top row 0): move Right -> Left
+            cx = clipMaxX - rem - charW;
+        } else {
+            // Odd rows (including row 1): move Left -> Right
+            cx = clipMinX + rem;
+        }
+
+        int charIdx = i % totalUnits;
+        char c = (charIdx < tLen) ? title[charIdx] : ' ';
+
+        if (c != ' ' && cy + 7 > clipMinY && cy < clipMaxY && cx + 5 >= clipMinX && cx < clipMaxX) {
+            matrix->drawChar(cx, cy, c, 0xFFFF, 0x0000, 1);
         }
     }
 }
@@ -300,15 +287,24 @@ void GNewsEngine::update(EngineContext* context) {
         int mH = _geometry.height > 0 ? _geometry.height : 32;
         bool isTate = (_geometry.layoutClass == LayoutClass::TALL || _geometry.layoutClass == LayoutClass::PORTRAIT || mH > (mW * 3) / 2 || mW < 48);
 
-        int bodyY = 14;
+        int bodyY = 13;
         int lineSpacing = 9;
+        int numRows = 2;
+
         if (isTate) {
             bodyY = 24;
-        } else if (mW >= 128 || mH >= 64) {
-            int divY = (mH >= 64) ? 16 : 12;
-            bodyY = divY + ((mH >= 64) ? 8 : 4);
+            lineSpacing = 9;
+            numRows = max(2, (mH - bodyY) / lineSpacing);
+        } else if (mH >= 64) {
+            bodyY = 19;
+            lineSpacing = 10;
+            numRows = 4;
+        } else {
+            // Horizontal 32px height (128x32 or 64x32)
+            bodyY = 13;
+            lineSpacing = 9;
+            numRows = 2;
         }
-        int numRows = max(1, (mH - bodyY) / lineSpacing);
 
         if (config_display_mode == "static_paged") {
             int maxW = isTate ? (mW - 4) : (mW - 8);
@@ -321,13 +317,10 @@ void GNewsEngine::update(EngineContext* context) {
             int viewH = mH - bodyY;
             cachedMaxScroll = (totalH > viewH) ? (totalH - viewH + 12) : 0;
         } else if (config_display_mode == "serpentine") {
-            distributeTextToRows(curArt.title, numRows);
-            int maxLineChars = 0;
-            for (size_t r = 0; r < cachedLineCount; r++) {
-                int len = strlen(cachedDisplayLines[r]);
-                if (len > maxLineChars) maxLineChars = len;
-            }
-            cachedMaxScroll = mW + (maxLineChars * 6) + 24;
+            int tLen = strlen(curArt.title);
+            int textPixelLen = tLen * 6;
+            int trackLen = numRows * mW;
+            cachedMaxScroll = max(trackLen + textPixelLen, trackLen * 2);
         } else {
             // "smooth_scroll"
             int textW = strlen(curArt.title) * 6;
@@ -536,12 +529,18 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
     }
 
     // Divider Line
-    int divY = (mH >= 64) ? 16 : 12;
+    int divY = (mH >= 64) ? 16 : 11;
     matrix->drawFastHLine(2, divY, mW - 4, matrix->color565(40, 45, 55));
 
     // 2. Headline Content Area
-    int bodyY = divY + ((mH >= 64) ? 8 : 4);
+    int bodyY = 13;
     int lineSpacing = 9;
+    int numRows = 2;
+    if (mH >= 64) {
+        bodyY = 19;
+        lineSpacing = 10;
+        numRows = 4;
+    }
 
     if (config_display_mode == "static_paged") {
         for (size_t i = 0; i < cachedLineCount; i++) {
@@ -565,7 +564,7 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
             }
         }
     } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, article, bodyY, 0, mW, divY + 1, mH, lineSpacing);
+        renderSerpentine(context, article.title, bodyY, 0, mW, divY + 1, mH, lineSpacing, numRows);
     } else {
         int startX = 4 - scrollPixelOffset;
         matrix->setTextWrap(false);
@@ -615,8 +614,9 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
     matrix->drawFastHLine(0, 10, mW, matrix->color565(35, 40, 50));
 
     // Headline area
-    int bodyY = 14;
+    int bodyY = 13;
     int lineSpacing = 9;
+    int numRows = 2;
 
     if (config_display_mode == "static_paged") {
         for (size_t i = 0; i < cachedLineCount; i++) {
@@ -640,7 +640,7 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
             }
         }
     } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, article, bodyY, 0, mW, 11, mH, lineSpacing);
+        renderSerpentine(context, article.title, bodyY, 0, mW, 11, mH, lineSpacing, numRows);
     } else {
         matrix->setTextColor(0xFFFF);
         int startX = 2 - scrollPixelOffset;
@@ -699,6 +699,7 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
 
     int bodyY = 24;
     int lineSpacing = 9;
+    int numRows = max(2, (mH - bodyY) / lineSpacing);
 
     if (config_display_mode == "static_paged") {
         for (size_t i = 0; i < cachedLineCount; i++) {
@@ -722,7 +723,7 @@ void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& art
             }
         }
     } else if (config_display_mode == "serpentine") {
-        renderSerpentine(context, article, bodyY, 0, mW, 20, mH, lineSpacing);
+        renderSerpentine(context, article.title, bodyY, 0, mW, 20, mH, lineSpacing, numRows);
     } else {
         matrix->setTextColor(0xFFFF);
         matrix->setCursor(2, 24);

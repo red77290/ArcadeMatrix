@@ -81,7 +81,7 @@ private:
     void advanceToNextArticle(const GNewsSnapshot& snap);
     void wrapTextToLines(const char* text, int maxW);
     void distributeTextToRows(const char* text, int numRows);
-    void renderSerpentine(EngineContext* context, const GNewsArticle& article, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing);
+    void renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows);
     void renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount);
     void renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount);
     void renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount);
