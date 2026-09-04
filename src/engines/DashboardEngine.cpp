@@ -77,6 +77,9 @@ DashboardLayout DashboardLayoutCalculator::calculate(const DisplayGeometry& geom
             } else if (config.showWorldClock && curY < h) {
                 l.hasWorldClock = true;
                 l.worldClockRect = Rect(0, (int16_t)curY, (uint16_t)w, (uint16_t)(h - curY));
+            } else if (config.showSysInfo && curY < h) {
+                l.hasSysInfo = true;
+                l.sysInfoRect = Rect(0, (int16_t)curY, (uint16_t)w, (uint16_t)(h - curY));
             }
         } else {
             // Small 32x64 / 64x64 Tower
@@ -514,7 +517,7 @@ static void drawClippedMarketIcon8x8(MatrixPanel_I2S_DMA* matrix, int x, int y, 
 // ============================================================================
 
 void WorldClockWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const std::vector<WorldTimeItem>& worldTimes, const DashboardTheme& theme) {
-    if (!matrix || rect.width < 20 || rect.height < 12) return;
+    if (!matrix || rect.width < 14 || rect.height < 8) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
@@ -527,13 +530,59 @@ void WorldClockWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, con
     int minY = rect.y + 1;
     int maxY = rect.y + rect.height - 1;
 
-    int itemW = 44; // [NYC] at top, 14:25 at bottom
-    int totalW = (int)count * itemW;
+    uint32_t now = millis();
 
-    if (rect.width >= 70 && rect.height <= 34) {
+    if (rect.height >= 24 && rect.width <= 36) {
+        // Vertical stacked layout (e.g. 32x128 mode): [NYC] on top, 14:25 at bottom
+        size_t idx = (now / 3000) % count;
+        const auto& wt = worldTimes[idx];
+        String label = "[" + wt.code + "]";
+        char timeBuf[8];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", wt.hours, wt.minutes);
+
+        int labelW = label.length() * 6 - 1;
+        int timeW = strlen(timeBuf) * 6 - 1;
+
+        int xCode = rect.x + max(1, (rect.width - labelW) / 2);
+        int xTime = rect.x + max(1, (rect.width - timeW) / 2);
+
+        int yCode = rect.y + 4;
+        int yTime = rect.y + 14;
+
+        drawClippedString(matrix, label, xCode, yCode, minX, maxX, minY, maxY, theme.secondary);
+        drawClippedString(matrix, timeBuf, xTime, yTime, minX, maxX, minY, maxY, theme.primary);
+    } else if (rect.height <= 20 || rect.width < 60) {
+        // Compact slot mode (e.g. 128x32 top row slots: ~30px wide, 15px high)
+        // Cycle through cities every 3 seconds
+        size_t idx = (now / 3000) % count;
+        const auto& wt = worldTimes[idx];
+
+        char timeBuf[8];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", wt.hours, wt.minutes);
+
+        int labelW = wt.code.length() * 6;
+        int timeW = strlen(timeBuf) * 6;
+        int textY = rect.y + (rect.height - 7) / 2;
+
+        if (rect.width >= (labelW + timeW + 5)) {
+            // Wide enough to show [NYC] on left and 14:25 on right
+            drawClippedString(matrix, wt.code, rect.x + 2, textY, minX, maxX, minY, maxY, theme.secondary);
+            drawClippedString(matrix, timeBuf, rect.x + rect.width - timeW - 2, textY, minX, maxX, minY, maxY, theme.primary);
+        } else {
+            // Ultra-compact: alternate between city code and time every 2 seconds centered
+            bool showCode = ((now / 2000) % 2 == 0);
+            if (showCode) {
+                int xCen = rect.x + (rect.width - labelW) / 2;
+                drawClippedString(matrix, wt.code, xCen, textY, minX, maxX, minY, maxY, theme.secondary);
+            } else {
+                int xCen = rect.x + (rect.width - timeW) / 2;
+                drawClippedString(matrix, timeBuf, xCen, textY, minX, maxX, minY, maxY, theme.primary);
+            }
+        }
+    } else if (rect.width >= 70 && rect.height <= 34) {
+        int itemW = 44; // [NYC] at top, 14:25 at bottom
+        int totalW = (int)count * itemW;
         bool needsScroll = (totalW > (rect.width - 4));
-        uint32_t now = millis();
-        // Calm, readable scroll speed: ~10 pixels / second
         int scrollOffset = needsScroll ? ((int)((now * 10) / 1000) % max(1, totalW)) : 0;
 
         for (size_t i = 0; i < count; i++) {
@@ -561,7 +610,6 @@ void WorldClockWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, con
     } else {
         int rowH = 14;
         int totalH = (int)count * rowH;
-        uint32_t now = millis();
         int scrollOffsetY = (totalH > rect.height) ? ((int)((now * 8) / 1000) % max(1, totalH)) : 0;
 
         for (size_t i = 0; i < count; i++) {
@@ -624,7 +672,7 @@ static void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int m
 }
 
 void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
-    if (!matrix || rect.width < 20 || rect.height < 14) return;
+    if (!matrix || rect.width < 14 || rect.height < 8) return;
 
     Lang l = I18n::parseLang(lang);
 
@@ -648,42 +696,58 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
         slideY = (int)((1.0f - progress) * (rect.height - 4));
     }
 
+    bool isTallNarrow = (rect.height >= 24 && rect.width <= 36);
+
     auto renderSlide = [&](int p, int offsetY) {
-        int baseY = rect.y + 3 + offsetY;
+        int textY = isTallNarrow ? (rect.y + 3 + offsetY) : (rect.y + (rect.height - 7) / 2 + offsetY);
+        int iconY = isTallNarrow ? (rect.y + 3 + offsetY) : (rect.y + (rect.height - 8) / 2 + offsetY);
+
         if (p == 0 && weatherValid) {
-            drawMiniWeatherIcon(matrix, rect.x + 3, baseY, minX, maxX, minY, maxY, weather.iconCode);
+            drawMiniWeatherIcon(matrix, rect.x + 2, iconY, minX, maxX, minY, maxY, weather.iconCode);
             char outBuf[12];
             float outT = useFahrenheit ? (weather.temp * 1.8f + 32.0f) : weather.temp;
-            snprintf(outBuf, sizeof(outBuf), "%.0f%s", outT, useFahrenheit ? "F" : "C");
-            drawClippedString(matrix, outBuf, rect.x + 13, baseY, minX, maxX, minY, maxY, theme.primary);
+            if (rect.width < 34) {
+                snprintf(outBuf, sizeof(outBuf), "%.0f`", outT);
+            } else {
+                snprintf(outBuf, sizeof(outBuf), "%.0f`%s", outT, useFahrenheit ? "F" : "C");
+            }
+            drawClippedString(matrix, outBuf, rect.x + 11, textY, minX, maxX, minY, maxY, theme.primary);
 
-            if (rect.height >= 26) {
+            if (rect.height >= 24) {
                 String desc = I18n::getWeatherCondition(weather.description, l);
                 if (desc.isEmpty()) desc = I18n::getOutdoorLabel(l);
                 desc.toUpperCase();
-                drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, baseY + 11, minX, maxX, minY, maxY, theme.textDim);
+                int descY = isTallNarrow ? (rect.y + 13 + offsetY) : (rect.y + 3 + offsetY + 11);
+                drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, descY, minX, maxX, minY, maxY, theme.textDim);
             }
         } else if (indoor.valid) {
             float inT = useFahrenheit ? (indoor.temperatureF + tempOffset) : (indoor.temperatureC + tempOffset);
             char inBuf[16];
-            snprintf(inBuf, sizeof(inBuf), "%s%.1f%s", I18n::getIndoorLabel(l), inT, useFahrenheit ? "F" : "C");
-            drawClippedString(matrix, inBuf, rect.x + 3, baseY, minX, maxX, minY, maxY, theme.accent);
+            if (rect.width < 34) {
+                snprintf(inBuf, sizeof(inBuf), "%.0f`", inT);
+            } else if (rect.width < 46) {
+                snprintf(inBuf, sizeof(inBuf), "%.1f`", inT);
+            } else {
+                snprintf(inBuf, sizeof(inBuf), "%s%.1f`%s", I18n::getIndoorLabel(l), inT, useFahrenheit ? "F" : "C");
+            }
+            drawClippedString(matrix, inBuf, rect.x + 2, textY, minX, maxX, minY, maxY, theme.accent);
 
             if (rect.height >= 24) {
                 char humBuf[12];
                 snprintf(humBuf, sizeof(humBuf), "%.0f%%RH", indoor.humidityPct);
-                drawClippedString(matrix, humBuf, rect.x + 3, baseY + 11, minX, maxX, minY, maxY, theme.textDim);
+                int humY = isTallNarrow ? (rect.y + 13 + offsetY) : (rect.y + 3 + offsetY + 11);
+                drawClippedString(matrix, humBuf, rect.x + 3, humY, minX, maxX, minY, maxY, theme.textDim);
 
                 int barW = rect.width - 8;
                 int fillW = constrain((int)(barW * (indoor.humidityPct / 100.0f)), 0, barW);
-                int barY = baseY + 19;
+                int barY = isTallNarrow ? (rect.y + 22 + offsetY) : (rect.y + 3 + offsetY + 19);
                 if (barY < maxY - 1 && barY >= minY) {
                     matrix->drawRect(rect.x + 3, barY, barW, 3, theme.border);
                     matrix->fillRect(rect.x + 4, barY + 1, fillW, 1, theme.accent);
                 }
             }
         } else {
-            drawClippedString(matrix, I18n::getClimateLabel(l), rect.x + 3, baseY, minX, maxX, minY, maxY, theme.textDim);
+            drawClippedString(matrix, I18n::getClimateLabel(l), rect.x + 3, textY, minX, maxX, minY, maxY, theme.textDim);
         }
     };
 
@@ -725,7 +789,7 @@ static void formatMarketPrice(char* buf, size_t bufSize, float price) {
 }
 
 void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme) {
-    if (!matrix || rect.width < 20 || rect.height < 12) return;
+    if (!matrix || rect.width < 10 || rect.height < 8) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
@@ -738,12 +802,71 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
     int minY = rect.y + 1;
     int maxY = rect.y + rect.height - 1;
 
-    if (rect.width >= 100 && rect.height <= 36) {
-        // Horizontal Infinite Continuous Rolling Ticker
+    if (rect.height <= 20) {
+        // Single-Line Continuous Smooth Horizontal Ticker (128x32, 128x64, 256x64 bottom bar)
+        // Format: [8x8 Icon] SYM $PRICE +X.X% (all in one line, vertically centered)
+        struct ItemMetrics {
+            int symW;
+            int priceW;
+            int chgW;
+            int itemW;
+            char priceBuf[16];
+            char chgBuf[10];
+            uint16_t trendCol;
+        };
+
+        std::vector<ItemMetrics> metrics(count);
+        int totalW = 0;
+        int gapIconSym = 3;
+        int gapSymPrice = 5;
+        int gapPriceChg = 5;
+        int marginRight = 14;
+
+        for (size_t i = 0; i < count; i++) {
+            metrics[i].symW = items[i].symbol.length() * 6;
+            formatMarketPrice(metrics[i].priceBuf, sizeof(metrics[i].priceBuf), items[i].price);
+            metrics[i].priceW = strlen(metrics[i].priceBuf) * 6;
+            metrics[i].trendCol = (items[i].change24h >= 0) ? theme.green : theme.red;
+            snprintf(metrics[i].chgBuf, sizeof(metrics[i].chgBuf), "%c%.1f%%", items[i].change24h >= 0 ? '+' : '-', fabsf(items[i].change24h));
+            metrics[i].chgW = strlen(metrics[i].chgBuf) * 6;
+
+            metrics[i].itemW = 8 + gapIconSym + metrics[i].symW + gapSymPrice + metrics[i].priceW + gapPriceChg + metrics[i].chgW + marginRight;
+            totalW += metrics[i].itemW;
+        }
+
+        if (totalW < 1) totalW = 1;
+        uint32_t now = millis();
+        int speedPxPerSec = 16;
+        int scrollOffset = (int)((now * speedPxPerSec) / 1000) % totalW;
+
+        int iconY = rect.y + (rect.height - 8) / 2;
+        int textY = rect.y + (rect.height - 7) / 2;
+
+        for (int k = -1; k < 3; k++) {
+            int curX = rect.x + 2 + (k * totalW) - scrollOffset;
+            for (size_t i = 0; i < count; i++) {
+                int itemX = curX;
+                int itemW = metrics[i].itemW;
+                curX += itemW;
+
+                if (itemX + itemW < minX || itemX >= maxX) continue;
+
+                int iconX = itemX;
+                int symX = iconX + 8 + gapIconSym;
+                int priceX = symX + metrics[i].symW + gapSymPrice;
+                int chgX = priceX + metrics[i].priceW + gapPriceChg;
+
+                drawClippedMarketIcon8x8(matrix, iconX, iconY, minX, maxX, minY, maxY, items[i].symbol);
+                drawClippedString(matrix, items[i].symbol, symX, textY, minX, maxX, minY, maxY, theme.text);
+                drawClippedString(matrix, metrics[i].priceBuf, priceX, textY, minX, maxX, minY, maxY, theme.primary);
+                drawClippedString(matrix, metrics[i].chgBuf, chgX, textY, minX, maxX, minY, maxY, metrics[i].trendCol);
+            }
+        }
+    } else if (rect.width >= 100 && rect.height <= 36) {
+        // Multi-line Horizontal Ticker for taller slots (e.g. 256x64 when market has 30px+ height)
         int itemW = 56;
         int totalW = (int)count * itemW;
         uint32_t now = millis();
-        // Calm, highly readable crawl speed: ~12 pixels / second
         int scrollOffset = (int)((now * 12) / 1000) % max(1, totalW);
 
         for (size_t i = 0; i < count; i++) {
@@ -770,6 +893,7 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
             }
         }
     } else {
+        // Vertical rolling list for narrow portrait layouts
         int rowH = 14;
         int totalH = (int)count * rowH;
         uint32_t now = millis();
@@ -796,11 +920,11 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
 }
 
 // ============================================================================
-// System Info Widget (Fluid Animated System Carousel)
+// System Info Widget (Fluid Animated System Carousel & Gauge)
 // ============================================================================
 
 void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const SystemData& sys, const DashboardTheme& theme) {
-    if (!matrix || rect.width < 16 || rect.height < 8) return;
+    if (!matrix || rect.width < 14 || rect.height < 8) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);
@@ -810,90 +934,139 @@ void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
     int minY = rect.y + 1;
     int maxY = rect.y + rect.height - 1;
 
-    int numPages = 3;
-    uint32_t period = 4000;
-    uint32_t phase = millis() % period;
-    int page = (millis() / period) % numPages;
-
-    int slideY = 0;
-    if (phase < 400) {
-        float progress = (float)phase / 400.0f;
-        slideY = (int)((1.0f - progress) * (rect.height - 4));
-    }
-
     int rssiBars = 1;
     if (sys.wifiRssi > -60) rssiBars = 4;
     else if (sys.wifiRssi > -70) rssiBars = 3;
-    else if (sys.wifiRssi > -85) rssiBars = 2;
+    else if (sys.wifiRssi > -80) rssiBars = 2;
 
-    auto renderSlide = [&](int p, int offsetY) {
-        int baseY = rect.y + 3 + offsetY;
-        if (p == 0) {
-            char ramBuf[12];
-            if (rect.width < 46) {
-                snprintf(ramBuf, sizeof(ramBuf), "R:%.0f%%", sys.ramUsagePct);
-            } else {
-                snprintf(ramBuf, sizeof(ramBuf), "RAM:%.0f%%", sys.ramUsagePct);
-            }
-            drawClippedString(matrix, ramBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.textDim);
-
-            // WiFi signal bars in bottom corner
-            int wx = rect.x + rect.width - 15;
-            int wy = baseY + rect.height - 8;
-            for (int b = 0; b < 4; b++) {
-                int bH = (b + 1) * 2;
-                uint16_t c = (b < rssiBars) ? theme.accent : theme.border;
-                for (int h = 0; h < bH; h++) {
-                    drawClippedPixel(matrix, wx + (b * 3), wy - h, minX, maxX, minY, maxY, c);
-                    drawClippedPixel(matrix, wx + (b * 3) + 1, wy - h, minX, maxX, minY, maxY, c);
-                }
-            }
-        } else if (p == 1) {
-            char upBuf[12];
-            int hrs = (int)(sys.uptimeSec / 3600);
-            int mins = (int)((sys.uptimeSec % 3600) / 60);
-            if (rect.width < 46) {
-                snprintf(upBuf, sizeof(upBuf), "%02d:%02d", hrs, mins);
-            } else {
-                snprintf(upBuf, sizeof(upBuf), "UP:%02d:%02d", hrs, mins);
-            }
-            drawClippedString(matrix, upBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.text);
-
-            if (rect.height >= 22) {
-                char sigBuf[10];
-                snprintf(sigBuf, sizeof(sigBuf), "%ddBm", sys.wifiRssi);
-                drawClippedString(matrix, sigBuf, rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.textDim);
-            }
-        } else {
-            char psramBuf[12];
-            uint32_t freePsram = ESP.getFreePsram();
-            if (freePsram > 1024 * 1024) {
-                if (rect.width < 46) {
-                    snprintf(psramBuf, sizeof(psramBuf), "%.1fM", (float)freePsram / (1024.0f * 1024.0f));
-                } else {
-                    snprintf(psramBuf, sizeof(psramBuf), "PS:%.1fM", (float)freePsram / (1024.0f * 1024.0f));
-                }
-            } else {
-                if (rect.width < 46) {
-                    snprintf(psramBuf, sizeof(psramBuf), "%uK", ESP.getFreeHeap() / 1024);
-                } else {
-                    snprintf(psramBuf, sizeof(psramBuf), "HP:%uK", ESP.getFreeHeap() / 1024);
-                }
-            }
-            drawClippedString(matrix, psramBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.primary);
-
-            if (rect.height >= 22) {
-                drawClippedString(matrix, "CPU:OK", rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.accent);
+    if (rect.height <= 20) {
+        // Compact slot layout (e.g. 128x32 upper row: ~30px wide, 15px high)
+        // 1. Draw 4-bar WiFi signal meter in right corner
+        int wx = rect.x + rect.width - 10;
+        int wy = rect.y + rect.height - 3;
+        for (int b = 0; b < 4; b++) {
+            int bH = (b + 1) * 2;
+            uint16_t c = (b < rssiBars) ? theme.accent : theme.border;
+            for (int h = 0; h < bH; h++) {
+                drawClippedPixel(matrix, wx + (b * 2), wy - h, minX, maxX, minY, maxY, c);
             }
         }
-    };
 
-    if (slideY > 0) {
-        int prevPage = (page - 1 + numPages) % numPages;
-        renderSlide(prevPage, -slideY);
-        renderSlide(page, (rect.height - 4) - slideY);
+        int availW = rect.width - 12;
+        uint32_t nowSec = millis() / 1000;
+        int cycle = (nowSec / 3) % 2;
+
+        const char* label = (cycle == 0) ? "CPU" : "RAM";
+        float usageVal = (cycle == 0) ? 15.0f : sys.ramUsagePct;
+
+        // Label on top
+        drawClippedString(matrix, label, rect.x + 2, rect.y + 2, minX, rect.x + availW, minY, maxY, theme.primary);
+
+        // Dynamic colored gauge bar on bottom
+        int barX = rect.x + 2;
+        int barW = max(4, availW - 3);
+        int barY = rect.y + rect.height - 4;
+        int barH = 2;
+        float usageRatio = constrain(usageVal / 100.0f, 0.0f, 1.0f);
+
+        for (int px = 0; px < barW; px++) {
+            float colRatio = (float)(px + 0.5f) / (float)barW;
+            uint16_t col;
+            if (colRatio <= usageRatio) {
+                if (colRatio < 0.20f) col = matrix->color565(0, 180, 255);
+                else if (colRatio < 0.40f) col = matrix->color565(0, 230, 80);
+                else if (colRatio < 0.60f) col = matrix->color565(255, 215, 0);
+                else if (colRatio < 0.80f) col = matrix->color565(255, 130, 0);
+                else col = matrix->color565(255, 45, 45);
+            } else {
+                col = matrix->color565(25, 30, 45);
+            }
+
+            for (int py = 0; py < barH; py++) {
+                drawClippedPixel(matrix, barX + px, barY + py, minX, maxX, minY, maxY, col);
+            }
+        }
     } else {
-        renderSlide(page, 0);
+        // Multi-page animated Carousel for taller slots (256x64)
+        int numPages = 3;
+        uint32_t period = 4000;
+        uint32_t phase = millis() % period;
+        int page = (millis() / period) % numPages;
+
+        int slideY = 0;
+        if (phase < 400) {
+            float progress = (float)phase / 400.0f;
+            slideY = (int)((1.0f - progress) * (rect.height - 4));
+        }
+
+        auto renderSlide = [&](int p, int offsetY) {
+            int baseY = rect.y + 3 + offsetY;
+            if (p == 0) {
+                char ramBuf[12];
+                if (rect.width < 46) {
+                    snprintf(ramBuf, sizeof(ramBuf), "R:%.0f%%", sys.ramUsagePct);
+                } else {
+                    snprintf(ramBuf, sizeof(ramBuf), "RAM:%.0f%%", sys.ramUsagePct);
+                }
+                drawClippedString(matrix, ramBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.textDim);
+
+                int wx = rect.x + rect.width - 15;
+                int wy = baseY + rect.height - 8;
+                for (int b = 0; b < 4; b++) {
+                    int bH = (b + 1) * 2;
+                    uint16_t c = (b < rssiBars) ? theme.accent : theme.border;
+                    for (int h = 0; h < bH; h++) {
+                        drawClippedPixel(matrix, wx + (b * 3), wy - h, minX, maxX, minY, maxY, c);
+                        drawClippedPixel(matrix, wx + (b * 3) + 1, wy - h, minX, maxX, minY, maxY, c);
+                    }
+                }
+            } else if (p == 1) {
+                char upBuf[12];
+                int hrs = (int)(sys.uptimeSec / 3600);
+                int mins = (int)((sys.uptimeSec % 3600) / 60);
+                if (rect.width < 46) {
+                    snprintf(upBuf, sizeof(upBuf), "%02d:%02d", hrs, mins);
+                } else {
+                    snprintf(upBuf, sizeof(upBuf), "UP:%02d:%02d", hrs, mins);
+                }
+                drawClippedString(matrix, upBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.text);
+
+                if (rect.height >= 22) {
+                    char sigBuf[10];
+                    snprintf(sigBuf, sizeof(sigBuf), "%ddBm", sys.wifiRssi);
+                    drawClippedString(matrix, sigBuf, rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.textDim);
+                }
+            } else {
+                char psramBuf[12];
+                uint32_t freePsram = ESP.getFreePsram();
+                if (freePsram > 1024 * 1024) {
+                    if (rect.width < 46) {
+                        snprintf(psramBuf, sizeof(psramBuf), "%.1fM", (float)freePsram / (1024.0f * 1024.0f));
+                    } else {
+                        snprintf(psramBuf, sizeof(psramBuf), "PS:%.1fM", (float)freePsram / (1024.0f * 1024.0f));
+                    }
+                } else {
+                    if (rect.width < 46) {
+                        snprintf(psramBuf, sizeof(psramBuf), "%uK", ESP.getFreeHeap() / 1024);
+                    } else {
+                        snprintf(psramBuf, sizeof(psramBuf), "HP:%uK", ESP.getFreeHeap() / 1024);
+                    }
+                }
+                drawClippedString(matrix, psramBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.primary);
+
+                if (rect.height >= 22) {
+                    drawClippedString(matrix, "CPU:OK", rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.accent);
+                }
+            }
+        };
+
+        if (slideY > 0) {
+            int prevPage = (page - 1 + numPages) % numPages;
+            renderSlide(prevPage, -slideY);
+            renderSlide(page, (rect.height - 4) - slideY);
+        } else {
+            renderSlide(page, 0);
+        }
     }
 
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);

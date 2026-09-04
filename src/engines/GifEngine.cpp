@@ -18,10 +18,10 @@ GifEngine::~GifEngine() {
 #include "../core/LayoutHelper.h"
 
 bool GifEngine::isDisplayVertical() const {
-    if (matrix && matrix->height() > matrix->width()) return true;
+    if (matrix && (matrix->height() > matrix->width() || matrix->width() < 48 || matrix->height() > (matrix->width() * 3) / 2)) return true;
     if (m_context) {
         DisplayGeometry g = m_context->getGeometry();
-        if (g.height > g.width) return true;
+        if (g.height > g.width || g.width < 48 || g.height > (g.width * 3) / 2) return true;
         if (g.layoutClass == LayoutClass::PORTRAIT || g.layoutClass == LayoutClass::TALL) return true;
     }
     return false;

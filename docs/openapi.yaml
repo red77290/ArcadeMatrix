@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ArcadeMatrix Local API
   description: API for controlling and configuring the ArcadeMatrix ESP32 firmware locally over Wi-Fi.
-  version: 3.0.0
+  version: 3.0.1
 servers:
   - url: http://ArcadeMatrix.local
     description: Default local mDNS address (or use the device's assigned IP)
@@ -182,6 +182,7 @@ paths:
                       brightness_limit: { type: integer, example: 50 }
                       idle_fighter_enabled: { type: boolean, example: false }
                       idle_fighter_interval: { type: integer, example: 30 }
+                      idle_fighter_speed: { type: integer, example: 100, minimum: 25, maximum: 200 }
                   matrix:
                     type: object
                     properties:
@@ -1022,7 +1023,41 @@ paths:
                   description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
       responses:
         '200':
+  /api/ota/check:
+    get:
+      tags:
+        - System
+      summary: Check GitHub Releases for online OTA updates
+      description: Fetches latest release from GitHub API, matching device architecture (esp32s3/esp32).
+      responses:
+        '200':
+          description: Release update check response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_version: { type: string, example: "3.0.1" }
+                  current_arch: { type: string, example: "esp32s3" }
+                  latest_version: { type: string, example: "3.0.1" }
+                  update_available: { type: boolean, example: false }
+
+  /api/ota/auto-update:
+    post:
+      tags:
+        - System
+      summary: 1-Click Online OTA Download and Installation
+      description: Downloads firmware binary from GitHub and flashes OTA partition automatically.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                download_url: { type: string }
+      responses:
+        '200':
           description: Firmware updated successfully, device will reboot.
         '400':
-          description: Update failed or no file provided.
+          description: Download failed or invalid firmware binary.
 

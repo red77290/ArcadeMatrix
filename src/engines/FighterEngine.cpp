@@ -490,7 +490,7 @@ public:
         fg.hud = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)(fg.isTate ? 14 : 6) };
 
         if (fg.isTate) {
-            fg.groundY = screenH - 2;
+            fg.groundY = screenH - 1;
             fg.p1SpawnX = -(p1Width * fg.scale);
             fg.p2SpawnX = screenW;
         } else {
@@ -564,7 +564,7 @@ void FighterEngine::startFight() {
         setPlayerState(p1, FIGHTER_WALK);
         setPlayerState(p2, FIGHTER_WALK);
         p1.hasHit = false; p2.hasHit = false; p1.isDead = false; p2.isDead = false;
-        fightStartTime = millis(); fightEndTime = 0; lastMoveTime = millis();
+        fightStartTime = millis(); fightEndTime = 0; faceoffStartTime = 0; lastMoveTime = millis();
         LOGI("FighterEngine", "🥊 Match -> [P1: %s] (H:%d) vs [P2: %s] (H:%d) [%dx%d %s]", 
              p1.name.c_str(), p1.height, p2.name.c_str(), p2.height, screenW, screenH, fg.isTate ? "TATE" : "LANDSCAPE");
         active = true;
@@ -639,8 +639,9 @@ bool FighterEngine::loop() {
     }
     
     uint32_t now = millis();
+    extern ConfigLoader config;
+    uint32_t speed = (config.system.idle_fighter_speed >= 25 && config.system.idle_fighter_speed <= 200) ? config.system.idle_fighter_speed : 100;
     
-    // Update frames
     // Update frames
     FgtAnimation* anim1 = nullptr;
     if (p1.state == FIGHTER_STAND) anim1 = p1.animStand.loaded ? &p1.animStand : &p1.animWalk;
@@ -653,12 +654,14 @@ bool FighterEngine::loop() {
     else if (p1.state == FIGHTER_FALL) anim1 = &p1.animFall;
     
     if (anim1 && anim1->loaded && anim1->frameDelays && (p1.currentFrame < anim1->numFrames)) {
-        uint32_t delay = anim1->frameDelays[p1.currentFrame];
+        uint32_t delay = (anim1->frameDelays[p1.currentFrame] * 100) / speed;
         if (p1.state != FIGHTER_STAND && p1.state != FIGHTER_WIN) {
-            delay = (delay * 3) / 4; // 25% faster combat animation
-            if (delay > 70) delay = 70;
+            delay = (delay * 3) / 4; // faster combat animation
+            uint32_t maxCombat = (70 * 100) / speed;
+            if (delay > maxCombat) delay = maxCombat;
         }
-        if (delay < 25) delay = 25;
+        uint32_t minDelay = (25 * 100) / speed;
+        if (delay < minDelay) delay = minDelay;
         if (now - p1.lastFrameTime >= delay) {
             p1.currentFrame++;
             p1.lastFrameTime = now;
@@ -682,12 +685,14 @@ bool FighterEngine::loop() {
     else if (p2.state == FIGHTER_FALL) anim2 = &p2.animFall;
     
     if (anim2 && anim2->loaded && anim2->frameDelays && (p2.currentFrame < anim2->numFrames)) {
-        uint32_t delay = anim2->frameDelays[p2.currentFrame];
+        uint32_t delay = (anim2->frameDelays[p2.currentFrame] * 100) / speed;
         if (p2.state != FIGHTER_STAND && p2.state != FIGHTER_WIN) {
-            delay = (delay * 3) / 4; // 25% faster combat animation
-            if (delay > 70) delay = 70;
+            delay = (delay * 3) / 4; // faster combat animation
+            uint32_t maxCombat = (70 * 100) / speed;
+            if (delay > maxCombat) delay = maxCombat;
         }
-        if (delay < 25) delay = 25;
+        uint32_t minDelay = (25 * 100) / speed;
+        if (delay < minDelay) delay = minDelay;
         if (now - p2.lastFrameTime >= delay) {
             p2.currentFrame++;
             p2.lastFrameTime = now;
@@ -718,10 +723,12 @@ bool FighterEngine::loop() {
         int p2_target_x = centerX + (engage_dist / 2) - ((p2.width_px - p2.origin_x) * scale);
 
         // Move towards center target
+        uint32_t stepInterval = (20 * 100) / speed;
+        if (stepInterval < 5) stepInterval = 5;
         uint32_t elapsed = now - lastMoveTime;
-        if (elapsed >= 20) { // Fluid arcade pace (1 pixel per 20ms -> 50 FPS)
-            int steps = (elapsed / 20);
-            lastMoveTime += steps * 20;
+        if (elapsed >= stepInterval) {
+            int steps = (elapsed / stepInterval);
+            lastMoveTime += steps * stepInterval;
 
             for (int s = 0; s < steps; s++) {
                 if (p1.x < p1_target_x) {
@@ -743,40 +750,43 @@ bool FighterEngine::loop() {
             setPlayerState(p2, FIGHTER_STAND);
         }
 
-        // Check if both combatants are ready or within engagement distance
+        // Check if both combatants are ready at center target
         bool p1Ready = (p1.x >= p1_target_x);
         bool p2Ready = (p2.x <= p2_target_x);
 
-        int p1_world_origin = p1.x + (p1.origin_x * scale);
-        int p2_world_origin = p2.x + ((p2.width_px - p2.origin_x) * scale);
-        int dist = p2_world_origin - p1_world_origin;
-
-        if ((p1Ready && p2Ready) || (dist <= engage_dist)) {
-            // Fight! Random winner
-            FighterPlayer* attacker = ((esp_random() % 2) == 0) ? &p1 : &p2;
-            FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
-
-            FighterState atkState = FIGHTER_ATTACK;
-            FighterState tgtState = FIGHTER_HIT;
-            bool isHeavy = false;
-
-            int rnd = esp_random() % 100;
-            if (attacker->animSuper.loaded && rnd < 50) {
-                atkState = FIGHTER_SUPER;
-                tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
-                isHeavy = true;
-            } else if (attacker->animSpecial.loaded && rnd < 80) {
-                atkState = FIGHTER_SPECIAL;
-                tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
-                isHeavy = true;
+        if (p1Ready && p2Ready) {
+            if (faceoffStartTime == 0) {
+                faceoffStartTime = now;
             }
 
-            setPlayerState(*attacker, atkState);
-            setPlayerState(*target, tgtState);
+            uint32_t faceoffDuration = (350 * 100) / speed;
+            if (now - faceoffStartTime >= faceoffDuration) {
+                // Fight! Random winner
+                FighterPlayer* attacker = ((esp_random() % 2) == 0) ? &p1 : &p2;
+                FighterPlayer* target = (attacker == &p1) ? &p2 : &p1;
 
-            if (isHeavy) {
-                hitStopUntilMillis = millis() + 60;
-                shakeRemainingFrames = 6;
+                FighterState atkState = FIGHTER_ATTACK;
+                FighterState tgtState = FIGHTER_HIT;
+                bool isHeavy = false;
+
+                int rnd = esp_random() % 100;
+                if (attacker->animSuper.loaded && rnd < 50) {
+                    atkState = FIGHTER_SUPER;
+                    tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
+                    isHeavy = true;
+                } else if (attacker->animSpecial.loaded && rnd < 80) {
+                    atkState = FIGHTER_SPECIAL;
+                    tgtState = target->animFall.loaded ? FIGHTER_FALL : FIGHTER_HIT;
+                    isHeavy = true;
+                }
+
+                setPlayerState(*attacker, atkState);
+                setPlayerState(*target, tgtState);
+
+                if (isHeavy) {
+                    hitStopUntilMillis = millis() + 60;
+                    shakeRemainingFrames = 6;
+                }
             }
         }
     }
@@ -887,7 +897,7 @@ void FighterEngine::draw() {
     
     int screenW = matrix->width();
     int screenH = matrix->height();
-    bool isTateMode = (screenH > screenW);
+    bool isTateMode = (screenH > (screenW * 3) / 2 || screenW < 48);
 
     // Draw the dead player first (background), then the winner (foreground)
     if (p1.state == FIGHTER_HIT || p1.state == FIGHTER_FALL || p1.isDead) {
@@ -898,29 +908,33 @@ void FighterEngine::draw() {
         drawPlayer(p1, globalOffsetY);
     }
 
-    // Responsive Arcade HUD in Tate mode / Large screens
-    if (isTateMode && screenH >= 64) {
-        int barW = (screenW - 10) / 2;
+    // Responsive Arcade HUD in Tate mode (only 64x256+) / Large horizontal screens
+    bool showHud = isTateMode ? (screenW >= 64) : (screenH >= 32);
+    if (showHud) {
+        int barW = min(20, (screenW - 16) / 2);
         if (barW > 2) {
             // Player 1 Health Bar (Left)
             uint16_t p1Color = (p1.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
-            matrix->drawRect(1, 2, barW, 4, matrix->color565(50, 50, 60));
-            matrix->fillRect(2, 3, p1.isDead ? 1 : (barW - 2), 2, p1Color);
+            matrix->drawRect(2, 2, barW, 4, matrix->color565(50, 50, 60));
+            matrix->fillRect(3, 3, p1.isDead ? 1 : (barW - 2), 2, p1Color);
 
             // VS Badge in Center
-            int vsX = (screenW / 2) - 2;
+            int vsX = (screenW / 2) - 1;
             matrix->drawPixel(vsX, 3, matrix->color565(255, 60, 60));
+            matrix->drawPixel(vsX + 1, 3, matrix->color565(255, 60, 60));
+            matrix->drawPixel(vsX, 4, matrix->color565(255, 220, 0));
             matrix->drawPixel(vsX + 1, 4, matrix->color565(255, 220, 0));
 
             // Player 2 Health Bar (Right)
             uint16_t p2Color = (p2.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
-            int p2BarX = screenW - 1 - barW;
+            int p2BarX = screenW - 2 - barW;
             matrix->drawRect(p2BarX, 2, barW, 4, matrix->color565(50, 50, 60));
             matrix->fillRect(p2BarX + 1, 3, p2.isDead ? 1 : (barW - 2), 2, p2Color);
         }
 
-        // On ultra-tall screens (32x128, 64x256), draw MUGEN arcade banner
-        if (screenH >= 128) {
+        // On ultra-tall screens (64x256), draw MUGEN arcade banner under health bars
+        bool showTags = (isTateMode && screenW >= 64 && screenH >= 200) || (!isTateMode && screenH >= 64);
+        if (showTags) {
             matrix->setFont(nullptr);
             matrix->setTextSize(1);
             matrix->setTextColor(matrix->color565(255, 215, 0));

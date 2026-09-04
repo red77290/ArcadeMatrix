@@ -246,7 +246,51 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | `show_uptime` | `bool` | `true` | `true`, `false` | Affiche le temps d'activité (Uptime) en heures/jours. |
 | `temp_unit` | `Options` | `C` | `C`, `F` | Unité de température : Celsius (`C`) ou Fahrenheit (`F`). |
 | `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
-| `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
+### Moteur : `gnews` (Actualités en Direct & Ticker GNews)
+
+Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel alimenté par l'API [GNews.io](https://gnews.io). Il intègre un pool multi-clés d'API avec bascule automatique, une persistance sur carte SD/disque et une gestion optimisée des quotas journaliers.
+
+| Champ | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Clés séparées par virgules | Clés API GNews.io (supporte plusieurs clés : `cle1,cle2,cle3` pour pool multi-comptes avec bascule automatique). |
+| `category` | `Options` | `technology` | `general`, `world`, `nation`, `business`, `technology`, `entertainment`, `sports`, `science`, `health` | Catégorie thématique principale ou liste séparée par des virgules pour rotation. |
+| `keywords` | `String` | `""` | Texte / Requête | Mots-clés de recherche ou tags personnalisés (ex. `ai OR arcade`). |
+| `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Langue des articles (`auto` synchronise avec la langue système). |
+| `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Édition régionale du pays. |
+| `max_articles` | `int` | `5` | `3` à `15` | Nombre maximal d'articles mis en cache et alternés par cycle. |
+| `requests_per_day` | `int` | `10` | `1` à `100` | Budget total de requêtes API alloué par 24 heures (offre gratuite GNews : 100 requêtes/jour/clé). |
+| `force_refresh` | `bool` | `false` | `true`, `false` | Action : purge immédiatement le cache de l'ancienne langue et interroge l'API sans réinitialiser les compteurs de quota. |
+| `cache_ttl_min` | `int` | `30` | `5` à `120` | Intervalle minimal en minutes entre requêtes quand le budget journalier est détendu. |
+| `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Style d'animation (défilement horizontal fluide, défilement vertical, pagination multiligne, ou serpentin alterné). |
+| `scroll_speed` | `int` | `3` | `1` à `10` | Vitesse de défilement (1 : Lent à 10 : Turbo). |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` à `4000` | Temps de pause fixe (ms) au début du titre avant le défilement. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` à `4000` | Temps de pause fixe (ms) à la fin du titre avant la transition. |
+| `article_duration_sec` | `int` | `12` | `5` à `60` | Durée d'affichage par article en secondes. |
+| `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Schéma de couleurs visuel. |
+| `show_category_badge` | `bool` | `true` | `true`, `false` | Affiche le badge thématique coloré (`[TECH]`, `[WORLD]`, etc.). |
+| `show_source` | `bool` | `true` | `true`, `false` | Affiche le nom de la source d'actualités (`BBC News`, `Reuters`, etc.). |
+| `show_time_ago` | `bool` | `true` | `true`, `false` | Affiche l'ancienneté relative (`5m ago`, `2h ago`). |
+| `show_beacon` | `bool` | `true` | `true`, `false` | Affiche le témoin lumineux de direct clignotant. |
+| `show_progress_dots` | `bool` | `true` | `true`, `false` | Affiche les points indicateurs de progression (`● ○ ○ ○ ○`). |
+
+#### Architecture & Optimisation des Quotas GNews
+1. **Pool Multi-Clés & Bascule Automatique (Failover) :**
+   - Vous pouvez renseigner plusieurs clés API GNews séparées par des virgules (`api_key: "cle1,cle2,cle3"`).
+   - Dès qu'une clé est invalide (`HTTP 401/403`) ou épuise son quota de 100 requêtes/jour (`HTTP 429/403`), le moteur bascule instantanément sur la clé suivante et retente la requête.
+   - 2 comptes = 200 requêtes/jour ; 3 comptes = 300 requêtes/jour.
+2. **Persistance sur Fichier (`/gnews_cache.json` sur SD ESP32, `gnews_cache.json` sur RPi) :**
+   - Les articles et compteurs de télémétrie sont persistés sur stockage physique. Au redémarrage, les titres s'affichent immédiatement sans consommer de quota API ni bloquer l'écran.
+   - En cas de coupure réseau ou de quota épuisé, les articles en cache sont conservés et continuent de défiler 24h/24.
+3. **Budget de Requêtes Journalier (Défaut : 10 reqs/jour) & Préservation des Clés Partagées :**
+   - Bien que les comptes gratuits GNews.io autorisent jusqu'à 100 requêtes/jour par clé, les utilisateurs partagent fréquemment leur clé avec d'autres services ou outils domotiques externes.
+   - Afin d'éviter qu'ArcadeMatrix ne monopolise ou n'épuise la clé, le moteur adopte par défaut un budget conservateur de **10 requêtes par jour** (`requests_per_day : 10`, espacées régulièrement toutes les 2h24 : $\Delta t = \frac{86400}{10} = 8640\text{ s}$).
+   - L'utilisateur peut librement ajuster ce budget de `1` à `100`. L'interface de configuration Web affiche dynamiquement le décompte par rapport au budget choisi (ex : `Clé 1 (..abcd) : 4/10 reqs [Active]`).
+   - Si plusieurs catégories sont spécifiées (ex : `technology,world`), les requêtes alternent en round-robin ($\frac{\text{requests\_per\_day}}{N}$ par catégorie).
+4. **Prise en Compte Différée & Forçage Immédiat :**
+   - Modifier des paramètres dans l'interface Web s'applique au prochain cycle prévu pour éviter de gaspiller le quota.
+   - Activer `force_refresh: true` purge les articles de l'ancienne langue et déclenche un appel immédiat tout en préservant le suivi des compteurs journaliers.
+5. **Remise à Zéro Automatique à Minuit (00:00 UTC) :**
+   - Le changement de jour calendrier réinitialise automatiquement les compteurs d'usage à 0 et lève les alertes de limite de quota.
 
 ### Moteur : `fighter` (Combat M.U.G.E.N)
 | Champ | Type | Défaut | Options | Description |

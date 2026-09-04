@@ -33,23 +33,38 @@ with open(output_file, "w") as f:
 
 print(f"Successfully generated {output_file} ({len(data)} bytes).")
 
-# Determine Firmware Version dynamically from Git Tag or CI/CD env
+# Determine Firmware Version dynamically from CI/CD Tag -> Git Tag -> VERSION file
 firmware_version = ""
 
-# 1. Read base version from VERSION file (Single Source of Truth)
-version_file = "VERSION"
-if os.path.exists(version_file):
-    with open(version_file, "r") as vf:
-        firmware_version = vf.read().strip().lstrip("v")
-
-# 2. Check CI/CD environment variable (e.g. GITHUB_REF_NAME when pushed with tag v3.0.0)
+# 1. Check CI/CD environment variable (e.g. GITHUB_REF_NAME when pushed with tag v3.0.1)
 ref_name = os.environ.get("GITHUB_REF_NAME", "")
 if ref_name.startswith("v") and re.match(r"^v\d+\.\d+", ref_name):
     firmware_version = ref_name.lstrip("v")
 
-# 3. Fallback if still empty
+# 2. Dynamic Git Tag detection via git describe
 if not firmware_version:
-    firmware_version = "3.0.0"
+    try:
+        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always']).decode('ascii').strip()
+        m = re.match(r"^v?(\d+\.\d+\.\d+)", tag_desc)
+        if m:
+            firmware_version = m.group(1)
+            if "-" in tag_desc and not tag_desc.startswith(f"v{firmware_version}-0"):
+                firmware_version = f"{firmware_version}-dev"
+        elif tag_desc:
+            firmware_version = tag_desc.lstrip("v")
+    except Exception:
+        pass
+
+# 3. Read base version from VERSION file if present
+if not firmware_version:
+    version_file = "VERSION"
+    if os.path.exists(version_file):
+        with open(version_file, "r") as vf:
+            firmware_version = vf.read().strip().lstrip("v")
+
+# 4. Fallback if still empty
+if not firmware_version:
+    firmware_version = "0.0.0"
 
 # Generate Git commit hash
 try:
