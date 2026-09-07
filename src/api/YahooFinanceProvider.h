@@ -8,7 +8,8 @@ public:
     bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) override;
     bool fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) override;
     
-    // Public parsing methods for TDD
+    // Public parsing methods for TDD & Streaming
     bool parsePayload(const String& payload, float& outPrice, float& outChange);
+    bool parsePayload(Stream& stream, float& outPrice, float& outChange);
     bool parseChart(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax);
 };

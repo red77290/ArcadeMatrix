@@ -351,14 +351,17 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | `weather_city` | `String` | `Paris` | Text | City for weather forecasts. |
 | `weather_api_key` | `String` | `""` | Optional API Key | OpenWeatherMap API key (leave blank to automatically use free Open-Meteo service without API key). |
 | `show_indoor_temp` | `bool` | `true` | `true`, `false` | Display onboard SHTC3 indoor room temperature and humidity. |
-| `temp_offset` | `float` | `-3.5` | `-30.0` to `30.0` | Calibration offset to compensate for CPU heat dissipation (in chosen temperature unit). |
+| `temp_unit` | `Options` | `system` | `system:System (General), C:Celsius (°C), F:Fahrenheit (°F)` | Temperature display unit. |
+| `temp_offset` | `float` | `""` | `-30.0` to `30.0` | Calibration offset to compensate for CPU heat dissipation (leave empty for General System setting). |
+| `refresh_interval` | `Options` | `10` | `1`, `5`, `10`, `15`, `30`, `60` min | Data refresh frequency for weather and markets. |
+| `format_24h` | `Options` | `system` | `system:System (General), 24h:24 Hours, 12h:12 Hours` | 24-hour vs 12-hour AM/PM time display. |
+| `lang` | `Options` | `system` | `system:System (General), fr:Français, en:English, es:Español` | Language for weather descriptions and widget labels (`system` syncs with general system language). |
 | `show_markets` | `bool` | `true` | `true`, `false` | Display crypto and stock market ticker badges. |
 | `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Top 20 tags / Free text | Cryptos via Binance API (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) and Stocks/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
 | `show_sysinfo` | `bool` | `true` | `true`, `false` | Display RAM, CPU & WiFi vitals gauge. |
 | `show_date` | `bool` | `true` | `true`, `false` | Display day and date badge. |
 | `show_seconds` | `bool` | `true` | `true`, `false` | Display sweeping second hand or seconds digits. |
 | `smooth_seconds` | `bool` | `true` | `true`, `false` | Continuous sweeping second hand vs crisp 1s ticks. |
-| `temp_unit` | `Options` | `C` | `C:Celsius (°C), F:Fahrenheit (°F)` | Temperature display unit. |
 | `offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel offset. |
 | `offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel offset. |
 
