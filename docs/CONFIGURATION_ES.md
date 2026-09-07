@@ -339,6 +339,54 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 | `speed` | `int` | `50` | `10` a `200` | Milisegundos por píxel de desplazamiento (menor = más rápido; ignorado en estático). |
 | `font` | `String` | `Default` | Dinámico | Archivo de fuente desde `/fonts/`. |
 
+### Motor: `dashboard` (Master Deck Horizontal y Hub Multi-Widgets)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `clock_mode` | `Options` | `1` | `0:Digital Modern, 1:Pixel-Art Watch Dial, 2:Minimal` | Estilo visual del reloj principal. |
+| `theme` | `Options` | `0` | `0:Cyberpunk Neon, 1:Arcade Amber HUD, 2:Minimalist Luxury, 3:Matrix Phosphor` | Paleta de colores para widgets y bisel. |
+| `show_clock` | `bool` | `true` | `true`, `false` | Muestra el reloj principal. |
+| `show_world_clock` | `bool` | `true` | `true`, `false` | Muestra el distintivo de husos horarios mundiales. |
+| `world_clocks` | `String` (Multi) | `NYC,TYO,LON` | Etiquetas preestablecidas / Texto libre | Códigos de ciudades/aeropuertos mundiales (`NYC`, `TYO`, `LON`, `PAR`, `LAX`, `SFO`, `DXB`, `SIN`, `HKG`, `SYD`, `BER`, `ROM`, `MAD`, `AMS`, `YUL`, `UTC`) o compensaciones personalizadas (`REU:+4`, `NYC:-4`). |
+| `show_weather` | `bool` | `true` | `true`, `false` | Muestra el tiempo exterior y la temperatura. |
+| `weather_city` | `String` | `Paris` | Texto | Ciudad para los pronósticos meteorológicos. |
+| `weather_api_key` | `String` | `""` | Clave API Opcional | Clave API de OpenWeatherMap (dejar en blanco para usar el servicio gratuito Open-Meteo sin clave). |
+| `show_indoor_temp` | `bool` | `true` | `true`, `false` | Muestra la temperatura y humedad interior del sensor SHTC3. |
+| `temp_unit` | `Options` | `system` | `system:System (General), C:Celsius (°C), F:Fahrenheit (°F)` | Unidad de visualización de temperatura. |
+| `temp_offset` | `float` | `""` | `-30.0` a `30.0` | Offset de calibración para compensar la disipación térmica de la CPU (dejar en blanco para el ajuste general). |
+| `refresh_interval` | `Options` | `10` | `1`, `5`, `10`, `15`, `30`, `60` min | Frecuencia de actualización de datos meteorológicos y de mercado. |
+| `format_24h` | `Options` | `system` | `system:System (General), 24h:24 Horas, 12h:12 Horas` | Formato de hora 24h o 12h AM/PM. |
+| `lang` | `Options` | `system` | `system:System (General), fr:Français, en:English, es:Español` | Idioma de las descripciones del clima y etiquetas de los widgets (`system` sincroniza con el idioma general). |
+| `show_markets` | `bool` | `true` | `true`, `false` | Muestra la marquesina de cotizaciones de criptomonedas y acciones. |
+| `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Top 20 / Texto libre | Criptomonedas vía Binance (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) y Acciones/ETFs vía Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
+| `show_sysinfo` | `bool` | `true` | `true`, `false` | Muestra la barra de estado del sistema (RAM, CPU, WiFi). |
+| `show_date` | `bool` | `true` | `true`, `false` | Muestra el distintivo de día y fecha. |
+| `show_seconds` | `bool` | `true` | `true`, `false` | Muestra el segundero o los dígitos de segundos. |
+| `smooth_seconds` | `bool` | `true` | `true`, `false` | Movimiento continuo suave del segundero frente a tictac neto de 1s. |
+| `offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal en píxeles. |
+| `offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical en píxeles. |
+
+> **Auto-Escalado Dinámico**: Cuando los widgets están ocultos, la pantalla se redimensiona dinámicamente para ocupar el 100% de la matriz sin bordes negros ni espacios vacíos.
+
+### Motor: `visualizer` (Visualizador de Audio en Tiempo Real)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Modo de renderizado: Barras de Espectro, Osciloscopio, Radial Circular o Fuego Neón. |
+| `gain` | `int` | `24` | `0` a `30` | Ganancia del micrófono por hardware en dB (códec ES7210). |
+| `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Gradiente de color para barras y ondas. |
+
+### Motor: `decibel` (Sonómetro de Nivel Acústico)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `alert_threshold_db` | `int` | `85` | `40` a `120` | Umbral de advertencia de presión acústica. |
+| `show_peak` | `bool` | `true` | `true`, `false` | Muestra el indicador de pico sostenido. |
+
+### Motor: `temp` (Monitor de Clima Interior)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `show_humidity` | `bool` | `true` | `true`, `false` | Muestra el porcentaje de humedad relativa. |
+| `temp_unit` | `Options` | `C` | `C`, `F` | Visualización en Celsius o Fahrenheit. |
+| `temp_offset` | `float` | `-3.5` | `-30.0` a `30.0` | Compensación de calibración (en la unidad elegida). |
+
 ### Motor: `marquee`
 | Campo | Tipo | Predeterminado | Descripción |
 | :--- | :--- | :--- | :--- |

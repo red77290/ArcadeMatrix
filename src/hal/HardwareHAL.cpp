@@ -151,6 +151,7 @@ bool HardwareHAL::probeSHTC3() {
 }
 
 bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
+    uint8_t t1, t2, tempCrc, h1, h2, humCrc;
     {
         std::lock_guard<std::mutex> lock(g_i2cMutex);
         // Wakeup SHTC3
@@ -167,13 +168,9 @@ bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
         if (Wire.endTransmission() != 0) {
             return false;
         }
-    }
 
-    delay(15); // Wait 15ms for measurement (mutex released so other I2C users can proceed)
+        delay(15); // Wait 15ms for measurement with I2C bus safely locked
 
-    uint8_t t1, t2, tempCrc, h1, h2, humCrc;
-    {
-        std::lock_guard<std::mutex> lock(g_i2cMutex);
         Wire.requestFrom((uint8_t)SHTC3_I2C_ADDR, (size_t)6);
         if (Wire.available() < 6) {
             return false;
@@ -245,6 +242,7 @@ EnvironmentData HardwareHAL::readEnvironment(float tempOffset) {
 
 bool HardwareHAL::probeES7210() {
 #if defined(ES7210_I2C_ADDR)
+    std::lock_guard<std::mutex> lock(g_i2cMutex);
     Wire.beginTransmission(ES7210_I2C_ADDR);
     return (Wire.endTransmission() == 0);
 #else
@@ -254,6 +252,8 @@ bool HardwareHAL::probeES7210() {
 
 bool HardwareHAL::configureES7210() {
 #if defined(ES7210_I2C_ADDR)
+    std::lock_guard<std::mutex> lock(g_i2cMutex);
+
     // 0. If ES8311 DAC is present at I2C address 0x18, power up its I2S clock interface to release shared bus
     Wire.beginTransmission(0x18);
     if (Wire.endTransmission() == 0) {
@@ -279,11 +279,11 @@ bool HardwareHAL::configureES7210() {
 
     Wire.beginTransmission(ES7210_I2C_ADDR);
     Wire.write(0x00);
-    Wire.write(0x32);
+    Wire.write(0x41);
     Wire.endTransmission();
     delay(10);
 
-    // 2. Official esp_codec_dev ES7210 Register sequence for 16kHz, 16-bit, I2S Master/Slave
+    // 2. Official esp_codec_dev / esp-adf ES7210 Register sequence
     uint8_t initCmds[][2] = {
         // Initialization time
         {0x09, 0x30}, // TIME_CONTROL0
@@ -295,12 +295,15 @@ bool HardwareHAL::configureES7210() {
         {0x21, 0x2A}, // ADC34_HPF1
         {0x20, 0x0A}, // ADC34_HPF2
         
-        // I2S format (16-bit, standard, TDM disabled)
-        {0x11, 0x62}, // 0x60 (16-bit) | 0x02 (Standard I2S)
+        // Secondary / Slave mode
+        {0x08, 0x00},
+
+        // I2S format (16-bit, standard I2S format 0x00, TDM disabled)
+        {0x11, 0x60}, // 0x60 (16-bit) | 0x00 (Standard I2S format)
         {0x12, 0x00}, // TDM disabled
         
-        // Analog power and VMID voltage
-        {0x40, 0xC3},
+        // Analog power and VMID voltage (0x43: analog active, VMID 5k startup)
+        {0x40, 0x43},
         
         // MIC bias 2.87V
         {0x41, 0x70},
@@ -325,12 +328,21 @@ bool HardwareHAL::configureES7210() {
         {0x04, 0x01}, // LRCK_DIVH
         {0x05, 0x00}, // LRCK_DIVL
         
-        // Power down DLL
-        {0x06, 0x04},
+        // Power down DLL: 0x00 clears all power-down blocks (full power on)
+        {0x06, 0x00},
         
-        // Power on MIC1-4 bias & ADC1-4 & PGA1-4 Power
-        {0x4B, 0x0F},
-        {0x4C, 0x0F},
+        // Clock off register: 0x00 turns all ADC clocks ON
+        {0x01, 0x00},
+
+        // CRITICAL: Disable Automute and un-mute all ADC channels!
+        // Prevents ES7210 from hardware-muting digital audio to 0 after silence
+        {0x13, 0x00}, // Automute disabled
+        {0x14, 0x00}, // ADC34 unmuted
+        {0x15, 0x00}, // ADC12 unmuted
+
+        // Power on MIC1-4 bias & ADC1-4 & PGA1-4 Power (0x00 powers on per official driver)
+        {0x4B, 0x00},
+        {0x4C, 0x00},
         
         // Volume 0dB (191 = 0xBF)
         {0x1B, 0xBF},
@@ -448,6 +460,39 @@ void HardwareHAL::stopAudioSampling() {
     LOGI("HardwareHAL", "I2S DMA Audio Sampling STOPPED (Lazy Sampling).");
 }
 
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+// Auto-recovery watchdog: if DMA reads bytes but incoming PCM samples are digital 0 for >60 frames (~1s),
+// re-assert unmute on ES7210. Shared between DecibelEngine and VisualizerEngine.
+void HardwareHAL::checkAndRecoverES7210(int16_t maxPeak, size_t bytesRead) {
+    static int zeroPeakCount = 0;
+    if (maxPeak == 0 && bytesRead > 0) {
+        zeroPeakCount++;
+        if (zeroPeakCount == 60) {
+            std::lock_guard<std::mutex> lock(g_i2cMutex);
+            Wire.beginTransmission(ES7210_I2C_ADDR);
+            Wire.write(0x13); Wire.write(0x00); // Automute disabled
+            Wire.endTransmission();
+            Wire.beginTransmission(ES7210_I2C_ADDR);
+            Wire.write(0x14); Wire.write(0x00); // ADC34 unmuted
+            Wire.endTransmission();
+            Wire.beginTransmission(ES7210_I2C_ADDR);
+            Wire.write(0x15); Wire.write(0x00); // ADC12 unmuted
+            Wire.endTransmission();
+            Wire.beginTransmission(ES7210_I2C_ADDR);
+            Wire.write(0x00); Wire.write(0x41); // Device enable
+            Wire.endTransmission();
+            LOGW("HardwareHAL", "Watchdog: ES7210 zero signal detected, re-asserted unmute.");
+        } else if (zeroPeakCount > 180) {
+            zeroPeakCount = 0;
+            configureES7210();
+            LOGW("HardwareHAL", "Watchdog: ES7210 reconfigured after prolonged silence.");
+        }
+    } else if (maxPeak > 0) {
+        zeroPeakCount = 0;
+    }
+}
+#endif
+
 float HardwareHAL::getDecibels(float dbCalibration) {
     if (!audioActive) {
         startAudioSampling();
@@ -501,6 +546,7 @@ float HardwareHAL::getDecibels(float dbCalibration) {
         db = 20.0f * log10f(rms / 32768.0f) + 120.0f;
     }
     
+
     // Apply user calibration
     db += dbCalibration;
 
@@ -508,13 +554,15 @@ float HardwareHAL::getDecibels(float dbCalibration) {
     if (db < 30.0f) db = 30.0f;
     if (db > 110.0f) db = 110.0f;
 
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    checkAndRecoverES7210(maxPeak, bytesRead);
+#endif
+
     static unsigned long lastAudioLog = 0;
-    if (millis() - lastAudioLog > 1000) {
+    if (millis() - lastAudioLog > 10000) {
         lastAudioLog = millis();
-        LOGI("HardwareHAL", "I2S Audio Debug: bytesRead=%d, maxPeak=%d, rms=%.1f, calcDb=%.1f dB | PCM: [%d, %d, %d, %d, %d, %d, %d, %d]",
-             (int)bytesRead, (int)maxPeak, rms, db,
-             sampleBuf[0], sampleBuf[1], sampleBuf[2], sampleBuf[3],
-             sampleBuf[4], sampleBuf[5], sampleBuf[6], sampleBuf[7]);
+        LOGD("HardwareHAL", "I2S Audio: bytesRead=%d, maxPeak=%d, rms=%.1f, db=%.1f dB",
+             (int)bytesRead, (int)maxPeak, rms, db);
     }
 
     return db;
@@ -537,12 +585,19 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
         return false;
     }
 
-    // First pass: find DC offset
+    // First pass: find DC offset and maxPeak
     double sum = 0.0;
+    int16_t maxPeak = 0;
     for (size_t i = 0; i < samplesCount; i++) {
         sum += sampleBuf[i];
+        int16_t absVal = abs(sampleBuf[i]);
+        if (absVal > maxPeak) maxPeak = absVal;
     }
     float dcOffset = sum / samplesCount;
+
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    checkAndRecoverES7210(maxPeak, bytesRead);
+#endif
 
     // Partition samples into frequency bands using energy distribution
     size_t samplesPerBand = samplesCount / numBands;

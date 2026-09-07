@@ -18,12 +18,14 @@ EngineError VisualizerEngine::initialize(EngineContext* context, const EngineCon
 }
 
 void VisualizerEngine::activate() {
+    if (active) return;
     active = true;
     hardwareHAL.startAudioSampling();
     LOGI("VisualizerEngine", "Music Visualizer STARTED.");
 }
 
 void VisualizerEngine::deactivate() {
+    if (!active) return;
     active = false;
     hardwareHAL.stopAudioSampling();
     LOGI("VisualizerEngine", "Music Visualizer STOPPED.");

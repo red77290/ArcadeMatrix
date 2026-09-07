@@ -61,15 +61,24 @@ String FighterEngine::getFightersDir() {
     }
     cachedScaleClass = targetHeight;
 
-    if (targetHeight == 64 && sd.exists("/fighters_64/index.txt")) {
+    bool has64 = false;
+    bool has32 = false;
+    bool hasDef = false;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (targetHeight == 64 && sd.exists("/fighters_64/index.txt")) has64 = true;
+        if (sd.exists("/fighters_32/index.txt")) has32 = true;
+        if (sd.exists("/fighters/index.txt")) hasDef = true;
+        xSemaphoreGive(sdMutex);
+    }
+    if (has64) {
         cachedFightersDir = "/fighters_64";
         return cachedFightersDir;
     }
-    if (sd.exists("/fighters_32/index.txt")) {
+    if (has32) {
         cachedFightersDir = "/fighters_32";
         return cachedFightersDir;
     }
-    if (sd.exists("/fighters/index.txt")) {
+    if (hasDef) {
         cachedFightersDir = "/fighters";
         return cachedFightersDir;
     }
@@ -184,7 +193,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     f.read((uint8_t*)&fileNumFrames, 2);
     f.read((uint8_t*)&anim.transparentColor, 2);
     
-    if (fileNumFrames == 0 || anim.width == 0 || anim.height == 0) {
+    if (fileNumFrames == 0 || anim.width == 0 || anim.height == 0 || anim.width > 256 || anim.height > 256) {
         f.close();
         return false;
     }
@@ -216,6 +225,15 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         f.close();
         return false;
     }
+
+    size_t fileSize = f.size();
+    if (fileSize < anim.pixelsOffset + anim.totalPixelsSize) {
+        LOGW("FighterEngine", "Corrupt/truncated animation %s: size %u < expected %u", filepath, (uint32_t)fileSize, (uint32_t)(anim.pixelsOffset + anim.totalPixelsSize));
+        free(anim.frameDelays);
+        anim.frameDelays = nullptr;
+        f.close();
+        return false;
+    }
     
     if (m_hasPsram) {
         size_t freePsram = ESP.getFreePsram();
@@ -231,12 +249,23 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
+            uint8_t sramChunk[1024];
             while (toRead > 0) {
-                size_t chunk = (toRead > 8192) ? 8192 : toRead;
-                size_t r = f.read(anim.psramBuffer + offset, chunk);
+                size_t chunk = (toRead > sizeof(sramChunk)) ? sizeof(sramChunk) : toRead;
+                size_t r = f.read(sramChunk, chunk);
                 if (r == 0) break;
+                memcpy(anim.psramBuffer + offset, sramChunk, r);
                 offset += r;
                 toRead -= r;
+            }
+            if (toRead > 0) {
+                LOGW("FighterEngine", "Incomplete read for %s (%u remaining)", filepath, (uint32_t)toRead);
+                heap_caps_free(anim.psramBuffer);
+                anim.psramBuffer = nullptr;
+                free(anim.frameDelays);
+                anim.frameDelays = nullptr;
+                f.close();
+                return false;
             }
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
@@ -267,7 +296,14 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 }
 
 void FighterEngine::freeFighter(FighterPlayer& p) {
-    if (p.activeFile) p.activeFile.close();
+    if (p.activeFile) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            p.activeFile.close();
+            xSemaphoreGive(sdMutex);
+        } else {
+            p.activeFile.close();
+        }
+    }
     if (p.currentFrameBuffer) {
         if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
         else free(p.currentFrameBuffer);
@@ -413,8 +449,12 @@ void FighterEngine::runBackgroundPreload() {
     loadAnimThreadSafe(nextP2.animFall, dir + "/" + nextP2.name + "/fall.fgt");
 
     if (ok) {
+        computeStandBounds(nextP1);
+        computeStandBounds(nextP2);
         isNextReady = true;
-        LOGI("FighterEngine", "Background preload completed on Core 0: %s vs %s", nextP1.name.c_str(), nextP2.name.c_str());
+        LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
+             nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
+             nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
     } else {
         freeFighter(nextP1);
         freeFighter(nextP2);
@@ -423,13 +463,83 @@ void FighterEngine::runBackgroundPreload() {
     isPreloading = false;
 }
 
+void FighterEngine::computeStandBounds(FighterPlayer& p) {
+    int h = p.height > 0 ? p.height : 32;
+    p.frontExtent = max(6, (h * 35) / 100);
+    p.backExtent = max(6, (h * 25) / 100);
+
+    const FgtAnimation& anim = p.animStand.loaded ? p.animStand : p.animWalk;
+    if (!anim.loaded || anim.width == 0 || anim.height == 0) return;
+
+    if (anim.psramBuffer) {
+        int minX = anim.width;
+        int maxX = -1;
+        const uint8_t* ptr = anim.psramBuffer;
+        for (int y = 0; y < anim.height; y++) {
+            for (int x = 0; x < anim.width; x++) {
+                uint16_t color = ptr[0] | (ptr[1] << 8);
+                ptr += 2;
+                if (color != anim.transparentColor) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                }
+            }
+        }
+        if (maxX >= minX) {
+            p.frontExtent = max(4, maxX - p.origin_x);
+            p.backExtent = max(4, p.origin_x - minX);
+        }
+    } else {
+        String path = anim.filepath;
+        if (path.length() > 0 && sd.exists(path.c_str())) {
+            FsFile f = sd.open(path.c_str(), O_RDONLY);
+            if (f) {
+                f.seek(anim.pixelsOffset);
+                int minX = anim.width;
+                int maxX = -1;
+                uint8_t lineBuf[256];
+                for (int y = 0; y < anim.height; y++) {
+                    int toRead = min((int)sizeof(lineBuf), (int)(anim.width * 2));
+                    int n = f.read(lineBuf, toRead);
+                    for (int x = 0; x < n / 2; x++) {
+                        uint16_t color = lineBuf[x * 2] | (lineBuf[x * 2 + 1] << 8);
+                        if (color != anim.transparentColor) {
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                        }
+                    }
+                    if ((int)(anim.width * 2) > toRead) {
+                        f.seek(f.position() + (anim.width * 2 - toRead));
+                    }
+                }
+                f.close();
+                if (maxX >= minX) {
+                    p.frontExtent = max(4, maxX - p.origin_x);
+                    p.backExtent = max(4, p.origin_x - minX);
+                }
+            }
+        }
+    }
+}
+
 static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
+    if (dest.activeFile) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            dest.activeFile.close();
+            xSemaphoreGive(sdMutex);
+        } else {
+            dest.activeFile.close();
+        }
+    }
+
     dest.name = src.name;
     dest.height = src.height;
     dest.ground_y = src.ground_y;
     dest.head_y = src.head_y;
     dest.origin_x = src.origin_x;
     dest.width_px = src.width_px;
+    dest.frontExtent = src.frontExtent;
+    dest.backExtent = src.backExtent;
     dest.animStand = src.animStand;
     dest.animWalk = src.animWalk;
     dest.animAttack = src.animAttack;
@@ -482,8 +592,8 @@ public:
         fg.scale = 1;
         if (!fg.isTate && screenH >= 64 && is32pxDir) {
             fg.scale = screenH / 32;
-        } else if (fg.isTate && screenW >= 64 && is32pxDir) {
-            fg.scale = screenW / 32;
+        } else if (fg.isTate && screenW >= 96 && is32pxDir) {
+            fg.scale = screenW / 64;
         }
 
         fg.arena = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)screenH };
@@ -621,6 +731,12 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             }
             p.currentBufferSize = newSize;
         }
+        if (p.activeFile) {
+            if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                p.activeFile.close();
+                xSemaphoreGive(sdMutex);
+            }
+        }
         if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
             xSemaphoreGive(sdMutex);
@@ -713,14 +829,28 @@ bool FighterEngine::loop() {
         int screenW = matrix ? matrix->width() : 128;
         int screenH = matrix ? matrix->height() : 32;
         bool isTate = (screenW < 48 || screenH > (screenW * 3) / 2);
-        int scale = (screenH >= 64 && loadDir.endsWith("32")) ? (screenH / 32) : 1;
-        if (isTate && screenW >= 64 && loadDir.endsWith("32")) scale = screenW / 32;
+        int scale = 1;
+        if (!isTate && screenH >= 64 && loadDir.endsWith("32")) {
+            scale = screenH / 32;
+        } else if (isTate && screenW >= 96 && loadDir.endsWith("32")) {
+            scale = screenW / 64;
+        }
 
-        int engage_dist = isTate ? max(6, 6 * scale) : ((screenW >= 128) ? (20 * scale) : (14 * scale));
+        // Combat engagement spacing:
+        // Gap is the space in pixels between the closest front pixels of the two combatants.
+        // In Tate (vertical): compact gap (2px) to guarantee zero overlap on narrow screens.
+        // In Landscape (horizontal): natural faceoff gap (4px).
+        int gap = isTate ? 2 : ((screenW >= 128) ? 4 : 3);
+        gap = max(1, gap * scale);
+
+        // Distance between spines so their front body hulls meet with exactly `gap` between them:
+        int engage_dist = (p1.frontExtent + p2.frontExtent) * scale + gap;
         int centerX = screenW / 2;
 
-        int p1_target_x = centerX - (engage_dist / 2) - (p1.origin_x * scale);
-        int p2_target_x = centerX + (engage_dist / 2) - ((p2.width_px - p2.origin_x) * scale);
+        int p1OriginOffset = p1.origin_x * scale;
+        int p2OriginOffset = (max(1, p2.width_px) - 1 - p2.origin_x) * scale;
+        int p1_target_x = centerX - (engage_dist / 2) - p1OriginOffset;
+        int p2_target_x = centerX + (engage_dist / 2) - p2OriginOffset;
 
         // Move towards center target
         uint32_t stepInterval = (20 * 100) / speed;
@@ -856,7 +986,15 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     
     bool invert = (p.state == FIGHTER_SUPER && p.currentFrame < 2);
     
-    int scale = (matrix->height() >= 64 && loadDir.endsWith("32")) ? (matrix->height() / 32) : 1;
+    int screenW = matrix ? matrix->width() : 128;
+    int screenH = matrix ? matrix->height() : 32;
+    bool isTate = (screenW < 48 || screenH > (screenW * 3) / 2);
+    int scale = 1;
+    if (!isTate && screenH >= 64 && loadDir.endsWith("32")) {
+        scale = screenH / 32;
+    } else if (isTate && screenW >= 96 && loadDir.endsWith("32")) {
+        scale = screenW / 64;
+    }
     
     for (int y = 0; y < anim->height; y++) {
         for (int x = 0; x < anim->width; x++) {

@@ -19,7 +19,7 @@ GNewsService::GNewsService() {
 
 GNewsService::~GNewsService() {}
 
-GNewsSnapshot GNewsService::getSnapshot() const {
+const GNewsSnapshot& GNewsService::getSnapshot() const {
     return _snapshot;
 }
 
@@ -73,19 +73,54 @@ static String cleanNewsText(const char* raw) {
     s.replace("&#8221;", "\"");
     s.replace("&#8211;", "-");
     s.replace("&#8212;", "-");
+    s.replace("&laquo;", "«");
+    s.replace("&raquo;", "»");
+    s.replace("&#171;", "«");
+    s.replace("&#187;", "»");
+    s.replace("&eacute;", "\xC3\xA9");
+    s.replace("&egrave;", "\xC3\xA8");
+    s.replace("&agrave;", "\xC3\xA0");
+    s.replace("&ccedil;", "\xC3\xA7");
+    s.replace("&ecirc;", "\xC3\xAA");
+    s.replace("&euml;", "\xC3\xAB");
+    s.replace("&ocirc;", "\xC3\xB4");
+    s.replace("&icirc;", "\xC3\xAE");
+    s.replace("&iuml;", "\xC3\xAF");
+    s.replace("&ucirc;", "\xC3\xBB");
+    s.replace("&ugrave;", "\xC3\xB9");
+    s.replace("&Eacute;", "\xC3\x89");
+    s.replace("&Egrave;", "\xC3\x88");
+    s.replace("&Agrave;", "\xC3\x80");
+    s.replace("&Ccedil;", "\xC3\x87");
+    s.replace("&#233;", "\xC3\xA9");
+    s.replace("&#232;", "\xC3\xA8");
+    s.replace("&#224;", "\xC3\xA0");
+    s.replace("&#231;", "\xC3\xA7");
+    s.replace("&#234;", "\xC3\xAA");
     s.trim();
     return s;
 }
 
-void GNewsService::saveToSd() {
-    if (!sd.exists("/")) return;
-    FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
-    if (!f) return;
+extern SemaphoreHandle_t sdMutex;
 
-    DynamicJsonDocument doc(8192);
+void GNewsService::saveToSd() {
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
+    if (!sd.exists("/")) {
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return;
+    }
+    FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
+    if (!f) {
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return;
+    }
+
+    DynamicJsonDocument doc(12288);
     doc["last_fetch_time"] = _snapshot.lastFetchTime;
+    doc["last_fetch_epoch"] = _snapshot.lastFetchEpoch;
     doc["last_fetch_day"] = _lastFetchDay;
     doc["active_key_idx"] = _activeKeyIdx;
+    doc["last_cat_idx"] = _catRoundRobinIdx;
     doc["cat_round_robin_idx"] = _catRoundRobinIdx;
     doc["status"] = _snapshot.status;
 
@@ -98,6 +133,7 @@ void GNewsService::saveToSd() {
     for (size_t i = 0; i < _snapshot.count; i++) {
         JsonObject obj = artArr.createNestedObject();
         obj["title"] = _snapshot.articles[i].title;
+        obj["description"] = _snapshot.articles[i].description;
         obj["source"] = _snapshot.articles[i].source;
         obj["category"] = _snapshot.articles[i].category;
         obj["published_epoch"] = _snapshot.articles[i].publishedEpoch;
@@ -105,28 +141,38 @@ void GNewsService::saveToSd() {
 
     serializeJson(doc, f);
     f.close();
-    LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json", (int)_snapshot.count);
+    if (sdMutex) xSemaphoreGive(sdMutex);
+    LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json (epoch: %u)", (int)_snapshot.count, _snapshot.lastFetchEpoch);
 }
 
 void GNewsService::loadFromSd() {
     _loadedFromSd = true;
-    if (!sd.exists("/gnews_cache.json")) return;
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
+    if (!sd.exists("/gnews_cache.json")) {
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return;
+    }
 
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_READ);
-    if (!f) return;
+    if (!f) {
+        if (sdMutex) xSemaphoreGive(sdMutex);
+        return;
+    }
 
-    DynamicJsonDocument doc(8192);
+    DynamicJsonDocument doc(12288);
     DeserializationError error = deserializeJson(doc, f);
     f.close();
+    if (sdMutex) xSemaphoreGive(sdMutex);
     if (error) {
         LOGW("GNewsService", "Failed to parse SD cache: %s", error.c_str());
         return;
     }
 
-    _snapshot.lastFetchTime = doc["last_fetch_time"] | 0;
+    _snapshot.lastFetchTime = millis();
+    _snapshot.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
     _lastFetchDay = doc["last_fetch_day"] | -1;
     _activeKeyIdx = doc["active_key_idx"] | 0;
-    _catRoundRobinIdx = doc["cat_round_robin_idx"] | 0;
+    _catRoundRobinIdx = doc["last_cat_idx"] | doc["cat_round_robin_idx"] | 0;
     _snapshot.status = doc["status"] | 0;
 
     JsonArray usagesArr = doc["key_usages"].as<JsonArray>();
@@ -140,6 +186,7 @@ void GNewsService::loadFromSd() {
     for (JsonObject obj : artArr) {
         if (_snapshot.count >= 10) break;
         const char* title = obj["title"] | "";
+        const char* desc = obj["description"] | "";
         const char* source = obj["source"] | "News";
         const char* category = obj["category"] | "News";
         uint32_t pubEpoch = obj["published_epoch"] | 0;
@@ -149,6 +196,8 @@ void GNewsService::loadFromSd() {
         GNewsArticle& a = _snapshot.articles[_snapshot.count++];
         strncpy(a.title, title, sizeof(a.title) - 1);
         a.title[sizeof(a.title) - 1] = '\0';
+        strncpy(a.description, desc, sizeof(a.description) - 1);
+        a.description[sizeof(a.description) - 1] = '\0';
         strncpy(a.source, source, sizeof(a.source) - 1);
         a.source[sizeof(a.source) - 1] = '\0';
         strncpy(a.category, category, sizeof(a.category) - 1);
@@ -209,6 +258,16 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
         strncpy(art.title, cleanTitle.c_str(), sizeof(art.title) - 1);
         art.title[sizeof(art.title) - 1] = '\0';
 
+        const char* rawDesc = obj["description"] | obj["content"] | "";
+        String cleanDesc = cleanNewsText(rawDesc);
+        int bracketPos = cleanDesc.lastIndexOf("[+");
+        if (bracketPos > 0) {
+            cleanDesc = cleanDesc.substring(0, bracketPos);
+            cleanDesc.trim();
+        }
+        strncpy(art.description, cleanDesc.c_str(), sizeof(art.description) - 1);
+        art.description[sizeof(art.description) - 1] = '\0';
+
         const char* sourceName = obj["source"]["name"] | "News";
         String cleanSource = cleanNewsText(sourceName);
         strncpy(art.source, cleanSource.c_str(), sizeof(art.source) - 1);
@@ -250,6 +309,9 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
     _snapshot.hasData = (_snapshot.count > 0);
     _snapshot.fetchSuccess = true;
     _snapshot.lastFetchTime = millis();
+    time_t curEp = 0;
+    time(&curEp);
+    _snapshot.lastFetchEpoch = (curEp > 1600000000) ? (uint32_t)curEp : 0;
     return true;
 }
 
@@ -263,6 +325,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     uint32_t now = millis();
     _lastRequestsPerDay = requestsPerDay > 0 ? requestsPerDay : 10;
     uint32_t intervalMs = (86400000UL) / (uint32_t)_lastRequestsPerDay;
+    uint32_t intervalSec = 86400UL / (uint32_t)_lastRequestsPerDay;
 
     String reqLang = lang;
     if (reqLang.length() == 0 || reqLang == "auto" || reqLang == "system") {
@@ -291,7 +354,18 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     }
     _lastFetchDay = curUtcDay;
 
-    if (!forceRefresh && _snapshot.hasData && (now - _snapshot.lastFetchTime < intervalMs)) {
+    bool intervalElapsed = false;
+    if (epochTime > 1600000000 && _snapshot.lastFetchEpoch > 1600000000) {
+        if ((uint32_t)epochTime >= _snapshot.lastFetchEpoch) {
+            intervalElapsed = (((uint32_t)epochTime - _snapshot.lastFetchEpoch) >= intervalSec);
+        } else {
+            intervalElapsed = true; // Clock jumped backwards
+        }
+    } else {
+        intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
+    }
+
+    if (!forceRefresh && _snapshot.hasData && !intervalElapsed) {
         return; // Scheduled interval not elapsed
     }
 

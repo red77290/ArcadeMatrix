@@ -6,7 +6,7 @@
 
 /**
  * @class GNewsEngine
- * @brief Live breaking news ticker engine rendering headlines from GNews API across all matrix resolutions.
+ * @brief Live breaking news ticker engine rendering headlines and article content from GNews API across all matrix resolutions.
  */
 class GNewsEngine : public IEngine {
 public:
@@ -30,6 +30,8 @@ public:
 
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
         _geometry = geometry;
+        cachedArticleIndex = -1;
+        currentPageIndex = 0;
     }
 
 private:
@@ -58,6 +60,12 @@ private:
     // Runtime state
     DisplayGeometry _geometry;
     size_t currentArticleIndex = 0;
+    size_t currentPageIndex = 0;
+    size_t totalPages = 1;
+    uint32_t lastPageSwitchTime = 0;
+    int lastMatrixW = 0;
+    int lastMatrixH = 0;
+
     int scrollPixelOffset = 0;
     uint32_t sourceMarqueeOffset = 0;
     ScrollState scrollState = ScrollState::PauseStart;
@@ -69,15 +77,20 @@ private:
     float beaconPulse = 0.0f;
 
     // Multi-line display pre-allocated static cache (Zero allocation on Core 1 hot path)
-    static constexpr size_t MAX_DISPLAY_ROWS = 6;
-    static constexpr size_t MAX_ROW_CHARS = 48;
+    static constexpr size_t MAX_DISPLAY_ROWS = 24;
+    static constexpr size_t MAX_ROW_CHARS = 64;
     char cachedDisplayLines[MAX_DISPLAY_ROWS][MAX_ROW_CHARS];
     size_t cachedLineCount = 0;
     int cachedMaxScroll = 0;
     int cachedArticleIndex = -1;
 
+    char formattedHeadline[640];
+    char formattedSource[64];
+
     static const char* getCategoryShort(const char* category);
     void applyConfig(const EngineConfig* config);
+    void prepareHeadlineText(const GNewsArticle& article);
+    static void formatGNewsText(const char* utf8Input, char* output, size_t maxLen);
     void advanceToNextArticle(const GNewsSnapshot& snap);
     void wrapTextToLines(const char* text, int maxW);
     void distributeTextToRows(const char* text, int numRows);

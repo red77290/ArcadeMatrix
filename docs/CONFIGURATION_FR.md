@@ -349,14 +349,17 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 | `weather_city` | `String` | `Paris` | Texte | Ville pour les prévisions météo. |
 | `weather_api_key` | `String` | `""` | Clé API Optionnelle | Clé API OpenWeatherMap (laisser vide pour basculer automatiquement sur le service gratuit Open-Meteo sans clé). |
 | `show_indoor_temp` | `bool` | `true` | `true`, `false` | Affiche la température et humidité intérieure du capteur SHTC3. |
-| `temp_offset` | `float` | `-3.5` | `-30.0` à `30.0` | Offset de calibration pour compenser la dissipation thermique du microcontrôleur (dans l'unité de température configurée). |
+| `temp_unit` | `Options` | `system` | `system:System (Général), C:Celsius (°C), F:Fahrenheit (°F)` | Unité d'affichage de la température. |
+| `temp_offset` | `float` | `""` | `-30.0` à `30.0` | Offset de calibration pour compenser la dissipation thermique du microcontrôleur (laisser vide pour le réglage général). |
+| `refresh_interval` | `Options` | `10` | `1`, `5`, `10`, `15`, `30`, `60` min | Fréquence de rafraîchissement des données météo et boursières. |
+| `format_24h` | `Options` | `system` | `system:System (Général), 24h:24 Heures, 12h:12 Heures` | Format d'affichage de l'heure 24h ou 12h AM/PM. |
+| `lang` | `Options` | `system` | `system:System (Général), fr:Français, en:English, es:Español` | Langue des descriptions météo et libellés des widgets (`system` synchronise avec la langue générale). |
 | `show_markets` | `bool` | `true` | `true`, `false` | Affiche le bandeau ticker défilant des cryptomonnaies et actions. |
 | `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Tags Top 20 / Saisie libre | Cryptos via Binance (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) et Actions/ETFs via Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
 | `show_sysinfo` | `bool` | `true` | `true`, `false` | Affiche la jauge d'état système (RAM, CPU, WiFi). |
 | `show_date` | `bool` | `true` | `true`, `false` | Affiche le badge jour et date. |
 | `show_seconds` | `bool` | `true` | `true`, `false` | Affiche la trotteuse ou les chiffres des secondes. |
 | `smooth_seconds` | `bool` | `true` | `true`, `false` | Balayage continu fluide de la trotteuse (vs tic-tac net 1s). |
-| `temp_unit` | `Options` | `C` | `C:Celsius (°C), F:Fahrenheit (°F)` | Unité d'affichage de la température. |
 | `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
 | `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
 
