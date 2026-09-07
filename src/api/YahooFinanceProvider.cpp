@@ -24,8 +24,8 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
         }
         
         if (code == 200) {
-            String payload = http.getString();
-            if (parsePayload(payload, outPrice, outChange)) {
+            WiFiClient* stream = http.getStreamPtr();
+            if (stream && parsePayload(*stream, outPrice, outChange)) {
                 String lowerSymbol = symbol;
                 lowerSymbol.toLowerCase();
                 outImageUrl = "https://eodhd.com/img/logos/US/" + lowerSymbol + ".png";
@@ -38,6 +38,25 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
         client.stop();
     }
     
+    return false;
+}
+
+bool YahooFinanceProvider::parsePayload(Stream& stream, float& outPrice, float& outChange) {
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, stream);
+    if (!err) {
+        JsonObject meta = doc["chart"]["result"][0]["meta"];
+        if (!meta.isNull()) {
+            outPrice = meta["regularMarketPrice"] | 0.0f;
+            float prevClose = meta["previousClose"] | meta["chartPreviousClose"] | outPrice;
+            if (prevClose > 0.0f && outPrice > 0.0f) {
+                outChange = ((outPrice - prevClose) / prevClose) * 100.0f;
+            } else {
+                outChange = 0.0f;
+            }
+            return (outPrice > 0.0f);
+        }
+    }
     return false;
 }
 

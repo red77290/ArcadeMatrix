@@ -60,6 +60,8 @@ struct FighterPlayer {
     int head_y;                 ///< Y position of the head in the stand animation
     int origin_x;               ///< X position of the origin
     int width_px;               ///< Native width of the character
+    int frontExtent = 10;       ///< Front body extent relative to origin_x (visual hull)
+    int backExtent = 10;        ///< Back body extent relative to origin_x
     FgtAnimation animStand;     ///< Stand / Idle stance animation data
     FgtAnimation animWalk;      ///< Walking animation data
     FgtAnimation animAttack;    ///< Attack animation data
@@ -172,12 +174,14 @@ private:
     bool loadFighterAnim(FgtAnimation& anim, const char* filepath);
     void freeFighter(FighterPlayer& p);
     void freeAnim(FgtAnimation& anim);
+    void computeStandBounds(FighterPlayer& p);
     
     void setPlayerState(FighterPlayer& p, FighterState newState);
     void drawPlayer(FighterPlayer& p, int offsetY = 0);
     
     uint32_t fightStartTime;        ///< Timestamp when the fight began
     uint32_t fightEndTime = 0;      ///< Timestamp when the fight concludes
+    uint32_t faceoffStartTime = 0;  ///< Timestamp when both fighters reached the face-off position
     
     uint32_t hitStopUntilMillis = 0; ///< Hit-stop pause end time
     int shakeRemainingFrames = 0;    ///< Number of frames left for screen shake

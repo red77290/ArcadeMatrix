@@ -96,6 +96,11 @@ void ConfigSanitizer::sanitizeSystem(SystemConfig& system, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
+    if (system.idle_fighter_speed < 25 || system.idle_fighter_speed > 200) {
+        system.idle_fighter_speed = constrain(system.idle_fighter_speed, 25, 200);
+        result.values_clamped++;
+        result.modified = true;
+    }
 }
 
 void ConfigSanitizer::sanitizeInstances(std::vector<EngineInstance>& instances, SanitizeResult& result) {

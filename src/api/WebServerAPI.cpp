@@ -696,7 +696,11 @@ void WebServerAPI::setupRoutes() {
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
         String response;
         serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        AsyncWebServerResponse *res = request->beginResponse(200, "application/json", response);
+        res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        res->addHeader("Pragma", "no-cache");
+        res->addHeader("Expires", "0");
+        request->send(res);
     });
 
     // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)
@@ -1045,6 +1049,7 @@ void WebServerAPI::setupRoutes() {
         doc["night_brightness"] = snap.system.night_brightness;
         doc["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
         doc["idle_fighter_interval"] = snap.system.idle_fighter_interval;
+        doc["idle_fighter_speed"] = snap.system.idle_fighter_speed;
         doc["matrix_power"] = snap.matrix.matrix_power;
 
         // WiFi
@@ -1247,6 +1252,7 @@ void WebServerAPI::setupRoutes() {
             if (!doc["night_brightness"].isNull()) cfg.system.night_brightness = doc["night_brightness"].as<int>();
             if (!doc["idle_fighter_enabled"].isNull()) cfg.system.idle_fighter_enabled = doc["idle_fighter_enabled"].as<bool>();
             if (!doc["idle_fighter_interval"].isNull()) cfg.system.idle_fighter_interval = doc["idle_fighter_interval"].as<int>();
+            if (!doc["idle_fighter_speed"].isNull()) cfg.system.idle_fighter_speed = doc["idle_fighter_speed"].as<int>();
 
             if (!doc["timezone"].isNull()) {
                 cfg.system.timezone = doc["timezone"].as<String>();
@@ -1436,6 +1442,7 @@ void WebServerAPI::setupRoutes() {
         sys["brightness_limit"] = snap.matrix.powerLimitPercent;
         sys["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
         sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
+        sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
 
         JsonObject mat = doc.createNestedObject("matrix");
         mat["height"] = snap.matrix.height;
@@ -1556,6 +1563,10 @@ void WebServerAPI::setupRoutes() {
             }
             if (!sys["idle_fighter_interval"].isNull()) {
                 cfg.system.idle_fighter_interval = sys["idle_fighter_interval"].as<int>();
+                changed = true;
+            }
+            if (!sys["idle_fighter_speed"].isNull()) {
+                cfg.system.idle_fighter_speed = sys["idle_fighter_speed"].as<int>();
                 changed = true;
             }
 

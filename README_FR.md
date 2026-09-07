@@ -30,13 +30,14 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 
 - **🎛️ Master Desk Deck & Hub Multi-Widgets (`dashboard`) :** Horloge de bureau complète & dashboard avec cadrans pixel-art soignés, balayage fluide de trotteuse, horloges multi-fuseaux horaires mondiaux, météo extérieure (OpenWeatherMap + fallback gratuit Open-Meteo), climat intérieur calibré SHTC3, bandeau ticker live cryptos Binance & actions Yahoo Finance, et agencement auto-adaptatif dynamique 100% responsive !
 - **Large sélection d'horloges animées (`clock`) :** horloges interactives incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** et **Versus (Mugen)** !
-- **📻 WebRadio Autonome & Moteur Musical (`music`) :** Streaming audio d'arrière-plan avec décodage MP3 linéaire temps réel (`minimp3`), sortie haute fidélité DAC I2S Everest ES8311, Bluetooth A2DP Sink, pochettes d'albums PNG couleur, artiste/titre défilant et visualiseur audio FFT 64 points Cooley-Tukey dynamique !
+- **📻 WebRadio Autonome & Moteur Musical (`music`) :** Streaming audio d'arrière-plan avec décodage MP3 linéaire temps réel (`minimp3`), sortie haute fidélité DAC I2S Everest ES8311 (flux WebRadio via Wi-Fi — *note : Bluetooth BLE 5.0 uniquement pour la configuration, pas de streaming audio Bluetooth Classic A2DP*), pochettes d'albums PNG couleur, artiste/titre défilant et visualiseur audio FFT 64 points Cooley-Tukey dynamique !
 - **🧭 Auto-Rotation d'Écran Gyroscopique 6-Axes (`QMI8658` / `GyroHAL`) :** Orientation automatique de l'affichage ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) par détection du vecteur de gravité physique, hystérèse anti-vibrations 500ms, offset mécanique de montage et calibration 1-clic depuis la Web UI !
 - **🎵 Spotify Now Playing (`spotify`) :** affichage en direct du morceau en cours de lecture avec pochette d'album en couleur, défilement artiste/titre, barre de progression et égaliseur audio animé.
 - **📡 Google Cast & Nest (`google_cast`) :** découverte automatique mDNS de vos enceintes Google Home / Nest Audio et affichage en direct des médias et flux audio diffusés.
 - **🖥️ Moniteur Système (`sysinfo`) :** surveillance en direct de l'utilisation CPU (%), RAM (%), température SoC (°C/°F) et Uptime avec jauges colorées et thèmes visuels.
 - **🥊 Moteur de combat M.U.G.E.N (`fighter`) :** combats de sprites rétro authentiques (Street Fighter, KOF, DBZ, Marvel...) extraits directement en RGB565 sans saccade, jouables en mode autonome ou en overlay discret sur vos horloges.
 - **📈 Tickers & Graphiques Crypto / Bourse (`crypto`, `stock`) :** cotations en direct, variations % sur 24h et courbes sparklines historiques depuis CoinGecko, Binance et Yahoo Finance avec cache intelligent.
+- **📰 Actualités & Ticker GNews en Direct (`gnews`) :** flux de grands titres et dépêches d'actualités filtrés par catégories (Tech, Monde, Économie, Science, Sport...), témoin lumineux de direct clignotant, défilement sous-pixel fluide à 60 FPS et filtrage multi-langue/région !
 - **🌦️ Météo dynamique (`weather`) :** météo en direct, température actuelle, prévisions sur 3 jours et icônes rétro animées via OpenWeatherMap.
 - **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
 - **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
@@ -122,8 +123,9 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 | Animations (GIFs) | ✅ Oui | ✅ Oui |
 | Moteur MUGEN | ✅ Oui | ✅ Oui |
 | Interface Web & Wi-Fi | ✅ Oui | ✅ Oui |
-| **WebRadio Autonome & Décodage MP3** | ✅ Oui (DAC ES8311 & Ampli intégrés) | ❌ Non (Nécessite DAC I2S & PSRAM) |
-| **Bluetooth Audio A2DP Sink** | ✅ Oui (Stack A2DP Sink ESP-IDF) | ⚠️ Limité (Nécessite un DAC externe) |
+| **WebRadio Autonome (Streaming MP3 Wi-Fi)** | ✅ Oui (DAC ES8311 & Ampli intégrés) | ❌ Non (Nécessite DAC I2S & PSRAM) |
+| **Streaming Audio Bluetooth (A2DP)** | ❌ Non (L'ESP32-S3 est BLE 5.0 uniquement ; pas d'A2DP audio) | ❌ Non |
+| **Bluetooth 5 (BLE Contrôle/Config)** | ✅ Oui (Natif ESP32-S3 BLE) | ✅ Oui |
 | **Auto-Rotation Gyroscope 6-Axes (`QMI8658`)** | ✅ Oui (IMU intégré & Calibrate 1-clic) | ❌ Non (Nécessite capteur I2C externe) |
 | **Crypto en Temps Réel** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
 | **Bourse** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
