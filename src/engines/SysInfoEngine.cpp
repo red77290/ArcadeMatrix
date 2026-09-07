@@ -374,6 +374,45 @@ void SysInfoEngine::renderCyberpunkTheme(MatrixPanel_I2S_DMA* matrix, float cpuP
         if (fillH > 0) {
             matrix->fillRect(w - 4, h - 4 - fillH, 2, fillH, cpuColor);
         }
+    } else if (w < 48 || h > (w * 3) / 2) {
+        // Tate Portrait 4-Tier Vertical Stack (e.g. 32x128, 64x128)
+        int stepY = h / 4;
+        int baseY = 4 + offsetY;
+
+        // CPU
+        matrix->setTextColor(cyan);
+        matrix->setCursor(3 + offsetX, baseY);
+        matrix->print("CPU");
+        matrix->setTextColor(cpuColor);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
+        matrix->print(buf);
+
+        // RAM
+        matrix->setTextColor(purple);
+        matrix->setCursor(3 + offsetX, baseY + stepY);
+        matrix->print("RAM");
+        matrix->setTextColor(ramColor);
+        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
+        matrix->print(buf);
+
+        // TMP
+        matrix->setTextColor(matrix->color565(255, 140, 0));
+        matrix->setCursor(3 + offsetX, baseY + stepY * 2);
+        matrix->print("TMP");
+        matrix->setTextColor(tempColor);
+        matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
+        matrix->print(tBuf);
+
+        // UPTIME
+        matrix->setTextColor(cyan);
+        matrix->setCursor(3 + offsetX, baseY + stepY * 3);
+        matrix->print("UPT");
+        matrix->setTextColor(matrix->color565(0, 220, 200));
+        matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
+        matrix->print(upBuf);
     } else {
         // Compact (64x32)
         int baseX = 4 + offsetX;
@@ -473,8 +512,51 @@ void SysInfoEngine::renderCompactTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct
         matrix->setTextColor(matrix->color565(0, 190, 255));
         matrix->setCursor(x3, 16 + offsetY);
         matrix->print(upBuf);
+    } else if (w < 48 || h > (w * 3) / 2) {
+        // Tate Portrait 4-Tier Stack
+        int stepY = h / 4;
+        int baseY = 3 + offsetY;
+
+        for (int i = 1; i < 4; i++) {
+            matrix->drawFastHLine(2, i * stepY, w - 4, matrix->color565(40, 45, 60));
+        }
+
+        // Tier 1: CPU
+        matrix->setTextColor(labelColor);
+        matrix->setCursor(3 + offsetX, baseY);
+        matrix->print("CPU");
+        matrix->setTextColor(cpuColor);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
+        matrix->print(buf);
+
+        // Tier 2: RAM
+        matrix->setTextColor(labelColor);
+        matrix->setCursor(3 + offsetX, baseY + stepY);
+        matrix->print("RAM");
+        matrix->setTextColor(ramColor);
+        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
+        matrix->print(buf);
+
+        // Tier 3: TMP
+        matrix->setTextColor(labelColor);
+        matrix->setCursor(3 + offsetX, baseY + stepY * 2);
+        matrix->print("TMP");
+        matrix->setTextColor(tempColor);
+        matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
+        matrix->print(tBuf);
+
+        // Tier 4: UPT
+        matrix->setTextColor(labelColor);
+        matrix->setCursor(3 + offsetX, baseY + stepY * 3);
+        matrix->print("UPT");
+        matrix->setTextColor(matrix->color565(0, 190, 255));
+        matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
+        matrix->print(upBuf);
     } else {
-        // Compact / Tall: 2x2 Grid
+        // Compact / Square: 2x2 Grid
         int midX = w / 2;
         int midY = h / 2;
 

@@ -147,6 +147,9 @@ private:
     bool probeSHTC3();
     bool probeES7210();
     bool configureES7210();
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    void checkAndRecoverES7210(int16_t maxPeak, size_t bytesRead);
+#endif
     bool readSHTC3Raw(float& tempC, float& hum);
     static uint8_t calcSensirionCRC8(const uint8_t* data, uint8_t len);
 };

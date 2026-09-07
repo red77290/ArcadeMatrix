@@ -200,6 +200,7 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         system.night_brightness = sys["night_brightness"] | system.night_brightness;
         system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
         system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
+        system.idle_fighter_speed = sys["idle_fighter_speed"] | system.idle_fighter_speed;
     }
 
     JsonObjectConst disp;
@@ -365,6 +366,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     sysObj["night_brightness"] = system.night_brightness;
     sysObj["idle_fighter_enabled"] = system.idle_fighter_enabled;
     sysObj["idle_fighter_interval"] = system.idle_fighter_interval;
+    sysObj["idle_fighter_speed"] = system.idle_fighter_speed;
 
     JsonObject dispObj = doc.createNestedObject("display");
     dispObj["width"] = matrix.width;

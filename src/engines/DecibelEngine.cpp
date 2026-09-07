@@ -16,12 +16,14 @@ EngineError DecibelEngine::initialize(EngineContext* context, const EngineConfig
 }
 
 void DecibelEngine::activate() {
+    if (active) return;
     active = true;
     hardwareHAL.startAudioSampling();
     LOGI("DecibelEngine", "DecibelEngine ACTIVATED (Lazy Audio Sampling started).");
 }
 
 void DecibelEngine::deactivate() {
+    if (!active) return;
     active = false;
     // Only stop audio sampling if Visualizer is NOT running
     if (!config_visualizer_enabled) {

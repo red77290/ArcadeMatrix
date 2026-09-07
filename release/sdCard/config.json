@@ -32,7 +32,7 @@
     "system": {
         "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",
         "format_24h": true,
-        "lang": "en",
+        "lang": "fr",
         "unit": "c",
         "temp_offset": 0.0,
         "night_mode_enabled": false,
@@ -129,6 +129,32 @@
                 "text": "",
                 "color": "#ffffff"
             }
+        },
+        {
+            "instance_id": "gnews_main",
+            "engine_id": "gnews",
+            "config": {
+                "api_key": "",
+                "category": "technology",
+                "keywords": "",
+                "lang": "auto",
+                "country": "auto",
+                "max_articles": 5,
+                "requests_per_day": 10,
+                "force_refresh": false,
+                "cache_ttl_min": 30,
+                "display_mode": "smooth_scroll",
+                "scroll_speed": 3,
+                "scroll_pause_start_ms": 1200,
+                "scroll_pause_end_ms": 1000,
+                "article_duration_sec": 12,
+                "theme": "category_dynamic",
+                "show_category_badge": true,
+                "show_source": true,
+                "show_time_ago": true,
+                "show_beacon": true,
+                "show_progress_dots": true
+            }
         }
     ],
     "rotation": [
@@ -176,6 +202,11 @@
             "instance_id": "message_main",
             "duration_sec": 15,
             "fighter_overlay": false
+        },
+        {
+            "instance_id": "gnews_main",
+            "duration_sec": 15,
+            "fighter_overlay": true
         }
     ]
 }

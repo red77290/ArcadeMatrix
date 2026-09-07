@@ -248,6 +248,52 @@ OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2
 | `offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal en píxeles. |
 | `offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical en píxeles. |
 
+### Motor: `gnews` (Noticias en Vivo y Ticker GNews)
+
+El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por la API de [GNews.io](https://gnews.io). Incluye un grupo multi-clave de API con conmutación por error automática, persistencia en tarjeta SD/disco y gestión optimizada de cuotas diarias.
+
+| Campo | Tipo | Por defecto | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `api_key` | `String` | `""` | Claves separadas por comas | Claves API de GNews.io (admite múltiples claves: `clave1,clave2,clave3` para grupo multi-cuenta con conmutación automática). |
+| `category` | `Options` | `technology` | `general`, `world`, `nation`, `business`, `technology`, `entertainment`, `sports`, `science`, `health` | Categoría temática principal o lista separada por comas para rotación. |
+| `keywords` | `String` | `""` | Texto / Consulta | Palabras clave de búsqueda o etiquetas personalizadas (ej. `ai OR arcade`). |
+| `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Idioma de las noticias (`auto` sincroniza con el sistema). |
+| `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Edición regional por país. |
+| `max_articles` | `int` | `5` | `3` a `15` | Cantidad máxima de titulares almacenados en caché por ciclo. |
+| `requests_per_day` | `int` | `10` | `1` a `100` | Presupuesto total de solicitudes API por cada 24 horas (nivel gratuito GNews: 100 sol/día por clave). |
+| `force_refresh` | `bool` | `false` | `true`, `false` | Acción: purga inmediatamente la caché del idioma anterior y consulta la API sin reiniciar contadores de cuota diaria. |
+| `cache_ttl_min` | `int` | `30` | `5` a `120` | Intervalo mínimo de refresco de caché en minutos. |
+| `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Estilo de animación (desplazamiento horizontal fluido, desplazamiento vertical, paginación multilínea, o serpentín alternado). |
+| `scroll_speed` | `int` | `3` | `1` a `10` | Velocidad de desplazamiento (1: Lento a 10: Turbo). |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` a `4000` | Tiempo de pausa inicial (ms) antes de comenzar el desplazamiento. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` a `4000` | Tiempo de pausa final (ms) al final del titular antes de cambiar. |
+| `article_duration_sec` | `int` | `12` | `5` a `60` | Duración de visualización por artículo en segundos. |
+| `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Esquema de colores visual. |
+| `show_category_badge` | `bool` | `true` | `true`, `false` | Muestra la píldora de categoría en color (`[TECH]`, `[WORLD]`, etc.). |
+| `show_source` | `bool` | `true` | `true`, `false` | Muestra el nombre de la fuente de noticias (`BBC News`, `Reuters`, etc.). |
+| `show_time_ago` | `bool` | `true` | `true`, `false` | Muestra la antigüedad relativa (`5m ago`, `2h ago`). |
+| `show_beacon` | `bool` | `true` | `true`, `false` | Muestra la baliza luminosa de directo parpadeante. |
+| `show_progress_dots` | `bool` | `true` | `true`, `false` | Muestra los puntos de progreso (`● ○ ○ ○ ○`). |
+
+#### Arquitectura y Optimización de Cuotas GNews
+1. **Grupo Multi-Clave y Conmutación Automática (Failover):**
+   - Puede ingresar múltiples claves API separadas por comas (`api_key: "clave1,clave2,clave3"`).
+   - Si una clave resulta inválida (`HTTP 401/403`) o agota su cuota de 100 solicitudes/día (`HTTP 429/403`), el motor conmuta instantáneamente a la siguiente clave y reintenta la solicitud.
+   - 2 cuentas = 200 solicitudes/día; 3 cuentas = 300 solicitudes/día.
+2. **Persistencia en Archivo (`/gnews_cache.json` en SD ESP32, `gnews_cache.json` en RPi):**
+   - Los artículos y la telemetría se guardan en almacenamiento local. Al reiniciar, las noticias se muestran al instante sin consumir cuota API.
+   - Si no hay conexión o se agota la cuota, las noticias persisten y siguen desplazándose 24/7.
+3. **Presupuesto Diario de Solicitudes (Por defecto: 10 sol/día) y Protección de Claves Compartidas:**
+   - Aunque las cuentas gratuitas de GNews.io permiten hasta 100 solicitudes/día por clave, los usuarios suelen compartir su clave con otros proyectos o sistemas domóticos externos.
+   - Para evitar que ArcadeMatrix monopolice o agote la cuota externa, el motor utiliza por defecto un presupuesto conservador de **10 solicitudes al día** (`requests_per_day: 10`, distribuidas uniformemente cada 2h24: $\Delta t = \frac{86400}{10} = 8640\text{ s}$).
+   - El usuario puede personalizar libremente este límite entre `1` y `100`. La interfaz web muestra dinámicamente el consumo respecto al presupuesto fijado (ej: `Clave 1 (..abcd): 4/10 reqs [Activa]`).
+   - Si se definen varias categorías (ej: `technology,world`), las solicitudes rotan cíclicamente ($\frac{\text{requests\_per\_day}}{N}$ por tema).
+4. **Actualizaciones Diferidas y Forzado Inmediato:**
+   - Modificar opciones en la interfaz web se aplica en el siguiente ciclo programado para no malgastar cuota.
+   - Activar `force_refresh: true` purga los artículos del idioma anterior y fuerza una consulta inmediata manteniendo los contadores diarios.
+5. **Reinicio a Medianoche (00:00 UTC):**
+   - El cambio de día calendario restablece automáticamente los contadores de consumo a 0 y borra las alertas de límite de cuota.
+
 ### Motor: `fighter` (Combate M.U.G.E.N)
 | Campo | Tipo | Por defecto | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
@@ -292,6 +338,54 @@ OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2
 | `direction` | `Options` | `left` | `left`, `none` | Dirección de desplazamiento (`left` para desplazamiento hacia la izquierda, `none` para texto estático centrado). |
 | `speed` | `int` | `50` | `10` a `200` | Milisegundos por píxel de desplazamiento (menor = más rápido; ignorado en estático). |
 | `font` | `String` | `Default` | Dinámico | Archivo de fuente desde `/fonts/`. |
+
+### Motor: `dashboard` (Master Deck Horizontal y Hub Multi-Widgets)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `clock_mode` | `Options` | `1` | `0:Digital Modern, 1:Pixel-Art Watch Dial, 2:Minimal` | Estilo visual del reloj principal. |
+| `theme` | `Options` | `0` | `0:Cyberpunk Neon, 1:Arcade Amber HUD, 2:Minimalist Luxury, 3:Matrix Phosphor` | Paleta de colores para widgets y bisel. |
+| `show_clock` | `bool` | `true` | `true`, `false` | Muestra el reloj principal. |
+| `show_world_clock` | `bool` | `true` | `true`, `false` | Muestra el distintivo de husos horarios mundiales. |
+| `world_clocks` | `String` (Multi) | `NYC,TYO,LON` | Etiquetas preestablecidas / Texto libre | Códigos de ciudades/aeropuertos mundiales (`NYC`, `TYO`, `LON`, `PAR`, `LAX`, `SFO`, `DXB`, `SIN`, `HKG`, `SYD`, `BER`, `ROM`, `MAD`, `AMS`, `YUL`, `UTC`) o compensaciones personalizadas (`REU:+4`, `NYC:-4`). |
+| `show_weather` | `bool` | `true` | `true`, `false` | Muestra el tiempo exterior y la temperatura. |
+| `weather_city` | `String` | `Paris` | Texto | Ciudad para los pronósticos meteorológicos. |
+| `weather_api_key` | `String` | `""` | Clave API Opcional | Clave API de OpenWeatherMap (dejar en blanco para usar el servicio gratuito Open-Meteo sin clave). |
+| `show_indoor_temp` | `bool` | `true` | `true`, `false` | Muestra la temperatura y humedad interior del sensor SHTC3. |
+| `temp_unit` | `Options` | `system` | `system:System (General), C:Celsius (°C), F:Fahrenheit (°F)` | Unidad de visualización de temperatura. |
+| `temp_offset` | `float` | `""` | `-30.0` a `30.0` | Offset de calibración para compensar la disipación térmica de la CPU (dejar en blanco para el ajuste general). |
+| `refresh_interval` | `Options` | `10` | `1`, `5`, `10`, `15`, `30`, `60` min | Frecuencia de actualización de datos meteorológicos y de mercado. |
+| `format_24h` | `Options` | `system` | `system:System (General), 24h:24 Horas, 12h:12 Horas` | Formato de hora 24h o 12h AM/PM. |
+| `lang` | `Options` | `system` | `system:System (General), fr:Français, en:English, es:Español` | Idioma de las descripciones del clima y etiquetas de los widgets (`system` sincroniza con el idioma general). |
+| `show_markets` | `bool` | `true` | `true`, `false` | Muestra la marquesina de cotizaciones de criptomonedas y acciones. |
+| `tracked_markets` | `String` (Multi) | `BTC,ETH,SOL,NVDA` | Top 20 / Texto libre | Criptomonedas vía Binance (`BTC`, `ETH`, `SOL`, `DOGE`, `XRP`, `PEPE`, `KAS`, `TAO`, `SUI`...) y Acciones/ETFs vía Yahoo Finance (`NVDA`, `AAPL`, `TSLA`, `MSFT`, `GOOG`, `AMZN`, `SPY`, `QQQ`, `PLTR`, `MSTR`...). |
+| `show_sysinfo` | `bool` | `true` | `true`, `false` | Muestra la barra de estado del sistema (RAM, CPU, WiFi). |
+| `show_date` | `bool` | `true` | `true`, `false` | Muestra el distintivo de día y fecha. |
+| `show_seconds` | `bool` | `true` | `true`, `false` | Muestra el segundero o los dígitos de segundos. |
+| `smooth_seconds` | `bool` | `true` | `true`, `false` | Movimiento continuo suave del segundero frente a tictac neto de 1s. |
+| `offset_x` | `int` | `0` | `-64` a `64` | Desplazamiento horizontal en píxeles. |
+| `offset_y` | `int` | `0` | `-32` a `32` | Desplazamiento vertical en píxeles. |
+
+> **Auto-Escalado Dinámico**: Cuando los widgets están ocultos, la pantalla se redimensiona dinámicamente para ocupar el 100% de la matriz sin bordes negros ni espacios vacíos.
+
+### Motor: `visualizer` (Visualizador de Audio en Tiempo Real)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Modo de renderizado: Barras de Espectro, Osciloscopio, Radial Circular o Fuego Neón. |
+| `gain` | `int` | `24` | `0` a `30` | Ganancia del micrófono por hardware en dB (códec ES7210). |
+| `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Gradiente de color para barras y ondas. |
+
+### Motor: `decibel` (Sonómetro de Nivel Acústico)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `alert_threshold_db` | `int` | `85` | `40` a `120` | Umbral de advertencia de presión acústica. |
+| `show_peak` | `bool` | `true` | `true`, `false` | Muestra el indicador de pico sostenido. |
+
+### Motor: `temp` (Monitor de Clima Interior)
+| Campo | Tipo | Predeterminado | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `show_humidity` | `bool` | `true` | `true`, `false` | Muestra el porcentaje de humedad relativa. |
+| `temp_unit` | `Options` | `C` | `C`, `F` | Visualización en Celsius o Fahrenheit. |
+| `temp_offset` | `float` | `-3.5` | `-30.0` a `30.0` | Compensación de calibración (en la unidad elegida). |
 
 ### Motor: `marquee`
 | Campo | Tipo | Predeterminado | Descripción |

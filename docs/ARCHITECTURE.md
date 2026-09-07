@@ -415,7 +415,7 @@ This was solved through a two-tiered architectural strategy:
 
 #### Concurrency: Seamless Simultaneous Audio & 60 FPS Video
 Real-time audio decoding and HUB75 matrix scanning operate concurrently without micro-stutters:
-- **Core 0 (Audio & Network Pipeline):** Runs `WebRadioService` MP3 frame decoding (`minimp3`) and Bluetooth A2DP Sink callbacks into a lock-free circular buffer, continuously feeding the Everest `ES8311` I2S DAC.
+- **Core 0 (Audio & Network Pipeline):** Runs `WebRadioService` MP3 frame decoding (`minimp3`) and audio network stream management into a lock-free circular buffer, continuously feeding the Everest `ES8311` I2S DAC.
 - **Core 1 (Matrix Render Loop):** Runs the HUB75 DMA display driver, rendering engines, and `OverlayManager` at a rock-solid 60 FPS cadence.
 - **Lock-Free State Handshake:** `AudioHub` publishes atomic `AudioPlaybackState` snapshots with incrementing `generation` IDs. The rendering engine on Core 1 reads snapshots instantly without blocking or acquiring mutexes on the audio thread.
 
