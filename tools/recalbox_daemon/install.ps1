@@ -162,10 +162,10 @@ try {
 
         Write-Host "Uploading hook to $TargetDir/arcadematrix_mqtt.sh..."
         Copy-ToRemote $activeUser $batoceraHookLocal "$TargetDir/arcadematrix_mqtt.sh"
-        Invoke-RemoteCommand $activeUser "chmod +x $TargetDir/arcadematrix_mqtt.sh" | Out-Null
+        Invoke-RemoteCommand $activeUser "chmod 755 $TargetDir/arcadematrix_mqtt.sh" | Out-Null
 
         Write-Host "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
-        $esCmd = "for evt in game-selected system-selected game-start game-end; do dir=\`"/userdata/system/configs/emulationstation/scripts/\$evt\`"; mkdir -p \`"\$dir\`"; cat > \`"\$dir/arcadematrix_mqtt.sh\`" << 'EOFEVT'`n#!/bin/sh`n/userdata/system/scripts/arcadematrix_mqtt.sh \`"\$evt\`" \`"\$@\`"`nEOFEVT`nchmod +x \`"\$dir/arcadematrix_mqtt.sh\`"; done"
+        $esCmd = "for evt in game-selected system-selected game-start game-end; do dir=\`"/userdata/system/configs/emulationstation/scripts/\$evt\`"; mkdir -p \`"\$dir\`"; cat > \`"\$dir/arcadematrix_mqtt.sh\`" << 'EOFEVT'`n#!/bin/sh`n/userdata/system/scripts/arcadematrix_mqtt.sh \`"\$evt\`" \`"\$@\`"`nEOFEVT`nchmod 755 \`"\$dir/arcadematrix_mqtt.sh\`"; done; chmod -R 755 /userdata/system/configs/emulationstation/scripts"
         Invoke-RemoteCommand $activeUser $esCmd | Out-Null
 
         Write-Host "Batocera one-shot event hooks successfully installed!"
