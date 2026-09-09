@@ -201,7 +201,7 @@ elif [ "$SYSTEM" = "batocera" ]; then
 
     echo "Uploading hook to $TARGET_DIR/arcadematrix_mqtt.sh..."
     scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh" || { echo "SCP failed!"; exit 1; }
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod +x $TARGET_DIR/arcadematrix_mqtt.sh" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod 755 $TARGET_DIR/arcadematrix_mqtt.sh" || true
 
     echo "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
     ssh_run "$ACTIVE_USER" "$PASSWORD" "
@@ -212,8 +212,9 @@ elif [ "$SYSTEM" = "batocera" ]; then
 #!/bin/sh
 /userdata/system/scripts/arcadematrix_mqtt.sh \"$evt\" \"\$@\"
 EOFEVT
-        chmod +x \"\$dir/arcadematrix_mqtt.sh\"
+        chmod 755 \"\$dir/arcadematrix_mqtt.sh\"
     done
+    chmod -R 755 /userdata/system/configs/emulationstation/scripts
     " || true
 
     echo "Batocera one-shot event hooks successfully installed!"
