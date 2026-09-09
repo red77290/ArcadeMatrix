@@ -19,6 +19,7 @@
 #include "MusicEngine.h"
 #include "DashboardEngine.h"
 #include "GNewsEngine.h"
+#include "MarqueeEngine.h"
 
 RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
     const auto& caps = hardwareHAL.capabilities();
@@ -78,6 +79,7 @@ void EngineRegistrar::registerAll() {
     static const MusicEngineDescriptorHandler musicHandler;
     static const DashboardEngineDescriptorHandler dashboardHandler;
     static const GNewsEngineDescriptorHandler gnewsHandler;
+    static const MarqueeEngineDescriptorHandler marqueeHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -95,7 +97,8 @@ void EngineRegistrar::registerAll() {
         &sysInfoHandler,
         &musicHandler,
         &dashboardHandler,
-        &gnewsHandler
+        &gnewsHandler,
+        &marqueeHandler
     };
 
     for (const auto* handler : handlers) {

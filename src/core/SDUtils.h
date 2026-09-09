@@ -8,6 +8,7 @@
 typedef fs::File FsFile;
 #define FILE_OPEN_READ "r"
 #define FILE_OPEN_WRITE "w"
+#define FILE_OPEN_APPEND "a"
 #else
 #ifdef FILE_READ
 #undef FILE_READ
@@ -25,6 +26,7 @@ typedef fs::File FsFile;
 extern SdFs sd;
 #define FILE_OPEN_READ O_READ
 #define FILE_OPEN_WRITE (O_WRITE | O_CREAT | O_TRUNC)
+#define FILE_OPEN_APPEND (O_WRITE | O_CREAT | O_APPEND)
 #endif
 
 inline bool isDirectory(FsFile& f) {

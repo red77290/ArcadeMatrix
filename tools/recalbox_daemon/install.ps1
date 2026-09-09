@@ -1,31 +1,22 @@
 <#
 .SYNOPSIS
-    ArcadeMatrix Recalbox/Batocera daemon installer - run this on your Windows PC, NOT on the
-    Recalbox/Batocera device itself.
+    ArcadeMatrix Gaming OS daemon installer - run this on your Windows PC, NOT on the
+    console itself.
 
 .DESCRIPTION
-    Connects over SSH (using Windows 10/11's built-in OpenSSH client - ssh.exe/scp.exe, present by
-    default since Windows 10 1809), auto-detects whether the target is Recalbox or Batocera,
-    uploads the right daemon/hook script (with your ArcadeMatrix device's IP baked in), and reboots
-    the target so it starts sending game events over MQTT.
-
-    Mirrors install.sh (macOS/Linux) and ArcadeMatrix_RPi's core/ssh_installer.py, for users who
-    don't want to (or can't) use WSL/Git Bash.
+    Connects over SSH, allows selecting target OS (Recalbox, Batocera, RetroPie) or auto-detecting,
+    uploads the right daemon/hook script (with your ArcadeMatrix device's IP and topic baked in),
+    and starts/reboots the target so it starts sending game events over MQTT to system/playing/#.
 
 .NOTES
     Requires ssh.exe and scp.exe to be on PATH. Check with: Get-Command ssh
-    If missing: Settings > Apps > Optional Features > Add a feature > OpenSSH Client.
-
-    Unlike install.sh, this script does not attempt to auto-supply the SSH password (Windows'
-    OpenSSH client has no built-in "sshpass" equivalent without extra tooling) - you will be
-    prompted for the password by ssh/scp themselves (recalboxroot for Recalbox, linux for
-    Batocera).
 #>
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "=============================================="
-Write-Host " ArcadeMatrix Recalbox/Batocera Daemon Installer"
+Write-Host " ArcadeMatrix Gaming OS Daemon Installer"
+Write-Host " (Recalbox / Batocera / RetroPie)"
 Write-Host "=============================================="
 Write-Host ""
 
@@ -34,7 +25,7 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$TargetIp = Read-Host "IP address of your Recalbox/Batocera device"
+$TargetIp = Read-Host "IP address of your Console (Recalbox/Batocera/RetroPie)"
 $Action = Read-Host "Action (1: Install Daemon, 2: Check Logs) [1]"
 if ([string]::IsNullOrWhiteSpace($Action)) { $Action = "1" }
 
@@ -51,105 +42,135 @@ if ([string]::IsNullOrWhiteSpace($TargetIp)) {
     exit 1
 }
 
-$CustomUser = Read-Host "Custom SSH Username (leave blank for 'root')"
-if ([string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser = "root" }
+Write-Host ""
+Write-Host "Select Target Console OS:"
+Write-Host "  1) Auto-Detect"
+Write-Host "  2) Recalbox"
+Write-Host "  3) Batocera"
+Write-Host "  4) RetroPie"
+$OsChoice = Read-Host "Choice [1]"
+if ([string]::IsNullOrWhiteSpace($OsChoice)) { $OsChoice = "1" }
+
+$CustomUser = Read-Host "Custom SSH Username (leave blank for defaults)"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SshOpts = @("-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=5")
 
 function Invoke-RemoteCommand {
-    # Suppress the remote command's own stdout from PowerShell's success-output pipeline (it would
-    # otherwise get concatenated with $LASTEXITCODE into a single array return value, since any
-    # unredirected external-command output becomes part of the function's return). We only care
-    # about the exit code here; ssh's interactive password prompt still goes to the real console
-    # (TTY), unaffected by this stdout redirect.
-    param([string]$Command)
-    & ssh @SshOpts "${CustomUser}@${TargetIp}" $Command | Out-Null
+    param([string]$User, [string]$Command)
+    & ssh @SshOpts "${User}@${TargetIp}" $Command | Out-Null
     return $LASTEXITCODE
 }
 
 function Copy-ToRemote {
-    param([string]$LocalPath, [string]$RemotePath)
-    & scp @SshOpts $LocalPath "${CustomUser}@${TargetIp}:${RemotePath}"
+    param([string]$User, [string]$LocalPath, [string]$RemotePath)
+    & scp @SshOpts $LocalPath "${User}@${TargetIp}:${RemotePath}"
     if ($LASTEXITCODE -ne 0) { throw "scp failed uploading $LocalPath" }
 }
 
-Write-Host "Connecting to $TargetIp - you may be prompted for the SSH password"
-Write-Host "(try 'recalboxroot' for Recalbox, 'linux' for Batocera)."
-Write-Host ""
-
 $system = "unknown"
-if ((Invoke-RemoteCommand "test -d /recalbox/share") -eq 0) {
+$activeUser = "root"
+
+if ($OsChoice -eq "2") {
     $system = "recalbox"
-} elseif ((Invoke-RemoteCommand "test -d /userdata/system") -eq 0) {
+    $activeUser = if (-not [string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser } else { "root" }
+} elseif ($OsChoice -eq "3") {
     $system = "batocera"
+    $activeUser = if (-not [string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser } else { "root" }
+} elseif ($OsChoice -eq "4") {
+    $system = "retropie"
+    $activeUser = if (-not [string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser } else { "pi" }
+} else {
+    Write-Host "Auto-detecting OS on $TargetIp..."
+    $testUser = if (-not [string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser } else { "root" }
+    if ((Invoke-RemoteCommand $testUser "test -d /recalbox/share") -eq 0) {
+        $system = "recalbox"
+        $activeUser = $testUser
+    } elseif ((Invoke-RemoteCommand $testUser "test -d /userdata/system") -eq 0) {
+        $system = "batocera"
+        $activeUser = $testUser
+    } else {
+        $piUser = if (-not [string]::IsNullOrWhiteSpace($CustomUser)) { $CustomUser } else { "pi" }
+        if ((Invoke-RemoteCommand $piUser "test -d /opt/retropie") -eq 0) {
+            $system = "retropie"
+            $activeUser = $piUser
+        }
+    }
 }
 
 if ($system -eq "unknown") {
-    Write-Error "Could not detect Recalbox or Batocera on $TargetIp. Check the IP, that SSH is enabled, and the password you entered."
+    Write-Error "Could not detect Console OS on $TargetIp. Check IP, SSH settings, and password."
     exit 1
 }
 
-Write-Host "Detected: $system"
+Write-Host "Detected: $system (User: $activeUser)"
 
 if ($Action -eq "2") {
-    $LogPath = if ($system -eq "recalbox") { "/recalbox/share/userscripts/daemon.log" } else { "/userdata/system/scripts/daemon.log" }
+    $LogPath = switch ($system) {
+        "recalbox" { "/recalbox/share/userscripts/daemon.log" }
+        "batocera" { "/userdata/system/scripts/daemon.log" }
+        "retropie" { "/opt/retropie/configs/all/daemon.log" }
+    }
     Write-Host ""
     Write-Host "=============================================="
     Write-Host " Fetching logs from $LogPath..."
     Write-Host "=============================================="
-    & ssh @SshOpts "${CustomUser}@${TargetIp}" "tail -n 100 $LogPath || echo 'Log file not found or empty'"
+    & ssh @SshOpts "${activeUser}@${TargetIp}" "tail -n 100 $LogPath 2>/dev/null || echo 'Log file not found or empty'"
     exit 0
 }
 
+$topic = "system/playing/$system"
 $TmpDir = Join-Path $env:TEMP "arcadematrix_installer_$(Get-Random)"
 New-Item -ItemType Directory -Path $TmpDir | Out-Null
 
 try {
+    $daemonSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_daemon.py") -Raw
+    $daemonSrc = $daemonSrc.Replace("{{BROKER}}", $BrokerIp).Replace("{{TOPIC}}", $topic)
+    $daemonLocal = Join-Path $TmpDir "arcadematrix_daemon.py"
+    [System.IO.File]::WriteAllText($daemonLocal, $daemonSrc.Replace("`r`n", "`n"))
+
     if ($system -eq "recalbox") {
         $TargetDir = "/recalbox/share/userscripts"
-        $daemonSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_daemon.py") -Raw
-        $daemonSrc = $daemonSrc.Replace("{{BROKER}}", $BrokerIp)
-        $daemonLocal = Join-Path $TmpDir "arcadematrix_daemon.py"
-        # ESP32/Recalbox side expects LF line endings; force them explicitly since PowerShell's
-        # Set-Content defaults to CRLF on Windows, which would otherwise corrupt the Python file.
-        [System.IO.File]::WriteAllText($daemonLocal, $daemonSrc.Replace("`r`n", "`n"))
+        Write-Host "Cleaning up previous install..."
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
+        Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir" | Out-Null
 
-        Write-Host "Cleaning up any previous install..."
-        Invoke-RemoteCommand "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
-        Invoke-RemoteCommand "mkdir -p $TargetDir" | Out-Null
+        Write-Host "Uploading daemon (topic: $topic)..."
+        Copy-ToRemote $activeUser $daemonLocal "/recalbox/share/arcadematrix_daemon.py"
 
-        Write-Host "Uploading daemon..."
-        Copy-ToRemote $daemonLocal "/recalbox/share/arcadematrix_daemon.py"
-        
         $launcherSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_launcher(permanent).sh") -Raw
         $launcherLocal = Join-Path $TmpDir "arcadematrix_launcher(permanent).sh"
         [System.IO.File]::WriteAllText($launcherLocal, $launcherSrc.Replace("`r`n", "`n"))
-        Copy-ToRemote $launcherLocal "'$TargetDir/arcadematrix_launcher(permanent).sh'"
-        
-        Invoke-RemoteCommand "chmod +x '$TargetDir/arcadematrix_launcher(permanent).sh'" | Out-Null
-    } else {
+        Copy-ToRemote $activeUser $launcherLocal "'$TargetDir/arcadematrix_launcher(permanent).sh'"
+
+        Invoke-RemoteCommand $activeUser "chmod +x '$TargetDir/arcadematrix_launcher(permanent).sh'" | Out-Null
+
+        Write-Host "Rebooting $TargetIp to apply changes..."
+        Invoke-RemoteCommand $activeUser "sleep 1 && reboot" | Out-Null
+
+    } elseif ($system -eq "batocera") {
         $TargetDir = "/userdata/system/scripts"
-        $daemonSrc = Get-Content (Join-Path $ScriptDir "arcadematrix_daemon.py") -Raw
-        $daemonSrc = $daemonSrc.Replace("{{BROKER}}", $BrokerIp)
-        $daemonLocal = Join-Path $TmpDir "arcadematrix_daemon.py"
-        [System.IO.File]::WriteAllText($daemonLocal, $daemonSrc.Replace("`r`n", "`n"))
+        Write-Host "Cleaning up previous install..."
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
+        Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir /userdata/system/configs/emulationstation/scripts" | Out-Null
 
-        Write-Host "Cleaning up any previous install..."
-        Invoke-RemoteCommand "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
-        Invoke-RemoteCommand "mkdir -p $TargetDir /userdata/system/configs/emulationstation/scripts" | Out-Null
-
-        Write-Host "Uploading daemon..."
-        Copy-ToRemote $daemonLocal "/userdata/system/arcadematrix_daemon.py"
+        Write-Host "Uploading daemon (topic: $topic)..."
+        Copy-ToRemote $activeUser $daemonLocal "/userdata/system/arcadematrix_daemon.py"
 
         Write-Host "Installing Batocera event hooks..."
         $hookCmd = @'
 cat > /userdata/system/scripts/arcadematrix_hook.sh << 'EOF'
 #!/bin/sh
-EVENT="$(basename "$0")"
-SYSTEM="$1"
-ROMPATH="$2"
-GAMENAME="$3"
+EVENT="$1"
+[ -z "$EVENT" ] && EVENT="$(basename "$0")"
+SYSTEM="$2"
+ROMPATH="$3"
+case "$(basename "$0")" in
+    game-start|game_start|gameStart) EVENT="game-start"; SYSTEM="$1"; ROMPATH="$2" ;;
+    game-end|game_end|gameStop)     EVENT="game-end"; SYSTEM="$1"; ROMPATH="$2" ;;
+    game-selected)                   EVENT="game-selected"; SYSTEM="$1"; ROMPATH="$2" ;;
+    system-selected)                 EVENT="system-selected"; SYSTEM="$1" ;;
+esac
 case "$EVENT" in
     game-selected) STATE="browsing" ;;
     game-start)    STATE="playing" ;;
@@ -169,20 +190,62 @@ for evt in game-selected game-start game-end system-selected; do
     ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/configs/emulationstation/scripts/$evt
 done
 '@
-        Invoke-RemoteCommand $hookCmd | Out-Null
+        Invoke-RemoteCommand $activeUser $hookCmd | Out-Null
 
         $cmd = 'if [ ! -f /userdata/system/custom.sh ]; then echo "#!/bin/sh" > /userdata/system/custom.sh; echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; chmod +x /userdata/system/custom.sh; else if ! grep -q "arcadematrix_daemon.py" /userdata/system/custom.sh; then echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; fi; fi'
-        Invoke-RemoteCommand $cmd | Out-Null
-    }
+        Invoke-RemoteCommand $activeUser $cmd | Out-Null
 
-    Write-Host "Rebooting $TargetIp to apply changes..."
-    Invoke-RemoteCommand "sleep 1 && reboot" | Out-Null
+        Write-Host "Rebooting $TargetIp to apply changes..."
+        Invoke-RemoteCommand $activeUser "sleep 1 && reboot" | Out-Null
+
+    } elseif ($system -eq "retropie") {
+        Write-Host "Installing for RetroPie..."
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; mkdir -p /opt/retropie/configs/all" | Out-Null
+
+        Write-Host "Uploading daemon (topic: $topic)..."
+        Copy-ToRemote $activeUser $daemonLocal "/opt/retropie/configs/all/arcadematrix_daemon.py"
+        Invoke-RemoteCommand $activeUser "chmod +x /opt/retropie/configs/all/arcadematrix_daemon.py" | Out-Null
+
+        $retroCmd = @'
+touch /opt/retropie/configs/all/runcommand-onstart.sh
+if ! grep -q 'ArcadeMatrix Runcommand Hook' /opt/retropie/configs/all/runcommand-onstart.sh; then
+    cat >> /opt/retropie/configs/all/runcommand-onstart.sh << 'EOF'
+# ArcadeMatrix Runcommand Hook
+cat > /tmp/es_state.inf << STATEEOF
+SystemId=$1
+GamePath=$3
+State=playing
+STATEEOF
+EOF
+fi
+chmod +x /opt/retropie/configs/all/runcommand-onstart.sh
+
+touch /opt/retropie/configs/all/runcommand-onend.sh
+if ! grep -q 'ArcadeMatrix Runcommand Hook' /opt/retropie/configs/all/runcommand-onend.sh; then
+    cat >> /opt/retropie/configs/all/runcommand-onend.sh << 'EOF'
+# ArcadeMatrix Runcommand Hook
+cat > /tmp/es_state.inf << STATEEOF
+SystemId=
+GamePath=
+State=stopped
+STATEEOF
+EOF
+fi
+chmod +x /opt/retropie/configs/all/runcommand-onend.sh
+
+if [ -f /opt/retropie/configs/all/autostart.sh ] && ! grep -q 'arcadematrix_daemon.py' /opt/retropie/configs/all/autostart.sh; then
+    sed -i '/emulationstation/i python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &' /opt/retropie/configs/all/autostart.sh
+fi
+nohup python3 /opt/retropie/configs/all/arcadematrix_daemon.py > /opt/retropie/configs/all/daemon.log 2>&1 &
+'@
+        Invoke-RemoteCommand $activeUser $retroCmd | Out-Null
+    }
 
     Write-Host ""
     Write-Host "=============================================="
-    Write-Host " Done! $system is rebooting."
-    Write-Host " It will publish game events to MQTT broker ${BrokerIp}:1883 on topic"
-    Write-Host " recalbox/system/playing once it's back up."
+    Write-Host " Done! $system is configured."
+    Write-Host " It publishes game events to MQTT broker ${BrokerIp}:1883 on topic"
+    Write-Host " $topic."
     Write-Host "=============================================="
 } finally {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue

@@ -1,4 +1,5 @@
 #include "ConfigLoader.h"
+#include "ConfigSanitizer.h"
 #include "Logger.h"
 #include <ArduinoJson.h>
 #include "SDUtils.h"
@@ -158,8 +159,6 @@ void ConfigLoader::setDefaults() {
     mqtt.user = "";
     mqtt.pass = "";
     mqtt.deviceName = "ArcadeMatrix";
-    mqtt.topic_batocera = "batocera";
-    mqtt.topic_recalbox = "recalbox";
 
     system.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
     system.format24h = true;
@@ -276,8 +275,6 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         mqtt.pass = m["pass"] | mqtt.pass;
         if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
         else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
-        mqtt.topic_batocera = m["topic_batocera"] | mqtt.topic_batocera;
-        mqtt.topic_recalbox = m["topic_recalbox"] | mqtt.topic_recalbox;
     }
 
     if (doc.containsKey("rotation")) {
@@ -347,6 +344,19 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         }
     }
 
+    SanitizeResult san = ConfigSanitizer::sanitize(*this);
+    bool hadLegacyTopics = false;
+    if (doc.containsKey("mqtt")) {
+        JsonObjectConst m = doc["mqtt"];
+        if (m.containsKey("topic_batocera") || m.containsKey("topic_recalbox")) {
+            hadLegacyTopics = true;
+        }
+    }
+    if (san.modified || hadLegacyTopics) {
+        LOGI("ConfigLoader", "Config sanitized or legacy topics pruned, saving back to SD.");
+        saveToSD("/config.json");
+    }
+
     publishSnapshot_locked();
     return true;
 }
@@ -400,8 +410,6 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     mObj["user"] = mqtt.user;
     mObj["pass"] = mqtt.pass;
     mObj["deviceName"] = mqtt.deviceName;
-    mObj["topic_batocera"] = mqtt.topic_batocera;
-    mObj["topic_recalbox"] = mqtt.topic_recalbox;
 
     JsonArray rotArr = doc.createNestedArray("rotation");
     for (const auto& rot : rotation) {

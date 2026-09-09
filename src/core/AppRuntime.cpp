@@ -309,6 +309,11 @@ void AppRuntime::initialize() {
             MDNS.addService("upnp", "tcp", 80);
             MDNS.addService("mediarenderer", "tcp", 80);
             
+            m_lastMqttEnabled = snapshot.mqtt.enabled;
+            m_lastMqttBroker = snapshot.mqtt.broker;
+            m_lastMqttPort = snapshot.mqtt.port;
+            m_lastMqttUser = snapshot.mqtt.user;
+            m_lastMqttPass = snapshot.mqtt.pass;
             if (snapshot.mqtt.enabled) {
                 m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
                 m_frontendListener->begin();
@@ -414,20 +419,16 @@ void AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
 }
 
 void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
-    static bool lastMqttEnabled = snapshot.mqtt.enabled;
-    static String lastMqttBroker = snapshot.mqtt.broker;
-    static int lastMqttPort = snapshot.mqtt.port;
-    static String lastMqttTopicBato = snapshot.mqtt.topic_batocera;
-    static String lastMqttTopicRecal = snapshot.mqtt.topic_recalbox;
-
-    if (snapshot.mqtt.enabled != lastMqttEnabled || 
-        (snapshot.mqtt.enabled && (snapshot.mqtt.broker != lastMqttBroker || snapshot.mqtt.port != lastMqttPort || 
-                                 snapshot.mqtt.topic_batocera != lastMqttTopicBato || snapshot.mqtt.topic_recalbox != lastMqttTopicRecal))) {
-        lastMqttEnabled = snapshot.mqtt.enabled;
-        lastMqttBroker = snapshot.mqtt.broker;
-        lastMqttPort = snapshot.mqtt.port;
-        lastMqttTopicBato = snapshot.mqtt.topic_batocera;
-        lastMqttTopicRecal = snapshot.mqtt.topic_recalbox;
+    if (snapshot.mqtt.enabled != m_lastMqttEnabled || 
+        (snapshot.mqtt.enabled && (snapshot.mqtt.broker != m_lastMqttBroker || 
+                                   snapshot.mqtt.port != m_lastMqttPort || 
+                                   snapshot.mqtt.user != m_lastMqttUser || 
+                                   snapshot.mqtt.pass != m_lastMqttPass))) {
+        m_lastMqttEnabled = snapshot.mqtt.enabled;
+        m_lastMqttBroker = snapshot.mqtt.broker;
+        m_lastMqttPort = snapshot.mqtt.port;
+        m_lastMqttUser = snapshot.mqtt.user;
+        m_lastMqttPass = snapshot.mqtt.pass;
 
         if (snapshot.mqtt.enabled) {
             if (m_frontendListener) {
@@ -442,6 +443,12 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 delete m_frontendListener;
                 m_frontendListener = nullptr;
                 if (m_appCtx) m_appCtx->setEventBus(nullptr);
+            }
+            if (m_messageEngine) {
+                m_messageEngine->deactivate();
+            }
+            if (gifEngine) {
+                gifEngine->stop();
             }
         }
     }
@@ -532,10 +539,14 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
         bool active = gifEngine->isActive();
         EngineHandle handle("gifs", "gifs_main");
         if (active) {
-            if (!m_syncGif.active || m_syncGif.handle != handle) {
+            DisplayPriority priority = snapshot.mqtt.enabled
+                ? DisplayPriority::MQTT
+                : DisplayPriority::GIF;
+            if (!m_syncGif.active || m_syncGif.handle != handle || m_syncGif.priority != priority) {
                 m_syncGif.active = true;
                 m_syncGif.handle = handle;
-                DisplayRequest req{DisplaySourceId::GIF, DisplayPriority::GIF, RequestLifecycle::UNTIL_CANCELLED, true};
+                m_syncGif.priority = priority;
+                DisplayRequest req{DisplaySourceId::GIF, priority, RequestLifecycle::UNTIL_CANCELLED, true};
                 req.engineHandle = handle;
                 m_displayArbiter.submitRequest(req);
             }
@@ -543,6 +554,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
             if (m_syncGif.active) {
                 m_syncGif.active = false;
                 m_syncGif.handle = EngineHandle();
+                m_syncGif.priority = DisplayPriority::GIF;
                 m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
             }
         }
