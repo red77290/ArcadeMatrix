@@ -71,6 +71,7 @@ struct MqttConfig {
     String user;
     String pass;
     String deviceName;
+    bool allow_overlay = false;
 };
 
 struct SystemConfig {

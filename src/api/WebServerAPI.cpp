@@ -1063,6 +1063,7 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_user"] = snap.mqtt.user;
         doc["mqtt_pass"] = snap.mqtt.pass;
         doc["mqtt_device"] = snap.mqtt.deviceName;
+        doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
 
         response->setLength();
         request->send(response);
@@ -1280,6 +1281,7 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_user"].isNull()) cfg.mqtt.user = (const char*)doc["mqtt_user"];
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
+            if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
         });
 
         // Sanitize all instances before persisting
@@ -1469,6 +1471,7 @@ void WebServerAPI::setupRoutes() {
         mqtt["user"] = snap.mqtt.user;
         mqtt["pass"] = snap.mqtt.pass;
         mqtt["device_name"] = snap.mqtt.deviceName;
+        mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
 
         JsonObject wifi = doc.createNestedObject("wifi");
         wifi["ssid"] = snap.wifi.ssid;
@@ -1607,6 +1610,7 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["user"].isNull()) cfg.mqtt.user = mq["user"].as<String>();
                 if (!mq["pass"].isNull()) cfg.mqtt.pass = mq["pass"].as<String>();
                 if (!mq["device_name"].isNull()) cfg.mqtt.deviceName = mq["device_name"].as<String>();
+                if (!mq["allow_overlay"].isNull()) cfg.mqtt.allow_overlay = mq["allow_overlay"].as<bool>();
                 changed = true;
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;

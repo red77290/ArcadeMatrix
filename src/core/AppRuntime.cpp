@@ -504,6 +504,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncMarquee.handle = handle;
                 DisplayRequest req{DisplaySourceId::MARQUEE, DisplayPriority::MARQUEE, RequestLifecycle::UNTIL_CANCELLED, true};
                 req.engineHandle = handle;
+                req.allowsOverlay = snapshot.mqtt.allow_overlay;
                 m_displayArbiter.submitRequest(req);
             }
         } else {
@@ -524,6 +525,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncMqtt.handle = handle;
                 DisplayRequest req{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::UNTIL_CANCELLED, true};
                 req.engineHandle = handle;
+                req.allowsOverlay = snapshot.mqtt.allow_overlay;
                 m_displayArbiter.submitRequest(req);
             }
         } else {
@@ -548,6 +550,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncGif.priority = priority;
                 DisplayRequest req{DisplaySourceId::GIF, priority, RequestLifecycle::UNTIL_CANCELLED, true};
                 req.engineHandle = handle;
+                req.allowsOverlay = snapshot.mqtt.enabled ? snapshot.mqtt.allow_overlay : true;
                 m_displayArbiter.submitRequest(req);
             }
         } else {
