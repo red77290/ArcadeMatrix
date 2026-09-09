@@ -21,9 +21,10 @@ before copying this file to the device.
 import subprocess
 import time
 import os
+import json
 
 BROKER = "{{BROKER}}"
-TOPIC = "recalbox/system/playing"
+TOPIC = "{{TOPIC}}"
 
 
 def parse_statefile():
@@ -116,11 +117,11 @@ def main():
                 if current_key[2] == "stopped":
                     msg = '{"status": "stopped"}'
                 elif current_key[0] is None:
-                    msg = '{"status": "browsing", "system": "' + str(current_key[1]) + '", "type": "system"}'
+                    msg = json.dumps({"status": "browsing", "system": str(current_key[1]), "type": "system"})
                 else:
                     gbase = os.path.splitext(os.path.basename(current_key[0]))[0]
                     gbase = clean_system_name(gbase)
-                    msg = '{"status": "' + current_key[2] + '", "game": "' + gbase + '", "system": "' + str(current_key[1]) + '"}'
+                    msg = json.dumps({"status": current_key[2], "game": gbase, "system": str(current_key[1])})
 
                 try:
                     subprocess.run(["mosquitto_pub", "-h", BROKER, "-t", TOPIC, "-m", msg], timeout=2, check=False)

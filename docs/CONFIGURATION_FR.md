@@ -96,10 +96,9 @@ Vous pouvez aussi pousser des identifiants à l'exécution avec `POST /api/wifi 
 | `user` | `String` | Nom d'utilisateur du broker (optionnel). |
 | `pass` | `String` | Mot de passe du broker (optionnel). |
 | `device_name` | `String` | Identifiant publié par cet appareil. |
-| `topic_batocera` | `String` | Topic écouté pour les événements de jeux Batocera. |
-| `topic_recalbox` | `String` | Topic écouté pour les événements de jeux Recalbox. |
+| *(auto-souscription)* | `system/playing/#` | Souscrit automatiquement à tous les systèmes rétro compatibles : `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
 
-Le démon de synchronisation peut être installé sur la console via SSH depuis la Web UI (`POST /api/mqtt/install`) et ses journaux récupérés avec `POST /api/mqtt/logs`.
+Le démon de synchronisation peut être installé sur la console (Recalbox, Batocera, RetroPie) via SSH depuis la Web UI (`POST /api/mqtt/install`) avec sélection de l'OS cible ou auto-détection, et ses journaux récupérés avec `POST /api/mqtt/logs`.
 
 ---
 

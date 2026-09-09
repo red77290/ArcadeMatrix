@@ -1238,11 +1238,11 @@ select.input option {
           </div>
         </header>
         <div class="card glass shadow">
-          <h3>Custom Marquee Image</h3>
-          <p class="text-muted">Upload an image to display immediately on the matrix.</p>
+          <h3>📜 <span data-i18n="marquee_title">Gameroom Marquee (GIF / Image)</span></h3>
+          <p class="text-muted" data-i18n="marquee_desc">Upload an animated GIF or custom artwork image to give your gameroom a signature identity in idle rotation.</p>
           <div id="marquee-drop-zone" class="drop-zone">
             <div class="drop-icon">🖼️</div>
-            <div class="drop-text">Drop image here or click to browse</div>
+            <div class="drop-text">Drop GIF or image here or click to browse</div>
             <input type="file" id="marquee-file-input" accept="image/png, image/jpeg, image/gif" style="display: none;">
           </div>
         </div>
@@ -1643,15 +1643,24 @@ select.input option {
                 <input type="password" id="hw-mqtt-ssh-pass" class="input" placeholder="recalboxroot">
               </div>
             </div>
-            <div class="form-grid" style="align-items: end;">
+            <div class="form-grid" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="recalbox_target_os">Target Console OS</label>
+                <select id="hw-mqtt-target-os" class="input" style="font-weight: 600;">
+                  <option value="auto" selected>🔍 Auto-Detect (Folder Scan)</option>
+                  <option value="recalbox">🕹️ Recalbox (/recalbox/share)</option>
+                  <option value="batocera">🦇 Batocera (/userdata/system)</option>
+                  <option value="retropie">🥧 RetroPie (/opt/retropie)</option>
+                </select>
+              </div>
               <div class="form-group">
                 <label data-i18n="recalbox_console_ip">Console IP Address</label>
                 <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
               </div>
-              <div class="form-group" style="display: flex; gap: 0.5rem;">
-                <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;" data-i18n="recalbox_install_btn">Install via SSH</button>
-                <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;" data-i18n="recalbox_logs_btn">Check Logs</button>
-              </div>
+            </div>
+            <div class="form-group" style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+              <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;" data-i18n="recalbox_install_btn">Install via SSH</button>
+              <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;" data-i18n="recalbox_logs_btn">Check Logs</button>
             </div>
             <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
           </div>
@@ -2065,7 +2074,8 @@ const translations = {
     mqtt_user: "Username",
     mqtt_pass: "Password",
     mqtt_save_btn: "Save MQTT Settings",
-    recalbox_title: "Recalbox / Batocera Sync",
+    recalbox_title: "Recalbox / Batocera / RetroPie Sync",
+    recalbox_target_os: "Target Console OS",
     recalbox_desc: "Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.",
     recalbox_custom_auth: "Use custom SSH credentials (Default: root / recalboxroot)",
     recalbox_ssh_user: "SSH Username",
@@ -2356,7 +2366,8 @@ const translations = {
     mqtt_user: "Nom d'utilisateur",
     mqtt_pass: "Mot de passe",
     mqtt_save_btn: "Enregistrer les paramètres MQTT",
-    recalbox_title: "Synchronisation Recalbox / Batocera",
+    recalbox_title: "Synchronisation Recalbox / Batocera / RetroPie",
+    recalbox_target_os: "Système console cible",
     recalbox_desc: "Installe automatiquement les scripts de synchro MQTT sur votre console retro-gaming via SSH.",
     recalbox_custom_auth: "Utiliser des identifiants SSH personnalisés (Défaut : root / recalboxroot)",
     recalbox_ssh_user: "Nom d'utilisateur SSH",
@@ -2645,7 +2656,8 @@ const translations = {
     mqtt_user: "Usuario",
     mqtt_pass: "Contraseña",
     mqtt_save_btn: "Guardar ajustes MQTT",
-    recalbox_title: "Sincronización Recalbox / Batocera",
+    recalbox_title: "Sincronización Recalbox / Batocera / RetroPie",
+    recalbox_target_os: "Sistema de consola objetivo",
     recalbox_desc: "Instala automáticamente los scripts de sincronización MQTT en tu consola vía SSH.",
     recalbox_custom_auth: "Usar credenciales SSH personalizadas (Por defecto: root / recalboxroot)",
     recalbox_ssh_user: "Usuario SSH",
@@ -5128,12 +5140,29 @@ function initCustomMarquee() {
   });
 
   async function uploadMarqueeImage(file) {
-    window.showToast('Uploading marquee image...', 'info');
+    window.showToast('Uploading marquee animation/image...', 'info');
+    if (file && file.type && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        let preview = dropZone.querySelector('.marquee-preview-img');
+        if (!preview) {
+          preview = document.createElement('img');
+          preview.className = 'marquee-preview-img';
+          preview.style.maxHeight = '64px';
+          preview.style.marginTop = '0.5rem';
+          preview.style.borderRadius = '4px';
+          preview.style.border = '1px solid rgba(255,255,255,0.2)';
+          dropZone.appendChild(preview);
+        }
+        preview.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
     try {
       await API.uploadMarquee(file);
-      window.showToast('Marquee image displayed!', 'success');
+      window.showToast('Gameroom marquee updated and active!', 'success');
     } catch (e) {
-      window.showToast('Failed to display marquee image', 'error');
+      window.showToast('Failed to upload marquee: ' + (e.message || e), 'error');
     }
   }
 }
@@ -5212,83 +5241,105 @@ function initNetworkSettings() {
     });
   }
 
+  const cbCustomAuth = document.getElementById('hw-mqtt-custom-auth');
+  const authFields = document.getElementById('mqtt-custom-auth-fields');
+  if (cbCustomAuth && authFields) {
+    cbCustomAuth.addEventListener('change', () => {
+      authFields.style.display = cbCustomAuth.checked ? 'grid' : 'none';
+    });
+  }
+
+  const targetOsSelect = document.getElementById('hw-mqtt-target-os');
+  if (targetOsSelect) {
+    targetOsSelect.addEventListener('change', () => {
+      const osVal = targetOsSelect.value;
+      const userInput = document.getElementById('hw-mqtt-ssh-user');
+      const passInput = document.getElementById('hw-mqtt-ssh-pass');
+      if (osVal === 'retropie') {
+        if (userInput) userInput.placeholder = 'pi';
+        if (passInput) passInput.placeholder = 'raspberry';
+      } else if (osVal === 'batocera') {
+        if (userInput) userInput.placeholder = 'root';
+        if (passInput) passInput.placeholder = 'linux';
+      } else {
+        if (userInput) userInput.placeholder = 'root';
+        if (passInput) passInput.placeholder = 'recalboxroot';
+      }
+    });
+  }
+
   const btnInstallMqtt = document.getElementById('btn-install-mqtt');
   if (btnInstallMqtt) {
-    const cbCustomAuth = document.getElementById('hw-mqtt-custom-auth');
-    const authFields = document.getElementById('mqtt-custom-auth-fields');
-    if (cbCustomAuth && authFields) {
-      cbCustomAuth.addEventListener('change', () => {
-        authFields.style.display = cbCustomAuth.checked ? 'grid' : 'none';
-      });
-    }
-
     btnInstallMqtt.addEventListener('click', async () => {
       const ip = document.getElementById('hw-mqtt-ip').value;
       if (!ip) {
         window.showToast('Please enter Console IP Address', 'error');
         return;
       }
-      
-      let user = null;
-      let pass = null;
-      if (cbCustomAuth && cbCustomAuth.checked) {
-        user = document.getElementById('hw-mqtt-ssh-user').value || 'root';
-        pass = document.getElementById('hw-mqtt-ssh-pass').value;
-      }
-
-      btnInstallMqtt.disabled = true;
-      btnInstallMqtt.textContent = 'Installing...';
-      try {
-        await API.postAuth('/api/mqtt/install', { ip, user, pass });
-        window.showToast('MQTT Sync Script Installed!', 'success');
-      } catch (e) {
-        window.showToast('Failed to install script', 'error');
-      } finally {
-        btnInstallMqtt.disabled = false;
-        btnInstallMqtt.textContent = 'Install via SSH';
-      }
-    });
-
-    const btnCheckLogs = document.getElementById('btn-check-logs');
-    if (btnCheckLogs) {
-      btnCheckLogs.addEventListener('click', async () => {
-        const ip = document.getElementById('hw-mqtt-ip').value;
-        if (!ip) {
-          window.showToast('Please enter Console IP Address', 'error');
-          return;
-        }
-
+        
+        const os = targetOsSelect ? targetOsSelect.value : 'auto';
         let user = null;
         let pass = null;
         if (cbCustomAuth && cbCustomAuth.checked) {
-          user = document.getElementById('hw-mqtt-ssh-user').value || 'root';
+          user = document.getElementById('hw-mqtt-ssh-user').value || (os === 'retropie' ? 'pi' : 'root');
           pass = document.getElementById('hw-mqtt-ssh-pass').value;
         }
 
-        btnCheckLogs.disabled = true;
-        btnCheckLogs.textContent = 'Checking...';
-        const logOutput = document.getElementById('ssh-log-output');
-        if (logOutput) {
-          logOutput.style.display = 'block';
-          logOutput.textContent = 'Fetching logs from ' + ip + '...';
-        }
-        
+        btnInstallMqtt.disabled = true;
+        btnInstallMqtt.textContent = 'Installing...';
         try {
-          const res = await API.postAuth('/api/mqtt/logs', { ip, user, pass });
-          if (logOutput) {
-            logOutput.textContent = res.logs || 'No logs returned.';
-          }
-          window.showToast('Logs retrieved!', 'success');
+          await API.postAuth('/api/mqtt/install', { ip, os, user, pass });
+          window.showToast('MQTT Sync Script Installed!', 'success');
         } catch (e) {
-          if (logOutput) {
-            logOutput.textContent = 'Failed to fetch logs: ' + (e.message || e.status || '');
-          }
-          window.showToast('Failed to fetch logs', 'error');
+          window.showToast('Failed to install script', 'error');
         } finally {
-          btnCheckLogs.disabled = false;
-          btnCheckLogs.textContent = 'Check Logs';
+          btnInstallMqtt.disabled = false;
+          btnInstallMqtt.textContent = 'Install via SSH';
         }
       });
+
+      const btnCheckLogs = document.getElementById('btn-check-logs');
+      if (btnCheckLogs) {
+        btnCheckLogs.addEventListener('click', async () => {
+          const ip = document.getElementById('hw-mqtt-ip').value;
+          if (!ip) {
+            window.showToast('Please enter Console IP Address', 'error');
+            return;
+          }
+
+          const os = targetOsSelect ? targetOsSelect.value : 'auto';
+          let user = null;
+          let pass = null;
+          if (cbCustomAuth && cbCustomAuth.checked) {
+            user = document.getElementById('hw-mqtt-ssh-user').value || (os === 'retropie' ? 'pi' : 'root');
+            pass = document.getElementById('hw-mqtt-ssh-pass').value;
+          }
+
+          btnCheckLogs.disabled = true;
+          btnCheckLogs.textContent = 'Checking...';
+          const logOutput = document.getElementById('ssh-log-output');
+          if (logOutput) {
+            logOutput.style.display = 'block';
+            logOutput.textContent = 'Fetching logs from ' + ip + '...';
+          }
+          
+          try {
+            const res = await API.postAuth('/api/mqtt/logs', { ip, os, user, pass });
+            if (logOutput) {
+              logOutput.textContent = res.logs || 'No logs returned.';
+            }
+            window.showToast('Logs retrieved!', 'success');
+          } catch (e) {
+            if (logOutput) {
+              logOutput.textContent = 'Failed to fetch logs: ' + (e.message || e.status || '');
+            }
+            window.showToast('Failed to fetch logs', 'error');
+          } finally {
+            btnCheckLogs.disabled = false;
+            btnCheckLogs.textContent = 'Check Logs';
+          }
+        });
+      }
     }
   }
 
@@ -5305,9 +5356,13 @@ function initNetworkSettings() {
         pass: document.getElementById('hw-mqtt-pass').value,
       };
       try {
-        await API.post('/api/system', { mqtt });
+        const res = await API.post('/api/system', { mqtt });
         if (window.__sysConfig) window.__sysConfig.mqtt = mqtt;
-        window.showToast('MQTT Settings Saved!', 'success');
+        if (res && res.status === 'rebooting') {
+          window.showToast('MQTT Settings Saved! Restarting...', 'info');
+        } else {
+          window.showToast('MQTT Settings Saved!', 'success');
+        }
       } catch (e) {
         window.showToast('Failed to save MQTT Settings', 'error');
       }

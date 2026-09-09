@@ -124,7 +124,10 @@ void ArcadeClock::drawTateTime() {
     sprintf(sStr, "%02d", storedTime.seconds);
 
     matrix->setFont(nullptr);
-    int scale = (w >= 64) ? 4 : 2;
+    int logicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 0)) : 0;
+    int maxScale = (w >= 64) ? 4 : 2;
+    int scale = (logicalSize > 0) ? min(logicalSize, maxScale) : maxScale;
+    if (scale < 1) scale = 1;
     matrix->setTextSize(scale);
 
     int digitW = 2 * 6 * scale - scale;
@@ -143,7 +146,7 @@ void ArcadeClock::drawTateTime() {
 
         drawStrWithShadow(hStr, drawX, yH, textColor, shadowColor, scale);
         drawStrWithShadow(mStr, drawX, yM, textColor, shadowColor, scale);
-        drawStrWithShadow(sStr, drawX, yS, matrix->color565(200, 200, 220), shadowColor, max(1, scale - 1));
+        drawStrWithShadow(sStr, drawX, yS, textColor, shadowColor, scale);
     } else {
         // 2 Tiers (Hours top, Minutes bottom, pulsing dots in center)
         int yH = (h / 4) - (digitH / 2) + offsetY + 2;

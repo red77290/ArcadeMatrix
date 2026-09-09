@@ -2,24 +2,23 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
 
-Installe un daemon d'événements léger sur votre appareil Recalbox ou Batocera afin qu'ArcadeMatrix (ESP32)
+Installe un daemon d'événements léger sur votre appareil Recalbox, Batocera ou RetroPie afin qu'ArcadeMatrix (ESP32)
 puisse afficher en direct l'artwork marquee « now playing » — c'est le même protocole de daemon que celui utilisé par
-`ArcadeMatrix_RPi` (voir son `core/ssh_installer.py`), donc **une seule installation du daemon sert les deux projets** si vous utilisez les deux.
+`ArcadeMatrix_RPi` (voir son `src/core/ssh_installer.rs`), donc **une seule installation du daemon sert les deux projets** si vous utilisez les deux.
 
 Contrairement au projet RPi (qui possède une interface web avec un bouton « Install » se connectant en SSH pour vous), le
 firmware ESP32 n'a pas cette interface côté hôte frontend — il s'agit donc d'un **outil autonome que vous exécutez depuis votre propre PC** (Windows/macOS/Linux), pas depuis l'ESP32 ni depuis EmulationStation lui-même.
 
 ## Ce qu'il fait
 
-1. Se connecte à votre appareil Recalbox/Batocera en SSH.
-2. Détecte automatiquement lequel des deux c'est (essaie d'abord le mot de passe Recalbox par défaut, puis celui de Batocera).
+1. Se connecte à votre appareil Recalbox/Batocera/RetroPie en SSH.
+2. Sélectionne ou détecte automatiquement l'OS cible (via l'inspection de répertoires distants).
 3. Upload le script daemon / hook correspondant, avec **l'adresse IP de votre appareil ArcadeMatrix** intégrée
    (afin qu'il sache où publier les événements MQTT).
 4. Redémarre l'appareil afin que le daemon se lance automatiquement à partir de maintenant.
 
 Une fois installé, chaque fois que vous lancez / parcourez / arrêtez un jeu, l'appareil publie un petit message
-JSON via MQTT (topic `recalbox/system/playing`, identique à la valeur par défaut de `core/config.py` dans
-`ArcadeMatrix_RPi` et à `TOPIC_RECALBOX` dans la section `[MQTT]` de `config.json`) :
+JSON via MQTT sur le topic standardisé `system/playing/<os>` (`system/playing/recalbox`, `system/playing/batocera` ou `system/playing/retropie`, écouté par le firmware via `system/playing/#`) :
 
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}
