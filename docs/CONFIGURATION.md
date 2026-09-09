@@ -96,10 +96,13 @@ You can also push credentials at runtime with `POST /api/wifi { "ssid": "...", "
 | `user` | `String` | Broker username (optional). |
 | `pass` | `String` | Broker password (optional). |
 | `device_name` | `String` | Identifier published by this device. |
-| `topic_batocera` | `String` | Topic subscribed for Batocera game events. |
-| `topic_recalbox` | `String` | Topic subscribed for Recalbox game events. |
+| `allow_overlay` | `bool` | Allow decorative overlays (e.g. Street Fighter) on top of MQTT/marquee screens (default `false`). |
+| *(auto-subscription)* | `system/playing/#` | Subscribes automatically to all supported retro gaming systems: `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
 
-The sync daemon can be installed on the console over SSH from the Web UI (`POST /api/mqtt/install`) and its logs fetched with `POST /api/mqtt/logs`.
+The sync daemon can be installed on the console (Recalbox, Batocera, RetroPie) over SSH from the Web UI (`POST /api/mqtt/install`) with target OS selection or auto-detection, and its logs fetched with `POST /api/mqtt/logs`.
+
+> [!NOTE]
+> For Batocera, version **v33 or newer** is required for dynamic marquee browsing (`game-selected` and `system-selected` hooks). Batocera v32 and earlier only trigger game launch/stop events. Recalbox is supported on all versions.
 
 ---
 

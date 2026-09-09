@@ -2,9 +2,9 @@
 
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
-Installs a lightweight event daemon on your Recalbox or Batocera device, so ArcadeMatrix (ESP32)
+Installs a lightweight event daemon on your Recalbox, Batocera, or RetroPie device, so ArcadeMatrix (ESP32)
 can display live "now playing" marquee artwork - the same daemon protocol used by
-`ArcadeMatrix_RPi` (see its `core/ssh_installer.py`), so **one daemon install serves both
+`ArcadeMatrix_RPi` (see its `src/core/ssh_installer.rs`), so **one daemon install serves both
 projects** if you happen to run both.
 
 Unlike the RPi project (which has a web UI with an "Install" button that SSHes in for you), the
@@ -13,15 +13,17 @@ run from your own PC** (Windows/macOS/Linux), not from the ESP32 or from Emulati
 
 ## What it does
 
-1. Connects to your Recalbox/Batocera device over SSH.
-2. Auto-detects which one it is (tries the Recalbox default password first, then Batocera's).
+1. Connects to your Recalbox/Batocera/RetroPie device over SSH.
+2. Selects or auto-detects the target operating system (via remote directory inspection).
 3. Uploads the matching daemon/hook script, with your **ArcadeMatrix device's IP address** baked
    in (so it knows where to publish MQTT events).
 4. Reboots the device so the daemon starts automatically from now on.
 
 Once installed, every time you launch/browse/stop a game, the device publishes a small JSON
-message over MQTT (topic `recalbox/system/playing`, matching `ArcadeMatrix_RPi`'s
-`core/config.py` default and ArcadeMatrix's `config.json` `[MQTT] TOPIC_RECALBOX` default):
+message over MQTT on topic `system/playing/<os>` (`system/playing/recalbox`, `system/playing/batocera`, or `system/playing/retropie`, matched by the firmware's wildcard subscription `system/playing/#`):
+
+> [!IMPORTANT]
+> **Batocera version requirement:** Dynamic marquee switching while browsing games and systems requires **Batocera v33 or newer** (Batocera introduced the EmulationStation `game-selected` and `system-selected` script hooks in v33). On Batocera v32 and earlier, only game launch and stop events are supported. Recalbox is fully supported across all versions.
 
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}

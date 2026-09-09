@@ -2,24 +2,26 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 [Français](README_FR.md) | 🇪🇸 Español
 
-Instala un daemon de eventos ligero en tu dispositivo Recalbox o Batocera para que ArcadeMatrix (ESP32)
+Instala un daemon de eventos ligero en tu dispositivo Recalbox, Batocera o RetroPie para que ArcadeMatrix (ESP32)
 pueda mostrar en vivo el artwork marquee de « now playing »: es el mismo protocolo de daemon que usa
-`ArcadeMatrix_RPi` (consulta su `core/ssh_installer.py`), así que **una sola instalación del daemon sirve para ambos proyectos** si utilizas los dos.
+`ArcadeMatrix_RPi` (consulta su `src/core/ssh_installer.rs`), así que **una sola instalación del daemon sirve para ambos proyectos** si utilizas los dos.
 
 A diferencia del proyecto RPi (que tiene una interfaz web con un botón « Install » que entra por SSH por ti), el
 firmware ESP32 no dispone de esa interfaz en el host frontend, así que esto es una **herramienta independiente que ejecutas desde tu propio PC** (Windows/macOS/Linux), no desde el ESP32 ni desde EmulationStation.
 
 ## Qué hace
 
-1. Se conecta por SSH a tu dispositivo Recalbox/Batocera.
-2. Detecta automáticamente cuál de los dos es (prueba primero la contraseña predeterminada de Recalbox y luego la de Batocera).
+1. Se conecta por SSH a tu dispositivo Recalbox/Batocera/RetroPie.
+2. Selecciona o detecta automáticamente el sistema operativo objetivo (mediante inspección de directorios remotos).
 3. Sube el script daemon / hook correspondiente, con **la dirección IP de tu dispositivo ArcadeMatrix** integrada
    (para que sepa dónde publicar los eventos MQTT).
 4. Reinicia el dispositivo para que el daemon se inicie automáticamente a partir de entonces.
 
 Una vez instalado, cada vez que lanzas / navegas / detienes un juego, el dispositivo publica un pequeño mensaje
-JSON por MQTT (topic `recalbox/system/playing`, igual al valor por defecto de `core/config.py` en
-`ArcadeMatrix_RPi` y de `TOPIC_RECALBOX` en la sección `[MQTT]` de `config.json`):
+JSON por MQTT en el topic estandarizado `system/playing/<os>` (`system/playing/recalbox`, `system/playing/batocera` o `system/playing/retropie`, escuchado por el firmware mediante `system/playing/#`):
+
+> [!IMPORTANT]
+> **Requisito de versión de Batocera:** La sincronización dinámica de marquesinas durante la navegación por los juegos y sistemas requiere **Batocera v33 o superior** (Batocera introdujo los hooks de script de EmulationStation `game-selected` y `system-selected` en la versión 33). En Batocera v32 y versiones anteriores, solo se admiten los eventos de inicio y parada del juego (`game-start`, `game-end`). Recalbox es totalmente compatible en todas sus versiones a través de su daemon de monitorización de estado nativo.
 
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}

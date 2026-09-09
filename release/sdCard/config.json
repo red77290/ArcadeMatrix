@@ -26,8 +26,7 @@
         "user": "",
         "pass": "",
         "device_name": "arcadematrix",
-        "topic_batocera": "batocera",
-        "topic_recalbox": "recalbox"
+        "allow_overlay": false
     },
     "system": {
         "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",

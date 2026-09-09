@@ -27,18 +27,8 @@ void FrontendSyncEngine::begin() {
         LOGI("RetroFrontend", "Starting embedded PicoMQTT Broker on port %d...", mqttConfig.port);
         internalBroker = new PicoMQTT::Server(mqttConfig.port);
         
-        // Subscribe to the configured topics locally
-        if (mqttConfig.topic_batocera.length() > 0) {
-            internalBroker->subscribe(mqttConfig.topic_batocera.c_str(), [](const char* topic, const char* payload) {
-                if (instance) instance->handleMessage(String(topic), String(payload));
-            });
-        }
-        if (mqttConfig.topic_recalbox.length() > 0) {
-            internalBroker->subscribe(mqttConfig.topic_recalbox.c_str(), [](const char* topic, const char* payload) {
-                if (instance) instance->handleMessage(String(topic), String(payload));
-            });
-        }
-        internalBroker->subscribe("/Recalbox/EmulationStation/Event", [](const char* topic, const char* payload) {
+        // Subscribe strictly to canonical wildcard topic
+        internalBroker->subscribe(MQTT_TOPIC_WILDCARD, [](const char* topic, const char* payload) {
             if (instance) instance->handleMessage(String(topic), String(payload));
         });
         
@@ -117,9 +107,9 @@ bool FrontendSyncEngine::loop() {
         hasPendingEvent = false;
         uint32_t reqId = currentRequestId;
         handleGameEvent(pendingPayload, reqId);
-    } else if (!hasReceivedAnyEvent && !waitingDisplayed && message) {
+    } else if (!hasReceivedAnyEvent && (!waitingDisplayed || (message && !message->isActive())) && message) {
         waitingDisplayed = true;
-        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "rtl", 40, 0 };
+        MessageConfig cfg = { "WAITING FOR MARQUEE", 0xFFFF, 1, "none", 40, 0 };
         message->displayMessage(cfg);
         LOGI("RetroFrontend", "MQTT Enabled: Displaying WAITING FOR MARQUEE on DMD.");
     }
@@ -132,20 +122,8 @@ void FrontendSyncEngine::reconnect() {
         Serial.print("Attempting MQTT connection...");
         if (mqttClient.connect(mqttConfig.deviceName.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str())) {
             Serial.println("connected");
-            // Subscribe to the *configured* topics (config.json [MQTT] TOPIC_BATOCERA/TOPIC_RECALBOX)
-            // rather than hardcoded ones - this is what tools/recalbox_daemon/ actually publishes
-            // to (default "recalbox/system/playing"/"batocera/system/playing"), matching
-            // ArcadeMatrix_RPi's core/ssh_installer.py daemon exactly so the same daemon install
-            // drives both projects.
-            if (mqttConfig.topic_batocera.length() > 0) {
-                mqttClient.subscribe(mqttConfig.topic_batocera.c_str());
-            }
-            if (mqttConfig.topic_recalbox.length() > 0) {
-                mqttClient.subscribe(mqttConfig.topic_recalbox.c_str());
-            }
-            // Also keep the native EmulationStation event topic for basic stop/start signals from
-            // setups that don't run the custom daemon (see docs/DEVELOPER.md).
-            mqttClient.subscribe("/Recalbox/EmulationStation/Event");
+            // Subscribe strictly to canonical wildcard topic
+            mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
         } else {
             Serial.print("failed, rc=");
             Serial.print(mqttClient.state());
@@ -170,30 +148,11 @@ void FrontendSyncEngine::callback(char* topic, byte* payload, unsigned int lengt
 void FrontendSyncEngine::handleMessage(String topic, String msg) {
     LOGI("RetroFrontend", "MQTT Event Received: Topic = '%s', Payload = '%s'", topic.c_str(), msg.c_str());
     
-    if (topic == mqttConfig.topic_recalbox || topic == mqttConfig.topic_batocera ||
-        topic.startsWith("recalbox/system/playing") || topic.startsWith("batocera/system/playing")) {
-        LOGI("RetroFrontend", "Matched Recalbox/Batocera playing topic, queueing game event.");
+    if (topic.startsWith("system/playing/")) {
+        LOGI("RetroFrontend", "Matched game playing topic, queueing game event.");
         pendingPayload = msg;
         hasPendingEvent = true;
         currentRequestId++;
-        return;
-    }
-    
-    if (topic == "/Recalbox/EmulationStation/Event") {
-        if (msg == "stop" || msg == "stopgame") {
-            LOGI("RetroFrontend", "Received native EmulationStation stop event, returning to idle rotation.");
-            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                gif->stop();
-                xSemaphoreGive(sdMutex);
-            }
-            hasPendingEvent = false;
-        } else if (msg == "rungame") {
-            LOGI("RetroFrontend", "Received native EmulationStation rungame event.");
-            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                gif->playGif("/gifs/recalbox_generic.raw");
-                xSemaphoreGive(sdMutex);
-            }
-        }
         return;
     }
 }
@@ -214,7 +173,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     hasReceivedAnyEvent = true;
 
     if (strcmp(status, "stopped") == 0) {
-        LOGI("RetroFrontend", "Received stopped event, keeping last marquee displayed.");
+        LOGI("RetroFrontend", "Received stopped event, keeping last marquee displayed until next event.");
         hasPendingEvent = false;
         return;
     }
@@ -222,7 +181,8 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     String cleanSystem = cleanSystemName(String(systemRaw));
     String cleanGame = cleanSystemName(String(gameRaw));
 
-    if (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem)) {
+    bool isPlaying = (strcmp(status, "playing") == 0);
+    if (!isPlaying && (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem))) {
         handleSystemEvent(cleanSystem.length() > 0 ? cleanSystem : String(systemRaw), reqId);
         return;
     }
@@ -289,6 +249,9 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
             gif->playGif(foundArtPath.c_str());
             xSemaphoreGive(sdMutex);
         }
+        if (message) {
+            message->deactivate();
+        }
         return;
     }
 
@@ -326,8 +289,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
             xSemaphoreGive(sdMutex);
         }
         if (message) {
-            MessageConfig emptyCfg = { "", 0x0000, 1, "none", 0, 0 };
-            message->displayMessage(emptyCfg);
+            message->deactivate();
         }
     }
 }
@@ -378,6 +340,9 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
             gif->playGif(foundArtPath.c_str());
             xSemaphoreGive(sdMutex);
         }
+        if (message) {
+            message->deactivate();
+        }
         return;
     }
 
@@ -416,8 +381,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
             xSemaphoreGive(sdMutex);
         }
         if (message) {
-            MessageConfig emptyCfg = { "", 0x0000, 1, "none", 0, 0 };
-            message->displayMessage(emptyCfg);
+            message->deactivate();
         }
     }
 }
