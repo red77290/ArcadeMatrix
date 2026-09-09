@@ -1062,9 +1062,8 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_port"] = snap.mqtt.port;
         doc["mqtt_user"] = snap.mqtt.user;
         doc["mqtt_pass"] = snap.mqtt.pass;
-        doc["mqtt_topic_bato"] = snap.mqtt.topic_batocera;
-        doc["mqtt_topic_recal"] = snap.mqtt.topic_recalbox;
         doc["mqtt_device"] = snap.mqtt.deviceName;
+        doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
 
         response->setLength();
         request->send(response);
@@ -1281,9 +1280,8 @@ void WebServerAPI::setupRoutes() {
             }
             if (!doc["mqtt_user"].isNull()) cfg.mqtt.user = (const char*)doc["mqtt_user"];
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
-            if (!doc["mqtt_topic_bato"].isNull()) cfg.mqtt.topic_batocera = (const char*)doc["mqtt_topic_bato"];
-            if (!doc["mqtt_topic_recal"].isNull()) cfg.mqtt.topic_recalbox = (const char*)doc["mqtt_topic_recal"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
+            if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
         });
 
         // Sanitize all instances before persisting
@@ -1472,9 +1470,8 @@ void WebServerAPI::setupRoutes() {
         mqtt["port"] = snap.mqtt.port;
         mqtt["user"] = snap.mqtt.user;
         mqtt["pass"] = snap.mqtt.pass;
-        mqtt["topic_batocera"] = snap.mqtt.topic_batocera;
-        mqtt["topic_recalbox"] = snap.mqtt.topic_recalbox;
         mqtt["device_name"] = snap.mqtt.deviceName;
+        mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
 
         JsonObject wifi = doc.createNestedObject("wifi");
         wifi["ssid"] = snap.wifi.ssid;
@@ -1605,16 +1602,17 @@ void WebServerAPI::setupRoutes() {
             if (doc.containsKey("mqtt")) {
                 JsonObject mq = doc["mqtt"].as<JsonObject>();
                 bool prevMqtt = cfg.mqtt.enabled;
+                String prevBroker = cfg.mqtt.broker;
+                int prevPort = cfg.mqtt.port;
                 if (!mq["enabled"].isNull()) cfg.mqtt.enabled = mq["enabled"].as<bool>();
                 if (!mq["broker"].isNull()) cfg.mqtt.broker = mq["broker"].as<String>();
                 if (!mq["port"].isNull()) cfg.mqtt.port = mq["port"].as<int>();
                 if (!mq["user"].isNull()) cfg.mqtt.user = mq["user"].as<String>();
                 if (!mq["pass"].isNull()) cfg.mqtt.pass = mq["pass"].as<String>();
-                if (!mq["topic_batocera"].isNull()) cfg.mqtt.topic_batocera = mq["topic_batocera"].as<String>();
-                if (!mq["topic_recalbox"].isNull()) cfg.mqtt.topic_recalbox = mq["topic_recalbox"].as<String>();
                 if (!mq["device_name"].isNull()) cfg.mqtt.deviceName = mq["device_name"].as<String>();
+                if (!mq["allow_overlay"].isNull()) cfg.mqtt.allow_overlay = mq["allow_overlay"].as<bool>();
                 changed = true;
-                if (prevMqtt != cfg.mqtt.enabled) {
+                if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
                 }
             }
@@ -1772,33 +1770,68 @@ void WebServerAPI::setupRoutes() {
 
     // API: MQTT SSH helpers (Parity stubs for ESP32)
     server.on("/api/mqtt/install", HTTP_POST, [](AsyncWebServerRequest *request){
-        request->send(200, "application/json", "{\"success\":false,\"message\":\"SSH install is only available on Raspberry Pi. On ESP32, configure Batocera/Recalbox manually to send MQTT to this device's IP.\"}");
+        request->send(200, "application/json", "{\"success\":false,\"message\":\"SSH install is only available on Raspberry Pi. On ESP32, configure Recalbox/Batocera/RetroPie manually with tools/rpi_emulationstation_base_os_setup.sh to send MQTT to this device's IP.\"}");
     });
     server.on("/api/mqtt/logs", HTTP_POST, [](AsyncWebServerRequest *request){
         request->send(200, "application/json", "{\"success\":true,\"logs\":\"SSH logs are only available on Raspberry Pi.\"}");
     });
 
-    // API: Live marquee/box-art image (raw RGB565, little-endian, row-major, matching the
-    // configured panel resolution exactly - see tools/mugen_extractor for the same wire format
-    // convention used by fighter sprites/date backgrounds). Parity feature with the RPi's
-    // /api/marquee, adapted to what an MCU with no general image decoder can realistically do.
+    // API: Marquee endpoint — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/custom_marquee.<ext>)
+    // as well as direct raw RGB565 streaming (application/octet-stream) for arcade frontend bridges.
     server.on("/api/marquee", HTTP_POST,
         [this](AsyncWebServerRequest *request) {
-            // The body handler below always sends the actual response once the full body has
-            // arrived; this only fires as a fallback for a genuinely empty POST (no body at all).
-            if (!request->_tempObject) {
+            if (request->_tempObject) {
+                request->send(200, "application/json", "{\"success\":true,\"message\":\"Marquee file uploaded and displayed\"}");
+            } else {
                 request->send(400, "application/json", "{\"success\":false,\"message\":\"No image data received\"}");
             }
         },
-        nullptr,
+        [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            String ext = ".gif";
+            int dotIdx = filename.lastIndexOf('.');
+            if (dotIdx >= 0) {
+                ext = filename.substring(dotIdx);
+                ext.toLowerCase();
+            }
+            String destPath = "/marquees/custom_marquee" + ext;
+
+            if (!index) {
+                LOGI("WebServer", "Marquee upload start: %s -> %s", filename.c_str(), destPath.c_str());
+                if (!sd.exists("/marquees")) {
+                    sd.mkdir("/marquees");
+                }
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                    request->_tempObject = (void*)1;
+                } else {
+                    LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
+                }
+            } else if (request->_tempObject) {
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                }
+            }
+
+            if (final && request->_tempObject) {
+                LOGI("WebServer", "Marquee upload complete: %s (%u bytes)", destPath.c_str(), index + len);
+                if (marquee) {
+                    marquee->setMarqueeFile(destPath.c_str());
+                    marquee->activate();
+                }
+            }
+        },
         [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (request->contentType().startsWith("multipart/")) {
+                return;
+            }
             if (!marquee) {
                 if (index == 0) request->send(503, "application/json", "{\"success\":false,\"message\":\"Marquee engine not initialized\"}");
                 return;
             }
-            // Buffer the whole payload before validating, following the same request->_tempObject
-            // pattern used by this library's own AsyncCallbackJsonWebHandler (auto-freed by
-            // AsyncWebServerRequest's destructor, so no manual cleanup/leak risk here).
             if (index == 0 && total > 0) {
                 request->_tempObject = malloc(total);
             }
@@ -1811,7 +1844,7 @@ void WebServerAPI::setupRoutes() {
                     request->send(200, "application/json", "{\"success\":true,\"message\":\"Marquee image received and displayed\"}");
                 } else {
                     char msgBuf[128];
-                    snprintf(msgBuf, sizeof(msgBuf), "{\"success\":false,\"message\":\"Expected exactly %u bytes of raw RGB565 (panel resolution), got %u\"}", (unsigned)marquee->expectedBufferBytes(), (unsigned)total);
+                    snprintf(msgBuf, sizeof(msgBuf), "{\"success\":false,\"message\":\"Expected exactly %u bytes of raw RGB565, got %u\"}", (unsigned)marquee->expectedBufferBytes(), (unsigned)total);
                     request->send(400, "application/json", msgBuf);
                 }
             }

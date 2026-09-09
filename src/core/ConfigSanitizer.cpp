@@ -6,6 +6,7 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config) {
     
     sanitizeMatrix(config.matrix, result);
     sanitizeSystem(config.system, result);
+    sanitizeMqtt(config.mqtt, result);
     sanitizeInstances(config.instances, result);
     sanitizeRotation(config, result);
 
@@ -228,6 +229,14 @@ void ConfigSanitizer::sanitizeField(DictionaryEngineConfig& conf, const ConfigFi
             result.values_fallback++;
             result.modified = true;
         }
+    }
+}
+
+void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
+    if (mqtt.port == 0) {
+        mqtt.port = 1883;
+        result.defaults_injected++;
+        result.modified = true;
     }
 }
 

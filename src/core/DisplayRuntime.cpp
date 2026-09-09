@@ -261,10 +261,14 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         OverlayConfig activeOverlayConfig;
         if (decision.sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
             activeOverlayConfig = m_rotationManager->getCurrentOverlays();
+        } else if (decision.sourceId == DisplaySourceId::MQTT || decision.sourceId == DisplaySourceId::MARQUEE || decision.sourceId == DisplaySourceId::GIF) {
+            activeOverlayConfig.fighter = FighterOverride::Enabled;
         }
         m_overlayManager->configure(activeOverlayConfig);
         m_overlayManager->update();
         m_overlayManager->render();
+    } else if (m_overlayManager) {
+        m_overlayManager->deactivate();
     }
 
     return result;

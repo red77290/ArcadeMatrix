@@ -44,10 +44,17 @@ private:
     int m_lastSec = -1;
     uint32_t m_lastReconciledVersion = 0;
 
+    bool m_lastMqttEnabled = false;
+    String m_lastMqttBroker = "";
+    int m_lastMqttPort = 0;
+    String m_lastMqttUser = "";
+    String m_lastMqttPass = "";
+
     struct ProducerSyncState {
         bool active = false;
         uint32_t requestId = 0;
         EngineHandle handle;
+        DisplayPriority priority = DisplayPriority::GIF;
     };
 
     ProducerSyncState m_syncMqtt;

@@ -19,10 +19,16 @@
 // MessageEngine) if no matching artwork is found on the SD card.
 class FrontendSyncEngine {
 public:
+    static constexpr const char* MQTT_TOPIC_WILDCARD = "system/playing/#";
+    static constexpr const char* MQTT_TOPIC_RECALBOX = "system/playing/recalbox";
+    static constexpr const char* MQTT_TOPIC_BATOCERA = "system/playing/batocera";
+    static constexpr const char* MQTT_TOPIC_RETROPIE = "system/playing/retropie";
+
     FrontendSyncEngine(const MqttConfig& config, GifEngine* gifEngine, MessageEngine* messageEngine = nullptr);
     void begin();
     bool loop();
     void stop();
+    bool isPlaying() const { return isGamePlaying; }
 
     struct SystemVariant {
         String folder;

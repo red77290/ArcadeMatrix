@@ -1,20 +1,20 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
-
-// Displays a full-screen static raw RGB565 image (little-endian, row-major, matching the panel's
-// exact resolution) received via HTTP POST, for a bounded duration. Intended for "live marquee"
-// / box-art style integrations with arcade frontends (Batocera/Recalbox/RetroPie), mirroring
-// ArcadeMatrix_RPi's /api/marquee endpoint. Unlike the RPi (which can decode arbitrary image
-// formats via PIL), the ESP32 has no general-purpose image decoder on board, so the companion
-// tooling/bridge script is expected to pre-convert artwork to raw RGB565 (see tools/mugen_extractor
-// for the existing convention used by fighter sprites and date backgrounds).
 #include "../../include/core/EngineContract.h"
+#include "GifEngine.h"
 
+/**
+ * @class MarqueeEngine
+ * @brief Gameroom Marquee engine displaying custom animations (GIF) or static images (PNG/RAW).
+ *
+ * Serves as the visual identity of the gameroom in idle rotation (allowRotation = true),
+ * and can be pushed on-demand via /api/marquee or frontend sync events.
+ */
 class MarqueeEngine : public IEngine {
 public:
     MarqueeEngine();
-    ~MarqueeEngine();
+    ~MarqueeEngine() override;
 
     EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
     void update(EngineContext* context) override;
@@ -25,21 +25,40 @@ public:
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     // Copies exactly width*height uint16_t pixels from src and displays them immediately for
-    // durationSeconds (default 8s, matching the RPi's typical marquee dwell time).
+    // durationSeconds (default 8s). Retained for live streaming compatibility.
     void show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds = 8);
-    bool isActive() const { return active; }
+    bool isActive() const { return m_active; }
 
     bool allowsOverlay() const override { return false; }
-    bool allowRotation() const override { return false; }
+    bool allowRotation() const override { return true; }
+    bool isRealtime() const override { return true; }
+    bool selfPaced() const override { return true; }
+    bool needsClear() const override { return false; }
 
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }
+
+    void setMarqueeFile(const char* path);
+    String getMarqueeFile() const { return m_filePath; }
+    String resolveMarqueeFile() const;
 
 private:
     int panelWidth;
     int panelHeight;
-    uint16_t* buffer;
-    bool active;
-    unsigned long startTime;
-    unsigned long durationMs;
+    uint16_t* m_rawBuffer;
+    bool m_active;
+    bool m_hasRawBuffer;
+    unsigned long m_rawStartTime;
+    unsigned long m_rawDurationMs;
     bool m_hasPsram = false;
+
+    String m_filePath;
+    float m_speedMultiplier;
+    String m_fitMode;
+
+    GifEngine* m_gifEngine;
+};
+
+class MarqueeEngineDescriptorHandler : public IEngineDescriptorHandler {
+public:
+    EngineDescriptor getDescriptor() const override;
 };

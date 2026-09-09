@@ -71,8 +71,7 @@ struct MqttConfig {
     String user;
     String pass;
     String deviceName;
-    String topic_batocera;
-    String topic_recalbox;
+    bool allow_overlay = false;
 };
 
 struct SystemConfig {
