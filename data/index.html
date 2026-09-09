@@ -1594,12 +1594,21 @@ select.input option {
         <div id="sys-tab-mqtt" class="tab-pane">
           <div class="card glass shadow" style="margin-bottom: 2rem;">
             <h3 data-i18n="mqtt_title">MQTT Integration</h3>
-            <div class="form-group">
-              <label data-i18n="mqtt_enable">Enable MQTT</label>
-              <select id="hw-mqtt-enable" class="input">
-                <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
-                <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
-              </select>
+            <div class="form-grid">
+              <div class="form-group">
+                <label data-i18n="mqtt_enable">Enable MQTT</label>
+                <select id="hw-mqtt-enable" class="input">
+                  <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                  <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="mqtt_overlay">Fighter Overlay</label>
+                <select id="hw-mqtt-overlay" class="input">
+                  <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                  <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                </select>
+              </div>
             </div>
             <div class="form-grid">
               <div class="form-group">
@@ -2067,6 +2076,7 @@ const translations = {
     wifi_connect_btn: "Connect Wi-Fi",
     mqtt_title: "MQTT Integration",
     mqtt_enable: "Enable MQTT",
+    mqtt_overlay: "Fighter Overlay",
     mqtt_opt_disabled: "Disabled",
     mqtt_opt_enabled: "Enabled",
     mqtt_broker: "Broker IP",
@@ -2359,6 +2369,7 @@ const translations = {
     wifi_connect_btn: "Connecter au Wi-Fi",
     mqtt_title: "Intégration MQTT",
     mqtt_enable: "Activer MQTT",
+    mqtt_overlay: "Overlay Fighter",
     mqtt_opt_disabled: "Désactivé",
     mqtt_opt_enabled: "Activé",
     mqtt_broker: "IP du Broker",
@@ -2649,6 +2660,7 @@ const translations = {
     wifi_connect_btn: "Conectar Wi-Fi",
     mqtt_title: "Integración MQTT",
     mqtt_enable: "Activar MQTT",
+    mqtt_overlay: "Overlay Fighter",
     mqtt_opt_disabled: "Desactivado",
     mqtt_opt_enabled: "Activado",
     mqtt_broker: "IP del Broker",
@@ -5350,6 +5362,7 @@ function initNetworkSettings() {
       const mqtt = {
         ...base,
         enabled: document.getElementById('hw-mqtt-enable').value === '1',
+        allow_overlay: document.getElementById('hw-mqtt-overlay').value === '1',
         broker: document.getElementById('hw-mqtt-broker').value,
         port: parseInt(document.getElementById('hw-mqtt-port').value, 10) || 1883,
         user: document.getElementById('hw-mqtt-user').value,
@@ -5500,6 +5513,7 @@ async function initSettings() {
 
     // MQTT (nested mqtt.*)
     setVal('hw-mqtt-enable', mqtt.enabled ? '1' : '0');
+    setVal('hw-mqtt-overlay', mqtt.allow_overlay ? '1' : '0');
     setVal('hw-mqtt-broker', mqtt.broker);
     setVal('hw-mqtt-port', mqtt.port);
     setVal('hw-mqtt-user', mqtt.user || '');

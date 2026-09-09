@@ -203,6 +203,7 @@ paths:
                       user: { type: string, example: "" }
                       pass: { type: string, example: "" }
                       device_name: { type: string, example: "ArcadeMatrix" }
+                      allow_overlay: { type: boolean, example: false }
                   wifi:
                     type: object
                     properties:

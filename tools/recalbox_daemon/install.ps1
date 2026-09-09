@@ -151,52 +151,24 @@ try {
     } elseif ($system -eq "batocera") {
         $TargetDir = "/userdata/system/scripts"
         Write-Host "Cleaning up previous install..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh" | Out-Null
-        Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir /userdata/system/configs/emulationstation/scripts" | Out-Null
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh $TargetDir/arcadematrix_hook.sh /userdata/system/arcadematrix_daemon.py; rm -f $TargetDir/game-selected $TargetDir/game-start $TargetDir/game-end $TargetDir/system-selected; rm -f /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected; if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" | Out-Null
+        Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir" | Out-Null
 
-        Write-Host "Uploading daemon (topic: $topic)..."
-        Copy-ToRemote $activeUser $daemonLocal "/userdata/system/arcadematrix_daemon.py"
+        Write-Host "Preparing Batocera event hook..."
+        $batoceraTemplate = Join-Path $ScriptDir "arcadematrix_mqtt_batocera.sh"
+        $batoceraHookLocal = Join-Path $tmpDir "arcadematrix_mqtt.sh"
+        (Get-Content -Path $batoceraTemplate -Raw) `
+            -replace '\{\{BROKER\}\}', $BrokerIp | Set-Content -Path $batoceraHookLocal -NoNewline
 
-        Write-Host "Installing Batocera event hooks..."
-        $hookCmd = @'
-cat > /userdata/system/scripts/arcadematrix_hook.sh << 'EOF'
-#!/bin/sh
-EVENT="$1"
-[ -z "$EVENT" ] && EVENT="$(basename "$0")"
-SYSTEM="$2"
-ROMPATH="$3"
-case "$(basename "$0")" in
-    game-start|game_start|gameStart) EVENT="game-start"; SYSTEM="$1"; ROMPATH="$2" ;;
-    game-end|game_end|gameStop)     EVENT="game-end"; SYSTEM="$1"; ROMPATH="$2" ;;
-    game-selected)                   EVENT="game-selected"; SYSTEM="$1"; ROMPATH="$2" ;;
-    system-selected)                 EVENT="system-selected"; SYSTEM="$1" ;;
-esac
-case "$EVENT" in
-    game-selected) STATE="browsing" ;;
-    game-start)    STATE="playing" ;;
-    game-end)      STATE="stopped" ;;
-    system-selected) STATE="browsing"; ROMPATH="" ;;
-    *)             STATE="browsing" ;;
-esac
-cat > /tmp/es_state.inf << STATEEOF
-SystemId=$SYSTEM
-GamePath=$ROMPATH
-State=$STATE
-STATEEOF
-EOF
-chmod +x /userdata/system/scripts/arcadematrix_hook.sh
-for evt in game-selected game-start game-end system-selected; do
-    ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/scripts/$evt
-    ln -sf /userdata/system/scripts/arcadematrix_hook.sh /userdata/system/configs/emulationstation/scripts/$evt
-done
-'@
-        Invoke-RemoteCommand $activeUser $hookCmd | Out-Null
+        Write-Host "Uploading hook to $TargetDir/arcadematrix_mqtt.sh..."
+        Copy-ToRemote $activeUser $batoceraHookLocal "$TargetDir/arcadematrix_mqtt.sh"
+        Invoke-RemoteCommand $activeUser "chmod +x $TargetDir/arcadematrix_mqtt.sh" | Out-Null
 
-        $cmd = 'if [ ! -f /userdata/system/custom.sh ]; then echo "#!/bin/sh" > /userdata/system/custom.sh; echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; chmod +x /userdata/system/custom.sh; else if ! grep -q "arcadematrix_daemon.py" /userdata/system/custom.sh; then echo ''[ "$1" = "start" ] && python3 /userdata/system/arcadematrix_daemon.py > /userdata/system/scripts/daemon.log 2>&1 &'' >> /userdata/system/custom.sh; fi; fi'
-        Invoke-RemoteCommand $activeUser $cmd | Out-Null
+        Write-Host "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
+        $esCmd = "for evt in game-selected system-selected game-start game-end; do dir=\`"/userdata/system/configs/emulationstation/scripts/\$evt\`"; mkdir -p \`"\$dir\`"; cat > \`"\$dir/arcadematrix_mqtt.sh\`" << 'EOFEVT'`n#!/bin/sh`n/userdata/system/scripts/arcadematrix_mqtt.sh \`"\$evt\`" \`"\$@\`"`nEOFEVT`nchmod +x \`"\$dir/arcadematrix_mqtt.sh\`"; done"
+        Invoke-RemoteCommand $activeUser $esCmd | Out-Null
 
-        Write-Host "Rebooting $TargetIp to apply changes..."
-        Invoke-RemoteCommand $activeUser "sleep 1 && reboot" | Out-Null
+        Write-Host "Batocera one-shot event hooks successfully installed!"
 
     } elseif ($system -eq "retropie") {
         Write-Host "Installing for RetroPie..."

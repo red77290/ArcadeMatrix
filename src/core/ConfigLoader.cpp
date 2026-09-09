@@ -159,6 +159,7 @@ void ConfigLoader::setDefaults() {
     mqtt.user = "";
     mqtt.pass = "";
     mqtt.deviceName = "ArcadeMatrix";
+    mqtt.allow_overlay = false;
 
     system.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
     system.format24h = true;
@@ -275,6 +276,7 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         mqtt.pass = m["pass"] | mqtt.pass;
         if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
         else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
+        if (m.containsKey("allow_overlay")) mqtt.allow_overlay = m["allow_overlay"].as<bool>();
     }
 
     if (doc.containsKey("rotation")) {
@@ -410,6 +412,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     mObj["user"] = mqtt.user;
     mObj["pass"] = mqtt.pass;
     mObj["deviceName"] = mqtt.deviceName;
+    mObj["allow_overlay"] = mqtt.allow_overlay;
 
     JsonArray rotArr = doc.createNestedArray("rotation");
     for (const auto& rot : rotation) {
