@@ -165,7 +165,7 @@ try {
         Invoke-RemoteCommand $activeUser "chmod 755 $TargetDir/arcadematrix_mqtt.sh" | Out-Null
 
         Write-Host "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
-        $esCmd = "for evt in game-selected system-selected game-start game-end; do dir=\`"/userdata/system/configs/emulationstation/scripts/\$evt\`"; mkdir -p \`"\$dir\`"; cat > \`"\$dir/arcadematrix_mqtt.sh\`" << 'EOFEVT'`n#!/bin/sh`n/userdata/system/scripts/arcadematrix_mqtt.sh \`"\$evt\`" \`"\$@\`"`nEOFEVT`nchmod 755 \`"\$dir/arcadematrix_mqtt.sh\`"; done; chmod -R 755 /userdata/system/configs/emulationstation/scripts"
+        $esCmd = 'for evt in game-selected system-selected game-start game-end; do dir="/userdata/system/configs/emulationstation/scripts/$evt"; mkdir -p "$dir"; printf ''#!/bin/sh\n/userdata/system/scripts/arcadematrix_mqtt.sh %s "$@"\n'' "$evt" > "$dir/arcadematrix_mqtt.sh"; chmod 755 "$dir/arcadematrix_mqtt.sh"; done; chmod -R 755 /userdata/system/configs/emulationstation/scripts'
         Invoke-RemoteCommand $activeUser $esCmd | Out-Null
 
         Write-Host "Batocera one-shot event hooks successfully installed!"

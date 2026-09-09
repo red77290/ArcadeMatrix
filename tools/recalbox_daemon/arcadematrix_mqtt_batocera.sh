@@ -124,8 +124,26 @@ case "$EVENT" in
         ;;
 
     gameStop)
-        PAYLOAD="{\"status\": \"stopped\"}"
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: gameStop | Sent: $PAYLOAD" >> "$LOG_FILE"
+        # Batocera system runner: $1=system, $2=emulator, $3=core, $4=rom_path
+        SYS_NAME="$1"
+        if [ -n "$4" ]; then
+            ROM_PATH="$4"
+        elif [ -n "$2" ] && echo "$2" | grep -qE '/|\.'; then
+            ROM_PATH="$2"
+        elif [ -n "$1" ] && echo "$1" | grep -qE '/|\.'; then
+            ROM_PATH="$1"
+            SYS_NAME="$2"
+        else
+            ROM_PATH="$1"
+        fi
+        GAME_BASENAME=""
+        if [ -n "$ROM_PATH" ]; then
+            GAME_BASENAME=$(basename "$ROM_PATH" | sed 's/\.[^.]*$//')
+        fi
+        GAME_CLEAN=$(clean_name "$GAME_BASENAME")
+        SYS_CLEAN=$(clean_name "$SYS_NAME")
+        PAYLOAD="{\"status\": \"stopped\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: gameStop | Rom: $ROM_PATH | Sys: $SYS_NAME | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;
 
@@ -139,11 +157,13 @@ case "$EVENT" in
             SYS_NAME="$2"
             TITLE="$3"
         fi
-        if [ -n "$TITLE" ]; then
-            GAME_CLEAN=$(clean_name "$TITLE")
-        else
+        if [ -n "$ROM_PATH" ]; then
             GAME_BASENAME=$(basename "$ROM_PATH" | sed 's/\.[^.]*$//')
             GAME_CLEAN=$(clean_name "$GAME_BASENAME")
+        elif [ -n "$TITLE" ]; then
+            GAME_CLEAN=$(clean_name "$TITLE")
+        else
+            GAME_CLEAN=""
         fi
         SYS_CLEAN=$(clean_name "$SYS_NAME")
         PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
@@ -169,11 +189,13 @@ case "$EVENT" in
             SYS_NAME="$2"
             TITLE="$3"
         fi
-        if [ -n "$TITLE" ]; then
-            GAME_CLEAN=$(clean_name "$TITLE")
-        else
+        if [ -n "$ROM_PATH" ]; then
             GAME_BASENAME=$(basename "$ROM_PATH" | sed 's/\.[^.]*$//')
             GAME_CLEAN=$(clean_name "$GAME_BASENAME")
+        elif [ -n "$TITLE" ]; then
+            GAME_CLEAN=$(clean_name "$TITLE")
+        else
+            GAME_CLEAN=""
         fi
         SYS_CLEAN=$(clean_name "$SYS_NAME")
         PAYLOAD="{\"status\": \"playing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
@@ -182,8 +204,21 @@ case "$EVENT" in
         ;;
 
     game-end)
-        PAYLOAD="{\"status\": \"stopped\"}"
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-end | Sent: $PAYLOAD" >> "$LOG_FILE"
+        # ES game-end: $1=system, $2=rom_path, $3=game_title
+        SYS_NAME="$1"
+        ROM_PATH="$2"
+        if echo "$1" | grep -qE '/|\.'; then
+            ROM_PATH="$1"
+            SYS_NAME="$2"
+        fi
+        GAME_BASENAME=""
+        if [ -n "$ROM_PATH" ]; then
+            GAME_BASENAME=$(basename "$ROM_PATH" | sed 's/\.[^.]*$//')
+        fi
+        GAME_CLEAN=$(clean_name "$GAME_BASENAME")
+        SYS_CLEAN=$(clean_name "$SYS_NAME")
+        PAYLOAD="{\"status\": \"stopped\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-end | Rom: $ROM_PATH | Sys: $SYS_NAME | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
         ;;
 
