@@ -181,7 +181,8 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     String cleanSystem = cleanSystemName(String(systemRaw));
     String cleanGame = cleanSystemName(String(gameRaw));
 
-    if (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem)) {
+    bool isPlaying = (strcmp(status, "playing") == 0);
+    if (!isPlaying && (strcmp(typeRaw, "system") == 0 || cleanGame.length() == 0 || cleanGame.equalsIgnoreCase(cleanSystem))) {
         handleSystemEvent(cleanSystem.length() > 0 ? cleanSystem : String(systemRaw), reqId);
         return;
     }

@@ -20,6 +20,9 @@ firmware ESP32 n'a pas cette interface côté hôte frontend — il s'agit donc 
 Une fois installé, chaque fois que vous lancez / parcourez / arrêtez un jeu, l'appareil publie un petit message
 JSON via MQTT sur le topic standardisé `system/playing/<os>` (`system/playing/recalbox`, `system/playing/batocera` ou `system/playing/retropie`, écouté par le firmware via `system/playing/#`) :
 
+> [!IMPORTANT]
+> **Version minimale de Batocera requise :** La synchronisation dynamique des marquees pendant la navigation dans les listes de jeux et de systèmes requiert **Batocera v33 ou supérieur** (Batocera a introduit les hooks de script EmulationStation `game-selected` et `system-selected` à partir de la version 33). Sur Batocera v32 et versions antérieures, seuls les événements de lancement et d'arrêt de jeu (`game-start`, `game-end`) sont supportés. Recalbox est intégralement pris en charge sur toutes ses versions grâce à son démon de scrutation d'état natif.
+
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}
 ```

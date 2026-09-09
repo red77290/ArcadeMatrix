@@ -22,6 +22,9 @@ run from your own PC** (Windows/macOS/Linux), not from the ESP32 or from Emulati
 Once installed, every time you launch/browse/stop a game, the device publishes a small JSON
 message over MQTT on topic `system/playing/<os>` (`system/playing/recalbox`, `system/playing/batocera`, or `system/playing/retropie`, matched by the firmware's wildcard subscription `system/playing/#`):
 
+> [!IMPORTANT]
+> **Batocera version requirement:** Dynamic marquee switching while browsing games and systems requires **Batocera v33 or newer** (Batocera introduced the EmulationStation `game-selected` and `system-selected` script hooks in v33). On Batocera v32 and earlier, only game launch and stop events are supported. Recalbox is fully supported across all versions.
+
 ```json
 {"status": "playing", "game": "pacman", "system": "mame"}
 ```
