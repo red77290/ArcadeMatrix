@@ -539,6 +539,35 @@ paths:
         '200':
           description: Success
 
+  /api/upload:
+    post:
+      tags:
+        - System
+      summary: Upload Asset File (GIF, PNG, JPG)
+      description: Upload an asset file to storage with single-file overwrite. Returns JSON with the resolved storage path.
+      parameters:
+        - name: target
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Upload destination target category (e.g. marquee)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Asset uploaded successfully.
+        '400':
+          description: No file received or upload error.
+
   /api/marquee:
     post:
       tags:

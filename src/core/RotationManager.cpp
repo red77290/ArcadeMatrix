@@ -214,7 +214,7 @@ void RotationManager::switchToModule(int index) {
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
-      if (strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0) {
+      if (strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0 || (newEngine->selfPaced() && newEngine->isFinished())) {
           newEngine->activate();
       }
   }
@@ -322,6 +322,10 @@ bool RotationManager::loop() {
                 if (activeEngine->isFinished() || (now - moduleStartTime >= dur * 1000UL)) {
                     advance = true;
                 }
+            }
+        } else {
+            if (activeEngine->selfPaced() && activeEngine->isFinished()) {
+                activeEngine->activate();
             }
         }
     } else {
