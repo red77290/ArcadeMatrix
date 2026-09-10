@@ -653,6 +653,10 @@ bool GifEngine::loop() {
             delayMs = 20; // Cap at 50fps max to prevent matrix stuttering
         }
         
+        if (instance->m_speedMultiplier > 0.05f) {
+            delayMs = (int)((float)delayMs / instance->m_speedMultiplier);
+            if (delayMs < 15) delayMs = 15;
+        }
         gifCurrentDelay = delayMs;
         
         static unsigned long lastLog = 0;
@@ -763,15 +767,36 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     if (canvasW <= 0) canvasW = 128; // Fallback
     if (canvasH <= 0) canvasH = 32;
     
-    int scaleX = instance->matrix->width() / canvasW;
-    int scaleY = instance->matrix->height() / canvasH;
-    int scale = min(scaleX, scaleY);
-    if (scale < 1) scale = 1;
-    scaleX = scale;
-    scaleY = scale;
-    
-    int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-    int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    int scaleX = 1;
+    int scaleY = 1;
+    int offsetX = 0;
+    int offsetY = 0;
+
+    String mode = instance->m_fitMode;
+    mode.toLowerCase();
+
+    if (mode == "stretch") {
+        scaleX = instance->matrix->width() / canvasW;
+        scaleY = instance->matrix->height() / canvasH;
+        if (scaleX < 1) scaleX = 1;
+        if (scaleY < 1) scaleY = 1;
+        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    } else if (mode == "center") {
+        scaleX = 1;
+        scaleY = 1;
+        offsetX = (instance->matrix->width() - canvasW) / 2;
+        offsetY = (instance->matrix->height() - canvasH) / 2;
+    } else { // "fit" (default)
+        int sX = instance->matrix->width() / canvasW;
+        int sY = instance->matrix->height() / canvasH;
+        int scale = min(sX, sY);
+        if (scale < 1) scale = 1;
+        scaleX = scale;
+        scaleY = scale;
+        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    }
 
     uint8_t *s;
     uint16_t *usPalette;
@@ -792,11 +817,12 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             if (c != ucTransparent) {
                 int px = offsetX + (pDraw->iX + x) * scaleX;
                 if (scaleX == 1 && scaleY == 1) {
-                    if (instance->canvasBuffer) {
-                        if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height())
+                    if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
+                        if (instance->canvasBuffer) {
                             instance->canvasBuffer[baseY * instance->matrix->width() + px] = usPalette[c];
-                    } else {
-                        instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                        } else {
+                            instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                        }
                     }
                 } else {
                     if (instance->canvasBuffer) {
@@ -819,11 +845,12 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             uint16_t color = usPalette[*s++];
             int px = offsetX + (pDraw->iX + x) * scaleX;
             if (scaleX == 1 && scaleY == 1) {
-                if (instance->canvasBuffer) {
-                    if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height())
+                if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
+                    if (instance->canvasBuffer) {
                         instance->canvasBuffer[baseY * instance->matrix->width() + px] = color;
-                } else {
-                    instance->matrix->drawPixel(px, baseY, color);
+                    } else {
+                        instance->matrix->drawPixel(px, baseY, color);
+                    }
                 }
             } else {
                 if (instance->canvasBuffer) {
@@ -887,15 +914,36 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     if (canvasW <= 0) canvasW = 128;
     if (canvasH <= 0) canvasH = 32;
 
-    int scaleX = instance->matrix->width() / canvasW;
-    int scaleY = instance->matrix->height() / canvasH;
-    int scale = min(scaleX, scaleY);
-    if (scale < 1) scale = 1;
-    scaleX = scale;
-    scaleY = scale;
+    int scaleX = 1;
+    int scaleY = 1;
+    int offsetX = 0;
+    int offsetY = 0;
 
-    int offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-    int offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    String mode = instance->m_fitMode;
+    mode.toLowerCase();
+
+    if (mode == "stretch") {
+        scaleX = instance->matrix->width() / canvasW;
+        scaleY = instance->matrix->height() / canvasH;
+        if (scaleX < 1) scaleX = 1;
+        if (scaleY < 1) scaleY = 1;
+        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    } else if (mode == "center") {
+        scaleX = 1;
+        scaleY = 1;
+        offsetX = (instance->matrix->width() - canvasW) / 2;
+        offsetY = (instance->matrix->height() - canvasH) / 2;
+    } else { // "fit" (default)
+        int sX = instance->matrix->width() / canvasW;
+        int sY = instance->matrix->height() / canvasH;
+        int scale = min(sX, sY);
+        if (scale < 1) scale = 1;
+        scaleX = scale;
+        scaleY = scale;
+        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+    }
 
     static uint16_t lineBuffer[512]; // Increased to 512 for safety
     int iWidth = pDraw->iWidth;
@@ -908,12 +956,11 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
 
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
-        // Don't draw absolute black as transparent if we don't want to, but for PNG usually we respect alpha.
-        // The PNG library blends to a background if we set it, or returns true RGB565.
-        // Assuming we just draw it:
         int px = offsetX + x * scaleX;
         if (scaleX == 1 && scaleY == 1) {
-            instance->matrix->drawPixel(px, baseY, color);
+            if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
+                instance->matrix->drawPixel(px, baseY, color);
+            }
         } else {
             instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
         }

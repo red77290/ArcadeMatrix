@@ -28,20 +28,23 @@ public:
     // durationSeconds (default 8s). Retained for live streaming compatibility.
     void show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds = 8);
     bool isActive() const { return m_active; }
+    bool hasRawBuffer() const { return m_hasRawBuffer; }
 
     bool allowsOverlay() const override { return false; }
     bool allowRotation() const override { return true; }
     bool isRealtime() const override { return true; }
-    bool selfPaced() const override { return true; }
+    bool selfPaced() const override { return false; }
+    bool isFinished() const override;
     bool needsClear() const override { return false; }
 
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }
 
     void setMarqueeFile(const char* path);
     String getMarqueeFile() const { return m_filePath; }
-    String resolveMarqueeFile() const;
+    String resolveMarqueeFile();
 
 private:
+    bool downloadUrlViaProxy(const String& targetUrl, const String& destPath);
     int panelWidth;
     int panelHeight;
     uint16_t* m_rawBuffer;

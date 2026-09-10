@@ -496,7 +496,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
     }
 
     if (m_marqueeEngine) {
-        bool active = m_marqueeEngine->isActive();
+        bool active = m_marqueeEngine->isActive() && m_marqueeEngine->hasRawBuffer();
         EngineHandle handle("marquee", "marquee_main");
         if (active) {
             if (!m_syncMarquee.active || m_syncMarquee.handle != handle) {

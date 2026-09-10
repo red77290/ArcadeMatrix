@@ -102,6 +102,11 @@ public:
      */
     bool isDisplayVertical() const;
 
+    void setFitMode(const String& mode) { m_fitMode = mode; }
+    const String& getFitMode() const { return m_fitMode; }
+    void setSpeedMultiplier(float speed) { m_speedMultiplier = (speed > 0.05f) ? speed : 1.0f; }
+    float getSpeedMultiplier() const { return m_speedMultiplier; }
+
 private:
     AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
     // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
@@ -187,6 +192,8 @@ private:
 
     bool m_hasPsram = false;
     bool m_lastFrameDrew = true;
+    String m_fitMode = "fit";
+    float m_speedMultiplier = 1.0f;
 };
 
 class GifEngineDescriptorHandler : public IEngineDescriptorHandler {
