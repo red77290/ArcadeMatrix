@@ -1777,53 +1777,72 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: Marquee endpoint — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/custom_marquee.<ext>)
-    // as well as direct raw RGB565 streaming (application/octet-stream) for arcade frontend bridges.
-    server.on("/api/marquee", HTTP_POST,
-        [this](AsyncWebServerRequest *request) {
-            if (request->_tempObject) {
-                request->send(200, "application/json", "{\"success\":true,\"message\":\"Marquee file uploaded and displayed\"}");
+    // API: Marquee & Upload endpoints — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/marquee.<ext>)
+    // with single-file overwrite and zero rotation preemption, as well as direct raw RGB565 streaming (application/octet-stream).
+    auto uploadHandler = [this](AsyncWebServerRequest *request) {
+        if (request->_tempObject) {
+            String* pPath = (String*)request->_tempObject;
+            String json = "{\"success\":true,\"path\":\"" + *pPath + "\",\"message\":\"Asset uploaded successfully\"}";
+            delete pPath;
+            request->_tempObject = nullptr;
+            request->send(200, "application/json", json);
+        } else {
+            request->send(400, "application/json", "{\"success\":false,\"message\":\"No image data received\"}");
+        }
+    };
+
+    auto uploadFileHandler = [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        String ext = ".gif";
+        int dotIdx = filename.lastIndexOf('.');
+        if (dotIdx >= 0) {
+            ext = filename.substring(dotIdx);
+            ext.toLowerCase();
+        }
+        String destPath = "/marquees/marquee" + ext;
+
+        if (!index) {
+            LOGI("WebServer", "Asset upload start: %s -> %s", filename.c_str(), destPath.c_str());
+            if (!sd.exists("/marquees")) {
+                sd.mkdir("/marquees");
+            }
+            // Enforce single-file overwrite: remove any previous marquee files
+            const char* oldFiles[] = {
+                "/marquees/marquee.gif", "/marquees/marquee.png", "/marquees/marquee.jpg", "/marquees/marquee.jpeg",
+                "/marquees/custom_marquee.gif", "/marquees/custom_marquee.png", "/marquees/custom_marquee.jpg", "/marquees/custom_marquee.raw"
+            };
+            for (const char* f : oldFiles) {
+                if (sd.exists(f)) {
+                    sd.remove(f);
+                }
+            }
+            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+            if (uploadFile) {
+                uploadFile.write(data, len);
+                uploadFile.close();
+                request->_tempObject = new String(destPath);
             } else {
-                request->send(400, "application/json", "{\"success\":false,\"message\":\"No image data received\"}");
+                LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
             }
-        },
-        [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-            String ext = ".gif";
-            int dotIdx = filename.lastIndexOf('.');
-            if (dotIdx >= 0) {
-                ext = filename.substring(dotIdx);
-                ext.toLowerCase();
+        } else if (request->_tempObject) {
+            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
+            if (uploadFile) {
+                uploadFile.write(data, len);
+                uploadFile.close();
             }
-            String destPath = "/marquees/custom_marquee" + ext;
+        }
 
-            if (!index) {
-                LOGI("WebServer", "Marquee upload start: %s -> %s", filename.c_str(), destPath.c_str());
-                if (!sd.exists("/marquees")) {
-                    sd.mkdir("/marquees");
-                }
-                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-                if (uploadFile) {
-                    uploadFile.write(data, len);
-                    uploadFile.close();
-                    request->_tempObject = (void*)1;
-                } else {
-                    LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
-                }
-            } else if (request->_tempObject) {
-                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
-                if (uploadFile) {
-                    uploadFile.write(data, len);
-                    uploadFile.close();
-                }
+        if (final && request->_tempObject) {
+            LOGI("WebServer", "Asset upload complete: %s (%u bytes)", destPath.c_str(), index + len);
+            if (marquee) {
+                marquee->setMarqueeFile(destPath.c_str());
+                // Do NOT call marquee->activate() so rotation continues seamlessly
             }
+        }
+    };
 
-            if (final && request->_tempObject) {
-                LOGI("WebServer", "Marquee upload complete: %s (%u bytes)", destPath.c_str(), index + len);
-                if (marquee) {
-                    marquee->setMarqueeFile(destPath.c_str());
-                    marquee->activate();
-                }
-            }
-        },
+    server.on("/api/marquee", HTTP_POST,
+        uploadHandler,
+        uploadFileHandler,
         [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
             if (request->contentType().startsWith("multipart/")) {
                 return;
@@ -1849,6 +1868,11 @@ void WebServerAPI::setupRoutes() {
                 }
             }
         }
+    );
+
+    server.on("/api/upload", HTTP_POST,
+        uploadHandler,
+        uploadFileHandler
     );
 
     // API: GET /api/audio/status — Returns current audio playback snapshot
