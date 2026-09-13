@@ -58,6 +58,7 @@ private:
     float m_speedMultiplier;
     String m_fitMode;
 
+    EngineContext* m_context = nullptr;
     GifEngine* m_gifEngine;
 };
 

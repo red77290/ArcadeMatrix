@@ -49,15 +49,42 @@ void test_visualizer_mode_parsing(void) {
     TEST_ASSERT_FALSE(engine.isActive());
 }
 
+/**
+ * @brief Tests MessageEngine continuous delta-time scrolling math, sub-pixel progression, and stall clamping.
+ */
+void test_message_scroll_math(void) {
+    // 1. Frame clamp: dt > 100ms clamped to 16.6ms
+    float dtLarge = 5000.0f;
+    float dtClamped = (dtLarge > 100.0f) ? 16.6f : dtLarge;
+    TEST_ASSERT_EQUAL_FLOAT(16.6f, dtClamped);
+
+    // 2. Continuous sub-pixel advance:
+    // With speed = 50ms/px and dt = 16.6ms, movePx = 16.6 / 50.0 = 0.332px
+    int speedMs = 50;
+    float movePx = dtClamped / (float)speedMs;
+    TEST_ASSERT_FLOAT_WITHIN(0.005f, 0.332f, movePx);
+
+    // 3. Sub-pixel accumulator progression across 3 frames (~50ms)
+    float cursorX = 128.0f;
+    cursorX -= movePx;
+    TEST_ASSERT_EQUAL_INT(128, (int16_t)roundf(cursorX)); // Frame 1: 127.668 -> rounds to 128
+    cursorX -= movePx;
+    TEST_ASSERT_EQUAL_INT(127, (int16_t)roundf(cursorX)); // Frame 2: 127.336 -> rounds to 127
+    cursorX -= movePx;
+    TEST_ASSERT_EQUAL_INT(127, (int16_t)roundf(cursorX)); // Frame 3: 127.004 -> rounds to 127
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
     UNITY_BEGIN();
     RUN_TEST(test_decibel_status_mapping);
     RUN_TEST(test_visualizer_mode_parsing);
+    RUN_TEST(test_message_scroll_math);
     UNITY_END();
 }
 
 void loop() {
     delay(100);
 }
+

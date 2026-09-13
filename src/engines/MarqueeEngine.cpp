@@ -19,6 +19,7 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     auto matrix = context->getMatrix();
     if (!matrix) return EngineError::HardwareUnavailable;
 
+    m_context = context;
     m_hasPsram = context->hasPsram();
     panelWidth = matrix->width();
     panelHeight = matrix->height();
@@ -176,6 +177,10 @@ String MarqueeEngine::resolveMarqueeFile() {
 
 void MarqueeEngine::activate() {
     m_active = true;
+    auto matrix = m_context ? m_context->getMatrix() : nullptr;
+    if (matrix) {
+        matrix->fillScreen(0);
+    }
     if (m_hasRawBuffer) {
         return;
     }

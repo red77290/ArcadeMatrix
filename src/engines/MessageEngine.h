@@ -47,8 +47,8 @@ private:
     unsigned long startTime;
     unsigned long lastUpdate;
     
-    int cursorX;
-    int cursorY;
+    float cursorX;
+    float cursorY;
     int textWidth;
     int textHeight;
     int baselineOffset;

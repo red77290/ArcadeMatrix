@@ -94,20 +94,20 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
     int matrixH = matrixDisplay ? matrixDisplay->height() : 64;
 
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
-        cursorX = matrixW;
-        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
+        cursorX = (float)matrixW;
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
     } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
-        cursorX = -textWidth;
-        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
+        cursorX = -(float)textWidth;
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
     } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
-        cursorX = (matrixW - textWidth) / 2;
-        cursorY = -textHeight + baselineOffset;
+        cursorX = (float)((matrixW - textWidth) / 2);
+        cursorY = (float)(-textHeight + baselineOffset);
     } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
-        cursorX = (matrixW - textWidth) / 2;
-        cursorY = matrixH + baselineOffset;
+        cursorX = (float)((matrixW - textWidth) / 2);
+        cursorY = (float)(matrixH + baselineOffset);
     } else if (currentMsg.direction == "static" || currentMsg.direction == "none") {
-        cursorX = (matrixW - textWidth) / 2;
-        cursorY = ((matrixH - textHeight) / 2) + baselineOffset;
+        cursorX = (float)((matrixW - textWidth) / 2);
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
     }
 }
 
@@ -124,32 +124,37 @@ void MessageEngine::update(EngineContext* context) {
     }
 
     if (currentMsg.direction == "static" || currentMsg.direction == "none") {
-        cursorX = (matrix->width() - textWidth) / 2;
-        cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
+        cursorX = (float)((matrix->width() - textWidth) / 2);
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+        lastUpdate = millis();
         return;
     }
     
-    // Scroll logic based on speed (ms per pixel update)
-    if (millis() - lastUpdate > (unsigned long)currentMsg.speed) {
-        lastUpdate = millis();
+    uint32_t now = millis();
+    float dt = (float)(now - lastUpdate);
+    lastUpdate = now;
+    if (dt > 100.0f) dt = 16.6f; // Clamped to prevent jumps on pause or stall
+    if (dt <= 0.0f) return;
 
-        if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
-            cursorX--;
-            if (cursorX < -textWidth) cursorX = matrix->width();
-            cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
-        } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
-            cursorX++;
-            if (cursorX > matrix->width()) cursorX = -textWidth;
-            cursorY = ((matrix->height() - textHeight) / 2) + baselineOffset;
-        } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
-            cursorY++;
-            if (cursorY > matrix->height() + baselineOffset) cursorY = -textHeight + baselineOffset;
-            cursorX = (matrix->width() - textWidth) / 2;
-        } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
-            cursorY--;
-            if (cursorY < -textHeight + baselineOffset) cursorY = matrix->height() + baselineOffset;
-            cursorX = (matrix->width() - textWidth) / 2;
-        }
+    float speedMs = (float)max(1, currentMsg.speed);
+    float movePx = dt / speedMs;
+
+    if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
+        cursorX -= movePx;
+        if (cursorX < -(float)textWidth) cursorX = (float)matrix->width();
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+    } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
+        cursorX += movePx;
+        if (cursorX > (float)matrix->width()) cursorX = -(float)textWidth;
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+    } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
+        cursorY += movePx;
+        if (cursorY > (float)(matrix->height() + baselineOffset)) cursorY = (float)(-textHeight + baselineOffset);
+        cursorX = (float)((matrix->width() - textWidth) / 2);
+    } else if (currentMsg.direction == "btt" || currentMsg.direction == "up") {
+        cursorY -= movePx;
+        if (cursorY < (float)(-textHeight + baselineOffset)) cursorY = (float)(matrix->height() + baselineOffset);
+        cursorX = (float)((matrix->width() - textWidth) / 2);
     }
 }
 
@@ -162,7 +167,7 @@ void MessageEngine::render(EngineContext* context) {
     matrix->setFont(customFont);
     matrix->setTextSize(currentMsg.size);
     matrix->setTextColor(currentMsg.color);
-    matrix->setCursor(cursorX, cursorY);
+    matrix->setCursor((int16_t)roundf(cursorX), (int16_t)roundf(cursorY));
     matrix->print(currentMsg.text);
 }
 

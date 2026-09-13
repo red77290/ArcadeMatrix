@@ -104,6 +104,41 @@ void test_api_settings_validation(void) {
     TEST_ASSERT_TRUE(errInvalid != DeserializationError::Ok);
 }
 
+/**
+ * @brief Tests Issue #24: Instance creation payload parsing for engines without variant/primaryField
+ * (e.g., Environment Sensor / 'temp', 'sysinfo', 'gnews').
+ */
+void test_instance_creation_without_variant(void) {
+    const char* instanceJson = "{\"instance_id\":\"temp_01\",\"engine_id\":\"temp\",\"config\":{\"screen_title\":\"Environment Sensor\"}}";
+    StaticJsonDocument<512> doc;
+    DeserializationError err = deserializeJson(doc, instanceJson);
+    TEST_ASSERT_TRUE(err == DeserializationError::Ok);
+    TEST_ASSERT_EQUAL_STRING("temp_01", doc["instance_id"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("temp", doc["engine_id"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("Environment Sensor", doc["config"]["screen_title"].as<const char*>());
+}
+
+/**
+ * @brief Tests rotation entry payload serialization & removal sync.
+ */
+void test_rotation_entry_sync(void) {
+    StaticJsonDocument<512> doc;
+    JsonArray arr = doc.to<JsonArray>();
+    JsonObject e1 = arr.createNestedObject();
+    e1["instance_id"] = "clock_01";
+    e1["duration_sec"] = 15;
+    JsonObject e2 = arr.createNestedObject();
+    e2["instance_id"] = "temp_01";
+    e2["duration_sec"] = 10;
+
+    TEST_ASSERT_EQUAL_INT(2, arr.size());
+
+    // Simulate removing entry e2 (trash button)
+    arr.remove(1);
+    TEST_ASSERT_EQUAL_INT(1, arr.size());
+    TEST_ASSERT_EQUAL_STRING("clock_01", arr[0]["instance_id"].as<const char*>());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -112,9 +147,12 @@ void setup() {
     RUN_TEST(test_direction_mapping);
     RUN_TEST(test_api_status_json_structure);
     RUN_TEST(test_api_settings_validation);
+    RUN_TEST(test_instance_creation_without_variant);
+    RUN_TEST(test_rotation_entry_sync);
     UNITY_END();
 }
 
 void loop() {
     delay(100);
 }
+

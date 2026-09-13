@@ -206,6 +206,9 @@ void RotationManager::switchToModule(int index) {
       if (oldEngine) {
           oldEngine->deactivate();
       }
+      if (m_ctx && m_ctx->getMatrix()) {
+          m_ctx->getMatrix()->fillScreen(0);
+      }
   }
 
   // Activate new engine
