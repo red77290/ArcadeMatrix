@@ -109,6 +109,7 @@ void GifEngine::rebuildActivePlaylists() {
 }
 
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    instance = this;
     if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
     m_context = context;
     m_instanceConfig = config;
@@ -123,6 +124,7 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
 }
 
 void GifEngine::activate() {
+    instance = this;
     int count = 1;
     if (m_rotationBudget > 0) {
         count = (int)m_rotationBudget;
@@ -140,17 +142,22 @@ void GifEngine::activate() {
 }
 
 void GifEngine::update(EngineContext* context) {
+    instance = this;
     m_context = context;
     m_lastFrameDrew = loop();
 }
 
-void GifEngine::render(EngineContext* context) {}
+void GifEngine::render(EngineContext* context) {
+    instance = this;
+}
 
 void GifEngine::deactivate() {
+    instance = this;
     stop();
 }
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
+    instance = this;
     m_instanceConfig = config;
     m_configuredFolders.clear();
     if (config) {
@@ -194,6 +201,7 @@ void GifEngine::onConfigChanged(const EngineConfig* config) {
 }
 
 void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
+    instance = this;
     if (matrix) {
         size_t matrixPixels = matrix->width() * matrix->height();
         if (canvasBuffer) {
@@ -243,6 +251,7 @@ bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
 }
 
 bool GifEngine::playGif(const char* filepath) {
+    instance = this;
     stop();
     playlistMode = false; // Playing a single GIF stops the playlist
     
@@ -342,6 +351,7 @@ void GifEngine::freePsramBuffer() {
 }
 
 bool GifEngine::decodePng(const char* filepath) {
+    instance = this;
     // Lazily allocate the ~38KB PNGdec decoder only on first actual use - see the `png` member
     // comment in GifEngine.h for why this isn't a permanent value member.
     if (!png) png = new PNG();
@@ -354,7 +364,7 @@ bool GifEngine::decodePng(const char* filepath) {
         LOGE("GifEngine", "png.open() failed for %s (rc=%d)", filepath, rc);
         return false;
     }
-    rc = png->decode(NULL, 0);
+    rc = png->decode((void*)this, 0);
     png->close();
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.decode() failed for %s (rc=%d)", filepath, rc);
@@ -579,6 +589,7 @@ void GifEngine::stop() {
 }
 
 bool GifEngine::loop() {
+    instance = this;
     if (hasPendingPlaylists) {
         stop();
         playlists = pendingPlaylists;
@@ -620,7 +631,7 @@ bool GifEngine::loop() {
         
         unsigned long startDecode = millis();
         int delayMs = 0;
-        int result = gif.playFrame(false, &delayMs);
+        int result = gif.playFrame(false, &delayMs, (void*)this);
         
         if (canvasBuffer && matrix) {
             int canvasW = gif.getCanvasWidth();
@@ -653,8 +664,8 @@ bool GifEngine::loop() {
             delayMs = 20; // Cap at 50fps max to prevent matrix stuttering
         }
         
-        if (instance->m_speedMultiplier > 0.05f) {
-            delayMs = (int)((float)delayMs / instance->m_speedMultiplier);
+        if (m_speedMultiplier > 0.05f) {
+            delayMs = (int)((float)delayMs / m_speedMultiplier);
             if (delayMs < 15) delayMs = 15;
         }
         gifCurrentDelay = delayMs;
@@ -679,6 +690,7 @@ bool GifEngine::loop() {
 
 
 bool GifEngine::playRawFrame() {
+    instance = this;
     if (millis() - rawLastFrameTime < 50) return false; // ~20 FPS limit for raw files
     rawLastFrameTime = millis();
     
@@ -760,10 +772,12 @@ int32_t GifEngine::GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
 }
 
 void GifEngine::GIFDraw(GIFDRAW *pDraw) {
-    if (!instance || !instance->matrix) return;
+    GifEngine* self = static_cast<GifEngine*>(pDraw->pUser);
+    if (!self) self = instance;
+    if (!self || !self->matrix) return;
     
-    int canvasW = instance->gif.getCanvasWidth();
-    int canvasH = instance->gif.getCanvasHeight();
+    int canvasW = self->gif.getCanvasWidth();
+    int canvasH = self->gif.getCanvasHeight();
     if (canvasW <= 0) canvasW = 128; // Fallback
     if (canvasH <= 0) canvasH = 32;
     
@@ -772,30 +786,30 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     int offsetX = 0;
     int offsetY = 0;
 
-    String mode = instance->m_fitMode;
+    String mode = self->m_fitMode;
     mode.toLowerCase();
 
     if (mode == "stretch") {
-        scaleX = instance->matrix->width() / canvasW;
-        scaleY = instance->matrix->height() / canvasH;
+        scaleX = self->matrix->width() / canvasW;
+        scaleY = self->matrix->height() / canvasH;
         if (scaleX < 1) scaleX = 1;
         if (scaleY < 1) scaleY = 1;
-        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
     } else if (mode == "center") {
         scaleX = 1;
         scaleY = 1;
-        offsetX = (instance->matrix->width() - canvasW) / 2;
-        offsetY = (instance->matrix->height() - canvasH) / 2;
+        offsetX = (self->matrix->width() - canvasW) / 2;
+        offsetY = (self->matrix->height() - canvasH) / 2;
     } else { // "fit" (default)
-        int sX = instance->matrix->width() / canvasW;
-        int sY = instance->matrix->height() / canvasH;
+        int sX = self->matrix->width() / canvasW;
+        int sY = self->matrix->height() / canvasH;
         int scale = min(sX, sY);
         if (scale < 1) scale = 1;
         scaleX = scale;
         scaleY = scale;
-        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
     }
 
     uint8_t *s;
@@ -817,25 +831,25 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             if (c != ucTransparent) {
                 int px = offsetX + (pDraw->iX + x) * scaleX;
                 if (scaleX == 1 && scaleY == 1) {
-                    if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
-                        if (instance->canvasBuffer) {
-                            instance->canvasBuffer[baseY * instance->matrix->width() + px] = usPalette[c];
+                    if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+                        if (self->canvasBuffer) {
+                            self->canvasBuffer[baseY * self->matrix->width() + px] = usPalette[c];
                         } else {
-                            instance->matrix->drawPixel(px, baseY, usPalette[c]);
+                            self->matrix->drawPixel(px, baseY, usPalette[c]);
                         }
                     }
                 } else {
-                    if (instance->canvasBuffer) {
-                        int mw = instance->matrix->width();
-                        int mh = instance->matrix->height();
+                    if (self->canvasBuffer) {
+                        int mw = self->matrix->width();
+                        int mh = self->matrix->height();
                         for (int sy = 0; sy < scaleY; sy++) {
                             for (int sx = 0; sx < scaleX; sx++) {
                                 if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
-                                    instance->canvasBuffer[(baseY + sy) * mw + (px + sx)] = usPalette[c];
+                                    self->canvasBuffer[(baseY + sy) * mw + (px + sx)] = usPalette[c];
                             }
                         }
                     } else {
-                        instance->matrix->fillRect(px, baseY, scaleX, scaleY, usPalette[c]);
+                        self->matrix->fillRect(px, baseY, scaleX, scaleY, usPalette[c]);
                     }
                 }
             }
@@ -845,25 +859,25 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
             uint16_t color = usPalette[*s++];
             int px = offsetX + (pDraw->iX + x) * scaleX;
             if (scaleX == 1 && scaleY == 1) {
-                if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
-                    if (instance->canvasBuffer) {
-                        instance->canvasBuffer[baseY * instance->matrix->width() + px] = color;
+                if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+                    if (self->canvasBuffer) {
+                        self->canvasBuffer[baseY * self->matrix->width() + px] = color;
                     } else {
-                        instance->matrix->drawPixel(px, baseY, color);
+                        self->matrix->drawPixel(px, baseY, color);
                     }
                 }
             } else {
-                if (instance->canvasBuffer) {
-                    int mw = instance->matrix->width();
-                    int mh = instance->matrix->height();
+                if (self->canvasBuffer) {
+                    int mw = self->matrix->width();
+                    int mh = self->matrix->height();
                     for (int sy = 0; sy < scaleY; sy++) {
                         for (int sx = 0; sx < scaleX; sx++) {
                             if (px+sx >= 0 && px+sx < mw && baseY+sy >= 0 && baseY+sy < mh)
-                                instance->canvasBuffer[(baseY + sy) * mw + (px + sx)] = color;
+                                self->canvasBuffer[(baseY + sy) * mw + (px + sx)] = color;
                         }
                     }
                 } else {
-                    instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+                    self->matrix->fillRect(px, baseY, scaleX, scaleY, color);
                 }
             }
         }
@@ -907,10 +921,12 @@ int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
 }
 
 int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
-    if (!instance || !instance->matrix || !instance->png) return 0;
+    GifEngine* self = static_cast<GifEngine*>(pDraw->pUser);
+    if (!self) self = instance;
+    if (!self || !self->matrix || !self->png) return 0;
 
-    int canvasW = instance->png->getWidth();
-    int canvasH = instance->png->getHeight();
+    int canvasW = self->png->getWidth();
+    int canvasH = self->png->getHeight();
     if (canvasW <= 0) canvasW = 128;
     if (canvasH <= 0) canvasH = 32;
 
@@ -919,37 +935,37 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     int offsetX = 0;
     int offsetY = 0;
 
-    String mode = instance->m_fitMode;
+    String mode = self->m_fitMode;
     mode.toLowerCase();
 
     if (mode == "stretch") {
-        scaleX = instance->matrix->width() / canvasW;
-        scaleY = instance->matrix->height() / canvasH;
+        scaleX = self->matrix->width() / canvasW;
+        scaleY = self->matrix->height() / canvasH;
         if (scaleX < 1) scaleX = 1;
         if (scaleY < 1) scaleY = 1;
-        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
     } else if (mode == "center") {
         scaleX = 1;
         scaleY = 1;
-        offsetX = (instance->matrix->width() - canvasW) / 2;
-        offsetY = (instance->matrix->height() - canvasH) / 2;
+        offsetX = (self->matrix->width() - canvasW) / 2;
+        offsetY = (self->matrix->height() - canvasH) / 2;
     } else { // "fit" (default)
-        int sX = instance->matrix->width() / canvasW;
-        int sY = instance->matrix->height() / canvasH;
+        int sX = self->matrix->width() / canvasW;
+        int sY = self->matrix->height() / canvasH;
         int scale = min(sX, sY);
         if (scale < 1) scale = 1;
         scaleX = scale;
         scaleY = scale;
-        offsetX = (instance->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (instance->matrix->height() - (canvasH * scaleY)) / 2;
+        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
+        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
     }
 
     static uint16_t lineBuffer[512]; // Increased to 512 for safety
     int iWidth = pDraw->iWidth;
     if (iWidth > 512) iWidth = 512;
 
-    instance->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+    self->png->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
 
     int y = pDraw->y;
     int baseY = offsetY + y * scaleY;
@@ -958,11 +974,11 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
         uint16_t color = lineBuffer[x];
         int px = offsetX + x * scaleX;
         if (scaleX == 1 && scaleY == 1) {
-            if (px >= 0 && px < instance->matrix->width() && baseY >= 0 && baseY < instance->matrix->height()) {
-                instance->matrix->drawPixel(px, baseY, color);
+            if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+                self->matrix->drawPixel(px, baseY, color);
             }
         } else {
-            instance->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+            self->matrix->fillRect(px, baseY, scaleX, scaleY, color);
         }
     }
     return 1;

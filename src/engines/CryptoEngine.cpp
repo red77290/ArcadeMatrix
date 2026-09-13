@@ -137,7 +137,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
                     pngPtr = png;
                     int rc = png->openRAM(buf, size, pngDraw);
                     if (rc == PNG_SUCCESS) {
-                        png->decode(NULL, 0);
+                        png->decode((void*)this, 0);
                         cache.hasIcon = true;
                     }
                     png->close();
@@ -177,7 +177,9 @@ void CryptoEngine::fetchQuote(const String& symbol) {
 }
 
 int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
-    if (!instance || !instance->currentDecodeBuffer) return 0;
+    CryptoEngine* self = static_cast<CryptoEngine*>(pDraw->pUser);
+    if (!self) self = instance;
+    if (!self || !self->currentDecodeBuffer || !self->pngPtr) return 0;
     
     int iWidth = pDraw->iWidth;
     if (iWidth > 16) iWidth = 16;
@@ -186,14 +188,14 @@ int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
     if (y >= 16) return 0;
     
     uint16_t lineBuffer[16];
-    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+    self->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
     
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
         if (color != 0) {
-            instance->currentDecodeBuffer[y * 16 + x] = color;
+            self->currentDecodeBuffer[y * 16 + x] = color;
         } else {
-            instance->currentDecodeBuffer[y * 16 + x] = 0x0000;
+            self->currentDecodeBuffer[y * 16 + x] = 0x0000;
         }
     }
     return 1;

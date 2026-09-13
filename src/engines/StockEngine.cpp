@@ -159,7 +159,7 @@ void StockEngine::fetchQuote(const String& symbol) {
                     pngPtr = png;
                     int rc = png->openRAM(buf, size, pngDraw);
                     if (rc == PNG_SUCCESS) {
-                        png->decode(NULL, 0);
+                        png->decode((void*)this, 0);
                         cache.hasIcon = true;
                     }
                     png->close();
@@ -201,7 +201,9 @@ void StockEngine::fetchQuote(const String& symbol) {
 }
 
 int StockEngine::pngDraw(PNGDRAW *pDraw) {
-    if (!instance || !instance->currentDecodeBuffer) return 0;
+    StockEngine* self = static_cast<StockEngine*>(pDraw->pUser);
+    if (!self) self = instance;
+    if (!self || !self->currentDecodeBuffer || !self->pngPtr) return 0;
     
     int iWidth = pDraw->iWidth;
     if (iWidth > 16) iWidth = 16;
@@ -211,15 +213,15 @@ int StockEngine::pngDraw(PNGDRAW *pDraw) {
     
     uint16_t lineBuffer[16];
     // We decode to RGB565. Transparency will be handled by drawing only non-black or by PNG library.
-    instance->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
+    self->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
     
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
         // Only save non-black pixels (assuming black is background/transparent)
         if (color != 0) {
-            instance->currentDecodeBuffer[y * 16 + x] = color;
+            self->currentDecodeBuffer[y * 16 + x] = color;
         } else {
-            instance->currentDecodeBuffer[y * 16 + x] = 0x0000; // Transparent indicator
+            self->currentDecodeBuffer[y * 16 + x] = 0x0000; // Transparent indicator
         }
     }
     return 1;
