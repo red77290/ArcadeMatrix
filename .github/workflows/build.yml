@@ -41,11 +41,29 @@ jobs:
       - name: Validate WebInstaller manifest
         run: python3 scripts/validate_webinstaller.py
 
+      - name: Build & validate unit test suites (${{ matrix.env }})
+        run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
 
-      - name: Build & validate unit test suites (${{ matrix.env }})
-        run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+      - name: Verify application firmware integrity (${{ matrix.env }})
+        run: |
+          python3 -c "
+          import os, sys
+          fw = '.pio/build/${{ matrix.env }}/firmware.bin'
+          size = os.path.getsize(fw)
+          print(f'Built firmware size: {size} bytes')
+          if size < 1000000:
+              print(f'ERROR: {fw} is too small ({size} bytes), expected full app binary (>1MB)!')
+              sys.exit(1)
+          with open(fw, 'rb') as f:
+              content = f.read()
+          if b'test_hardware' in content:
+              print('ERROR: {fw} contains unit test symbols! pio test output contaminated firmware.bin!')
+              sys.exit(1)
+          print('✅ Application firmware verified successfully.')
+          "
 
 #      - name: Install QEMU ESP32 (esp32dev)
 #        if: matrix.env == 'esp32dev'
@@ -108,6 +126,21 @@ jobs:
           cp artifacts/esp32s3_waveshare/bootloader.bin  _site/bootloader-esp32s3_waveshare.bin
           cp artifacts/esp32s3_waveshare/partitions.bin  _site/partitions-esp32s3_waveshare.bin
           cp artifacts/esp32s3_waveshare/firmware.bin    _site/firmware-esp32s3_waveshare.bin
+          python3 -c "
+          import os, sys
+          for env in ['esp32dev', 'esp32s3_waveshare']:
+              path = f'_site/firmware-{env}.bin'
+              size = os.path.getsize(path)
+              print(f'Installer {path}: {size} bytes')
+              if size < 1000000:
+                  print(f'ERROR: {path} is too small ({size} bytes)!')
+                  sys.exit(1)
+              with open(path, 'rb') as f:
+                  if b'test_hardware' in f.read():
+                      print(f'ERROR: {path} contains unit test symbols!')
+                      sys.exit(1)
+          print('✅ Web installer binaries verified successfully.')
+          "
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

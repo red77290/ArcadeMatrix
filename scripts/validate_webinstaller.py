@@ -67,6 +67,14 @@ def validate_manifest(manifest_info):
             if size == 0:
                 print(f"❌ Binary file {path} exists but is empty (0 bytes)")
                 return False
+            if "firmware" in path:
+                if size < 1000000:
+                    print(f"❌ Firmware binary {path} is suspiciously small ({size} bytes, expected >1MB)")
+                    return False
+                with open(bin_full_path, "rb") as f:
+                    if b"test_hardware" in f.read():
+                        print(f"❌ Firmware binary {path} contains test runner symbols!")
+                        return False
             print(f"  ✓ Found {path} ({size} bytes)")
         else:
             print(f"  ℹ Note: {path} not present locally (will be populated by CI build)")

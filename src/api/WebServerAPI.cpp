@@ -100,16 +100,16 @@ void WebServerAPI::begin() {
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
-    // This bypasses the SD card entirely, preventing SPI lockups with GifEngine!
+    // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
-        response->addHeader("Content-Encoding", "identity");
+        response->addHeader("Content-Encoding", "gzip");
         response->addHeader("Cache-Control", "no-store, max-age=0");
         request->send(response);
     });
     server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
-        response->addHeader("Content-Encoding", "identity");
+        response->addHeader("Content-Encoding", "gzip");
         response->addHeader("Cache-Control", "no-store, max-age=0");
         request->send(response);
     });
