@@ -244,10 +244,10 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     desc_visualizer.capabilities.allowRotation = false; // Priority override engine
     desc_visualizer.requirements.needsAudio = true;
     desc_visualizer.schema.fields = {
-        ConfigField("priority_mode", ConfigType::BOOLEAN, "Mode Prioritaire (Continu)", "Afficher l'Audio Visualizer en continu (prend la priorité sur la rotation)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("style", ConfigType::ENUM, "Style", "Style de visualisation FFT", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("sensitivity", ConfigType::INTEGER, "Sensibilité", "Sensibilité du microphone", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("gain", ConfigType::FLOAT, "Gain Micro", "Facteur de gain audio", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp)
+        ConfigField("priority_mode", ConfigType::BOOLEAN, "Priority Mode (Continuous)", "Display Audio Visualizer continuously (overrides rotation loop)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("sensitivity", ConfigType::INTEGER, "Sensitivity", "Microphone sensitivity", "5", false, "1", "10", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("gain", ConfigType::FLOAT, "Mic Gain", "Audio gain multiplier", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp)
     };
     desc_visualizer.factory = []() { return std::unique_ptr<IEngine>(new VisualizerEngine()); };
     return desc_visualizer;

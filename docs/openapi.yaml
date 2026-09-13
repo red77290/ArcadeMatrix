@@ -1032,11 +1032,11 @@ paths:
         '200':
           description: Gyroscope calibrated successfully
 
-  /api/ota:
+  /api/update:
     post:
       tags:
         - System
-      summary: OTA Firmware Update
+      summary: OTA Firmware Binary Upload
       description: Upload a new firmware.bin to flash the device over-the-air.
       requestBody:
         required: true
@@ -1051,12 +1051,49 @@ paths:
                   description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
       responses:
         '200':
+          description: Firmware update accepted and flashed. Device reboots in 1 second.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+        '400':
+          description: Upload error or flash write failure.
+
+  /api/ota:
+    post:
+      tags:
+        - System
+      summary: OTA Firmware Update (Alias of /api/update)
+      description: Upload a new firmware.bin to flash the device over-the-air.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                update:
+                  type: string
+                  format: binary
+                  description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
+      responses:
+        '200':
+          description: Firmware update accepted and flashed. Device reboots in 1 second.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+        '400':
+          description: Upload error or flash write failure.
+
   /api/ota/check:
     get:
       tags:
         - System
-      summary: Check GitHub Releases for online OTA updates
-      description: Fetches latest release from GitHub API, matching device architecture (esp32s3/esp32).
+      summary: Check for OTA updates
+      description: Returns current firmware version, architecture, and whether online automated OTA is supported on this platform.
       responses:
         '200':
           description: Release update check response
@@ -1065,17 +1102,19 @@ paths:
               schema:
                 type: object
                 properties:
-                  current_version: { type: string, example: "3.0.1" }
+                  current_version: { type: string, example: "3.2.4" }
                   current_arch: { type: string, example: "esp32s3" }
-                  latest_version: { type: string, example: "3.0.1" }
+                  latest_version: { type: string, example: "3.2.4" }
                   update_available: { type: boolean, example: false }
+                  supported: { type: boolean, example: false }
+                  message: { type: string }
 
   /api/ota/auto-update:
     post:
       tags:
         - System
       summary: 1-Click Online OTA Download and Installation
-      description: Downloads firmware binary from GitHub and flashes OTA partition automatically.
+      description: Downloads firmware binary from GitHub and flashes OTA partition automatically (Raspberry Pi only, returns 400 on ESP32).
       requestBody:
         content:
           application/json:
@@ -1087,5 +1126,5 @@ paths:
         '200':
           description: Firmware updated successfully, device will reboot.
         '400':
-          description: Download failed or invalid firmware binary.
+          description: Auto-download OTA not supported on ESP32 or download failed.
 

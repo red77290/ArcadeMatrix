@@ -42,6 +42,9 @@ html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>Matrix Slowdo
 html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>Audio PWM Conflict[\s\S]*?</div>[^<]*</div>', '', html_content)
 html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>PWM LSB Nanoseconds[\s\S]*?</div>[^<]*</div>', '', html_content)
 
+# Strip Pi-specific Online Automatic Update card (ESP32 uses WebInstaller or manual file upload)
+html_content = re.sub(r'<!-- 1\. Online Automatic Update[\s\S]*?<!-- 2\. Manual Binary Upload', '<!-- 2. Manual Binary Upload', html_content)
+
 with open("data/index.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 

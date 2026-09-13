@@ -611,9 +611,9 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     desc_date.requirements.needsNetwork = false;
     desc_date.schema.fields = {
         ConfigField("date_theme", ConfigType::ENUM, "Date Theme", "Visual theme for date", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:Système (Général),%d/%m/%Y:Jour/Mois/Année (%d/%m/%Y),%m/%d/%Y:Mois/Jour/Année (%m/%d/%Y),%Y-%m-%d:Année-Mois-Jour (%Y-%m-%d),%a %d %b:Court avec jour (%a %d %b),%A %d %B:Complet (%A %d %B)", "", false, "", ValidationPolicy::Accept),
+        ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:System (General),%d/%m/%Y:Day/Month/Year (%d/%m/%Y),%m/%d/%Y:Month/Day/Year (%m/%d/%Y),%Y-%m-%d:Year-Month-Day (%Y-%m-%d),%a %d %b:Short with day (%a %d %b),%A %d %B:Full (%A %d %B)", "", false, "", ValidationPolicy::Accept),
         ConfigField("date_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:Système (Général)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "1", false, "1", "4", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("date_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),
         ConfigField("date_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#00ffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),

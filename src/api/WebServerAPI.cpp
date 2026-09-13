@@ -1679,8 +1679,8 @@ void WebServerAPI::setupRoutes() {
         }, "restart_app_task", 2048, NULL, 1, NULL);
     });
     
-    // API: OTA Firmware Update
-    server.on("/api/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // API: OTA Firmware Update (/api/update and /api/ota alias)
+    auto otaResponseHandler = [](AsyncWebServerRequest *request) {
         bool shouldReboot = !Update.hasError();
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
         response->addHeader("Connection", "close");
@@ -1700,7 +1700,9 @@ void WebServerAPI::setupRoutes() {
                 ESP.restart();
             }, "ota_reboot", 2048, NULL, 1, NULL);
         }
-    }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    };
+
+    auto otaUploadHandler = [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
             LOGI("OTA", "Update Start: %s", filename.c_str());
             extern GifEngine* gifEngine;
@@ -1721,6 +1723,32 @@ void WebServerAPI::setupRoutes() {
                 Update.printError(Serial);
             }
         }
+    };
+
+    server.on("/api/update", HTTP_POST, otaResponseHandler, otaUploadHandler);
+    server.on("/api/ota", HTTP_POST, otaResponseHandler, otaUploadHandler);
+
+    // API: GET /api/ota/check (Parity with RPi & OpenAPI specification)
+    server.on("/api/ota/check", HTTP_GET, [](AsyncWebServerRequest *request){
+        DynamicJsonDocument doc(512);
+        doc["current_version"] = FIRMWARE_VERSION;
+        #if defined(CONFIG_IDF_TARGET_ESP32S3)
+        doc["current_arch"] = "esp32s3";
+        #else
+        doc["current_arch"] = "esp32";
+        #endif
+        doc["latest_version"] = FIRMWARE_VERSION;
+        doc["update_available"] = false;
+        doc["supported"] = false;
+        doc["message"] = "Online OTA download is not supported on ESP32. Please use manual file upload or the WebInstaller.";
+        String res;
+        serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    // API: POST /api/ota/auto-update (Parity with RPi & OpenAPI specification)
+    server.on("/api/ota/auto-update", HTTP_POST, [](AsyncWebServerRequest *request){
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Auto-download OTA is not supported on ESP32. Please use manual file upload.\"}");
     });
 
     // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's

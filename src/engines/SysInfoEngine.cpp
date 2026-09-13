@@ -617,7 +617,7 @@ EngineDescriptor SysInfoEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_ram", ConfigType::BOOLEAN, "Show RAM", "Display memory usage percentage & gauge", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_temp", ConfigType::BOOLEAN, "Show Temperature", "Display core/environment temperature", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_uptime", ConfigType::BOOLEAN, "Show Uptime", "Display running uptime counter", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "system", false, "", "", "", "system:Système (Général),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("temp_unit", ConfigType::ENUM, "Temperature Unit", "Celsius (°C) or Fahrenheit (°F)", "system", false, "", "", "", "system:System (General),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
     };

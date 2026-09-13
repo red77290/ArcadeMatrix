@@ -228,6 +228,57 @@ void ConfigSanitizer::sanitizeField(DictionaryEngineConfig& conf, const ConfigFi
             conf.setString(key, field.default_value);
             result.values_fallback++;
             result.modified = true;
+        } else {
+            // 1. Auto-heal dirty values that retained the dropdown label (e.g. "F:Fahrenheit (°F)" -> "F")
+            if (val_str.indexOf(':') != -1 && !val_str.startsWith("%")) {
+                int colonIdx = val_str.indexOf(':');
+                String cleanVal = val_str.substring(0, colonIdx);
+                cleanVal.trim();
+                if (!cleanVal.isEmpty()) {
+                    val_str = cleanVal;
+                    conf.setString(key, val_str);
+                    result.modified = true;
+                }
+            }
+
+            // 2. Validate against field.options if provided
+            if (strlen(field.options) > 0) {
+                bool found = false;
+                String optsStr(field.options);
+                int start = 0;
+                while (start < optsStr.length()) {
+                    int comma = optsStr.indexOf(',', start);
+                    String item = (comma == -1) ? optsStr.substring(start) : optsStr.substring(start, comma);
+                    item.trim();
+                    if (!item.isEmpty()) {
+                        String optVal = item;
+                        if (!item.startsWith("%") && item.indexOf(':') != -1) {
+                            optVal = item.substring(0, item.indexOf(':'));
+                            optVal.trim();
+                        }
+                        if (val_str.equalsIgnoreCase(optVal)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (comma == -1) break;
+                    start = comma + 1;
+                }
+                if (!found && (field.validation_policy == ValidationPolicy::FallbackDefault ||
+                               field.validation_policy == ValidationPolicy::Reject)) {
+                    if (strlen(field.default_value) > 0) {
+                        conf.setString(key, field.default_value);
+                        result.values_fallback++;
+                        result.modified = true;
+                    }
+                }
+            }
+        }
+    } else if (field.type == ConfigType::LIST) {
+        if (val_str.isEmpty() && strlen(field.default_value) > 0) {
+            conf.setString(key, field.default_value);
+            result.defaults_injected++;
+            result.modified = true;
         }
     }
 }
