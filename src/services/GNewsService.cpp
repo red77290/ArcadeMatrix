@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include <esp_heap_caps.h>
 
 GNewsService gnewsService;
 
@@ -17,18 +18,50 @@ GNewsService::GNewsService() {
     _snapshot.status = 1; // EMPTY_KEY
 }
 
-GNewsService::~GNewsService() {}
+GNewsService::~GNewsService() {
+    releaseArticleStorage();
+}
+
+bool GNewsService::ensureArticleStorage() {
+    if (_snapshot.articles) return true;
+
+    const size_t bytes = sizeof(GNewsArticle) * GNEWS_MAX_ARTICLES;
+    // Prefer PSRAM: this block is only read by the render path, never from an ISR or DMA.
+    void* block = nullptr;
+    if (psramFound()) {
+        block = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (!block) {
+        block = malloc(bytes);
+    }
+    if (!block) {
+        LOGE("GNewsService", "Failed to allocate %u bytes of article storage", (unsigned)bytes);
+        return false;
+    }
+
+    memset(block, 0, bytes);
+    _snapshot.articles = static_cast<GNewsArticle*>(block);
+    return true;
+}
+
+void GNewsService::releaseArticleStorage() {
+    if (_snapshot.articles) {
+        heap_caps_free(_snapshot.articles);
+        _snapshot.articles = nullptr;
+    }
+    _snapshot.count = 0;
+}
 
 const GNewsSnapshot& GNewsService::getSnapshot() const {
     return _snapshot;
 }
 
 bool GNewsService::hasData() const {
-    return _snapshot.hasData && _snapshot.count > 0;
+    return _snapshot.articles && _snapshot.hasData && _snapshot.count > 0;
 }
 
 void GNewsService::purgeArticles() {
-    _snapshot.count = 0;
+    releaseArticleStorage();
     _snapshot.hasData = false;
     _snapshot.fetchSuccess = false;
     _snapshot.lastFetchTime = 0;
@@ -130,7 +163,7 @@ void GNewsService::saveToSd() {
     }
 
     JsonArray artArr = doc.createNestedArray("articles");
-    for (size_t i = 0; i < _snapshot.count; i++) {
+    for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
         JsonObject obj = artArr.createNestedObject();
         obj["title"] = _snapshot.articles[i].title;
         obj["description"] = _snapshot.articles[i].description;
@@ -183,8 +216,11 @@ void GNewsService::loadFromSd() {
 
     JsonArray artArr = doc["articles"].as<JsonArray>();
     _snapshot.count = 0;
+    if (!artArr.isNull() && artArr.size() > 0 && !ensureArticleStorage()) {
+        return;
+    }
     for (JsonObject obj : artArr) {
-        if (_snapshot.count >= 10) break;
+        if (_snapshot.count >= GNEWS_MAX_ARTICLES) break;
         const char* title = obj["title"] | "";
         const char* desc = obj["description"] | "";
         const char* source = obj["source"] | "News";
@@ -283,12 +319,12 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
 
     if (incoming.empty()) return false;
 
-    // Merge incoming into _snapshot.articles with title deduplication
+    // Merge incoming into the snapshot articles with title deduplication
     std::vector<GNewsArticle> merged;
     for (const auto& inc : incoming) {
         merged.push_back(inc);
     }
-    for (size_t i = 0; i < _snapshot.count; i++) {
+    for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
         bool dup = false;
         for (const auto& m : merged) {
             if (strcmp(m.title, _snapshot.articles[i].title) == 0) {
@@ -296,12 +332,18 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
                 break;
             }
         }
-        if (!dup && merged.size() < 10) {
+        if (!dup && merged.size() < GNEWS_MAX_ARTICLES) {
             merged.push_back(_snapshot.articles[i]);
         }
     }
 
-    _snapshot.count = min((size_t)10, merged.size());
+    if (!ensureArticleStorage()) {
+        _snapshot.count = 0;
+        _snapshot.hasData = false;
+        return false;
+    }
+
+    _snapshot.count = min((size_t)GNEWS_MAX_ARTICLES, merged.size());
     for (size_t i = 0; i < _snapshot.count; i++) {
         _snapshot.articles[i] = merged[i];
     }

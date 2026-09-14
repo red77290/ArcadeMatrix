@@ -1,5 +1,8 @@
 #include "HardwareHAL.h"
+#include "AudioOutputHAL.h"
+#include "GyroHAL.h"
 #include "../core/Logger.h"
+#include "../services/FFT64.h"
 #include <driver/i2s.h>
 #include <math.h>
 
@@ -7,13 +10,60 @@ HardwareHAL hardwareHAL;
 std::mutex g_i2cMutex;
 
 #define I2S_PORT I2S_NUM_0
-#define SAMPLE_RATE 22050
+// The ES7210 register block below is the official 16 kHz coefficient set, and the codec requires a
+// fixed 256*Fs MCLK (4.096 MHz). Changing this constant without re-deriving the register sequence
+// de-tunes the ADC and the microphone goes silent.
+#define SAMPLE_RATE 16000
 #define BUFFER_SIZE 512
+
+// DMA ring geometry. i2s_read() can only hand back data once a descriptor has been completed by
+// the DMA engine, so the descriptor period is the hard floor of the read latency. With the former
+// 4 x 512-frame layout a descriptor took 512/16000 = 32 ms to fill, which is longer than the read
+// timeout used by the visualizer: every time the ring ran dry the read returned zero bytes and the
+// spectrum collapsed, then recovered once the ring refilled. Shorter descriptors make data
+// available every 8 ms while keeping the same 64 ms of total buffering.
+#define I2S_DMA_DESC_COUNT 8
+#define I2S_DMA_FRAMES_PER_DESC 128
+
+// Read budget on the Core 1 render path. i2s_read() returns partial data on timeout, which is
+// perfectly usable for time-domain banding, so these stay well under one frame period.
+#define AUDIO_SPECTRUM_READ_TIMEOUT_MS 10
+#define AUDIO_DECIBEL_READ_TIMEOUT_MS 20
+
+static_assert(SAMPLE_RATE * 256 == 4096000,
+              "ES7210 requires a fixed 4.096 MHz MCLK (256 * 16 kHz); update configureES7210() "
+              "register coefficients before changing SAMPLE_RATE.");
+
+static_assert(I2S_DMA_FRAMES_PER_DESC * 1000 / SAMPLE_RATE < AUDIO_SPECTRUM_READ_TIMEOUT_MS,
+              "One DMA descriptor must complete faster than the spectrum read timeout, otherwise "
+              "reads periodically return zero bytes and the visualizer oscillates.");
+
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+// The Waveshare S3 board carries a single physical microphone capsule (ES7210 MIC1), but
+// the I2S peripheral is configured I2S_CHANNEL_FMT_RIGHT_LEFT (stereo) purely so both the
+// RX (mic) and TX (speaker) sides of the full-duplex bus share one MCLK/BCLK generator.
+// Every consumer therefore receives interleaved [L, R, L, R, ...] 16-bit words where only
+// one slot carries the real acoustic signal.
+//
+// Feeding that interleaved stream straight into a time-domain analysis (RMS, or worse, an
+// FFT window) silently splices two unrelated "channels" together: an FFT window ends up
+// with 32 real samples and 32 samples from the other slot, which corrupts every bin above
+// DC. This compacts the buffer in place to the left slot only, halving the sample count.
+static size_t extractMonoChannel(int16_t* buf, size_t samplesCount) {
+    size_t monoCount = samplesCount / 2;
+    for (size_t i = 0; i < monoCount; i++) {
+        buf[i] = buf[i * 2];
+    }
+    return monoCount;
+}
+#endif
 
 HardwareHAL::HardwareHAL() 
     : audioActive(false), 
-      micGain(1.0f), lastTempReadTime(0) {
+      micGain(1.0f), lastTempReadTime(0),
+      _lastSpectrumBands(0), _lastDecibels(30.0f), _audioWarmupFrames(0) {
     cachedEnvData = {false, 0.0f, 32.0f, 0.0f};
+    for (size_t i = 0; i < MAX_SPECTRUM_BANDS; i++) _lastSpectrum[i] = 0.0f;
 }
 
 HardwareHAL::~HardwareHAL() {
@@ -91,8 +141,11 @@ void HardwareHAL::begin() {
          _capabilities.audio.output ? "YES" : "NO",
          _capabilities.audio.fullDuplex ? "YES" : "NO");
 
+    // 4. Probe Gyroscope / Accelerometer (QMI8658 / MPU6050)
+    gyroHAL.begin();
+    _capabilities.hasGyroscope = gyroHAL.isAvailable();
+
     // Populate Capabilities Snapshot
-    _capabilities.hasGyroscope = false;
     _capabilities.hasNetwork = true;
     _capabilities.hasSd = true;
 
@@ -151,7 +204,6 @@ bool HardwareHAL::probeSHTC3() {
 }
 
 bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
-    uint8_t t1, t2, tempCrc, h1, h2, humCrc;
     {
         std::lock_guard<std::mutex> lock(g_i2cMutex);
         // Wakeup SHTC3
@@ -168,9 +220,13 @@ bool HardwareHAL::readSHTC3Raw(float& tempC, float& hum) {
         if (Wire.endTransmission() != 0) {
             return false;
         }
+    }
 
-        delay(15); // Wait 15ms for measurement with I2C bus safely locked
+    delay(15); // Wait 15ms for measurement with I2C bus safely released
 
+    uint8_t t1, t2, tempCrc, h1, h2, humCrc;
+    {
+        std::lock_guard<std::mutex> lock(g_i2cMutex);
         Wire.requestFrom((uint8_t)SHTC3_I2C_ADDR, (size_t)6);
         if (Wire.available() < 6) {
             return false;
@@ -279,11 +335,11 @@ bool HardwareHAL::configureES7210() {
 
     Wire.beginTransmission(ES7210_I2C_ADDR);
     Wire.write(0x00);
-    Wire.write(0x41);
+    Wire.write(0x32);
     Wire.endTransmission();
     delay(10);
 
-    // 2. Official esp_codec_dev / esp-adf ES7210 Register sequence
+    // 2. Official esp_codec_dev / Waveshare ES7210 Register sequence for 16kHz, 16-bit, I2S Master/Slave
     uint8_t initCmds[][2] = {
         // Initialization time
         {0x09, 0x30}, // TIME_CONTROL0
@@ -295,15 +351,12 @@ bool HardwareHAL::configureES7210() {
         {0x21, 0x2A}, // ADC34_HPF1
         {0x20, 0x0A}, // ADC34_HPF2
         
-        // Secondary / Slave mode
-        {0x08, 0x00},
-
-        // I2S format (16-bit, standard I2S format 0x00, TDM disabled)
-        {0x11, 0x60}, // 0x60 (16-bit) | 0x00 (Standard I2S format)
+        // I2S format (16-bit, standard, TDM disabled)
+        {0x11, 0x62}, // 0x60 (16-bit) | 0x02 (Standard I2S)
         {0x12, 0x00}, // TDM disabled
         
-        // Analog power and VMID voltage (0x43: analog active, VMID 5k startup)
-        {0x40, 0x43},
+        // Analog power and VMID voltage
+        {0x40, 0xC3},
         
         // MIC bias 2.87V
         {0x41, 0x70},
@@ -322,28 +375,40 @@ bool HardwareHAL::configureES7210() {
         {0x4A, 0x08},
         
         // Set ADC sample rate (16kHz, mclk=16000*256=4096000)
-        // From es7210 coeff div table: osr=0x20, adc_div=1, doubler=1, dll=1, lrck_h=1, lrck_l=0
         {0x07, 0x20}, // OSR
         {0x02, 0xC1}, // MAINCLK: adc_div(1) | doubler(1<<6) | dll(1<<7) = 0xC1
         {0x04, 0x01}, // LRCK_DIVH
         {0x05, 0x00}, // LRCK_DIVL
         
-        // Power down DLL: 0x00 clears all power-down blocks (full power on)
-        {0x06, 0x00},
-        
-        // Clock off register: 0x00 turns all ADC clocks ON
-        {0x01, 0x00},
+        // Power down DLL: matches the v3.1.0 sequence verified on hardware. 0x00 (full
+        // power on of every block) was tried during the audio refactor and is the
+        // regression that silenced the microphone: 0x04 is required.
+        {0x06, 0x04},
 
-        // CRITICAL: Disable Automute and un-mute all ADC channels!
-        // Prevents ES7210 from hardware-muting digital audio to 0 after silence
+        // Power on MIC1-4 bias & ADC1-4 & PGA1-4 Power: matches v3.1.0. The refactor's
+        // 0x00 here left the analog front-end powered down, so the ADC digitized
+        // near-silence: the spectrum was technically "reading" but had nothing to show,
+        // which is exactly the "flat from boot" symptom.
+        {0x4B, 0x0F},
+        {0x4C, 0x0F},
+
+        // Disable ADC automute and force both channel pairs unmuted. This is a SEPARATE,
+        // real fix from the one above, not a leftover of the same regression: the ES7210
+        // hardware-mutes its digital output to a flat zero after it decides the input has
+        // been "quiet" for a while (its own automute heuristic, independent of the
+        // 0x4B/0x4C bias/PGA power state). That is the exact failure mode reported live
+        // ("mic works for a while, then goes flat while DMA/I2S keeps reporting healthy
+        // reads") and is exactly why commit 6ee7d4c originally added these three writes,
+        // labeling them CRITICAL after observing a "digital zero freeze". Reverting them
+        // to match v3.1.0 in an earlier pass of this fix was a mistake: v3.1.0 likely had
+        // this same automute freeze, which is presumably why they were added in the first
+        // place. Disabling automute at init is the root-cause fix; it replaces the old
+        // runtime checkAndRecoverES7210() watchdog (removed), which only patched the
+        // symptom after ~1s of silence instead of preventing it.
         {0x13, 0x00}, // Automute disabled
         {0x14, 0x00}, // ADC34 unmuted
         {0x15, 0x00}, // ADC12 unmuted
 
-        // Power on MIC1-4 bias & ADC1-4 & PGA1-4 Power (0x00 powers on per official driver)
-        {0x4B, 0x00},
-        {0x4C, 0x00},
-        
         // Volume 0dB (191 = 0xBF)
         {0x1B, 0xBF},
         {0x1C, 0xBF},
@@ -375,44 +440,90 @@ bool HardwareHAL::configureES7210() {
 }
 
 void HardwareHAL::startAudioSampling() {
-    if (audioActive || !_capabilities.hasMicrophone) return;
+    if (!_capabilities.hasMicrophone) return;
 
-    // 0. Enable Power Amplifier circuit on GPIO 11 (shared audio power rail on Waveshare board)
+    // Record the standing intent even if the bus is busy, so capture can be reclaimed
+    // automatically as soon as playback releases it.
+    _captureRequested = true;
+    if (audioActive) return;
+
+    // Capture and playback are mutually exclusive: they share I2S_NUM_0, the same I2S
+    // pins and the same analog front-end. Running both at once makes the amplified
+    // speaker output leak straight back into the microphone (acoustic feedback), so
+    // playback ownership always wins and capture simply stays off until it is released.
+    if (audioOutputHAL.isAvailable()) {
+        static unsigned long lastRefusalLog = 0;
+        if (millis() - lastRefusalLog > 5000) {
+            lastRefusalLog = millis();
+            LOGW("HardwareHAL", "Audio capture deferred: playback owns the I2S bus (mic and speaker are mutually exclusive).");
+        }
+        return;
+    }
+
+    // A restart must not replay the spectrum captured before the driver was torn down.
+    _lastSpectrumBands = 0;
+    _lastDecibels = 30.0f;
+    _audioWarmupFrames = 0;
+    for (size_t i = 0; i < MAX_SPECTRUM_BANDS; i++) _lastSpectrum[i] = 0.0f;
+
+    // 0. Force the Power Amplifier OFF for the whole capture session. Capture is always
+    //    silent: the PA belongs exclusively to AudioOutputHAL. Enabling it here (the
+    //    previous behaviour) put a live speaker next to the microphone it was recording.
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     pinMode(11, OUTPUT);
-    digitalWrite(11, HIGH);
-    delay(10);
-    LOGI("HardwareHAL", "Audio PA enabled on GPIO 11.");
+    digitalWrite(11, LOW);
+    LOGI("HardwareHAL", "Audio PA held OFF on GPIO 11 for the capture session (feedback prevention).");
 #endif
 
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     // 1. Full-duplex I2S config (TX+RX) - matches official Waveshare BSP
     //    The ES7210 (ADC) and ES8311 (DAC) share the same I2S bus.
-    //    Both channels must be active for proper clock generation.
+    //    Both channels must be active for proper clock generation and stable 4.096 MHz MCLK.
     i2s_config_t i2s_config = {
         .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX),
-        .sample_rate = 16000,  // Match BSP default: 16kHz
+        .sample_rate = SAMPLE_RATE,  // 16000 Hz
         .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
         .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = 4,
-        .dma_buf_len = BUFFER_SIZE,
+        .dma_buf_count = I2S_DMA_DESC_COUNT,
+        .dma_buf_len = I2S_DMA_FRAMES_PER_DESC,
         .use_apll = true,       // APLL for precise MCLK generation
         .tx_desc_auto_clear = true,
-        .fixed_mclk = 16000 * 256  // 4.096 MHz MCLK
+        .fixed_mclk = SAMPLE_RATE * 256  // 4.096 MHz fixed MCLK required by ES7210
     };
 
     i2s_pin_config_t pin_config = {
-#if defined(I2S_MCLK_PIN)
-        .mck_io_num = I2S_MCLK_PIN,     // GPIO 12
-#else
-        .mck_io_num = I2S_PIN_NO_CHANGE,
-#endif
-        .bck_io_num = I2S_SCLK_PIN,     // GPIO 43
-        .ws_io_num = I2S_LRCK_PIN,      // GPIO 38
-        .data_out_num = 21,              // GPIO 21 - ES8311 DAC data (BSP_I2S_DOUT)
-        .data_in_num = I2S_ASDOUT_PIN   // GPIO 39 - ES7210 ADC data (BSP_I2S_DSIN)
+        .mck_io_num = I2S_MCLK_PIN,     // GPIO 12 - MCLK
+        .bck_io_num = I2S_SCLK_PIN,     // GPIO 43 - BCLK
+        .ws_io_num = I2S_LRCK_PIN,      // GPIO 38 - LRCK
+        .data_out_num = 21,             // GPIO 21 - ES8311 DAC DOUT
+        .data_in_num = I2S_ASDOUT_PIN   // GPIO 39 - ES7210 ADC DSIN
     };
+#else
+    // ESP32 Standard: Pure RX Mono (e.g. INMP441 on GPIO 32, 14, 15)
+    i2s_config_t i2s_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+        .sample_rate = SAMPLE_RATE,  // 16000 Hz
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = I2S_DMA_DESC_COUNT,
+        .dma_buf_len = I2S_DMA_FRAMES_PER_DESC,
+        .use_apll = false,
+        .tx_desc_auto_clear = false,
+        .fixed_mclk = 0
+    };
+
+    i2s_pin_config_t pin_config = {
+        .mck_io_num = I2S_PIN_NO_CHANGE,
+        .bck_io_num = I2S_SCLK_PIN,     // GPIO 14
+        .ws_io_num = I2S_LRCK_PIN,      // GPIO 15
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = I2S_ASDOUT_PIN   // GPIO 32
+    };
+#endif
 
     esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
     if (err == ESP_OK) {
@@ -423,12 +534,13 @@ void HardwareHAL::startAudioSampling() {
         i2s_zero_dma_buffer(I2S_PORT);
         i2s_start(I2S_PORT);
         audioActive = true;
-#if defined(I2S_MCLK_PIN)
-        LOGI("HardwareHAL", "I2S DMA Audio STARTED (Full-Duplex TX+RX, APLL, MCLK on GPIO %d).", I2S_MCLK_PIN);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED (Waveshare S3 Full-Duplex, 4.096 MHz MCLK on GPIO %d).", I2S_MCLK_PIN);
 #else
-        LOGI("HardwareHAL", "I2S DMA Audio STARTED (Full-Duplex TX+RX, APLL).");
+        LOGI("HardwareHAL", "I2S DMA Audio Sampling STARTED (ESP32 Standard RX Mono).");
 #endif
-        // Wait for MCLK to stabilize
+        // Let the MCLK signal settle on the ES7210 pins before any I2C write. Writing registers
+        // while MCLK is still unstable silently mis-latches them and the ADC stays muted.
         delay(50);
 
         // Configure & Power up ES7210 ADC registers NOW while MCLK is active!
@@ -439,75 +551,67 @@ void HardwareHAL::startAudioSampling() {
             LOGW("HardwareHAL", "ES7210 I2C config failed, running generic I2S audio mode.");
         }
 #endif
-        // Flush initial stale DMA data
+        // Flush initial stale DMA data captured while the ES7210 registers were still settling.
+        // Bounded so activation never stalls the render loop for more than ~40 ms.
         int16_t dummyBuf[BUFFER_SIZE];
         size_t dummyRead = 0;
-        for (int i = 0; i < 8; i++) {
-            i2s_read(I2S_PORT, (void*)dummyBuf, sizeof(dummyBuf), &dummyRead, pdMS_TO_TICKS(20));
+        for (int i = 0; i < 4; i++) {
+            i2s_read(I2S_PORT, (void*)dummyBuf, sizeof(dummyBuf), &dummyRead, pdMS_TO_TICKS(10));
         }
-        LOGI("HardwareHAL", "I2S DMA buffer flushed (%d dummy reads).", 8);
+        i2s_zero_dma_buffer(I2S_PORT);
+        LOGI("HardwareHAL", "I2S DMA buffer flushed (%d dummy reads, %d x %d frame descriptors).",
+             4, I2S_DMA_DESC_COUNT, I2S_DMA_FRAMES_PER_DESC);
     } else {
         LOGE("HardwareHAL", "Failed to install I2S driver! err=%d", err);
     }
 }
 
-void HardwareHAL::stopAudioSampling() {
+void HardwareHAL::stopAudioSampling(bool clearIntent) {
+    if (clearIntent) _captureRequested = false;
     if (!audioActive) return;
 
     i2s_stop(I2S_PORT);
     i2s_driver_uninstall(I2S_PORT);
     audioActive = false;
-    LOGI("HardwareHAL", "I2S DMA Audio Sampling STOPPED (Lazy Sampling).");
-}
-
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-// Auto-recovery watchdog: if DMA reads bytes but incoming PCM samples are digital 0 for >60 frames (~1s),
-// re-assert unmute on ES7210. Shared between DecibelEngine and VisualizerEngine.
-void HardwareHAL::checkAndRecoverES7210(int16_t maxPeak, size_t bytesRead) {
-    static int zeroPeakCount = 0;
-    if (maxPeak == 0 && bytesRead > 0) {
-        zeroPeakCount++;
-        if (zeroPeakCount == 60) {
-            std::lock_guard<std::mutex> lock(g_i2cMutex);
-            Wire.beginTransmission(ES7210_I2C_ADDR);
-            Wire.write(0x13); Wire.write(0x00); // Automute disabled
-            Wire.endTransmission();
-            Wire.beginTransmission(ES7210_I2C_ADDR);
-            Wire.write(0x14); Wire.write(0x00); // ADC34 unmuted
-            Wire.endTransmission();
-            Wire.beginTransmission(ES7210_I2C_ADDR);
-            Wire.write(0x15); Wire.write(0x00); // ADC12 unmuted
-            Wire.endTransmission();
-            Wire.beginTransmission(ES7210_I2C_ADDR);
-            Wire.write(0x00); Wire.write(0x41); // Device enable
-            Wire.endTransmission();
-            LOGW("HardwareHAL", "Watchdog: ES7210 zero signal detected, re-asserted unmute.");
-        } else if (zeroPeakCount > 180) {
-            zeroPeakCount = 0;
-            configureES7210();
-            LOGW("HardwareHAL", "Watchdog: ES7210 reconfigured after prolonged silence.");
-        }
-    } else if (maxPeak > 0) {
-        zeroPeakCount = 0;
-    }
-}
+    // Leave the PA in the state playback expects: off. AudioOutputHAL re-enables it.
+    pinMode(11, OUTPUT);
+    digitalWrite(11, LOW);
 #endif
+    // Logged at INFO because an unexpected teardown (I2S_NUM_0 is shared with AudioOutputHAL)
+    // silently starves the visualizer and is otherwise invisible in a field log.
+    LOGI("HardwareHAL", "I2S DMA Audio Sampling STOPPED (driver uninstalled, intent %s).",
+         _captureRequested ? "kept" : "cleared");
+}
 
 float HardwareHAL::getDecibels(float dbCalibration) {
+    // Only re-arm on a standing intent, and never while playback owns the bus.
+    // Unconditionally restarting here used to steal I2S_NUM_0 back from the radio one
+    // render frame after AudioHub had handed it over, which both killed playback and
+    // re-armed the microphone next to a live speaker.
     if (!audioActive) {
+        if (!_captureRequested || audioOutputHAL.isAvailable()) {
+            return _lastDecibels + dbCalibration;
+        }
         startAudioSampling();
+        if (!audioActive) return _lastDecibels + dbCalibration;
     }
 
     int16_t sampleBuf[BUFFER_SIZE];
     size_t bytesRead = 0;
-    i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead, pdMS_TO_TICKS(50));
+    i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead,
+             pdMS_TO_TICKS(AUDIO_DECIBEL_READ_TIMEOUT_MS));
 
     if (bytesRead == 0) {
-        return 30.0f + dbCalibration; // Silence / fallback minimum when no bytes read
+        return _lastDecibels + dbCalibration; // Transient DMA underrun: hold the last measurement
     }
 
     size_t samplesCount = bytesRead / sizeof(int16_t);
-    if (samplesCount == 0) return 30.0f + dbCalibration;
+    if (samplesCount == 0) return _lastDecibels + dbCalibration;
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    samplesCount = extractMonoChannel(sampleBuf, samplesCount);
+    if (samplesCount == 0) return _lastDecibels + dbCalibration;
+#endif
     double sum = 0.0;
     double sumSquares = 0.0;
     int16_t maxPeak = 0;
@@ -529,9 +633,10 @@ float HardwareHAL::getDecibels(float dbCalibration) {
         sumSquares += (sample * sample);
     }
 
-    static int warmupFrames = 0;
-    if (warmupFrames < 4) {
-        warmupFrames++;
+    // Warm-up is per sampling session, not per boot: a function-local static would have stayed
+    // latched after the very first four reads and skipped the settle window on every restart.
+    if (_audioWarmupFrames < 4) {
+        _audioWarmupFrames++;
         return 30.0f + dbCalibration;
     }
 
@@ -554,12 +659,10 @@ float HardwareHAL::getDecibels(float dbCalibration) {
     if (db < 30.0f) db = 30.0f;
     if (db > 110.0f) db = 110.0f;
 
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    checkAndRecoverES7210(maxPeak, bytesRead);
-#endif
+    _lastDecibels = db - dbCalibration;
 
     static unsigned long lastAudioLog = 0;
-    if (millis() - lastAudioLog > 10000) {
+    if (millis() - lastAudioLog > 2000) {
         lastAudioLog = millis();
         LOGD("HardwareHAL", "I2S Audio: bytesRead=%d, maxPeak=%d, rms=%.1f, db=%.1f dB",
              (int)bytesRead, (int)maxPeak, rms, db);
@@ -570,22 +673,82 @@ float HardwareHAL::getDecibels(float dbCalibration) {
 
 bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
     if (!bands || numBands == 0) return false;
+    if (numBands > MAX_SPECTRUM_BANDS) numBands = MAX_SPECTRUM_BANDS;
 
+    // Only re-arm on a standing intent, and never while playback owns the bus (see
+    // getDecibels). When capture is unavailable the previous frame is decayed out so
+    // the bars fade instead of freezing or snapping to zero.
     if (!audioActive) {
+        if (!_captureRequested || audioOutputHAL.isAvailable()) {
+            for (size_t i = 0; i < numBands; i++) {
+                float v = (_lastSpectrumBands == numBands) ? (_lastSpectrum[i] * 0.85f) : 0.0f;
+                if (v < 0.002f) v = 0.0f;
+                _lastSpectrum[i] = v;
+                bands[i] = v;
+            }
+            return false;
+        }
         startAudioSampling();
+        if (!audioActive) {
+            for (size_t i = 0; i < numBands; i++) bands[i] = 0.0f;
+            return false;
+        }
     }
 
     int16_t sampleBuf[BUFFER_SIZE];
     size_t bytesRead = 0;
-    i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead, pdMS_TO_TICKS(20));
+    i2s_read(I2S_PORT, (void*)sampleBuf, sizeof(sampleBuf), &bytesRead,
+             pdMS_TO_TICKS(AUDIO_SPECTRUM_READ_TIMEOUT_MS));
+
+    // Sampling health probe: distinguishes "the DMA ring is starving the visualizer" from
+    // "the Core 1 render loop itself stalled". Throttled to one line every 2 s.
+    static uint32_t probeCalls = 0, probeUnderruns = 0, probeMinBytes = 0xFFFFFFFF, probeMaxBytes = 0;
+    static unsigned long probeWindowStart = 0;
+    probeCalls++;
+    if (bytesRead == 0) probeUnderruns++;
+    if (bytesRead < probeMinBytes) probeMinBytes = bytesRead;
+    if (bytesRead > probeMaxBytes) probeMaxBytes = bytesRead;
+    unsigned long nowMs = millis();
+    if (probeWindowStart == 0) probeWindowStart = nowMs;
+    if (nowMs - probeWindowStart >= 2000) {
+        LOGI("HardwareHAL", "MIC health: %u reads/2s (%.1f fps), %u underruns (%.0f%%), bytes min=%u max=%u",
+             (unsigned)probeCalls, probeCalls / 2.0f, (unsigned)probeUnderruns,
+             probeCalls ? (100.0f * probeUnderruns / probeCalls) : 0.0f,
+             (unsigned)(probeMinBytes == 0xFFFFFFFF ? 0 : probeMinBytes), (unsigned)probeMaxBytes);
+        probeCalls = probeUnderruns = probeMaxBytes = 0;
+        probeMinBytes = 0xFFFFFFFF;
+        probeWindowStart = nowMs;
+    }
 
     size_t samplesCount = bytesRead / sizeof(int16_t);
+    if (samplesCount == 0) {
+        // A dry read is a DMA underrun, not silence. Replaying the previous frame with a decay
+        // keeps the bars continuous across underruns while still fading out a dead microphone.
+        if (_lastSpectrumBands == numBands) {
+            for (size_t i = 0; i < numBands; i++) {
+                _lastSpectrum[i] *= 0.85f;
+                if (_lastSpectrum[i] < 0.002f) _lastSpectrum[i] = 0.0f;
+                bands[i] = _lastSpectrum[i];
+            }
+        } else {
+            for (size_t i = 0; i < numBands; i++) bands[i] = 0.0f;
+        }
+        return false;
+    }
+
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    // See extractMonoChannel(): the RX stream is interleaved [L, R, ...] with only one
+    // slot carrying the real microphone signal. Splicing both slots into the same FFT
+    // window would corrupt the frequency axis, so this must run before the DC/FFT passes.
+    samplesCount = extractMonoChannel(sampleBuf, samplesCount);
     if (samplesCount == 0) {
         for (size_t i = 0; i < numBands; i++) bands[i] = 0.0f;
         return false;
     }
+#endif
 
-    // First pass: find DC offset and maxPeak
+    // First pass: DC offset and peak. The ES7210 carries a large DC bias; leaving it in
+    // would dump all the energy into bin 0 and flatten every other bar.
     double sum = 0.0;
     int16_t maxPeak = 0;
     for (size_t i = 0; i < samplesCount; i++) {
@@ -593,32 +756,65 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
         int16_t absVal = abs(sampleBuf[i]);
         if (absVal > maxPeak) maxPeak = absVal;
     }
-    float dcOffset = sum / samplesCount;
+    float dcOffset = (float)(sum / samplesCount);
 
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    checkAndRecoverES7210(maxPeak, bytesRead);
-#endif
+    // Second pass: Welch-averaged 64-point FFT.
+    //
+    // This is the regression that made the visualizer look "flat": the previous code
+    // sliced the buffer into contiguous TIME windows and plotted the average amplitude
+    // of each slice. For any steady signal every slice carries the same energy, so all
+    // the bars ended up at the same height regardless of the actual audio content. It
+    // was never a frequency transform.
+    //
+    // A single 64-sample window is only 4 ms at 16 kHz and is far too noisy on its own,
+    // so the magnitude spectra of every non-overlapping window in the captured buffer
+    // are averaged (Welch's method). The buffer is already paid for and the cost stays
+    // bounded: BUFFER_SIZE / 64 transforms per frame, no allocation and no mutex.
+    float fftIn[arcade_audio::FFT_SIZE];
+    float fftMag[arcade_audio::FFT_BINS];
+    float magAccum[arcade_audio::FFT_BINS] = {0.0f};
 
-    // Partition samples into frequency bands using energy distribution
-    size_t samplesPerBand = samplesCount / numBands;
-    if (samplesPerBand < 1) samplesPerBand = 1;
-
-    for (size_t b = 0; b < numBands; b++) {
-        double bandEnergy = 0.0;
-        size_t start = b * samplesPerBand;
-        size_t end = (b + 1) * samplesPerBand;
-        if (end > samplesCount) end = samplesCount;
-
-        for (size_t i = start; i < end; i++) {
-            float val = fabsf((float)sampleBuf[i] - dcOffset) * micGain;
-            bandEnergy += val;
+    size_t windows = samplesCount / arcade_audio::FFT_SIZE;
+    for (size_t w = 0; w < windows; w++) {
+        const int16_t* src = &sampleBuf[w * arcade_audio::FFT_SIZE];
+        for (size_t i = 0; i < arcade_audio::FFT_SIZE; i++) {
+            fftIn[i] = ((float)src[i] - dcOffset) / 32768.0f;
         }
+        arcade_audio::computeFFT64(fftIn, fftMag);
+        for (size_t k = 0; k < arcade_audio::FFT_BINS; k++) magAccum[k] += fftMag[k];
+    }
 
-        float avgEnergy = (end > start) ? (float)(bandEnergy / (end - start)) : 0.0f;
-        // Dynamic amplitude normalization (0.0 to 1.0)
-        float norm = avgEnergy / 1500.0f;
-        if (norm > 1.0f) norm = 1.0f;
-        bands[b] = norm;
+    if (windows == 0) {
+        // Buffer shorter than one transform: zero-pad a single window rather than
+        // falling back to a non-spectral approximation.
+        for (size_t i = 0; i < arcade_audio::FFT_SIZE; i++) {
+            fftIn[i] = (i < samplesCount) ? (((float)sampleBuf[i] - dcOffset) / 32768.0f) : 0.0f;
+        }
+        arcade_audio::computeFFT64(fftIn, magAccum);
+        windows = 1;
+    } else {
+        for (size_t k = 0; k < arcade_audio::FFT_BINS; k++) magAccum[k] /= (float)windows;
+    }
+
+    // Map the FFT bins onto the requested bar count using the shared log-spaced recipe,
+    // then apply the same exponential moving average as the streamed-audio path so the
+    // microphone and the radio visualizers behave identically.
+    bool bandCountChanged = (_lastSpectrumBands != numBands);
+    for (size_t b = 0; b < numBands; b++) {
+        float rawVal = magAccum[arcade_audio::bandToBin(b, numBands)] * 4.0f * micGain;
+        if (rawVal > 1.0f) rawVal = 1.0f;
+        float prev = bandCountChanged ? 0.0f : _lastSpectrum[b];
+        float smoothed = (prev * 0.65f) + (rawVal * 0.35f);
+        bands[b] = smoothed;
+        _lastSpectrum[b] = smoothed;
+    }
+    _lastSpectrumBands = numBands;
+
+    static unsigned long lastSpectrumLog = 0;
+    if (millis() - lastSpectrumLog > 2000) {
+        lastSpectrumLog = millis();
+        LOGD("HardwareHAL", "MIC Spectrum: bytes=%d, peak=%d, dc=%.1f, windows=%u, b0=%.2f, gain=%.1f",
+             (int)bytesRead, maxPeak, dcOffset, (unsigned)windows, bands[0], micGain);
     }
 
     return true;

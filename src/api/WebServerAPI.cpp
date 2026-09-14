@@ -1,6 +1,7 @@
 #include "WebServerAPI.h"
 #include <core/EngineRegistry.h>
 #include <ArduinoJson.h>
+#include <memory>
 #include "../core/SDUtils.h"
 #include <Update.h>
 #include "../core/MatrixEngine.h"
@@ -20,6 +21,218 @@
 #include "../hal/GyroHAL.h"
 
 extern RotationManager* rotationManager;
+
+// In-RAM cache for /api/playlists. Enumerating the GIF folders costs many SD round-trips; doing it
+// on every request keeps sdMutex held on the AsyncTCP task and stalls the whole HTTP server, which
+// is what made the WebUI Display tab take tens of seconds on first connection.
+// Index 0 = combined, 1 = yoko, 2 = tate. GIF folders are managed out of band (SD card swap, host
+// copy), so the cache self-expires after a TTL and can be bypassed explicitly with ?refresh=1.
+static const uint32_t PLAYLIST_CACHE_TTL_MS = 30000;
+static String s_playlistCache[3];
+static uint32_t s_playlistCacheStamp[3] = { 0, 0, 0 };
+static bool s_playlistCacheValid[3] = { false, false, false };
+
+static void invalidatePlaylistCache() {
+    for (int i = 0; i < 3; ++i) {
+        s_playlistCache[i] = String();
+        s_playlistCacheStamp[i] = 0;
+        s_playlistCacheValid[i] = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /api/engines incremental serializer
+//
+// Emits the descriptor array one element at a time so that peak heap usage stays proportional to
+// the largest single descriptor instead of the whole payload. See the route handler for the two
+// regressions this replaces.
+// ---------------------------------------------------------------------------
+struct EngineStreamState {
+    size_t descriptorIndex = 0;
+    String pending;
+    size_t offset = 0;
+    bool arrayOpened = false;
+    bool arrayClosed = false;
+};
+
+static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out) {
+    const size_t fieldCount = desc.schema.fields.size();
+    // ConfigField members are all `const char*`, so ArduinoJson links them instead of copying:
+    // only structural slots consume capacity. A field object emits at most 12 members (id,
+    // field_type, label, description, default_value, options, options_endpoint, multiple,
+    // visible_when, min_val, max_val, step) - under-counting here silently truncates the schema
+    // of the largest engines, which is exactly what the WebUI reported as an empty response.
+    const size_t capacity = JSON_OBJECT_SIZE(8)            // root
+                          + JSON_OBJECT_SIZE(4)            // metadata
+                          + JSON_OBJECT_SIZE(5)            // capabilities
+                          + JSON_OBJECT_SIZE(6)            // requirements
+                          + JSON_ARRAY_SIZE(fieldCount)    // schema array
+                          + fieldCount * JSON_OBJECT_SIZE(12)
+                          + 512;                           // headroom
+
+    DynamicJsonDocument doc(capacity);
+    JsonObject obj = doc.to<JsonObject>();
+
+    JsonObject metaObj = obj.createNestedObject("metadata");
+    metaObj["id"] = desc.metadata.id;
+    metaObj["name"] = desc.metadata.name;
+    metaObj["category"] = desc.metadata.category;
+    metaObj["version"] = desc.metadata.version;
+
+    JsonObject capObj = obj.createNestedObject("capabilities");
+    capObj["supports_128x32"] = desc.capabilities.supports_128x32;
+    capObj["supports_256x64"] = desc.capabilities.supports_256x64;
+    capObj["realtime"] = desc.capabilities.realtime;
+    capObj["interruptible"] = desc.capabilities.interruptible;
+    capObj["selfPaced"] = desc.capabilities.selfPaced;
+
+    JsonObject reqObj = obj.createNestedObject("requirements");
+    reqObj["needs_psram"] = desc.requirements.needsPsram;
+    reqObj["needs_audio"] = desc.requirements.needsAudio;
+    reqObj["needs_temp_sensor"] = desc.requirements.needsTempSensor;
+    reqObj["needs_gyroscope"] = desc.requirements.needsGyroscope;
+    reqObj["needs_network"] = desc.requirements.needsNetwork;
+    reqObj["needs_sd"] = desc.requirements.needsSd;
+
+    auto reqCheck = EngineRegistrar::checkRequirements(desc.requirements);
+    obj["available"] = reqCheck.satisfied;
+    if (!reqCheck.satisfied) {
+        obj["reason"] = reqCheck.reason;
+    }
+
+    JsonArray schema = obj.createNestedArray("schema");
+    for (const auto& field : desc.schema.fields) {
+        JsonObject fieldObj = schema.createNestedObject();
+        fieldObj["id"] = field.id;
+        fieldObj["field_type"] = (int)field.type;
+        fieldObj["label"] = field.label;
+        fieldObj["description"] = field.description;
+        fieldObj["default_value"] = field.default_value;
+        if (strlen(field.options) > 0) fieldObj["options"] = field.options;
+        if (strlen(field.options_endpoint) > 0) fieldObj["options_endpoint"] = field.options_endpoint;
+        if (field.multiple) fieldObj["multiple"] = true;
+        if (strlen(field.visible_when) > 0) fieldObj["visible_when"] = field.visible_when;
+        if (strlen(field.min_val) > 0) fieldObj["min_val"] = field.min_val;
+        if (strlen(field.max_val) > 0) fieldObj["max_val"] = field.max_val;
+        if (strlen(field.step) > 0) fieldObj["step"] = field.step;
+    }
+
+    if (doc.overflowed()) {
+        LOGE("WebServer", "Engine descriptor %s overflowed its %u byte document; schema truncated.",
+             desc.metadata.id ? desc.metadata.id : "?", (unsigned)capacity);
+    }
+
+    out = String();
+    serializeJson(doc, out);
+}
+
+/**
+ * @brief Produce the next JSON fragment of the /api/engines array.
+ * @return false once the closing bracket has already been emitted.
+ */
+static bool refillEngineStream(EngineStreamState& state) {
+    size_t count = 0;
+    const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+
+    state.offset = 0;
+
+    if (!state.arrayOpened) {
+        state.arrayOpened = true;
+        state.pending = "[";
+        return true;
+    }
+
+    if (descriptors && state.descriptorIndex < count) {
+        String body;
+        serializeEngineDescriptor(descriptors[state.descriptorIndex], body);
+        state.pending = (state.descriptorIndex > 0) ? "," : "";
+        state.pending += body;
+        state.descriptorIndex++;
+        return true;
+    }
+
+    if (!state.arrayClosed) {
+        state.arrayClosed = true;
+        state.pending = "]";
+        return true;
+    }
+
+    state.pending = String();
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// /api/instances incremental serializer (same rationale as /api/engines)
+// ---------------------------------------------------------------------------
+struct InstanceStreamState {
+    size_t instanceIndex = 0;
+    String pending;
+    size_t offset = 0;
+    bool arrayOpened = false;
+    bool arrayClosed = false;
+};
+
+static bool refillInstanceStream(InstanceStreamState& state) {
+    extern ConfigLoader config;
+
+    // Safe to read config.instances directly across successive filler calls because every mutation
+    // of that vector happens either at boot (AppRuntime) or inside a request handler, i.e. on the
+    // very same AsyncTCP task that drives this filler. Moving config mutation to another task would
+    // require snapshotting the instance ids here first.
+    state.offset = 0;
+
+    if (!state.arrayOpened) {
+        state.arrayOpened = true;
+        state.pending = "[";
+        return true;
+    }
+
+    if (state.instanceIndex < config.instances.size()) {
+        const auto& inst = config.instances[state.instanceIndex];
+        const auto& dict = inst.config.getDictionary();
+
+        // Instance config keys and values are Strings, which ArduinoJson duplicates into the
+        // document, so their byte length must be accounted for on top of the structural slots.
+        size_t stringBytes = inst.instance_id.length() + inst.engine_id.length() + 2;
+        for (const auto& kv : dict) {
+            stringBytes += kv.first.length() + kv.second.length() + 2;
+        }
+        const size_t capacity = JSON_OBJECT_SIZE(3)
+                              + JSON_OBJECT_SIZE(dict.size())
+                              + stringBytes
+                              + 256;
+
+        DynamicJsonDocument doc(capacity);
+        JsonObject obj = doc.to<JsonObject>();
+        obj["instance_id"] = inst.instance_id;
+        obj["engine_id"] = inst.engine_id;
+        JsonObject cfgObj = obj.createNestedObject("config");
+        for (const auto& kv : dict) {
+            cfgObj[kv.first] = kv.second;
+        }
+
+        if (doc.overflowed()) {
+            LOGE("WebServer", "Instance %s overflowed its %u byte document; config truncated.",
+                 inst.instance_id.c_str(), (unsigned)capacity);
+        }
+
+        String body;
+        serializeJson(doc, body);
+        state.pending = (state.instanceIndex > 0) ? "," : "";
+        state.pending += body;
+        state.instanceIndex++;
+        return true;
+    }
+
+    if (!state.arrayClosed) {
+        state.arrayClosed = true;
+        state.pending = "]";
+        return true;
+    }
+
+    state.pending = String();
+    return false;
+}
 
 // Helper class to stream large files from SdFat to ESPAsyncWebServer
 class AsyncSdFatResponse : public AsyncAbstractResponse {
@@ -100,19 +313,25 @@ void WebServerAPI::begin() {
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
-    // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion.
+    // The ETag is content-derived (see scripts/build_webui.py): a commit-derived tag would not
+    // change when data/index.html is edited without committing, leaving stale UI in the browser.
+    auto serveWebUi = [](AsyncWebServerRequest *request) {
+        if (request->hasHeader("If-None-Match")) {
+            const AsyncWebHeader* h = request->getHeader("If-None-Match");
+            if (h && h->value().equals(WebUI_html_etag)) {
+                request->send(304);
+                return;
+            }
+        }
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Cache-Control", "no-store, max-age=0");
+        response->addHeader("ETag", WebUI_html_etag);
+        response->addHeader("Cache-Control", "no-cache");
         request->send(response);
-    });
-    server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest *request){
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
-        response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Cache-Control", "no-store, max-age=0");
-        request->send(response);
-    });
+    };
+    server.on("/", HTTP_GET, serveWebUi);
+    server.on("/index.html", HTTP_GET, serveWebUi);
 
     server.begin();
     LOGI("WebServer", "Web Server Started.");
@@ -136,81 +355,45 @@ void WebServerAPI::setupRoutes() {
         psramObj["bytes"] = caps.psramBytes;
         doc["microphone"] = caps.hasMicrophone;
         doc["temperature_sensor"] = caps.hasTempSensor;
-        doc["gyroscope"] = caps.hasGyroscope;
+        doc["gyroscope"] = gyroHAL.isAvailable();
         
         String response;
         serializeJson(doc, response);
         request->send(200, "application/json", response);
     });
 
-    // API: GET /api/engines (Schema-driven engine descriptors)
-    // API: GET /api/engines (Streamed engine descriptors with minimal RAM)
+    // API: GET /api/engines (schema-driven engine descriptors, streamed chunk by chunk)
+    //
+    // Two regressions were fixed here and both must stay fixed:
+    //  1. beginResponseStream() buffers the WHOLE response in a StreamString. With ~19 descriptors
+    //     and ~130 config fields that is tens of KB of heap (plus the transient doubling of every
+    //     String realloc), which starves the HUB75 DMA buffers and freezes the panel on Core 1.
+    //     beginChunkedResponse() keeps a single serialized descriptor in RAM at a time.
+    //  2. A fixed DynamicJsonDocument(4096) silently overflowed for the largest descriptors
+    //     (DashboardEngine has 22 fields, GNewsEngine 20) - ArduinoJson then drops members and
+    //     emits a structurally incomplete descriptor, which the WebUI reports as "returned empty".
+    //     The capacity is now derived from the actual field count.
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
-        size_t count = 0;
-        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-        
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        response->print("[");
-        
-        for (size_t i = 0; i < count; i++) {
-            DynamicJsonDocument doc(4096);
-            JsonObject obj = doc.to<JsonObject>();
-            obj["metadata"]["id"] = descriptors[i].metadata.id;
-            obj["metadata"]["name"] = descriptors[i].metadata.name;
-            obj["metadata"]["category"] = descriptors[i].metadata.category;
-            obj["metadata"]["version"] = descriptors[i].metadata.version;
-            
-            JsonObject capObj = obj.createNestedObject("capabilities");
-            capObj["supports_128x32"] = descriptors[i].capabilities.supports_128x32;
-            capObj["supports_256x64"] = descriptors[i].capabilities.supports_256x64;
-            capObj["realtime"] = descriptors[i].capabilities.realtime;
-            capObj["interruptible"] = descriptors[i].capabilities.interruptible;
-            capObj["selfPaced"] = descriptors[i].capabilities.selfPaced;
+        auto state = std::make_shared<EngineStreamState>();
 
-            JsonObject reqObj = obj.createNestedObject("requirements");
-            reqObj["needs_psram"] = descriptors[i].requirements.needsPsram;
-            reqObj["needs_audio"] = descriptors[i].requirements.needsAudio;
-            reqObj["needs_temp_sensor"] = descriptors[i].requirements.needsTempSensor;
-            reqObj["needs_gyroscope"] = descriptors[i].requirements.needsGyroscope;
-            reqObj["needs_network"] = descriptors[i].requirements.needsNetwork;
-            reqObj["needs_sd"] = descriptors[i].requirements.needsSd;
+        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
+            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+                (void)index;
+                // Returning 0 terminates a chunked response, so a zero-sized window must ask for
+                // another call instead of truncating the array.
+                if (maxLen == 0) return RESPONSE_TRY_AGAIN;
+                if (state->offset >= state->pending.length()) {
+                    if (!refillEngineStream(*state)) {
+                        return 0; // Whole array emitted
+                    }
+                }
+                size_t remaining = state->pending.length() - state->offset;
+                size_t toCopy = (remaining < maxLen) ? remaining : maxLen;
+                memcpy(buffer, state->pending.c_str() + state->offset, toCopy);
+                state->offset += toCopy;
+                return toCopy;
+            });
 
-            auto reqCheck = EngineRegistrar::checkRequirements(descriptors[i].requirements);
-            obj["available"] = reqCheck.satisfied;
-            if (!reqCheck.satisfied) {
-                obj["reason"] = reqCheck.reason;
-            }
-            
-            JsonArray schema = obj.createNestedArray("schema");
-            for (const auto& field : descriptors[i].schema.fields) {
-                JsonObject fieldObj = schema.createNestedObject();
-                fieldObj["id"] = field.id;
-                fieldObj["field_type"] = (int)field.type;
-                fieldObj["label"] = field.label;
-                fieldObj["description"] = field.description;
-                fieldObj["default_value"] = field.default_value;
-                if (strlen(field.options) > 0) {
-                    fieldObj["options"] = field.options;
-                }
-                if (strlen(field.options_endpoint) > 0) {
-                    fieldObj["options_endpoint"] = field.options_endpoint;
-                }
-                if (field.multiple) {
-                    fieldObj["multiple"] = true;
-                }
-                if (strlen(field.visible_when) > 0) {
-                    fieldObj["visible_when"] = field.visible_when;
-                }
-                if (strlen(field.min_val) > 0) fieldObj["min_val"] = field.min_val;
-                if (strlen(field.max_val) > 0) fieldObj["max_val"] = field.max_val;
-                if (strlen(field.step) > 0) fieldObj["step"] = field.step;
-            }
-            
-            if (i > 0) response->print(",");
-            serializeJson(doc, *response);
-        }
-        
-        response->print("]");
         request->send(response);
     });
 
@@ -333,24 +516,30 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
+    // API: GET /api/instances (streamed one instance at a time)
+    // Same two fixes as /api/engines: chunked streaming instead of a full in-RAM StreamString, and
+    // a capacity derived from the actual dictionary instead of a fixed 1024 bytes (instance configs
+    // store String keys AND String values, which ArduinoJson copies, so large engine configs such
+    // as DashboardEngine silently lost settings on serialization).
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
-        extern ConfigLoader config;
-        AsyncResponseStream *response = request->beginResponseStream("application/json");
-        response->print("[");
-        for (size_t i = 0; i < config.instances.size(); i++) {
-            const auto& inst = config.instances[i];
-            DynamicJsonDocument doc(1024);
-            JsonObject obj = doc.to<JsonObject>();
-            obj["instance_id"] = inst.instance_id;
-            obj["engine_id"] = inst.engine_id;
-            JsonObject cfgObj = obj.createNestedObject("config");
-            for (const auto& kv : inst.config.getDictionary()) {
-                cfgObj[kv.first] = kv.second;
-            }
-            if (i > 0) response->print(",");
-            serializeJson(doc, *response);
-        }
-        response->print("]");
+        auto state = std::make_shared<InstanceStreamState>();
+
+        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
+            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+                (void)index;
+                if (maxLen == 0) return RESPONSE_TRY_AGAIN;
+                if (state->offset >= state->pending.length()) {
+                    if (!refillInstanceStream(*state)) {
+                        return 0;
+                    }
+                }
+                size_t remaining = state->pending.length() - state->offset;
+                size_t toCopy = (remaining < maxLen) ? remaining : maxLen;
+                memcpy(buffer, state->pending.c_str() + state->offset, toCopy);
+                state->offset += toCopy;
+                return toCopy;
+            });
+
         request->send(response);
     });
 
@@ -542,7 +731,17 @@ void WebServerAPI::setupRoutes() {
     // API: GET /api/rotation — Return the current rotation list
     server.on("/api/rotation", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        DynamicJsonDocument doc(2048);
+        // Capacity derived from the actual rotation length: a fixed 2048 bytes silently dropped
+        // entries once the loop grew past roughly 25 screens.
+        size_t stringBytes = 0;
+        for (const auto& rot : config.rotation) {
+            stringBytes += rot.instance_id.length() + 1;
+        }
+        const size_t capacity = JSON_ARRAY_SIZE(config.rotation.size())
+                              + config.rotation.size() * (JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1))
+                              + stringBytes
+                              + 256;
+        DynamicJsonDocument doc(capacity);
         JsonArray arr = doc.to<JsonArray>();
         for (const auto& rot : config.rotation) {
             JsonObject obj = arr.createNestedObject();
@@ -552,6 +751,10 @@ void WebServerAPI::setupRoutes() {
                 JsonObject ovObj = obj.createNestedObject("overlays");
                 ovObj["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
             }
+        }
+        if (doc.overflowed()) {
+            LOGE("WebServer", "Rotation list overflowed its %u byte document; entries truncated.",
+                 (unsigned)capacity);
         }
         String response;
         serializeJson(doc, response);
@@ -770,17 +973,36 @@ void WebServerAPI::setupRoutes() {
         if (request->hasParam("type")) reqType = request->getParam("type")->value();
         else if (request->hasParam("folder") && request->getParam("folder")->value().indexOf("tate") != -1) reqType = "tate";
 
+        int cacheSlot = 0;
+        if (reqType.equalsIgnoreCase("tate")) cacheSlot = 2;
+        else if (reqType.equalsIgnoreCase("yoko") || reqType.equalsIgnoreCase("horizontal")) cacheSlot = 1;
+
+        if (request->hasParam("refresh")) {
+            invalidatePlaylistCache();
+        } else if (s_playlistCacheValid[cacheSlot] &&
+                   (millis() - s_playlistCacheStamp[cacheSlot]) < PLAYLIST_CACHE_TTL_MS) {
+            request->send(200, "application/json", s_playlistCache[cacheSlot]);
+            return;
+        }
+
         auto readOrScan = [](const String& rootDir) -> String {
-            String jsonPath = rootDir + "/playlists.json";
-            if (!sd.exists(jsonPath.c_str()) && rootDir.startsWith("/")) {
-                jsonPath = rootDir.substring(1) + "/playlists.json";
+            String cleanRoot = rootDir;
+            if (!sd.exists(cleanRoot.c_str()) && cleanRoot.startsWith("/")) {
+                cleanRoot = cleanRoot.substring(1);
             }
+            if (!sd.exists(cleanRoot.c_str())) {
+                return "{}";
+            }
+
+            String jsonPath = cleanRoot + "/playlists.json";
             if (sd.exists(jsonPath.c_str())) {
                 FsFile f = sd.open(jsonPath.c_str(), FILE_OPEN_READ);
                 if (f) {
                     size_t sz = f.size();
-                    if (sz > 0 && sz < 65536) {
-                        char* buf = (char*)malloc(sz + 1);
+                    if (sz > 0 && sz < 131072) {
+                        char* buf = (hardwareHAL.capabilities().hasPsram && psramFound()) 
+                                    ? (char*)ps_malloc(sz + 1) 
+                                    : (char*)malloc(sz + 1);
                         if (buf) {
                             size_t n = f.read((uint8_t*)buf, sz);
                             buf[n] = '\0';
@@ -793,9 +1015,10 @@ void WebServerAPI::setupRoutes() {
                                 *(jsonEnd + 1) = '\0';
                                 String s(jsonStart);
                                 free(buf);
-                                return s;
+                                if (s.length() > 2) return s;
+                            } else {
+                                free(buf);
                             }
-                            free(buf);
                         } else {
                             f.close();
                         }
@@ -804,87 +1027,89 @@ void WebServerAPI::setupRoutes() {
                     }
                 }
             }
-            // Fallback directory scan
+
+            // Fallback directory scan: an SD card without playlists.json must still expose its
+            // folders, otherwise the WebUI shows an empty library and the engine plays nothing.
             String content = "{";
             bool first = true;
-            FsFile dir = sd.open(rootDir.c_str(), FILE_OPEN_READ);
-            if (!dir || !isDirectory(dir)) {
-                if (rootDir.startsWith("/")) dir = sd.open(rootDir.substring(1).c_str(), FILE_OPEN_READ);
-            }
+            FsFile dir = sd.open(cleanRoot.c_str(), FILE_OPEN_READ);
             if (dir && isDirectory(dir)) {
                 FsFile file;
                 while (getNextFile(dir, file)) {
-                    if (isDirectory(file)) {
-                        String name = getFileName(file);
-                        int lastSlash = name.lastIndexOf('/');
-                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                        if (name.length() > 0 && !isMacJunk(name)) {
-                            int count = 0;
-                            String indexPath = rootDir + "/" + name + "/index.txt";
-                            if (!sd.exists(indexPath.c_str()) && rootDir.startsWith("/")) {
-                                indexPath = rootDir.substring(1) + "/" + name + "/index.txt";
+                    if (!isDirectory(file)) continue;
+                    String name = getFileName(file);
+                    int lastSlash = name.lastIndexOf('/');
+                    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                    if (name.length() == 0 || isMacJunk(name)) continue;
+
+                    int count = 0;
+                    String indexPath = cleanRoot + "/" + name + "/index.txt";
+                    if (sd.exists(indexPath.c_str())) {
+                        FsFile idx = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+                        if (idx) {
+                            while (idx.available()) {
+                                String l = idx.readStringUntil('\n');
+                                l.trim();
+                                if (l.length() > 0 && !isMacJunk(l)) count++;
                             }
-                            if (sd.exists(indexPath.c_str())) {
-                                FsFile idx = sd.open(indexPath.c_str(), FILE_OPEN_READ);
-                                if (idx) {
-                                    while (idx.available()) {
-                                        String l = idx.readStringUntil('\n');
-                                        l.trim();
-                                        if (l.length() > 0 && !isMacJunk(l)) count++;
-                                    }
-                                    idx.close();
-                                }
-                            }
-                            if (!first) content += ",";
-                            content += "\"" + name + "\":{\"path\":\"" + rootDir + "/" + name + "\",\"count\":" + String(count) + "}";
-                            first = false;
+                            idx.close();
                         }
                     }
+                    if (!first) content += ",";
+                    content += "\"" + name + "\":{\"path\":\"" + rootDir + "/" + name + "\",\"count\":" + String(count) + "}";
+                    first = false;
                 }
+                if (file) file.close();
+                dir.close();
+            } else if (dir) {
                 dir.close();
             }
             content += "}";
             return content;
         };
 
-        if (reqType.equalsIgnoreCase("tate")) {
-            String tateContent = "{}";
-            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                tateContent = readOrScan("/gifs_tate");
-                if (tateContent == "{}" && (sd.exists("/gifs/tate") || sd.exists("gifs/tate"))) {
-                    tateContent = readOrScan("/gifs/tate");
-                }
-                if (tateContent == "{}" && (sd.exists("/tate") || sd.exists("tate"))) {
-                    tateContent = readOrScan("/tate");
-                }
-                xSemaphoreGive(sdMutex);
+        // Bounded wait: never block the AsyncTCP task indefinitely on the SD mutex, otherwise a
+        // long Core 1 decode stalls every pending HTTP connection.
+        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+            if (s_playlistCacheValid[cacheSlot]) {
+                // Serve the stale snapshot rather than failing the whole Display tab.
+                request->send(200, "application/json", s_playlistCache[cacheSlot]);
+            } else {
+                request->send(503, "application/json", "{\"error\":\"SD card busy\"}");
             }
-            request->send(200, "application/json", tateContent);
-            return;
-        } else if (reqType.equalsIgnoreCase("yoko") || reqType.equalsIgnoreCase("horizontal")) {
-            String yokoContent = "{}";
-            if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-                yokoContent = readOrScan("/gifs");
-                xSemaphoreGive(sdMutex);
-            }
-            request->send(200, "application/json", yokoContent);
             return;
         }
 
-        String jsonCombined = "{\"yoko\":{},\"tate\":{}}";
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            String yoko = readOrScan("/gifs");
-            String tate = readOrScan("/gifs_tate");
-            if (tate == "{}" && (sd.exists("/gifs/tate") || sd.exists("gifs/tate"))) {
-                tate = readOrScan("/gifs/tate");
+        String payload;
+        if (cacheSlot == 2) {
+            payload = "{}";
+            if (sd.exists("/gifs_tate") || sd.exists("gifs_tate")) {
+                payload = readOrScan("/gifs_tate");
+            } else if (sd.exists("/gifs/tate") || sd.exists("gifs/tate")) {
+                payload = readOrScan("/gifs/tate");
+            } else if (sd.exists("/tate") || sd.exists("tate")) {
+                payload = readOrScan("/tate");
             }
-            if (tate == "{}" && (sd.exists("/tate") || sd.exists("tate"))) {
+        } else if (cacheSlot == 1) {
+            payload = (sd.exists("/gifs") || sd.exists("gifs")) ? readOrScan("/gifs") : "{}";
+        } else {
+            String yoko = (sd.exists("/gifs") || sd.exists("gifs")) ? readOrScan("/gifs") : "{}";
+            String tate = "{}";
+            if (sd.exists("/gifs_tate") || sd.exists("gifs_tate")) {
+                tate = readOrScan("/gifs_tate");
+            } else if (sd.exists("/gifs/tate") || sd.exists("gifs/tate")) {
+                tate = readOrScan("/gifs/tate");
+            } else if (sd.exists("/tate") || sd.exists("tate")) {
                 tate = readOrScan("/tate");
             }
-            xSemaphoreGive(sdMutex);
-            jsonCombined = "{\"yoko\":" + yoko + ",\"tate\":" + tate + "}";
+            payload = "{\"yoko\":" + yoko + ",\"tate\":" + tate + "}";
         }
-        request->send(200, "application/json", jsonCombined);
+        xSemaphoreGive(sdMutex);
+
+        s_playlistCache[cacheSlot] = payload;
+        s_playlistCacheStamp[cacheSlot] = millis();
+        s_playlistCacheValid[cacheSlot] = true;
+        request->send(200, "application/json", payload);
     });
 
     // API: Play GIF Playlists immediately
@@ -1449,16 +1674,13 @@ void WebServerAPI::setupRoutes() {
         mat["parallel"] = 1;
         mat["driver_chip"] = snap.matrix.driverChip;
         mat["row_address_mode"] = snap.matrix.rowAddressMode;
-        mat["multiplexing"] = 0;
-        mat["mapping"] = "regular";
         mat["rgb_sequence"] = snap.matrix.rgbSequence;
-        mat["slowdown"] = 1;
+        mat["color_depth"] = snap.matrix.colorDepth;
         mat["pwm_bits"] = snap.matrix.colorDepth;
-        mat["pwm_lsb_nanoseconds"] = 130;
-        mat["disable_hardware_pulsing"] = false;
         mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
         mat["clk_phase"] = snap.matrix.clkPhase;
         mat["latch_blanking"] = snap.matrix.latchBlanking;
+        mat["force_single_buffer"] = snap.matrix.forceSingleBuffer;
         mat["rotation_offset"] = snap.matrix.rotation_offset;
         mat["auto_rotate"] = snap.matrix.auto_rotate;
         mat["rotation_transition"] = snap.matrix.rotation_transition;
@@ -1476,6 +1698,16 @@ void WebServerAPI::setupRoutes() {
         JsonObject wifi = doc.createNestedObject("wifi");
         wifi["ssid"] = snap.wifi.ssid;
         wifi["hostname"] = snap.wifi.hostname;
+
+        JsonObject hw = doc.createNestedObject("hardware");
+        const auto& caps = hardwareHAL.capabilities();
+        hw["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
+        JsonObject psramObj = hw.createNestedObject("psram");
+        psramObj["available"] = caps.hasPsram;
+        psramObj["bytes"] = caps.psramBytes;
+        hw["microphone"] = caps.hasMicrophone;
+        hw["temperature_sensor"] = caps.hasTempSensor;
+        hw["gyroscope"] = gyroHAL.isAvailable();
 
         doc["api_auth_enabled"] = false;
         doc["api_token"] = "";
@@ -1582,6 +1814,8 @@ void WebServerAPI::setupRoutes() {
                 else if (!mat["clkPhase"].isNull()) cfg.matrix.clkPhase = mat["clkPhase"].as<bool>();
                 if (!mat["latch_blanking"].isNull()) cfg.matrix.latchBlanking = mat["latch_blanking"].as<int>();
                 else if (!mat["latchBlanking"].isNull()) cfg.matrix.latchBlanking = mat["latchBlanking"].as<int>();
+                if (!mat["force_single_buffer"].isNull()) cfg.matrix.forceSingleBuffer = mat["force_single_buffer"].as<bool>();
+                else if (!mat["forceSingleBuffer"].isNull()) cfg.matrix.forceSingleBuffer = mat["forceSingleBuffer"].as<bool>();
                 if (!mat["rotation_offset"].isNull()) {
                     cfg.matrix.rotation_offset = mat["rotation_offset"].as<int>();
                     displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);

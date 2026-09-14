@@ -33,21 +33,21 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 
 | Clave | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `width` | `int` | Ancho de un solo panel (ej. `64`). |
-| `height` | `int` | Alto de un solo panel (ej. `32`). |
+| `width` | `int` | Ancho de un solo panel (ej. `64` o `256`). |
+| `height` | `int` | Alto de un solo panel (ej. `32` o `64`). |
 | `chain_length` | `int` | Número de paneles encadenados horizontalmente. |
-| `mapping` | `String` | Cableado/mapeo GPIO (`regular`, `adafruit-hat`, `adafruit-hat-pwm`, ...). |
-| `driver_chip` | `String` | Chip controlador (`SHIFTREG`, `FM6126A`). |
+| `driver_chip` | `String` | Chip controlador (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Orden de colores (`RGB`, `RBG`, `BGR`, ...). Corrige aquí colores intercambiados. |
-| `slowdown` | `int` | Ralentización GPIO (`1`–`4`). Auméntala en Pi 3/4 si ves artefactos. |
-| `pwm_bits` | `int` | Profundidad de color. Valor por defecto `11`; bájalo a `8` para ahorrar CPU. |
-| `pwm_lsb_nanoseconds` | `int` | Ajuste del ancho de pulso LSB (avanzado). |
-| `disable_hardware_pulsing` | `bool` | Ponlo en `true` para evitar que DMA asfixie el Wi-Fi interno (ligero parpadeo). |
+| `color_depth` | `int` | Profundidad de color (`1`–`8` bits). Por defecto `8`. Reducir para ahorrar RAM DMA. |
 | `limit_refresh_rate_hz` | `int` | Limita la frecuencia de refresco (`0` = sin límite). |
-| `row_address_mode` | `int` | Tipo de direccionamiento de filas para paneles exóticos (`0` por defecto). |
-| `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto para alineación estándar de columnas de píxeles; habilitar a `true` si el panel lo requiere). |
-| `latch_blanking` | `int` | Ciclos de ocultación de latch (`1`–`4`) para reducir el ghosting (líneas fantasma). |
-| `panel_type` | `String` | Cadena opcional de inicialización del panel (ej. `FM6126A`), normalmente vacía. |
+| `row_address_mode` | `int` | Modo de direccionamiento de filas (`0`: Directo Binario, `1`: ShiftReg, `2`: Directo 16, `3`: Directo 32, `4`: Directo 64). |
+| `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto; poner en `true` si el panel lo requiere). |
+| `latch_blanking` | `int` | Ciclos de ocultación de latch (`0`–`8`) para reducir el ghosting (líneas fantasma). |
+| `force_single_buffer` | `bool` | Forzar buffer simple DMA para ahorrar SRAM interna (`false` por defecto). |
+| `rotation_offset` | `int` | Desfase de orientación física (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
+| `auto_rotate` | `bool` | Habilitar rotación automática mediante giroscopio/IMU integrado (`true` por defecto). |
+| `rotation_transition` | `String` | Efecto visual de transición (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
+| `rotation_transition_duration_ms` | `int` | Duración del efecto de transición en milisegundos (por defecto `400`). |
 
 > El brillo diurno en vivo **no** se almacena en este bloque; se controla en tiempo de ejecución desde la interfaz Web (deslizador del Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). El brillo nocturno vive en el bloque `system` (§4).
 

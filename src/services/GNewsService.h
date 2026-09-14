@@ -14,8 +14,15 @@ struct GNewsArticle {
     uint16_t badgeColor;
 };
 
+static constexpr size_t GNEWS_MAX_ARTICLES = 10;
+
 struct GNewsSnapshot {
-    GNewsArticle articles[10];
+    // Lazily allocated (PSRAM first). Keeping the 10 fixed-size articles inline made the global
+    // GNewsService object a 7.3 KB .bss block permanently reserved in internal DRAM, even when the
+    // GNews engine was never instantiated. Internal DRAM is the scarce resource on this board:
+    // mbedTLS forces every allocation of 4 KB or less into it, so that static cost was directly
+    // eating the budget TLS handshakes need. Indexing syntax at call sites is unchanged.
+    GNewsArticle* articles = nullptr;
     size_t count = 0;
     uint32_t lastFetchTime = 0;
     uint32_t lastFetchEpoch = 0;
@@ -64,6 +71,15 @@ private:
     bool _loadedFromSd = false;
 
     bool parseGNewsJson(const String& payload, const char* defaultCategory);
+
+    /**
+     * @brief Allocate the article storage on first use, preferring PSRAM.
+     * @return true when snapshot.articles is usable, false when allocation failed.
+     */
+    bool ensureArticleStorage();
+
+    /** @brief Release the article storage and reset the snapshot counters. */
+    void releaseArticleStorage();
 };
 
 extern GNewsService gnewsService;

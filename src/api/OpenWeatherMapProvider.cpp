@@ -1,25 +1,7 @@
 #include "OpenWeatherMapProvider.h"
 #include "../core/Logger.h"
+#include "../core/SpiRamJsonDocument.h"
 #include "core/I18n.h"
-#include <esp_heap_caps.h>
-
-struct SpiRamAllocator {
-  void* allocate(size_t size) {
-    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = malloc(size);
-    return p;
-  }
-  void deallocate(void* pointer) {
-    free(pointer);
-  }
-  void* reallocate(void* ptr, size_t new_size) {
-    void* p = heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = realloc(ptr, new_size);
-    return p;
-  }
-};
-
-using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
 
 bool OpenWeatherMapProvider::fetchForecast(const String& apiKey, const String& city, const String& lang, const String& units, WeatherData outForecasts[], int maxDays, int& outNumForecasts) {
     HTTPClient http;

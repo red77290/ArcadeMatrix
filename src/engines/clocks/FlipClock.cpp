@@ -157,7 +157,7 @@ void FlipClock::drawPanel(int x, int y, int w, int h, const char* curText, const
         drawFlapRegion(matrix, x, y, w, h, curDigit, bgColor, textColor, 0, topEnd, 0, topEnd, false, true);
         drawFlapRegion(matrix, x, y, w, h, curDigit, bgColor, textColor, botStart, botEnd, botStart, botEnd, false, false);
         
-        // 3D Mechanical Split Slot (Fente mécanique en relief)
+        // 3D mechanical split slot (raised mechanical seam)
         if (botStart > 0) matrix->drawFastHLine(x + 1, y + botStart - 1, w - 2, slotUpperShadow);
         matrix->drawFastHLine(x, y + botStart, w, splitCol);
         if (botStart + 1 < h) matrix->drawFastHLine(x + 1, y + botStart + 1, w - 2, slotLowerBevel);

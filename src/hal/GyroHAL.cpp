@@ -37,6 +37,7 @@ bool GyroHAL::begin(TwoWire* wire) {
 
     if (detected) {
         LOGI("GyroHAL", "Detected %s Accelerometer at 0x%02X", _lastOrientation.sensorName, _i2cAddr);
+        hardwareHAL.setGyroscopeAvailable(true);
         // Immediate physical settling on boot (bypass 500ms debounce)
         delay(10);
         float ax = 0.0f, ay = 0.0f, az = 0.0f;
@@ -65,6 +66,7 @@ bool GyroHAL::begin(TwoWire* wire) {
         return true;
     }
 
+    hardwareHAL.setGyroscopeAvailable(false);
     LOGD("GyroHAL", "No I2C Gyroscope / Accelerometer detected (Manual rotation mode active).");
     return false;
 }

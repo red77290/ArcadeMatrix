@@ -121,13 +121,17 @@ classDiagram
         +bool supports_256x64
         +bool realtime
         +bool interruptible
+        +bool selfPaced
+        +bool allowsOverlay
     }
 
     class EngineRequirements {
         +bool needsPsram
         +bool needsAudio
-        +bool needsMicrophone
-        +bool needsGyro
+        +bool needsTempSensor
+        +bool needsGyroscope
+        +bool needsNetwork
+        +bool needsSd
     }
 
     class ConfigSchema {

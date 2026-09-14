@@ -1,10 +1,10 @@
 #pragma once
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "3.2.2-dev"
+#define FIRMWARE_VERSION "3.2.4-dev"
 #endif
 #ifndef BUILD_GIT_COMMIT
-#define BUILD_GIT_COMMIT "def17bc"
+#define BUILD_GIT_COMMIT "7ab5d45"
 #endif
 #ifndef BUILD_TIMESTAMP
-#define BUILD_TIMESTAMP "2026-09-13 20:35:52 UTC"
+#define BUILD_TIMESTAMP "2026-09-14 11:55:02 UTC"
 #endif

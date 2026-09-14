@@ -82,7 +82,27 @@ void RotationManager::processPendingActions() {
                 }
             }
         } else if (p.first == RotationAction::RESET_ROTATION) {
-            currentIndex = 0;
+            // Re-anchor to wherever the currently active instance now sits in the updated
+            // rotation list instead of unconditionally jumping back to slot 0. Every single
+            // rotation-list edit (reorder, duration tweak, add/remove an unrelated screen)
+            // queues RESET_ROTATION, and always restarting from index 0 tore down and rebuilt
+            // whatever engine happened to occupy that slot - including a full I2S audio driver
+            // stop/start if the audio visualizer was running - even though nothing about the
+            // screen actually playing had changed. If the active instance is no longer present
+            // (removed from rotation) this falls back to slot 0, which is the only case where
+            // restarting from the top is actually correct.
+            int newIndex = 0;
+            if (currentActiveInstanceId[0] != '\0') {
+                extern ConfigLoader config;
+                ConfigSnapshotGuard guard = config.acquireSnapshot();
+                for (size_t i = 0; i < guard->rotation.size(); ++i) {
+                    if (guard->rotation[i].instance_id == currentActiveInstanceId) {
+                        newIndex = (int)i;
+                        break;
+                    }
+                }
+            }
+            currentIndex = newIndex;
             switchToModule(currentIndex);
         }
     }

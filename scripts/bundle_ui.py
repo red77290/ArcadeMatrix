@@ -1,51 +1,38 @@
+#!/usr/bin/env python3
+"""
+bundle_ui.py - Safe Asset Synchronizer for ArcadeMatrix ESP32 WebUI.
+
+CRITICAL ARCHITECTURAL INVARIANT (GEMINI.md Section 8):
+data/index.html is the SOLE MASTER for the ESP32 WebUI.
+It is STRICTLY PROHIBITED to overwrite data/index.html with ../ArcadeMatrix_RPi/api/www/index.html.
+Raspberry Pi hardware settings (slowdown, mapping, disable_pulsing, pwm_lsb, multiplexing)
+must NEVER be injected into ESP32 WebUI.
+"""
+
 import os
-import re
+import sys
 
-base_dir = "../ArcadeMatrix_RPi/api/www/"
-html_path = os.path.join(base_dir, "index.html")
+print("🔒 Safe UI Bundler: Verifying ESP32 WebUI isolation...")
 
-with open(html_path, "r", encoding="utf-8") as f:
-    html_content = f.read()
+esp_index = "data/index.html"
+if not os.path.exists(esp_index):
+    print(f"❌ Error: {esp_index} not found.")
+    sys.exit(1)
 
-# 1. Inline CSS
-def css_replacer(match):
-    css_file = match.group(1).lstrip("/") # Remove leading slash
-    css_path = os.path.join(base_dir, css_file)
-    if os.path.exists(css_path):
-        with open(css_path, "r", encoding="utf-8") as f:
-            return "<style>\n" + f.read() + "\n</style>"
-    return match.group(0)
+with open(esp_index, "r", encoding="utf-8") as f:
+    content = f.read()
 
-html_content = re.sub(r'<link rel="stylesheet" href="([^"]+)">', css_replacer, html_content)
+# Verify zero contamination
+FORBIDDEN = [
+    "hw-slowdown", "Slowdown GPIO",
+    "hw-mapping", "HAT / Mapping",
+    "hw-disable-pulsing", "Disable Hardware Pulsing",
+    "hw-pwm-lsb", "PWM LSB",
+    "hw-multiplexing"
+]
+for item in FORBIDDEN:
+    if item in content:
+        print(f"❌ Isolation breach: '{item}' found in {esp_index}!")
+        sys.exit(1)
 
-# 2. Bundle JS
-js_files = ["js/api.js", "js/i18n.js", "js/components/toast.js", "js/dynamic_engines.js", "js/app.js"]
-bundled_js = ""
-for js_file in js_files:
-    path = os.path.join(base_dir, js_file)
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-            # Remove imports
-            content = re.sub(r'import\s+.*?;?\n', '', content)
-            # Remove exports but keep the declarations
-            content = re.sub(r'export\s+', '', content)
-            bundled_js += f"\n// --- {js_file} ---\n{content}\n"
-
-# Replace the module script tag with our bundled JS
-html_content = re.sub(r'<script type="module" src="/?js/app.js"></script>', lambda m: f'<script>{bundled_js}</script>', html_content)
-
-# Hide non-ESP32 sections (Pi specific)
-# Let's replace the whole list item for "Hardware Mapping", "Slowdown", "Audio Conflict", etc.
-html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>Hardware Mapping[\s\S]*?</select>[^<]*</div>', '', html_content)
-html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>Matrix Slowdown[\s\S]*?</select>[^<]*</div>', '', html_content)
-html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>Audio PWM Conflict[\s\S]*?</div>[^<]*</div>', '', html_content)
-html_content = re.sub(r'<div class="setting-item">[^<]*<label[^>]*>PWM LSB Nanoseconds[\s\S]*?</div>[^<]*</div>', '', html_content)
-
-# Strip Pi-specific Online Automatic Update card (ESP32 uses WebInstaller or manual file upload)
-html_content = re.sub(r'<!-- 1\. Online Automatic Update[\s\S]*?<!-- 2\. Manual Binary Upload', '<!-- 2. Manual Binary Upload', html_content)
-
-with open("data/index.html", "w", encoding="utf-8") as f:
-    f.write(html_content)
-
-print("Bundled UI generated at data/index.html")
+print("✅ ESP32 WebUI is clean and isolated from Raspberry Pi hardware controls.")

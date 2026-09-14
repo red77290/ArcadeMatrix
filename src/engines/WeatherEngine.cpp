@@ -277,7 +277,7 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
         matrix->setCursor(tempX, 10 + config_offset_y);
         matrix->print(tempMinStr);
 
-        // Après-midi (Bas) - Size 2
+        // Afternoon (bottom row) - Size 2
         matrix->setTextColor(shadowColor);
         matrix->setCursor(tempX + 1, 38 + 1 + config_offset_y);
         matrix->print(tempMaxStr);
@@ -316,7 +316,7 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
         matrix->setCursor(tempX, 4 + config_offset_y);
         matrix->print(tempMinStr);
 
-        // Après-midi (Bas)
+        // Afternoon (bottom row)
         matrix->setTextColor(shadowColor);
         matrix->setCursor(tempX + 1, 18 + 1 + config_offset_y);
         matrix->print(tempMaxStr);
@@ -369,7 +369,7 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
         matrix->setCursor(tempX, 12 + config_offset_y);
         matrix->print(tempMinStr);
 
-        // Après-midi (Bas) - Size 2
+        // Afternoon (bottom row) - Size 2
         matrix->setTextColor(shadowColor);
         matrix->setCursor(tempX + 1, 38 + 1 + config_offset_y);
         matrix->print(tempMaxStr);

@@ -123,7 +123,8 @@ void AppRuntime::initialize() {
     esp_task_wdt_init(WDT_TIMEOUT_S, true);
 
 #if defined(USE_RTC) && USE_RTC
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    // The I2C bus is already up: hardwareHAL.begin() owns Wire.begin() plus the tuned clock and
+    // timeout. Re-initializing it here would silently reset those settings.
     if (initRTC()) {
         struct tm timeinfo;
         if (readRTC(timeinfo)) {
@@ -196,7 +197,8 @@ void AppRuntime::initialize() {
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
-    gyroHAL.begin();
+    // Gyroscope is already probed by hardwareHAL.begin(); re-probing here only cost an extra
+    // I2C round-trip and a settling delay on every boot.
     displayOrientationManager.begin(matrixEngine.getDisplay());
     displayOrientationManager.setRotationOffset(snapshot.matrix.rotation_offset);
     displayOrientationManager.setTransitionEffect(snapshot.matrix.rotation_transition);
@@ -606,8 +608,25 @@ void AppRuntime::update() {
     }
     m_wasPoweredOn = true;
 
+    // Core 1 cadence probe. A visualizer that "stops and resumes" is either starved of PCM data or
+    // running on a stalled render loop; this reports the second case explicitly.
+    static unsigned long lastFrameEnd = 0;
+    unsigned long tFrameStart = millis();
+
     DisplayDecision decision = m_displayRuntime.update(snapshot);
+    unsigned long tAfterUpdate = millis();
     FrameRenderResult renderResult = m_displayRuntime.render(decision, m_appCtx);
+    unsigned long tAfterRender = millis();
+
+    if (lastFrameEnd != 0) {
+        unsigned long framePeriod = tAfterRender - lastFrameEnd;
+        if (framePeriod > 100) {
+            LOGW("System", "Core 1 frame stall: period=%lu ms (pre=%lu, update=%lu, render=%lu, heap=%u)",
+                 framePeriod, tFrameStart - lastFrameEnd, tAfterUpdate - tFrameStart,
+                 tAfterRender - tAfterUpdate, (unsigned)ESP.getFreeHeap());
+        }
+    }
+    lastFrameEnd = tAfterRender;
 
     handleNightMode(snapshot);
 

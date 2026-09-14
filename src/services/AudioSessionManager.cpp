@@ -24,28 +24,35 @@ void AudioSessionManager::registerSource(IAudioSource* source) {
 }
 
 void AudioSessionManager::evaluateRequiredServices(const ConfigSnapshot& snapshot) {
+    // Only the "Universal Music Player" engine displays what the audio receivers
+    // (Bluetooth A2DP, DLNA, AirPlay) are streaming, so it is the only engine that
+    // justifies paying for them. Starting those receivers allocates a listening
+    // socket, mDNS records and, on classic ESP32, the whole Bluedroid A2DP stack.
+    //
+    // The previous list matched "universal_audio", "music", "webradio", "airplay"
+    // and "dlna", none of which is a registered engine id. The real identifier is
+    // "music_player" (see MusicEngine.cpp), so the receivers were in practice only
+    // started when the unrelated "spotify" engine was configured, and never for the
+    // engine that actually needs them.
     bool needed = false;
     for (const auto& rot : snapshot.rotation) {
         const auto* inst = snapshot.getInstance(rot.instance_id);
-        if (inst) {
-            if (inst->engine_id == "universal_audio" || inst->engine_id == "music" ||
-                inst->engine_id == "spotify" || inst->engine_id == "webradio" ||
-                inst->engine_id == "airplay" || inst->engine_id == "dlna") {
-                needed = true;
-                break;
-            }
+        if (inst && inst->engine_id == "music_player") {
+            needed = true;
+            break;
         }
     }
 
     if (needed != m_hasActiveEngine) {
         m_hasActiveEngine = needed;
         LOGI("AudioSessionManager", "Audio services state updated dynamically: active=%s", needed ? "true" : "false");
-        
+
         if (m_hasActiveEngine) {
             bluetoothAudioService.begin("ArcadeMatrix Audio");
-            webRadioService.begin();
             dlnaService.begin();
             airPlayAudioService.begin();
+            // webRadioService intentionally not started here: it allocates its
+            // worker task and decoder buffers only when playback is requested.
         }
     }
 }

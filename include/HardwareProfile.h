@@ -1,9 +1,9 @@
 #pragma once
 
-// Configuration du profil matériel actif
+// Active hardware profile configuration
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
 
-    // Profil : Waveshare ESP32-S3-RGB-Matrix
+    // Profile: Waveshare ESP32-S3-RGB-Matrix
     #define MATRIX_R1_PIN 4
     #define MATRIX_G1_PIN 5
     #define MATRIX_B1_PIN 6
@@ -25,7 +25,7 @@
     #define SD_MMC_CMD_PIN 44
     #define SD_MMC_CLK_PIN 1
 
-    // Bus I2C pour Capteur SHTC3 & Codec Audio ES7210
+    // I2C bus for the SHTC3 sensor & the ES7210 audio codec
     #ifndef I2C_SDA_PIN
     #define I2C_SDA_PIN 47
     #endif
@@ -35,7 +35,7 @@
     #define SHTC3_I2C_ADDR 0x70
     #define ES7210_I2C_ADDR 0x40
 
-    // Bus I2S pour Audio / Microphone (Cablage reel Waveshare ESP32-S3 RGB Matrix)
+    // I2S bus for audio / microphone (actual Waveshare ESP32-S3 RGB Matrix wiring)
     #ifndef I2S_MCLK_PIN
     #define I2S_MCLK_PIN 12
     #endif
@@ -51,7 +51,7 @@
 
 #else
 
-    // Profil par défaut : ESP32 Standard (Retro_Pixel_LED_4_0_0)
+    // Default profile: ESP32 Standard (Retro_Pixel_LED_4_0_0)
     #define MATRIX_R1_PIN 25
     #define MATRIX_G1_PIN 26
     #define MATRIX_B1_PIN 27
@@ -74,7 +74,7 @@
     #define VSPI_MISO 19
     #define VSPI_MOSI 23
 
-    // Bus I2C par défaut (ESP32 Standard)
+    // Default I2C bus (ESP32 Standard)
     #ifndef I2C_SDA_PIN
     #define I2C_SDA_PIN 21
     #endif
@@ -83,7 +83,7 @@
     #endif
     #define SHTC3_I2C_ADDR 0x70
 
-    // Bus I2S par défaut (Microphone I2S standard ex: INMP441)
+    // Default I2S bus (standard I2S microphone, e.g. INMP441)
     #ifndef I2S_SCLK_PIN
     #define I2S_SCLK_PIN 14
     #endif

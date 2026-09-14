@@ -47,7 +47,9 @@ bool AudioHub::requestPlayback(AudioSource source) {
         notifyStateChanged();
     }
     if (hardwareHAL.isAudioSamplingActive()) {
-        hardwareHAL.stopAudioSampling();
+        // Keep the capture intent: the visualizer/decibel engine may still be the active
+        // screen. Capture resumes by itself once playback releases the bus.
+        hardwareHAL.stopAudioSampling(false);
     }
     audioOutputHAL.preparePlayback();
     return true;

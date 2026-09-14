@@ -14,6 +14,7 @@ struct RenderSession {
     uint32_t sessionId = 0;
     EngineHandle engineHandle{};
     DisplaySourceId sourceId = DisplaySourceId::ROTATION;
+    DisplayPriority priority = DisplayPriority::ROTATION;
     uint32_t requestId = 0;
     uint32_t startedAtMs = 0;
     RequestLifecycle lifecycle = RequestLifecycle::PERSISTENT;
@@ -93,6 +94,14 @@ public:
     }
 
     void transitionSession(const DisplayDecision& decision);
+
+    /**
+     * @brief Reset the Adafruit_GFX text state (font, size, wrap) shared through the panel object.
+     *
+     * Called at every engine lifecycle boundary so that an engine which installs a custom GFXfont
+     * cannot corrupt the layout of the engine that runs next.
+     */
+    void resetSharedTextState();
 
 private:
     struct SourceEngineRegistration {

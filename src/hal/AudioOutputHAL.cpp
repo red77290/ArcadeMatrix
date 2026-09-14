@@ -193,6 +193,12 @@ bool AudioOutputHAL::begin() {
         return false;
     }
 
+    // Capture and playback are mutually exclusive on I2S_NUM_0. Release the microphone
+    // before claiming the bus, but keep its standing intent so it resumes on stop().
+    if (hardwareHAL.isAudioSamplingActive()) {
+        hardwareHAL.stopAudioSampling(false);
+    }
+
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     // 1. First start I2S peripheral to generate MCLK clock for ES8311
     i2s_config_t i2s_config = {
@@ -293,6 +299,13 @@ void AudioOutputHAL::stop() {
     i2s_driver_uninstall(I2S_TX_PORT);
     _initialized = false;
     LOGI("AudioOutputHAL", "AudioOutputHAL stopped.");
+
+    // The bus is free again: hand it back to the microphone if an engine still needs it.
+    // _initialized is already false, so startAudioSampling() will not refuse.
+    if (!hardwareHAL.isAudioSamplingActive() && hardwareHAL.isAudioCaptureRequested()) {
+        LOGI("AudioOutputHAL", "Playback released the I2S bus, resuming microphone capture.");
+        hardwareHAL.startAudioSampling();
+    }
 }
 
 size_t AudioOutputHAL::writeSamples(const int16_t* samples, size_t numSamples, TickType_t timeoutTicks) {

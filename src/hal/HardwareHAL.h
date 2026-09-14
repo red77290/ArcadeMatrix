@@ -96,18 +96,31 @@ public:
 
     /**
      * @brief Enables on-demand I2S DMA audio sampling (Lazy Sampling).
+     *
+     * Registers a standing capture intent and starts the driver when the I2S bus is
+     * free. Capture is refused while AudioOutputHAL owns the bus (mic and speaker are
+     * mutually exclusive); it then resumes automatically once playback is released.
      */
     void startAudioSampling();
 
     /**
      * @brief Disables I2S DMA audio sampling to release CPU/DMA resources.
+     * @param clearIntent When true (engine deactivation), also drops the standing capture
+     *        intent so sampling stays off. When false (AudioHub yielding the bus to
+     *        playback), the intent is kept and capture resumes once playback ends.
      */
-    void stopAudioSampling();
+    void stopAudioSampling(bool clearIntent = true);
 
     /**
      * @brief Indicates whether I2S audio sampling is currently active.
      */
     bool isAudioSamplingActive() const { return audioActive; }
+
+    /**
+     * @brief Indicates whether an engine still needs the microphone, even if the I2S bus
+     *        is currently lent to playback. Used to reclaim capture when playback stops.
+     */
+    bool isAudioCaptureRequested() const { return _captureRequested; }
 
     /**
      * @brief Calculates and returns the current sound level in decibels (dB SPL).
@@ -133,13 +146,37 @@ public:
      */
     float getMicGain() const { return micGain; }
 
+    /**
+     * @brief Updates gyroscope availability in runtime capabilities.
+     */
+    void setGyroscopeAvailable(bool avail) { _capabilities.hasGyroscope = avail; }
+
+    /**
+     * @brief Indicates whether an IMU / gyroscope sensor was detected on the I2C bus.
+     */
+    bool isGyroscopeAvailable() const { return _capabilities.hasGyroscope; }
+
 private:
     HardwareCapabilities _capabilities;
     
     // Internal state variables (these can remain for internal workings)
     bool audioSamplingEnabled;
     bool audioActive;
+    // Standing intent: an engine that needs the microphone is currently active. Kept
+    // separate from audioActive so the bus can be lent to playback and reclaimed
+    // afterwards without the engine having to re-arm it.
+    bool _captureRequested = false;
     float micGain;
+
+    // Last-good audio frame. An I2S read that returns no bytes is a transient DMA underrun, not
+    // silence: zero-filling on that path made the visualizer collapse to a flat line and recover
+    // in a loop. The cached frame is replayed with a mild decay so a genuinely dead microphone
+    // still fades out instead of freezing.
+    static constexpr size_t MAX_SPECTRUM_BANDS = 128;
+    float _lastSpectrum[MAX_SPECTRUM_BANDS];
+    size_t _lastSpectrumBands;
+    float _lastDecibels;
+    uint8_t _audioWarmupFrames;
 
     uint32_t lastTempReadTime;
     EnvironmentData cachedEnvData;
@@ -147,9 +184,6 @@ private:
     bool probeSHTC3();
     bool probeES7210();
     bool configureES7210();
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    void checkAndRecoverES7210(int16_t maxPeak, size_t bytesRead);
-#endif
     bool readSHTC3Raw(float& tempC, float& hum);
     static uint8_t calcSensirionCRC8(const uint8_t* data, uint8_t len);
 };

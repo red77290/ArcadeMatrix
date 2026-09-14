@@ -1222,11 +1222,7 @@ select.input option {
           </div>
         </header>
 
-        <div id="dynamic-display-wrapper">
-          <div class="tabs">
-            <!-- Dynamic instances will generate tabs here -->
-          </div>
-        </div>
+        <div id="dynamic-display-wrapper"></div>
       </section>
 
       <!-- Media Page -->
@@ -1424,29 +1420,124 @@ select.input option {
 
         <!-- Hardware Settings -->
         <div id="sys-tab-hardware" class="tab-pane">
+          <!-- 1. Hardware Profile & Capabilities Card -->
+          <div class="card glass shadow" style="margin-bottom: 1.5rem;">
+            <h3 data-i18n="hw_caps_title">🖥️ Hardware Profile & Capabilities</h3>
+            <p class="text-muted" data-i18n="hw_caps_desc">Real-time hardware sensors, memory detection and onboard peripherals status.</p>
+            <div class="form-grid col-3" id="hw-caps-grid" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="hw_cap_profile_label">Hardware Profile</label>
+                <div id="hw-cap-profile" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_cap_psram_label">PSRAM</label>
+                <div id="hw-cap-psram" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_cap_mic_label">Microphone (Audio)</label>
+                <div id="hw-cap-mic" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_cap_temp_label">Temperature Sensor</label>
+                <div id="hw-cap-temp" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_cap_gyro_label">Gyroscope (Motion)</label>
+                <div id="hw-cap-gyro" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">Detecting...</div>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_cap_heap_label">Free Heap / Free PSRAM</label>
+                <div id="hw-cap-heap" class="input" style="background:rgba(255,255,255,0.05); font-weight:600;">-</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Screen Orientation & Gyroscope Calibration Card -->
+          <div class="card glass shadow" style="margin-bottom: 1.5rem;">
+            <h3 data-i18n="hw_gyro_title">🧭 Screen Orientation & Gyroscope</h3>
+            <p class="text-muted" data-i18n="hw_gyro_desc">Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via onboard Gyroscope/IMU.</p>
+            
+            <div class="form-grid col-3" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <select id="hw-screen-rotation" class="input">
+                  <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape / YOKO)</option>
+                  <option value="1" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
+                  <option value="2" data-i18n="hw_rot_180">180° - Inverted Landscape</option>
+                  <option value="3" data-i18n="hw_rot_270">270° - Portrait Counter-Clockwise (TATE)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="hw-gyro-autorotate" checked>
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
+                <button id="btn-gyro-calibrate" class="btn btn-secondary" style="width: 100%;" data-i18n="hw_btn_gyro_calibrate">🎯 Set Current as Normal (0°)</button>
+              </div>
+            </div>
+
+            <!-- Transition Effects Row -->
+            <div class="form-grid col-3" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
+                <select id="hw-rotation-transition" class="input">
+                  <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
+                  <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
+                  <option value="slide" data-i18n="hw_trans_slide">💫 Smooth Slide</option>
+                  <option value="zoom" data-i18n="hw_trans_zoom">🌀 Tunnel Zoom</option>
+                  <option value="matrix" data-i18n="hw_trans_matrix">🌊 Matrix Rain</option>
+                  <option value="random" data-i18n="hw_trans_random">🎲 Random (Every rotation)</option>
+                  <option value="none" data-i18n="hw_trans_none">Instant Cut (None)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
+                <input type="number" id="hw-transition-duration" class="input" value="400" min="150" max="1500" step="50">
+              </div>
+              <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
+                <button id="btn-test-transition" class="btn btn-secondary" style="width: 100%;" data-i18n="hw_btn_test_transition">✨ Test Transition FX</button>
+              </div>
+            </div>
+
+            <div id="gyro-live-status" style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.85rem; display: flex; gap: 1.5rem; flex-wrap: wrap;">
+              <div><strong data-i18n="hw_sensor_label">Sensor:</strong> <span id="gyro-sensor-name">Probing...</span></div>
+              <div><strong data-i18n="hw_gravity_label">Gravity Vector:</strong> <span id="gyro-gravity-val">--</span></div>
+              <div><strong data-i18n="hw_active_rot_label">Active Rotation:</strong> <span id="gyro-active-rot">0°</span></div>
+            </div>
+          </div>
+
+          <!-- 3. Matrix Hardware Configuration Card -->
           <div class="card glass shadow">
             <h3 data-i18n="hw_matrix_title">Matrix Hardware Configuration</h3>
-            <div class="form-grid col-4">
+            <p class="text-muted" data-i18n="hw_matrix_desc">ESP32 HUB75 DMA driver parameters. Changing physical dimensions, driver chip, or timings requires saving and panel restart.</p>
+            
+            <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Rows (Height)</label>
-                <input type="number" id="hw-rows" class="input" value="32">
+                <label data-i18n="hw_rows_label">Rows (Height)</label>
+                <input type="number" id="hw-rows" class="input" value="64">
               </div>
               <div class="form-group">
-                <label>Cols (Width)</label>
-                <input type="number" id="hw-cols" class="input" value="64">
+                <label data-i18n="hw_cols_label">Cols (Width)</label>
+                <input type="number" id="hw-cols" class="input" value="256">
               </div>
               <div class="form-group">
-                <label>Chain Length <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
+                <label><span data-i18n="hw_chain_label">Chain Length</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_chain">?</span></label>
                 <input type="number" id="hw-chain" class="input" value="1">
               </div>
               <div class="form-group">
-                <label>Parallel Chains <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
-                <input type="number" id="hw-parallel" class="input" value="1">
+                <label><span data-i18n="hw_parallel_label">Parallel Chains</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_parallel">?</span></label>
+                <input type="number" id="hw-parallel" class="input" value="1" disabled style="opacity:0.6;">
               </div>
             </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
+
+            <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Matrix Driver Chip <span class="tooltip-icon" data-tooltip="Select hardware LED driver chip (Standard SHIFTREG, FM6124/FM6126A, ICN2038S, MBI5124, SM16208)">?</span></label>
+                <label><span data-i18n="hw_driver_chip_label">Matrix Driver Chip</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_driver_chip">?</span></label>
                 <select id="hw-driver-chip" class="input">
                   <option value="SHIFTREG">Standard (SHIFTREG)</option>
                   <option value="FM6126A">FM6124 / FM6126A</option>
@@ -1456,17 +1547,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>HAT / Mapping <span class="tooltip-icon" data-i18n-tooltip="tt_hw_mapping">?</span></label>
-                <select id="hw-mapping" class="input">
-                  <option value="regular">Regular</option>
-                  <option value="regular-pi1">Regular Pi1</option>
-                  <option value="adafruit-hat">Adafruit HAT</option>
-                  <option value="adafruit-hat-pwm">Adafruit HAT PWM</option>
-                  <option value="compute-module">Compute Module</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>RGB Sequence <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
+                <label><span data-i18n="hw_rgb_label">RGB Sequence</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rgb">?</span></label>
                 <select id="hw-rgb" class="input">
                   <option value="RGB">RGB</option>
                   <option value="RBG">RBG</option>
@@ -1477,50 +1558,54 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label>Row Addr Type <span class="tooltip-icon" data-tooltip="Default 0. Set to 1 for AB, 2 for direct, 3 for ABC, 4 for ShiftReg. Used for complex P2 panels.">?</span></label>
+                <label><span data-i18n="hw_row_addr_type_label">Row Addr Type</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_row_addr">?</span></label>
                 <select id="hw-row-addr-type" class="input">
                   <option value="0">0 - Direct Binary (Default)</option>
-                  <option value="1">1 - Direct 16 Lines (AB)</option>
-                  <option value="2">2 - Direct 32 Lines (ABC)</option>
-                  <option value="3">3 - Direct 64 Lines (ABCD)</option>
-                  <option value="4">4 - Shift Register (ShiftReg)</option>
+                  <option value="1">1 - Shift Register (ShiftReg)</option>
+                  <option value="2">2 - Direct 16 Lines (AB)</option>
+                  <option value="3">3 - Direct 32 Lines (ABC)</option>
+                  <option value="4">4 - Direct 64 Lines (ABCD)</option>
                 </select>
               </div>
             </div>
-            <div class="form-grid col-4" style="margin-top: 1rem;">
+
+            <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Multiplexing <span class="tooltip-icon" data-tooltip="Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.">?</span></label>
-                <input type="number" id="hw-multiplexing" class="input" value="0" min="0" max="17">
+                <label><span data-i18n="hw_color_depth_label">Color Depth (Bits)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
+                <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
               </div>
               <div class="form-group">
-                <label>Slowdown GPIO <span class="tooltip-icon" data-tooltip="Slowdown for fast Pi CPUs (Pi 3=1, Pi 4=2, Pi 5=4)">?</span></label>
-                <input type="number" id="hw-slowdown" class="input" value="1" min="0" max="5">
+                <label><span data-i18n="hw_latch_blanking_label">Latch Blanking (Cycles)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
+                <input type="number" id="hw-latch-blanking" class="input" value="4" min="0" max="8">
               </div>
               <div class="form-group">
-                <label>PWM Bits <span class="tooltip-icon" data-tooltip="Color depth (1-11)">?</span></label>
-                <input type="number" id="hw-pwm-bits" class="input" value="11" min="1" max="11">
-              </div>
-              <div class="form-group">
-                <label>PWM LSB (ns) <span class="tooltip-icon" data-tooltip="LSB pulse width (130 default)">?</span></label>
-                <input type="number" id="hw-pwm-lsb" class="input" value="130" min="50" max="3000">
+                <label><span data-i18n="hw_refresh_rate_label">Target Refresh Rate (Hz)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
+                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
               </div>
             </div>
+
             <div class="form-grid col-2" style="margin-top: 1rem;">
               <div class="form-group">
-                <label>Limit Refresh (Hz) <span class="tooltip-icon" data-tooltip="Max refresh rate in Hz (0 = unlimited)">?</span></label>
-                <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="500">
-              </div>
-              <div class="form-group">
-                <label>Disable Hardware Pulsing <span class="tooltip-icon" data-tooltip="Enable if DMA saturates internal Wi-Fi or audio glitches">?</span></label>
+                <label><span data-i18n="hw_clk_phase_label">Invert CLK Phase (ESP32)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
-                    <input type="checkbox" id="hw-disable-pulsing">
+                    <input type="checkbox" id="hw-clk-phase">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-group">
+                <label><span data-i18n="hw_single_buffer_label">Force Single Buffer (Low SRAM)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_single_buffer">?</span></label>
+                <div style="display: flex; align-items: center; height: 100%;">
+                  <label class="switch">
+                    <input type="checkbox" id="hw-force-single-buffer">
                     <span class="slider"></span>
                   </label>
                 </div>
               </div>
             </div>
-            <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;">💾 Save Hardware Settings</button>
+
+            <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;" data-i18n="hw_btn_save">💾 Save Hardware Settings</button>
           </div>
         </div>
 
@@ -1731,18 +1816,32 @@ function authHeaders(base = {}) {
   return headers;
 }
 
+// The ESP32 AsyncWebServer has a very small socket pool: a request that never settles keeps a
+// connection pinned and starves every later call. Every fetch is therefore bounded.
+const API_TIMEOUT_MS = 8000;
+
+function withTimeout(ms = API_TIMEOUT_MS) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), ms);
+  return ctrl.signal;
+}
+
 const API = {
-  async get(url) {
-    const res = await fetch(url, { headers: authHeaders() });
+  async get(url, timeoutMs = API_TIMEOUT_MS) {
+    const res = await fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
 
-  async post(url, data) {
+  async post(url, data, timeoutMs = API_TIMEOUT_MS) {
     const res = await fetch(url, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: data ? JSON.stringify(data) : undefined,
+      signal: withTimeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
@@ -1753,7 +1852,7 @@ const API = {
   },
 
   async delete(url) {
-    const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+    const res = await fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -1958,20 +2057,11 @@ const translations = {
     opt_display_mode_serpentine: "Serpentine Snake Flow",
     opt_display_mode_vertical_crawl: "Vertical Crawl",
     opt_display_mode_static_paged: "Static Word-Wrapped Paging",
-    field_api_key: "API Key",
-    field_category: "News Categories",
     field_keywords: "Search Keywords",
-    field_lang: "Language",
-    field_country: "Country",
     field_max_articles: "Max Articles",
     field_cache_ttl_min: "Cache TTL (min)",
-    field_display_mode: "Display Mode",
-    field_scroll_speed: "Scroll Speed",
-    field_scroll_pause_start_ms: "Start Pause (ms)",
-    field_scroll_pause_end_ms: "End Pause (ms)",
     field_article_duration_sec: "Article Duration (s)",
     field_show_category_badge: "Show Category Badge",
-    field_show_source: "Show Source Name",
     field_show_time_ago: "Show Time Ago",
     field_show_beacon: "Show Live Beacon",
     field_show_progress_dots: "Show Progress Dots",
@@ -2004,15 +2094,9 @@ const translations = {
     hw_chain: "Chain Length",
     hw_parallel: "Parallel Chains",
     hw_driver_chip: "Matrix Driver Chip",
-    hw_mapping: "HAT / Mapping",
     hw_rgb: "RGB Sequence",
     hw_row_addr_type: "Row Addr Type",
-    hw_multiplexing: "Multiplexing",
-    hw_slowdown: "Slowdown GPIO",
-    hw_pwm_bits: "PWM Bits",
-    hw_pwm_lsb: "PWM LSB (ns)",
     hw_limit_refresh: "Limit Refresh (Hz)",
-    hw_disable_pulsing: "Disable Hardware Pulsing",
     hw_save_btn: "Save Hardware Settings",
     night_title: "🌙 Night Mode & Standby Schedule",
     night_desc: "Automatically reduce matrix brightness or completely turn off the display at night.",
@@ -2061,16 +2145,10 @@ const translations = {
     // Tooltips
     tt_hw_chain: "Number of LED panels connected sequentially in a single line.",
     tt_hw_parallel: "Number of parallel chains (requires specific wiring/HAT).",
-    tt_hw_mapping: "Hardware mapping: 'regular' for standard wiring, 'regular-pi1' for Joy-IT HAT, 'adafruit-hat-pwm' if you soldered the PWM mod.",
     tt_hw_rgb: "Change this if your colors appear swapped (e.g., Red looks Blue).",
-    tt_hw_slowdown: "GPIO Slowdown. Crucial for modern Raspberry Pis to prevent flickering (Pi 3 = 1-2, Pi 4 = 2-3, Pi 5 = 4).",
-    tt_hw_pwm_bits: "Lowering this increases refresh rate but reduces color depth. 11 is default.",
-    tt_hw_pwm_lsb: "Adjust only if you experience ghosting or brightness artifacts. Default 130.",
-    tt_hw_disable_pulsing: "DANGER: Checking this disables DMA and uses CPU spin-loops (100% CPU usage), which WILL freeze single-core Pis. Keep UNCHECKED for DMA (requires disabling OS audio).",
-    tt_hw_limit_refresh: "Refresh rate limit. Set to 0 to uncap (forces 120Hz internally to prevent CPU lockups).",
+    tt_hw_limit_refresh: "Caps the DMA refresh rate in Hz. Set to 0 to leave it uncapped and let the driver pick the maximum stable rate.",
     tt_hw_driver_chip: "Selects the matrix driver IC (SHIFTREG standard, FM6124/FM6126A for P2 HD panels, ICN2038S, SM16208).",
-    tt_hw_row_addr: "Default 0. 1=AB, 2=ABC, 3=ABCD, 4=ShiftReg. Used for complex P2 panels.",
-    tt_hw_multiplexing: "Default 0. 1=Stripe, 2=Checkered. Useful for indoor panels.",
+    tt_hw_row_addr: "Row addressing mode. 0 = direct binary (default), 1 = shift register, 2 = direct 16 lines (AB), 3 = direct 32 lines (ABC), 4 = direct 64 lines (ABCD).",
     
     // Time Formats
     opt_time_24s: "24h with Seconds (HH:MM:SS)",
@@ -2245,6 +2323,61 @@ const translations = {
     field_show_progress: "Show Progress Bar",
     field_show_visualizer: "Show Visualizer",
     field_marquee_speed: "Marquee Speed",
+
+
+    // Asset upload widget
+    accepted_types: "Accepted:",
+    asset_uploaded_success: "Asset uploaded successfully!",
+    browse_file_btn: "Browse File",
+    file_drop_or_browse: "Drop file here or click to browse",
+    no_file_uploaded: "No file uploaded yet",
+    upload_error: "Upload failed: ",
+    upload_failed: "Upload failed. Click to retry.",
+    uploading_file: "Uploading asset...",
+    saving_btn: "Saving...",
+    btn_retry: "Retry Loading",
+    error_loading_engines: "Unable to load display engines",
+    error_loading_engines_desc: "Communication with the matrix timed out or returned empty.",
+
+    // Hardware tab - profile & capabilities (ESP32 only)
+    hw_caps_title: "🖥️ Hardware Profile & Capabilities",
+    hw_caps_desc: "Real-time hardware sensors, memory detection and onboard peripherals status.",
+    hw_cap_profile_label: "Hardware Profile",
+    hw_cap_psram_label: "PSRAM",
+    hw_cap_mic_label: "Microphone (Audio)",
+    hw_cap_temp_label: "Temperature Sensor",
+    hw_cap_gyro_label: "Gyroscope (Motion)",
+    hw_cap_heap_label: "Free Heap / Free PSRAM",
+
+    // Hardware tab - screen orientation & gyroscope
+    hw_gyro_title: "🧭 Screen Orientation & Gyroscope",
+    hw_gyro_desc: "Configure display rotation, baseline mounting offset, visual transition FX, or enable auto-rotation via the onboard Gyroscope/IMU.",
+    hw_gyro_autorotate_label: "Gyro Auto-Rotation",
+    hw_btn_gyro_calibrate: "🎯 Set Current as Normal (0°)",
+    hw_btn_test_transition: "✨ Test Transition FX",
+    hw_active_rot_label: "Active Rotation:",
+    hw_gravity_label: "Gravity Vector:",
+    hw_sensor_label: "Sensor:",
+
+    // Hardware tab - HUB75 DMA matrix (ESP32 only)
+    hw_matrix_desc: "ESP32 HUB75 DMA driver parameters. Changing physical dimensions, driver chip or timings requires saving and a panel restart.",
+    hw_rows_label: "Rows (Height)",
+    hw_cols_label: "Cols (Width)",
+    hw_chain_label: "Chain Length",
+    hw_parallel_label: "Parallel Chains",
+    hw_driver_chip_label: "Matrix Driver Chip",
+    hw_rgb_label: "RGB Sequence",
+    hw_row_addr_type_label: "Row Addr Type",
+    hw_color_depth_label: "Color Depth (Bits)",
+    hw_latch_blanking_label: "Latch Blanking (Cycles)",
+    hw_refresh_rate_label: "Target Refresh Rate (Hz)",
+    hw_clk_phase_label: "Invert CLK Phase (ESP32)",
+    hw_single_buffer_label: "Force Single Buffer (Low SRAM)",
+    hw_btn_save: "💾 Save Hardware Settings",
+    tt_hw_color_depth: "Bits per color channel driven by the DMA engine. Lower values raise the refresh rate but reduce color gradation. 8 is the default.",
+    tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
+    tt_hw_clk_phase: "Inverts the HUB75 clock phase. Enable it only if the panel shows shifted or duplicated columns.",
+    tt_hw_single_buffer: "Forces a single DMA framebuffer instead of double buffering. Halves SRAM usage at the cost of possible tearing.",
   },
   fr: {
     nav_dashboard: "Tableau de bord",
@@ -2354,20 +2487,11 @@ const translations = {
     opt_display_mode_serpentine: "Défilement Serpentin",
     opt_display_mode_vertical_crawl: "Défilement Vertical",
     opt_display_mode_static_paged: "Affichage Fixe Page par Page",
-    field_api_key: "Clé API GNews",
-    field_category: "Catégories d'Actualités",
     field_keywords: "Mots-Clés de Recherche",
-    field_lang: "Langue des Articles",
-    field_country: "Édition du Pays",
     field_max_articles: "Nombre Max d'Articles",
     field_cache_ttl_min: "Durée du Cache (min)",
-    field_display_mode: "Mode d'Affichage",
-    field_scroll_speed: "Vitesse de Défilement",
-    field_scroll_pause_start_ms: "Pause Initiale (ms)",
-    field_scroll_pause_end_ms: "Pause Finale (ms)",
     field_article_duration_sec: "Durée par Article (s)",
     field_show_category_badge: "Afficher le Badge Catégorie",
-    field_show_source: "Afficher la Source",
     field_show_time_ago: "Afficher l'Heure Relative",
     field_show_beacon: "Afficher le Témoin Direct",
     field_show_progress_dots: "Afficher les Points de Progression",
@@ -2400,15 +2524,9 @@ const translations = {
     hw_chain: "Longueur de Chaîne",
     hw_parallel: "Chaînes Parallèles",
     hw_driver_chip: "Contrôleur Matrice (Driver)",
-    hw_mapping: "Mapping / HAT",
     hw_rgb: "Ordre des Couleurs (RGB)",
     hw_row_addr_type: "Type d'adressage lignes",
-    hw_multiplexing: "Multiplexage",
-    hw_slowdown: "Ralentissement GPIO",
-    hw_pwm_bits: "Bits PWM (Profondeur couleur)",
-    hw_pwm_lsb: "PWM LSB (ns)",
     hw_limit_refresh: "Limite Rafraîchissement (Hz)",
-    hw_disable_pulsing: "Désactiver Impulsions Matérielles",
     hw_save_btn: "Enregistrer les paramètres matériels",
     night_title: "🌙 Mode Nuit & Veille Programmée",
     night_desc: "Réduit automatiquement la luminosité de la matrice ou éteint complètement l'affichage la nuit.",
@@ -2457,16 +2575,10 @@ const translations = {
     // Tooltips
     tt_hw_chain: "Nombre de dalles LED chaînées à la suite sur une seule ligne.",
     tt_hw_parallel: "Nombre de chaînes parallèles (nécessite un câblage/HAT spécifique).",
-    tt_hw_mapping: "Mapping matériel : 'regular' (standard), 'regular-pi1' (HAT Joy-IT), 'adafruit-hat-pwm' (si modif PWM soudée).",
     tt_hw_rgb: "Modifiez ceci si vos couleurs sont inversées (ex: le rouge apparait bleu).",
-    tt_hw_slowdown: "Ralentissement GPIO. Indispensable pour éviter le clignotement sur les Pi récents (Pi 3 = 1-2, Pi 4 = 2-3).",
-    tt_hw_pwm_bits: "Baisser cette valeur augmente la fluidité mais réduit les nuances de couleurs. 11 par défaut.",
-    tt_hw_pwm_lsb: "Ajustez uniquement en cas d'effets fantômes (ghosting). 130 par défaut.",
-    tt_hw_disable_pulsing: "DANGER : Cocher ceci désactive le DMA et sature le CPU à 100%, ce qui plantera les Pi monocœurs ! Laissez DÉCOCHÉ pour utiliser le DMA (nécessite de couper l'audio de l'OS).",
-    tt_hw_limit_refresh: "Limite de rafraîchissement. 0 pour illimité (forcé à 120Hz en interne pour éviter un freeze CPU).",
+    tt_hw_limit_refresh: "Plafonne la frequence de rafraichissement DMA en Hz. Mettez 0 pour laisser le pilote choisir la frequence stable maximale.",
     tt_hw_driver_chip: "Sélectionne le contrôleur matériel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 HD, ICN2038S, SM16208).",
-    tt_hw_row_addr: "0 par défaut. 1=AB, 2=ABC, 3=ABCD, 4=ShiftReg. Utilisé pour les dalles P2 complexes.",
-    tt_hw_multiplexing: "0 par défaut. 1=Stripe, 2=Checkered. Utile pour certains panneaux intérieurs.",
+    tt_hw_row_addr: "Mode d'adressage des lignes. 0 = binaire direct (defaut), 1 = registre a decalage, 2 = 16 lignes directes (AB), 3 = 32 lignes directes (ABC), 4 = 64 lignes directes (ABCD).",
     
     // Time Formats
     opt_time_24s: "24h avec secondes (HH:MM:SS)",
@@ -2483,7 +2595,7 @@ const translations = {
     dir_btt: "Bas vers Haut (BTT)",
     dir_static: "Statique (Sans défilement)",
 
-    // Onglets Système & Préférences Générales
+    // System tabs & general preferences
     tab_general: "🌐 Général",
     tab_hardware: "⚙️ Matériel",
     tab_night: "🌙 Mode Nuit",
@@ -2505,7 +2617,7 @@ const translations = {
     gen_idle_fighter_speed: "Vitesse Combattant",
     gen_btn_save: "💾 Enregistrer les Préférences",
 
-    // TATE / YOKO & Sélections Rapides
+    // TATE / YOKO & quick selections
     tab_yoko: "Horizontal (Paysage / YOKO)",
     tab_tate: "Vertical (Portrait / TATE)",
     gif_auto_switch_title: "Détection & Switch Automatique :",
@@ -2641,6 +2753,61 @@ const translations = {
     field_show_progress: "Afficher la Barre de Progression",
     field_show_visualizer: "Afficher le Visualiseur",
     field_marquee_speed: "Vitesse de Défilement",
+
+
+    // Asset upload widget
+    accepted_types: "Acceptés :",
+    asset_uploaded_success: "Ressource téléversée avec succès !",
+    browse_file_btn: "Parcourir",
+    file_drop_or_browse: "Déposez un fichier ici ou cliquez pour parcourir",
+    no_file_uploaded: "Aucun fichier téléversé pour l'instant",
+    upload_error: "Échec du téléversement : ",
+    upload_failed: "Échec du téléversement. Cliquez pour réessayer.",
+    uploading_file: "Téléversement de la ressource...",
+    saving_btn: "Enregistrement...",
+    btn_retry: "Réessayer le chargement",
+    error_loading_engines: "Impossible de charger les moteurs d'affichage",
+    error_loading_engines_desc: "La communication avec la matrice a expiré ou n'a rien renvoyé.",
+
+    // Hardware tab - profile & capabilities (ESP32 only)
+    hw_caps_title: "🖥️ Profil & Capacités Matérielles",
+    hw_caps_desc: "Capteurs matériels en temps réel, détection mémoire et état des périphériques embarqués.",
+    hw_cap_profile_label: "Profil Matériel",
+    hw_cap_psram_label: "PSRAM",
+    hw_cap_mic_label: "Microphone (Audio)",
+    hw_cap_temp_label: "Capteur de Température",
+    hw_cap_gyro_label: "Gyroscope (Mouvement)",
+    hw_cap_heap_label: "Heap Libre / PSRAM Libre",
+
+    // Hardware tab - screen orientation & gyroscope
+    hw_gyro_title: "🧭 Orientation de l'Écran & Gyroscope",
+    hw_gyro_desc: "Configurez la rotation de l'affichage, le décalage de montage de référence, les effets de transition ou activez l'auto-rotation via le gyroscope/IMU embarqué.",
+    hw_gyro_autorotate_label: "Auto-Rotation Gyroscopique",
+    hw_btn_gyro_calibrate: "🎯 Définir la position actuelle comme normale (0°)",
+    hw_btn_test_transition: "✨ Tester les effets de transition",
+    hw_active_rot_label: "Rotation active :",
+    hw_gravity_label: "Vecteur de gravité :",
+    hw_sensor_label: "Capteur :",
+
+    // Hardware tab - HUB75 DMA matrix (ESP32 only)
+    hw_matrix_desc: "Paramètres du pilote DMA HUB75 de l'ESP32. Modifier les dimensions physiques, le contrôleur ou les timings nécessite un enregistrement et un redémarrage du panneau.",
+    hw_rows_label: "Lignes (Hauteur)",
+    hw_cols_label: "Colonnes (Largeur)",
+    hw_chain_label: "Longueur de Chaîne",
+    hw_parallel_label: "Chaînes Parallèles",
+    hw_driver_chip_label: "Contrôleur Matrice (Driver)",
+    hw_rgb_label: "Ordre des Couleurs RGB",
+    hw_row_addr_type_label: "Type d'adressage lignes",
+    hw_color_depth_label: "Profondeur de Couleur (bits)",
+    hw_latch_blanking_label: "Latch Blanking (cycles)",
+    hw_refresh_rate_label: "Fréquence de Rafraîchissement Cible (Hz)",
+    hw_clk_phase_label: "Inverser la Phase d'Horloge (ESP32)",
+    hw_single_buffer_label: "Forcer le Simple Buffer (SRAM faible)",
+    hw_btn_save: "💾 Enregistrer les paramètres matériels",
+    tt_hw_color_depth: "Bits par canal de couleur pilotés par le moteur DMA. Une valeur plus faible augmente le rafraîchissement mais réduit les nuances. 8 par défaut.",
+    tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
+    tt_hw_clk_phase: "Inverse la phase d'horloge HUB75. À activer uniquement si la dalle affiche des colonnes décalées ou dupliquées.",
+    tt_hw_single_buffer: "Force un unique framebuffer DMA au lieu du double buffering. Divise par deux la SRAM utilisée au prix d'un possible tearing.",
   },
   es: {
     nav_dashboard: "Panel",
@@ -2750,20 +2917,11 @@ const translations = {
     opt_display_mode_serpentine: "Desplazamiento Serpentina",
     opt_display_mode_vertical_crawl: "Desplazamiento Vertical",
     opt_display_mode_static_paged: "Visualización Fija por Páginas",
-    field_api_key: "Clave API GNews",
-    field_category: "Categorías de Noticias",
     field_keywords: "Palabras Clave de Búsqueda",
-    field_lang: "Idioma de los Artículos",
-    field_country: "Edición del País",
     field_max_articles: "Máx Artículos",
     field_cache_ttl_min: "Caché TTL (min)",
-    field_display_mode: "Modo de Visualización",
-    field_scroll_speed: "Velocidad de Desplazamiento",
-    field_scroll_pause_start_ms: "Pausa Inicial (ms)",
-    field_scroll_pause_end_ms: "Pausa Final (ms)",
     field_article_duration_sec: "Duración por Artículo (s)",
     field_show_category_badge: "Mostrar Etiqueta de Categoría",
-    field_show_source: "Mostrar Fuente",
     field_show_time_ago: "Mostrar Tiempo Transcurrido",
     field_show_beacon: "Mostrar Baliza En Vivo",
     field_show_progress_dots: "Mostrar Puntos de Progreso",
@@ -2796,15 +2954,9 @@ const translations = {
     hw_chain: "Longitud de Cadena",
     hw_parallel: "Cadenas Paralelas",
     hw_driver_chip: "Chip Controlador de Matriz",
-    hw_mapping: "Mapeo / HAT",
     hw_rgb: "Secuencia RGB",
     hw_row_addr_type: "Tipo de Dirección de Fila",
-    hw_multiplexing: "Multiplexación",
-    hw_slowdown: "Ralentización GPIO",
-    hw_pwm_bits: "Bits PWM",
-    hw_pwm_lsb: "PWM LSB (ns)",
     hw_limit_refresh: "Límite de Refresco (Hz)",
-    hw_disable_pulsing: "Desactivar Pulsos de Hardware",
     hw_save_btn: "Guardar ajustes de hardware",
     night_title: "🌙 Modo Noche y Horario de Espera",
     night_desc: "Reduce automáticamente el brillo de la matriz o apaga la pantalla por la noche.",
@@ -2853,16 +3005,10 @@ const translations = {
     // Tooltips
     tt_hw_chain: "Número de paneles LED encadenados en una sola línea.",
     tt_hw_parallel: "Número de cadenas paralelas (requiere cableado/HAT específico).",
-    tt_hw_mapping: "Mapeo de hardware: 'regular' (estándar), 'regular-pi1' (Joy-IT HAT), 'adafruit-hat-pwm' (con mod PWM).",
     tt_hw_rgb: "Cambia esto si tus colores aparecen intercambiados (ej: rojo se ve azul).",
-    tt_hw_slowdown: "Ralentización GPIO. Crucial para evitar parpadeos en Pi recientes (Pi 3 = 1-2, Pi 4 = 2-3).",
-    tt_hw_pwm_bits: "Bajar este valor aumenta la tasa de refresco pero reduce la profundidad de color. 11 por defecto.",
-    tt_hw_pwm_lsb: "Ajusta esto solo si experimentas efecto fantasma (ghosting). 130 por defecto.",
-    tt_hw_disable_pulsing: "PELIGRO: Marcar esto desactiva DMA y satura el CPU al 100%, lo que congelará las Pi de un solo núcleo. Dejar DESMARCADO (requiere desactivar el audio del SO).",
-    tt_hw_limit_refresh: "Límite de refresco. 0 para ilimitado (forzado a 120Hz internamente para evitar el bloqueo del CPU).",
+    tt_hw_limit_refresh: "Limita la frecuencia de refresco DMA en Hz. Ponlo a 0 para que el controlador elija la frecuencia estable maxima.",
     tt_hw_driver_chip: "Selecciona el chip controlador de matriz (SHIFTREG estándar, FM6124/FM6126A para dalles P2 HD, ICN2038S, SM16208).",
-    tt_hw_row_addr: "0 por defecto. 1=AB, 2=ABC, 3=ABCD, 4=ShiftReg. Usado para paneles P2 complejos.",
-    tt_hw_multiplexing: "0 por defecto. 1=Stripe, 2=Checkered. Útil para paneles interiores.",
+    tt_hw_row_addr: "Modo de direccionamiento de filas. 0 = binario directo (predeterminado), 1 = registro de desplazamiento, 2 = 16 lineas directas (AB), 3 = 32 lineas directas (ABC), 4 = 64 lineas directas (ABCD).",
     
     // Time Formats
     opt_time_24s: "24h con segundos (HH:MM:SS)",
@@ -3037,6 +3183,61 @@ const translations = {
     field_show_progress: "Mostrar Barra de Progreso",
     field_show_visualizer: "Mostrar Visualizador",
     field_marquee_speed: "Velocidad de Desplazamiento",
+
+
+    // Asset upload widget
+    accepted_types: "Aceptados:",
+    asset_uploaded_success: "¡Recurso subido correctamente!",
+    browse_file_btn: "Examinar archivo",
+    file_drop_or_browse: "Suelta el archivo aquí o haz clic para examinar",
+    no_file_uploaded: "Aún no se ha subido ningún archivo",
+    upload_error: "Error al subir: ",
+    upload_failed: "Error al subir. Haz clic para reintentar.",
+    uploading_file: "Subiendo recurso...",
+    saving_btn: "Guardando...",
+    btn_retry: "Reintentar carga",
+    error_loading_engines: "No se pueden cargar los motores de visualización",
+    error_loading_engines_desc: "La comunicación con la matriz ha expirado o no ha devuelto nada.",
+
+    // Hardware tab - profile & capabilities (ESP32 only)
+    hw_caps_title: "🖥️ Perfil y Capacidades del Hardware",
+    hw_caps_desc: "Sensores de hardware en tiempo real, detección de memoria y estado de los periféricos integrados.",
+    hw_cap_profile_label: "Perfil de Hardware",
+    hw_cap_psram_label: "PSRAM",
+    hw_cap_mic_label: "Micrófono (Audio)",
+    hw_cap_temp_label: "Sensor de Temperatura",
+    hw_cap_gyro_label: "Giroscopio (Movimiento)",
+    hw_cap_heap_label: "Heap Libre / PSRAM Libre",
+
+    // Hardware tab - screen orientation & gyroscope
+    hw_gyro_title: "🧭 Orientación de Pantalla y Giroscopio",
+    hw_gyro_desc: "Configura la rotación de la pantalla, el desfase de montaje de referencia, los efectos de transición o activa la rotación automática mediante el giroscopio/IMU integrado.",
+    hw_gyro_autorotate_label: "Rotación Automática por Giroscopio",
+    hw_btn_gyro_calibrate: "🎯 Fijar la posición actual como normal (0°)",
+    hw_btn_test_transition: "✨ Probar efectos de transición",
+    hw_active_rot_label: "Rotación activa:",
+    hw_gravity_label: "Vector de gravedad:",
+    hw_sensor_label: "Sensor:",
+
+    // Hardware tab - HUB75 DMA matrix (ESP32 only)
+    hw_matrix_desc: "Parámetros del controlador DMA HUB75 del ESP32. Cambiar las dimensiones físicas, el chip controlador o los tiempos requiere guardar y reiniciar el panel.",
+    hw_rows_label: "Filas (Alto)",
+    hw_cols_label: "Columnas (Ancho)",
+    hw_chain_label: "Longitud de Cadena",
+    hw_parallel_label: "Cadenas Paralelas",
+    hw_driver_chip_label: "Chip Controlador de Matriz",
+    hw_rgb_label: "Secuencia RGB",
+    hw_row_addr_type_label: "Tipo de Dirección de Fila",
+    hw_color_depth_label: "Profundidad de Color (bits)",
+    hw_latch_blanking_label: "Latch Blanking (ciclos)",
+    hw_refresh_rate_label: "Frecuencia de Refresco Objetivo (Hz)",
+    hw_clk_phase_label: "Invertir Fase de Reloj (ESP32)",
+    hw_single_buffer_label: "Forzar Búfer Simple (SRAM baja)",
+    hw_btn_save: "💾 Guardar la configuración de hardware",
+    tt_hw_color_depth: "Bits por canal de color gestionados por el motor DMA. Un valor menor aumenta el refresco pero reduce los matices. 8 por defecto.",
+    tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
+    tt_hw_clk_phase: "Invierte la fase de reloj HUB75. Actívalo solo si el panel muestra columnas desplazadas o duplicadas.",
+    tt_hw_single_buffer: "Fuerza un único framebuffer DMA en lugar de doble búfer. Reduce a la mitad el uso de SRAM a costa de posible tearing.",
   }
 };
 
@@ -3256,16 +3457,37 @@ function getEngineMeta(descOrMeta) {
   return { id, name, category: cat, icon, desc, version: meta.version || '1.0.0' };
 }
 
-// Global in-memory cache to prevent multiple round-trips
+// Global in-memory cache and in-flight deduplicator to prevent duplicate round-trips
 const endpointCache = new Map();
+const inFlightRequests = new Map();
 
 async function fetchCachedEndpoint(url) {
   if (!url) return [];
   if (endpointCache.has(url)) {
     return endpointCache.get(url);
   }
-  const promise = API.get(url).catch(() => []);
-  endpointCache.set(url, promise);
+  if (inFlightRequests.has(url)) {
+    return inFlightRequests.get(url);
+  }
+
+  const promise = (async () => {
+    try {
+      const data = await API.get(url);
+      const isValid = (Array.isArray(data) && data.length > 0) ||
+                      (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
+      if (isValid) {
+        endpointCache.set(url, data);
+      }
+      return data || [];
+    } catch (err) {
+      console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
+      return [];
+    } finally {
+      inFlightRequests.delete(url);
+    }
+  })();
+
+  inFlightRequests.set(url, promise);
   return promise;
 }
 
@@ -4873,17 +5095,70 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    // Parallel fetch of initial descriptors, instances, and rotation loop
     const [descriptors, instancesList, rotationList] = await Promise.all([
       fetchCachedEndpoint('/api/engines'),
       API.get('/api/instances').catch(() => []),
       API.get('/api/rotation').catch(() => [])
     ]);
 
+    if (!Array.isArray(descriptors) || descriptors.length === 0) {
+      console.warn('[Display] No engine descriptors received from backend, showing retry view.');
+      wrapper.innerHTML = `
+        <div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">
+          <div style="font-size: 3rem; margin-bottom: 0.75rem;">⚠️</div>
+          <h4 data-i18n="error_loading_engines">${t('error_loading_engines', 'Unable to load display engines')}</h4>
+          <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="error_loading_engines_desc">
+            ${t('error_loading_engines_desc', 'Communication with the matrix timed out or returned empty.')}
+          </p>
+          <button class="btn btn-primary" id="btn-retry-engines">🔄 ${t('btn_retry', 'Retry Loading')}</button>
+        </div>
+      `;
+      const retryBtn = wrapper.querySelector('#btn-retry-engines');
+      if (retryBtn) {
+        retryBtn.onclick = () => {
+          endpointCache.delete('/api/engines');
+          renderDynamicDisplay(targetActiveInstanceId);
+        };
+      }
+      return;
+    }
+
     const enginesMap = {};
     descriptors.forEach(desc => {
-      enginesMap[desc.metadata.id] = desc;
+      if (desc && desc.metadata && desc.metadata.id) {
+        enginesMap[desc.metadata.id] = desc;
+      }
     });
+
+    // Warm every distinct options endpoint before rendering. The per-field builder awaits
+    // fetchCachedEndpoint() inside nested loops, so without this pre-pass each distinct endpoint
+    // costs a serialized round-trip. Concurrency is capped because the ESP32 AsyncWebServer has a
+    // small socket pool and saturating it is what made the first connection crawl.
+    //
+    // File-asset fields must be skipped: for them options_endpoint carries the multipart UPLOAD
+    // target (e.g. /api/upload?target=marquee), not a list of options. The renderer already
+    // short-circuits them via isFileAssetField(), and warming them issued a GET on a POST-only
+    // route, which the server answered with 404 "Not found".
+    const optionsEndpoints = new Set();
+    descriptors.forEach(desc => {
+      const fields = (desc && desc.schema) || [];
+      fields.forEach(field => {
+        if (!field || !field.options_endpoint) return;
+        if (field.options_endpoint === '/api/timezones') return;
+        if (isFileAssetField(field)) return;
+        optionsEndpoints.add(field.options_endpoint);
+      });
+    });
+    if (optionsEndpoints.size > 0) {
+      const queue = [...optionsEndpoints];
+      const MAX_PARALLEL_WARMUPS = 3;
+      const workers = Array.from({ length: Math.min(MAX_PARALLEL_WARMUPS, queue.length) }, async () => {
+        while (queue.length > 0) {
+          await fetchCachedEndpoint(queue.shift());
+        }
+      });
+      await Promise.all(workers);
+    }
 
     // 1. Render Visual Engine Catalog directly onto the Dashboard (Home Hub)
     renderEngineCatalog(descriptors, instancesList, enginesMap);
@@ -5320,7 +5595,7 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
                       if (colonIdx > 0) cleanVal = cleanVal.substring(0, colonIdx).trim();
                     }
                     payload.config[field.id] = cleanVal;
-                } else if (field.multiple || field.options_endpoint) {
+                } else if (!isFileAssetField(field) && (field.multiple || field.options_endpoint)) {
                     const checkboxes = document.querySelectorAll(`.multi-cb-${instance.instance_id}-${field.id}:checked`);
                     if (checkboxes.length > 0) {
                         const vals = Array.from(checkboxes).map(cb => cb.value);
@@ -5443,9 +5718,16 @@ window.switchSystemTab = function(tabId) {
   });
   const pane = document.getElementById('sys-tab-' + tabId);
   if (pane) pane.classList.add('active');
+  if (tabId === 'hardware') {
+    initHardwareCapabilities();
+  }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Deliberately ordered: initNavigation() restores the last page and lazily renders it.
+  // The Display tree (initDynamicEngines) and the hardware probe (initHardwareCapabilities) are
+  // NOT called eagerly here — each costs several round-trips on a socket-starved AsyncWebServer,
+  // and both panes are hidden on boot unless the user actually navigates to them.
   initNavigation();
   initDashboard();
   initOta();
@@ -5454,7 +5736,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initFighterOverlay();
   initNetworkSettings();
   initSettings();
-  initDynamicEngines();
 });
 
 function switchPage(pageName) {
@@ -5466,6 +5747,18 @@ function switchPage(pageName) {
   if (navItem) navItem.classList.add('active');
   if (pageEl) pageEl.classList.add('active');
   localStorage.setItem('activePage', pageName);
+
+  if (pageName === 'display') {
+    const wrapper = document.getElementById('dynamic-display-wrapper');
+    if (!wrapper || wrapper.children.length === 0 || wrapper.querySelector('#btn-retry-engines')) {
+      renderDynamicDisplay();
+    }
+  } else if (pageName === 'system') {
+    const hwPane = document.getElementById('sys-tab-hardware');
+    if (hwPane && hwPane.classList.contains('active')) {
+      initHardwareCapabilities();
+    }
+  }
 }
 window.switchPage = switchPage;
 
@@ -6054,6 +6347,71 @@ function initNetworkSettings() {
   }
 }
 
+// Always queries /api/hardware, which is the single source of truth for runtime detection flags.
+// config.json (/api/system) only stores user preferences (rows, cols, driver_chip...) and carries
+// no detection data, so feeding it in here reported every peripheral as "Not Detected".
+async function initHardwareCapabilities() {
+  try {
+    const [hw, status] = await Promise.all([
+      API.get('/api/hardware').catch(() => null),
+      API.get('/api/status').catch(() => null),
+    ]);
+    if (hw) {
+      const elProf = document.getElementById('hw-cap-profile');
+      if (elProf) {
+        elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';
+        elProf.style.color = 'var(--accent-info)';
+      }
+      
+      const elPsram = document.getElementById('hw-cap-psram');
+      if (elPsram) {
+        if (hw.psram && hw.psram.available) {
+          const mb = (hw.psram.bytes / (1024 * 1024)).toFixed(0);
+          elPsram.textContent = `Available (${mb} MB)`;
+          elPsram.style.color = 'var(--accent-success)';
+        } else {
+          elPsram.textContent = 'Not Available (Internal SRAM only)';
+          elPsram.style.color = 'var(--accent-warning)';
+        }
+      }
+      
+      const elMic = document.getElementById('hw-cap-mic');
+      if (elMic) {
+        elMic.textContent = hw.microphone ? 'Detected (ES7210 I2S Audio)' : 'Not Detected';
+        elMic.style.color = hw.microphone ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+      
+      const elTemp = document.getElementById('hw-cap-temp');
+      if (elTemp) {
+        elTemp.textContent = hw.temperature_sensor ? 'Detected (SHTC3 I2C)' : 'Not Detected';
+        elTemp.style.color = hw.temperature_sensor ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+      
+      const elGyro = document.getElementById('hw-cap-gyro');
+      if (elGyro) {
+        const isGyro = Boolean(hw.gyroscope || hw.has_gyro);
+        elGyro.textContent = isGyro ? 'Detected (QMI8658 I2C)' : 'Not Detected';
+        elGyro.style.color = isGyro ? 'var(--accent-success)' : 'var(--text-muted)';
+      }
+    }
+    
+    if (status) {
+      const elHeap = document.getElementById('hw-cap-heap');
+      if (elHeap) {
+        const freeKb = (status.free_heap / 1024).toFixed(1);
+        let txt = `Heap: ${freeKb} KB`;
+        if (status.free_psram) {
+          const psramMb = (status.free_psram / (1024 * 1024)).toFixed(2);
+          txt += ` | PSRAM: ${psramMb} MB`;
+        }
+        elHeap.textContent = txt;
+      }
+    }
+  } catch (e) {
+    console.warn('Hardware capabilities initialization failed', e);
+  }
+}
+
 async function initSettings() {
   // Load current settings (canonical nested model straight from config.json).
   try {
@@ -6148,21 +6506,41 @@ async function initSettings() {
     setVal('sys-rotation-transition', matrix.transition_effect || 'vortex');
     setVal('sys-transition-duration', matrix.transition_duration_ms || 400);
 
-    // Raspberry Pi Matrix Hardware (pure RPi HUB75 configuration)
-    setVal('hw-rows', matrix.height || 32);
-    setVal('hw-cols', matrix.width || 64);
+    // ESP32 Matrix Hardware & Timings (pure ESP32 HUB75 DMA configuration)
+    setVal('hw-rows', matrix.height || 64);
+    setVal('hw-cols', matrix.width || 256);
     setVal('hw-chain', matrix.chain_length || 1);
     setVal('hw-parallel', 1);
     setVal('hw-driver-chip', matrix.driver_chip || 'SHIFTREG');
-    setVal('hw-mapping', matrix.mapping || 'regular');
     setVal('hw-rgb', matrix.rgb_sequence || 'RGB');
     setVal('hw-row-addr-type', matrix.row_address_mode ?? 0);
-    setVal('hw-multiplexing', matrix.multiplexing ?? 0);
-    setVal('hw-slowdown', matrix.slowdown ?? 2);
-    setVal('hw-pwm-bits', matrix.pwm_bits ?? 11);
-    setVal('hw-pwm-lsb', matrix.pwm_lsb_nanoseconds ?? 130);
+    setVal('hw-color-depth', matrix.color_depth || matrix.pwm_bits || 8);
+    setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
-    setChk('hw-disable-pulsing', matrix.disable_hardware_pulsing ?? false);
+    setChk('hw-clk-phase', matrix.clk_phase ?? false);
+    setChk('hw-force-single-buffer', matrix.force_single_buffer ?? false);
+
+    // Screen Orientation & Gyroscope
+    setVal('hw-screen-rotation', matrix.rotation_offset ?? matrix.rotation ?? 0);
+    setChk('hw-gyro-autorotate', matrix.auto_rotate ?? true);
+    setVal('hw-rotation-transition', matrix.rotation_transition || matrix.transition_effect || 'vortex');
+    setVal('hw-transition-duration', matrix.rotation_transition_duration_ms || matrix.transition_duration_ms || 400);
+
+    // Fetch Live Gyroscope status & telemetry
+    try {
+      const gyro = await API.get('/api/gyro/status');
+      if (gyro) {
+        const sName = document.getElementById('gyro-sensor-name');
+        if (sName) sName.textContent = gyro.available ? (gyro.sensor || 'Detected (QMI8658)') : 'Not Detected (Manual Mode)';
+        const gVal = document.getElementById('gyro-gravity-val');
+        if (gVal) gVal.textContent = `Ax: ${gyro.ax?.toFixed(2) ?? '--'}, Ay: ${gyro.ay?.toFixed(2) ?? '--'}, Az: ${gyro.az?.toFixed(2) ?? '--'}`;
+        const aRot = document.getElementById('gyro-active-rot');
+        if (aRot) aRot.textContent = `${(gyro.current_rotation ?? 0) * 90}° (Mode ${gyro.current_rotation ?? 0})`;
+        if (gyro.rotation_offset !== undefined) setVal('hw-screen-rotation', gyro.rotation_offset);
+      }
+    } catch (e) {
+      console.warn('Gyro status fetch failed', e);
+    }
 
     // MQTT (nested mqtt.*)
     setVal('hw-mqtt-enable', mqtt.enabled ? '1' : '0');
@@ -6177,6 +6555,55 @@ async function initSettings() {
     setVal('hw-api-token', cfg.api_token || '');
   } catch (e) {
     console.error('Failed to load settings', e);
+  }
+
+  // Handle Gyro Calibration & Rotation changes
+  const rotSelect = document.getElementById('hw-screen-rotation');
+  if (rotSelect && !rotSelect._boundChange) {
+    rotSelect._boundChange = true;
+    rotSelect.addEventListener('change', async (e) => {
+      const rot = parseInt(e.target.value) || 0;
+      try {
+        await API.post('/api/display/orientation', { manual_rotation: rot, rotation_offset: rot });
+        window.showToast(`Display rotation set to ${rot * 90}°`, 'info');
+        const aRot = document.getElementById('gyro-active-rot');
+        if (aRot) aRot.textContent = `${rot * 90}° (Mode ${rot})`;
+      } catch (err) {
+        window.showToast('Failed to apply rotation', 'error');
+      }
+    });
+  }
+
+  const btnCalibrate = document.getElementById('btn-gyro-calibrate');
+  if (btnCalibrate && !btnCalibrate._boundClick) {
+    btnCalibrate._boundClick = true;
+    btnCalibrate.addEventListener('click', async () => {
+      try {
+        const res = await API.post('/api/gyro/calibrate');
+        if (res && res.rotation_offset !== undefined) {
+          setVal('hw-screen-rotation', res.rotation_offset);
+          const aRot = document.getElementById('gyro-active-rot');
+          if (aRot) aRot.textContent = '0° (Calibrated)';
+        }
+        window.showToast('🎯 Current orientation calibrated as 0° Normal position!', 'success');
+      } catch (err) {
+        window.showToast('Failed to calibrate orientation', 'error');
+      }
+    });
+  }
+
+  const btnTestTransition = document.getElementById('btn-test-transition');
+  if (btnTestTransition && !btnTestTransition._boundClick) {
+    btnTestTransition._boundClick = true;
+    btnTestTransition.addEventListener('click', async () => {
+      const effect = document.getElementById('hw-rotation-transition')?.value || 'vortex';
+      try {
+        await API.post('/api/display/test-transition', { effect });
+        window.showToast(`✨ Triggered test transition FX: ${effect}`, 'info');
+      } catch (err) {
+        window.showToast('Failed to test transition FX', 'error');
+      }
+    });
   }
 
   // Save General System Preferences (including real-time Screen Orientation & Transitions)
@@ -6244,7 +6671,7 @@ async function initSettings() {
     });
   }
 
-  // Save Raspberry Pi Hardware settings (requires panel daemon restart for hardware bus/chip re-init)
+  // Save ESP32 Matrix Hardware settings (reboots DMA panel driver)
   const btnSaveHw = document.getElementById('btn-save-hw');
   if (btnSaveHw && !btnSaveHw._boundClick) {
     btnSaveHw._boundClick = true;
@@ -6253,25 +6680,28 @@ async function initSettings() {
       const numOr = (id, d) => parseInt(document.getElementById(id)?.value) || d;
       const matrix = {
         ...base,
-        height: numOr('hw-rows', 32),
-        width: numOr('hw-cols', 64),
+        height: numOr('hw-rows', 64),
+        width: numOr('hw-cols', 256),
         chain_length: numOr('hw-chain', 1),
         driver_chip: document.getElementById('hw-driver-chip')?.value || 'SHIFTREG',
-        mapping: document.getElementById('hw-mapping')?.value || 'regular',
         rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
         row_address_mode: numOr('hw-row-addr-type', 0),
-        multiplexing: numOr('hw-multiplexing', 0),
-        slowdown: numOr('hw-slowdown', 2),
-        pwm_bits: numOr('hw-pwm-bits', 11),
-        pwm_lsb_nanoseconds: numOr('hw-pwm-lsb', 130),
+        color_depth: numOr('hw-color-depth', 8),
+        pwm_bits: numOr('hw-color-depth', 8),
+        latch_blanking: numOr('hw-latch-blanking', 4),
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
-        disable_hardware_pulsing: document.getElementById('hw-disable-pulsing')?.checked || false,
+        clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,
+        force_single_buffer: document.getElementById('hw-force-single-buffer')?.checked ?? false,
+        rotation_offset: numOr('hw-screen-rotation', 0),
+        auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
+        rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',
+        rotation_transition_duration_ms: numOr('hw-transition-duration', 400),
       };
 
       try {
-        await API.post('/api/system', { matrix });
+        await API.post('/api/system', { matrix, reboot: true });
         if (window.__sysConfig) window.__sysConfig.matrix = matrix;
-        window.showToast('Hardware settings saved! The panel will restart to apply physical bus changes.', 'success');
+        window.showToast('Hardware settings saved! Restarting panel driver...', 'success');
       } catch (e) {
         window.showToast('Failed to save HW settings', 'error');
       }

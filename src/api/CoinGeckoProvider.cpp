@@ -1,8 +1,17 @@
 #include "CoinGeckoProvider.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include <WiFiClientSecure.h>
 
 bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
+    // See BinanceProvider::fetchQuote: attempting a handshake without the required
+    // internal DRAM only fragments the heap and starves the SD/FATFS layer.
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("CoinGecko", "Skipping quote for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        return false;
+    }
+
     String lowerSymbol = symbol;
     lowerSymbol.toLowerCase();
     
@@ -82,6 +91,11 @@ bool CoinGeckoProvider::parseSimple(const String& payload, const String& coinId,
 
 bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("CoinGecko", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
 
     String lower = symbol;
     lower.toLowerCase();

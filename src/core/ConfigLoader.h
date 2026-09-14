@@ -258,6 +258,18 @@ private:
     mutable std::atomic<bool> _publishPending{false};
     ConfigSnapshot _snapshots[3];
 
+    // Reused for every serializeToJson()/loadFromSD() call instead of allocating a fresh
+    // 32KB DynamicJsonDocument each time. Every WebUI settings change ends up calling
+    // saveToSD() -> serializeToJson(), and a transient 32KB heap allocation on every single
+    // save (observed several times per second during WebUI editing sessions) was fragmenting
+    // the ESP32 DRAM heap irrecoverably: freed 32KB blocks got carved up by unrelated
+    // WebServer/JSON-parsing allocations before the next save needed the space again, so free
+    // heap AND largest-contiguous-block both trended down permanently across a session. Both
+    // saveToSD() (serialize) and loadFromSD() (deserialize) are only ever called from a single
+    // context at a time (save is always under sdMutex, load only runs once at boot before any
+    // other task touches config), so sharing one scratch buffer is safe.
+    mutable DynamicJsonDocument _jsonScratch{32768};
+
     void publishSnapshot_locked();
 };
 

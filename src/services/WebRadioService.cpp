@@ -3,42 +3,121 @@
 #include "WebRadioService.h"
 #include "../core/Logger.h"
 #include "AudioAnalysisService.h"
+#include <esp_heap_caps.h>
 
 WebRadioService webRadioService;
 
 #define RADIO_CHUNK_SIZE 2048
 #define PREBUFFER_THRESHOLD 16384
 
+/// Idle grace period before the worker task terminates and frees its memory.
+static constexpr uint32_t IDLE_SHUTDOWN_MS = 5000;
+
 WebRadioService::WebRadioService()
     : _activeClient(nullptr), _requestPlay(false), _requestStop(false),
       _isPlaying(false), _taskRunning(false),
       _isHttps(false), _isWavStream(false), _wavHeaderParsed(false),
       _metaint(0), _bytesUntilMeta(0),
-      _audioTaskHandle(nullptr), _streamBuf(nullptr),
+      _audioTaskHandle(nullptr), _idleSinceMs(0), _mp3d(nullptr), _pcmDecBuf(nullptr),
+      _streamBuf(nullptr),
       _streamBufCapacity(0), _streamBufLen(0), _isBuffering(true) {
-    mp3dec_init(&_mp3d);
+    // Buffers are deliberately NOT allocated here. This object is a global, so its
+    // constructor runs during static initialisation on every boot. Allocating the
+    // decoder eagerly would permanently consume internal DRAM (and, without PSRAM,
+    // a 16 KB stream buffer) even when the radio is never used. begin() performs
+    // the allocation on first actual use instead.
+}
 
-    // Allocate large audio streaming buffer (prefer PSRAM if available)
-    _streamBufCapacity = 65536; // 64KB (approx 4 seconds of 128kbps audio)
+bool WebRadioService::ensureDecoderStorage() {
+    if (_mp3d && _pcmDecBuf && _streamBuf) return true;
+
+    if (!_mp3d) {
+        // The decoder state is touched on every frame, so internal DRAM is preferred
+        // for speed; PSRAM is an acceptable fallback on a memory-constrained boot.
+        _mp3d = (mp3dec_t*)heap_caps_malloc(sizeof(mp3dec_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 #if defined(BOARD_HAS_PSRAM)
-    if (psramFound()) {
-        _streamBuf = (uint8_t*)ps_malloc(_streamBufCapacity);
-        if (_streamBuf) {
-            LOGI("WebRadio", "Allocated 64KB stream buffer in PSRAM.");
+        if (!_mp3d && psramFound()) {
+            _mp3d = (mp3dec_t*)ps_malloc(sizeof(mp3dec_t));
         }
-    }
 #endif
-    if (!_streamBuf) {
-        _streamBufCapacity = 16384; // 16KB in internal SRAM
-        _streamBuf = (uint8_t*)malloc(_streamBufCapacity);
-        if (_streamBuf) {
-            LOGI("WebRadio", "Allocated 16KB stream buffer in SRAM.");
-        } else {
-            _streamBufCapacity = 4096;
-            _streamBuf = (uint8_t*)malloc(_streamBufCapacity);
-            LOGW("WebRadio", "Fallback: Allocated 4KB stream buffer.");
+        if (!_mp3d) {
+            LOGE("WebRadio", "Failed to allocate MP3 decoder state (%u bytes).",
+                 (unsigned)sizeof(mp3dec_t));
+            releaseDecoderStorage();
+            return false;
+        }
+        mp3dec_init(_mp3d);
+    }
+
+    if (!_pcmDecBuf) {
+        const size_t pcmBytes = sizeof(int16_t) * MINIMP3_MAX_SAMPLES_PER_FRAME;
+        _pcmDecBuf = (int16_t*)heap_caps_malloc(pcmBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#if defined(BOARD_HAS_PSRAM)
+        if (!_pcmDecBuf && psramFound()) {
+            _pcmDecBuf = (int16_t*)ps_malloc(pcmBytes);
+        }
+#endif
+        if (!_pcmDecBuf) {
+            LOGE("WebRadio", "Failed to allocate PCM decode buffer (%u bytes).", (unsigned)pcmBytes);
+            releaseDecoderStorage();
+            return false;
         }
     }
+
+    if (!_streamBuf) {
+        // Large streaming buffer: PSRAM is strongly preferred, it is only read
+        // sequentially and never from the Core 1 hot path.
+        _streamBufCapacity = 65536; // 64KB (approx 4 seconds of 128kbps audio)
+#if defined(BOARD_HAS_PSRAM)
+        if (psramFound()) {
+            _streamBuf = (uint8_t*)ps_malloc(_streamBufCapacity);
+            if (_streamBuf) {
+                LOGI("WebRadio", "Allocated 64KB stream buffer in PSRAM.");
+            }
+        }
+#endif
+        if (!_streamBuf) {
+            _streamBufCapacity = 16384; // 16KB in internal SRAM
+            _streamBuf = (uint8_t*)malloc(_streamBufCapacity);
+            if (_streamBuf) {
+                LOGI("WebRadio", "Allocated 16KB stream buffer in SRAM.");
+            } else {
+                _streamBufCapacity = 4096;
+                _streamBuf = (uint8_t*)malloc(_streamBufCapacity);
+                if (_streamBuf) {
+                    LOGW("WebRadio", "Fallback: Allocated 4KB stream buffer.");
+                }
+            }
+        }
+        if (!_streamBuf) {
+            _streamBufCapacity = 0;
+            LOGE("WebRadio", "Failed to allocate any stream buffer.");
+            releaseDecoderStorage();
+            return false;
+        }
+    }
+
+    _streamBufLen = 0;
+    _isBuffering = true;
+    return true;
+}
+
+void WebRadioService::releaseDecoderStorage() {
+    if (_mp3d) {
+        heap_caps_free(_mp3d);
+        _mp3d = nullptr;
+    }
+    if (_pcmDecBuf) {
+        heap_caps_free(_pcmDecBuf);
+        _pcmDecBuf = nullptr;
+    }
+    if (_streamBuf) {
+        free(_streamBuf);
+        _streamBuf = nullptr;
+    }
+    _streamBufCapacity = 0;
+    _streamBufLen = 0;
+    _isBuffering = true;
 }
 
 WebRadioService::~WebRadioService() {
@@ -49,10 +128,7 @@ WebRadioService::~WebRadioService() {
         vTaskDelete(_audioTaskHandle);
         _audioTaskHandle = nullptr;
     }
-    if (_streamBuf) {
-        free(_streamBuf);
-        _streamBuf = nullptr;
-    }
+    releaseDecoderStorage();
 }
 
 String WebRadioService::getStationName() {
@@ -65,10 +141,21 @@ String WebRadioService::getStreamUrl() {
     return _streamUrl;
 }
 
-bool WebRadioService::begin() {
-    if (_taskRunning && _audioTaskHandle) return true;
+bool WebRadioService::startWorker() {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    // The previous worker clears _audioTaskHandle only after it has fully released
+    // its buffers, still holding this mutex. Observing a non-null handle therefore
+    // guarantees a live, fully-owning worker and prevents spawning a second one.
+    if (_audioTaskHandle) return true;
+
+    if (!ensureDecoderStorage()) {
+        LOGE("WebRadio", "Cannot start WebRadio: decoder storage unavailable.");
+        return false;
+    }
 
     _taskRunning = true;
+    _idleSinceMs = 0;
     BaseType_t ret = xTaskCreatePinnedToCore(
         audioTaskStatic,
         "WebRadioTask",
@@ -82,19 +169,17 @@ bool WebRadioService::begin() {
     if (ret != pdPASS) {
         LOGE("WebRadio", "Failed to create WebRadio FreeRTOS worker task!");
         _taskRunning = false;
+        _audioTaskHandle = nullptr;
+        releaseDecoderStorage();
         return false;
     }
 
-    LOGI("WebRadio", "WebRadioService initialized with dedicated worker task.");
+    LOGI("WebRadio", "WebRadio worker task started on demand.");
     return true;
 }
 
 bool WebRadioService::play(const String& url, const String& stationName) {
     if (url.isEmpty()) return false;
-
-    if (!_taskRunning || !_audioTaskHandle) {
-        begin();
-    }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -102,6 +187,13 @@ bool WebRadioService::play(const String& url, const String& stationName) {
         _nextStation = stationName.length() > 0 ? stationName : "Web Radio";
         _requestPlay = true;
         _requestStop = false;
+    }
+
+    if (!startWorker()) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _requestPlay = false;
+        LOGE("WebRadio", "Playback request rejected: worker task unavailable.");
+        return false;
     }
 
     LOGI("WebRadio", "Queued playback request for: %s", url.c_str());
@@ -268,7 +360,6 @@ void WebRadioService::extractIcyMetadata() {
 
 void WebRadioService::decodeAndPlayFrames() {
     if (!_streamBuf || _streamBufLen == 0) return;
-
     // 1. WAV / L16 Uncompressed PCM Stream Handling
     if (_isWavStream || (_streamBufLen >= 12 && memcmp(_streamBuf, "RIFF", 4) == 0 && memcmp(_streamBuf + 8, "WAVE", 4) == 0)) {
         _isWavStream = true;
@@ -309,8 +400,9 @@ void WebRadioService::decodeAndPlayFrames() {
     }
 
     // 2. MP3 Compressed Stream Decoding via minimp3
+    if (!_mp3d || !_pcmDecBuf) return;
     while (_streamBufLen >= 128) {
-        int samples = mp3dec_decode_frame(&_mp3d, _streamBuf, _streamBufLen, _pcmDecBuf, &_frameInfo);
+        int samples = mp3dec_decode_frame(_mp3d, _streamBuf, _streamBufLen, _pcmDecBuf, &_frameInfo);
         if (_frameInfo.frame_bytes <= 0) {
             if (_streamBufLen > 512) {
                 memmove(_streamBuf, _streamBuf + 1, _streamBufLen - 1);
@@ -442,7 +534,9 @@ void WebRadioService::audioTaskStatic(void* pvParameters) {
             self->_streamBufLen = 0;
             self->_isWavStream = false;
             self->_wavHeaderParsed = false;
-            mp3dec_init(&self->_mp3d);
+            if (self->_mp3d) {
+                mp3dec_init(self->_mp3d);
+            }
 
             audioHub.requestPlayback(AudioSource::WEBRADIO);
             audioHub.updateStatus(AudioSource::WEBRADIO, PlaybackStatus::STATUS_BUFFERING);
@@ -463,10 +557,38 @@ void WebRadioService::audioTaskStatic(void* pvParameters) {
         // 3. Process active audio stream
         if (self->_isPlaying) {
             self->handleStream();
+            self->_idleSinceMs = 0;
         } else {
             vTaskDelay(pdMS_TO_TICKS(50));
+
+            // Nothing is playing: shut the worker down so the 24 KB stack and every
+            // decoder buffer go back to the system. An idle WebRadioService must own
+            // no memory at all; a later play() call spawns a fresh worker.
+            const uint32_t now = millis();
+            if (self->_idleSinceMs == 0) {
+                self->_idleSinceMs = now;
+            } else if ((now - self->_idleSinceMs) > IDLE_SHUTDOWN_MS) {
+                std::lock_guard<std::mutex> lock(self->_mutex);
+                if (!self->_requestPlay && !self->_isPlaying) {
+                    self->_taskRunning = false;
+                }
+            }
         }
     }
 
+    {
+        // Tear down while holding the mutex so startWorker() can never observe a
+        // partially released worker: _audioTaskHandle is cleared last, and only
+        // once every buffer has been freed.
+        std::lock_guard<std::mutex> lock(self->_mutex);
+        self->closeActiveClient();
+        self->_isPlaying = false;
+        self->_requestStop = false;
+        self->releaseDecoderStorage();
+        self->_taskRunning = false;
+        self->_audioTaskHandle = nullptr;
+    }
+
+    LOGI("WebRadio", "WebRadio worker task stopped; decoder memory released.");
     vTaskDelete(NULL);
 }

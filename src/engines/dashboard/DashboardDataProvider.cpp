@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include "../../core/NetworkBudget.h"
 #include <ArduinoJson.h>
 #include <PNGdec.h>
 #include "../../core/Globals.h"
@@ -390,7 +391,7 @@ void DashboardDataProvider::fetchWeather() {
     float lat = 48.8566f;
     float lon = 2.3522f;
 
-    if (!city.equalsIgnoreCase("Paris")) {
+    if (!city.equalsIgnoreCase("Paris") && NetworkBudget::canStartTlsSession()) {
         WiFiClientSecure geoClient;
         geoClient.setInsecure();
         HTTPClient geoHttp;
@@ -413,6 +414,13 @@ void DashboardDataProvider::fetchWeather() {
             geoHttp.end();
             geoClient.stop();
         }
+    }
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Dashboard", "Skipping weather fetch: internal heap too low (free=%u, largest=%u).",
+             (unsigned)NetworkBudget::freeInternal(),
+             (unsigned)NetworkBudget::largestInternalBlock());
+        return;
     }
 
     WiFiClientSecure metClient;
@@ -540,7 +548,7 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
     }
 
     // If HTTP failed (e.g. proxy redirected or blocked), try https://wsrv.nl fallback
-    if (!success) {
+    if (!success && NetworkBudget::canStartTlsSession()) {
         WiFiClientSecure secureClient;
         secureClient.setInsecure();
         String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
@@ -722,6 +730,18 @@ void DashboardDataProvider::fetchMarkets() {
 
     for (const auto& sym : symbols) {
         if (!m_isActive) break;
+
+        // Abandon the whole round as soon as internal DRAM can no longer sustain a
+        // TLS handshake. Without this, every remaining symbol issued a handshake
+        // that was guaranteed to fail with MBEDTLS_ERR_SSL_ALLOC_FAILED, fragmenting
+        // the heap further and starving the SD/FATFS layer on the same core.
+        if (!NetworkBudget::canStartTlsSession()) {
+            LOGW("Dashboard", "Aborting market fetch: internal heap too low (free=%u, largest=%u). Retrying next cycle.",
+                 (unsigned)NetworkBudget::freeInternal(),
+                 (unsigned)NetworkBudget::largestInternalBlock());
+            break;
+        }
+
         bool itemAdded = false;
 
         // 1. Check Binance (fast crypto API)

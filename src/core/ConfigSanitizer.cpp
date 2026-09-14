@@ -1,14 +1,14 @@
 #include "ConfigSanitizer.h"
 #include "Logger.h"
 
-SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config) {
+SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotationBootstrap) {
     SanitizeResult result;
     
     sanitizeMatrix(config.matrix, result);
     sanitizeSystem(config.system, result);
     sanitizeMqtt(config.mqtt, result);
     sanitizeInstances(config.instances, result);
-    sanitizeRotation(config, result);
+    sanitizeRotation(config, allowRotationBootstrap, result);
 
     if (result.modified) {
         LOGI("ConfigSanitizer", "[CONFIG] In-memory sanitization: %d defaults injected, %d clamped, %d fallbacks, %d invalid instances.",
@@ -291,7 +291,12 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
     }
 }
 
-void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, SanitizeResult& result) {
+void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap, SanitizeResult& result) {
+    // Seeding the rotation from the instance list is a first-boot convenience, never a
+    // repair. Running it on every mutation meant that creating a single screen while the
+    // rotation happened to be empty silently enrolled every other configured screen too.
+    if (!allowBootstrap) return;
+
     if (config.rotation.empty() && !config.instances.empty()) {
         for (const auto& inst : config.instances) {
             const auto* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());

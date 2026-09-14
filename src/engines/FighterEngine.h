@@ -151,13 +151,26 @@ private:
     FighterPlayer p1;            ///< Player 1 (Left)
     FighterPlayer p2;            ///< Player 2 (Right)
 
-    // Background Preloader (Core 0 FreeRTOS task)
+    // Background Preloader (Core 0 FreeRTOS task).
+    //
+    // The loader task is created ONCE and kept alive for the engine's whole
+    // lifetime (mirrors GoogleCastEngine's CastPoll / DashboardDataProvider's
+    // DashFetch: a single long-lived worker parked on a task notification,
+    // never torn down and recreated). Each preload cycle previously spawned a
+    // brand-new 16 KB-stack task via xTaskCreatePinnedToCore and let it
+    // self-delete at the end, which repeatedly grabbed and released a 16 KB
+    // internal-DRAM block on Core 0 - the exact resource mbedTLS needs for a
+    // contiguous TLS handshake buffer. That churn raced with GoogleCast's /
+    // Spotify's own TLS attempts on the same core and was directly responsible
+    // for MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512) failures observed in the field.
     FighterPlayer nextP1;
     FighterPlayer nextP2;
     volatile bool isNextReady = false;
     volatile bool isPreloading = false;
+    volatile bool m_taskShouldExit = false;
     TaskHandle_t loaderTaskHandle = nullptr;
 
+    void startLoaderTaskIfNeeded();
     static void loaderTaskFunc(void* param);
     void runBackgroundPreload();
     void triggerBackgroundPreload();

@@ -346,7 +346,10 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
         }
     }
 
-    SanitizeResult san = ConfigSanitizer::sanitize(*this);
+    // Bootstrap the rotation only when the persisted config never declared one. A config
+    // that explicitly stores "rotation": [] means the user emptied it on purpose, and
+    // re-seeding it on every boot would resurrect screens they had just removed.
+    SanitizeResult san = ConfigSanitizer::sanitize(*this, !doc.containsKey("rotation"));
     bool hadLegacyTopics = false;
     if (doc.containsKey("mqtt")) {
         JsonObjectConst m = doc["mqtt"];
@@ -364,7 +367,11 @@ bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
 }
 
 String ConfigLoader::serializeToJson(bool pretty) const {
-    DynamicJsonDocument doc(32768);
+    // Reuse the persistent scratch document instead of allocating a fresh 32KB
+    // DynamicJsonDocument on every save (see ConfigLoader.h for the fragmentation
+    // rationale). clear() resets content but keeps the already-allocated pool.
+    _jsonScratch.clear();
+    DynamicJsonDocument& doc = _jsonScratch;
 
     JsonObject sysObj = doc.createNestedObject("system");
     sysObj["timezone"] = system.timezone;
@@ -456,7 +463,12 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         if (!sd.exists(path)) return false;
         FsFile f = sd.open(path, FILE_OPEN_READ);
         if (!f) return false;
-        DynamicJsonDocument doc(32768);
+        // Reuse the persistent scratch document (see ConfigLoader.h) instead of a fresh
+        // 32KB allocation. loadFromSD() only ever runs once at boot before any other task
+        // touches config, so there is no concurrency concern with serializeToJson()'s use
+        // of the same buffer.
+        _jsonScratch.clear();
+        DynamicJsonDocument& doc = _jsonScratch;
         DeserializationError error = deserializeJson(doc, f);
         f.close();
         if (error) {
@@ -529,13 +541,22 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     f.flush();
     f.close();
 
-    if (sdMutex) xSemaphoreGive(sdMutex);
-
     if (written >= jsonStr.length()) {
+        if (sdMutex) xSemaphoreGive(sdMutex);
         LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, written);
         return true;
-    } else {
-        LOGE("ConfigLoader", "Incomplete write to %s (%d/%d bytes)", filepath, written, jsonStr.length());
-        return false;
     }
+
+    // A short write leaves a truncated, unparsable config behind. The previous version
+    // is still intact in the .bak file, so roll back to it rather than keeping the
+    // corrupted one: SD writes do fail under memory pressure, and losing the whole
+    // configuration on a transient failure is not acceptable.
+    LOGE("ConfigLoader", "Incomplete write to %s (%d/%d bytes), restoring backup...",
+         filepath, written, jsonStr.length());
+    sd.remove(filepath);
+    if (sd.exists(bakPath.c_str())) {
+        sd.rename(bakPath.c_str(), filepath);
+    }
+    if (sdMutex) xSemaphoreGive(sdMutex);
+    return false;
 }

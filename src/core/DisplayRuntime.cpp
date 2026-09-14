@@ -75,12 +75,38 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
     LOGI("DisplayRuntime", "Reconciled display runtime to config version %u", snapshot.version);
 }
 
-void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
-    // PHASE 1: Resolve target engine
+/**
+ * @brief Reset the Adafruit_GFX text state shared by every engine through the panel object.
+ *
+ * Font, text size and wrap are properties of MatrixPanel_I2S_DMA, not of the engine. Engines such
+ * as WordClock, MessageEngine, DateEngine and ArcadeClock install a custom GFXfont and do not
+ * restore it, and a GFXfont anchors glyphs on their baseline while the built-in font anchors on the
+ * top-left corner. Inheriting a leaked font therefore shifts the next engine's whole layout
+ * upwards. Resetting at every lifecycle boundary removes the entire bug class instead of relying
+ * on each engine to defend itself.
+ */
+void DisplayRuntime::resetSharedTextState() {
+    if (!m_matrixEngine || !m_matrixEngine->getDisplay()) return;
+    auto* display = m_matrixEngine->getDisplay();
+    display->setFont(nullptr);
+    display->setTextSize(1);
+    display->setTextWrap(false);
+}
+
+void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // PHASE 1: Resolve target engine
     IEngine* targetEngine = resolveEngine(decision.engineHandle, decision.sourceId);
 
     // PHASE 2: Validate target (reject transactionally if target is unresolvable)
-    if (!targetEngine) {
+    //
+    // ROTATION is the one source whose engine lifetime is owned by RotationManager, not by the
+    // runtime: getCurrentActiveEngine() legitimately returns nullptr until RotationManager::loop()
+    // has selected its first slot. Rejecting that decision froze the baseline session at boot and
+    // spammed the log, so ROTATION binds lazily instead: the session takes ownership now and the
+    // next update() promotes it to a REPLACE once the engine exists.
+    const bool rotationDeferredBinding =
+        (decision.sourceId == DisplaySourceId::ROTATION) && (m_rotationManager != nullptr);
+
+    if (!targetEngine && !rotationDeferredBinding) {
         LOGW("DisplayRuntime", "Rejecting transition: target engine not found");
         return; // Session and stack remain 100% intact
     }
@@ -111,7 +137,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         m_preemptionStack[m_preemptionDepth++] = PreemptionEntry{
             m_session.engineHandle,
             m_session.sourceId,
-            (m_session.sourceId == DisplaySourceId::ROTATION) ? DisplayPriority::ROTATION : DisplayPriority::ALERT,
+            m_session.priority,
             m_session.requestId,
             m_session.sessionId,
             m_session.startedAtMs,
@@ -126,6 +152,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         
         m_session.sessionId = ++m_sessionCounter;
         m_session.sourceId = decision.sourceId;
+        m_session.priority = decision.priority;
         m_session.engineHandle = decision.engineHandle;
         m_session.requestId = decision.requestId;
         m_session.startedAtMs = millis();
@@ -176,6 +203,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
         // Restore complete parent session snapshot
         m_session.sessionId = parent.sessionId;
         m_session.sourceId = parent.sourceId;
+        m_session.priority = parent.priority;
         m_session.engineHandle = parent.handle;
         m_session.requestId = parent.requestId;
         m_session.startedAtMs = parent.startedAtMs;
@@ -207,6 +235,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {
     }
     m_session.sessionId = ++m_sessionCounter;
     m_session.sourceId = decision.sourceId;
+    m_session.priority = decision.priority;
     m_session.engineHandle = decision.engineHandle;
     m_session.requestId = decision.requestId;
     m_session.startedAtMs = millis();
@@ -241,6 +270,15 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
     }
 
     IEngine* activeEngine = getEngineForSource(decision.sourceId, decision.engineHandle);
+
+    // Adafruit_GFX text state (font, size, wrap) lives on the shared panel object, not on the
+    // engine. WordClock, MessageEngine, DateEngine and ArcadeClock install a custom GFXfont and do
+    // not restore it, and a GFXfont anchors glyphs on their baseline while the built-in font
+    // anchors on the top-left corner. Any engine that does not set a font itself (GNews, Crypto,
+    // Stock) would therefore inherit the leaked one and render its whole layout shifted upwards.
+    // Every font-installing engine re-applies its font inside its own draw path, so resetting once
+    // per frame here is safe and removes the entire bug class at its single point of truth.
+    resetSharedTextState();
 
     if (decision.sourceId != DisplaySourceId::ROTATION && activeEngine != nullptr) {
         if (activeEngine->needsClear()) {

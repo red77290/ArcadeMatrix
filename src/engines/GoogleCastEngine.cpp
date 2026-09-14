@@ -1,5 +1,7 @@
 #include "GoogleCastEngine.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
+#include "../core/SpiRamJsonDocument.h"
 #include "../services/ArtworkService.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -282,11 +284,33 @@ void GoogleCastEngine::pollCastStatus() {
         return;
     }
 
+    // Same admission control as the HTTPS providers: a CastV2 session is still a full
+    // TLS handshake (mbedTLS, ~16KB input record buffer) even though the certificate is
+    // unverified (setInsecure()). Attempting it below the safe internal-DRAM watermark
+    // fails the handshake silently (client.connect() just returns false below, with the
+    // engine otherwise never logging why), which was misread as "Cast device gone quiet"
+    // when it was actually "heap too fragmented to open a TLS socket this round".
+    if (!NetworkBudget::canStartTlsSession()) {
+        static unsigned long lastBudgetWarn = 0;
+        if (now - lastBudgetWarn > 10000) {
+            lastBudgetWarn = now;
+            LOGW("GoogleCast", "Skipping status poll: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
+                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        }
+        return;
+    }
+
     WiFiClientSecure client;
     client.setInsecure();
     client.setTimeout(1200);
 
     if (!client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+        static unsigned long lastConnectWarn = 0;
+        if (now - lastConnectWarn > 10000) {
+            lastConnectWarn = now;
+            LOGW("GoogleCast", "Failed to connect to Cast device %s:%u (was previously silent).",
+                 m_resolvedIp.c_str(), m_resolvedPort);
+        }
         return;
     }
 
@@ -313,7 +337,11 @@ void GoogleCastEngine::pollCastStatus() {
             auto pong = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PONG\"}");
             client.write(pong.data(), pong.size());
         } else if (resp.namespaceUri == "urn:x-cast:com.google.cast.receiver") {
-            DynamicJsonDocument doc(4096);
+            // PSRAM-backed: this poll cycle runs every ~1.5s while the engine is
+            // active, unlike Dashboard's per-minutes refresh. Keeping this buffer
+            // off internal DRAM avoids fragmenting the heap that TLS handshakes
+            // and the WebUI's AsyncWebServer also depend on.
+            SpiRamJsonDocument doc(4096);
             if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
                 if (doc["status"]["volume"].is<JsonObject>()) {
                     volumeLevel = doc["status"]["volume"]["level"] | 0.5f;
@@ -351,7 +379,8 @@ void GoogleCastEngine::pollCastStatus() {
             if (!readCastMessage(client, resp, 600)) break;
 
             if (resp.namespaceUri == "urn:x-cast:com.google.cast.media") {
-                DynamicJsonDocument doc(4096);
+                // PSRAM-backed for the same reason as the receiver-status doc above.
+                SpiRamJsonDocument doc(4096);
                 if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
                     if (doc["status"].is<JsonArray>() && doc["status"].size() > 0) {
                         JsonObject mediaStat = doc["status"][0];

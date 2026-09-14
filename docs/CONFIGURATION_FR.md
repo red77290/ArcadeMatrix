@@ -33,21 +33,21 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 
 | Clé | Type | Description |
 | :--- | :--- | :--- |
-| `width` | `int` | Largeur d'un seul panneau (ex. `64`). |
-| `height` | `int` | Hauteur d'un seul panneau (ex. `32`). |
+| `width` | `int` | Largeur d'un seul panneau (ex. `64` ou `256`). |
+| `height` | `int` | Hauteur d'un seul panneau (ex. `32` ou `64`). |
 | `chain_length` | `int` | Nombre de panneaux chaînés horizontalement. |
-| `mapping` | `String` | Câblage/mapping GPIO (`regular`, `adafruit-hat`, `adafruit-hat-pwm`, ...). |
-| `driver_chip` | `String` | Puce contrôleur (`SHIFTREG`, `FM6126A`). |
+| `driver_chip` | `String` | Puce contrôleur (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Ordre des couleurs (`RGB`, `RBG`, `BGR`, ...). Corrigez ici les couleurs inversées. |
-| `slowdown` | `int` | Ralentissement GPIO (`1`–`4`). Augmentez-le sur Pi 3/4 si vous voyez des artefacts. |
-| `pwm_bits` | `int` | Profondeur des couleurs. Défaut `11` ; baissez à `8` pour économiser du CPU. |
-| `pwm_lsb_nanoseconds` | `int` | Réglage de la largeur d'impulsion LSB (avancé). |
-| `disable_hardware_pulsing` | `bool` | Mettre à `true` pour éviter que le DMA n'affame le Wi-Fi interne (léger scintillement). |
+| `color_depth` | `int` | Profondeur des couleurs (`1`–`8` bits). Défaut `8`. Baissez pour économiser la RAM DMA. |
 | `limit_refresh_rate_hz` | `int` | Limite le taux de rafraîchissement (`0` = illimité). |
-| `row_address_mode` | `int` | Type d'adressage des lignes pour panneaux exotiques (`0` par défaut). |
-| `clk_phase` | `bool` | Inverse le front d'horloge CLK (`false` par défaut pour un alignement standard des colonnes de pixels ; mettre à `true` si la dalle requiert un front inversé). |
-| `latch_blanking` | `int` | Nombre de cycles de masquage de latch (`1`–`4`) pour supprimer le ghosting (lignes fantômes). |
-| `panel_type` | `String` | Chaîne d'initialisation optionnelle du panneau (ex. `FM6126A`), généralement vide. |
+| `row_address_mode` | `int` | Type d'adressage des lignes (`0`: Direct Binaire, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
+| `clk_phase` | `bool` | Inverse le front d'horloge CLK (`false` par défaut ; mettre à `true` si la dalle requiert un front inversé). |
+| `latch_blanking` | `int` | Nombre de cycles de masquage de latch (`0`–`8`) pour supprimer le ghosting (lignes fantômes). |
+| `force_single_buffer` | `bool` | Force un simple buffer DMA pour économiser la SRAM interne (`false` par défaut). |
+| `rotation_offset` | `int` | Décalage physique de montage (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
+| `auto_rotate` | `bool` | Active l'orientation automatique via le gyroscope/IMU embarqué (`true` par défaut). |
+| `rotation_transition` | `String` | Effet visuel de transition (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
+| `rotation_transition_duration_ms` | `int` | Durée de l'effet de transition en millisecondes (défaut `400`). |
 
 > La luminosité de jour en direct **n'est pas** stockée dans ce bloc ; elle est contrôlée à l'exécution depuis la Web UI (curseur du Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). La luminosité de nuit se trouve dans le bloc `system` (§4).
 

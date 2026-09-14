@@ -1,5 +1,7 @@
 #include "SpotifyEngine.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
+#include "../core/SpiRamJsonDocument.h"
 #include "../services/ArtworkService.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -92,6 +94,23 @@ bool SpotifyEngine::refreshAccessToken() {
     if (m_clientId.isEmpty() || m_refreshToken.isEmpty()) return false;
     if (!m_accessToken.isEmpty() && millis() < m_tokenExpiry) return true;
 
+    // Same admission control as the other HTTPS providers (Binance/CoinGecko/Yahoo,
+    // GoogleCast): a WiFiClientSecure handshake needs a contiguous ~16KB internal-DRAM
+    // block even with setInsecure(). Attempting it while fragmented fails silently deep
+    // inside HTTPClient (http.begin()/POST() just return false/-1), which looked
+    // identical to "the refresh token is invalid" or "Spotify stopped answering" from the
+    // engine's perspective, with nothing in the log to tell them apart.
+    if (!NetworkBudget::canStartTlsSession()) {
+        static unsigned long lastBudgetWarn = 0;
+        unsigned long now = millis();
+        if (now - lastBudgetWarn > 10000) {
+            lastBudgetWarn = now;
+            LOGW("Spotify", "Skipping token refresh: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
+                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        }
+        return false;
+    }
+
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;
@@ -110,7 +129,10 @@ bool SpotifyEngine::refreshAccessToken() {
 
     int httpCode = http.POST(postData);
     if (httpCode == 200) {
-        DynamicJsonDocument doc(1024);
+        // PSRAM-backed: refreshAccessToken() can run every poll cycle (~1.5s)
+        // when the cached token is close to expiry, same rationale as the
+        // Cast status docs (see SpiRamJsonDocument.h).
+        SpiRamJsonDocument doc(1024);
         deserializeJson(doc, http.getString());
         m_accessToken = doc["access_token"].as<String>();
         uint32_t expiresIn = doc["expires_in"] | 3600;
@@ -127,6 +149,20 @@ bool SpotifyEngine::refreshAccessToken() {
 
 void SpotifyEngine::pollSpotifyStatus() {
     if (!refreshAccessToken()) return;
+
+    // refreshAccessToken() only opens a TLS session when the cached token actually needs
+    // renewing; on a cache hit this poll's own connect() below is the first (and only)
+    // handshake this round, so it needs its own admission check.
+    if (!NetworkBudget::canStartTlsSession()) {
+        static unsigned long lastBudgetWarn = 0;
+        unsigned long now = millis();
+        if (now - lastBudgetWarn > 10000) {
+            lastBudgetWarn = now;
+            LOGW("Spotify", "Skipping status poll: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
+                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        }
+        return;
+    }
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -150,7 +186,8 @@ void SpotifyEngine::pollSpotifyStatus() {
     }
 
     if (httpCode == 200) {
-        DynamicJsonDocument doc(4096);
+        // PSRAM-backed: this poll cycle runs every ~1.5s while the engine is active.
+        SpiRamJsonDocument doc(4096);
         deserializeJson(doc, http.getString());
 
         m_state.isActive = true;

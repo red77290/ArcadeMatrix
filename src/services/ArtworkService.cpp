@@ -1,5 +1,6 @@
 #include "ArtworkService.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <esp_heap_caps.h>
@@ -77,6 +78,25 @@ static int jpegDrawToBuffer(JPEGDRAW *pDraw) {
 }
 
 static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int targetW, int targetH, bool hasPsram) {
+    // Same admission control as every other WiFiClientSecure caller this session (Cast, Spotify,
+    // the finance providers): album art fetches are triggered every time a track changes - roughly
+    // every 20-30s while Cast/Spotify are active - and stack directly on top of FighterEngine's
+    // ~60KB background preload and the matrix render buffers. That combination was observed
+    // driving free internal DRAM down to 9-12KB in the field, which starves not just this TLS
+    // handshake but the WebServer and mDNS too. Skipping cleanly here (the current art just stays
+    // on screen one cycle longer) is far better than a silent failed handshake competing for the
+    // same scarce memory.
+    if (!NetworkBudget::canStartTlsSession()) {
+        static unsigned long lastBudgetWarn = 0;
+        unsigned long now = millis();
+        if (now - lastBudgetWarn > 10000) {
+            lastBudgetWarn = now;
+            LOGW("ArtworkService", "Skipping artwork download: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
+                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        }
+        return false;
+    }
+
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;

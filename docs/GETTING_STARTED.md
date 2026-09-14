@@ -130,7 +130,7 @@ reformatted from exFAT to FAT32).
 pio test -e esp32dev
 ```
 
-**Important caveat**: `test/test_config/test_config.cpp` is an **on-target** Unity test - it
+**Important caveat**: `test/test_core/test_core.cpp` (like every suite under `test/`) is an **on-target** Unity test - it
 compiles against the real ESP32 Arduino core (`WiFi.h`, `FS.h`, etc.) and must be **uploaded to a
 physical board** to execute (PlatformIO flashes it, then reads pass/fail results back over serial).
 There is currently no hardware-independent ("native"/host) test target for this firmware - see

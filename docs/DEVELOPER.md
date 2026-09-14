@@ -159,8 +159,10 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
    Core 0 submits display requests via `m_displayArbiter.submitRequest(req)`. Core 1 owns the arbiter slots exclusively and drains commands in $O(1)$ without mutex contention.
 4. **Golden Rule #4 — In-Place Hot Reload:**
    In `onConfigChanged()`, update internal variables directly. The instance is **not** destroyed or recreated.
-5. **Golden Rule #5 — Respect Bus Locks:**
-   SD card access must be protected with `sdMutex` when reading streaming assets.
+5. **Golden Rule #5 — Coarse-Grained SD Ownership, Never Per-Read Locking:**
+   `sdMutex` is a **non-recursive** FreeRTOS mutex (`xSemaphoreCreateMutex()`). Take it **once**, around a complete SD transaction (open, directory scan, whole-file read, close), and never inside a callback that the same transaction can re-enter: `AnimatedGIF` invokes its read/seek callbacks synchronously from `gif.open()`, so locking there self-deadlocks.
+   Once a streaming handle is open, it belongs exclusively to Core 1 for the lifetime of the playback session and is read **without** locking, as required by Golden Rule #2.
+   Core 0 producers (HTTP handlers, MQTT) must always use a **bounded** wait (`pdMS_TO_TICKS(...)`) and degrade gracefully. `portMAX_DELAY` on the AsyncTCP task freezes the entire web server.
 6. **Golden Rule #6 — Overlays vs Selectable Engines:**
    - **Selectable Engine:** Replaces the primary framebuffer (e.g. Clock, Weather, GIF, Crypto). Registered in `EngineRegistry` with a descriptor, factory, and canonical `EngineHandle`.
    - **Transverse Overlay:** Composites additively on top of any active display source (e.g. Fighter). Managed exclusively by `OverlayManager`, enabled per rotation slot (`overlays.fighter: true`), never registered in `EngineRegistry`.

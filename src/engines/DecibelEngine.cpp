@@ -60,30 +60,30 @@ void DecibelEngine::updateStatusLevel(float db) {
 uint16_t DecibelEngine::getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float dbVal) {
     if (!matrix) return 0xFFFF;
     if (dbVal < 20.0f) {
-        return matrix->color565(0, 140, 255);   // 🟦 Bleu (0-20 dB) — Calme / Silence
+        return matrix->color565(0, 140, 255);   // Blue (0-20 dB) - Quiet / Silence
     } else if (dbVal < 40.0f) {
-        return matrix->color565(0, 220, 80);    // 🟩 Vert (20-40 dB) — Bruit agréable
+        return matrix->color565(0, 220, 80);    // Green (20-40 dB) - Comfortable noise
     } else if (dbVal < 60.0f) {
-        return matrix->color565(255, 220, 0);   // 🟨 Jaune (40-60 dB) — Bruit tolérable
+        return matrix->color565(255, 220, 0);   // Yellow (40-60 dB) - Tolerable noise
     } else if (dbVal < 80.0f) {
-        return matrix->color565(255, 130, 0);   // 🟧 Orange (60-80 dB) — Bruit fatigant
+        return matrix->color565(255, 130, 0);   // Orange (60-80 dB) - Tiring noise
     } else if (dbVal < 100.0f) {
-        return matrix->color565(255, 30, 30);   // 🟥 Rouge (80-100 dB) — Bruit dangereux
+        return matrix->color565(255, 30, 30);   // Red (80-100 dB) - Harmful noise
     } else {
-        return matrix->color565(180, 0, 255);   // 🟪 Violet (> 100 dB) — Bruit douloureux
+        return matrix->color565(180, 0, 255);   // Purple (> 100 dB) - Painful noise
     }
 }
 
 uint16_t DecibelEngine::getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLevel level) {
     if (!matrix) return 0xFFFF;
     switch (level) {
-        case NOISE_CALM:     return matrix->color565(0, 140, 255);  // 🟦 Bleu (0-20 dB)
-        case NOISE_NORMAL:   return matrix->color565(0, 220, 80);   // 🟩 Vert (20-40 dB)
-        case NOISE_MODERATE: return matrix->color565(255, 220, 0);  // 🟨 Jaune (40-60 dB)
-        case NOISE_VIGILANCE:return matrix->color565(255, 130, 0);  // 🟧 Orange (60-80 dB)
-        case NOISE_LIMIT:    return matrix->color565(255, 30, 30);  // 🟥 Rouge (80-100 dB)
+        case NOISE_CALM:     return matrix->color565(0, 140, 255);  // Blue (0-20 dB)
+        case NOISE_NORMAL:   return matrix->color565(0, 220, 80);   // Green (20-40 dB)
+        case NOISE_MODERATE: return matrix->color565(255, 220, 0);  // Yellow (40-60 dB)
+        case NOISE_VIGILANCE:return matrix->color565(255, 130, 0);  // Orange (60-80 dB)
+        case NOISE_LIMIT:    return matrix->color565(255, 30, 30);  // Red (80-100 dB)
         case NOISE_ALERT:
-        default:             return matrix->color565(180, 0, 255);  // 🟪 Violet (> 100 dB)
+        default:             return matrix->color565(180, 0, 255);  // Purple (> 100 dB)
     }
 }
 

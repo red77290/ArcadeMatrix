@@ -128,13 +128,17 @@ classDiagram
         +bool supports_256x64
         +bool realtime
         +bool interruptible
+        +bool selfPaced
+        +bool allowsOverlay
     }
 
     class EngineRequirements {
         +bool needsPsram
         +bool needsAudio
-        +bool needsMicrophone
-        +bool needsGyro
+        +bool needsTempSensor
+        +bool needsGyroscope
+        +bool needsNetwork
+        +bool needsSd
     }
 
     class ConfigSchema {
@@ -611,12 +615,13 @@ AppRuntime
 | **A $\to$ B $\to$ C $\to$ C timeout**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Depth = 1 |
 | **A $\to$ B $\to$ cancel B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Depth = 0 |
 | **A $\to$ B $\to$ cancel A** | None | `0` (submerged A discarded from stack if expired) | B remains active |
-| **A $\to$ Target Invalide** | Rejet Transactionnel| `0` (transition rejected silently, A intact) | Depth unchanged |
-| **Stack saturée (depth=4) $\to$ Nouvel Alert** | Rejet Transactionnel| `0` (preemption rejected cleanly, top session intact)| Depth = 4 |
-| **Parent non résolvable $\to$ RESUME** | Rejet Transactionnel| `0` (RESUME rejected without corrupting active child)| Child remains active |
-| **REPLACE indépendant sur stack active** | `REPLACE` | `deactivate(All) → activate(New)` | Depth reset to 0 |
-| **Priorité A(10) vs B(5)** | Dominance A | `0` (A stays active) | Depth unchanged |
-| **Priorité A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
+| **A $\to$ unresolvable target** | Transactional rejection | `0` (transition rejected silently, A intact) | Depth unchanged |
+| **ROTATION target not bound yet** | Deferred binding | `0` (session binds to ROTATION, engine attached on a later `update()`) | Depth unchanged |
+| **Saturated stack (depth=4) $\to$ new alert** | Transactional rejection | `0` (preemption rejected cleanly, top session intact)| Depth = 4 |
+| **Unresolvable parent $\to$ RESUME** | Transactional rejection | `0` (RESUME rejected without corrupting active child)| Child remains active |
+| **Independent REPLACE over an active stack** | `REPLACE` | `deactivate(All) → activate(New)` | Depth reset to 0 |
+| **Priority A(10) vs B(5)** | A dominates | `0` (A stays active) | Depth unchanged |
+| **Priority A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Depth increments |
 
 ---
 
@@ -631,13 +636,13 @@ ArcadeMatrix features a comprehensive 3-tier validation pipeline ensuring 100% t
 │ Tier 1: Local PIO    │ Tier 2: QEMU Emulation CI     │ Tier 3: Dual-Target  │
 │ Unit Test Suites     │ Hardware Emulated Execution   │ Compilation          │
 ├──────────────────────┼───────────────────────────────┼──────────────────────┤
-│ • test_core          │ • scripts/run_qemu_tests.py   │ • esp32dev           │
-│ • test_config        │ • ESP32 dual-core bootloader  │ • esp32s3_waveshare  │
+│ • test_api           │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_core          │ • ESP32 dual-core bootloader  │ • esp32s3_waveshare  │
 │ • test_engines       │ • UART Unity test runner      │ • Full static check  │
-│ • test_utils         │ • Zero host device dependency │ • Binary size check  │
-│ • test_matrix        │ • Automated GitHub Actions CI │                      │
+│ • test_hardware      │ • Zero host device dependency │ • Binary size check  │
+│ • test_providers     │ • Automated GitHub Actions CI │                      │
 │ • test_retrofrontend │                               │                      │
-│ • test_spotify       │                               │                      │
+│ • test_utils         │                               │                      │
 └──────────────────────┴───────────────────────────────┴──────────────────────┘
 ```
 

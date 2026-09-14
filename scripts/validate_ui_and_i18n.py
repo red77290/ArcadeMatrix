@@ -9,7 +9,8 @@ Validates:
 4. Issue #24 regression test: Verifies modal creation logic in dynamic_engines.js safely handles engines without primaryField.
 5. Rotation live-sync contract: Verifies updateInstanceRotationState is wired to trash removal and quick add.
 6. MessageEngine smooth scrolling: Verifies continuous delta-time sub-pixel advance in C++ and Rust.
-7. Marquee screen clearance: Verifies matrix fillScreen(0) on module transition and MarqueeEngine::activate().
+7. Hardware & WebUI isolation: Verifies zero ESP32/Raspberry Pi cross-contamination (GEMINI.md invariant 8).
+8. ESP32 WebUI i18n integrity: duplicate-free EN/FR/ES parity in data/index.html, every markup key defined, no RPi key residue.
 """
 
 import os
@@ -45,7 +46,7 @@ def extract_js_dict(js_content, lang):
     return keys
 
 def test_i18n_parity():
-    print("🔍 [1/6] Testing I18n dictionary parity across EN, FR, and ES...")
+    print("🔍 [1/8] Testing I18n dictionary parity across EN, FR, and ES...")
     i18n_path = os.path.join(RPI_ROOT, "api", "www", "js", "i18n.js")
     if not os.path.exists(i18n_path):
         fail(f"i18n.js not found at {i18n_path}")
@@ -71,7 +72,7 @@ def test_i18n_parity():
     pass_step(f"Total keys per dictionary: {len(en_keys)} (EN=FR=ES parity 100%)")
 
 def test_engine_and_field_translations():
-    print("🔍 [2/6] Testing Engine & Field I18n coverage...")
+    print("🔍 [2/8] Testing Engine & Field I18n coverage...")
     i18n_path = os.path.join(RPI_ROOT, "api", "www", "js", "i18n.js")
     dyn_path = os.path.join(RPI_ROOT, "api", "www", "js", "dynamic_engines.js")
     
@@ -108,7 +109,7 @@ def test_engine_and_field_translations():
     pass_step(f"All {len(universal_keys)} universal option keys verified.")
 
 def test_issue24_modal_creation_safety():
-    print("🔍 [3/6] Testing Issue #24 regression: primaryField safe modal creation...")
+    print("🔍 [3/8] Testing Issue #24 regression: primaryField safe modal creation...")
     dyn_path = os.path.join(RPI_ROOT, "api", "www", "js", "dynamic_engines.js")
     index_path = os.path.join(REPO_ROOT, "data", "index.html")
 
@@ -130,7 +131,7 @@ def test_issue24_modal_creation_safety():
     pass_step("Issue #24 verified: primaryField properly scoped and guarded; engines without variants create cleanly.")
 
 def test_rotation_live_sync():
-    print("🔍 [4/6] Testing Rotation Loop Live UI Sync contract...")
+    print("🔍 [4/8] Testing Rotation Loop Live UI Sync contract...")
     dyn_path = os.path.join(RPI_ROOT, "api", "www", "js", "dynamic_engines.js")
     with open(dyn_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -155,7 +156,7 @@ def test_rotation_live_sync():
     pass_step("Rotation Live UI Sync contract verified (trash live sync, add sync, rename sync).")
 
 def test_message_engine_smooth_scrolling():
-    print("🔍 [5/6] Testing MessageEngine smooth continuous scrolling contracts (ESP32 & RPi)...")
+    print("🔍 [5/8] Testing MessageEngine smooth continuous scrolling contracts (ESP32 & RPi)...")
     
     # Check ESP32
     esp32_cpp = os.path.join(REPO_ROOT, "src", "engines", "MessageEngine.cpp")
@@ -186,7 +187,7 @@ def test_message_engine_smooth_scrolling():
     pass_step("MessageEngine continuous delta-time scrolling contract verified on both ESP32 and RPi.")
 
 def test_marquee_screen_clear():
-    print("🔍 [6/6] Testing Marquee and Rotation screen clearance contracts...")
+    print("🔍 [6/8] Testing Marquee and Rotation screen clearance contracts...")
     
     rot_mgr = os.path.join(REPO_ROOT, "src", "core", "RotationManager.cpp")
     with open(rot_mgr, "r", encoding="utf-8") as f:
@@ -202,6 +203,149 @@ def test_marquee_screen_clear():
 
     pass_step("Screen clearance verified: no lingering ghost frames during transitions or marquee activate.")
 
+def test_hardware_isolation():
+    print("🔍 [7/8] Testing Hardware & WebUI Isolation (GEMINI.md Invariant 8)...")
+    
+    esp_html = os.path.join(REPO_ROOT, "data", "index.html")
+    with open(esp_html, "r", encoding="utf-8") as f:
+        esp_content = f.read()
+
+    forbidden_rpi_in_esp = [
+        'id="hw-slowdown"',
+        'id="hw-mapping"',
+        'id="hw-disable-pulsing"',
+        'id="hw-pwm-lsb"',
+        'id="hw-multiplexing"',
+        'Slowdown for fast Pi',
+        'Raspberry Pi 40-Pin GPIO Options',
+    ]
+    for term in forbidden_rpi_in_esp:
+        if term in esp_content:
+            fail(f"RPi hardware term '{term}' found in ESP32 data/index.html! Cross-contamination violation.")
+
+    required_esp_terms = [
+        'id="hw-caps-grid"',
+        'id="hw-screen-rotation"',
+        'id="hw-gyro-autorotate"',
+        'id="btn-gyro-calibrate"',
+        'id="hw-rotation-transition"',
+        'id="hw-transition-duration"',
+        'id="hw-driver-chip"',
+        'id="hw-color-depth"',
+        'id="hw-row-addr-type"',
+        'id="hw-latch-blanking"',
+        'id="hw-clk-phase"',
+        'id="hw-force-single-buffer"',
+        'id="btn-save-hw"',
+    ]
+    for term in required_esp_terms:
+        if term not in esp_content:
+            fail(f"Required ESP32 hardware term '{term}' missing from ESP32 data/index.html!")
+
+    # Check RPi index.html doesn't have ESP32-only terms
+    rpi_html = os.path.join(RPI_ROOT, "api", "www", "index.html")
+    with open(rpi_html, "r", encoding="utf-8") as f:
+        rpi_content = f.read()
+
+    forbidden_esp_in_rpi = [
+        'id="hw-caps-grid"',
+        'id="hw-clk-phase"',
+        'id="hw-force-single-buffer"',
+    ]
+    for term in forbidden_esp_in_rpi:
+        if term in rpi_content:
+            fail(f"ESP32-only term '{term}' found in RPi index.html! Cross-contamination violation.")
+
+    pass_step("Hardware & WebUI isolation verified 100%: zero cross-contamination between ESP32 and RPi.")
+
+def extract_esp32_dicts():
+    """Extract the EN/FR/ES dictionaries embedded in the ESP32 data/index.html.
+
+    Unlike the Raspberry Pi build, the ESP32 WebUI ships as a single self-contained HTML file,
+    so its dictionaries live inside a `const translations = { en: {...}, fr: {...}, es: {...} }`
+    literal rather than in a separate i18n.js module.
+    """
+    esp_html = os.path.join(REPO_ROOT, "data", "index.html")
+    with open(esp_html, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    dicts = {}
+    for lang in ("en", "fr", "es"):
+        match = re.search(r"^\s{2}%s:\s*\{" % lang, content, re.M)
+        if not match:
+            fail(f"Could not extract ESP32 dictionary for language '{lang}' from data/index.html")
+        start = match.end()
+        depth, i = 1, start
+        while i < len(content) and depth:
+            if content[i] == "{":
+                depth += 1
+            elif content[i] == "}":
+                depth -= 1
+            i += 1
+        body = content[start:i - 1]
+        keys = []
+        for line in body.splitlines():
+            line = line.strip()
+            if not line or line.startswith("//"):
+                continue
+            key_match = re.match(r"^([a-zA-Z0-9_]+)\s*:\s*[\"'](.*)[\"'],?$", line)
+            if key_match:
+                keys.append(key_match.group(1))
+        dicts[lang] = keys
+    return content, dicts
+
+
+def test_esp32_i18n_integrity():
+    print("🔍 [8/8] Testing ESP32 WebUI I18n integrity (data/index.html)...")
+    content, dicts = extract_esp32_dicts()
+
+    # 1. No duplicate keys: a shadowed key silently overrides the earlier definition at runtime.
+    for lang, keys in dicts.items():
+        seen, dupes = set(), set()
+        for k in keys:
+            if k in seen:
+                dupes.add(k)
+            seen.add(k)
+        if dupes:
+            fail(f"Duplicate keys in ESP32 '{lang}' dictionary ({len(dupes)}): {sorted(dupes)}")
+
+    en, fr, es = (set(dicts[l]) for l in ("en", "fr", "es"))
+    if not en:
+        fail("No keys found in ESP32 EN dictionary!")
+
+    # 2. Strict EN/FR/ES parity.
+    for label, other in (("FR", fr), ("ES", es)):
+        missing = en - other
+        extra = other - en
+        if missing:
+            fail(f"ESP32 keys present in EN but missing in {label} ({len(missing)}): {sorted(missing)}")
+        if extra:
+            fail(f"ESP32 keys present in {label} but missing in EN ({len(extra)}): {sorted(extra)}")
+
+    # 3. Every key referenced by the markup must exist, otherwise the UI silently falls back to
+    #    the hardcoded English inline text and the FR/ES users see untranslated labels.
+    used = set()
+    for attr in ("data-i18n", "data-i18n-tooltip", "data-i18n-placeholder", "data-i18n-title", "data-i18n-html"):
+        used |= set(re.findall(r'%s="([A-Za-z0-9_]+)"' % attr, content))
+    used |= set(re.findall(r"\bt\(\s*['\"]([A-Za-z0-9_]+)['\"]", content))
+    undefined = used - en
+    if undefined:
+        fail(f"ESP32 markup references {len(undefined)} undefined i18n keys: {sorted(undefined)}")
+
+    # 4. GEMINI.md invariant 8.2: no Raspberry Pi setting may leak into the ESP32 dictionaries.
+    rpi_keys = [
+        "hw_mapping", "hw_slowdown", "hw_multiplexing", "hw_pwm_lsb", "hw_pwm_bits",
+        "hw_disable_pulsing", "tt_hw_mapping", "tt_hw_slowdown", "tt_hw_multiplexing",
+        "tt_hw_pwm_lsb", "tt_hw_pwm_bits", "tt_hw_disable_pulsing",
+    ]
+    leaked = sorted(k for k in rpi_keys if k in en or k in fr or k in es)
+    if leaked:
+        fail(f"Raspberry Pi i18n keys found in ESP32 dictionaries ({len(leaked)}): {leaked}")
+
+    pass_step(f"ESP32 dictionaries verified: {len(en)} keys, EN=FR=ES parity, no duplicates, "
+              f"{len(used)} markup references resolved, zero RPi residue.")
+
+
 def main():
     print("================================================================================")
     print("  ArcadeMatrix UI, I18n & Engine Contract Automated Test Suite")
@@ -212,6 +356,8 @@ def main():
     test_rotation_live_sync()
     test_message_engine_smooth_scrolling()
     test_marquee_screen_clear()
+    test_hardware_isolation()
+    test_esp32_i18n_integrity()
     print("================================================================================")
     print("🎉 ALL UI, I18N AND ENGINE CONTRACT TESTS PASSED!")
     print("================================================================================")

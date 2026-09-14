@@ -39,8 +39,18 @@ void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
 
 FighterEngine::~FighterEngine() {
     if (loaderTaskHandle) {
-        vTaskDelete(loaderTaskHandle);
-        loaderTaskHandle = nullptr;
+        // Ask the persistent worker to exit and wake it, instead of forcibly
+        // deleting it while it may be mid-read (which could leave sdMutex held
+        // forever). Fall back to a forced delete only if it doesn't exit in time.
+        m_taskShouldExit = true;
+        xTaskNotifyGive(loaderTaskHandle);
+        for (int i = 0; i < 50 && loaderTaskHandle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (loaderTaskHandle) {
+            vTaskDelete(loaderTaskHandle);
+            loaderTaskHandle = nullptr;
+        }
     }
     if (fighterOffsets) free(fighterOffsets);
     freeFighter(p1);
@@ -51,6 +61,7 @@ FighterEngine::~FighterEngine() {
 
 void FighterEngine::initialize() {
     loadRoster();
+    startLoaderTaskIfNeeded();
     triggerBackgroundPreload();
 }
 
@@ -90,10 +101,10 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
         FsFile f;
-        if (sd.exists(indexPath)) {
-            f = sd.open(indexPath, FILE_OPEN_READ);
+        if (sd.exists(indexPath.c_str())) {
+            f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
         }
         if (!f) {
             xSemaphoreGive(sdMutex);
@@ -101,32 +112,27 @@ void FighterEngine::loadRoster() {
             return;
         }
         
+        std::vector<uint32_t> offsets;
+        offsets.reserve(1200);
         while (f.available()) {
+            uint32_t pos = f.position();
             String line = f.readStringUntil('\n');
             line.trim();
             if (line.length() > 0 && !isMacJunk(line)) {
-                numAvailableFighters++;
+                offsets.push_back(pos);
             }
         }
-        
+        f.close();
+        xSemaphoreGive(sdMutex);
+
+        numAvailableFighters = (int)offsets.size();
         if (numAvailableFighters > 0) {
             if (fighterOffsets) free(fighterOffsets);
             fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
-            
-            f.seek(0);
-            int idx = 0;
-            while (f.available() && idx < numAvailableFighters) {
-                uint32_t pos = f.position();
-                String line = f.readStringUntil('\n');
-                line.trim();
-                if (line.length() > 0 && !isMacJunk(line)) {
-                    fighterOffsets[idx++] = pos;
-                }
+            if (fighterOffsets) {
+                memcpy(fighterOffsets, offsets.data(), numAvailableFighters * sizeof(uint32_t));
             }
         }
-        
-        f.close();
-        xSemaphoreGive(sdMutex);
     }
     LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
 }
@@ -249,12 +255,10 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            uint8_t sramChunk[1024];
             while (toRead > 0) {
-                size_t chunk = (toRead > sizeof(sramChunk)) ? sizeof(sramChunk) : toRead;
-                size_t r = f.read(sramChunk, chunk);
+                size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
-                memcpy(anim.psramBuffer + offset, sramChunk, r);
                 offset += r;
                 toRead -= r;
             }
@@ -320,15 +324,80 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
     freeAnim(p.animFall);
 }
 
+void FighterEngine::startLoaderTaskIfNeeded() {
+    if (loaderTaskHandle) return;
+
+    // Persistent Core 0 worker, created ONCE for the engine's lifetime and parked
+    // on a task notification between preload cycles (ulTaskNotifyTake), instead of
+    // being spawned via xTaskCreatePinnedToCore and self-deleted on every single
+    // cycle. The previous per-cycle approach repeatedly grabbed and released a
+    // task stack on Core 0 - the exact resource mbedTLS needs for a contiguous
+    // TLS handshake buffer - which raced with GoogleCast's and Spotify's own TLS
+    // attempts on the same core and directly produced MBEDTLS_ERR_SSL_ALLOC_FAILED
+    // (-32512) failures observed in the field.
+    //
+    // IMPORTANT: making this task persistent turns its stack into a PERMANENT
+    // deduction from the internal-DRAM floor for the engine's whole lifetime,
+    // instead of a transient one paid only during a preload. A first attempt at
+    // 16 KB (matching the size that used to be spawned per-cycle) pushed the
+    // system's baseline free heap down to ~44-47 KB - below FighterEngine's own
+    // PRELOAD_MIN_FREE_HEAP gate below - so the gate never passed again and the
+    // overlay silently stopped preloading fights entirely. 10 KB (matching
+    // DashboardDataProvider's own persistent "DashFetch" task) keeps a safety
+    // margin over the 8 KB stack v3.1.0 used successfully with simpler preload
+    // logic, while giving back 6 KB of permanent headroom versus 16 KB.
+    m_taskShouldExit = false;
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 10240, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+        LOGE("FighterEngine", "Failed to spawn persistent preload worker task.");
+        loaderTaskHandle = nullptr;
+    }
+}
+
 void FighterEngine::triggerBackgroundPreload() {
     if (isNextReady || isPreloading || numAvailableFighters < 2) return;
+    if (!loaderTaskHandle) return; // Worker failed to start; nothing to notify.
+
+    // Guard against starting a preload cycle while internal DRAM is critically
+    // low, which could leave the FATFS file object in an inconsistent state and
+    // crash Core 0 inside f_read(). This preload only performs small internal
+    // allocations - a handful of String path/name buffers and a per-animation
+    // frameDelays array (numFrames * 2 bytes, capped at 80 bytes) - the large
+    // per-frame pixel buffers are allocated in PSRAM via heap_caps_malloc(...,
+    // MALLOC_CAP_SPIRAM) in loadFighterAnim(). It therefore does NOT need the
+    // ~56-60 KB / large-contiguous-block budget that TLS handshakes (Cast,
+    // Spotify, Artwork - see NetworkBudget) require; reusing that TLS-sized
+    // threshold here was overly conservative and, combined with the persistent
+    // worker's own permanent stack cost, made this gate unreachable in practice
+    // (observed stable baseline ~54 KB free, never reaching 60 KB). 30 KB keeps
+    // a comfortable multi-KB margin over the actual usage while still tripping
+    // well before real exhaustion.
+    static constexpr uint32_t PRELOAD_MIN_FREE_HEAP = 30 * 1024;
+    static uint32_t lastSkipLogMs = 0;
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < PRELOAD_MIN_FREE_HEAP) {
+        const uint32_t now = millis();
+        if (now - lastSkipLogMs > 30000) {
+            lastSkipLogMs = now;
+            LOGW("FighterEngine", "Skipping background preload: free heap %u < %u bytes required.",
+                 (unsigned)freeHeap, (unsigned)PRELOAD_MIN_FREE_HEAP);
+        }
+        return;
+    }
+
     isPreloading = true;
-    xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 8192, this, 1, &loaderTaskHandle, 0);
+    xTaskNotifyGive(loaderTaskHandle);
 }
 
 void FighterEngine::loaderTaskFunc(void* param) {
     FighterEngine* self = (FighterEngine*)param;
-    self->runBackgroundPreload();
+    while (true) {
+        // Sleep until triggerBackgroundPreload() (or the destructor) wakes us up.
+        // No stack is allocated/freed here across cycles - only the one-time task
+        // creation cost paid by startLoaderTaskIfNeeded().
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (self->m_taskShouldExit) break;
+        self->runBackgroundPreload();
+    }
     self->loaderTaskHandle = nullptr;
     vTaskDelete(NULL);
 }
@@ -337,16 +406,39 @@ void FighterEngine::runBackgroundPreload() {
     freeFighter(nextP1);
     freeFighter(nextP2);
 
-    bool gotP1 = getRandomFighter(nextP1);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    if (!gotP1) {
-        isPreloading = false;
-        return;
-    }
+    auto readFighterLine = [&](FsFile& f, int lineIdx, String& name, int& height, int& ground_y, int& origin_x, int& width_px, int& head_y) -> bool {
+        f.seek(fighterOffsets[lineIdx]);
+        String result = f.readStringUntil('\n');
+        result.trim();
+        int comma1 = result.indexOf(',');
+        int comma2 = result.indexOf(',', comma1 + 1);
+        int comma3 = result.indexOf(',', comma2 + 1);
+        int comma4 = result.indexOf(',', comma3 + 1);
+        int comma5 = result.indexOf(',', comma4 + 1);
+        if (comma1 <= 0) return false;
+        name = result.substring(0, comma1);
+        height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
+        ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
+        origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
+        width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
+        head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
+        return true;
+    };
 
-    int h1 = nextP1.height > 0 ? nextP1.height : ((nextP1.ground_y - nextP1.head_y) > 0 ? (nextP1.ground_y - nextP1.head_y) : 32);
-    bool found = false;
-    
+    // Height actually occupied on screen, i.e. the exact metric the renderer uses to
+    // place a sprite. The index "height" column can disagree with it, so it is only a
+    // last-resort fallback: matching candidates on a different metric than the one
+    // used for drawing is what let visibly mismatched pairs through.
+    auto renderedHeight = [](int ground_y, int head_y, int declaredHeight) -> int {
+        int h = ground_y - head_y;
+        if (h > 0) return h;
+        return declaredHeight > 0 ? declaredHeight : 32;
+    };
+
+    bool gotP1 = false;
+    String dir = getFightersDir();
+    String indexPath = dir + "/index.txt";
+
     struct SimpleMeta {
         String name = "";
         int height = 0;
@@ -357,58 +449,68 @@ void FighterEngine::runBackgroundPreload() {
     } bestMeta, candMeta;
     float bestRatio = 0.0f;
 
-    for (int i = 0; i < 40; i++) {
-        FighterPlayer tempP;
-        if (getRandomFighter(tempP)) {
-            candMeta.name = tempP.name;
-            candMeta.height = tempP.height;
-            candMeta.ground_y = tempP.ground_y;
-            candMeta.head_y = tempP.head_y;
-            candMeta.origin_x = tempP.origin_x;
-            candMeta.width_px = tempP.width_px;
-
-            if (candMeta.name != nextP1.name) {
-                int h2 = candMeta.height > 0 ? candMeta.height : ((candMeta.ground_y - candMeta.head_y) > 0 ? (candMeta.ground_y - candMeta.head_y) : 32);
-                if (h1 > 0 && h2 > 0) {
-                    float ratio = (float)h2 / (float)h1;
-                    // P2 must be same height or up to 20% smaller (never taller than P1)
-                    if (h2 <= h1) {
-                        if (ratio > bestRatio) {
-                            bestRatio = ratio;
-                            bestMeta = candMeta;
-                        }
-                        if (ratio >= 0.80f) {
-                            nextP2.name = candMeta.name;
-                            nextP2.height = candMeta.height;
-                            nextP2.ground_y = candMeta.ground_y;
-                            nextP2.head_y = candMeta.head_y;
-                            nextP2.origin_x = candMeta.origin_x;
-                            nextP2.width_px = candMeta.width_px;
-                            found = true;
+    if (numAvailableFighters > 0 && fighterOffsets) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+            FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+            if (f) {
+                int p1Line = esp_random() % numAvailableFighters;
+                if (readFighterLine(f, p1Line, nextP1.name, nextP1.height, nextP1.ground_y, nextP1.origin_x, nextP1.width_px, nextP1.head_y)) {
+                    gotP1 = true;
+                    int h1 = renderedHeight(nextP1.ground_y, nextP1.head_y, nextP1.height);
+                    for (int i = 0; i < 40; i++) {
+                        int candLine = esp_random() % numAvailableFighters;
+                        if (readFighterLine(f, candLine, candMeta.name, candMeta.height, candMeta.ground_y, candMeta.origin_x, candMeta.width_px, candMeta.head_y)) {
+                            if (candMeta.name != nextP1.name) {
+                                int h2 = renderedHeight(candMeta.ground_y, candMeta.head_y, candMeta.height);
+                                if (h1 > 0 && h2 > 0) {
+                                    // Similarity score in (0,1]; 1.0 means identical
+                                    // heights. Both directions are now acceptable
+                                    // because the ground line is sized for the tallest
+                                    // sprite, so P2 may legitimately be taller than P1.
+                                    float ratio = (h2 <= h1) ? ((float)h2 / (float)h1)
+                                                             : ((float)h1 / (float)h2);
+                                    if (ratio > bestRatio) {
+                                        bestRatio = ratio;
+                                        bestMeta = candMeta;
+                                    }
+                                    if (ratio >= 0.80f) {
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    // Always adopt the best candidate seen. Leaving nextP2 untouched
+                    // made it keep metadata from the previous match, pairing a sprite
+                    // with another fighter's ground/head offsets.
+                    if (bestMeta.name.length() > 0) {
+                        nextP2.name = bestMeta.name;
+                        nextP2.height = bestMeta.height;
+                        nextP2.ground_y = bestMeta.ground_y;
+                        nextP2.head_y = bestMeta.head_y;
+                        nextP2.origin_x = bestMeta.origin_x;
+                        nextP2.width_px = bestMeta.width_px;
+                    } else {
+                        gotP1 = false; // No usable opponent: abort and retry later.
+                    }
                 }
+                f.close();
             }
+            xSemaphoreGive(sdMutex);
         }
-        if (found) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    if (!found && bestMeta.name.length() > 0) {
-        nextP2.name = bestMeta.name;
-        nextP2.height = bestMeta.height;
-        nextP2.ground_y = bestMeta.ground_y;
-        nextP2.head_y = bestMeta.head_y;
-        nextP2.origin_x = bestMeta.origin_x;
-        nextP2.width_px = bestMeta.width_px;
+    if (!gotP1) {
+        isPreloading = false;
+        return;
     }
 
-    String dir = getFightersDir();
     bool ok = true;
 
     auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
         bool res = false;
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
             res = loadFighterAnim(anim, path.c_str());
             xSemaphoreGive(sdMutex);
         }
@@ -583,7 +685,9 @@ struct FighterGeometry {
 
 class FighterGeometryAdapter {
 public:
-    static FighterGeometry calculate(const DisplayGeometry& geometry, bool is32pxDir, int p1HeadY, int p1GroundY, int p1Width, int p2GroundY, int p2Width) {
+    static FighterGeometry calculate(const DisplayGeometry& geometry, bool is32pxDir,
+                                     int p1HeadY, int p1GroundY, int p1Width,
+                                     int p2HeadY, int p2GroundY, int p2Width) {
         FighterGeometry fg;
         int screenW = geometry.width;
         int screenH = geometry.height;
@@ -595,6 +699,7 @@ public:
         } else if (fg.isTate && screenW >= 96 && is32pxDir) {
             fg.scale = screenW / 64;
         }
+        if (fg.scale < 1) fg.scale = 1;
 
         fg.arena = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)screenH };
         fg.hud = Rect{ 0, 0, (uint16_t)screenW, (uint16_t)(fg.isTate ? 14 : 6) };
@@ -604,7 +709,29 @@ public:
             fg.p1SpawnX = -(p1Width * fg.scale);
             fg.p2SpawnX = screenW;
         } else {
-            fg.groundY = 1 - p1HeadY + p1GroundY;
+            // Both fighters share a single ground line. That line is derived from the
+            // TALLEST of the two sprites so that its head always lands just below the
+            // top edge of the panel; the shorter fighter then simply stands on the same
+            // line, lower down. Anchoring on P1 only (the historical behaviour) pushed
+            // P2's head off the top whenever P2 was the taller sprite.
+            //
+            // Sprite height above the ground line is (ground_y - head_y); this is the
+            // exact metric used when drawing, so it is the only safe one to use here.
+            int h1 = p1GroundY - p1HeadY;
+            int h2 = p2GroundY - p2HeadY;
+            int tallest = (h1 > h2) ? h1 : h2;
+            if (tallest < 0) tallest = 0;
+
+            // Exactly one pixel of clearance above the tallest head, at any scale.
+            // groundY is expressed in SCREEN pixels here, just like the TATE branch.
+            //
+            // The resulting ground line is deliberately NOT clamped to the panel
+            // height: when the sprites are taller than the display, the feet must fall
+            // below the bottom edge so the overflow is cropped at the legs. Clamping it
+            // to the bottom of the panel would crop the heads instead, which is never
+            // acceptable.
+            fg.groundY = (int16_t)(1 + tallest * fg.scale);
+
             fg.p1SpawnX = -(p1Width * fg.scale);
             fg.p2SpawnX = screenW;
         }
@@ -619,14 +746,14 @@ void FighterEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
         cachedFightersDir = "";
     }
     bool is32 = getFightersDir().endsWith("32");
-    FighterGeometry fg = FighterGeometryAdapter::calculate(geometry, is32, p1.head_y, p1.ground_y, p1.width_px, p2.ground_y, p2.width_px);
-    if (fg.isTate) {
-        p1.y = fg.groundY - (p1.ground_y * fg.scale);
-        p2.y = fg.groundY - (p2.ground_y * fg.scale);
-    } else {
-        p1.y = (1 - p1.head_y) * fg.scale;
-        p2.y = (fg.groundY - p2.ground_y) * fg.scale;
-    }
+    FighterGeometry fg = FighterGeometryAdapter::calculate(geometry, is32,
+                                                           p1.head_y, p1.ground_y, p1.width_px,
+                                                           p2.head_y, p2.ground_y, p2.width_px);
+    // Symmetric placement: both fighters are anchored by their feet on the shared
+    // ground line, which the adapter already sized for the tallest of the two.
+    // groundY is in screen pixels in both orientations.
+    p1.y = fg.groundY - (p1.ground_y * fg.scale);
+    p2.y = fg.groundY - (p2.ground_y * fg.scale);
 }
 
 void FighterEngine::startFight() {
@@ -651,25 +778,20 @@ void FighterEngine::startFight() {
         geom.layoutClass = DisplayGeometry::classify(screenW, screenH);
 
         bool is32 = loadDir.endsWith("32");
-        FighterGeometry fg = FighterGeometryAdapter::calculate(geom, is32, p1.head_y, p1.ground_y, p1.width_px, p2.ground_y, p2.width_px);
+        FighterGeometry fg = FighterGeometryAdapter::calculate(geom, is32,
+                                                               p1.head_y, p1.ground_y, p1.width_px,
+                                                               p2.head_y, p2.ground_y, p2.width_px);
 
-        if (fg.isTate) {
-            p1.direction = 1;
-            p1.x = fg.p1SpawnX;
-            p1.y = fg.groundY - (p1.ground_y * fg.scale);
+        // Feet of both fighters land on the same ground line, sized for the tallest
+        // sprite so neither head can escape the top of the panel. groundY is in
+        // screen pixels in both orientations.
+        p1.direction = 1;
+        p1.x = fg.p1SpawnX;
+        p1.y = fg.groundY - (p1.ground_y * fg.scale);
 
-            p2.direction = -1;
-            p2.x = fg.p2SpawnX;
-            p2.y = fg.groundY - (p2.ground_y * fg.scale);
-        } else {
-            p1.direction = 1; 
-            p1.x = fg.p1SpawnX; 
-            p1.y = (1 - p1.head_y) * fg.scale;
-            
-            p2.direction = -1; 
-            p2.x = fg.p2SpawnX;
-            p2.y = (fg.groundY - p2.ground_y) * fg.scale;
-        }
+        p2.direction = -1;
+        p2.x = fg.p2SpawnX;
+        p2.y = fg.groundY - (p2.ground_y * fg.scale);
         
         setPlayerState(p1, FIGHTER_WALK);
         setPlayerState(p2, FIGHTER_WALK);
@@ -723,13 +845,26 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             if (p.currentFrameBuffer) {
                 if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
                 else free(p.currentFrameBuffer);
+                p.currentFrameBuffer = nullptr;
+                p.currentBufferSize = 0;
             }
             if (m_hasPsram) {
                 p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
             } else {
-                p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+                // Never drain internal DRAM: it is the only memory mbedTLS can use for its small
+                // handshake allocations, so give up this frame rather than starve the network stack.
+                const size_t INTERNAL_HEAP_HEADROOM = 48 * 1024;
+                size_t freeInternal = ESP.getFreeHeap();
+                if (freeInternal < INTERNAL_HEAP_HEADROOM + (size_t)newSize) {
+                    LOGW("FighterEngine", "Skipping frame buffer of %d bytes: only %u bytes of internal heap left",
+                         newSize, (unsigned)freeInternal);
+                } else {
+                    p.currentFrameBuffer = (uint8_t*)malloc(newSize);
+                }
             }
-            p.currentBufferSize = newSize;
+            // Only advertise the capacity once the allocation actually succeeded, otherwise a later
+            // call with a smaller frame would skip the retry and write through a null pointer.
+            p.currentBufferSize = p.currentFrameBuffer ? newSize : 0;
         }
         if (p.activeFile) {
             if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {

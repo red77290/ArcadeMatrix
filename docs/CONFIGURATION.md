@@ -33,21 +33,21 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `width` | `int` | Width of a single panel (e.g., `64`). |
-| `height` | `int` | Height of a single panel (e.g., `32`). |
+| `width` | `int` | Width of a single panel (e.g., `64` or `256`). |
+| `height` | `int` | Height of a single panel (e.g., `32` or `64`). |
 | `chain_length` | `int` | Number of panels chained horizontally. |
-| `mapping` | `String` | GPIO wiring/mapping (`regular`, `adafruit-hat`, `adafruit-hat-pwm`, ...). |
-| `driver_chip` | `String` | Controller chip (`SHIFTREG`, `FM6126A`). |
+| `driver_chip` | `String` | Controller chip (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Color order (`RGB`, `RBG`, `BGR`, ...). Fix swapped colors here. |
-| `slowdown` | `int` | GPIO slowdown (`1`–`4`). Increase on Pi 3/4 if you see artifacts. |
-| `pwm_bits` | `int` | Color depth. Default `11`; lower to `8` to save CPU. |
-| `pwm_lsb_nanoseconds` | `int` | LSB pulse width tuning (advanced). |
-| `disable_hardware_pulsing` | `bool` | Set `true` to stop DMA starving the internal Wi-Fi (slight flicker). |
+| `color_depth` | `int` | Color depth (`1`–`8` bits). Default `8`. Lower to save DMA RAM. |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
-| `row_address_mode` | `int` | Row addressing type for exotic panels (`0` default). |
-| `clk_phase` | `bool` | Invert CLK clock phase (`false` default for standard pixel alignment; set `true` if your panel requires inverted clock latching). |
-| `latch_blanking` | `int` | Latch blanking cycles (`1`–`4`) for ghosting/phantom line reduction. |
-| `panel_type` | `String` | Optional panel init string (e.g. `FM6126A`), usually empty. |
+| `row_address_mode` | `int` | Row addressing mode (`0`: Direct Binary, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
+| `clk_phase` | `bool` | Invert CLK clock phase (`false` default; set `true` if panel requires inverted clock latching). |
+| `latch_blanking` | `int` | Latch blanking cycles (`0`–`8`) for ghosting/phantom line reduction. |
+| `force_single_buffer` | `bool` | Force single DMA buffer to save internal SRAM (`false` default). |
+| `rotation_offset` | `int` | Mounting orientation offset (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
+| `auto_rotate` | `bool` | Enable automatic display orientation via onboard Gyroscope/IMU (`true` default). |
+| `rotation_transition` | `String` | Visual transition effect (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
+| `rotation_transition_duration_ms` | `int` | Transition effect duration in milliseconds (default `400`). |
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 

@@ -1,8 +1,18 @@
 #include "BinanceProvider.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include <WiFiClientSecure.h>
 
 bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
+    // Refuse the handshake rather than let mbedTLS fail with -32512 and fragment the
+    // internal heap further. A failed attempt still costs allocations, CPU on Core 0
+    // and SD bus time, so retrying blindly makes the starvation worse.
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Binance", "Skipping quote for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        return false;
+    }
+
     String apiSymbol = symbol;
     String quotePair = m_currency;
     quotePair.toUpperCase();
@@ -86,6 +96,11 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
     }
 
     String url = "https://api.binance.com/api/v3/klines?symbol=" + apiSymbol + "&interval=" + String(interval) + "&limit=" + String(limit);
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Binance", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
 
     WiFiClientSecure client;
     client.setInsecure();

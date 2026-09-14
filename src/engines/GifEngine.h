@@ -171,7 +171,21 @@ private:
      * again into "/gifs/gifs").
      */
     static String sanitizePlaylistPath(String p);
+
+    /**
+     * @brief Extract the sub-folder name of a sanitized playlist path, stripped of its orientation
+     * root ("/gifs/" or "/gifs_tate/"). Returns an empty String for orientation roots themselves or
+     * for paths belonging to another asset family (e.g. "/sprites/..."). This is what allows a
+     * playlist configured in one orientation to be resolved symmetrically in the other one.
+     */
+    static String extractPlaylistLeaf(const String& cleanPath);
     static void expandPlaylists(const std::vector<String>& inputPaths, std::vector<String>& outPaths);
+
+    /**
+     * @brief Allocate the scanline canvas in internal SRAM (mandatory: it is accessed pixel-by-pixel
+     * on the Core 1 hot path), falling back to PSRAM only if internal allocation fails.
+     */
+    uint16_t* allocateCanvasBuffer(size_t matrixPixels);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;

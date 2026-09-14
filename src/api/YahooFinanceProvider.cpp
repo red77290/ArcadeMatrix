@@ -1,8 +1,17 @@
 #include "YahooFinanceProvider.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include <WiFiClientSecure.h>
 
 bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
+    // See BinanceProvider::fetchQuote: attempting a handshake without the required
+    // internal DRAM only fragments the heap and starves the SD/FATFS layer.
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Yahoo", "Skipping quote for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        return false;
+    }
+
     String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
     
     WiFiClientSecure client;
@@ -81,6 +90,11 @@ bool YahooFinanceProvider::parsePayload(const String& payload, float& outPrice, 
 
 bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Yahoo", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
 
     const char* range = "1d";
     const char* interval = "5m";
