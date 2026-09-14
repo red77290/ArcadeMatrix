@@ -43,6 +43,9 @@ private:
     String m_resolvedIp = "";
     uint16_t m_resolvedPort = 8009;
     uint32_t m_lastMdnsQuery = 0;
+    uint32_t m_reconnectFailures = 0;
+    uint32_t m_nextReconnectMs = 0;
+    uint32_t m_lastMdnsQueryMs = 0;
     uint32_t m_requestId = 1;
     bool m_showAlbumArt = true;
     bool m_showProgress = true;

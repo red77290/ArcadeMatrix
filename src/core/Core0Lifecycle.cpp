@@ -14,7 +14,7 @@ void Core0LifecycleDispatcher::begin() {
         BaseType_t ret = xTaskCreatePinnedToCore(
             lifecycleTaskFunc,
             "Lifecycle0",
-            4096,
+            3072,
             this,
             1,
             &_lifecycleTaskHandle,

@@ -17,6 +17,7 @@ EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig
 }
 
 void FighterEngine::activate() {
+    startLoaderTaskIfNeeded();
     startFight();
 }
 
@@ -31,6 +32,10 @@ void FighterEngine::render(EngineContext* context) {
 void FighterEngine::deactivate() {
     // Non-blocking state-only transition on Core 1: zero allocation, zero mutex
     active = false;
+    m_taskShouldExit = true;
+    if (loaderTaskHandle) {
+        xTaskNotifyGive(loaderTaskHandle);
+    }
 }
 
 void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
@@ -75,8 +80,6 @@ FighterEngine::~FighterEngine() {
 
 void FighterEngine::initialize() {
     loadRoster();
-    startLoaderTaskIfNeeded();
-    triggerBackgroundPreload();
 }
 
 String FighterEngine::getFightersDir() {
@@ -376,8 +379,9 @@ void FighterEngine::startLoaderTaskIfNeeded() {
     // margin over the 8 KB stack v3.1.0 used successfully with simpler preload
     // logic, while giving back 6 KB of permanent headroom versus 16 KB.
     m_taskShouldExit = false;
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 10240, this, 1, &loaderTaskHandle, 0) != pdPASS) {
-        LOGE("FighterEngine", "Failed to spawn persistent preload worker task.");
+    m_loaderStopped.store(false, std::memory_order_release);
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 5120, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+        LOGE("FighterEngine", "Failed to spawn preload worker task.");
         loaderTaskHandle = nullptr;
     }
 }

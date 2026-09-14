@@ -1,37 +1,32 @@
 #pragma once
 
 #include <Arduino.h>
-#include <esp_heap_caps.h>
 #include <atomic>
+#include <esp_heap_caps.h>
 
 /**
  * @file NetworkBudget.h
  * @brief Internal DRAM admission control for TLS sessions.
  *
- * Every TLS handshake performed through WiFiClientSecure/mbedTLS issues dozens of
- * small allocations. Because the ESP32-S3 SDK is built with
- * CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL = 4096, any allocation of 4 KB or less is
- * served from internal DRAM and can never fall back to PSRAM. Internal DRAM is
- * therefore the scarce resource on this platform, regardless of how much PSRAM is
- * free.
+ * Provides admission thresholds and telemetry for TLS sessions and HTTP transactions.
+ * While mbedTLS dynamic allocations are routed to PSRAM via the PSRAM-first allocator,
+ * network transport buffers (lwIP PCBs, socket tables, AsyncTCP buffers) still require
+ * internal DRAM.
  *
- * When a handshake is attempted below the safe watermark it fails with
- * MBEDTLS_ERR_SSL_ALLOC_FAILED (-0x7F00, reported as -32512) and leaves the heap
- * more fragmented than before. Repeating that for every item of a fetch loop
- * produces the handshake storms observed in the field, and starves concurrent
- * consumers such as the SD/FATFS layer.
- *
- * These helpers let network producers on Core 0 skip a round cleanly instead of
- * hammering a heap that cannot satisfy them.
+ * Safety boundaries:
+ * - Hard safety limit: freeInternal >= 30 KB, largestInternalBlock >= 16896 bytes.
+ * - Healthy target under nominal streaming: freeInternal >= 50 KB.
  */
 namespace NetworkBudget {
 
-/// Empirically validated admission threshold for current ESP32-S3 configuration.
-/// Note: These are measured admission thresholds, not theoretical TLS memory guarantees.
+/// Hard safety admission threshold for internal DRAM.
 static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 30u * 1024u; // 30,720 bytes
 
 /// Contiguous allocation watermark to satisfy the 16 KB mbedTLS input record buffer.
 static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
+
+/// Healthy operation target for internal DRAM with active stream.
+static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
 
 /**
  * @brief Returns the total free internal DRAM in bytes.
@@ -76,8 +71,8 @@ inline std::atomic<uint32_t>& getTlsDeniedCount() {
 /**
  * @brief Tells whether a TLS handshake may reasonably be attempted right now.
  *
- * Checks both the total free internal DRAM, largest contiguous block, and DMA-capable
- * heap for hardware SHA acceleration (esp-sha buffer allocation).
+ * Checks both the total free internal DRAM, largest contiguous block, and
+ * DMA-capable heap for hardware SHA acceleration (esp-sha buffer allocation).
  *
  * @return true when there is enough internal DRAM and DMA headroom for a TLS session.
  */
@@ -101,6 +96,20 @@ inline bool canStartTlsSession() {
         }
     }
     return admitted;
+}
+
+/**
+ * @brief Architectural gate for plain HTTP connections.
+ * Plain HTTP does not allocate mbedTLS context, consuming only ~1.5 KB DRAM.
+ */
+inline bool acquireHttp() {
+    return true;
+}
+
+/**
+ * @brief Releases plain HTTP connection reservation.
+ */
+inline void releaseHttp() {
 }
 
 } // namespace NetworkBudget

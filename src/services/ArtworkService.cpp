@@ -2,13 +2,16 @@
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_heap_caps.h>
 
 ArtworkService artworkService;
 
 ArtworkService::ArtworkService()
-    : _bitmapBuffer(nullptr), _width(0), _height(0), _hasPsram(false) {
+    : _activeBitmapBuffer(nullptr), _retiredBitmapBuffer(nullptr),
+      _width(0), _height(0), _generation(0), _hasPsram(false) {
     _hasPsram = psramFound();
 }
 
@@ -18,14 +21,32 @@ ArtworkService::~ArtworkService() {
 
 void ArtworkService::clear() {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (_bitmapBuffer) {
-        free(_bitmapBuffer);
-        _bitmapBuffer = nullptr;
+    if (_activeBitmapBuffer) {
+        free(_activeBitmapBuffer);
+        _activeBitmapBuffer = nullptr;
+    }
+    if (_retiredBitmapBuffer) {
+        free(_retiredBitmapBuffer);
+        _retiredBitmapBuffer = nullptr;
     }
     _width = 0;
     _height = 0;
     _currentArtworkId = "";
     _currentUrl = "";
+    _generation++;
+}
+
+String ArtworkService::normalizeArtworkUrl(const String& url) {
+    if (url.isEmpty()) return "";
+    if (url.startsWith("https://")) {
+        int hostStart = 8;
+        int hostEnd = url.indexOf('/', hostStart);
+        String host = (hostEnd != -1) ? url.substring(hostStart, hostEnd) : url.substring(hostStart);
+        if (host.endsWith("googleusercontent.com") || host.endsWith("ggpht.com")) {
+            return "http://" + url.substring(8);
+        }
+    }
+    return url;
 }
 
 #include <PNGdec.h>
@@ -77,43 +98,69 @@ static int jpegDrawToBuffer(JPEGDRAW *pDraw) {
     return 1;
 }
 
-static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int targetW, int targetH, bool hasPsram) {
-    // Same admission control as every other WiFiClientSecure caller this session (Cast, Spotify,
-    // the finance providers): album art fetches are triggered every time a track changes - roughly
-    // every 20-30s while Cast/Spotify are active - and stack directly on top of FighterEngine's
-    // ~60KB background preload and the matrix render buffers. That combination was observed
-    // driving free internal DRAM down to 9-12KB in the field, which starves not just this TLS
-    // handshake but the WebServer and mDNS too. Skipping cleanly here (the current art just stays
-    // on screen one cycle longer) is far better than a silent failed handshake competing for the
-    // same scarce memory.
-    if (!NetworkBudget::canStartTlsSession()) {
-        static unsigned long lastBudgetWarn = 0;
-        unsigned long now = millis();
-        if (now - lastBudgetWarn > 10000) {
-            lastBudgetWarn = now;
-            LOGW("ArtworkService", "Skipping artwork download: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
-                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        }
+static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int targetW, int targetH, bool hasPsram, int redirectDepth = 0) {
+    if (redirectDepth > 3) {
+        LOGW("ArtworkService", "Exceeded max redirects (3) for %s", downloadUrl.c_str());
         return false;
     }
 
-    WiFiClientSecure client;
-    client.setInsecure();
+    const bool isHttps = downloadUrl.startsWith("https://");
+
+    if (isHttps) {
+        if (!NetworkBudget::canStartTlsSession()) {
+            LOGW("ArtworkService", "Skipping HTTPS artwork: insufficient internal DRAM for TLS session.");
+            return false;
+        }
+    } else {
+        NetworkBudget::acquireHttp();
+    }
+
     HTTPClient http;
     http.setTimeout(4000);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS); // Explicit redirect handling
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-    if (!http.begin(client, downloadUrl)) {
+    bool beginOk = false;
+    WiFiClient plainClient;
+    WiFiClientSecure secureClient;
+
+    if (isHttps) {
+        secureClient.setInsecure();
+        beginOk = http.begin(secureClient, downloadUrl);
+    } else {
+        beginOk = http.begin(plainClient, downloadUrl);
+    }
+
+    if (!beginOk) {
         LOGW("ArtworkService", "HTTP begin failed for URL: %s", downloadUrl.c_str());
+        if (!isHttps) NetworkBudget::releaseHttp();
         return false;
     }
 
     int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK && httpCode != HTTP_CODE_MOVED_PERMANENTLY) {
+
+    // Check for HTTP Redirection (3xx)
+    if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND ||
+        httpCode == HTTP_CODE_SEE_OTHER || httpCode == HTTP_CODE_TEMPORARY_REDIRECT) {
+        String newUrl = http.getLocation();
+        http.end();
+        if (isHttps) secureClient.stop();
+        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
+
+        if (newUrl.isEmpty()) {
+            LOGW("ArtworkService", "Redirect with empty Location header for %s", downloadUrl.c_str());
+            return false;
+        }
+
+        LOGI("ArtworkService", "Redirect (%d) -> %s", httpCode, newUrl.c_str());
+        return fetchAndDecode(newUrl, targetBuf, targetW, targetH, hasPsram, redirectDepth + 1);
+    }
+
+    if (httpCode != HTTP_CODE_OK) {
         LOGW("ArtworkService", "HTTP GET failed with code: %d for %s", httpCode, downloadUrl.c_str());
         http.end();
-        client.stop();
+        if (isHttps) secureClient.stop();
+        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
         return false;
     }
 
@@ -125,7 +172,8 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
     if (!imgData) {
         LOGE("ArtworkService", "Failed to allocate download buffer (%u bytes)", (unsigned)maxAlloc);
         http.end();
-        client.stop();
+        if (isHttps) secureClient.stop();
+        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
         return false;
     }
 
@@ -146,7 +194,8 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
         }
     }
     http.end();
-    client.stop();
+    if (isHttps) secureClient.stop();
+    else { plainClient.stop(); NetworkBudget::releaseHttp(); }
 
     if (bytesRead < 10) {
         LOGW("ArtworkService", "Image download was empty or too small (%u bytes) for %s", (unsigned)bytesRead, downloadUrl.c_str());
@@ -154,7 +203,7 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
         return false;
     }
 
-    // Decode image into RGB565 bitmap buffer
+    // Decode image into RGB565 bitmap buffer in PSRAM
     s_targetBuf = targetBuf;
     s_targetW = targetW;
     s_targetH = targetH;
@@ -197,80 +246,85 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
 String ArtworkService::loadArtwork(const String& url, int targetWidth, int targetHeight) {
     if (url.isEmpty()) return "";
 
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (url == _currentUrl && !_currentArtworkId.isEmpty()) {
-        return _currentArtworkId; // Cache hit
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (url == _currentUrl && !_currentArtworkId.isEmpty()) {
+            return _currentArtworkId; // Cache hit
+        }
     }
 
     _hasPsram = psramFound();
     if (WiFi.status() != WL_CONNECTED) return "";
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        static unsigned long lastBudgetWarn = 0;
-        unsigned long now = millis();
-        if (now - lastBudgetWarn > 10000) {
-            lastBudgetWarn = now;
-            LOGW("ArtworkService", "Skipping artwork download: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
-                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        }
+    String effectiveUrl = normalizeArtworkUrl(url);
+
+    size_t bufSize = targetWidth * targetHeight * sizeof(uint16_t);
+    uint16_t* newBitmapBuffer = nullptr;
+    if (_hasPsram) {
+        newBitmapBuffer = (uint16_t*)heap_caps_malloc(bufSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    } else {
+        newBitmapBuffer = (uint16_t*)malloc(bufSize);
+    }
+
+    if (!newBitmapBuffer) {
+        LOGE("ArtworkService", "Failed to allocate %u bytes for new artwork buffer!", (unsigned)bufSize);
         return "";
     }
+    memset(newBitmapBuffer, 0, bufSize);
 
-    _currentUrl = url;
-    _width = targetWidth;
-    _height = targetHeight;
+    LOGI("ArtworkService", "Fetching album cover: %s (direct %s, %dx%d)",
+         effectiveUrl.c_str(), effectiveUrl.startsWith("https://") ? "HTTPS" : "HTTP", targetWidth, targetHeight);
 
-    size_t bufSize = _width * _height * sizeof(uint16_t);
-    if (!_bitmapBuffer) {
-        if (_hasPsram) {
-            _bitmapBuffer = (uint16_t*)heap_caps_malloc(bufSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        } else {
-            _bitmapBuffer = (uint16_t*)malloc(bufSize);
-        }
-    }
-
-    if (!_bitmapBuffer) {
-        LOGE("ArtworkService", "Failed to allocate %u bytes for artwork buffer!", (unsigned)bufSize);
-        return "";
-    }
-    memset(_bitmapBuffer, 0, bufSize);
-
-    // 1. Build wsrv.nl proxy URL for downscaling to target dimensions
-    String proxyUrl = url;
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-        if (!url.startsWith("https://wsrv.nl/")) {
-            proxyUrl = "https://wsrv.nl/?url=" + url + "&w=" + String(_width) + "&h=" + String(_height) + "&fit=cover&output=png";
-        }
-    }
-
-    LOGI("ArtworkService", "Downloading album cover (resized %dx%d via wsrv.nl proxy)", _width, _height);
-    bool decoded = fetchAndDecode(proxyUrl, _bitmapBuffer, _width, _height, _hasPsram);
-
-    // 2. If proxy fails, try direct URL
-    if (!decoded && proxyUrl != url) {
-        LOGW("ArtworkService", "wsrv.nl proxy failed, trying direct URL: %s", url.c_str());
-        decoded = fetchAndDecode(url, _bitmapBuffer, _width, _height, _hasPsram);
-    }
+    bool decoded = fetchAndDecode(effectiveUrl, newBitmapBuffer, targetWidth, targetHeight, _hasPsram);
 
     if (!decoded) {
-        LOGW("ArtworkService", "Failed to decode image from URL: %s", url.c_str());
+        LOGW("ArtworkService", "Failed to decode image from URL: %s", effectiveUrl.c_str());
+        free(newBitmapBuffer);
         return "";
     }
 
-    // Generate unique artwork ID
-    _currentArtworkId = "art_" + String(millis());
-    LOGI("ArtworkService", "Album artwork loaded successfully (ID: %s, %dx%d)", _currentArtworkId.c_str(), _width, _height);
-    return _currentArtworkId;
+    // Publish new snapshot generation and retire previous buffer
+    String newId = "art_" + String(millis());
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_retiredBitmapBuffer) {
+            free(_retiredBitmapBuffer);
+            _retiredBitmapBuffer = nullptr;
+        }
+        _retiredBitmapBuffer = _activeBitmapBuffer;
+        _activeBitmapBuffer = newBitmapBuffer;
+        _width = targetWidth;
+        _height = targetHeight;
+        _currentUrl = url;
+        _currentArtworkId = newId;
+        _generation++;
+    }
+
+    LOGI("ArtworkService", "Album artwork published successfully (ID: %s, gen: %u, %dx%d)",
+         newId.c_str(), _generation, targetWidth, targetHeight);
+    return newId;
+}
+
+ArtworkSnapshot ArtworkService::getSnapshot() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    ArtworkSnapshot snap;
+    snap.bitmap = _activeBitmapBuffer;
+    snap.width = _width;
+    snap.height = _height;
+    snap.stride = _width;
+    snap.generation = _generation;
+    snap.artworkId = _currentArtworkId;
+    return snap;
 }
 
 const uint16_t* ArtworkService::getArtworkBitmap(const String& artworkId, int& width, int& height) {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (artworkId.isEmpty() || artworkId != _currentArtworkId || !_bitmapBuffer) {
+    if (artworkId.isEmpty() || artworkId != _currentArtworkId || !_activeBitmapBuffer) {
         width = 0;
         height = 0;
         return nullptr;
     }
     width = _width;
     height = _height;
-    return _bitmapBuffer;
+    return _activeBitmapBuffer;
 }

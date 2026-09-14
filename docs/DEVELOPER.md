@@ -183,6 +183,11 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
     - Never run parallel recovery watchdogs across cores.
     - If Core 1 detects hardware peripheral anomalies (e.g. ES7210 digital zero freeze), Core 1 evaluates lock-free in $O(1)$ and signals an atomic flag.
     - Recovery (I2C re-initialization) is executed exclusively on Core 0 with bounded rate-limiting/cooldown (3000 ms), completely isolated from the Core 1 audio rendering hot-path.
+11. **Golden Rule #11 — PSRAM-First Allocation for mbedTLS & Internal DRAM Preservation:**
+    - On ESP32-S3 boards equipped with PSRAM, mbedTLS dynamic heap allocations (SSL contexts, certificates, session keys, record buffers) MUST be routed to PSRAM via the custom runtime hook `mbedtls_platform_set_calloc_free()`, reserving internal DRAM for real-time networking (WiFi, lwIP, AsyncTCP, DMA).
+    - Hard admission boundary: `NetworkBudget::canStartTlsSession()` requires `freeInternal >= 30 KB` and `largestInternalBlock >= 16896 bytes`. Healthy operational target is `freeInternal >= 50 KB`.
+    - Every allocation is tracked via `MbedTlsAllocHeader` (16 bytes, 8-byte aligned) with lock-free atomic telemetry (`allocCount`, `psramBytesCurrent`, `internalBytesCurrent`, `fallbackCount`, `peakPsramBytes`).
+    - *Security Note:* mTLS/TLS sensitive material may reside in external PSRAM. On ESP32-S2/S3, this is an accepted and documented configuration when platform external-memory protection and PSRAM encryption requirements are satisfied.
 
 ---
 

@@ -242,7 +242,7 @@ EngineError GoogleCastEngine::initialize(EngineContext* context, const EngineCon
         BaseType_t ret = xTaskCreatePinnedToCore(
             pollTaskStatic,
             "CastPoll",
-            8192,
+            4096,
             this,
             1,
             &m_pollTaskHandle,
@@ -336,8 +336,8 @@ void GoogleCastEngine::pollCastStatus() {
 
     // Discover device via mDNS only if we don't have a resolved IP yet
     if (m_resolvedIp.isEmpty()) {
-        if (now - m_lastMdnsQuery >= 15000UL) {
-            m_lastMdnsQuery = now;
+        if (m_lastMdnsQueryMs == 0 || (now - m_lastMdnsQueryMs >= 300000UL)) {
+            m_lastMdnsQueryMs = now;
             discoverDevice();
         }
         return;
@@ -345,8 +345,7 @@ void GoogleCastEngine::pollCastStatus() {
 
     // 1. Establish or recover persistent TLS connection if not connected
     if (!m_client.connected()) {
-        // Enforce cooldown between reconnect attempts to avoid socket exhaustion (lwIP TIME_WAIT accumulation)
-        if (now - m_lastConnectAttemptMs < 15000) {
+        if (now < m_nextReconnectMs) {
             return;
         }
         m_lastConnectAttemptMs = now;
@@ -361,6 +360,7 @@ void GoogleCastEngine::pollCastStatus() {
         if (!NetworkBudget::canStartTlsSession()) {
             LOGW("GoogleCast", "[TLS Telemetry] pre: free=%u, largest=%u, dma=%u, largestDma=%u | result=REJECTED_BY_BUDGET",
                  preFree, preLargest, preFreeDma, preLargestDma);
+            m_nextReconnectMs = now + 5000;
             return;
         }
 
@@ -377,19 +377,31 @@ void GoogleCastEngine::pollCastStatus() {
                  preFree, preLargest, preFreeDma, preLargestDma,
                  postFree, postLargest, postFreeDma, postLargestDma);
             m_client.stop();
-            m_lastConnectAttemptMs = millis(); // Enforce full backoff after handshake failure
+
+            m_reconnectFailures++;
+            uint32_t backoffSec = 5;
+            if (m_reconnectFailures == 2) backoffSec = 10;
+            else if (m_reconnectFailures == 3) backoffSec = 20;
+            else if (m_reconnectFailures >= 4) backoffSec = 60;
+            m_nextReconnectMs = now + (backoffSec * 1000UL);
+
             static unsigned long lastConnectWarn = 0;
             if (now - lastConnectWarn > 10000) {
                 lastConnectWarn = now;
-                LOGW("GoogleCast", "Failed to connect to Cast device %s:%u.",
-                     m_resolvedIp.c_str(), m_resolvedPort);
+                LOGW("GoogleCast", "Failed to connect to Cast device %s:%u (attempt #%u, backoff %us).",
+                     m_resolvedIp.c_str(), m_resolvedPort, m_reconnectFailures, backoffSec);
             }
-            // If mDNS IP fails repeatedly for > 60s and user hasn't hardcoded an IP, rediscover
-            if (m_deviceIp.isEmpty() && now - m_lastMdnsQuery > 60000UL) {
+            // If cached endpoint fails repeatedly (>= 5 failures) and cooldown expired (>= 300s) and user hasn't hardcoded an IP
+            if (m_deviceIp.isEmpty() && m_reconnectFailures >= 5 && (now - m_lastMdnsQueryMs >= 300000UL)) {
+                m_lastMdnsQueryMs = now;
+                LOGI("GoogleCast", "Cached endpoint failed repeatedly (%u times); scheduling mDNS refresh.", m_reconnectFailures);
                 m_resolvedIp = "";
             }
             return;
         }
+
+        m_reconnectFailures = 0;
+        m_nextReconnectMs = 0;
 
         const uint32_t postFree = NetworkBudget::freeInternal();
         const uint32_t postLargest = NetworkBudget::largestInternalBlock();
@@ -730,14 +742,11 @@ void GoogleCastEngine::render(EngineContext* context) {
 
         display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(40, 40, 50));
 
-        if (!m_artworkId.isEmpty()) {
-            int artW = 0, artH = 0;
-            const uint16_t* artBmp = artworkService.getArtworkBitmap(m_artworkId, artW, artH);
-            if (artBmp && artW > 0 && artH > 0) {
-                int drawW = min(imgSize, artW);
-                int drawH = min(imgSize, artH);
-                display->drawRGBBitmap(imgX, imgY, artBmp, drawW, drawH);
-            }
+        ArtworkSnapshot snap = artworkService.getSnapshot();
+        if (snap.bitmap && snap.width > 0 && snap.height > 0) {
+            int drawW = min(imgSize, snap.width);
+            int drawH = min(imgSize, snap.height);
+            display->drawRGBBitmap(imgX, imgY, snap.bitmap, drawW, drawH);
         }
         textX = imgX + imgSize + 4;
     }

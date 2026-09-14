@@ -2,6 +2,7 @@
 #include "AudioOutputHAL.h"
 #include "GyroHAL.h"
 #include "../core/Logger.h"
+#include "../core/MbedTlsAllocator.h"
 #include "../services/FFT64.h"
 #include <driver/i2s.h>
 #include <math.h>
@@ -183,6 +184,7 @@ void HardwareHAL::begin() {
         _capabilities.psramBytes = 0;
     }
     _capabilities.audio.psram = _capabilities.hasPsram;
+    initMbedTlsPsramAllocator();
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     _capabilities.profile = HwProfile::WAVESHARE_S3;
