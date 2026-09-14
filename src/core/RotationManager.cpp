@@ -1,5 +1,6 @@
 #include "../../include/core/EngineRegistry.h"
 #include "RotationManager.h"
+#include "DisplayRuntime.h"
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
@@ -49,13 +50,49 @@ void RotationManager::queueAction(RotationAction action, const String& instanceI
     pendingActions.push_back({action, instanceId});
 }
 
+void RotationManager::retireEngineSlot(size_t slotIndex) {
+    if (slotIndex >= MAX_ACTIVE_ENGINES || !activeEngines[slotIndex].engine) return;
+
+    IEngine* eng = activeEngines[slotIndex].engine.get();
+    char instId[32];
+    strncpy(instId, activeEngines[slotIndex].instanceId, sizeof(instId));
+    instId[sizeof(instId) - 1] = '\0';
+
+    // Release Barrier Step 1: stop / deactivate (state-only, non-blocking on Core 1)
+    eng->deactivate();
+
+    // Release Barrier Step 2: clear currentActiveInstanceId if matching
+    if (instId[0] != '\0' && strcmp(currentActiveInstanceId, instId) == 0) {
+        currentActiveInstanceId[0] = '\0';
+    }
+
+    // Release Barrier Step 3: purge all references from DisplayRuntime (session activeEngine & preemption stack)
+    if (m_displayRuntime) {
+        m_displayRuntime->purgeEngineReferences(eng, instId);
+    }
+
+    // Release Barrier Step 4: mark engine state as CORE1_RELEASED
+    eng->setResourceState(EngineResourceState::CORE1_RELEASED);
+
+    // Release Barrier Step 5: sever local instanceId immediately (never findable again by findActiveEngine)
+    activeEngines[slotIndex].instanceId[0] = '\0';
+
+    // Release Barrier Step 6: MOVE unique_ptr to retirement queue
+    LOGI("RotationManager", "Retiring engine at %p (inst='%s') for Core 0 lifecycle destruction", eng, instId);
+    if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[slotIndex].engine))) {
+        activeEngines[slotIndex].pendingRetirement = false;
+    } else {
+        LOGW("RotationManager", "Retirement queue full; retaining engine at %p in pending-retirement slot to retry", eng);
+        activeEngines[slotIndex].pendingRetirement = true;
+    }
+}
+
 void RotationManager::processPendingActions() {
     // 1. Retry retirement for any slots previously kept in pendingRetirement due to a full queue
     for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
         if (activeEngines[i].pendingRetirement && activeEngines[i].engine) {
             if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[i].engine))) {
                 activeEngines[i].pendingRetirement = false;
-                activeEngines[i].instanceId[0] = '\0';
                 LOGI("RotationManager", "Successfully retired pending engine on retry");
             }
         }
@@ -84,18 +121,7 @@ void RotationManager::processPendingActions() {
         } else if (p.first == RotationAction::RECREATE_INSTANCE) {
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.second.c_str(), sizeof(activeEngines[i].instanceId)) == 0) {
-                    if (strcmp(currentActiveInstanceId, p.second.c_str()) == 0) {
-                        activeEngines[i].engine->deactivate();
-                        currentActiveInstanceId[0] = '\0';
-                    }
-                    LOGI("RotationManager", "Retiring instance %s for Core 0 lifecycle destruction", p.second.c_str());
-                    if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[i].engine))) {
-                        activeEngines[i].instanceId[0] = '\0';
-                        activeEngines[i].pendingRetirement = false;
-                    } else {
-                        LOGW("RotationManager", "Retirement queue full; retaining instance %s in pending-retirement state to retry", p.second.c_str());
-                        activeEngines[i].pendingRetirement = true;
-                    }
+                    retireEngineSlot(i);
                     break;
                 }
             }
@@ -105,7 +131,7 @@ void RotationManager::processPendingActions() {
 
             // Prune and retire any active engines that are no longer in the rotation sequence
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
-                if (activeEngines[i].engine) {
+                if (activeEngines[i].engine && activeEngines[i].instanceId[0] != '\0') {
                     bool stillInRotation = false;
                     for (const auto& entry : guard->rotation) {
                         if (entry.instance_id == activeEngines[i].instanceId) {
@@ -115,17 +141,7 @@ void RotationManager::processPendingActions() {
                     }
                     if (!stillInRotation) {
                         LOGI("RotationManager", "Pruning deactivated engine '%s' (removed from rotation)", activeEngines[i].instanceId);
-                        if (strcmp(currentActiveInstanceId, activeEngines[i].instanceId) == 0) {
-                            activeEngines[i].engine->deactivate();
-                            currentActiveInstanceId[0] = '\0';
-                        }
-                        if (Core0LifecycleDispatcher::instance().retire(std::move(activeEngines[i].engine))) {
-                            activeEngines[i].instanceId[0] = '\0';
-                            activeEngines[i].pendingRetirement = false;
-                        } else {
-                            LOGW("RotationManager", "Retirement queue full; retaining instance %s in pending-retirement state to retry", activeEngines[i].instanceId);
-                            activeEngines[i].pendingRetirement = true;
-                        }
+                        retireEngineSlot(i);
                     }
                 }
             }

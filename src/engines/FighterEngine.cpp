@@ -1,9 +1,9 @@
 #include "../core/SDUtils.h"
 #include "FighterEngine.h"
 #include <ArduinoJson.h>
-#include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
+#include "../core/SdLockGuard.h"
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -200,6 +200,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) return false;
     if (m_hasPsram && ESP.getFreePsram() < 1048576) return false;
 
+    SdLockGuard sdGuard(pdMS_TO_TICKS(3000));
+    if (!sdGuard) {
+        LOGW("FighterEngine", "Could not acquire sdMutex for %s (timeout)", filepath);
+        return false;
+    }
+
     if (!sd.exists(filepath)) return false;
     
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
@@ -313,6 +319,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     }
     
     f.close();
+    sdGuard.unlock();
     anim.loaded = true;
     return true;
 }
@@ -333,12 +340,8 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 
 void FighterEngine::freeFighter(FighterPlayer& p) {
     if (p.activeFile) {
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            p.activeFile.close();
-            xSemaphoreGive(sdMutex);
-        } else {
-            p.activeFile.close();
-        }
+        SdLockGuard guard(pdMS_TO_TICKS(1000));
+        p.activeFile.close();
     }
     if (p.currentFrameBuffer) {
         if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
@@ -688,9 +691,11 @@ void FighterEngine::computeStandBounds(FighterPlayer& p) {
         }
     } else {
         String path = anim.filepath;
-        if (path.length() > 0 && sd.exists(path.c_str())) {
-            FsFile f = sd.open(path.c_str(), O_RDONLY);
-            if (f) {
+        if (path.length() > 0) {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard && sd.exists(path.c_str())) {
+                FsFile f = sd.open(path.c_str(), O_RDONLY);
+                if (f) {
                 f.seek(anim.pixelsOffset);
                 int minX = anim.width;
                 int maxX = -1;
@@ -718,15 +723,12 @@ void FighterEngine::computeStandBounds(FighterPlayer& p) {
         }
     }
 }
+}
 
 static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
     if (dest.activeFile) {
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            dest.activeFile.close();
-            xSemaphoreGive(sdMutex);
-        } else {
-            dest.activeFile.close();
-        }
+        SdLockGuard guard(pdMS_TO_TICKS(1000));
+        dest.activeFile.close();
     }
 
     dest.name = src.name;
@@ -962,14 +964,8 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             p.currentBufferSize = p.currentFrameBuffer ? newSize : 0;
         }
         if (p.activeFile) {
-            if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                p.activeFile.close();
-                xSemaphoreGive(sdMutex);
-            }
-        }
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            p.activeFile = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
-            xSemaphoreGive(sdMutex);
+            SdLockGuard guard(pdMS_TO_TICKS(500));
+            p.activeFile.close();
         }
     }
 }
@@ -1197,13 +1193,17 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
         ptr = anim->psramBuffer + (p.currentFrame * frameSize);
     } else {
         if (p.currentFrame != anim->cachedFrameIndex) {
-            if (p.activeFile && p.currentFrameBuffer) {
+            if (p.currentFrameBuffer && anim->filepath.length() > 0) {
                 uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    p.activeFile.seek(offset);
-                    p.activeFile.read(p.currentFrameBuffer, frameSize);
-                    xSemaphoreGive(sdMutex);
-                    anim->cachedFrameIndex = p.currentFrame;
+                SdLockGuard guard(pdMS_TO_TICKS(100));
+                if (guard) {
+                    FsFile f = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
+                    if (f) {
+                        f.seek(offset);
+                        f.read(p.currentFrameBuffer, frameSize);
+                        f.close();
+                        anim->cachedFrameIndex = p.currentFrame;
+                    }
                 }
             } else {
                 return;

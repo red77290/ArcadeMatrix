@@ -1,4 +1,5 @@
 #include "BitmapFontLoader.h"
+#include "SdLockGuard.h"
 
 // "AMF1" read as a little-endian uint32.
 static const uint32_t AMFONT_MAGIC = 0x31464D41;
@@ -25,6 +26,12 @@ void BitmapFontLoader::unload() {
 
 bool BitmapFontLoader::loadFromSD(const char* path) {
     unload();
+
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) {
+        Serial.printf("BitmapFontLoader: failed to acquire sdMutex for %s\n", path);
+        return false;
+    }
 
     FsFile f = sd.open(path, FILE_OPEN_READ);
     if (!f) {

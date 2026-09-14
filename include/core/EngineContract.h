@@ -252,9 +252,12 @@ public:
  *     │ (Core 1 non-blocking deactivate)
  *     ▼
  *   DEACTIVATING
- *     │ (Core 1 handoff via EngineRetirementQueue)
+ *     │ (Core 1 severs all pointers: currentActiveInstanceId, RenderSession, PreemptionStack, Overlays)
  *     ▼
- *   STOPPING_TASKS (Core 0 worker)
+ *   CORE1_RELEASED
+ *     │ (Core 1 handoff via EngineRetirementQueue: Move-Only unique_ptr)
+ *     ▼
+ *   STOPPING_TASKS (Core 0 worker: shutdownForDestruction())
  *     ├── timeout ──► QUARANTINED (Safe leak > UAF: kept alive in bounded pool)
  *     ▼
  *   RELEASING_RESOURCES (Core 0: close sockets, free DMA, clear buffers)
@@ -265,6 +268,7 @@ enum class EngineResourceState : uint8_t {
     UNINITIALIZED,       ///< Constructed but initialize() not yet called
     ACTIVE,              ///< Currently rendering / active on display
     DEACTIVATING,        ///< Non-blocking state transition out of active display (Core 1)
+    CORE1_RELEASED,      ///< Release barrier crossed: no Core-1-owned state contains or can dereference engine pointer
     STOPPING_TASKS,      ///< Requesting background tasks to cooperatively terminate on Core 0
     QUARANTINED,         ///< Worker task failed to stop within timeout; kept alive safely (no UAF)
     RELEASING_RESOURCES, ///< Tasks stopped; releasing sockets, DMA, large buffers on Core 0
@@ -355,6 +359,12 @@ public:
      *        Defaults to true. Returns false for self-buffering / delta-frame engines (e.g. GifEngine).
      */
     virtual bool needsClear() const { return true; }
+
+    virtual EngineResourceState getResourceState() const { return _resourceState; }
+    virtual void setResourceState(EngineResourceState state) { _resourceState = state; }
+
+protected:
+    EngineResourceState _resourceState = EngineResourceState::UNINITIALIZED;
 };
 
 // =======================================================

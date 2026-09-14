@@ -13,6 +13,12 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
         return false;
     }
 
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Binance", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
+        return false;
+    }
+
     String apiSymbol = symbol;
     String quotePair = m_currency;
     quotePair.toUpperCase();
@@ -99,6 +105,12 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
 
     if (!NetworkBudget::canStartTlsSession()) {
         LOGW("Binance", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Binance", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
         return false;
     }
 

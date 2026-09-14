@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "../core/Globals.h"
+#include "../core/NetworkBudget.h"
 #include "core/BuildInfo.h"
 #include "../core/Logger.h"
 
@@ -119,6 +120,15 @@ bool MarqueeEngine::downloadUrlViaProxy(const String& targetUrl, const String& d
     }
 
     if (!success) {
+        if (!NetworkBudget::canStartTlsSession()) {
+            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: insufficient internal DRAM for TLS session.");
+            return false;
+        }
+        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+        if (!tlsLock) {
+            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: another TLS handshake is in progress.");
+            return false;
+        }
         WiFiClientSecure secureClient;
         secureClient.setInsecure();
         String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";

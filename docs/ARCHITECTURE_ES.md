@@ -276,6 +276,14 @@ El audio en segundo plano continúa sonando incluso si un mensaje prioritario to
 - **Núcleo 0:** Tareas asíncronas (Web, Audio, Sensores, Análisis FFT).
 - **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual.
 
+### Estrategia TLS / mbedTLS: 100% SRAM Interna, Nunca PSRAM
+
+Una iteración anterior enrutaba las asignaciones dinámicas de mbedTLS a la PSRAM mediante un hook `mbedtls_platform_set_calloc_free()` personalizado, buscando liberar la SRAM interna para el DMA de la pantalla. **Las pruebas en hardware real demostraron que esto corrompe la pantalla**: el framebuffer HUB75 también reside en PSRAM en esta placa, y los búferes de registro TLS de mbedTLS (~32 KB) compiten por la misma caché PSRAM que el motor GDMA de HUB75, apagando la pantalla en segundos. Este allocador (`MbedTlsAllocator`) fue **revertido y eliminado**; mbedTLS vuelve a usar el allocador estándar 100% SRAM interna, igual que en `v3.1.0`.
+
+La integridad de la pantalla tiene prioridad estricta sobre la fiabilidad TLS. Como mitigación, cada punto de conexión TLS del firmware (Dashboard, Crypto, Bolsa, Spotify, Google Cast, Artwork, GNews, etc.) ahora serializa su negociación TLS mediante un mutex global (`NetworkBudget::ScopedTlsHandshakeLock`), de forma que solo una negociación TLS puede estar en curso a la vez en todo el sistema, acotando la demanda pico de SRAM interna. El umbral de admisión (`freeInternal >= 30 KB`, `largestInternalBlock >= 16896 bytes`) se revalida de forma atómica dentro del propio bloqueo, justo después de adquirirlo, para cerrar una posible condición de carrera TOCTOU entre la verificación de presupuesto y la adquisición del mutex.
+
+**Problema conocido, aún no resuelto:** tras unos minutos de actividad (especialmente con `Dashboard` activo), la SRAM interna libre se fragmenta hasta un umbral donde `canStartTlsSession()` deniega la admisión indefinidamente, incluso aunque el descubrimiento mDNS de Google Cast funcione correctamente — esto se percibe como "Google Cast no conecta / no muestra nada". No hay caída ni corrupción de pantalla (degradación aceptada), pero la fragmentación subyacente de memoria sigue sin resolverse.
+
 ---
 
 ## 15. Regulación de Cuadros y Doble Búfer DMA

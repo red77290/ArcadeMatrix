@@ -372,6 +372,16 @@ void DashboardDataProvider::updateWorldTimes(const String& clocks) {
 void DashboardDataProvider::fetchWeather() {
     if (WiFi.status() != WL_CONNECTED) return;
 
+    // Serialize the whole weather fetch (geocode + forecast, both TLS) against every other TLS
+    // user in the system. See BinanceProvider.cpp / HardwareHAL::begin() for why: mbedTLS's
+    // ~32KB combined record buffers must stay in internal DRAM only on this board (PSRAM would
+    // corrupt the HUB75 display), so overlapping handshakes compound peak internal DRAM demand.
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Dashboard", "Skipping weather fetch: another TLS handshake is in progress.");
+        return;
+    }
+
     String apiKey = m_weatherApiKey;
     String city = m_weatherCity.isEmpty() ? "Paris" : m_weatherCity;
     String lang = m_config.lang;
@@ -557,6 +567,11 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
 
     // If HTTP failed (e.g. proxy redirected or blocked), try https://wsrv.nl fallback
     if (!success && NetworkBudget::canStartTlsSession()) {
+        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+        if (!tlsLock) {
+            LOGW("Dashboard", "Skipping HTTPS icon fallback: another TLS handshake is in progress.");
+            return false;
+        }
         WiFiClientSecure secureClient;
         secureClient.setInsecure();
         String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
@@ -755,25 +770,32 @@ void DashboardDataProvider::fetchMarkets() {
         String fetchedImgUrl = "";
 
         // 1. Check Binance (fast crypto API)
-        WiFiClientSecure binanceClient;
-        binanceClient.setInsecure();
-        HTTPClient http;
-        http.setTimeout(2500);
-        String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
-        
-        if (http.begin(binanceClient, url)) {
-            int code = http.GET();
-            if (code == 200) {
-                DynamicJsonDocument doc(1024);
-                if (deserializeJson(doc, http.getStream()) == DeserializationError::Ok) {
-                    fetchedPrice = doc["lastPrice"].as<float>();
-                    fetchedChange = doc["priceChangePercent"].as<float>();
-                    fetchSuccess = true;
+        {
+            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+            if (!tlsLock) {
+                LOGW("Dashboard", "Skipping Binance quote for %s: another TLS handshake is in progress.", sym.c_str());
+            } else {
+                WiFiClientSecure binanceClient;
+                binanceClient.setInsecure();
+                HTTPClient http;
+                http.setTimeout(2500);
+                String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
+
+                if (http.begin(binanceClient, url)) {
+                    int code = http.GET();
+                    if (code == 200) {
+                        DynamicJsonDocument doc(1024);
+                        if (deserializeJson(doc, http.getStream()) == DeserializationError::Ok) {
+                            fetchedPrice = doc["lastPrice"].as<float>();
+                            fetchedChange = doc["priceChangePercent"].as<float>();
+                            fetchSuccess = true;
+                        }
+                    }
+                    http.end();
                 }
+                binanceClient.stop();
             }
-            http.end();
         }
-        binanceClient.stop();
 
         // 2. Check Yahoo Finance (Stocks & other Cryptos)
         if (!fetchSuccess && m_isActive) {

@@ -1,6 +1,7 @@
 #include "ArtworkService.h"
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
+#include <memory>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
@@ -106,9 +107,19 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
 
     const bool isHttps = downloadUrl.startsWith("https://");
 
+    std::unique_ptr<NetworkBudget::ScopedTlsHandshakeLock> tlsLock;
     if (isHttps) {
         if (!NetworkBudget::canStartTlsSession()) {
             LOGW("ArtworkService", "Skipping HTTPS artwork: insufficient internal DRAM for TLS session.");
+            return false;
+        }
+        // Serialize against every other TLS user (Dashboard, Cast, Spotify, etc.) -- see
+        // HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only on this board.
+        // Explicitly unlocked (tlsLock.reset()) before the recursive redirect call below,
+        // since the mutex is not recursive/re-entrant.
+        tlsLock.reset(new NetworkBudget::ScopedTlsHandshakeLock());
+        if (!*tlsLock) {
+            LOGW("ArtworkService", "Skipping HTTPS artwork: another TLS handshake is in progress.");
             return false;
         }
     } else {
@@ -153,6 +164,7 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
         }
 
         LOGI("ArtworkService", "Redirect (%d) -> %s", httpCode, newUrl.c_str());
+        tlsLock.reset(); // Release before recursing: the handshake mutex is not re-entrant.
         return fetchAndDecode(newUrl, targetBuf, targetW, targetH, hasPsram, redirectDepth + 1);
     }
 

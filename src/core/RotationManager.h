@@ -11,6 +11,8 @@
 #include <memory>
 #include <mutex>
 
+class DisplayRuntime;
+
 enum class RotationAction {
     NOTIFY_CONFIG_CHANGED,
     RECREATE_INSTANCE,
@@ -49,6 +51,7 @@ public:
 
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
+    void setDisplayRuntime(DisplayRuntime* dr) { m_displayRuntime = dr; }
     
     /**
      * Hot-path lookup.
@@ -84,6 +87,7 @@ private:
     void processPendingActions();
 
     AppEngineContext* m_ctx = nullptr;
+    DisplayRuntime* m_displayRuntime = nullptr;
     std::array<ActiveEngineSlot, MAX_ACTIVE_ENGINES> activeEngines{};
     
     size_t currentIndex = 0;
@@ -93,4 +97,5 @@ private:
     char currentActiveInstanceId[32]{0};
 
     void switchToModule(int index);
+    void retireEngineSlot(size_t slotIndex);
 };

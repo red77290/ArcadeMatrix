@@ -96,6 +96,13 @@ public:
     void transitionSession(const DisplayDecision& decision);
 
     /**
+     * @brief Release Barrier hook: purges any Core 1 references to an engine being retired.
+     * Guarantees that neither m_session.activeEngine nor any entry in m_preemptionStack
+     * retains a dangling pointer before the engine is destroyed on Core 0.
+     */
+    void purgeEngineReferences(IEngine* engine, const char* instanceId);
+
+    /**
      * @brief Reset the Adafruit_GFX text state (font, size, wrap) shared through the panel object.
      *
      * Called at every engine lifecycle boundary so that an engine which installs a custom GFXfont

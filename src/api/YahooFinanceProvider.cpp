@@ -12,6 +12,17 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
         return false;
     }
 
+    // Serialize this handshake against every other TLS user in the system (Dashboard weather,
+    // Cast, artwork, etc.). mbedTLS's ~32KB combined record buffers must come from internal DRAM
+    // only on this board (see HardwareHAL::begin() comment); overlapping handshakes compound peak
+    // internal DRAM demand and are the main reason isolated MBEDTLS_ERR_SSL_ALLOC_FAILED failures
+    // happen even when canStartTlsSession() was satisfied moments earlier.
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Yahoo", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
+        return false;
+    }
+
     String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
     
     WiFiClientSecure client;
@@ -93,6 +104,12 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
 
     if (!NetworkBudget::canStartTlsSession()) {
         LOGW("Yahoo", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Yahoo", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
         return false;
     }
 

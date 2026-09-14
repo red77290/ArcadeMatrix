@@ -3,6 +3,33 @@
 #include "../../core/I18n.h"
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
+namespace {
+// Core 1 render() runs every frame; localizing/uppercasing the weather description on every
+// call allocates a heap String each time (Arduino String type), which fragments the heap over
+// long uptimes and eventually crashes. Cache the resolved, truncated label in a fixed buffer and
+// only recompute it when the underlying raw description or language actually changes (i.e. on
+// the ~10 min weather refresh cadence), keeping the hot render path allocation-free.
+const char* getCachedOutdoorLabel(const String& rawDescription, Lang lang) {
+    static String s_lastRaw;
+    static Lang s_lastLang = static_cast<Lang>(-1);
+    static char s_labelBuf[9] = {0};
+    static bool s_initialized = false;
+
+    if (!s_initialized || s_lastLang != lang || s_lastRaw != rawDescription) {
+        String desc = I18n::getWeatherCondition(rawDescription, lang);
+        if (desc.isEmpty()) desc = I18n::getOutdoorLabel(lang);
+        desc.toUpperCase();
+        strncpy(s_labelBuf, desc.substring(0, 8).c_str(), sizeof(s_labelBuf) - 1);
+        s_labelBuf[sizeof(s_labelBuf) - 1] = '\0';
+        s_lastRaw = rawDescription;
+        s_lastLang = lang;
+        s_initialized = true;
+    }
+
+    return s_labelBuf;
+}
+} // namespace
+
 void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
     if (!matrix || rect.width < 14 || rect.height < 8) return;
 
@@ -27,10 +54,7 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
         snprintf(outBuf, sizeof(outBuf), "%.1f\xF8%s", outT, useFahrenheit ? "F" : "C");
         drawClippedString(matrix, outBuf, rect.x + 14, rect.y + 3, minX, maxX, minY, maxY, theme.primary);
 
-        String desc = I18n::getWeatherCondition(weather.description, l);
-        if (desc.isEmpty()) desc = I18n::getOutdoorLabel(l);
-        desc.toUpperCase();
-        drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, rect.y + 13, minX, maxX, minY, maxY, theme.textDim);
+        drawClippedString(matrix, getCachedOutdoorLabel(weather.description, l), rect.x + 3, rect.y + 13, minX, maxX, minY, maxY, theme.textDim);
 
         // Subtle divider
         int divY = rect.y + 23;
@@ -117,10 +141,7 @@ void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
 
                 int descY = rect.y + 13 + offsetY;
                 if (descY < maxY - 6 && descY >= minY) {
-                    String desc = I18n::getWeatherCondition(weather.description, l);
-                    if (desc.isEmpty()) desc = I18n::getOutdoorLabel(l);
-                    desc.toUpperCase();
-                    drawClippedString(matrix, desc.substring(0, 8), rect.x + 3, descY, minX, maxX, minY, maxY, theme.textDim);
+                    drawClippedString(matrix, getCachedOutdoorLabel(weather.description, l), rect.x + 3, descY, minX, maxX, minY, maxY, theme.textDim);
                 }
             } else if (indoor.valid) {
                 drawMiniIndoorIcon(matrix, rect.x + 2, iconY, minX, maxX, minY, maxY, theme.accent);

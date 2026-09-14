@@ -111,6 +111,12 @@ bool SpotifyEngine::refreshAccessToken() {
         return false;
     }
 
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Spotify", "Skipping token refresh: another TLS handshake is in progress.");
+        return false;
+    }
+
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;
@@ -161,6 +167,12 @@ void SpotifyEngine::pollSpotifyStatus() {
             LOGW("Spotify", "Skipping status poll: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
                  (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
         }
+        return;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Spotify", "Skipping status poll: another TLS handshake is in progress.");
         return;
     }
 

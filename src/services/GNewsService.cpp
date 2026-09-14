@@ -1,6 +1,7 @@
 #include "GNewsService.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
+#include "../core/NetworkBudget.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -467,6 +468,19 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
 
     String targetCat = cats[_catRoundRobinIdx % cats.size()];
     _catRoundRobinIdx = (_catRoundRobinIdx + 1) % cats.size();
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("GNewsService", "Skipping news fetch: insufficient internal DRAM for a TLS session.");
+        return;
+    }
+    // Held across the whole key-failover loop below (sequential, non-recursive handshakes
+    // against the same host) -- see HardwareHAL::begin() for why mbedTLS must stay
+    // internal-DRAM-only and all TLS handshakes must be serialized system-wide.
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("GNewsService", "Skipping news fetch: another TLS handshake is in progress.");
+        return;
+    }
 
     WiFiClientSecure client;
     client.setInsecure();

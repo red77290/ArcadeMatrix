@@ -364,6 +364,15 @@ void GoogleCastEngine::pollCastStatus() {
             return;
         }
 
+        // Serialize this (rare, reconnect-only) handshake against every other TLS user in
+        // the system -- see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only.
+        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+        if (!tlsLock) {
+            LOGW("GoogleCast", "Skipping reconnect: another TLS handshake is in progress.");
+            m_nextReconnectMs = now + 2000;
+            return;
+        }
+
         m_client.stop();
         m_client.setInsecure();
 

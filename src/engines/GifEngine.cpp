@@ -397,16 +397,23 @@ bool GifEngine::decodePng(const char* filepath) {
     // comment in GifEngine.h for why this isn't a permanent value member.
     if (!png) png = new PNG();
 
+    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        LOGE("GifEngine", "Failed to acquire sdMutex for %s", filepath);
+        return false;
+    }
+
     // PNGdec has no concept of animation: decode the whole image once, directly onto the
     // matrix (via PNGDrawCallback -> matrix->drawPixel), then just leave it on screen. loop()
     // only needs to track pngShowStartTime to know when to advance/loop - see loop()/GifEngine.h.
     int rc = png->open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.open() failed for %s (rc=%d)", filepath, rc);
+        xSemaphoreGive(sdMutex);
         return false;
     }
     rc = png->decode((void*)this, 0);
     png->close();
+    xSemaphoreGive(sdMutex);
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.decode() failed for %s (rc=%d)", filepath, rc);
         return false;

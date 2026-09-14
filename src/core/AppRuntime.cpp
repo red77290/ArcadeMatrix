@@ -206,6 +206,13 @@ void AppRuntime::initialize() {
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
+    // NOTE: begin() does NOT re-probe the gyroscope (that's HardwareHAL's job); it only
+    // captures the Adafruit_GFX display pointer and reads its real width()/height() to seed
+    // _geometry. Without this call, _display stays nullptr forever, applyGeometryAndNotify()
+    // silently no-ops on every subsequent call, and _geometry stays stuck at its
+    // default-constructed 64x32 for the entire session -- causing every geometry-aware engine
+    // (e.g. Dashboard) to lay out for a tiny 64x32 canvas instead of the real panel size.
+    displayOrientationManager.begin(matrixEngine.getDisplay());
     displayOrientationManager.setRotationOffset(snapshot.matrix.rotation_offset);
     displayOrientationManager.setTransitionEffect(snapshot.matrix.rotation_transition);
     displayOrientationManager.setTransitionDuration(snapshot.matrix.rotation_transition_duration_ms);

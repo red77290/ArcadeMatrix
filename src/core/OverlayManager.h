@@ -67,6 +67,7 @@ public:
             }
             if (!globalEnabled && _fighterOverlay) {
                 LOGI("OverlayManager", "Retiring FighterEngine overlay for Core 0 lifecycle destruction...");
+                _fighterOverlay->setResourceState(EngineResourceState::CORE1_RELEASED);
                 Core0LifecycleDispatcher::instance().retire(std::move(_fighterOverlay));
             }
         }

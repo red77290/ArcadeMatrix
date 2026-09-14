@@ -2,6 +2,7 @@
 #include "../hal/HardwareHAL.h"
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
+#include "../core/SdLockGuard.h"
 #include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
@@ -123,54 +124,68 @@ void StockEngine::fetchQuote(const String& symbol) {
         safeName.toLowerCase();
         String sdPath = "/stock_icons/" + safeName + ".png";
         
-        if (!sd.exists(sdPath)) {
-            HTTPClient httpImg;
-            WiFiClient imgClient;
-            String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
-            httpImg.setTimeout(5000);
-            if (httpImg.begin(imgClient, proxyUrl)) {
-                int code = httpImg.GET();
-                if (code == 200) {
-                    if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
-                    FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
-                    if (f) {
-                        httpImg.writeToStream(&f);
-                        f.close();
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard && !sd.exists(sdPath)) {
+                guard.unlock();
+                HTTPClient httpImg;
+                WiFiClient imgClient;
+                String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
+                httpImg.setTimeout(5000);
+                if (httpImg.begin(imgClient, proxyUrl)) {
+                    int code = httpImg.GET();
+                    if (code == 200) {
+                        SdLockGuard writeGuard(pdMS_TO_TICKS(1500));
+                        if (writeGuard) {
+                            if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
+                            FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
+                            if (f) {
+                                httpImg.writeToStream(&f);
+                                f.close();
+                            }
+                        }
                     }
+                    httpImg.end();
                 }
-                httpImg.end();
             }
         }
         
         // Load into RAM
-        if (sd.exists(sdPath)) {
-            FsFile f = sd.open(sdPath, FILE_OPEN_READ);
-            if (f) {
-                size_t size = f.size();
-                uint8_t* buf = (uint8_t*)malloc(size);
-                if (buf) {
-                    f.read(buf, size);
-                    f.close();
-                    
-                    memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
-                    currentDecodeBuffer = cache.iconPixels;
-                    
-                    PNG* png = new PNG();
-                    pngPtr = png;
-                    int rc = png->openRAM(buf, size, pngDraw);
-                    if (rc == PNG_SUCCESS) {
-                        png->decode((void*)this, 0);
-                        cache.hasIcon = true;
+        size_t size = 0;
+        uint8_t* buf = nullptr;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard && sd.exists(sdPath)) {
+                FsFile f = sd.open(sdPath, FILE_OPEN_READ);
+                if (f) {
+                    size = f.size();
+                    if (size > 0 && size <= 16384) {
+                        buf = (uint8_t*)malloc(size);
+                        if (buf) {
+                            f.read(buf, size);
+                        }
                     }
-                    png->close();
-                    delete png;
-                    pngPtr = nullptr;
-                    free(buf);
-                    currentDecodeBuffer = nullptr;
-                } else {
                     f.close();
                 }
             }
+        }
+
+        if (buf && size > 0) {
+            memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
+            currentDecodeBuffer = cache.iconPixels;
+            
+            PNG* png = new PNG();
+            pngPtr = png;
+            int rc = png->openRAM(buf, size, pngDraw);
+            if (rc == PNG_SUCCESS) {
+                png->decode((void*)this, 0);
+                cache.hasIcon = true;
+            }
+            png->close();
+            delete png;
+            pngPtr = nullptr;
+            free(buf);
+            currentDecodeBuffer = nullptr;
         }
     }
     

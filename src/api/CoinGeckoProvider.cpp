@@ -12,6 +12,12 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
         return false;
     }
 
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("CoinGecko", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
+        return false;
+    }
+
     String lowerSymbol = symbol;
     lowerSymbol.toLowerCase();
     
@@ -94,6 +100,12 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     if (!NetworkBudget::canStartTlsSession()) {
         LOGW("CoinGecko", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("CoinGecko", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
         return false;
     }
 

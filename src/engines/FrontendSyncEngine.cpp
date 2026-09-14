@@ -3,6 +3,7 @@
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
+#include "../core/NetworkBudget.h"
 #include <esp_task_wdt.h>
 
 FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
@@ -870,6 +871,19 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
     
     String dirPath = "/pixelcade/" + folder;
     String savePath = dirPath + "/" + filename;
+
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("RetroFrontend", "Skipping artwork download: insufficient internal DRAM for a TLS session.");
+        return false;
+    }
+    // Held across the whole download below (can take several seconds for large GIFs) --
+    // see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only and all TLS
+    // handshakes must be serialized system-wide.
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("RetroFrontend", "Skipping artwork download: another TLS handshake is in progress.");
+        return false;
+    }
 
     WiFiClientSecure client;
     client.setInsecure();

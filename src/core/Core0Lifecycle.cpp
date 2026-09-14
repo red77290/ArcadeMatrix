@@ -35,6 +35,7 @@ void Core0LifecycleDispatcher::processRetirements() {
         for (size_t i = 0; i < _quarantineCount; ) {
             if (_quarantine[i] && _quarantine[i]->shutdownForDestruction()) {
                 LOGI("Core0Lifecycle", "Quarantined engine at %p cleanly stopped on retry. Reclaiming...", _quarantine[i].get());
+                _quarantine[i]->setResourceState(EngineResourceState::RETIRED);
                 _quarantine[i].reset();
                 // Compact quarantine array
                 for (size_t j = i; j < _quarantineCount - 1; ++j) {
@@ -56,9 +57,11 @@ void Core0LifecycleDispatcher::processRetirements() {
         LOGI("Core0Lifecycle", "Core 0 processing cooperative shutdown for retired engine at %p...", engine.get());
         if (engine->shutdownForDestruction()) {
             LOGI("Core0Lifecycle", "Cooperative shutdown succeeded. Destroying engine and releasing Core 0 resources.");
+            engine->setResourceState(EngineResourceState::RETIRED);
             engine.reset(); // Safe destruction on Core 0
         } else {
             LOGE("Core0Lifecycle", "CRITICAL: Engine at %p failed cooperative shutdown within timeout! Placing in quarantine (anti-UAF).", engine.get());
+            engine->setResourceState(EngineResourceState::QUARANTINED);
             if (_quarantineCount < QUARANTINE_CAPACITY) {
                 _quarantine[_quarantineCount++] = std::move(engine);
             } else {

@@ -1,6 +1,7 @@
 #include "AudioOutputHAL.h"
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
+#include "../core/SdLockGuard.h"
 #include <math.h>
 
 AudioOutputHAL audioOutputHAL;
@@ -389,6 +390,13 @@ bool AudioOutputHAL::playWav(const char* filepath) {
     if (!_initialized && !begin()) return false;
     _isPlaying.store(true, std::memory_order_release);
     LOGI("AudioOutputHAL", "Playing WAV file: %s", filepath);
+
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) {
+        _isPlaying.store(false, std::memory_order_release);
+        LOGE("AudioOutputHAL", "Failed to acquire sdMutex for WAV: %s", filepath);
+        return false;
+    }
 
     // Simple WAV header parsing (44-byte standard PCM header)
     FsFile f = sd.open(filepath, FILE_OPEN_READ);

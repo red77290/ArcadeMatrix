@@ -13,6 +13,9 @@ void DisplayRuntime::begin(AppEngineContext* ctx, MatrixEngine* matrix, Rotation
     m_ctx = ctx;
     m_matrixEngine = matrix;
     m_rotationManager = rot;
+    if (m_rotationManager) {
+        m_rotationManager->setDisplayRuntime(this);
+    }
     m_overlayManager = ov;
     m_orientationManager = orient;
     m_arbiter = arb;
@@ -91,6 +94,29 @@ void DisplayRuntime::resetSharedTextState() {
     display->setFont(nullptr);
     display->setTextSize(1);
     display->setTextWrap(false);
+}
+
+void DisplayRuntime::purgeEngineReferences(IEngine* engine, const char* instanceId) {
+    if (m_session.activeEngine == engine ||
+        (instanceId && instanceId[0] != '\0' && strcmp(m_session.engineHandle.instanceId, instanceId) == 0)) {
+        m_session.activeEngine = nullptr;
+    }
+    for (size_t i = 0; i < m_preemptionDepth; ) {
+        bool matches = false;
+        if (instanceId && instanceId[0] != '\0' && strcmp(m_preemptionStack[i].handle.instanceId, instanceId) == 0) {
+            matches = true;
+        } else if (engine && resolveEngine(m_preemptionStack[i].handle, m_preemptionStack[i].sourceId) == engine) {
+            matches = true;
+        }
+        if (matches) {
+            for (size_t j = i; j < m_preemptionDepth - 1; ++j) {
+                m_preemptionStack[j] = m_preemptionStack[j + 1];
+            }
+            m_preemptionDepth--;
+        } else {
+            i++;
+        }
+    }
 }
 
 void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // PHASE 1: Resolve target engine
