@@ -41,6 +41,29 @@ public:
     void resume() override { resumeCalls++; }
 };
 
+#include "core/Core0Lifecycle.h"
+
+class LifecycleMockEngine : public IEngine {
+public:
+    static bool s_failShutdown;
+    bool shutdownCalled = false;
+
+    LifecycleMockEngine() {
+        setResourceState(EngineResourceState::UNINITIALIZED);
+    }
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override { return EngineError::OK; }
+    void activate() override { setResourceState(EngineResourceState::ACTIVE); }
+    void update(EngineContext* context) override {}
+    void render(EngineContext* context) override {}
+    void deactivate() override { setResourceState(EngineResourceState::DEACTIVATING); }
+    bool shutdownForDestruction() override {
+        shutdownCalled = true;
+        return !s_failShutdown;
+    }
+};
+bool LifecycleMockEngine::s_failShutdown = false;
+
 void setUp(void) {
     EngineRegistry::clear();
 }
@@ -1702,6 +1725,117 @@ void test_network_budget_admission_and_telemetry(void) {
     }
 }
 
+void test_engine_retirement_core1_release_barrier(void) {
+    auto engine = std::unique_ptr<LifecycleMockEngine>(new LifecycleMockEngine());
+    TEST_ASSERT_EQUAL(EngineResourceState::UNINITIALIZED, engine->getResourceState());
+
+    // Core 1 activates engine
+    engine->activate();
+    TEST_ASSERT_EQUAL(EngineResourceState::ACTIVE, engine->getResourceState());
+
+    // Core 1 deactivates engine
+    engine->deactivate();
+    TEST_ASSERT_EQUAL(EngineResourceState::DEACTIVATING, engine->getResourceState());
+
+    // Core 1 asserts Release Barrier step 5: sets CORE1_RELEASED
+    engine->setResourceState(EngineResourceState::CORE1_RELEASED);
+    TEST_ASSERT_EQUAL(EngineResourceState::CORE1_RELEASED, engine->getResourceState());
+
+    // Core 1 hands over ownership to Core 0 dispatcher queue
+    bool queued = Core0LifecycleDispatcher::instance().retire(std::move(engine));
+    TEST_ASSERT_TRUE(queued);
+
+    // Core 0 executes reclamation
+    Core0LifecycleDispatcher::instance().processRetirements();
+    TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
+}
+
+void test_display_runtime_purge_engine_references(void) {
+    DisplayRuntime runtime;
+    TrackingMockEngine clockEng("clock");
+    TrackingMockEngine alertEng("alert");
+
+    runtime.registerSourceEngine(DisplaySourceId::ROTATION, &clockEng, EngineHandle("clock", "main"));
+    runtime.registerSourceEngine(DisplaySourceId::MQTT, &alertEng, EngineHandle("message", "alert1"));
+
+    DisplayArbiter arbiter;
+    // 1. Clock active
+    DisplayDecision d1 = arbiter.evaluate();
+    runtime.transitionSession(d1);
+    TEST_ASSERT_EQUAL_PTR(&clockEng, runtime.getCurrentSession().activeEngine);
+
+    // 2. Alert preempts clock
+    DisplayRequest req;
+    req.sourceId = DisplaySourceId::MQTT;
+    req.priority = DisplayPriority::ALERT;
+    req.engineHandle = EngineHandle("message", "alert1");
+    req.preemptive = true;
+    req.requestId = 201;
+    req.lifecycle = RequestLifecycle::UNTIL_CANCELLED;
+    arbiter.submitRequest(req);
+
+    DisplayDecision d2 = arbiter.evaluate();
+    runtime.transitionSession(d2);
+    TEST_ASSERT_EQUAL_PTR(&alertEng, runtime.getCurrentSession().activeEngine);
+    TEST_ASSERT_EQUAL(1, runtime.getPreemptionDepth());
+
+    // 3. Purge alert references (simulating retirement of alertEng)
+    runtime.purgeEngineReferences(&alertEng, "alert1");
+    TEST_ASSERT_NULL(runtime.getCurrentSession().activeEngine);
+
+    // 4. Purge clock references (simulating retirement of clockEng while in preemption stack)
+    runtime.purgeEngineReferences(&clockEng, "main");
+    TEST_ASSERT_EQUAL(0, runtime.getPreemptionDepth());
+}
+
+void test_engine_retirement_queue_stress_and_saturation(void) {
+    // 1. Fill queue to capacity (8 items)
+    for (size_t i = 0; i < 8; ++i) {
+        auto eng = std::unique_ptr<LifecycleMockEngine>(new LifecycleMockEngine());
+        eng->setResourceState(EngineResourceState::CORE1_RELEASED);
+        TEST_ASSERT_TRUE(Core0LifecycleDispatcher::instance().retire(std::move(eng)));
+    }
+
+    // 9th item must fail (queue full)
+    auto overflowEng = std::unique_ptr<LifecycleMockEngine>(new LifecycleMockEngine());
+    overflowEng->setResourceState(EngineResourceState::CORE1_RELEASED);
+    TEST_ASSERT_FALSE(Core0LifecycleDispatcher::instance().retire(std::move(overflowEng)));
+
+    // Drain queue on Core 0
+    Core0LifecycleDispatcher::instance().processRetirements();
+
+    // Now pushing succeeds again
+    TEST_ASSERT_TRUE(Core0LifecycleDispatcher::instance().retire(std::move(overflowEng)));
+    Core0LifecycleDispatcher::instance().processRetirements();
+    TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
+
+    // 2. Test Quarantine: engine that fails shutdownForDestruction()
+    LifecycleMockEngine::s_failShutdown = true;
+    auto faultyEng = std::unique_ptr<LifecycleMockEngine>(new LifecycleMockEngine());
+    faultyEng->setResourceState(EngineResourceState::CORE1_RELEASED);
+    TEST_ASSERT_TRUE(Core0LifecycleDispatcher::instance().retire(std::move(faultyEng)));
+
+    Core0LifecycleDispatcher::instance().processRetirements();
+    TEST_ASSERT_EQUAL(1, Core0LifecycleDispatcher::instance().getQuarantineCount());
+
+    // Allow retry to succeed and drain quarantine
+    LifecycleMockEngine::s_failShutdown = false;
+    Core0LifecycleDispatcher::instance().processRetirements();
+    TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
+
+    // 3. 1000-cycle stress test: rapid handover and processing
+    for (int cycle = 0; cycle < 1000; ++cycle) {
+        auto eng = std::unique_ptr<LifecycleMockEngine>(new LifecycleMockEngine());
+        eng->activate();
+        eng->deactivate();
+        eng->setResourceState(EngineResourceState::CORE1_RELEASED);
+        bool queued = Core0LifecycleDispatcher::instance().retire(std::move(eng));
+        TEST_ASSERT_TRUE(queued);
+        Core0LifecycleDispatcher::instance().processRetirements();
+    }
+    TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1771,6 +1905,13 @@ void setup() {
     RUN_TEST(test_overlay_manager_lifecycle_and_heap_preservation);
     RUN_TEST(test_overlay_preemption_by_arbiter);
     RUN_TEST(test_network_budget_admission_and_telemetry);
+
+    // =========================================================================
+    // 8. Core 0/1 Lifecycle Dispatcher, Release Barrier & Quarantine
+    // =========================================================================
+    RUN_TEST(test_engine_retirement_core1_release_barrier);
+    RUN_TEST(test_display_runtime_purge_engine_references);
+    RUN_TEST(test_engine_retirement_queue_stress_and_saturation);
 
     UNITY_END();
 }
