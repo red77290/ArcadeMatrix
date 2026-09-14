@@ -29,28 +29,42 @@ void FighterEngine::render(EngineContext* context) {
 }
 
 void FighterEngine::deactivate() {
-    stop();
+    // Non-blocking state-only transition on Core 1: zero allocation, zero mutex
+    active = false;
 }
 
 void FighterEngine::onConfigChanged(const EngineConfig* engineConfig) {
     // Config now comes from global config.system
 }
 
-
-FighterEngine::~FighterEngine() {
+bool FighterEngine::shutdownForDestruction() {
+    // 1. Core 0 cooperative worker task shutdown
     if (loaderTaskHandle) {
-        // Ask the persistent worker to exit and wake it, instead of forcibly
-        // deleting it while it may be mid-read (which could leave sdMutex held
-        // forever). Fall back to a forced delete only if it doesn't exit in time.
         m_taskShouldExit = true;
         xTaskNotifyGive(loaderTaskHandle);
-        for (int i = 0; i < 50 && loaderTaskHandle; i++) {
+        uint32_t start = millis();
+        while (!m_loaderStopped.load(std::memory_order_acquire) && (millis() - start < 300)) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        if (loaderTaskHandle) {
-            vTaskDelete(loaderTaskHandle);
-            loaderTaskHandle = nullptr;
+        if (!m_loaderStopped.load(std::memory_order_acquire)) {
+            LOGE("FighterEngine", "CRITICAL: FgtLoader task failed to stop within 300ms!");
+            return false; // Quarantined: do not delete object, no UAF
         }
+    }
+
+    // 2. Safe resource cleanup on Core 0 (closes SD file handles and frees frame buffers)
+    stop();
+    return true;
+}
+
+FighterEngine::~FighterEngine() {
+    if (loaderTaskHandle && !m_loaderStopped.load(std::memory_order_acquire)) {
+        m_taskShouldExit = true;
+        xTaskNotifyGive(loaderTaskHandle);
+        for (int i = 0; i < 30 && !m_loaderStopped.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        // Strict cooperative shutdown: ZERO forced vTaskDelete() fallback
     }
     if (fighterOffsets) free(fighterOffsets);
     freeFighter(p1);
@@ -128,13 +142,18 @@ void FighterEngine::loadRoster() {
         numAvailableFighters = (int)offsets.size();
         if (numAvailableFighters > 0) {
             if (fighterOffsets) free(fighterOffsets);
-            fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+            fighterOffsets = (uint32_t*)heap_caps_malloc(numAvailableFighters * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!fighterOffsets) {
+                fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+            }
             if (fighterOffsets) {
                 memcpy(fighterOffsets, offsets.data(), numAvailableFighters * sizeof(uint32_t));
             }
         }
     }
-    LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes RAM)", numAvailableFighters, numAvailableFighters * 4);
+    LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes %s)",
+         numAvailableFighters, numAvailableFighters * 4,
+         (fighterOffsets && esp_ptr_external_ram(fighterOffsets)) ? "PSRAM" : "internal DRAM");
 }
 
 bool FighterEngine::getRandomFighter(FighterPlayer& p) {
@@ -409,6 +428,7 @@ void FighterEngine::loaderTaskFunc(void* param) {
         self->runBackgroundPreload();
     }
     self->loaderTaskHandle = nullptr;
+    self->m_loaderStopped.store(true, std::memory_order_release);
     vTaskDelete(NULL);
 }
 

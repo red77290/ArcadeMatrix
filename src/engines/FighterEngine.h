@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <atomic>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/SDUtils.h"
 #include "FS.h"
@@ -108,6 +109,7 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
@@ -168,6 +170,7 @@ private:
     volatile bool isNextReady = false;
     volatile bool isPreloading = false;
     volatile bool m_taskShouldExit = false;
+    std::atomic<bool> m_loaderStopped{false};
     TaskHandle_t loaderTaskHandle = nullptr;
 
     void startLoaderTaskIfNeeded();

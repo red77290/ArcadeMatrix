@@ -53,6 +53,10 @@ void AudioSessionManager::evaluateRequiredServices(const ConfigSnapshot& snapsho
             airPlayAudioService.begin();
             // webRadioService intentionally not started here: it allocates its
             // worker task and decoder buffers only when playback is requested.
+        } else {
+            bluetoothAudioService.stop();
+            dlnaService.stop();
+            airPlayAudioService.stop();
         }
     }
 }

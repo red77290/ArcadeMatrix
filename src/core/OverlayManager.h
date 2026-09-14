@@ -4,6 +4,7 @@
 #include <memory>
 #include "../../include/core/EngineContract.h"
 #include "ConfigLoader.h"
+#include "Core0Lifecycle.h"
 #include "../engines/FighterEngine.h"
 #include "Logger.h"
 
@@ -63,6 +64,10 @@ public:
             if (_fighterActive && _fighterOverlay) {
                 _fighterOverlay->deactivate();
                 _fighterActive = false;
+            }
+            if (!globalEnabled && _fighterOverlay) {
+                LOGI("OverlayManager", "Retiring FighterEngine overlay for Core 0 lifecycle destruction...");
+                Core0LifecycleDispatcher::instance().retire(std::move(_fighterOverlay));
             }
         }
     }

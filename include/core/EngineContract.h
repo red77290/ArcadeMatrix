@@ -240,6 +240,38 @@ public:
 };
 
 // =======================================================
+// 4.5 Engine Resource State Machine
+// =======================================================
+
+/**
+ * @enum EngineResourceState
+ * @brief Formal lifecycle states governing hardware and memory resources.
+ *
+ * State Transitions:
+ *   ACTIVE
+ *     │ (Core 1 non-blocking deactivate)
+ *     ▼
+ *   DEACTIVATING
+ *     │ (Core 1 handoff via EngineRetirementQueue)
+ *     ▼
+ *   STOPPING_TASKS (Core 0 worker)
+ *     ├── timeout ──► QUARANTINED (Safe leak > UAF: kept alive in bounded pool)
+ *     ▼
+ *   RELEASING_RESOURCES (Core 0: close sockets, free DMA, clear buffers)
+ *     ▼
+ *   RETIRED (Zero tasks, zero sockets, zero DMA: safe to delete)
+ */
+enum class EngineResourceState : uint8_t {
+    UNINITIALIZED,       ///< Constructed but initialize() not yet called
+    ACTIVE,              ///< Currently rendering / active on display
+    DEACTIVATING,        ///< Non-blocking state transition out of active display (Core 1)
+    STOPPING_TASKS,      ///< Requesting background tasks to cooperatively terminate on Core 0
+    QUARANTINED,         ///< Worker task failed to stop within timeout; kept alive safely (no UAF)
+    RELEASING_RESOURCES, ///< Tasks stopped; releasing sockets, DMA, large buffers on Core 0
+    RETIRED              ///< Zero tasks, zero sockets, zero DMA, zero runtime memory: safe for destruction
+};
+
+// =======================================================
 // 5. Engine Interface
 // =======================================================
 
@@ -252,7 +284,31 @@ public:
     virtual void activate() = 0;
     virtual void update(EngineContext* context) = 0;
     virtual void render(EngineContext* context) = 0;
+
+    /**
+     * @brief Transitions the engine out of active display.
+     * CONTRACT: Must be state-only and strictly non-blocking when called from Core 1.
+     * Must NOT wait on tasks, block on sockets, or acquire long mutexes.
+     * All physical resource release belongs to shutdownForDestruction() on Core 0.
+     */
     virtual void deactivate() = 0;
+
+    /**
+     * @brief Core 0 lifecycle shutdown protocol before instance destruction.
+     * CONTRACT: Executes strictly on Core 0. Requests all background worker tasks to stop
+     * cooperatively, waits for confirmation, and cleans up sockets/DMA.
+     *
+     * @return true  Object can now be safely destroyed:
+     *               -> all worker tasks stopped
+     *               -> all owned sockets released
+     *               -> all DMA resources released
+     *               -> all resource callbacks completed
+     *               -> safe to delete
+     * @return false DO NOT DELETE:
+     *               Worker task did not confirm termination within timeout.
+     *               Engine MUST be quarantined to prevent Use-After-Free (UAF).
+     */
+    virtual bool shutdownForDestruction() { return true; }
     
     // Optional preemption lifecycle hooks (defaults to no-op for backward compatibility)
     virtual void pause() {}

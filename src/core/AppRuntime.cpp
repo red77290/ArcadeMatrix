@@ -26,6 +26,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "../hal/HardwareHAL.h"
 #include "../hal/GyroHAL.h"
 #include "AudioHub.h"
+#include "Core0Lifecycle.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -180,11 +181,19 @@ void AppRuntime::initialize() {
 #endif
     LOGI("SD", "SD Card mounted successfully.");
 
+    uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    uint32_t preConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
+    uint32_t postConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t postConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    uint32_t postConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    LOGI("Config", "ConfigLoader DRAM telemetry: freeInternal=%u (delta=%d), largestInternal=%u, largestDma=%u",
+         postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
@@ -197,9 +206,6 @@ void AppRuntime::initialize() {
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
-    // Gyroscope is already probed by hardwareHAL.begin(); re-probing here only cost an extra
-    // I2C round-trip and a settling delay on every boot.
-    displayOrientationManager.begin(matrixEngine.getDisplay());
     displayOrientationManager.setRotationOffset(snapshot.matrix.rotation_offset);
     displayOrientationManager.setTransitionEffect(snapshot.matrix.rotation_transition);
     displayOrientationManager.setTransitionDuration(snapshot.matrix.rotation_transition_duration_ms);
@@ -211,6 +217,7 @@ void AppRuntime::initialize() {
 
     audioHub.begin();
 
+    Core0LifecycleDispatcher::instance().begin();
     rotationManager = new RotationManager();
     m_appCtx = new AppEngineContext(matrixEngine.getDisplay(), m_frontendListener);
     rotationManager->setEngineContext(m_appCtx);

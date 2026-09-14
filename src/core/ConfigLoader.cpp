@@ -174,7 +174,7 @@ void ConfigLoader::setDefaults() {
 }
 
 bool ConfigLoader::parseFromJson(const char* jsonContent) {
-    DynamicJsonDocument doc(32768);
+    SpiRamJsonDocument doc(32768);
     DeserializationError error = deserializeJson(doc, jsonContent);
 
     if (error) {
@@ -184,7 +184,7 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
     return parseFromJsonDoc(doc);
 }
 
-bool ConfigLoader::parseFromJsonDoc(const DynamicJsonDocument& doc) {
+bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
     if (doc.containsKey("system")) {
         JsonObjectConst sys = doc["system"];
         system.timezone = sys["timezone"] | system.timezone;
@@ -371,7 +371,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     // DynamicJsonDocument on every save (see ConfigLoader.h for the fragmentation
     // rationale). clear() resets content but keeps the already-allocated pool.
     _jsonScratch.clear();
-    DynamicJsonDocument& doc = _jsonScratch;
+    auto& doc = _jsonScratch;
 
     JsonObject sysObj = doc.createNestedObject("system");
     sysObj["timezone"] = system.timezone;
@@ -468,7 +468,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         // touches config, so there is no concurrency concern with serializeToJson()'s use
         // of the same buffer.
         _jsonScratch.clear();
-        DynamicJsonDocument& doc = _jsonScratch;
+        auto& doc = _jsonScratch;
         DeserializationError error = deserializeJson(doc, f);
         f.close();
         if (error) {

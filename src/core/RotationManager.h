@@ -20,6 +20,7 @@ enum class RotationAction {
 struct ActiveEngineSlot {
     char instanceId[32]{0};
     std::unique_ptr<IEngine> engine{};
+    bool pendingRetirement = false;
 };
 
 class RotationManager {

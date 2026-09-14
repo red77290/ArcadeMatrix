@@ -146,16 +146,31 @@ GoogleCastEngine::GoogleCastEngine() {
 }
 
 GoogleCastEngine::~GoogleCastEngine() {
-    m_taskRunning = false;
-    m_isActive = false;
-    if (m_pollTaskHandle) {
-        vTaskDelete(m_pollTaskHandle);
-        m_pollTaskHandle = nullptr;
+    if (m_pollTaskHandle && !m_taskStopped.load(std::memory_order_acquire)) {
+        m_taskRunning = false;
+        m_isActive = false;
+        xTaskNotifyGive(m_pollTaskHandle);
+        for (int i = 0; i < 30 && !m_taskStopped.load(std::memory_order_acquire); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
-    if (m_client.connected()) {
-        m_client.stop();
+}
+
+bool GoogleCastEngine::shutdownForDestruction() {
+    if (m_pollTaskHandle && !m_taskStopped.load(std::memory_order_acquire)) {
+        m_taskRunning = false;
+        m_isActive = false;
+        xTaskNotifyGive(m_pollTaskHandle);
+        uint32_t start = millis();
+        while (!m_taskStopped.load(std::memory_order_acquire) && (millis() - start < 300)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (!m_taskStopped.load(std::memory_order_acquire)) {
+            LOGE("GoogleCast", "CRITICAL: CastPoll task failed to stop within 300ms!");
+            return false; // Quarantined: do not delete object, no UAF
+        }
     }
-    m_lastTransportId = "";
+    return true;
 }
 
 void GoogleCastEngine::applyConfig(const EngineConfig* config) {
@@ -184,7 +199,6 @@ void GoogleCastEngine::pollTaskStatic(void* pvParameters) {
     if (self) {
         self->pollTaskLoop();
     }
-    vTaskDelete(NULL);
 }
 
 void GoogleCastEngine::pollTaskLoop() {
@@ -199,9 +213,23 @@ void GoogleCastEngine::pollTaskLoop() {
                 LOGD("GoogleCast", "CastPoll stack HWM: %u words (%u bytes free)",
                      (unsigned)hwm, (unsigned)(hwm * sizeof(StackType_t)));
             }
+        } else {
+            // When deactivated, CastPoll (the sole operational owner of m_client) closes the TLS session
+            if (m_client.connected()) {
+                LOGI("GoogleCast", "Engine deactivated: CastPoll closing TLS session to reclaim DRAM.");
+                m_client.stop();
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1500));
     }
+
+    // Task exiting cooperatively: close client and signal completion
+    if (m_client.connected()) {
+        m_client.stop();
+    }
+    m_pollTaskHandle = nullptr;
+    m_taskStopped.store(true, std::memory_order_release);
+    vTaskDelete(NULL);
 }
 
 EngineError GoogleCastEngine::initialize(EngineContext* context, const EngineConfig* config) {
@@ -210,6 +238,7 @@ EngineError GoogleCastEngine::initialize(EngineContext* context, const EngineCon
 
     if (!m_pollTaskHandle) {
         m_taskRunning = true;
+        m_taskStopped.store(false, std::memory_order_release);
         BaseType_t ret = xTaskCreatePinnedToCore(
             pollTaskStatic,
             "CastPoll",
@@ -236,14 +265,18 @@ void GoogleCastEngine::activate() {
     m_lastAnimTick = millis();
     m_lastMdnsQuery = 0;
     m_isActive = true;
+    if (m_pollTaskHandle) {
+        xTaskNotifyGive(m_pollTaskHandle);
+    }
 }
 
 void GoogleCastEngine::deactivate() {
+    // Non-blocking state transition on Core 1: wake CastPoll on Core 0 to close m_client
     m_isActive = false;
-    if (m_client.connected()) {
-        m_client.stop();
-    }
     m_lastTransportId = "";
+    if (m_pollTaskHandle) {
+        xTaskNotifyGive(m_pollTaskHandle);
+    }
 }
 
 void GoogleCastEngine::onConfigChanged(const EngineConfig* config) {
@@ -319,8 +352,15 @@ void GoogleCastEngine::pollCastStatus() {
         m_lastConnectAttemptMs = now;
         m_lastTransportId = "";
 
+        const uint32_t preFree = NetworkBudget::freeInternal();
+        const uint32_t preLargest = NetworkBudget::largestInternalBlock();
+        const uint32_t preFreeDma = NetworkBudget::freeDmaInternal();
+        const uint32_t preLargestDma = NetworkBudget::largestDmaInternalBlock();
+
         // Check internal DRAM and DMA admission before initiating TLS handshake
         if (!NetworkBudget::canStartTlsSession()) {
+            LOGW("GoogleCast", "[TLS Telemetry] pre: free=%u, largest=%u, dma=%u, largestDma=%u | result=REJECTED_BY_BUDGET",
+                 preFree, preLargest, preFreeDma, preLargestDma);
             return;
         }
 
@@ -329,7 +369,15 @@ void GoogleCastEngine::pollCastStatus() {
 
         LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
         if (!m_client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+            const uint32_t postFree = NetworkBudget::freeInternal();
+            const uint32_t postLargest = NetworkBudget::largestInternalBlock();
+            const uint32_t postFreeDma = NetworkBudget::freeDmaInternal();
+            const uint32_t postLargestDma = NetworkBudget::largestDmaInternalBlock();
+            LOGW("GoogleCast", "[TLS Telemetry] pre: free=%u, largest=%u, dma=%u, largestDma=%u | result=HANDSHAKE_FAILED | post: free=%u, largest=%u, dma=%u, largestDma=%u",
+                 preFree, preLargest, preFreeDma, preLargestDma,
+                 postFree, postLargest, postFreeDma, postLargestDma);
             m_client.stop();
+            m_lastConnectAttemptMs = millis(); // Enforce full backoff after handshake failure
             static unsigned long lastConnectWarn = 0;
             if (now - lastConnectWarn > 10000) {
                 lastConnectWarn = now;
@@ -342,6 +390,14 @@ void GoogleCastEngine::pollCastStatus() {
             }
             return;
         }
+
+        const uint32_t postFree = NetworkBudget::freeInternal();
+        const uint32_t postLargest = NetworkBudget::largestInternalBlock();
+        const uint32_t postFreeDma = NetworkBudget::freeDmaInternal();
+        const uint32_t postLargestDma = NetworkBudget::largestDmaInternalBlock();
+        LOGI("GoogleCast", "[TLS Telemetry] pre: free=%u, largest=%u, dma=%u, largestDma=%u | result=SUCCESS | post: free=%u, largest=%u, dma=%u, largestDma=%u",
+             preFree, preLargest, preFreeDma, preLargestDma,
+             postFree, postLargest, postFreeDma, postLargestDma);
 
         m_client.setTimeout(1200);
 

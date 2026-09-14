@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include "DictionaryEngineConfig.h"
+#include "SpiRamJsonDocument.h"
 
 struct EngineInstance {
     String instance_id;
@@ -174,7 +175,7 @@ public:
     void setDefaults();
     
     bool parseFromJson(const char* jsonContent);
-    bool parseFromJsonDoc(const DynamicJsonDocument& doc);
+    bool parseFromJsonDoc(const JsonDocument& doc);
     String serializeToJson(bool pretty = false) const;
     
     bool loadFromSD(const char* filepath);
@@ -268,7 +269,7 @@ private:
     // saveToSD() (serialize) and loadFromSD() (deserialize) are only ever called from a single
     // context at a time (save is always under sdMutex, load only runs once at boot before any
     // other task touches config), so sharing one scratch buffer is safe.
-    mutable DynamicJsonDocument _jsonScratch{32768};
+    mutable SpiRamJsonDocument _jsonScratch{32768};
 
     void publishSnapshot_locked();
 };
