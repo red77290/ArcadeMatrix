@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <mutex>
+#include <WiFiClientSecure.h>
 
 struct GoogleCastMediaState {
     bool isActive = false;
@@ -57,6 +58,11 @@ private:
     volatile bool m_isActive = false;
     static void pollTaskStatic(void* pvParameters);
     void pollTaskLoop();
+
+    // Persistent TLS client (Core 0 only, avoids TIME_WAIT socket exhaustion)
+    WiFiClientSecure m_client;
+    String m_lastTransportId = "";
+    uint32_t m_lastConnectAttemptMs = 0;
 
     // Artwork caching
     String m_artworkId = "";

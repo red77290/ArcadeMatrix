@@ -152,6 +152,10 @@ GoogleCastEngine::~GoogleCastEngine() {
         vTaskDelete(m_pollTaskHandle);
         m_pollTaskHandle = nullptr;
     }
+    if (m_client.connected()) {
+        m_client.stop();
+    }
+    m_lastTransportId = "";
 }
 
 void GoogleCastEngine::applyConfig(const EngineConfig* config) {
@@ -168,6 +172,10 @@ void GoogleCastEngine::applyConfig(const EngineConfig* config) {
     if (oldIp != m_deviceIp || oldName != m_deviceName) {
         m_resolvedIp = m_deviceIp;
         m_lastMdnsQuery = 0;
+        if (m_client.connected()) {
+            m_client.stop();
+        }
+        m_lastTransportId = "";
     }
 }
 
@@ -232,6 +240,10 @@ void GoogleCastEngine::activate() {
 
 void GoogleCastEngine::deactivate() {
     m_isActive = false;
+    if (m_client.connected()) {
+        m_client.stop();
+    }
+    m_lastTransportId = "";
 }
 
 void GoogleCastEngine::onConfigChanged(const EngineConfig* config) {
@@ -279,80 +291,104 @@ void GoogleCastEngine::discoverDevice() {
 }
 
 void GoogleCastEngine::pollCastStatus() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        if (m_client.connected()) {
+            m_client.stop();
+            m_lastTransportId = "";
+        }
+        return;
+    }
     uint32_t now = millis();
     m_state.lastPollTime = now;
 
-    if (m_resolvedIp.isEmpty() || (now - m_lastMdnsQuery >= 60000UL)) {
-        m_lastMdnsQuery = now;
-        discoverDevice();
-    }
-
+    // Discover device via mDNS only if we don't have a resolved IP yet
     if (m_resolvedIp.isEmpty()) {
-        return;
-    }
-
-    // Same admission control as the HTTPS providers: a CastV2 session is still a full
-    // TLS handshake (mbedTLS, ~16KB input record buffer) even though the certificate is
-    // unverified (setInsecure()). Attempting it below the safe internal-DRAM watermark
-    // fails the handshake silently (client.connect() just returns false below, with the
-    // engine otherwise never logging why), which was misread as "Cast device gone quiet"
-    // when it was actually "heap too fragmented to open a TLS socket this round".
-    if (!NetworkBudget::canStartTlsSession()) {
-        static unsigned long lastBudgetWarn = 0;
-        if (now - lastBudgetWarn > 10000) {
-            lastBudgetWarn = now;
-            LOGW("GoogleCast", "Skipping status poll: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
-                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        if (now - m_lastMdnsQuery >= 15000UL) {
+            m_lastMdnsQuery = now;
+            discoverDevice();
         }
         return;
     }
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(1200);
-
-    if (!client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
-        static unsigned long lastConnectWarn = 0;
-        if (now - lastConnectWarn > 10000) {
-            lastConnectWarn = now;
-            LOGW("GoogleCast", "Failed to connect to Cast device %s:%u (was previously silent).",
-                 m_resolvedIp.c_str(), m_resolvedPort);
+    // 1. Establish or recover persistent TLS connection if not connected
+    if (!m_client.connected()) {
+        // Enforce cooldown between reconnect attempts to avoid socket exhaustion
+        if (now - m_lastConnectAttemptMs < 5000) {
+            return;
         }
-        return;
+        m_lastConnectAttemptMs = now;
+        m_lastTransportId = "";
+
+        // Check internal DRAM admission before initiating TLS handshake
+        if (!NetworkBudget::canStartTlsSession()) {
+            static unsigned long lastBudgetWarn = 0;
+            if (now - lastBudgetWarn > 10000) {
+                lastBudgetWarn = now;
+                LOGW("GoogleCast", "Skipping connection: insufficient internal DRAM for TLS session (free=%u, largest=%u).",
+                     (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+            }
+            return;
+        }
+
+        m_client.stop();
+        m_client.setInsecure();
+        m_client.setTimeout(1200);
+
+        LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
+        if (!m_client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+            static unsigned long lastConnectWarn = 0;
+            if (now - lastConnectWarn > 10000) {
+                lastConnectWarn = now;
+                LOGW("GoogleCast", "Failed to connect to Cast device %s:%u.",
+                     m_resolvedIp.c_str(), m_resolvedPort);
+            }
+            // If mDNS IP fails repeatedly for > 60s and user hasn't hardcoded an IP, rediscover
+            if (m_deviceIp.isEmpty() && now - m_lastMdnsQuery > 60000UL) {
+                m_resolvedIp = "";
+            }
+            return;
+        }
+
+        LOGI("GoogleCast", "Connected to Cast device %s:%u (persistent session active).", m_resolvedIp.c_str(), m_resolvedPort);
+
+        // Send initial CONNECT to receiver-0
+        auto connMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
+        m_client.write(connMsg.data(), connMsg.size());
     }
 
-    // 1. Send CONNECT to receiver-0
-    auto connMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
-    client.write(connMsg.data(), connMsg.size());
+    // 2. Consume any pending unsolicited frames or heartbeat PINGs
+    while (m_client.available()) {
+        CastMessage resp;
+        if (!readCastMessage(m_client, resp, 100)) break;
+        if (resp.namespaceUri == "urn:x-cast:com.google.cast.tp.heartbeat" && resp.payloadUtf8.indexOf("PING") != -1) {
+            auto pong = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PONG\"}");
+            m_client.write(pong.data(), pong.size());
+        }
+    }
 
-    // 2. Send GET_STATUS to receiver-0
+    // 3. Send GET_STATUS to receiver-0
     m_requestId++;
     String getStatus = "{\"type\":\"GET_STATUS\",\"requestId\":" + String(m_requestId) + "}";
     auto reqMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.receiver", getStatus);
-    client.write(reqMsg.data(), reqMsg.size());
+    m_client.write(reqMsg.data(), reqMsg.size());
 
     String transportId = "";
     String appName = "";
-    float volumeLevel = 0.5f;
+    float volumeLevel = m_state.volumeLevel;
 
     // Read receiver status responses (up to 4 frames)
     for (int i = 0; i < 4; i++) {
         CastMessage resp;
-        if (!readCastMessage(client, resp, 600)) break;
+        if (!readCastMessage(m_client, resp, 400)) break;
 
         if (resp.namespaceUri == "urn:x-cast:com.google.cast.tp.heartbeat" && resp.payloadUtf8.indexOf("PING") != -1) {
             auto pong = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PONG\"}");
-            client.write(pong.data(), pong.size());
+            m_client.write(pong.data(), pong.size());
         } else if (resp.namespaceUri == "urn:x-cast:com.google.cast.receiver") {
-            // PSRAM-backed: this poll cycle runs every ~1.5s while the engine is
-            // active, unlike Dashboard's per-minutes refresh. Keeping this buffer
-            // off internal DRAM avoids fragmenting the heap that TLS handshakes
-            // and the WebUI's AsyncWebServer also depend on.
             SpiRamJsonDocument doc(4096);
             if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
                 if (doc["status"]["volume"].is<JsonObject>()) {
-                    volumeLevel = doc["status"]["volume"]["level"] | 0.5f;
+                    volumeLevel = doc["status"]["volume"]["level"] | volumeLevel;
                 }
                 if (doc["status"]["applications"].is<JsonArray>()) {
                     for (JsonObject app : doc["status"]["applications"].as<JsonArray>()) {
@@ -372,22 +408,27 @@ void GoogleCastEngine::pollCastStatus() {
     }
 
     if (!transportId.isEmpty()) {
-        // 3. Send CONNECT to transportId
-        auto tConn = encodeCastMessage("sender-0", transportId, "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
-        client.write(tConn.data(), tConn.size());
+        // Connect to transportId if new
+        if (transportId != m_lastTransportId) {
+            auto tConn = encodeCastMessage("sender-0", transportId, "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
+            m_client.write(tConn.data(), tConn.size());
+            m_lastTransportId = transportId;
+        }
 
-        // 4. Send GET_STATUS to transportId on media namespace
+        // Send GET_STATUS to transportId on media namespace
         m_requestId++;
         String getMediaStatus = "{\"type\":\"GET_STATUS\",\"requestId\":" + String(m_requestId) + "}";
         auto mReq = encodeCastMessage("sender-0", transportId, "urn:x-cast:com.google.cast.media", getMediaStatus);
-        client.write(mReq.data(), mReq.size());
+        m_client.write(mReq.data(), mReq.size());
 
         for (int i = 0; i < 6; i++) {
             CastMessage resp;
-            if (!readCastMessage(client, resp, 600)) break;
+            if (!readCastMessage(m_client, resp, 400)) break;
 
-            if (resp.namespaceUri == "urn:x-cast:com.google.cast.media") {
-                // PSRAM-backed for the same reason as the receiver-status doc above.
+            if (resp.namespaceUri == "urn:x-cast:com.google.cast.tp.heartbeat" && resp.payloadUtf8.indexOf("PING") != -1) {
+                auto pong = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PONG\"}");
+                m_client.write(pong.data(), pong.size());
+            } else if (resp.namespaceUri == "urn:x-cast:com.google.cast.media") {
                 SpiRamJsonDocument doc(4096);
                 if (deserializeJson(doc, resp.payloadUtf8) == DeserializationError::Ok) {
                     if (doc["status"].is<JsonArray>() && doc["status"].size() > 0) {
@@ -441,9 +482,14 @@ void GoogleCastEngine::pollCastStatus() {
     } else {
         m_state.isActive = false;
         m_state.isPlaying = false;
+        m_lastTransportId = "";
     }
 
-    client.stop();
+    // If socket was disconnected by remote peer, clean up
+    if (!m_client.connected()) {
+        m_client.stop();
+        m_lastTransportId = "";
+    }
 
     // Asynchronously load artwork on Core 0
     if (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty()) {

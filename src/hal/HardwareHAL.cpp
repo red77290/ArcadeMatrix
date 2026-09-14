@@ -91,9 +91,7 @@ static void es7210RecoveryTaskFunc(void* param) {
     auto* hal = static_cast<HardwareHAL*>(param);
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
-        if (hal->isEs7210RecoveryPending()) {
-            hal->checkAndPerformES7210Recovery();
-        }
+        hal->checkAndPerformES7210Recovery();
     }
 }
 #endif
@@ -584,6 +582,8 @@ void HardwareHAL::startAudioSampling() {
     _lastDecibels = 30.0f;
     _audioWarmupFrames = 0;
     for (size_t i = 0; i < MAX_SPECTRUM_BANDS; i++) _lastSpectrum[i] = 0.0f;
+    _es7210ZeroFrames.store(0, std::memory_order_relaxed);
+    _es7210RecoveryPending.store(false, std::memory_order_relaxed);
 
     // 0. Enable the Audio Power Rail on GPIO 11 for microphone session.
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
@@ -690,6 +690,8 @@ void HardwareHAL::stopAudioSampling(bool clearIntent) {
     i2s_stop(I2S_PORT);
     i2s_driver_uninstall(I2S_PORT);
     audioActive = false;
+    _es7210ZeroFrames.store(0, std::memory_order_relaxed);
+    _es7210RecoveryPending.store(false, std::memory_order_relaxed);
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     // Leave the PA in the state playback expects: off if not playing.
     if (!audioOutputHAL.isPlaying()) {
