@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include "GifEngine.h"
@@ -35,7 +36,14 @@ public:
     bool isRealtime() const override { return true; }
     bool selfPaced() const override { return false; }
     bool isFinished() const override;
-    bool needsClear() const override { return false; }
+    bool needsClear() const override {
+        uint8_t rem = m_clearFramesRemaining.load(std::memory_order_relaxed);
+        if (rem > 0) {
+            m_clearFramesRemaining.store(rem - 1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
 
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }
 
@@ -53,6 +61,7 @@ private:
     unsigned long m_rawStartTime;
     unsigned long m_rawDurationMs;
     bool m_hasPsram = false;
+    mutable std::atomic<uint8_t> m_clearFramesRemaining{2};
 
     String m_filePath;
     float m_speedMultiplier;

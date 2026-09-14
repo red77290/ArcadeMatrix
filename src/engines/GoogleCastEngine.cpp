@@ -531,7 +531,8 @@ void GoogleCastEngine::pollCastStatus() {
                         m_state.isPlaying = isPlaying;
                         m_state.currentTimeSec = mediaStat["currentTime"] | 0.0f;
                         m_state.volumeLevel = volumeLevel;
-                        m_state.appName = appName;
+                        strncpy(m_state.appName, appName.c_str(), sizeof(m_state.appName) - 1);
+                        m_state.appName[sizeof(m_state.appName) - 1] = '\0';
 
                         if (mediaStat["media"].is<JsonObject>()) {
                             JsonObject media = mediaStat["media"];
@@ -540,9 +541,16 @@ void GoogleCastEngine::pollCastStatus() {
 
                             if (media["metadata"].is<JsonObject>()) {
                                 JsonObject meta = media["metadata"];
-                                m_state.title = meta["title"] | (meta["songName"] | (media["customData"]["title"] | ""));
-                                m_state.artist = meta["artist"] | (meta["subtitle"] | (meta["artistName"] | (meta["albumArtist"] | "")));
-                                m_state.album = meta["albumName"] | (meta["albumTitle"] | "");
+                                const char* t = meta["title"] | (meta["songName"] | (media["customData"]["title"] | ""));
+                                const char* a = meta["artist"] | (meta["subtitle"] | (meta["artistName"] | (meta["albumArtist"] | "")));
+                                const char* al = meta["albumName"] | (meta["albumTitle"] | "");
+
+                                strncpy(m_state.title, t, sizeof(m_state.title) - 1);
+                                m_state.title[sizeof(m_state.title) - 1] = '\0';
+                                strncpy(m_state.artist, a, sizeof(m_state.artist) - 1);
+                                m_state.artist[sizeof(m_state.artist) - 1] = '\0';
+                                strncpy(m_state.album, al, sizeof(m_state.album) - 1);
+                                m_state.album[sizeof(m_state.album) - 1] = '\0';
 
                                 if (meta["images"].is<JsonArray>() && meta["images"].size() > 0) {
                                     imgUrl = meta["images"][0]["url"] | (meta["images"][0]["href"] | "");
@@ -557,7 +565,8 @@ void GoogleCastEngine::pollCastStatus() {
                             if (imgUrl.isEmpty() && media["customData"].is<JsonObject>()) {
                                 imgUrl = media["customData"]["imageUrl"] | (media["customData"]["thumbnail"] | (media["customData"]["poster"] | ""));
                             }
-                            m_state.imageUrl = imgUrl;
+                            strncpy(m_state.imageUrl, imgUrl.c_str(), sizeof(m_state.imageUrl) - 1);
+                            m_state.imageUrl[sizeof(m_state.imageUrl) - 1] = '\0';
                         }
                     }
                 }
@@ -567,12 +576,19 @@ void GoogleCastEngine::pollCastStatus() {
 
         if (!m_state.isActive && !appName.isEmpty()) {
             m_state.isActive = true;
-            m_state.appName = appName;
-            if (m_state.title.isEmpty()) m_state.title = appName;
+            strncpy(m_state.appName, appName.c_str(), sizeof(m_state.appName) - 1);
+            m_state.appName[sizeof(m_state.appName) - 1] = '\0';
+            if (m_state.title[0] == '\0') {
+                strncpy(m_state.title, appName.c_str(), sizeof(m_state.title) - 1);
+                m_state.title[sizeof(m_state.title) - 1] = '\0';
+            }
         }
     } else {
         m_state.isActive = false;
         m_state.isPlaying = false;
+        m_state.title[0] = '\0';
+        m_state.artist[0] = '\0';
+        m_state.imageUrl[0] = '\0';
         m_lastTransportId = "";
     }
 
@@ -583,8 +599,8 @@ void GoogleCastEngine::pollCastStatus() {
     }
 
     // Asynchronously load artwork on Core 0
-    if (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty()) {
-        if (m_state.imageUrl != m_loadedImageUrl) {
+    if (m_hasPsram && m_showAlbumArt && m_state.imageUrl[0] != '\0') {
+        if (strcmp(m_state.imageUrl, m_loadedImageUrl.c_str()) != 0) {
             m_loadedImageUrl = m_state.imageUrl;
             int imgSize = 52;
             LOGI("GoogleCast", "Fetching album cover: %s", m_loadedImageUrl.c_str());
@@ -595,29 +611,22 @@ void GoogleCastEngine::pollCastStatus() {
                 LOGW("GoogleCast", "Failed to load album cover from: %s", m_loadedImageUrl.c_str());
             }
         }
-    } else if (m_state.imageUrl.isEmpty() || !m_hasPsram || !m_showAlbumArt) {
+    } else if (m_state.imageUrl[0] == '\0' || !m_hasPsram || !m_showAlbumArt) {
         m_artworkId = "";
         m_loadedImageUrl = "";
     }
 
     m_state.localTimestampMs = millis();
 
-    // Thread-safe copy for Core 1 renderer
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        m_renderState = m_state;
-    }
+    // Lock-free generational double-buffer publish to Core 1 (Invariant 1)
+    uint8_t nextSlot = 1 - m_publishedSlot.load(std::memory_order_relaxed);
+    m_slots[nextSlot] = m_state;
+    m_publishedSlot.store(nextSlot, std::memory_order_release);
 }
 
 void GoogleCastEngine::update(EngineContext* context) {
     uint32_t now = millis();
-
-    // Fast copy of background state
-    GoogleCastMediaState st;
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        st = m_renderState;
-    }
+    const auto& st = m_slots[m_publishedSlot.load(std::memory_order_acquire)];
 
     // Marquee scrolling tick (~40ms per pixel)
     if (now - m_lastMarqueeTick >= 40) {
@@ -632,14 +641,13 @@ void GoogleCastEngine::update(EngineContext* context) {
     }
 
     // Log newly playing track without spam
-    if (st.isActive && !st.title.isEmpty()) {
-        String trackKey = st.artist + " - " + st.title;
-        if (trackKey != m_lastLoggedTrack) {
-            m_lastLoggedTrack = trackKey;
+    if (st.isActive && st.title[0] != '\0') {
+        if (m_lastLoggedTrack != st.title) {
+            m_lastLoggedTrack = st.title;
             LOGI("GoogleCast", "📻 Now Streaming -> \"%s\" by \"%s\" (App: %s)",
-                 st.title.c_str(),
-                 st.artist.isEmpty() ? "Unknown Artist" : st.artist.c_str(),
-                 st.appName.isEmpty() ? "Cast" : st.appName.c_str());
+                 st.title,
+                 st.artist[0] == '\0' ? "Unknown Artist" : st.artist,
+                 st.appName[0] == '\0' ? "Cast" : st.appName);
         }
     } else if (!m_lastLoggedTrack.isEmpty()) {
         m_lastLoggedTrack = "";
@@ -648,13 +656,15 @@ void GoogleCastEngine::update(EngineContext* context) {
 
 #include <glcdfont.c>
 
-static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
-    if (!display || text.isEmpty()) return;
+static void drawClippedString(Adafruit_GFX* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || !text || text[0] == '\0' || clipMinX >= clipMaxX) return;
     int curX = x;
-    for (size_t i = 0; i < text.length(); i++) {
-        char c = text[i];
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = (uint8_t)text[i];
+        if (c >= 128) c = '?'; // Clamp non-ASCII to prevent negative/out-of-bounds font index
         if (curX >= clipMinX && curX + 6 <= clipMaxX) {
-            display->drawChar(curX, y, c, color, 0, 1);
+            display->drawChar(curX, y, (char)c, color, 0, 1);
         } else if (curX + 6 > clipMinX && curX < clipMaxX) {
             for (int col = 0; col < 5; col++) {
                 int px = curX + col;
@@ -673,9 +683,9 @@ static void drawClippedString(Adafruit_GFX* display, const String& text, int x, 
     }
 }
 
-static void renderMarquee(Adafruit_GFX* display, const String& text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
-    if (!display || text.isEmpty()) return;
-    int textW = text.length() * 6;
+static void renderMarquee(Adafruit_GFX* display, const char* text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
+    if (!display || !text || text[0] == '\0' || clipMinX >= clipMaxX || availW <= 0) return;
+    int textW = (int)strlen(text) * 6;
     if (textW <= availW) {
         drawClippedString(display, text, clipMinX, y, clipMinX, clipMaxX, color);
     } else {
@@ -703,19 +713,15 @@ void GoogleCastEngine::render(EngineContext* context) {
     int w = display->width();
     int h = display->height();
 
-    // Fast copy of background state
-    GoogleCastMediaState st;
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        st = m_renderState;
-    }
+    // Lock-free generational read from Core 1 (Invariant 1)
+    const auto& st = m_slots[m_publishedSlot.load(std::memory_order_acquire)];
 
-    if (!st.isActive || st.title.isEmpty()) {
+    if (!st.isActive || st.title[0] == '\0') {
         // Idle screen
-        String title = "Google Cast";
-        String subtitle = !m_deviceName.isEmpty() ? ("Ready to stream - " + m_deviceName) : "Ready to stream";
+        const char* title = "Google Cast";
+        const char* subtitle = (m_deviceName.length() > 0) ? m_deviceName.c_str() : "Ready to stream";
 
-        int titleW = title.length() * 6;
+        int titleW = (int)strlen(title) * 6;
         int yIdleTitle = (h >= 64) ? ((h / 2) - 10) : 4;
         int yIdleSub = (h >= 64) ? ((h / 2) + 4) : 16;
 
@@ -726,7 +732,7 @@ void GoogleCastEngine::render(EngineContext* context) {
             renderMarquee(display, title, yIdleTitle, 2, w - 2, w - 4, m_marqueeOffset, display->color565(66, 133, 244));
         }
 
-        int subW = subtitle.length() * 6;
+        int subW = (int)strlen(subtitle) * 6;
         int clipMinX = 2;
         int clipMaxX = w - 2;
         int availW = clipMaxX - clipMinX;
@@ -741,23 +747,21 @@ void GoogleCastEngine::render(EngineContext* context) {
     }
 
     int textX = 2;
-    bool hasArt = (m_hasPsram && m_showAlbumArt && !st.imageUrl.isEmpty());
-
-    // 1. Album Cover Art frame & decoded RGB565 bitmap
-    if (hasArt) {
-        int imgSize = (h >= 64) ? 52 : 24;
-        int imgX = 1;
-        int imgY = (h >= 64) ? ((h - 4 - imgSize) / 2) : max(1, (h - 3 - imgSize) / 2);
-
-        display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(40, 40, 50));
-
+    bool hasArt = false;
+    if (m_hasPsram && m_showAlbumArt && st.imageUrl[0] != '\0') {
         ArtworkSnapshot snap = artworkService.getSnapshot();
         if (snap.bitmap && snap.width > 0 && snap.height > 0) {
+            hasArt = true;
+            int imgSize = (h >= 64) ? 52 : 24;
+            int imgX = 1;
+            int imgY = (h >= 64) ? ((h - 4 - imgSize) / 2) : max(1, (h - 3 - imgSize) / 2);
+
+            display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(40, 40, 50));
             int drawW = min(imgSize, snap.width);
             int drawH = min(imgSize, snap.height);
             display->drawRGBBitmap(imgX, imgY, snap.bitmap, drawW, drawH);
+            textX = imgX + imgSize + 4;
         }
-        textX = imgX + imgSize + 4;
     }
 
     bool isCompact = (w <= 64);
@@ -771,6 +775,9 @@ void GoogleCastEngine::render(EngineContext* context) {
     // Strict viewport for text
     int clipMinX = textX;
     int clipMaxX = w - rightReserved;
+    if (clipMaxX <= clipMinX) {
+        clipMaxX = w - 2; // Fallback so text is never crushed
+    }
     int availW = max(16, clipMaxX - clipMinX);
 
     int yTitle = (h >= 64) ? 8 : 3;
@@ -780,7 +787,7 @@ void GoogleCastEngine::render(EngineContext* context) {
     renderMarquee(display, st.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
 
     // 3. Artist / Subtitle (Marquee)
-    String artistStr = !st.artist.isEmpty() ? st.artist : (!st.appName.isEmpty() ? st.appName : "Google Nest");
+    const char* artistStr = (st.artist[0] != '\0') ? st.artist : ((st.appName[0] != '\0') ? st.appName : "Google Nest");
     renderMarquee(display, artistStr, yArtist, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(66, 180, 255));
 
     // 4. Equalizer Visualizer on the right

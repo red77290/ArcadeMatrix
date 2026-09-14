@@ -450,7 +450,7 @@ To maintain system-wide stability across network, storage, audio, and visual sub
    - **Storage Layer (SDMMC):** Requires contiguous internal DMA bounce buffers (`MALLOC_CAP_DMA`).
 2. **Opportunistic Services (Strictly Subordinate & Abandonable):**
    - **`FighterEngine` Overlay:** Must cut short immediately upon memory scarcity (`heap < 30 KB`, `dma < 16 KB`, `psram < 1 MB`) or missing files without monopolizing the SDMMC bus or CPU.
-   - **`ArtworkService` HTTPS Downloads:** Must verify `NetworkBudget::canStartTlsSession()` before allocating and requesting album art.
+   - **`ArtworkService` HTTPS Downloads:** Must verify `NetworkBudget::canStartTlsSession()` before allocating and requesting album art. Thumbnail parameters (`=w64-h64-c` on Google CDN) cap download sizes to 16 KB to protect PSRAM GDMA bandwidth. Core 1 reads immutable lock-free POD snapshots (`ArtworkSnapshot`) without heap allocations or mutexes.
 
 #### Stateful Networking vs Socket Descriptor Exhaustion (CastV2)
 - Transversal protocols (Google Cast) maintain a persistent `WiFiClientSecure` connection across polling cycles with active protocol heartbeats (`PING` every 5s).

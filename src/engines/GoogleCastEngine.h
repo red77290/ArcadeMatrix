@@ -11,11 +11,11 @@
 struct GoogleCastMediaState {
     bool isActive = false;
     bool isPlaying = false;
-    String appName = "";
-    String title = "";
-    String artist = "";
-    String album = "";
-    String imageUrl = "";
+    char appName[32] = {0};
+    char title[96] = {0};
+    char artist[64] = {0};
+    char album[64] = {0};
+    char imageUrl[160] = {0};
     float currentTimeSec = 0.0f;
     float durationSec = 0.0f;
     float volumeLevel = 0.5f;
@@ -52,9 +52,10 @@ private:
     bool m_showVolume = true;
     bool m_showVisualizer = true;
 
-    GoogleCastMediaState m_state;
-    GoogleCastMediaState m_renderState;
-    std::mutex m_stateMutex;
+    // Generational lock-free double-buffer between Core 0 and Core 1 (Invariant 1)
+    GoogleCastMediaState m_slots[2];
+    std::atomic<uint8_t> m_publishedSlot{0};
+    GoogleCastMediaState m_state; // Core 0 worker private accumulator
     bool m_hasPsram = false;
 
     // Background polling worker task (Core 0)

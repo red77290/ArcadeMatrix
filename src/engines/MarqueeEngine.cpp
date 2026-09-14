@@ -63,6 +63,11 @@ void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long du
     m_active = true;
     m_rawStartTime = millis();
     m_rawDurationMs = durationSeconds * 1000UL;
+    m_clearFramesRemaining.store(2, std::memory_order_relaxed);
+    auto matrix = m_context ? m_context->getMatrix() : nullptr;
+    if (matrix) {
+        matrix->fillScreen(0);
+    }
     if (m_gifEngine) {
         m_gifEngine->stop();
     }
@@ -72,6 +77,7 @@ void MarqueeEngine::setMarqueeFile(const char* path) {
     if (!path || strlen(path) == 0) return;
     m_filePath = String(path);
     m_hasRawBuffer = false;
+    m_clearFramesRemaining.store(2, std::memory_order_relaxed);
     if (m_active && m_gifEngine) {
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
@@ -187,6 +193,7 @@ String MarqueeEngine::resolveMarqueeFile() {
 
 void MarqueeEngine::activate() {
     m_active = true;
+    m_clearFramesRemaining.store(2, std::memory_order_relaxed);
     auto matrix = m_context ? m_context->getMatrix() : nullptr;
     if (matrix) {
         matrix->fillScreen(0);

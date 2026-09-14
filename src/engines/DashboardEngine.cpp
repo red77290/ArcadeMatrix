@@ -67,8 +67,9 @@ void DashboardEngine::render(EngineContext* context) {
     float tempOffset = (m_config.tempOffsetStr.isEmpty() || m_config.tempOffsetStr.equalsIgnoreCase("system")) ? 
                        guard->system.temp_offset : m_config.tempOffsetStr.toFloat();
 
-    String lang = (m_config.lang.isEmpty() || m_config.lang.equalsIgnoreCase("system")) ? 
-                  (guard->system.lang.length() > 0 ? guard->system.lang : "en") : m_config.lang;
+    static const String s_defaultLang = "en";
+    const String& lang = (m_config.lang.isEmpty() || m_config.lang.equalsIgnoreCase("system")) ? 
+                         (guard->system.lang.length() > 0 ? guard->system.lang : s_defaultLang) : m_config.lang;
 
     bool format24h = (m_config.format24hStr.isEmpty() || m_config.format24hStr.equalsIgnoreCase("system")) ? 
                      guard->system.format24h : 

@@ -4021,7 +4021,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
               </div>
               ${(currentDesc.capabilities && currentDesc.capabilities.allows_overlay !== false) ? `
                 <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; cursor: pointer;">
-                  <input type="checkbox" id="modal-check-fighter" ${engId === 'clock' ? 'checked' : ''}>
+                  <input type="checkbox" id="modal-check-fighter">
                   <span data-i18n="fighter_overlay_label">${t('fighter_overlay_label', '🥊 Street Fighter Overlay')}</span>
                 </label>
               ` : ''}
@@ -4514,8 +4514,8 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
       entries.push({
         instance_id: instId,
         duration_sec: 30,
-        overlays: { fighter: allowOverlay },
-        fighter_overlay: allowOverlay
+        overlays: { fighter: false },
+        fighter_overlay: false
       });
       // Local-only edit: every add/remove/reorder used to POST /api/rotation
       // immediately, which triggered a full SD save + engine reconcile per click,
@@ -5327,8 +5327,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
             newRot.push({
               instance_id: instance.instance_id,
               duration_sec: 30,
-              overlays: { fighter: allowOverlay },
-              fighter_overlay: allowOverlay
+              overlays: { fighter: false },
+              fighter_overlay: false
             });
             window.showToast(`Added '${info.title}' to rotation`, 'success');
           }

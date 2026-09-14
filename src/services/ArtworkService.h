@@ -1,12 +1,13 @@
 #pragma once
 #include <Arduino.h>
 #include <mutex>
+#include <atomic>
 #include "../hal/HardwareHAL.h"
 
 /**
  * @struct ArtworkSnapshot
  * @brief Immutable generational snapshot of decoded album art published to Core 1.
- * Core 1 reads this snapshot safely without data races or allocations.
+ * Core 1 reads this POD snapshot safely without data races, allocations, or mutexes.
  */
 struct ArtworkSnapshot {
     const uint16_t* bitmap = nullptr;
@@ -14,7 +15,6 @@ struct ArtworkSnapshot {
     int height = 0;
     int stride = 0;
     uint32_t generation = 0;
-    String artworkId = "";
 };
 
 /**
@@ -28,8 +28,7 @@ public:
     ~ArtworkService();
 
     /**
-     * @brief Normalizes artwork URLs: forces plain HTTP (port 80) for Google CDN hosts
-     * verified to serve direct JPEGs without TLS redirection.
+     * @brief Normalizes artwork URLs: forces 64x64 thumbnail parameters on Google CDN hosts.
      */
     static String normalizeArtworkUrl(const String& url);
 
@@ -44,6 +43,7 @@ public:
 
     /**
      * @brief Returns an immutable snapshot of current artwork for safe Core 1 rendering.
+     * Lock-free, zero-allocation, zero-mutex (Invariant 1).
      */
     ArtworkSnapshot getSnapshot() const;
 
@@ -61,12 +61,14 @@ private:
     mutable std::mutex _mutex;
     String _currentArtworkId;
     String _currentUrl;
-    uint16_t* _activeBitmapBuffer = nullptr;
+    std::atomic<const uint16_t*> _activeBitmapBuffer{nullptr};
     uint16_t* _retiredBitmapBuffer = nullptr;
-    int _width = 0;
-    int _height = 0;
-    uint32_t _generation = 0;
+    std::atomic<int> _width{0};
+    std::atomic<int> _height{0};
+    std::atomic<uint32_t> _generation{0};
+    std::atomic<uint32_t> _currentArtworkTimestamp{0};
     bool _hasPsram = false;
 };
 
 extern ArtworkService artworkService;
+

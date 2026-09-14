@@ -22,29 +22,32 @@ ArtworkService::~ArtworkService() {
 
 void ArtworkService::clear() {
     std::lock_guard<std::mutex> lock(_mutex);
-    if (_activeBitmapBuffer) {
-        free(_activeBitmapBuffer);
-        _activeBitmapBuffer = nullptr;
+    uint16_t* active = const_cast<uint16_t*>(_activeBitmapBuffer.load(std::memory_order_relaxed));
+    if (active) {
+        free(active);
+        _activeBitmapBuffer.store(nullptr, std::memory_order_release);
     }
     if (_retiredBitmapBuffer) {
         free(_retiredBitmapBuffer);
         _retiredBitmapBuffer = nullptr;
     }
-    _width = 0;
-    _height = 0;
+    _width.store(0, std::memory_order_relaxed);
+    _height.store(0, std::memory_order_relaxed);
     _currentArtworkId = "";
     _currentUrl = "";
-    _generation++;
+    _currentArtworkTimestamp.store(0, std::memory_order_release);
+    _generation.fetch_add(1, std::memory_order_release);
 }
 
 String ArtworkService::normalizeArtworkUrl(const String& url) {
     if (url.isEmpty()) return "";
-    if (url.startsWith("https://")) {
-        int hostStart = 8;
-        int hostEnd = url.indexOf('/', hostStart);
-        String host = (hostEnd != -1) ? url.substring(hostStart, hostEnd) : url.substring(hostStart);
-        if (host.endsWith("googleusercontent.com") || host.endsWith("ggpht.com")) {
-            return "http://" + url.substring(8);
+    // Handle Google CDN URLs (YouTube Music / Google Cast / Google Photos)
+    if (url.indexOf("googleusercontent.com") != -1 || url.indexOf("ggpht.com") != -1) {
+        int eqPos = url.lastIndexOf('=');
+        if (eqPos != -1 && eqPos > (int)url.length() - 20) {
+            return url.substring(0, eqPos) + "=w64-h64-c";
+        } else {
+            return url + "=w64-h64-c";
         }
     }
     return url;
@@ -176,7 +179,7 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
         return false;
     }
 
-    size_t maxAlloc = hasPsram ? (128 * 1024) : (32 * 1024);
+    size_t maxAlloc = 16 * 1024;
     uint8_t* imgData = hasPsram ? 
         (uint8_t*)heap_caps_malloc(maxAlloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) :
         (uint8_t*)malloc(maxAlloc);
@@ -296,47 +299,59 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
     }
 
     // Publish new snapshot generation and retire previous buffer
-    String newId = "art_" + String(millis());
+    uint32_t ts = millis();
+    if (ts == 0) ts = 1;
+    String newId = "art_" + String(ts);
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_retiredBitmapBuffer) {
             free(_retiredBitmapBuffer);
             _retiredBitmapBuffer = nullptr;
         }
-        _retiredBitmapBuffer = _activeBitmapBuffer;
-        _activeBitmapBuffer = newBitmapBuffer;
-        _width = targetWidth;
-        _height = targetHeight;
+        _retiredBitmapBuffer = const_cast<uint16_t*>(_activeBitmapBuffer.load(std::memory_order_relaxed));
+        _width.store(targetWidth, std::memory_order_relaxed);
+        _height.store(targetHeight, std::memory_order_relaxed);
+        _activeBitmapBuffer.store(newBitmapBuffer, std::memory_order_release);
         _currentUrl = url;
         _currentArtworkId = newId;
-        _generation++;
+        _currentArtworkTimestamp.store(ts, std::memory_order_release);
+        _generation.fetch_add(1, std::memory_order_release);
     }
 
     LOGI("ArtworkService", "Album artwork published successfully (ID: %s, gen: %u, %dx%d)",
-         newId.c_str(), _generation, targetWidth, targetHeight);
+         newId.c_str(), _generation.load(std::memory_order_relaxed), targetWidth, targetHeight);
     return newId;
 }
 
 ArtworkSnapshot ArtworkService::getSnapshot() const {
-    std::lock_guard<std::mutex> lock(_mutex);
     ArtworkSnapshot snap;
-    snap.bitmap = _activeBitmapBuffer;
-    snap.width = _width;
-    snap.height = _height;
-    snap.stride = _width;
-    snap.generation = _generation;
-    snap.artworkId = _currentArtworkId;
+    snap.bitmap = _activeBitmapBuffer.load(std::memory_order_acquire);
+    snap.width = _width.load(std::memory_order_relaxed);
+    snap.height = _height.load(std::memory_order_relaxed);
+    snap.stride = snap.width;
+    snap.generation = _generation.load(std::memory_order_relaxed);
     return snap;
 }
 
 const uint16_t* ArtworkService::getArtworkBitmap(const String& artworkId, int& width, int& height) {
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (artworkId.isEmpty() || artworkId != _currentArtworkId || !_activeBitmapBuffer) {
+    if (artworkId.length() <= 4 || !artworkId.startsWith("art_")) {
         width = 0;
         height = 0;
         return nullptr;
     }
-    width = _width;
-    height = _height;
-    return _activeBitmapBuffer;
+    uint32_t reqTs = (uint32_t)strtoul(artworkId.c_str() + 4, nullptr, 10);
+    if (reqTs == 0 || reqTs != _currentArtworkTimestamp.load(std::memory_order_acquire)) {
+        width = 0;
+        height = 0;
+        return nullptr;
+    }
+    const uint16_t* buf = _activeBitmapBuffer.load(std::memory_order_acquire);
+    if (!buf) {
+        width = 0;
+        height = 0;
+        return nullptr;
+    }
+    width = _width.load(std::memory_order_relaxed);
+    height = _height.load(std::memory_order_relaxed);
+    return buf;
 }

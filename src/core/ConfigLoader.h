@@ -85,7 +85,7 @@ struct SystemConfig {
     String turn_off_at;
     String wake_up_at;
     int night_brightness;
-    bool idle_fighter_enabled = false;
+    bool idle_fighter_enabled = true;
     int idle_fighter_interval = 60;
     int idle_fighter_speed = 100;
 };
