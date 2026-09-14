@@ -7,6 +7,7 @@
 #include "core/DisplayArbiter.h"
 #include "core/DisplayRuntime.h"
 #include "core/OverlayManager.h"
+#include "core/NetworkBudget.h"
 #include "engines/EngineRegistrar.h"
 #include "hal/HardwareHAL.h"
 
@@ -1688,6 +1689,19 @@ void test_cross_priority_and_edge_transitions(void) {
     TEST_ASSERT_EQUAL(2, tracker.mutations);
 }
 
+void test_network_budget_admission_and_telemetry(void) {
+    // Validate calibrated thresholds
+    TEST_ASSERT_EQUAL_UINT32(30u * 1024u, NetworkBudget::TLS_MIN_FREE_INTERNAL);
+    TEST_ASSERT_EQUAL_UINT32(16896u, NetworkBudget::TLS_MIN_LARGEST_BLOCK);
+
+    // Validate telemetry counter increments on admission check
+    uint32_t initialDenied = NetworkBudget::getTlsDeniedCount().load();
+    bool admitted = NetworkBudget::canStartTlsSession();
+    if (!admitted) {
+        TEST_ASSERT_EQUAL_UINT32(initialDenied + 1, NetworkBudget::getTlsDeniedCount().load());
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1756,6 +1770,7 @@ void setup() {
     RUN_TEST(test_rotation_overlay_combinations);
     RUN_TEST(test_overlay_manager_lifecycle_and_heap_preservation);
     RUN_TEST(test_overlay_preemption_by_arbiter);
+    RUN_TEST(test_network_budget_admission_and_telemetry);
 
     UNITY_END();
 }

@@ -84,6 +84,7 @@ void AudioOutputHAL::setVolume(uint8_t volume) {
 }
 
 void AudioOutputHAL::preparePlayback() {
+    _isPlaying.store(true, std::memory_order_release);
     if (!_initialized) {
         begin();
         return;
@@ -289,6 +290,7 @@ bool AudioOutputHAL::begin() {
 }
 
 void AudioOutputHAL::stop() {
+    _isPlaying.store(false, std::memory_order_release);
     if (!_initialized) return;
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
@@ -353,6 +355,7 @@ size_t AudioOutputHAL::writeSamples(const int16_t* samples, size_t numSamples, T
 void AudioOutputHAL::playSine(float freqHz, uint32_t durationMs) {
     if (!_initialized && !begin()) return;
 
+    _isPlaying.store(true, std::memory_order_release);
     LOGI("AudioOutputHAL", "Playing Sine Wave POC (%.1f Hz, %u ms)...", freqHz, durationMs);
 
     const size_t sampleRate = 44100;
@@ -378,16 +381,19 @@ void AudioOutputHAL::playSine(float freqHz, uint32_t durationMs) {
         writeSamples(buffer, bufferFrames * 2);
     }
     setVolume(savedVolume);
+    _isPlaying.store(false, std::memory_order_release);
     LOGI("AudioOutputHAL", "Sine Wave POC finished.");
 }
 
 bool AudioOutputHAL::playWav(const char* filepath) {
     if (!_initialized && !begin()) return false;
+    _isPlaying.store(true, std::memory_order_release);
     LOGI("AudioOutputHAL", "Playing WAV file: %s", filepath);
 
     // Simple WAV header parsing (44-byte standard PCM header)
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
+        _isPlaying.store(false, std::memory_order_release);
         LOGE("AudioOutputHAL", "Failed to open WAV file: %s", filepath);
         return false;
     }
@@ -395,6 +401,7 @@ bool AudioOutputHAL::playWav(const char* filepath) {
     uint8_t header[44];
     if (f.read(header, 44) < 44) {
         f.close();
+        _isPlaying.store(false, std::memory_order_release);
         return false;
     }
 
@@ -402,6 +409,7 @@ bool AudioOutputHAL::playWav(const char* filepath) {
     if (memcmp(header, "RIFF", 4) != 0 || memcmp(header + 8, "WAVE", 4) != 0) {
         LOGE("AudioOutputHAL", "Not a valid RIFF/WAVE file!");
         f.close();
+        _isPlaying.store(false, std::memory_order_release);
         return false;
     }
 
@@ -413,6 +421,7 @@ bool AudioOutputHAL::playWav(const char* filepath) {
     }
 
     f.close();
+    _isPlaying.store(false, std::memory_order_release);
     LOGI("AudioOutputHAL", "WAV playback finished.");
     return true;
 }

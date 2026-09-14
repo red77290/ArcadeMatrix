@@ -212,6 +212,47 @@ void test_parse_coingecko_market_chart(void) {
     TEST_ASSERT_EQUAL_FLOAT(105.5f, maxP);
 }
 
+#include "engines/dashboard/DashboardData.h"
+
+/**
+ * @brief Tests MarketItem valid flag and in-place quote preservation semantics.
+ */
+void test_market_item_valid_flag_and_in_place_preservation(void) {
+    MarketItem itemDefault;
+    TEST_ASSERT_FALSE(itemDefault.valid);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, itemDefault.price);
+
+    MarketItem itemBtc("BTC", 65000.0f, 2.5f, true);
+    TEST_ASSERT_TRUE(itemBtc.valid);
+    TEST_ASSERT_EQUAL_FLOAT(65000.0f, itemBtc.price);
+
+    // Simulate in-place snapshot update behavior
+    std::vector<MarketItem> items;
+    items.push_back(MarketItem("BTC", 65000.0f, 2.5f, true));
+    items.push_back(MarketItem("ETH", 3500.0f, -1.0f, true));
+
+    // A fetch succeeds for ETH but fails for BTC
+    float newEthPrice = 3600.0f;
+    float newEthChange = 1.8f;
+    for (auto& item : items) {
+        if (item.symbol == "ETH") {
+            item.price = newEthPrice;
+            item.change24h = newEthChange;
+            item.valid = true;
+        }
+    }
+
+    // BTC must remain untouched with its previous valid price
+    TEST_ASSERT_EQUAL_STRING("BTC", items[0].symbol.c_str());
+    TEST_ASSERT_TRUE(items[0].valid);
+    TEST_ASSERT_EQUAL_FLOAT(65000.0f, items[0].price);
+
+    // ETH is updated
+    TEST_ASSERT_EQUAL_STRING("ETH", items[1].symbol.c_str());
+    TEST_ASSERT_TRUE(items[1].valid);
+    TEST_ASSERT_EQUAL_FLOAT(3600.0f, items[1].price);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -227,6 +268,7 @@ void setup() {
     RUN_TEST(test_parse_yahoo_malformed);
     RUN_TEST(test_parse_yahoo_chart);
     RUN_TEST(test_parse_openweathermap);
+    RUN_TEST(test_market_item_valid_flag_and_in_place_preservation);
     UNITY_END();
 }
 

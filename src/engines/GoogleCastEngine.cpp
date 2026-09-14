@@ -183,6 +183,14 @@ void GoogleCastEngine::pollTaskLoop() {
     while (m_taskRunning) {
         if (m_isActive && WiFi.status() == WL_CONNECTED) {
             pollCastStatus();
+            static uint32_t lastHwmLog = 0;
+            uint32_t now = millis();
+            if (now - lastHwmLog > 30000) {
+                lastHwmLog = now;
+                UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+                LOGD("GoogleCast", "CastPoll stack HWM: %u words (%u bytes free)",
+                     (unsigned)hwm, (unsigned)(hwm * sizeof(StackType_t)));
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(1500));
     }

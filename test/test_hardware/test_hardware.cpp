@@ -41,6 +41,74 @@ void test_environment_data_conversion(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 72.5f, tempF);
 }
 
+/**
+ * @brief Tests ES7210 zero signal lock-free flagging, Core 0 recovery, cooldown and healthy reset.
+ */
+void test_es7210_zero_signal_lockfree_flagging_and_recovery(void) {
+    HardwareHAL hal;
+    hal.setEs7210ZeroFrames(0);
+    hal.setEs7210RecoveryPending(false);
+    hal.setConsecutiveRecoveryCount(0);
+    hal.setLastES7210RecoveryMs(0);
+
+    // Simulate 59 zero-peak PCM buffers (Core 1)
+    for (int i = 0; i < 59; i++) {
+        hal.evaluateES7210Signal(512, 0);
+    }
+    TEST_ASSERT_EQUAL_UINT16(59, hal.getEs7210ZeroFrames());
+    TEST_ASSERT_FALSE(hal.isEs7210RecoveryPending());
+
+    // 60th zero buffer triggers recovery pending
+    hal.evaluateES7210Signal(512, 0);
+    TEST_ASSERT_TRUE(hal.isEs7210RecoveryPending());
+
+    // Core 0 executes recovery
+    bool recResult = hal.checkAndPerformES7210Recovery();
+    TEST_ASSERT_TRUE(recResult);
+    TEST_ASSERT_FALSE(hal.isEs7210RecoveryPending());
+    TEST_ASSERT_EQUAL_UINT8(1, hal.getConsecutiveRecoveryCount());
+
+    // Immediate second recovery pending should be rejected by 3000ms cooldown
+    hal.setEs7210RecoveryPending(true);
+    TEST_ASSERT_FALSE(hal.checkAndPerformES7210Recovery());
+    // Pending flag must remain true during cooldown so it can retry later
+    TEST_ASSERT_TRUE(hal.isEs7210RecoveryPending());
+
+    // Core 1 observes healthy non-zero PCM signal
+    hal.evaluateES7210Signal(512, 1200);
+    TEST_ASSERT_EQUAL_UINT16(0, hal.getEs7210ZeroFrames());
+    TEST_ASSERT_TRUE(hal.isEs7210SignalHealthy());
+
+    // Advance cooldown and execute: healthy signal resets consecutive count
+    hal.setLastES7210RecoveryMs(0);
+    hal.checkAndPerformES7210Recovery();
+    TEST_ASSERT_EQUAL_UINT8(1, hal.getConsecutiveRecoveryCount());
+}
+
+/**
+ * @brief Verifies that transient DMA underruns and alternating silence do not trigger spurious recovery.
+ */
+void test_es7210_dma_underrun_and_transient_silence(void) {
+    HardwareHAL hal;
+    hal.setEs7210ZeroFrames(0);
+    hal.setEs7210RecoveryPending(false);
+
+    // bytesRead == 0 is DMA underrun, not silence freeze
+    hal.evaluateES7210Signal(0, 0);
+    TEST_ASSERT_EQUAL_UINT16(0, hal.getEs7210ZeroFrames());
+    TEST_ASSERT_FALSE(hal.isEs7210RecoveryPending());
+
+    // 30 silent frames followed by healthy sound frame
+    for (int i = 0; i < 30; i++) {
+        hal.evaluateES7210Signal(512, 0);
+    }
+    TEST_ASSERT_EQUAL_UINT16(30, hal.getEs7210ZeroFrames());
+
+    hal.evaluateES7210Signal(512, 500); // Sound arrives
+    TEST_ASSERT_EQUAL_UINT16(0, hal.getEs7210ZeroFrames());
+    TEST_ASSERT_FALSE(hal.isEs7210RecoveryPending());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -48,6 +116,8 @@ void setup() {
     RUN_TEST(test_hal_default_states);
     RUN_TEST(test_mic_gain_bounds);
     RUN_TEST(test_environment_data_conversion);
+    RUN_TEST(test_es7210_zero_signal_lockfree_flagging_and_recovery);
+    RUN_TEST(test_es7210_dma_underrun_and_transient_silence);
     UNITY_END();
 }
 

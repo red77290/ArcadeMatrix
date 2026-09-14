@@ -264,6 +264,14 @@ void DashboardDataProvider::fetchTaskLoop() {
                 }
 
                 LOGI("Dashboard", "Sequential data fetch completed. Next refresh in %d min.", m_config.refreshIntervalMin);
+
+                static uint32_t lastHwmLog = 0;
+                if (now - lastHwmLog > 30000) {
+                    lastHwmLog = now;
+                    UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+                    LOGD("Dashboard", "DashFetch stack HWM: %u words (%u bytes free)",
+                         (unsigned)hwm, (unsigned)(hwm * sizeof(StackType_t)));
+                }
             }
         }
 
@@ -725,7 +733,6 @@ void DashboardDataProvider::fetchMarkets() {
 
     if (symbols.empty()) return;
 
-    std::vector<MarketItem> updatedItems;
     YahooFinanceProvider yahooProvider;
 
     for (const auto& sym : symbols) {
@@ -742,7 +749,10 @@ void DashboardDataProvider::fetchMarkets() {
             break;
         }
 
-        bool itemAdded = false;
+        bool fetchSuccess = false;
+        float fetchedPrice = 0.0f;
+        float fetchedChange = 0.0f;
+        String fetchedImgUrl = "";
 
         // 1. Check Binance (fast crypto API)
         WiFiClientSecure binanceClient;
@@ -756,14 +766,9 @@ void DashboardDataProvider::fetchMarkets() {
             if (code == 200) {
                 DynamicJsonDocument doc(1024);
                 if (deserializeJson(doc, http.getStream()) == DeserializationError::Ok) {
-                    float price = doc["lastPrice"].as<float>();
-                    float chg = doc["priceChangePercent"].as<float>();
-                    MarketItem item(sym, price, chg, true);
-                    if (resolveMarketIcon(sym, "", item.iconPixels)) {
-                        item.hasIcon = true;
-                    }
-                    updatedItems.push_back(item);
-                    itemAdded = true;
+                    fetchedPrice = doc["lastPrice"].as<float>();
+                    fetchedChange = doc["priceChangePercent"].as<float>();
+                    fetchSuccess = true;
                 }
             }
             http.end();
@@ -771,33 +776,47 @@ void DashboardDataProvider::fetchMarkets() {
         binanceClient.stop();
 
         // 2. Check Yahoo Finance (Stocks & other Cryptos)
-        if (!itemAdded && m_isActive) {
-            float stockPrice = 0.0f;
-            float stockChange = 0.0f;
-            String imgUrl = "";
-            if (yahooProvider.fetchQuote(sym, stockPrice, stockChange, imgUrl)) {
-                MarketItem item(sym, stockPrice, stockChange, true);
-                if (resolveMarketIcon(sym, imgUrl, item.iconPixels)) {
-                    item.hasIcon = true;
-                }
-                updatedItems.push_back(item);
-                itemAdded = true;
-            } else if (yahooProvider.fetchQuote(sym + "-USD", stockPrice, stockChange, imgUrl)) {
-                MarketItem item(sym, stockPrice, stockChange, true);
-                if (resolveMarketIcon(sym, imgUrl, item.iconPixels)) {
-                    item.hasIcon = true;
-                }
-                updatedItems.push_back(item);
-                itemAdded = true;
+        if (!fetchSuccess && m_isActive) {
+            if (yahooProvider.fetchQuote(sym, fetchedPrice, fetchedChange, fetchedImgUrl)) {
+                fetchSuccess = true;
+            } else if (yahooProvider.fetchQuote(sym + "-USD", fetchedPrice, fetchedChange, fetchedImgUrl)) {
+                fetchSuccess = true;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(150));
-    }
 
-    if (!updatedItems.empty()) {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
-        m_snapshot.marketItems = updatedItems;
-        LOGI("Dashboard", "Markets updated (%d tickers).", (int)updatedItems.size());
+        // 3. Patch quote in-place: preserve previous cached quotes if individual fetch fails
+        if (fetchSuccess) {
+            uint16_t iconPixels[64];
+            bool hasIcon = resolveMarketIcon(sym, fetchedImgUrl, iconPixels);
+            std::lock_guard<std::mutex> lock(m_snapshotMutex);
+            bool found = false;
+            for (auto& item : m_snapshot.marketItems) {
+                if (item.symbol == sym) {
+                    item.price = fetchedPrice;
+                    item.change24h = fetchedChange;
+                    item.valid = true;
+                    if (hasIcon) {
+                        item.hasIcon = true;
+                        memcpy(item.iconPixels, iconPixels, sizeof(item.iconPixels));
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                MarketItem newItem(sym, fetchedPrice, fetchedChange, true);
+                if (hasIcon) {
+                    newItem.hasIcon = true;
+                    memcpy(newItem.iconPixels, iconPixels, sizeof(newItem.iconPixels));
+                }
+                m_snapshot.marketItems.push_back(newItem);
+            }
+            LOGD("Dashboard", "Market ticker %s updated: price=%.2f, change=%.2f%%", sym.c_str(), fetchedPrice, fetchedChange);
+        } else {
+            LOGW("Dashboard", "Failed to update market ticker %s; keeping previous cached quote.", sym.c_str());
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
 

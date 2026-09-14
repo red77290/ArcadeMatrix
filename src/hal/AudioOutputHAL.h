@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <driver/i2s.h>
+#include <atomic>
 #include "HardwareHAL.h"
 
 /**
@@ -49,6 +50,17 @@ public:
     uint8_t getVolume() const { return _volume; }
 
     /**
+     * @brief Indicates if audio output DAC is actively transmitting playback sound.
+     * Fast-path read on Core 1; MUST NOT be treated as a concurrency lock.
+     */
+    bool isPlaying() const { return _isPlaying.load(std::memory_order_relaxed); }
+
+    /**
+     * @brief Sets active playback state.
+     */
+    void setPlaying(bool playing) { _isPlaying.store(playing, std::memory_order_release); }
+
+    /**
      * @brief Indicates if audio output DAC is available and initialized.
      */
     bool isAvailable() const { return _initialized; }
@@ -69,6 +81,7 @@ public:
 
 private:
     bool _initialized;
+    std::atomic<bool> _isPlaying{false};
     uint8_t _volume;
     float _volumeScale; // 0.0f to 1.0f (logarithmic scale)
     int16_t _scaledBuffer[1024];

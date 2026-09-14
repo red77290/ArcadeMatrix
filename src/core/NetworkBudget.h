@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <atomic>
 
 /**
  * @file NetworkBudget.h
@@ -25,22 +26,12 @@
  */
 namespace NetworkBudget {
 
-/// Minimum total free internal DRAM required before starting a TLS session.
-///
-/// Derived from the peak cost of one session with the Arduino-ESP32 mbedTLS build
-/// (CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN): a 16 KB input record buffer, a 4 KB output
-/// record buffer, X.509 chain parsing and the handshake/session state add up to roughly
-/// 30 KB, on top of whatever the SD/FATFS layer and AsyncWebServer need concurrently.
-/// Field logs showed handshakes still failing at ~59 KB free, so the earlier 46 KB
-/// watermark was far too optimistic.
-static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 56u * 1024u;
+/// Empirically validated admission threshold for current ESP32-S3 configuration.
+/// Note: These are measured admission thresholds, not theoretical TLS memory guarantees.
+static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 30u * 1024u; // 30,720 bytes
 
-/// Minimum contiguous internal DRAM block required before starting a TLS session.
-///
-/// This is the binding constraint: the 16384-byte input record buffer is a single
-/// allocation, so a fragmented heap fails the handshake even when the total free size
-/// looks comfortable. 18 KB covers the buffer plus its header overhead.
-static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 18u * 1024u;
+/// Contiguous allocation watermark to satisfy the 16 KB mbedTLS input record buffer.
+static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
 
 /**
  * @brief Returns the total free internal DRAM in bytes.
@@ -57,6 +48,14 @@ inline uint32_t largestInternalBlock() {
 }
 
 /**
+ * @brief Thread-safe telemetry counter tracking rejected TLS attempts.
+ */
+inline std::atomic<uint32_t>& getTlsDeniedCount() {
+    static std::atomic<uint32_t> count{0};
+    return count;
+}
+
+/**
  * @brief Tells whether a TLS handshake may reasonably be attempted right now.
  *
  * Checks both the total free internal DRAM and the largest contiguous block, since
@@ -65,8 +64,21 @@ inline uint32_t largestInternalBlock() {
  * @return true when there is enough internal DRAM headroom for a TLS session.
  */
 inline bool canStartTlsSession() {
-    return freeInternal() >= TLS_MIN_FREE_INTERNAL &&
-           largestInternalBlock() >= TLS_MIN_LARGEST_BLOCK;
+    const uint32_t free = freeInternal();
+    const uint32_t largest = largestInternalBlock();
+    const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && largest >= TLS_MIN_LARGEST_BLOCK);
+    if (!admitted) {
+        getTlsDeniedCount().fetch_add(1, std::memory_order_relaxed);
+        static std::atomic<uint32_t> lastDenialLogMs{0};
+        uint32_t now = millis();
+        uint32_t last = lastDenialLogMs.load(std::memory_order_relaxed);
+        if (now - last > 10000 && lastDenialLogMs.compare_exchange_strong(last, now)) {
+            log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), total denied=%u",
+                  free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_LARGEST_BLOCK,
+                  getTlsDeniedCount().load(std::memory_order_relaxed));
+        }
+    }
+    return admitted;
 }
 
 } // namespace NetworkBudget

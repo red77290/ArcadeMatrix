@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <mutex>
+#include <atomic>
 #include "../include/HardwareProfile.h"
 
 extern std::mutex g_i2cMutex;
@@ -155,6 +156,35 @@ public:
      * @brief Indicates whether an IMU / gyroscope sensor was detected on the I2C bus.
      */
     bool isGyroscopeAvailable() const { return _capabilities.hasGyroscope; }
+    /**
+     * @brief Evaluates audio signal health on Core 1 once per PCM capture.
+     * Core 1 single-producer, lock-free, zero-allocation, zero-I2C.
+     */
+    void evaluateES7210Signal(size_t bytesRead, int16_t maxPeak);
+
+    /**
+     * @brief Performs I2C recovery sequence on Core 0 with thread safety and cooldown.
+     * Core 0 exclusive; takes g_i2cMutex.
+     * @return true if recovery actions were executed
+     */
+    bool checkAndPerformES7210Recovery();
+
+    /**
+     * @brief Indicates whether an ES7210 I2C recovery is currently pending.
+     */
+    bool isEs7210RecoveryPending() const { return _es7210RecoveryPending.load(std::memory_order_relaxed); }
+
+#ifdef UNIT_TEST
+    std::atomic<uint32_t> es7210I2cRecoveryCalls{0};
+    std::atomic<uint32_t> es7210FullConfigCalls{0};
+    uint16_t getEs7210ZeroFrames() const { return _es7210ZeroFrames.load(std::memory_order_relaxed); }
+    void setEs7210ZeroFrames(uint16_t f) { _es7210ZeroFrames.store(f, std::memory_order_relaxed); }
+    void setEs7210RecoveryPending(bool p) { _es7210RecoveryPending.store(p, std::memory_order_relaxed); }
+    bool isEs7210SignalHealthy() const { return _es7210SignalHealthy.load(std::memory_order_relaxed); }
+    uint8_t getConsecutiveRecoveryCount() const { return _consecutiveRecoveryCount; }
+    void setConsecutiveRecoveryCount(uint8_t c) { _consecutiveRecoveryCount = c; }
+    void setLastES7210RecoveryMs(uint32_t ms) { _lastES7210RecoveryMs = ms; }
+#endif
 
 private:
     HardwareCapabilities _capabilities;
@@ -167,6 +197,13 @@ private:
     // afterwards without the engine having to re-arm it.
     bool _captureRequested = false;
     float micGain;
+
+    // --- ES7210 Lock-Free Watchdog & Core 0 Recovery State ---
+    std::atomic<uint16_t> _es7210ZeroFrames{0};
+    std::atomic<bool> _es7210RecoveryPending{false};
+    std::atomic<bool> _es7210SignalHealthy{false};
+    uint32_t _lastES7210RecoveryMs = 0;
+    uint8_t _consecutiveRecoveryCount = 0;
 
     // Last-good audio frame. An I2S read that returns no bytes is a transient DMA underrun, not
     // silence: zero-filling on that path made the visualizer collapse to a flat line and recover

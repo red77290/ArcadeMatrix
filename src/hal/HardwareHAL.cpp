@@ -27,7 +27,7 @@ std::mutex g_i2cMutex;
 
 // Read budget on the Core 1 render path. i2s_read() returns partial data on timeout, which is
 // perfectly usable for time-domain banding, so these stay well under one frame period.
-#define AUDIO_SPECTRUM_READ_TIMEOUT_MS 10
+#define AUDIO_SPECTRUM_READ_TIMEOUT_MS 20
 #define AUDIO_DECIBEL_READ_TIMEOUT_MS 20
 
 static_assert(SAMPLE_RATE * 256 == 4096000,
@@ -84,6 +84,20 @@ uint8_t HardwareHAL::calcSensirionCRC8(const uint8_t* data, uint8_t len) {
     return crc;
 }
 
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3) && !defined(UNIT_TEST)
+static TaskHandle_t s_es7210RecoveryTaskHandle = nullptr;
+
+static void es7210RecoveryTaskFunc(void* param) {
+    auto* hal = static_cast<HardwareHAL*>(param);
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
+        if (hal->isEs7210RecoveryPending()) {
+            hal->checkAndPerformES7210Recovery();
+        }
+    }
+}
+#endif
+
 void HardwareHAL::begin() {
     LOGI("HardwareHAL", "Initializing Hardware Abstraction Layer...");
 
@@ -125,6 +139,20 @@ void HardwareHAL::begin() {
     _capabilities.audio.maxSampleRate = 44100;
     _capabilities.audio.maxChannels = 2;
     _capabilities.audio.bluetoothClassic = false; // S3 is BLE only
+
+#if !defined(UNIT_TEST)
+    if (_capabilities.hasMicrophone && s_es7210RecoveryTaskHandle == nullptr) {
+        xTaskCreatePinnedToCore(
+            es7210RecoveryTaskFunc,
+            "ES7210Rec",
+            2560,
+            this,
+            1,
+            &s_es7210RecoveryTaskHandle,
+            0 // Core 0
+        );
+    }
+#endif
 #else
     _capabilities.hasMicrophone = true; // Default ESP32 generic I2S mic profile
     _capabilities.audio.input = true;
@@ -439,6 +467,100 @@ bool HardwareHAL::configureES7210() {
 #endif
 }
 
+void HardwareHAL::evaluateES7210Signal(size_t bytesRead, int16_t maxPeak) {
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3) || defined(UNIT_TEST)
+    if (bytesRead == 0) {
+        // Transient DMA underrun, not an ES7210 silent-freeze failure
+        return;
+    }
+    if (maxPeak > 0) {
+        _es7210ZeroFrames.store(0, std::memory_order_relaxed);
+        _es7210SignalHealthy.store(true, std::memory_order_release);
+        return;
+    }
+    const uint16_t frames = _es7210ZeroFrames.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (frames >= 60) {
+        _es7210ZeroFrames.store(0, std::memory_order_relaxed);
+        _es7210RecoveryPending.store(true, std::memory_order_release);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3) && !defined(UNIT_TEST)
+        if (s_es7210RecoveryTaskHandle != nullptr) {
+            xTaskNotifyGive(s_es7210RecoveryTaskHandle);
+        }
+#endif
+    }
+#endif
+}
+
+bool HardwareHAL::checkAndPerformES7210Recovery() {
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3) || defined(UNIT_TEST)
+    // 1. Reset consecutive attempt counter upon observing confirmed healthy signal
+    if (_es7210SignalHealthy.exchange(false, std::memory_order_acquire)) {
+        _consecutiveRecoveryCount = 0;
+    }
+
+    // 2. Fast check: is recovery pending?
+    if (!_es7210RecoveryPending.load(std::memory_order_relaxed)) {
+        return false;
+    }
+
+    // 3. Cooldown check: minimum 3000 ms between recovery attempts
+    uint32_t now = millis();
+    if (now - _lastES7210RecoveryMs < 3000) {
+        return false; // Leave pending = true so Core 0 retries once cooldown expires
+    }
+
+    // 4. Consume pending flag
+    if (!_es7210RecoveryPending.exchange(false, std::memory_order_acquire)) {
+        return false;
+    }
+
+    _lastES7210RecoveryMs = now;
+    _consecutiveRecoveryCount++;
+
+#ifdef UNIT_TEST
+    es7210I2cRecoveryCalls.fetch_add(1, std::memory_order_relaxed);
+#endif
+
+    LOGW("HardwareHAL", "ES7210 digital zero freeze detected! Performing Core 0 I2C recovery #%u...",
+         _consecutiveRecoveryCount);
+
+    if (_consecutiveRecoveryCount >= 3) {
+        LOGW("HardwareHAL", "3 consecutive ES7210 recoveries failed. Triggering full configureES7210()...");
+#ifdef UNIT_TEST
+        es7210FullConfigCalls.fetch_add(1, std::memory_order_relaxed);
+#endif
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        configureES7210(); // configureES7210 handles g_i2cMutex internally
+#endif
+        _consecutiveRecoveryCount = 0;
+        return true;
+    }
+
+    // Fixed un-mute sequence from commit 6ee7d4c:
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    {
+        std::lock_guard<std::mutex> lock(g_i2cMutex);
+        static const uint8_t unmuteCmds[][2] = {
+            {0x13, 0x00}, // Automute disabled
+            {0x14, 0x00}, // ADC34 unmuted
+            {0x15, 0x00}, // ADC12 unmuted
+            {0x00, 0x41}  // Device enable
+        };
+        for (size_t i = 0; i < sizeof(unmuteCmds)/sizeof(unmuteCmds[0]); i++) {
+            Wire.beginTransmission(ES7210_I2C_ADDR);
+            Wire.write(unmuteCmds[i][0]);
+            Wire.write(unmuteCmds[i][1]);
+            Wire.endTransmission();
+        }
+    }
+#endif
+
+    return true;
+#else
+    return false;
+#endif
+}
+
 void HardwareHAL::startAudioSampling() {
     if (!_capabilities.hasMicrophone) return;
 
@@ -447,15 +569,12 @@ void HardwareHAL::startAudioSampling() {
     _captureRequested = true;
     if (audioActive) return;
 
-    // Capture and playback are mutually exclusive: they share I2S_NUM_0, the same I2S
-    // pins and the same analog front-end. Running both at once makes the amplified
-    // speaker output leak straight back into the microphone (acoustic feedback), so
-    // playback ownership always wins and capture simply stays off until it is released.
-    if (audioOutputHAL.isAvailable()) {
+    // Fast-path state check on Core 1: mic capture is deferred only while playback is actively playing sound
+    if (audioOutputHAL.isPlaying()) {
         static unsigned long lastRefusalLog = 0;
         if (millis() - lastRefusalLog > 5000) {
             lastRefusalLog = millis();
-            LOGW("HardwareHAL", "Audio capture deferred: playback owns the I2S bus (mic and speaker are mutually exclusive).");
+            LOGW("HardwareHAL", "Audio capture deferred: playback is actively streaming sound.");
         }
         return;
     }
@@ -466,13 +585,11 @@ void HardwareHAL::startAudioSampling() {
     _audioWarmupFrames = 0;
     for (size_t i = 0; i < MAX_SPECTRUM_BANDS; i++) _lastSpectrum[i] = 0.0f;
 
-    // 0. Force the Power Amplifier OFF for the whole capture session. Capture is always
-    //    silent: the PA belongs exclusively to AudioOutputHAL. Enabling it here (the
-    //    previous behaviour) put a live speaker next to the microphone it was recording.
+    // 0. Enable the Audio Power Rail on GPIO 11 for microphone session.
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     pinMode(11, OUTPUT);
-    digitalWrite(11, LOW);
-    LOGI("HardwareHAL", "Audio PA held OFF on GPIO 11 for the capture session (feedback prevention).");
+    digitalWrite(11, HIGH);
+    LOGI("HardwareHAL", "Audio power rail enabled on GPIO 11 for microphone session.");
 #endif
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
@@ -574,9 +691,11 @@ void HardwareHAL::stopAudioSampling(bool clearIntent) {
     i2s_driver_uninstall(I2S_PORT);
     audioActive = false;
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    // Leave the PA in the state playback expects: off. AudioOutputHAL re-enables it.
-    pinMode(11, OUTPUT);
-    digitalWrite(11, LOW);
+    // Leave the PA in the state playback expects: off if not playing.
+    if (!audioOutputHAL.isPlaying()) {
+        pinMode(11, OUTPUT);
+        digitalWrite(11, LOW);
+    }
 #endif
     // Logged at INFO because an unexpected teardown (I2S_NUM_0 is shared with AudioOutputHAL)
     // silently starves the visualizer and is otherwise invisible in a field log.
@@ -585,12 +704,9 @@ void HardwareHAL::stopAudioSampling(bool clearIntent) {
 }
 
 float HardwareHAL::getDecibels(float dbCalibration) {
-    // Only re-arm on a standing intent, and never while playback owns the bus.
-    // Unconditionally restarting here used to steal I2S_NUM_0 back from the radio one
-    // render frame after AudioHub had handed it over, which both killed playback and
-    // re-armed the microphone next to a live speaker.
+    // Only re-arm on a standing intent, and never while playback is actively outputting sound.
     if (!audioActive) {
-        if (!_captureRequested || audioOutputHAL.isAvailable()) {
+        if (!_captureRequested || audioOutputHAL.isPlaying()) {
             return _lastDecibels + dbCalibration;
         }
         startAudioSampling();
@@ -632,6 +748,8 @@ float HardwareHAL::getDecibels(float dbCalibration) {
         }
         sumSquares += (sample * sample);
     }
+
+    evaluateES7210Signal(bytesRead, maxPeak);
 
     // Warm-up is per sampling session, not per boot: a function-local static would have stayed
     // latched after the very first four reads and skipped the settle window on every restart.
@@ -675,11 +793,9 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
     if (!bands || numBands == 0) return false;
     if (numBands > MAX_SPECTRUM_BANDS) numBands = MAX_SPECTRUM_BANDS;
 
-    // Only re-arm on a standing intent, and never while playback owns the bus (see
-    // getDecibels). When capture is unavailable the previous frame is decayed out so
-    // the bars fade instead of freezing or snapping to zero.
+    // Only re-arm on a standing intent, and never while playback is actively outputting sound.
     if (!audioActive) {
-        if (!_captureRequested || audioOutputHAL.isAvailable()) {
+        if (!_captureRequested || audioOutputHAL.isPlaying()) {
             for (size_t i = 0; i < numBands; i++) {
                 float v = (_lastSpectrumBands == numBands) ? (_lastSpectrum[i] * 0.85f) : 0.0f;
                 if (v < 0.002f) v = 0.0f;
@@ -757,6 +873,9 @@ bool HardwareHAL::getAudioSpectrum(float* bands, size_t numBands) {
         if (absVal > maxPeak) maxPeak = absVal;
     }
     float dcOffset = (float)(sum / samplesCount);
+
+    // Lock-free watchdog evaluation: evaluated strictly ONCE per physical PCM capture buffer on Core 1
+    evaluateES7210Signal(bytesRead, maxPeak);
 
     // Second pass: Welch-averaged 64-point FFT.
     //
