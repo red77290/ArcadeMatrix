@@ -63,6 +63,8 @@ private:
     WiFiClientSecure m_client;
     String m_lastTransportId = "";
     uint32_t m_lastConnectAttemptMs = 0;
+    uint32_t m_lastPingMs = 0;
+    uint32_t m_lastStatusMs = 0;
 
     // Artwork caching
     String m_artworkId = "";

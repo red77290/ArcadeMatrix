@@ -312,30 +312,24 @@ void GoogleCastEngine::pollCastStatus() {
 
     // 1. Establish or recover persistent TLS connection if not connected
     if (!m_client.connected()) {
-        // Enforce cooldown between reconnect attempts to avoid socket exhaustion
-        if (now - m_lastConnectAttemptMs < 5000) {
+        // Enforce cooldown between reconnect attempts to avoid socket exhaustion (lwIP TIME_WAIT accumulation)
+        if (now - m_lastConnectAttemptMs < 15000) {
             return;
         }
         m_lastConnectAttemptMs = now;
         m_lastTransportId = "";
 
-        // Check internal DRAM admission before initiating TLS handshake
+        // Check internal DRAM and DMA admission before initiating TLS handshake
         if (!NetworkBudget::canStartTlsSession()) {
-            static unsigned long lastBudgetWarn = 0;
-            if (now - lastBudgetWarn > 10000) {
-                lastBudgetWarn = now;
-                LOGW("GoogleCast", "Skipping connection: insufficient internal DRAM for TLS session (free=%u, largest=%u).",
-                     (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-            }
             return;
         }
 
         m_client.stop();
         m_client.setInsecure();
-        m_client.setTimeout(1200);
 
         LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
         if (!m_client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+            m_client.stop();
             static unsigned long lastConnectWarn = 0;
             if (now - lastConnectWarn > 10000) {
                 lastConnectWarn = now;
@@ -349,14 +343,26 @@ void GoogleCastEngine::pollCastStatus() {
             return;
         }
 
+        m_client.setTimeout(1200);
+
         LOGI("GoogleCast", "Connected to Cast device %s:%u (persistent session active).", m_resolvedIp.c_str(), m_resolvedPort);
 
         // Send initial CONNECT to receiver-0
         auto connMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.connection", "{\"type\":\"CONNECT\"}");
         m_client.write(connMsg.data(), connMsg.size());
+
+        m_lastPingMs = now;
+        m_lastStatusMs = 0;
     }
 
-    // 2. Consume any pending unsolicited frames or heartbeat PINGs
+    // 2. Proactive heartbeat PING every 5000 ms (mandated by CastV2 contract to prevent speaker drop)
+    if (now - m_lastPingMs >= 5000) {
+        m_lastPingMs = now;
+        auto ping = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.tp.heartbeat", "{\"type\":\"PING\"}");
+        m_client.write(ping.data(), ping.size());
+    }
+
+    // 3. Consume any pending unsolicited frames or heartbeat PINGs
     while (m_client.available()) {
         CastMessage resp;
         if (!readCastMessage(m_client, resp, 100)) break;
@@ -366,7 +372,15 @@ void GoogleCastEngine::pollCastStatus() {
         }
     }
 
-    // 3. Send GET_STATUS to receiver-0
+    // 4. Pace status queries: poll every 5000 ms or immediately upon fresh connect
+    bool shouldQueryStatus = (m_lastStatusMs == 0 || (now - m_lastStatusMs >= 5000));
+    if (!shouldQueryStatus && !m_lastTransportId.isEmpty()) {
+        m_state.localTimestampMs = millis();
+        return;
+    }
+    m_lastStatusMs = now;
+
+    // Send GET_STATUS to receiver-0
     m_requestId++;
     String getStatus = "{\"type\":\"GET_STATUS\",\"requestId\":" + String(m_requestId) + "}";
     auto reqMsg = encodeCastMessage("sender-0", "receiver-0", "urn:x-cast:com.google.cast.receiver", getStatus);

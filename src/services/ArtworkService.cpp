@@ -205,6 +205,17 @@ String ArtworkService::loadArtwork(const String& url, int targetWidth, int targe
     _hasPsram = psramFound();
     if (WiFi.status() != WL_CONNECTED) return "";
 
+    if (!NetworkBudget::canStartTlsSession()) {
+        static unsigned long lastBudgetWarn = 0;
+        unsigned long now = millis();
+        if (now - lastBudgetWarn > 10000) {
+            lastBudgetWarn = now;
+            LOGW("ArtworkService", "Skipping artwork download: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
+                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        }
+        return "";
+    }
+
     _currentUrl = url;
     _width = targetWidth;
     _height = targetHeight;

@@ -166,6 +166,23 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
 6. **Golden Rule #6 — Overlays vs Selectable Engines:**
    - **Selectable Engine:** Replaces the primary framebuffer (e.g. Clock, Weather, GIF, Crypto). Registered in `EngineRegistry` with a descriptor, factory, and canonical `EngineHandle`.
    - **Transverse Overlay:** Composites additively on top of any active display source (e.g. Fighter). Managed exclusively by `OverlayManager`, enabled per rotation slot (`overlays.fighter: true`), never registered in `EngineRegistry`.
+7. **Golden Rule #7 — Stateful Network Protocols & Socket Lifecycle (CastV2 / TLS):**
+   - Transversal network streaming engines (e.g. `GoogleCastEngine`) MUST maintain a persistent `WiFiClientSecure` connection across polling cycles with active protocol heartbeats (CastV2 `PING` every 5s on `urn:x-cast:com.google.cast.tp.heartbeat` to `receiver-0`).
+   - NEVER instantiate and teardown TLS clients in a rapid polling loop (e.g. 1-2s): TCP `TIME_WAIT` states linger for 120 seconds in lwIP. Sockets accumulate up to the OS ceiling (`fd 48`, `ECONNABORTED = 113`), starving `AsyncWebServer` (port 80) and mDNS, resulting in `ERR_ADDRESS_UNREACHABLE`.
+   - Reconnect backoff after connection failure MUST be at least 15 seconds to bound maximum concurrent `TIME_WAIT` descriptors to 8 (well below the 48 socket ceiling).
+8. **Golden Rule #8 — Resource Hierarchy: Critical Services vs Opportunistic Overlays:**
+   - Critical services (Display matrix, Core 0 Web Server, Audio stream, Transversal Cast, SDMMC) have reserved bandwidth and memory.
+   - Opportunistic and decorative overlays (`FighterEngine`, `ArtworkService`) MUST be strictly subordinate:
+     * Never compete with critical services for RAM, DMA, or bus bandwidth.
+     * Cut short immediately upon the first file failure or memory dip (`heap < 30 KB`, `dma < 16 KB`, `psram < 1 MB`), free any partial allocations, and abort without attempting remaining files.
+     * Use `NetworkBudget::canStartTlsSession()` before initiating any optional HTTPS/TLS download.
+9. **Golden Rule #9 — Hardware DMA Gating for Crypto & Storage:**
+   - Hardware SHA (`esp-sha`) in ESP32-S3 and SDMMC block reading require contiguous internal DMA memory (`MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL`). If internal DMA drops below 16 KB or largest DMA block drops below 4096 bytes, `esp-sha: Failed to allocate buf memory` and `sdmmc_read_blocks failed (257) (ESP_ERR_NO_MEM)` will occur.
+   - `NetworkBudget::canStartTlsSession()` must evaluate internal DMA headroom (`freeDma >= 16 KB`, `largestDma >= 4 KB`) as well as total DRAM before admitting TLS handshakes.
+10. **Golden Rule #10 — Single-Path Peripheral Recovery (Core 0 Exclusive):**
+    - Never run parallel recovery watchdogs across cores.
+    - If Core 1 detects hardware peripheral anomalies (e.g. ES7210 digital zero freeze), Core 1 evaluates lock-free in $O(1)$ and signals an atomic flag.
+    - Recovery (I2C re-initialization) is executed exclusively on Core 0 with bounded rate-limiting/cooldown (3000 ms), completely isolated from the Core 1 audio rendering hot-path.
 
 ---
 

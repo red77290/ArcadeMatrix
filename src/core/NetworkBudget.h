@@ -47,6 +47,24 @@ inline uint32_t largestInternalBlock() {
     return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
 }
 
+/// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
+static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
+static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
+
+/**
+ * @brief Returns the total free internal DMA-capable memory in bytes.
+ */
+inline uint32_t freeDmaInternal() {
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+}
+
+/**
+ * @brief Returns the largest contiguous free internal DMA-capable block in bytes.
+ */
+inline uint32_t largestDmaInternalBlock() {
+    return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+}
+
 /**
  * @brief Thread-safe telemetry counter tracking rejected TLS attempts.
  */
@@ -58,23 +76,27 @@ inline std::atomic<uint32_t>& getTlsDeniedCount() {
 /**
  * @brief Tells whether a TLS handshake may reasonably be attempted right now.
  *
- * Checks both the total free internal DRAM and the largest contiguous block, since
- * a fragmented heap fails the handshake even when the total looks sufficient.
+ * Checks both the total free internal DRAM, largest contiguous block, and DMA-capable
+ * heap for hardware SHA acceleration (esp-sha buffer allocation).
  *
- * @return true when there is enough internal DRAM headroom for a TLS session.
+ * @return true when there is enough internal DRAM and DMA headroom for a TLS session.
  */
 inline bool canStartTlsSession() {
     const uint32_t free = freeInternal();
     const uint32_t largest = largestInternalBlock();
-    const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && largest >= TLS_MIN_LARGEST_BLOCK);
+    const uint32_t freeDma = freeDmaInternal();
+    const uint32_t largestDma = largestDmaInternalBlock();
+    const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && largest >= TLS_MIN_LARGEST_BLOCK &&
+                           freeDma >= TLS_MIN_FREE_DMA && largestDma >= TLS_MIN_LARGEST_DMA_BLOCK);
     if (!admitted) {
         getTlsDeniedCount().fetch_add(1, std::memory_order_relaxed);
         static std::atomic<uint32_t> lastDenialLogMs{0};
         uint32_t now = millis();
         uint32_t last = lastDenialLogMs.load(std::memory_order_relaxed);
         if (now - last > 10000 && lastDenialLogMs.compare_exchange_strong(last, now)) {
-            log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), total denied=%u",
+            log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), freeDma=%u (req %u), largestDma=%u (req %u), total denied=%u",
                   free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_LARGEST_BLOCK,
+                  freeDma, TLS_MIN_FREE_DMA, largestDma, TLS_MIN_LARGEST_DMA_BLOCK,
                   getTlsDeniedCount().load(std::memory_order_relaxed));
         }
     }

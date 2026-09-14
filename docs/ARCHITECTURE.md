@@ -417,6 +417,47 @@ This was solved through a two-tiered architectural strategy:
 1. **Capabilities Gating on Classic ESP32:** Heavy network engines (`CryptoEngine`, `StockEngine`) declare `EngineRequirements::needsPsram = true`. On boards without PSRAM, `ConfigSanitizer` automatically gates them off safely without crashing.
 2. **PSRAM Allocation Routing on ESP32-S3:** On ESP32-S3 boards, all large memory consumers (PNG decoding buffers in `ArtworkService`, MP3 ring buffers in `WebRadioService`, and TLS socket buffers in `WiFiClientSecure`) are routed directly to Octal PSRAM via `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`. Internal SRAM remains dedicated solely to FreeRTOS kernel tasks and time-critical hardware interrupts.
 
+#### Resource Hierarchy & Opportunistic Service Tiering
+
+To maintain system-wide stability across network, storage, audio, and visual subsystems under FreeRTOS memory pressure, ArcadeMatrix implements an explicit resource prioritization policy:
+
+```text
+                    CORE 0
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+     Network         Audio          Storage
+        │              │              │
+     Cast TLS       ES7210/I2S       SDMMC
+        │              │              │
+        └──────────────┼──────────────┘
+                       │
+                 resource budget
+                       │
+                FighterEngine
+                ArtworkService
+                  (optional)
+```
+
+1. **Critical Services (Guaranteed Resources):**
+   - **Display DMA & Matrix Scanning:** Core 1 scan loop has hard real-time priority.
+   - **AsyncWebServer (Port 80) & mDNS:** Core 0 sockets must never be starved by background client sockets.
+   - **Audio Subsystem:** I2S microphone capture (ES7210) and playback DAC (ES8311).
+   - **Transversal Cast Stream:** Persistent CastV2 streaming engine on Core 0.
+   - **Storage Layer (SDMMC):** Requires contiguous internal DMA bounce buffers (`MALLOC_CAP_DMA`).
+2. **Opportunistic Services (Strictly Subordinate & Abandonable):**
+   - **`FighterEngine` Overlay:** Must cut short immediately upon memory scarcity (`heap < 30 KB`, `dma < 16 KB`, `psram < 1 MB`) or missing files without monopolizing the SDMMC bus or CPU.
+   - **`ArtworkService` HTTPS Downloads:** Must verify `NetworkBudget::canStartTlsSession()` before allocating and requesting album art.
+
+#### Stateful Networking vs Socket Descriptor Exhaustion (CastV2)
+- Transversal protocols (Google Cast) maintain a persistent `WiFiClientSecure` connection across polling cycles with active protocol heartbeats (`PING` every 5s).
+- Repeated teardown and recreation of TLS clients creates an accumulation of TCP sockets in `TIME_WAIT` (120-second lwIP lifetime). When 48 descriptors are occupied, the OS rejects new incoming connections (`ECONNABORTED = 113`), rendering the WebUI unreachable (`ERR_ADDRESS_UNREACHABLE`).
+- Reconnection backoff is paced at $\ge 15\text{ seconds}$, bounding maximum concurrent `TIME_WAIT` sockets to 8.
+
+#### Hardware DMA Gating (`esp-sha` & SDMMC)
+- ESP32-S3 hardware SHA acceleration allocates internal DMA memory (`MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL`). If largest DMA block $< 4096$ bytes, `esp-sha: Failed to allocate buf memory` causes TLS handshakes to fail.
+- `NetworkBudget::canStartTlsSession()` admits TLS handshakes only when `freeDma >= 16 KB` and `largestDma >= 4 KB`.
+
 #### Concurrency: Seamless Simultaneous Audio & 60 FPS Video
 Real-time audio decoding and HUB75 matrix scanning operate concurrently without micro-stutters:
 - **Core 0 (Audio & Network Pipeline):** Runs `WebRadioService` MP3 frame decoding (`minimp3`) and audio network stream management into a lock-free circular buffer, continuously feeding the Everest `ES8311` I2S DAC.

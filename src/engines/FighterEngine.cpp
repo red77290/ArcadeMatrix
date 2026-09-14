@@ -173,6 +173,11 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
+    if (m_taskShouldExit) return false;
+    if (ESP.getFreeHeap() < 30720) return false;
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) return false;
+    if (m_hasPsram && ESP.getFreePsram() < 1048576) return false;
+
     if (!sd.exists(filepath)) return false;
     
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
@@ -256,7 +261,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
             while (toRead > 0) {
-                size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                if (m_taskShouldExit || ESP.getFreeHeap() < 28672) {
+                    LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
+                    toRead = 1; // force abort
+                    break;
+                }
+                size_t chunk = (toRead > 4096) ? 4096 : toRead;
                 size_t r = f.read(anim.psramBuffer + offset, chunk);
                 if (r == 0) break;
                 offset += r;
@@ -406,6 +416,21 @@ void FighterEngine::runBackgroundPreload() {
     freeFighter(nextP1);
     freeFighter(nextP2);
 
+    static constexpr uint32_t PRELOAD_MIN_FREE_HEAP = 30 * 1024;
+    static constexpr uint32_t PRELOAD_MIN_FREE_DMA = 16 * 1024;
+    static constexpr uint32_t PRELOAD_MIN_FREE_PSRAM = 1024 * 1024; // 1 MB safety reserve
+
+    if (m_taskShouldExit || ESP.getFreeHeap() < PRELOAD_MIN_FREE_HEAP ||
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < PRELOAD_MIN_FREE_DMA ||
+        (m_hasPsram && ESP.getFreePsram() < PRELOAD_MIN_FREE_PSRAM)) {
+        LOGW("FighterEngine", "Aborting background preload: insufficient memory (heap: %u, dma: %u, psram: %u)",
+             (unsigned)ESP.getFreeHeap(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+             (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
+        isPreloading = false;
+        return;
+    }
+
     auto readFighterLine = [&](FsFile& f, int lineIdx, String& name, int& height, int& ground_y, int& origin_x, int& width_px, int& head_y) -> bool {
         f.seek(fighterOffsets[lineIdx]);
         String result = f.readStringUntil('\n');
@@ -509,8 +534,18 @@ void FighterEngine::runBackgroundPreload() {
     bool ok = true;
 
     auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
+        if (m_taskShouldExit) return false;
+        if (ESP.getFreeHeap() < PRELOAD_MIN_FREE_HEAP ||
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < PRELOAD_MIN_FREE_DMA ||
+            (m_hasPsram && ESP.getFreePsram() < PRELOAD_MIN_FREE_PSRAM)) {
+            LOGW("FighterEngine", "Preload cut short: memory below floor (heap: %u, dma: %u, psram: %u)",
+                 (unsigned)ESP.getFreeHeap(),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                 (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
+            return false;
+        }
         bool res = false;
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
             res = loadFighterAnim(anim, path.c_str());
             xSemaphoreGive(sdMutex);
         }
@@ -518,11 +553,35 @@ void FighterEngine::runBackgroundPreload() {
         return res;
     };
 
-    ok &= loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt");
+    auto abortPreload = [&]() {
+        freeFighter(nextP1);
+        freeFighter(nextP2);
+        isPreloading = false;
+    };
+
+    // P1 Required Animations: walk, attack, hit, win
+    if (!loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed walk for %s", nextP1.name.c_str());
+        abortPreload();
+        return;
+    }
     loadAnimThreadSafe(nextP1.animStand, dir + "/" + nextP1.name + "/stand.fgt");
-    ok &= loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt");
-    ok &= loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt");
-    ok &= loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt");
+
+    if (!loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed attack for %s", nextP1.name.c_str());
+        abortPreload();
+        return;
+    }
+    if (!loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed hit for %s", nextP1.name.c_str());
+        abortPreload();
+        return;
+    }
+    if (!loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed win for %s", nextP1.name.c_str());
+        abortPreload();
+        return;
+    }
 
     int t1[3] = {1, 2, 3};
     for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t1[i]; t1[i]=t1[r]; t1[r]=temp; }
@@ -534,11 +593,29 @@ void FighterEngine::runBackgroundPreload() {
     }
     loadAnimThreadSafe(nextP1.animFall, dir + "/" + nextP1.name + "/fall.fgt");
 
-    ok &= loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt");
+    // P2 Required Animations: walk, attack, hit, win
+    if (!loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed walk for %s", nextP2.name.c_str());
+        abortPreload();
+        return;
+    }
     loadAnimThreadSafe(nextP2.animStand, dir + "/" + nextP2.name + "/stand.fgt");
-    ok &= loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt");
-    ok &= loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt");
-    ok &= loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt");
+
+    if (!loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed attack for %s", nextP2.name.c_str());
+        abortPreload();
+        return;
+    }
+    if (!loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed hit for %s", nextP2.name.c_str());
+        abortPreload();
+        return;
+    }
+    if (!loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt")) {
+        LOGW("FighterEngine", "Preload cut short: failed win for %s", nextP2.name.c_str());
+        abortPreload();
+        return;
+    }
 
     int t2[3] = {1, 2, 3};
     for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t2[i]; t2[i]=t2[r]; t2[r]=temp; }
@@ -550,18 +627,12 @@ void FighterEngine::runBackgroundPreload() {
     }
     loadAnimThreadSafe(nextP2.animFall, dir + "/" + nextP2.name + "/fall.fgt");
 
-    if (ok) {
-        computeStandBounds(nextP1);
-        computeStandBounds(nextP2);
-        isNextReady = true;
-        LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
-             nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
-             nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
-    } else {
-        freeFighter(nextP1);
-        freeFighter(nextP2);
-        LOGW("FighterEngine", "Background preload failed for %s vs %s", nextP1.name.c_str(), nextP2.name.c_str());
-    }
+    computeStandBounds(nextP1);
+    computeStandBounds(nextP2);
+    isNextReady = true;
+    LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
+         nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
+         nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
     isPreloading = false;
 }
 
