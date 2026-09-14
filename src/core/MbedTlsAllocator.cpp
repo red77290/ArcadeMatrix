@@ -1,11 +1,18 @@
 #include "MbedTlsAllocator.h"
 #include "Logger.h"
+#include <soc/soc_memory_types.h>
 
 MbedTlsMemoryTelemetry g_mbedTlsTelemetry;
 
 static constexpr uint32_t MBEDTLS_ALLOC_MAGIC = 0x544C534D; // "TLSM"
 
 static void* mbedtls_psram_calloc(size_t n, size_t size) {
+    if (n == 0 || size == 0) {
+        return nullptr;
+    }
+    if (size > 0 && n > SIZE_MAX / size) {
+        return nullptr;
+    }
     const size_t payloadSize = n * size;
     const size_t totalAlloc = sizeof(MbedTlsAllocHeader) + payloadSize;
 
@@ -53,8 +60,12 @@ static void* mbedtls_psram_calloc(size_t n, size_t size) {
 static void mbedtls_psram_free(void* ptr) {
     if (!ptr) return;
 
+    if (!esp_ptr_internal(ptr) && !esp_ptr_external_ram(ptr)) {
+        return;
+    }
+
     auto* hdr = reinterpret_cast<MbedTlsAllocHeader*>(static_cast<uint8_t*>(ptr) - sizeof(MbedTlsAllocHeader));
-    if (hdr->magic == MBEDTLS_ALLOC_MAGIC) {
+    if ((esp_ptr_internal(hdr) || esp_ptr_external_ram(hdr)) && hdr->magic == MBEDTLS_ALLOC_MAGIC) {
         uint32_t sz = hdr->size;
         uint8_t region = hdr->region;
         g_mbedTlsTelemetry.freeCount.fetch_add(1, std::memory_order_relaxed);

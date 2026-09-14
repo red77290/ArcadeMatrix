@@ -242,7 +242,7 @@ EngineError GoogleCastEngine::initialize(EngineContext* context, const EngineCon
         BaseType_t ret = xTaskCreatePinnedToCore(
             pollTaskStatic,
             "CastPoll",
-            4096,
+            8192,
             this,
             1,
             &m_pollTaskHandle,
