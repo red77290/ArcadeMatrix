@@ -132,8 +132,15 @@ void MatrixEngine::clear() {
 
 void MatrixEngine::setBrightness(uint8_t brightness) {
     if (display) {
+        if (brightness == 0) {
+            display->setBrightness8(0);
+            return;
+        }
         // brightness is 0-100 (percentage), setBrightness8 expects 0-255
         uint8_t scaledBrightness = (brightness * 255) / 100;
+        if (scaledBrightness < 25) {
+            scaledBrightness = 25; // Minimum floor to prevent driver chip OE pulse blanking
+        }
         display->setBrightness8(scaledBrightness);
     }
 }

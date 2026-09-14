@@ -258,6 +258,9 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         
         if (disp.containsKey("rotation_transition_duration_ms")) matrix.rotation_transition_duration_ms = disp["rotation_transition_duration_ms"].as<int>();
         else if (disp.containsKey("rotationTransitionDurationMs")) matrix.rotation_transition_duration_ms = disp["rotationTransitionDurationMs"].as<int>();
+
+        if (disp.containsKey("matrix_power")) matrix.matrix_power = disp["matrix_power"].as<bool>();
+        else if (disp.containsKey("matrixPower")) matrix.matrix_power = disp["matrixPower"].as<bool>();
     }
 
     if (doc.containsKey("wifi")) {

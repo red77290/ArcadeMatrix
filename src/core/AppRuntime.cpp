@@ -412,17 +412,17 @@ void AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
             }
         }
         
-        if (is_night) {
-            if (snapshot.system.night_brightness == 0) {
-                matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
-                delay(1000);
-                return;
-            } else {
-                matrixEngine.setBrightness(snapshot.system.night_brightness);
-            }
-        } else {
-            matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
+        static int lastAppliedBrightness = -1;
+        uint8_t targetBrightness = is_night ? snapshot.system.night_brightness : snapshot.matrix.powerLimitPercent;
+        if (is_night && targetBrightness == 0) {
+            matrixEngine.getDisplay()->fillScreen(0);
+            matrixEngine.getDisplay()->flipDMABuffer();
+            delay(1000);
+            return;
+        }
+        if (targetBrightness != lastAppliedBrightness) {
+            lastAppliedBrightness = targetBrightness;
+            matrixEngine.setBrightness(targetBrightness);
         }
     }
 }
