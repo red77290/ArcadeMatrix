@@ -73,8 +73,6 @@ struct FighterPlayer {
     FgtAnimation animFall;      ///< Fall animation data
     FighterState state;         ///< Current state in the state machine
     
-    FsFile activeFile;          ///< File handle currently open for streaming pixels
-    
     uint8_t* currentFrameBuffer = nullptr; ///< RAM buffer for the current frame
     int currentBufferSize = 0;             ///< Size of the allocated frame buffer
     

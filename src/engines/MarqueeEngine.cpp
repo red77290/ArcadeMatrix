@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include "../core/Globals.h"
+#include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
 #include "core/BuildInfo.h"
 #include "../core/Logger.h"
@@ -171,6 +172,9 @@ String MarqueeEngine::resolveMarqueeFile() {
             return "/marquees/marquee.png";
         }
     }
+    SdLockGuard guard(pdMS_TO_TICKS(1500));
+    if (!guard) return "";
+
     if (m_filePath.length() > 0 && sd.exists(m_filePath.c_str())) {
         return m_filePath;
     }

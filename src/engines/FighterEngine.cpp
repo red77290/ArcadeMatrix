@@ -4,6 +4,7 @@
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "../core/SdLockGuard.h"
+#include "../core/NetworkBudget.h"
 
 
 FighterEngine::FighterEngine() : matrix(nullptr) {}
@@ -194,9 +195,18 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (m_taskShouldExit) return false;
-    if (ESP.getFreeHeap() < 30720) return false;
-    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) return false;
+    if (ESP.getFreeHeap() < 32768) return false;
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 18432) return false;
     if (m_hasPsram && ESP.getFreePsram() < 1048576) return false;
+
+    // Do not stress SD bus / memory while another task on Core 0 is performing a heavy TLS handshake
+    if (NetworkBudget::getTlsHandshakeMutex()) {
+        if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), 0) == pdTRUE) {
+            xSemaphoreGive(NetworkBudget::getTlsHandshakeMutex());
+        } else {
+            return false;
+        }
+    }
 
     SdLockGuard sdGuard(pdMS_TO_TICKS(3000));
     if (!sdGuard) {
@@ -212,6 +222,11 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         return false;
     }
     
+    if (f.available() < 11) {
+        f.close();
+        return false;
+    }
+
     char magic[3];
     if (f.read((uint8_t*)magic, 3) != 3 || magic[0] != 'F' || magic[1] != 'G' || magic[2] != 'T') {
         f.close();
@@ -243,7 +258,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         f.close();
         return false;
     }
-    f.read((uint8_t*)anim.frameDelays, anim.numFrames * 2);
+    if (f.read((uint8_t*)anim.frameDelays, anim.numFrames * 2) != (int)(anim.numFrames * 2)) {
+        free(anim.frameDelays);
+        anim.frameDelays = nullptr;
+        f.close();
+        return false;
+    }
     if (fileNumFrames > anim.numFrames) {
         f.seek(f.position() + (fileNumFrames - anim.numFrames) * 2);
     }
@@ -286,14 +306,17 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            // Use an internal DRAM bounce buffer for SD reads. SDMMC DMA hardware cannot
-            // DMA directly into external PSRAM on ESP32/ESP32-S3, which would force the
-            // driver to dynamically allocate bounce buffers and crash under heap pressure.
-            uint8_t bounceBuf[2048];
+            // Use a compact 512-byte (single SD sector) DRAM bounce buffer for SD reads
+            // to conserve task stack and prevent stack overflow / memory corruption.
+            uint8_t bounceBuf[512];
             while (toRead > 0) {
-                if (m_taskShouldExit || ESP.getFreeHeap() < 28672) {
+                if (m_taskShouldExit || ESP.getFreeHeap() < 30720 || heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) {
                     LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
                     toRead = 1; // force abort
+                    break;
+                }
+                if (!f || !f.available()) {
+                    toRead = 1;
                     break;
                 }
                 size_t chunk = (toRead > sizeof(bounceBuf)) ? sizeof(bounceBuf) : toRead;
@@ -302,6 +325,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
                 memcpy(anim.psramBuffer + offset, bounceBuf, r);
                 offset += r;
                 toRead -= r;
+                vTaskDelay(pdMS_TO_TICKS(1)); // Yield to keep Core 0 responsive and allow other tasks to breathe
             }
             if (toRead > 0) {
                 LOGW("FighterEngine", "Incomplete read for %s (%u remaining)", filepath, (uint32_t)toRead);
@@ -342,10 +366,6 @@ void FighterEngine::freeAnim(FgtAnimation& anim) {
 }
 
 void FighterEngine::freeFighter(FighterPlayer& p) {
-    if (p.activeFile) {
-        SdLockGuard guard(pdMS_TO_TICKS(1000));
-        p.activeFile.close();
-    }
     if (p.currentFrameBuffer) {
         if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
         else free(p.currentFrameBuffer);
@@ -365,51 +385,19 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
 void FighterEngine::startLoaderTaskIfNeeded() {
     if (loaderTaskHandle) return;
 
-    // Persistent Core 0 worker, created ONCE for the engine's lifetime and parked
-    // on a task notification between preload cycles (ulTaskNotifyTake), instead of
-    // being spawned via xTaskCreatePinnedToCore and self-deleted on every single
-    // cycle. The previous per-cycle approach repeatedly grabbed and released a
-    // task stack on Core 0 - the exact resource mbedTLS needs for a contiguous
-    // TLS handshake buffer - which raced with GoogleCast's and Spotify's own TLS
-    // attempts on the same core and directly produced MBEDTLS_ERR_SSL_ALLOC_FAILED
-    // (-32512) failures observed in the field.
-    //
-    // IMPORTANT: making this task persistent turns its stack into a PERMANENT
-    // deduction from the internal-DRAM floor for the engine's whole lifetime,
-    // instead of a transient one paid only during a preload. A first attempt at
-    // 16 KB (matching the size that used to be spawned per-cycle) pushed the
-    // system's baseline free heap down to ~44-47 KB - below FighterEngine's own
-    // PRELOAD_MIN_FREE_HEAP gate below - so the gate never passed again and the
-    // overlay silently stopped preloading fights entirely. 10 KB (matching
-    // DashboardDataProvider's own persistent "DashFetch" task) keeps a safety
-    // margin over the 8 KB stack v3.1.0 used successfully with simpler preload
-    // logic, while giving back 6 KB of permanent headroom versus 16 KB.
     m_taskShouldExit = false;
     m_loaderStopped.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 8192, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 10240, this, 1, &loaderTaskHandle, 0) != pdPASS) {
         LOGE("FighterEngine", "Failed to spawn preload worker task.");
         loaderTaskHandle = nullptr;
     }
 }
 
 void FighterEngine::triggerBackgroundPreload() {
+    if (millis() < retryDelayEnd) return;
     if (isNextReady.load(std::memory_order_acquire) || isPreloading || numAvailableFighters < 2) return;
     if (!loaderTaskHandle) return; // Worker failed to start; nothing to notify.
 
-    // Guard against starting a preload cycle while internal DRAM is critically
-    // low, which could leave the FATFS file object in an inconsistent state and
-    // crash Core 0 inside f_read(). This preload only performs small internal
-    // allocations - a handful of String path/name buffers and a per-animation
-    // frameDelays array (numFrames * 2 bytes, capped at 80 bytes) - the large
-    // per-frame pixel buffers are allocated in PSRAM via heap_caps_malloc(...,
-    // MALLOC_CAP_SPIRAM) in loadFighterAnim(). It therefore does NOT need the
-    // ~56-60 KB / large-contiguous-block budget that TLS handshakes (Cast,
-    // Spotify, Artwork - see NetworkBudget) require; reusing that TLS-sized
-    // threshold here was overly conservative and, combined with the persistent
-    // worker's own permanent stack cost, made this gate unreachable in practice
-    // (observed stable baseline ~54 KB free, never reaching 60 KB). 30 KB keeps
-    // a comfortable multi-KB margin over the actual usage while still tripping
-    // well before real exhaustion.
     static constexpr uint32_t PRELOAD_MIN_FREE_HEAP = 30 * 1024;
     static uint32_t lastSkipLogMs = 0;
     const uint32_t freeHeap = ESP.getFreeHeap();
@@ -430,9 +418,6 @@ void FighterEngine::triggerBackgroundPreload() {
 void FighterEngine::loaderTaskFunc(void* param) {
     FighterEngine* self = (FighterEngine*)param;
     while (true) {
-        // Sleep until triggerBackgroundPreload() (or the destructor) wakes us up.
-        // No stack is allocated/freed here across cycles - only the one-time task
-        // creation cost paid by startLoaderTaskIfNeeded().
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (self->m_taskShouldExit) break;
         self->runBackgroundPreload();
@@ -458,6 +443,7 @@ void FighterEngine::runBackgroundPreload() {
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
              (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
         isPreloading = false;
+        retryDelayEnd = millis() + 10000;
         return;
     }
 
@@ -558,6 +544,7 @@ void FighterEngine::runBackgroundPreload() {
 
     if (!gotP1) {
         isPreloading = false;
+        retryDelayEnd = millis() + 10000;
         return;
     }
 
@@ -583,6 +570,7 @@ void FighterEngine::runBackgroundPreload() {
         freeFighter(nextP1);
         freeFighter(nextP2);
         isPreloading = false;
+        retryDelayEnd = millis() + 10000;
     };
 
     // P1 Required Animations: walk, attack, hit, win
@@ -725,11 +713,6 @@ void FighterEngine::computeStandBounds(FighterPlayer& p) {
 }
 
 static void movePlayer(FighterPlayer& dest, FighterPlayer& src) {
-    if (dest.activeFile) {
-        SdLockGuard guard(pdMS_TO_TICKS(1000));
-        dest.activeFile.close();
-    }
-
     dest.name = src.name;
     dest.height = src.height;
     dest.ground_y = src.ground_y;
@@ -923,11 +906,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_SUPER) anim = &p.animSuper;
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
-    if (p.activeFile) {
-        SdLockGuard guard(pdMS_TO_TICKS(500));
-        p.activeFile.close();
-    }
-
     // Reset frame cache for all animations when changing state so new frames are freshly read
     p.animStand.cachedFrameIndex = -1;
     p.animWalk.cachedFrameIndex = -1;
@@ -964,10 +942,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
             // Only advertise the capacity once the allocation actually succeeded, otherwise a later
             // call with a smaller frame would skip the retry and write through a null pointer.
             p.currentBufferSize = p.currentFrameBuffer ? newSize : 0;
-        }
-        if (p.activeFile) {
-            SdLockGuard guard(pdMS_TO_TICKS(500));
-            p.activeFile.close();
         }
     }
 }
@@ -1192,7 +1166,9 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     uint8_t* ptr = nullptr;
     
     if (anim->psramBuffer) {
-        ptr = anim->psramBuffer + (p.currentFrame * frameSize);
+        if ((size_t)(p.currentFrame + 1) * (size_t)frameSize <= anim->totalPixelsSize) {
+            ptr = anim->psramBuffer + (p.currentFrame * frameSize);
+        }
     } else {
         if (p.currentFrame != anim->cachedFrameIndex) {
             if (p.currentFrameBuffer && anim->filepath.length() > 0) {

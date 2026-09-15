@@ -387,7 +387,7 @@ void gifReindexLeaveMaintenance() {
 }
 
 void gifReindexTask(void*) {
-    // Both orientations are rebuilt: a portrait cabinet keeps its playlists under /gifs_tate, and a
+    // Both orientations are rebuilt: vertical orientation keeps its playlists under /gifs_tate, and a
     // rescan that only walked /gifs would leave those index.txt files stale for ever.
     std::vector<std::pair<String, String>> work;   // (root, folder)
     for (size_t r = 0; r < GIF_ROOT_COUNT; ++r) {
@@ -2631,7 +2631,13 @@ void WebServerAPI::setupRoutes() {
                 return out;
             });
             resp->addHeader("Cache-Control", "no-cache");
-            request->onDisconnect([ctx]() { if (ctx->idx) ctx->idx.close(); delete ctx; });
+            request->onDisconnect([ctx]() {
+                if (ctx->idx) {
+                    SdLockGuard guard(pdMS_TO_TICKS(1000));
+                    if (guard) ctx->idx.close();
+                }
+                delete ctx;
+            });
             request->send(resp);
         });
 
@@ -2760,7 +2766,13 @@ void WebServerAPI::setupRoutes() {
             });
             resp->addHeader("Cache-Control", "no-cache");
             if (request->hasParam("download") && request->getParam("download")->value() == "1") resp->addHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
-            request->onDisconnect([ctx]() { if (ctx->f) ctx->f.close(); delete ctx; });
+            request->onDisconnect([ctx]() {
+                if (ctx->f) {
+                    SdLockGuard guard(pdMS_TO_TICKS(1000));
+                    if (guard) ctx->f.close();
+                }
+                delete ctx;
+            });
             request->send(resp);
         });
 
@@ -2793,7 +2805,15 @@ void WebServerAPI::setupRoutes() {
                     // free the context if the client disconnects mid-upload (the final handler nulls _tempObject after deleting it)
                     request->onDisconnect([request, leaveUploadMode]() {
                         GifUploadCtx* c = (GifUploadCtx*)request->_tempObject;
-                        if (c) { if (c->modeOn) leaveUploadMode(); delete c; request->_tempObject = nullptr; }
+                        if (c) {
+                            if (c->file) {
+                                SdLockGuard guard(pdMS_TO_TICKS(1000));
+                                if (guard) c->file.close();
+                            }
+                            if (c->modeOn) leaveUploadMode();
+                            delete c;
+                            request->_tempObject = nullptr;
+                        }
                     });
                     extern GifEngine* gifEngine;
                     if (gifEngine) { gifEngine->stop(); ctx->engineStopped = true; }   // no concurrent SD reads during the write
@@ -2809,7 +2829,10 @@ void WebServerAPI::setupRoutes() {
                 if (ctx->badFolder) return;   // rejected folder name: swallow the body, final handler answers 400
                 if (index == 0) {
                     // new part begins: close any previous file
-                    if (ctx->file) ctx->file.close();
+                    if (ctx->file) {
+                        SdLockGuard guard(pdMS_TO_TICKS(5000));
+                        if (guard) ctx->file.close();
+                    }
                     ctx->currentName = sanitizeName(filename, true); ctx->currentBytes = 0; ctx->currentOk = false;
                     if (ctx->currentName.isEmpty() || !hasGifExt(ctx->currentName)) {
                         if (ctx->skipped.length()) ctx->skipped += ",";

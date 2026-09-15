@@ -40,6 +40,7 @@ private:
     FrontendSyncEngine* m_frontendListener = nullptr;
 
     bool m_wasPoweredOn = true;
+    int m_lastAppliedBrightness = -1;
     bool m_firstLoop = true;
     int m_lastSec = -1;
     uint32_t m_lastReconciledVersion = 0;
@@ -62,7 +63,7 @@ private:
     ProducerSyncState m_syncGif;
     ProducerSyncState m_syncVis;
 
-    void handleNightMode(const ConfigSnapshot& snapshot);
+    bool handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);
     void evaluateDisplayRequests(const ConfigSnapshot& snapshot);
 };

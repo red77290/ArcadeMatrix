@@ -87,8 +87,8 @@ void ConfigSanitizer::sanitizeSystem(SystemConfig& system, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
-    if (system.night_brightness < 1 || system.night_brightness > 100) {
-        system.night_brightness = constrain(system.night_brightness, 1, 100);
+    if (system.night_brightness < 0 || system.night_brightness > 100) {
+        system.night_brightness = constrain(system.night_brightness, 0, 100);
         result.values_clamped++;
         result.modified = true;
     }

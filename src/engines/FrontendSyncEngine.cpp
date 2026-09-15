@@ -3,6 +3,7 @@
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
 #include "../core/Globals.h"
+#include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
 #include <esp_task_wdt.h>
 
@@ -214,32 +215,31 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
     String foundArtPath = "";
     bool exists = false;
 
-    bool lockAcquired = (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)));
-
-    for (const String& nameVar : nameVariants) {
-        String testPaths[] = {
-            "/pixelcade/" + folder + "/" + nameVar,
-            "/" + folder + "/" + nameVar,
-            "/pixelcade/console/" + nameVar,
-            "/console/" + nameVar
-        };
-        for (const auto& basePath : testPaths) {
-            if (sd.exists(basePath + ".png")) {
-                foundArtPath = basePath + ".png";
-                exists = true;
-                break;
-            }
-            if (sd.exists(basePath + ".gif")) {
-                foundArtPath = basePath + ".gif";
-                exists = true;
-                break;
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (guard) {
+            for (const String& nameVar : nameVariants) {
+                String testPaths[] = {
+                    "/pixelcade/" + folder + "/" + nameVar,
+                    "/" + folder + "/" + nameVar,
+                    "/pixelcade/console/" + nameVar,
+                    "/console/" + nameVar
+                };
+                for (const auto& basePath : testPaths) {
+                    if (sd.exists(basePath + ".png")) {
+                        foundArtPath = basePath + ".png";
+                        exists = true;
+                        break;
+                    }
+                    if (sd.exists(basePath + ".gif")) {
+                        foundArtPath = basePath + ".gif";
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) break;
             }
         }
-        if (exists) break;
-    }
-
-    if (lockAcquired) {
-        xSemaphoreGive(sdMutex);
     }
 
     if (reqId != currentRequestId) return;
@@ -305,32 +305,31 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
     String foundArtPath = "";
     bool exists = false;
 
-    bool lockAcquired = (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(100)));
-
-    for (const auto& v : variants) {
-        String testPaths[] = {
-            "/pixelcade/" + v.folder + "/" + v.name,
-            "/" + v.folder + "/" + v.name,
-            "/pixelcade/" + v.name,
-            "/" + v.name
-        };
-        for (const auto& basePath : testPaths) {
-            if (sd.exists(basePath + ".png")) {
-                foundArtPath = basePath + ".png";
-                exists = true;
-                break;
-            }
-            if (sd.exists(basePath + ".gif")) {
-                foundArtPath = basePath + ".gif";
-                exists = true;
-                break;
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        if (guard) {
+            for (const auto& v : variants) {
+                String testPaths[] = {
+                    "/pixelcade/" + v.folder + "/" + v.name,
+                    "/" + v.folder + "/" + v.name,
+                    "/pixelcade/" + v.name,
+                    "/" + v.name
+                };
+                for (const auto& basePath : testPaths) {
+                    if (sd.exists(basePath + ".png")) {
+                        foundArtPath = basePath + ".png";
+                        exists = true;
+                        break;
+                    }
+                    if (sd.exists(basePath + ".gif")) {
+                        foundArtPath = basePath + ".gif";
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) break;
             }
         }
-        if (exists) break;
-    }
-
-    if (lockAcquired) {
-        xSemaphoreGive(sdMutex);
     }
 
     if (reqId != currentRequestId) return;
@@ -453,6 +452,9 @@ std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
 
     const char* jsonPaths[] = { "/pixelcade/systems.json", "/systems.json" };
     bool loadedJson = false;
+
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) return mappings;
 
     for (const char* p : jsonPaths) {
         if (sd.exists(p)) {
@@ -909,7 +911,15 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
             String dirPath = "/pixelcade/" + folder;
             String savePath = dirPath + "/" + filename;
             
-            // The caller (main.cpp) already holds sdMutex! Do not take it again or it will deadlock!
+            SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
+            if (!sdGuard) {
+                LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", savePath.c_str());
+                http.end();
+                client.stop();
+                esp_task_wdt_add(NULL);
+                return false;
+            }
+
             if (!sd.exists("/pixelcade")) {
                 sd.mkdir("/pixelcade");
             }

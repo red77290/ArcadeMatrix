@@ -102,7 +102,15 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         safeName.toLowerCase();
         String sdPath = "/crypto_icons/" + safeName + ".png";
         
-        if (!sd.exists(sdPath)) {
+        bool iconExists = false;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard) {
+                iconExists = sd.exists(sdPath);
+            }
+        }
+        
+        if (!iconExists) {
             HTTPClient httpImg;
             WiFiClient imgClient;
             String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";

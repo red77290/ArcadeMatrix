@@ -799,7 +799,7 @@ paths:
       tags:
         - GIF Library
       summary: Rebuild every folder's index.txt and playlists.json from the card (background)
-      description: Rebuilds **both** libraries (`/gifs` and `/gifs_tate`), so a portrait cabinet's playlists are rebuilt too; the `orientation` parameter does not apply here. The walk over the whole library is too slow to run inside a request on the ESP32, so it is started as a background task while the screen rotation is suspended and the panel shows a notice. Poll `/api/gifs/reindex/status`. The rescan slot is claimed atomically, so a second request while one is running answers `409`. Uploads, deletes and renames keep `index.txt` / `playlists.json` current on their own, so a rescan is only needed after the card was edited offline.
+      description: Rebuilds **both** libraries (`/gifs` and `/gifs_tate`), so vertical display playlists are rebuilt too; the `orientation` parameter does not apply here. The walk over the whole library is too slow to run inside a request on the ESP32, so it is started as a background task while the screen rotation is suspended and the panel shows a notice. Poll `/api/gifs/reindex/status`. The rescan slot is claimed atomically, so a second request while one is running answers `409`. Uploads, deletes and renames keep `index.txt` / `playlists.json` current on their own, so a rescan is only needed after the card was edited offline.
       responses:
         '202':
           description: Rescan started

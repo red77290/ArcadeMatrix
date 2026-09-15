@@ -187,7 +187,7 @@ void AppRuntime::initialize() {
         Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
         while (1) { delay(100); }
     }
-    if (!sd.begin("/sdcard", true)) {
+    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 10)) {
         Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
         while (1) { delay(100); }
     }
@@ -224,6 +224,7 @@ void AppRuntime::initialize() {
         while (1) { delay(100); }
     }
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
+    m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
     // NOTE: begin() does NOT re-probe the gyroscope (that's HardwareHAL's job); it only
@@ -294,6 +295,15 @@ void AppRuntime::initialize() {
         MessageConfig connMsg = {"Connecting to Wi-Fi...", 0xFFFF, 1, "rtl", 50, 10};
         m_messageEngine->displayMessage(connMsg);
 
+        static auto registerMdnsServices = []() {
+            static bool s_servicesRegistered = false;
+            if (s_servicesRegistered) return;
+            s_servicesRegistered = true;
+            MDNS.addService("http", "tcp", 80);
+            MDNS.addService("upnp", "tcp", 80);
+            MDNS.addService("mediarenderer", "tcp", 80);
+        };
+
         String wifiHostname = snapshot.wifi.hostname;
         WiFi.onEvent([wifiHostname](WiFiEvent_t event, WiFiEventInfo_t info) {
             (void)info;
@@ -304,9 +314,7 @@ void AppRuntime::initialize() {
                 LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
                 if (MDNS.begin(wifiHostname.c_str())) {
                     LOGI("WiFi", "mDNS responder started: http://%s.local", wifiHostname.c_str());
-                    MDNS.addService("http", "tcp", 80);
-                    MDNS.addService("upnp", "tcp", 80);
-                    MDNS.addService("mediarenderer", "tcp", 80);
+                    registerMdnsServices();
                 }
             }
         });
@@ -351,9 +359,7 @@ void AppRuntime::initialize() {
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
             m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
-            MDNS.addService("http", "tcp", 80);
-            MDNS.addService("upnp", "tcp", 80);
-            MDNS.addService("mediarenderer", "tcp", 80);
+            registerMdnsServices();
             
             m_lastMqttEnabled = snapshot.mqtt.enabled;
             m_lastMqttBroker = snapshot.mqtt.broker;
@@ -437,34 +443,30 @@ void AppRuntime::initialize() {
     LOGI("System", "Setup complete. Entering loop().");
 }
 
-void AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
+bool AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
+    bool is_night = false;
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 0)) {
-        bool is_night = false;
-        if (snapshot.system.night_mode_enabled) {
-            int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-            int off_min = snapshot.system.turn_off_at.substring(0, 2).toInt() * 60 + snapshot.system.turn_off_at.substring(3).toInt();
-            int wake_min = snapshot.system.wake_up_at.substring(0, 2).toInt() * 60 + snapshot.system.wake_up_at.substring(3).toInt();
-            if (off_min > wake_min) {
-                is_night = (now_min >= off_min || now_min < wake_min);
-            } else {
-                is_night = (now_min >= off_min && now_min < wake_min);
-            }
-        }
-        
-        static int lastAppliedBrightness = -1;
-        uint8_t targetBrightness = is_night ? snapshot.system.night_brightness : snapshot.matrix.powerLimitPercent;
-        if (is_night && targetBrightness == 0) {
-            matrixEngine.getDisplay()->fillScreen(0);
-            matrixEngine.getDisplay()->flipDMABuffer();
-            delay(1000);
-            return;
-        }
-        if (targetBrightness != lastAppliedBrightness) {
-            lastAppliedBrightness = targetBrightness;
-            matrixEngine.setBrightness(targetBrightness);
+    if (snapshot.system.night_mode_enabled && getLocalTime(&timeinfo, 0)) {
+        int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+        int off_min = snapshot.system.turn_off_at.substring(0, 2).toInt() * 60 + snapshot.system.turn_off_at.substring(3).toInt();
+        int wake_min = snapshot.system.wake_up_at.substring(0, 2).toInt() * 60 + snapshot.system.wake_up_at.substring(3).toInt();
+        if (off_min > wake_min) {
+            is_night = (now_min >= off_min || now_min < wake_min);
+        } else {
+            is_night = (now_min >= off_min && now_min < wake_min);
         }
     }
+    
+    uint8_t targetBrightness = is_night ? (uint8_t)snapshot.system.night_brightness : (uint8_t)snapshot.matrix.powerLimitPercent;
+    if (is_night && targetBrightness == 0) {
+        return false;
+    }
+
+    if (m_lastAppliedBrightness != (int)targetBrightness) {
+        m_lastAppliedBrightness = targetBrightness;
+        matrixEngine.setBrightness(targetBrightness);
+    }
+    return true;
 }
 
 void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
@@ -642,18 +644,26 @@ void AppRuntime::update() {
         m_firstLoop = false;
     }
 
-    if (!snapshot.matrix.matrix_power) {
+    bool displayActive = snapshot.matrix.matrix_power && handleNightMode(snapshot);
+
+    if (!displayActive) {
         if (m_wasPoweredOn) {
+            matrixEngine.setBrightness(0);
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.getDisplay()->flipDMABuffer();
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.getDisplay()->flipDMABuffer();
             m_wasPoweredOn = false;
+            m_lastAppliedBrightness = 0;
         }
         delay(100);
         return;
     }
-    m_wasPoweredOn = true;
+    if (!m_wasPoweredOn) {
+        m_wasPoweredOn = true;
+        m_lastAppliedBrightness = -1;
+        handleNightMode(snapshot);
+    }
 
     // Core 1 cadence probe. A visualizer that "stops and resumes" is either starved of PCM data or
     // running on a stalled render loop; this reports the second case explicitly.
@@ -674,8 +684,6 @@ void AppRuntime::update() {
         }
     }
     lastFrameEnd = tAfterRender;
-
-    handleNightMode(snapshot);
 
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
         matrixEngine.getDisplay()->flipDMABuffer();

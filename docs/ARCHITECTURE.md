@@ -655,8 +655,8 @@ enum class LayoutClass : uint8_t {
 
 Every `/api/gifs/*` route takes an optional `orientation=yoko|tate` parameter selecting the horizontal
 (`/gifs`) or vertical (`/gifs_tate`) library, matching the split `GifEngine` already makes between the two
-roots. Omitting it means `yoko`. `POST /api/gifs/reindex` ignores it and always walks both roots, so a
-portrait cabinet's playlists are rebuilt too; the rescan slot is claimed atomically, and a second request
+roots. Omitting it means `yoko`. `POST /api/gifs/reindex` ignores it and always walks both roots, so
+vertical display playlists are rebuilt too; the rescan slot is claimed atomically, and a second request
 while one is running answers `409`.
 
 ---

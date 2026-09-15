@@ -337,6 +337,33 @@ void test_sanitizer_validation_policy_coverage(void) {
     TEST_ASSERT_EQUAL(5, snap.config.getInt("f_reject"));
 }
 
+/**
+ * @brief Tests that ConfigSanitizer allows night_brightness to be 0 (display power-off mode)
+ * and properly clamps out-of-bounds negative and > 100 values.
+ */
+void test_sanitizer_night_brightness_allows_zero(void) {
+    ConfigLoader cfg;
+    cfg.mutate([](ConfigLoader& c) {
+        c.system.night_brightness = 0;
+    });
+    SanitizeResult res = ConfigSanitizer::sanitize(cfg);
+    TEST_ASSERT_EQUAL(0, cfg.system.night_brightness);
+
+    cfg.mutate([](ConfigLoader& c) {
+        c.system.night_brightness = -5;
+    });
+    res = ConfigSanitizer::sanitize(cfg);
+    TEST_ASSERT_EQUAL(0, cfg.system.night_brightness);
+    TEST_ASSERT_TRUE(res.values_clamped >= 1);
+
+    cfg.mutate([](ConfigLoader& c) {
+        c.system.night_brightness = 150;
+    });
+    res = ConfigSanitizer::sanitize(cfg);
+    TEST_ASSERT_EQUAL(100, cfg.system.night_brightness);
+    TEST_ASSERT_TRUE(res.values_clamped >= 1);
+}
+
 // =========================================================================
 // 3. DisplayArbiter & OverlayManager Tests
 // =========================================================================
@@ -1860,6 +1887,7 @@ void setup() {
     RUN_TEST(test_sanitizer_handles_invalid_boolean_and_enum);
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     RUN_TEST(test_sanitizer_validation_policy_coverage);
+    RUN_TEST(test_sanitizer_night_brightness_allows_zero);
 
     // =========================================================================
     // 3. Display Arbiter & SPSC Queue Lock-Free Invariants
