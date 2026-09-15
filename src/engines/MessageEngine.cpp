@@ -21,6 +21,10 @@ void MessageEngine::activate() {
 }
 
 void MessageEngine::deactivate() {
+    // drop any message still parked for the render core, otherwise update() would re-activate us right after
+    portENTER_CRITICAL(&pendingMux);
+    pendingFlag = false;
+    portEXIT_CRITICAL(&pendingMux);
     active = false;
 }
 
@@ -95,10 +99,10 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
 
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
         cursorX = (float)matrixW;
-        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
         cursorX = -(float)textWidth;
-        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
         cursorX = (float)((matrixW - textWidth) / 2);
         cursorY = (float)(-textHeight + baselineOffset);
@@ -107,11 +111,27 @@ void MessageEngine::displayMessage(const MessageConfig& config) {
         cursorY = (float)(matrixH + baselineOffset);
     } else if (currentMsg.direction == "static" || currentMsg.direction == "none") {
         cursorX = (float)((matrixW - textWidth) / 2);
-        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrixH - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     }
 }
 
+void MessageEngine::queueMessage(const MessageConfig& config) {
+    portENTER_CRITICAL(&pendingMux);
+    pendingMsg = config;
+    pendingFlag = true;
+    portEXIT_CRITICAL(&pendingMux);
+    active = true;   // so the arbiter routes the display to us; the text itself is applied on the render core
+}
+
 void MessageEngine::update(EngineContext* context) {
+    if (pendingFlag) {
+        MessageConfig cfg;
+        portENTER_CRITICAL(&pendingMux);
+        cfg = pendingMsg;
+        pendingFlag = false;
+        portEXIT_CRITICAL(&pendingMux);
+        displayMessage(cfg);
+    }
     if (!active) return;
     
     auto* matrix = context->getMatrix();
@@ -125,7 +145,7 @@ void MessageEngine::update(EngineContext* context) {
 
     if (currentMsg.direction == "static" || currentMsg.direction == "none") {
         cursorX = (float)((matrix->width() - textWidth) / 2);
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
         lastUpdate = millis();
         return;
     }
@@ -142,11 +162,11 @@ void MessageEngine::update(EngineContext* context) {
     if (currentMsg.direction == "rtl" || currentMsg.direction == "left") {
         cursorX -= movePx;
         if (cursorX < -(float)textWidth) cursorX = (float)matrix->width();
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     } else if (currentMsg.direction == "ltr" || currentMsg.direction == "right") {
         cursorX += movePx;
         if (cursorX > (float)matrix->width()) cursorX = -(float)textWidth;
-        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset);
+        cursorY = (float)(((matrix->height() - textHeight) / 2) + baselineOffset + (float)currentMsg.offsetY);
     } else if (currentMsg.direction == "ttb" || currentMsg.direction == "down") {
         cursorY += movePx;
         if (cursorY > (float)(matrix->height() + baselineOffset)) cursorY = (float)(-textHeight + baselineOffset);

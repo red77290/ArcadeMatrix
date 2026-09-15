@@ -342,6 +342,23 @@ AudioHub (Estado, Generación y Arbitraje)
 | `POST`| `/api/audio/volume` | Ajuste del volumen de audio principal (0-100%). |
 | `GET` | `/api/gyro/status` | Vector de gravedad y orientación sugerida. |
 | `POST`| `/api/display/orientation` | Fijación manual de rotación o autorrotación. |
+| `GET` | `/api/gifs/library` | Carpetas de playlists de una biblioteca con el número de archivos (desde `playlists.json`). |
+| `GET` | `/api/gifs/files` | Archivos de una carpeta de playlist, transmitidos desde su `index.txt`. |
+| `GET` | `/api/gifs/file` | Sirve un archivo multimedia (vista previa inline; `download=1` para descargar). |
+| `POST`| `/api/gifs/upload` | Subida multipart a una carpeta de playlist (rotación suspendida durante la escritura). |
+| `POST`| `/api/gifs/mkdir` | Crea una carpeta de playlist. |
+| `POST`| `/api/gifs/rename` | Renombra una carpeta, o un archivo si se indica `name`. |
+| `POST`| `/api/gifs/reindex` | Reconstruye `index.txt` + `playlists.json` de **ambas** bibliotecas (tarea en segundo plano, `202`). |
+| `GET` | `/api/gifs/reindex/status` | Progreso del reescaneo (`running`, `done/total`, `files`, `eta`, `last_result`). |
+| `DELETE`| `/api/gifs/reindex` | Cancela un reescaneo en curso (se atiende entre carpetas). |
+| `DELETE`| `/api/gifs/file` | Elimina un archivo. |
+| `DELETE`| `/api/gifs/folder` | Elimina recursivamente una carpeta de playlist. |
+
+Cada ruta `/api/gifs/*` acepta un parámetro opcional `orientation=yoko|tate` que selecciona la biblioteca
+horizontal (`/gifs`) o vertical (`/gifs_tate`), siguiendo la separación que `GifEngine` ya hace entre ambas
+raíces. Si se omite, se usa `yoko`. `POST /api/gifs/reindex` lo ignora y siempre recorre ambas raíces, de
+modo que las playlists de una máquina vertical también se reconstruyen; el turno de reescaneo se reserva de
+forma atómica y una segunda petición responde `409`.
 
 ---
 
