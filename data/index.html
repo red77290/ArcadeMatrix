@@ -2106,6 +2106,7 @@ const translations = {
     gifs_title: "GIF Library",
     gifs_desc: "Manage the playlist folders on the card over the network. Pick a folder on the left to see its files; drop files onto the folder view to queue them for that folder, or drop whole folders to create playlists named after them. Supported: .gif, .png, .raw.",
     gifs_folders: "Playlist folders",
+    gifs_reindexing_hint: "A rescan is running - browsing and previews may be slow or answer \"busy\" until it finishes.",
     gifs_orientation_yoko: "Horizontal (/gifs)",
     gifs_orientation_tate: "Vertical (/gifs_tate)",
     gifs_new_folder_ph: "New folder name",
@@ -2578,6 +2579,7 @@ const translations = {
     gifs_title: "Bibliothèque GIF",
     gifs_desc: "Gérez les dossiers de playlists de la carte via le réseau. Choisissez un dossier à gauche pour voir ses fichiers ; déposez des fichiers sur la vue du dossier pour les mettre en file pour ce dossier, ou déposez des dossiers entiers pour créer des playlists à leur nom. Formats : .gif, .png, .raw.",
     gifs_folders: "Dossiers de playlists",
+    gifs_reindexing_hint: "Un rescan est en cours - la navigation et les aperçus peuvent être lents ou répondre \"occupé\" jusqu'à la fin.",
     gifs_orientation_yoko: "Horizontal (/gifs)",
     gifs_orientation_tate: "Vertical (/gifs_tate)",
     gifs_new_folder_ph: "Nom du nouveau dossier",
@@ -3050,6 +3052,7 @@ const translations = {
     gifs_title: "Biblioteca GIF",
     gifs_desc: "Gestiona las carpetas de playlists de la tarjeta por red. Elige una carpeta a la izquierda para ver sus archivos; suelta archivos sobre la vista de la carpeta para ponerlos en cola en esa carpeta, o suelta carpetas enteras para crear playlists con su nombre. Formatos: .gif, .png, .raw.",
     gifs_folders: "Carpetas de playlists",
+    gifs_reindexing_hint: "Hay un reescaneo en curso - la navegación y las vistas previas pueden ser lentas o responder \"ocupado\" hasta que termine.",
     gifs_orientation_yoko: "Horizontal (/gifs)",
     gifs_orientation_tate: "Vertical (/gifs_tate)",
     gifs_new_folder_ph: "Nombre de la nueva carpeta",
@@ -6594,6 +6597,8 @@ function initGifLibrary() {
   async function loadLibrary(keep) {
     try {
       const data = await api('/api/gifs/library?' + orient()); folders = data.folders || {};
+      // while a rescan holds the card, listings/previews can answer 503 busy: say so instead of looking broken
+      if (data.reindexing && !busy) progress.textContent = tr('gifs_reindexing_hint', 'A rescan is running - browsing and previews may be slow or answer "busy" until it finishes.');
       const names = Object.keys(folders).sort((a, b) => a.localeCompare(b));
       folderList.innerHTML = names.length ? '' : '<span class="text-muted">No playlist folders yet.</span>';
       names.forEach(n => {

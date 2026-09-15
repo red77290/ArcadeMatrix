@@ -2486,10 +2486,9 @@ void WebServerAPI::setupRoutes() {
             String folders = "{}";
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
-                if (guard) {
-                    folders = readPlaylistsJson(root);
-                    if (folders.isEmpty()) folders = buildPlaylistsFromIndexes(root);
-                }
+                if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                folders = readPlaylistsJson(root);
+                if (folders.isEmpty()) folders = buildPlaylistsFromIndexes(root);
             }
             request->send(200, "application/json", "{\"root\":\"" + root + "\",\"orientation\":\"" + orientation + "\",\"reindexing\":" + String(g_gifReindex.running ? "true" : "false") + ",\"folders\":" + folders + "}");
         });
@@ -2542,10 +2541,9 @@ void WebServerAPI::setupRoutes() {
             bool removed = false;
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
-                if (guard) {
-                    if (sd.exists(path.c_str())) removed = sd.remove(path.c_str());
-                    if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); }
-                }
+                if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                if (sd.exists(path.c_str())) removed = sd.remove(path.c_str());
+                if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); }
             }
             if (!removed) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
             request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"deleted\":\"" + jsonEsc(path) + "\"}");
@@ -2565,7 +2563,8 @@ void WebServerAPI::setupRoutes() {
             bool found = false; bool haveIndex = false;
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
-                if (guard && sd.exists(path.c_str())) {
+                if (!guard) { delete ctx; request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                if (sd.exists(path.c_str())) {
                     found = true;
                     String idxPath = path + "/index.txt";
                     ctx->idx = sd.open(idxPath.c_str(), FILE_OPEN_READ);
@@ -2577,7 +2576,8 @@ void WebServerAPI::setupRoutes() {
                 // no index yet (folder created offline): walk the directory; such folders are small in practice
                 String json = "["; bool first = true;
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
-                if (guard) {
+                if (!guard) { delete ctx; request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                {
                     FsFile dir = sd.open(path.c_str(), FILE_OPEN_READ);
                     if (dir && isDirectory(dir)) {
                         FsFile f;
@@ -2657,7 +2657,8 @@ void WebServerAPI::setupRoutes() {
             String path = root + "/" + folder; int n = -1;
             {
                 SdLockGuard guard(pdMS_TO_TICKS(30000));
-                if (guard && sd.exists(path.c_str())) {
+                if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                if (sd.exists(path.c_str())) {
                     extern GifEngine* gifEngine; if (gifEngine) gifEngine->stop();
                     n = removeTree(path); updatePlaylistsEntry(root, folder, -1);
                 }
@@ -2674,10 +2675,13 @@ void WebServerAPI::setupRoutes() {
             if (badName(raw) || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain name\"}"); return; }
             const String orientation = gifOrientationOf(request);
             const String root = gifRootFor(orientation);
-            String path = root + "/" + folder; int code = 500; String msg = "SD busy";
+            String path = root + "/" + folder; int code = 503; String msg = "SD card busy (rescan in progress?) - try again in a moment";
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
                 if (guard) {
+                    // SdFat's parent-creation flag does not create the library root on this card, so make
+                    // it explicitly (as the upload handler does) or the first vertical folder fails.
+                    if (!sd.exists(root.c_str())) sd.mkdir(root.c_str());
                     if (sd.exists(path.c_str())) { code = 409; msg = "Folder already exists"; }
                     else if (sd.mkdir(path.c_str())) { code = 200; }
                     else { msg = "mkdir failed"; }
@@ -2707,7 +2711,7 @@ void WebServerAPI::setupRoutes() {
                 if (name.isEmpty() || toName.isEmpty() || !hasGifExt(toName)) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"bad file name\"}"); return; }
                 from = root + "/" + folder + "/" + name; to = root + "/" + folder + "/" + toName; what = to; oldName = name; newName = toName;
             }
-            int code = 500; String msg = "SD busy";
+            int code = 503; String msg = "SD card busy (rescan in progress?) - try again in a moment";
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
                 if (guard) {
@@ -2738,7 +2742,8 @@ void WebServerAPI::setupRoutes() {
             bool ok = false;
             {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
-                if (guard && sd.exists(path.c_str())) { ctx->f = sd.open(path.c_str(), FILE_OPEN_READ); ok = (bool)ctx->f; if (ok) ctx->size = ctx->f.size(); }
+                if (!guard) { delete ctx; request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
+                if (sd.exists(path.c_str())) { ctx->f = sd.open(path.c_str(), FILE_OPEN_READ); ok = (bool)ctx->f; if (ok) ctx->size = ctx->f.size(); }
             }
             if (!ok) { delete ctx; request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
             String lower = name; lower.toLowerCase();
