@@ -27,6 +27,8 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "../hal/GyroHAL.h"
 #include "AudioHub.h"
 #include "Core0Lifecycle.h"
+#include <esp_ota_ops.h>
+#include "BuildInfo.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -118,7 +120,19 @@ void AppRuntime::initialize() {
     EngineRegistrar::registerAll();
     
     randomSeed(esp_random());
-    LOGI("System", "Starting ArcadeMatrix Firmware...");
+
+    const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (runningPartition && esp_ota_get_state_partition(runningPartition, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_NEW || ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            LOGI("OTA", "New OTA partition marked valid, rollback cancelled.");
+        }
+    }
+    LOGI("System", "Starting ArcadeMatrix v%s (commit %s) from partition '%s' (0x%08x)",
+         FIRMWARE_VERSION, BUILD_GIT_COMMIT,
+         runningPartition ? runningPartition->label : "app0",
+         runningPartition ? (unsigned)runningPartition->address : 0);
 
     constexpr uint32_t WDT_TIMEOUT_S = 30;
     esp_task_wdt_init(WDT_TIMEOUT_S, true);

@@ -905,6 +905,9 @@ paths:
                   arch:
                     type: string
                     example: "esp32s3"
+                  running_partition:
+                    type: string
+                    example: "app0"
 
   /api/hardware:
     get:
@@ -1051,14 +1054,31 @@ paths:
                   description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
       responses:
         '200':
-          description: Firmware update accepted and flashed. Device reboots in 1 second.
+          description: Firmware update accepted and flashed. Device reboots cleanly.
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: "OK"
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Update successful, rebooting..."
         '400':
-          description: Upload error or flash write failure.
+          description: Upload error, invalid firmware, or flash write failure.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "error"
+                  message:
+                    type: string
+                    example: "No firmware received or update failed"
 
   /api/ota:
     post:
@@ -1079,14 +1099,31 @@ paths:
                   description: The firmware binary file (e.g. firmware-esp32s3_waveshare.bin)
       responses:
         '200':
-          description: Firmware update accepted and flashed. Device reboots in 1 second.
+          description: Firmware update accepted and flashed. Device reboots cleanly.
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-                example: "OK"
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Update successful, rebooting..."
         '400':
-          description: Upload error or flash write failure.
+          description: Upload error, invalid firmware, or flash write failure.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "error"
+                  message:
+                    type: string
+                    example: "No firmware received or update failed"
 
   /api/ota/check:
     get:
@@ -1106,7 +1143,9 @@ paths:
                   current_arch: { type: string, example: "esp32s3" }
                   latest_version: { type: string, example: "3.2.4" }
                   update_available: { type: boolean, example: false }
-                  supported: { type: boolean, example: false }
+                  supported: { type: boolean, example: true }
+                  in_progress: { type: boolean, example: false }
+                  progress: { type: integer, example: 0 }
                   message: { type: string }
 
   /api/ota/auto-update:
@@ -1114,17 +1153,35 @@ paths:
       tags:
         - System
       summary: 1-Click Online OTA Download and Installation
-      description: Downloads firmware binary from GitHub and flashes OTA partition automatically (Raspberry Pi only, returns 400 on ESP32).
+      description: Downloads firmware binary from GitHub and flashes OTA partition automatically in background. Supported on both ESP32 and Raspberry Pi.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required:
+                - download_url
               properties:
-                download_url: { type: string }
+                download_url:
+                  type: string
+                  example: "https://github.com/red77290/ArcadeMatrix/releases/download/v3.2.4/firmware-esp32s3_waveshare.bin"
       responses:
         '200':
-          description: Firmware updated successfully, device will reboot.
+          description: Firmware download and OTA worker initiated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  message:
+                    type: string
+                    example: "OTA download initiated"
         '400':
-          description: Auto-download OTA not supported on ESP32 or download failed.
+          description: Missing download_url or invalid URL scheme.
+        '409':
+          description: OTA update already in progress.
 

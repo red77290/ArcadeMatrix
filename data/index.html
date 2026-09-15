@@ -1787,8 +1787,8 @@ select.input option {
             <p class="text-muted" data-i18n="ota_online_desc">Check GitHub Releases for new updates matching your device architecture and update automatically.</p>
 
             <div class="ota-info-box" style="margin-bottom: 1rem;">
-              <div><span data-i18n="ota_cur_ver">Current Version:</span> <strong id="ota-current-version">--</strong></div>
-              <div><span data-i18n="ota_sys_arch">System Architecture:</span> <strong id="ota-current-arch">ESP32</strong></div>
+              <div><span data-i18n="ota_cur_ver">Current Version:</span> <strong id="ota-current-version">--</strong> <span id="ota-current-commit" class="text-muted" style="font-size: 0.8rem;"></span></div>
+              <div><span data-i18n="ota_sys_arch">System Architecture:</span> <strong id="ota-current-arch">ESP32</strong> (<span id="ota-current-part" style="font-family: monospace; font-size: 0.85rem;">app0</span>)</div>
             </div>
 
             <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
@@ -1814,6 +1814,9 @@ select.input option {
               <button id="btn-ota-auto-install" class="btn btn-warning" style="flex: 1; display: none;" data-i18n="ota_download_btn">
                 ⬇️ Download & Install Update
               </button>
+              <a id="btn-ota-direct-download" class="btn btn-secondary" style="flex: 1; display: none; text-align: center; text-decoration: none;" target="_blank" download data-i18n="ota_save_bin">
+                💾 Save .bin to PC
+              </a>
             </div>
           </div>
 
@@ -1879,7 +1882,12 @@ const API = {
   async get(url, timeoutMs = API_TIMEOUT_MS) {
     const res = await fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
-    return await res.json();
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { status: 'success', message: text };
+    }
   },
 
   async post(url, data, timeoutMs = API_TIMEOUT_MS) {
@@ -1890,7 +1898,12 @@ const API = {
       signal: withTimeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
-    return await res.json();
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { status: 'success', message: text };
+    }
   },
 
   async postAuth(url, data) {
@@ -2178,6 +2191,7 @@ const translations = {
     ota_sys_arch: "System Architecture:",
     ota_check_btn: "🔍 Check for Updates",
     ota_download_btn: "⬇️ Download & Install Update",
+    ota_save_bin: "💾 Save .bin to PC",
     ota_manual_title: "📁 Manual File Upload",
     ota_manual_desc: "Upload a pre-compiled binary manually if your device is offline or using a custom build.",
     ota_upload_btn: "Upload & Update Firmware",
@@ -2608,6 +2622,7 @@ const translations = {
     ota_sys_arch: "Architecture système :",
     ota_check_btn: "🔍 Vérifier les mises à jour",
     ota_download_btn: "⬇️ Télécharger & Installer",
+    ota_save_bin: "💾 Enregistrer le .bin sur PC",
     ota_manual_title: "📁 Téléversement Manuel de Fichier",
     ota_manual_desc: "Téléversez manuellement un binaire compilé si votre appareil est hors-ligne ou utilise une version personnalisée.",
     ota_upload_btn: "Téléverser & Mettre à jour",
@@ -3038,6 +3053,7 @@ const translations = {
     ota_sys_arch: "Arquitectura del sistema:",
     ota_check_btn: "🔍 Buscar actualizaciones",
     ota_download_btn: "⬇️ Descargar e instalar",
+    ota_save_bin: "💾 Guardar .bin en PC",
     ota_manual_title: "📁 Subida Manual de Archivo",
     ota_manual_desc: "Sube manualmente un binario si el dispositivo no tiene conexión.",
     ota_upload_btn: "Subir y actualizar firmware",
@@ -5847,10 +5863,14 @@ async function loadVersion() {
     const versionTag = document.getElementById('version-tag');
     const otaVer = document.getElementById('ota-current-version');
     const otaArch = document.getElementById('ota-current-arch');
+    const otaPart = document.getElementById('ota-current-part');
+    const otaCommit = document.getElementById('ota-current-commit');
 
     if (versionTag) versionTag.textContent = `v${data.version}`;
     if (otaVer) otaVer.textContent = `v${data.version}`;
     if (otaArch) otaArch.textContent = (data.arch || 'esp32').toUpperCase();
+    if (otaPart && data.partition) otaPart.textContent = data.partition;
+    if (otaCommit && data.git_commit) otaCommit.textContent = `(${data.git_commit})`;
   } catch (e) {
     console.error('Failed to load version:', e);
   }
@@ -6094,7 +6114,15 @@ function initOta() {
           onlineNotes.style.display = 'none';
         }
 
+        const btnDirect = document.getElementById('btn-ota-direct-download');
         const updateAvailable = isSemVerLower(currentVer, latestVer);
+
+        if (btnDirect && matchingAsset) {
+          btnDirect.href = matchingAsset.browser_download_url;
+          btnDirect.style.display = 'inline-block';
+        } else if (btnDirect) {
+          btnDirect.style.display = 'none';
+        }
 
         if (updateAvailable && matchingAsset) {
           latestDownloadUrl = matchingAsset.browser_download_url;
@@ -6132,7 +6160,7 @@ function initOta() {
   if (btnAutoInstall) {
     btnAutoInstall.addEventListener('click', async () => {
       if (!latestDownloadUrl) return;
-      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName} on ESP32? The device will automatically restart.`)) {
+      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName} on ESP32? The device will download from GitHub, flash itself, and restart automatically.`)) {
         return;
       }
 
@@ -6140,29 +6168,44 @@ function initOta() {
       btnAutoInstall.disabled = true;
       autoProgress.style.display = 'block';
       if (autoProgressFill) autoProgressFill.style.width = '0%';
-      autoProgressText.textContent = '1/2 Downloading from GitHub...';
-      window.showToast('Downloading firmware from GitHub...', 'info');
+      autoProgressText.textContent = 'Triggering ESP32 OTA update...';
+      window.showToast('Initiating automatic OTA on ESP32...', 'info');
 
       try {
         const oldVersionData = await API.getVersion().catch(() => null);
         const oldVer = oldVersionData?.version || '';
 
-        const resp = await fetch(latestDownloadUrl);
-        if (!resp.ok) throw new Error(`GitHub download failed: HTTP ${resp.status}`);
-        const blob = await resp.blob();
+        const resp = await API.post('/api/ota/auto-update', { download_url: latestDownloadUrl });
+        if (resp.status === 'error') {
+          throw new Error(resp.message || 'Auto-update failed');
+        }
 
-        autoProgressText.textContent = '2/2 Flashing ESP32 firmware (0%)...';
-        window.showToast('Flashing binary to ESP32...', 'info');
+        autoProgressText.textContent = 'ESP32 downloading firmware & flashing...';
+        window.showToast('ESP32 is downloading firmware and updating...', 'info');
 
-        await API.uploadFirmware(blob, (percent) => {
-          if (autoProgressFill) autoProgressFill.style.width = `${percent}%`;
-          autoProgressText.textContent = `2/2 Flashing ESP32 firmware (${percent}%)...`;
-        });
+        // Poll /api/ota/check for progress while online
+        let pollCount = 0;
+        const progressInterval = setInterval(async () => {
+          pollCount++;
+          if (pollCount > 60) {
+            clearInterval(progressInterval);
+            return;
+          }
+          try {
+            const st = await API.get('/api/ota/check?_t=' + Date.now());
+            if (st && st.progress !== undefined && st.progress > 0) {
+              if (autoProgressFill) autoProgressFill.style.width = `${st.progress}%`;
+              autoProgressText.textContent = `Downloading & Flashing (${st.progress}%)...`;
+            }
+          } catch {
+            // Device likely rebooting
+            clearInterval(progressInterval);
+            autoProgressText.textContent = 'Rebooting ESP32...';
+          }
+        }, 1000);
 
-        autoProgressText.textContent = 'Rebooting ESP32...';
-        window.showToast('Firmware flashed! Reconnecting to device...', 'info');
-
-        const versionData = await API.waitForReconnect(60000, 2000, oldVer);
+        const versionData = await API.waitForReconnect(90000, 2500, oldVer);
+        clearInterval(progressInterval);
         if (oldVer && versionData.version === oldVer) {
           window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
         } else {
@@ -6203,12 +6246,12 @@ function initOta() {
         progressText.textContent = `${percent}%`;
       });
 
-      progressText.textContent = 'Restarting daemon...';
-      window.showToast('Firmware uploaded! Waiting for daemon to restart...', 'info');
+      progressText.textContent = 'Restarting ESP32...';
+      window.showToast('Firmware uploaded! Waiting for device to restart...', 'info');
 
       const versionData = await API.waitForReconnect(60000, 2000, oldVer);
       if (oldVer && versionData.version === oldVer) {
-        window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Check /tmp/arcadematrix_ota.log)`, 'warning');
+        window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Update may be identical or rolled back)`, 'warning');
       } else {
         window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
       }

@@ -4,6 +4,9 @@
 #include <memory>
 #include "../core/SDUtils.h"
 #include <Update.h>
+#include <esp_ota_ops.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
 #include "../core/MatrixEngine.h"
 #include "../engines/GifEngine.h"
 #include "../core/RotationManager.h"
@@ -901,6 +904,8 @@ void WebServerAPI::setupRoutes() {
         doc["git_commit"] = BUILD_GIT_COMMIT;
         doc["build_timestamp"] = BUILD_TIMESTAMP;
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        doc["partition"] = running ? running->label : "app0";
         String response;
         serializeJson(doc, response);
         AsyncWebServerResponse *res = request->beginResponse(200, "application/json", response);
@@ -1917,54 +1922,9 @@ void WebServerAPI::setupRoutes() {
         }, "restart_app_task", 2048, NULL, 1, NULL);
     });
     
-    // API: OTA Firmware Update (/api/update and /api/ota alias)
-    auto otaResponseHandler = [](AsyncWebServerRequest *request) {
-        bool shouldReboot = !Update.hasError();
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", shouldReboot ? "OK" : "FAIL");
-        response->addHeader("Connection", "close");
-        request->send(response);
-
-        if (shouldReboot) {
-            LOGI("OTA", "OTA Update successful! Rebooting in 1 second...");
-            xTaskCreate([](void *param) {
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                extern MatrixEngine matrixEngine;
-                if (matrixEngine.getDisplay()) {
-                    matrixEngine.getDisplay()->fillScreen(0);
-                    matrixEngine.getDisplay()->flipDMABuffer();
-                    matrixEngine.getDisplay()->fillScreen(0);
-                    matrixEngine.getDisplay()->flipDMABuffer();
-                }
-                ESP.restart();
-            }, "ota_reboot", 2048, NULL, 1, NULL);
-        }
-    };
-
-    auto otaUploadHandler = [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        if (!index) {
-            LOGI("OTA", "Update Start: %s", filename.c_str());
-            extern GifEngine* gifEngine;
-            if (gifEngine) gifEngine->stop();
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
-                Update.printError(Serial);
-            }
-        }
-        if (!Update.hasError()) {
-            if (Update.write(data, len) != len) {
-                Update.printError(Serial);
-            }
-        }
-        if (final) {
-            if (Update.end(true)) {
-                LOGI("OTA", "Update Success: %uB written.", index + len);
-            } else {
-                Update.printError(Serial);
-            }
-        }
-    };
-
-    server.on("/api/update", HTTP_POST, otaResponseHandler, otaUploadHandler);
-    server.on("/api/ota", HTTP_POST, otaResponseHandler, otaUploadHandler);
+    static std::atomic<bool> s_otaRunning{false};
+    static std::atomic<int> s_otaProgressPercent{0};
+    static std::atomic<bool> s_otaUploadSuccess{false};
 
     // API: GET /api/ota/check (Parity with RPi & OpenAPI specification)
     server.on("/api/ota/check", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1977,17 +1937,165 @@ void WebServerAPI::setupRoutes() {
         #endif
         doc["latest_version"] = FIRMWARE_VERSION;
         doc["update_available"] = false;
-        doc["supported"] = false;
-        doc["message"] = "Online OTA download is not supported on ESP32. Please use manual file upload or the WebInstaller.";
+        doc["supported"] = true;
+        doc["in_progress"] = s_otaRunning.load(std::memory_order_relaxed);
+        doc["progress"] = s_otaProgressPercent.load(std::memory_order_relaxed);
         String res;
         serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
 
-    // API: POST /api/ota/auto-update (Parity with RPi & OpenAPI specification)
-    server.on("/api/ota/auto-update", HTTP_POST, [](AsyncWebServerRequest *request){
-        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Auto-download OTA is not supported on ESP32. Please use manual file upload.\"}");
+    // API: POST /api/ota/auto-update (Autonomous ESP32 background download & flash)
+    // Registered BEFORE generic /api/ota to prevent ESPAsyncWebServer prefix matching collision
+    AsyncCallbackJsonWebHandler* autoOtaHandler = new AsyncCallbackJsonWebHandler("/api/ota/auto-update", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!json.is<JsonObject>()) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON payload\"}");
+            return;
+        }
+        JsonObject body = json.as<JsonObject>();
+        if (body["download_url"].isNull()) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing download_url\"}");
+            return;
+        }
+        String downloadUrl = body["download_url"].as<String>();
+        if (!downloadUrl.startsWith("http://") && !downloadUrl.startsWith("https://")) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid download URL scheme\"}");
+            return;
+        }
+
+        if (s_otaRunning.exchange(true)) {
+            request->send(409, "application/json", "{\"status\":\"error\",\"message\":\"OTA update already in progress\"}");
+            return;
+        }
+
+        s_otaProgressPercent.store(0, std::memory_order_relaxed);
+        request->send(200, "application/json", "{\"status\":\"ok\",\"message\":\"OTA download initiated\"}");
+
+        struct AutoOtaParams {
+            String url;
+        };
+        AutoOtaParams* params = new AutoOtaParams{ downloadUrl };
+
+        xTaskCreatePinnedToCore([](void *param) {
+            AutoOtaParams* p = static_cast<AutoOtaParams*>(param);
+            String url = p->url;
+            delete p;
+
+            const esp_partition_t* targetPart = esp_ota_get_next_update_partition(NULL);
+            LOGI("OTA", "Auto-OTA starting download from %s -> target partition %s (0x%08X)",
+                 url.c_str(), targetPart ? targetPart->label : "unknown", targetPart ? (unsigned)targetPart->address : 0);
+            vTaskDelay(pdMS_TO_TICKS(600)); // allow HTTP 200 response to flush over network
+
+            extern MatrixEngine matrixEngine;
+            if (matrixEngine.getDisplay()) {
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.getDisplay()->flipDMABuffer();
+            }
+
+            WiFiClientSecure secureClient;
+            secureClient.setInsecure();
+            secureClient.setTimeout(30000); // 30 seconds timeout (unit is milliseconds in Arduino Stream)
+
+            httpUpdate.setLedPin(-1);
+            httpUpdate.rebootOnUpdate(false);
+            httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+            httpUpdate.onProgress([](int cur, int total) {
+                if (total > 0) {
+                    int pct = (cur * 100) / total;
+                    s_otaProgressPercent.store(pct, std::memory_order_relaxed);
+                    static int lastLoggedPct = -1;
+                    if (pct / 10 != lastLoggedPct / 10) {
+                        lastLoggedPct = pct;
+                        LOGI("OTA", "Auto-OTA progress: %d%% (%d/%d bytes)", pct, cur, total);
+                    }
+                }
+            });
+
+            t_httpUpdate_return ret = httpUpdate.update(secureClient, url);
+            if (ret == HTTP_UPDATE_OK) {
+                const esp_partition_t* bootPart = esp_ota_get_boot_partition();
+                LOGI("OTA", "Auto-OTA succeeded! Next boot partition: %s (0x%08X). Rebooting...",
+                     bootPart ? bootPart->label : "unknown", bootPart ? (unsigned)bootPart->address : 0);
+                s_otaProgressPercent.store(100, std::memory_order_relaxed);
+                vTaskDelay(pdMS_TO_TICKS(250));
+                if (matrixEngine.getDisplay()) {
+                    matrixEngine.getDisplay()->fillScreen(0);
+                    matrixEngine.getDisplay()->flipDMABuffer();
+                }
+                esp_restart();
+            } else {
+                LOGE("OTA", "Auto-OTA failed: (%d) %s", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+                s_otaRunning.store(false, std::memory_order_relaxed);
+                s_otaProgressPercent.store(0, std::memory_order_relaxed);
+            }
+
+            vTaskDelete(NULL);
+        }, "ota_auto_worker", 16384, params, 1, NULL, 0);
     });
+    server.addHandler(autoOtaHandler);
+
+    // API: OTA Firmware Update (/api/update and /api/ota alias)
+    auto otaResponseHandler = [](AsyncWebServerRequest *request) {
+        bool shouldReboot = s_otaUploadSuccess.exchange(false) && !Update.hasError();
+        AsyncWebServerResponse *response = request->beginResponse(
+            shouldReboot ? 200 : 400,
+            "application/json",
+            shouldReboot ? "{\"status\":\"success\",\"message\":\"Update successful, rebooting...\"}"
+                         : "{\"status\":\"error\",\"message\":\"No firmware received or update failed\"}"
+        );
+        response->addHeader("Connection", "close");
+        request->send(response);
+
+        if (shouldReboot) {
+            const esp_partition_t* bootPart = esp_ota_get_boot_partition();
+            LOGI("OTA", "OTA Upload verified! Next boot partition: %s (0x%08X). Rebooting...",
+                 bootPart ? bootPart->label : "unknown", bootPart ? (unsigned)bootPart->address : 0);
+            xTaskCreate([](void *param) {
+                vTaskDelay(pdMS_TO_TICKS(250));
+                extern MatrixEngine matrixEngine;
+                if (matrixEngine.getDisplay()) {
+                    matrixEngine.getDisplay()->fillScreen(0);
+                    matrixEngine.getDisplay()->flipDMABuffer();
+                }
+                esp_restart();
+            }, "ota_reboot", 4096, NULL, configMAX_PRIORITIES - 1, NULL);
+        } else {
+            LOGW("OTA", "OTA request received without valid upload or with errors. Reboot cancelled.");
+        }
+    };
+
+    auto otaUploadHandler = [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (!index) {
+            const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
+            LOGI("OTA", "Update Start: %s -> target partition %s (0x%08X)",
+                 filename.c_str(), nextPart ? nextPart->label : "unknown", nextPart ? (unsigned)nextPart->address : 0);
+            extern GifEngine* gifEngine;
+            if (gifEngine) gifEngine->stop();
+            s_otaUploadSuccess.store(false, std::memory_order_relaxed);
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+                Update.printError(Serial);
+            }
+        }
+        if (!Update.hasError()) {
+            if (Update.write(data, len) != len) {
+                Update.printError(Serial);
+            }
+        }
+        if (final) {
+            if (Update.end(true)) {
+                LOGI("OTA", "Update Success: %uB written.", index + len);
+                s_otaUploadSuccess.store(true, std::memory_order_relaxed);
+            } else {
+                Update.printError(Serial);
+                s_otaUploadSuccess.store(false, std::memory_order_relaxed);
+            }
+        }
+    };
+
+    server.on("/api/update", HTTP_POST, otaResponseHandler, otaUploadHandler)
+        .setFilter([](AsyncWebServerRequest *req) { return req->url().equals("/api/update"); });
+    server.on("/api/ota", HTTP_POST, otaResponseHandler, otaUploadHandler)
+        .setFilter([](AsyncWebServerRequest *req) { return req->url().equals("/api/ota"); });
 
     // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's
     // /api/wifi). Unlike the generic /api/settings handler, this persists the new credentials to
