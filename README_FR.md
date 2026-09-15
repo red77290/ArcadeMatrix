@@ -42,7 +42,8 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
 - **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
-- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour envoyer des GIF, calibrer l'orientation d'écran et modifier la configuration en direct !
+- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour gérer vos playlists, calibrer l'orientation d'écran et modifier la configuration en direct !
+- **🗂️ Bibliothèque GIF Réseau & Gestionnaire de Fichiers Web (`gifs`) :** Carte gestionnaire de fichiers intégrée dans la Web UI permettant de parcourir les dossiers, téléverser des GIF animés par Wi-Fi sans retirer la carte SD, créer/supprimer des dossiers, renommer et réindexer automatiquement en arrière-plan. Support natif double orientation (`?orientation=yoko|tate`) pour bornes horizontales (Yoko) et verticales (Tate) — réalisé par [@TooncesToo](https://github.com/TooncesToo) !
 - **Moteur GIF (`gifs`) :** lecture fluide des GIF et playlists organisées sur la carte SD.
 - **Support MQTT (`marquee`) :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees de jeux officiels via votre fork Pixelcade.
 - **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
@@ -96,6 +97,10 @@ BACKGROUND_SPRITE=stage1.raw
 
 ## Playlists GIF (Découverte Automatique)
 Le firmware ESP32 scanne désormais dynamiquement votre carte SD et le dossier `/gifs/` à la volée. Vous n'avez plus besoin d'exécuter de scripts d'indexation ni de maintenir de fichier `playlists.json` !
+
+> [!TIP]
+> **Gestionnaire de Fichiers & Uploader Web (Sans retirer la carte SD !) :**
+> Vous pouvez désormais téléverser, gérer, renommer et supprimer vos dossiers de playlists GIF directement depuis votre navigateur grâce à la carte **GIF File Manager** de la Web UI avec support natif Horizontal / Vertical et réindexation automatique en arrière-plan — réalisé par [@TooncesToo](https://github.com/TooncesToo) !
 
 1. Organisez simplement vos GIF dans des sous-dossiers sous `gifs/` sur votre carte SD, par ex. `gifs/mario/`, `gifs/sonic/`.
 2. L'interface Web les détectera automatiquement comme des playlists sélectionnables.
@@ -168,6 +173,7 @@ Un immense merci à la communauté open source et aux créateurs des formidables
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** par mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** par Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** par greiman
+- **[@TooncesToo](https://github.com/TooncesToo)** pour le développement de l'API bibliothèque GIF réseau, du téléversement multi-fichiers et du gestionnaire de fichiers Web UI avec support double orientation sur ESP32 et Raspberry Pi.
 
 Un grand merci à la **RPiTeam** pour le super pack de 600 GIFs !
 

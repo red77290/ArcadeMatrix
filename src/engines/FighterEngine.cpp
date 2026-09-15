@@ -286,15 +286,20 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
+            // Use an internal DRAM bounce buffer for SD reads. SDMMC DMA hardware cannot
+            // DMA directly into external PSRAM on ESP32/ESP32-S3, which would force the
+            // driver to dynamically allocate bounce buffers and crash under heap pressure.
+            uint8_t bounceBuf[2048];
             while (toRead > 0) {
                 if (m_taskShouldExit || ESP.getFreeHeap() < 28672) {
                     LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
                     toRead = 1; // force abort
                     break;
                 }
-                size_t chunk = (toRead > 4096) ? 4096 : toRead;
-                size_t r = f.read(anim.psramBuffer + offset, chunk);
+                size_t chunk = (toRead > sizeof(bounceBuf)) ? sizeof(bounceBuf) : toRead;
+                size_t r = f.read(bounceBuf, chunk);
                 if (r == 0) break;
+                memcpy(anim.psramBuffer + offset, bounceBuf, r);
                 offset += r;
                 toRead -= r;
             }
@@ -381,14 +386,14 @@ void FighterEngine::startLoaderTaskIfNeeded() {
     // logic, while giving back 6 KB of permanent headroom versus 16 KB.
     m_taskShouldExit = false;
     m_loaderStopped.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 5120, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 8192, this, 1, &loaderTaskHandle, 0) != pdPASS) {
         LOGE("FighterEngine", "Failed to spawn preload worker task.");
         loaderTaskHandle = nullptr;
     }
 }
 
 void FighterEngine::triggerBackgroundPreload() {
-    if (isNextReady || isPreloading || numAvailableFighters < 2) return;
+    if (isNextReady.load(std::memory_order_acquire) || isPreloading || numAvailableFighters < 2) return;
     if (!loaderTaskHandle) return; // Worker failed to start; nothing to notify.
 
     // Guard against starting a preload cycle while internal DRAM is critically
@@ -650,7 +655,7 @@ void FighterEngine::runBackgroundPreload() {
 
     computeStandBounds(nextP1);
     computeStandBounds(nextP2);
-    isNextReady = true;
+    isNextReady.store(true, std::memory_order_release);
     LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
          nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
          nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
@@ -851,13 +856,13 @@ void FighterEngine::startFight() {
     if (millis() < retryDelayEnd) return;
     if (numAvailableFighters < 2) return;
     
-    if (isNextReady) {
+    if (isNextReady.load(std::memory_order_acquire)) {
         freeFighter(p1);
         freeFighter(p2);
 
         movePlayer(p1, nextP1);
         movePlayer(p2, nextP2);
-        isNextReady = false;
+        isNextReady.store(false, std::memory_order_release);
 
         loadDir = getFightersDir();
         int screenW = matrix ? matrix->width() : 128;
@@ -918,7 +923,10 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     else if (newState == FIGHTER_SUPER) anim = &p.animSuper;
     else if (newState == FIGHTER_FALL) anim = &p.animFall;
     
-    if (p.activeFile) p.activeFile.close();
+    if (p.activeFile) {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        p.activeFile.close();
+    }
 
     // Reset frame cache for all animations when changing state so new frames are freshly read
     p.animStand.cachedFrameIndex = -1;

@@ -115,6 +115,12 @@ void AppRuntime::initialize() {
     Serial.begin(115200);
     delay(1000);
     
+    // Explicitly enforce maximum CPU frequency (240MHz on ESP32 / ESP32-S3) to prevent
+    // clock throttling after software resets (e.g. esp_restart() after OTA)
+    setCpuFrequencyMhz(240);
+    LOGI("System", "CPU Frequency: %u MHz | APB Frequency: %u MHz",
+         (unsigned)getCpuFrequencyMhz(), (unsigned)(getApbFrequency() / 1000000));
+
     // 1. Initialize HAL first so auto-detection can be used by Registrar
     hardwareHAL.begin();
     EngineRegistrar::registerAll();
@@ -288,10 +294,20 @@ void AppRuntime::initialize() {
         MessageConfig connMsg = {"Connecting to Wi-Fi...", 0xFFFF, 1, "rtl", 50, 10};
         m_messageEngine->displayMessage(connMsg);
 
-        WiFi.onEvent([](WiFiEvent_t event) {
+        String wifiHostname = snapshot.wifi.hostname;
+        WiFi.onEvent([wifiHostname](WiFiEvent_t event, WiFiEventInfo_t info) {
+            (void)info;
             if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
                 Serial.println("Wi-Fi disconnected - attempting to reconnect...");
                 WiFi.reconnect();
+            } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+                LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+                if (MDNS.begin(wifiHostname.c_str())) {
+                    LOGI("WiFi", "mDNS responder started: http://%s.local", wifiHostname.c_str());
+                    MDNS.addService("http", "tcp", 80);
+                    MDNS.addService("upnp", "tcp", 80);
+                    MDNS.addService("mediarenderer", "tcp", 80);
+                }
             }
         });
 
@@ -350,8 +366,8 @@ void AppRuntime::initialize() {
                 if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
             }
         } else {
-            Serial.println("Wi-Fi connection failed. Starting Access Point (AP) Mode.");
-            WiFi.mode(WIFI_AP);
+            Serial.println("Wi-Fi connection timed out. Starting dual Access Point (AP) & Station mode...");
+            WiFi.mode(WIFI_AP_STA);
             WiFi.softAP("ArcadeMatrix", "12345678");
             String apMsg = "Offline Mode (AP: ArcadeMatrix)";
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
@@ -359,6 +375,7 @@ void AppRuntime::initialize() {
             
             m_webServer = new WebServerAPI(80, m_messageEngine);
             m_webServer->begin();
+            m_webServer->setVisualizerEngine(visualizerEngine);
             auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
             if (marqueeDesc && marqueeDesc->factory) {
                 auto marqPtr = marqueeDesc->factory();
@@ -367,6 +384,8 @@ void AppRuntime::initialize() {
                 m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
             }
             m_webServer->setMarqueeEngine(m_marqueeEngine);
+            // Re-arm background station connection so it automatically connects as soon as AP is ready
+            WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
         }
     } else {
         Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");

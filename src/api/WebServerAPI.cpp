@@ -2170,6 +2170,8 @@ void WebServerAPI::setupRoutes() {
                     matrixEngine.getDisplay()->fillScreen(0);
                     matrixEngine.getDisplay()->flipDMABuffer();
                 }
+                WiFi.disconnect(true, true);
+                vTaskDelay(pdMS_TO_TICKS(100));
                 esp_restart();
             } else {
                 LOGE("OTA", "Auto-OTA failed: (%d) %s", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
@@ -2205,6 +2207,8 @@ void WebServerAPI::setupRoutes() {
                     matrixEngine.getDisplay()->fillScreen(0);
                     matrixEngine.getDisplay()->flipDMABuffer();
                 }
+                WiFi.disconnect(true, true);
+                vTaskDelay(pdMS_TO_TICKS(100));
                 esp_restart();
             }, "ota_reboot", 4096, NULL, configMAX_PRIORITIES - 1, NULL);
         } else {

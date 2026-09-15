@@ -99,6 +99,37 @@ static void es7210RecoveryTaskFunc(void* param) {
 void HardwareHAL::begin() {
     LOGI("HardwareHAL", "Initializing Hardware Abstraction Layer...");
 
+    // 0. I2C Bus Recovery: if an external peripheral (QMI8658, ES7210, SHTC3) was interrupted
+    // mid-transfer during a software reset (e.g. OTA reboot), SDA may remain held LOW by the slave.
+    // Pulse SCL up to 9 clock cycles to let the slave finish its byte and release SDA.
+    pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+    pinMode(I2C_SCL_PIN, OUTPUT_OPEN_DRAIN);
+    digitalWrite(I2C_SCL_PIN, HIGH);
+    delayMicroseconds(10);
+
+    if (digitalRead(I2C_SDA_PIN) == LOW) {
+        LOGW("HardwareHAL", "I2C SDA line held low on boot, pulsing SCL to recover bus...");
+        for (int i = 0; i < 9 && digitalRead(I2C_SDA_PIN) == LOW; i++) {
+            digitalWrite(I2C_SCL_PIN, LOW);
+            delayMicroseconds(5);
+            digitalWrite(I2C_SCL_PIN, HIGH);
+            delayMicroseconds(5);
+        }
+        // Generate an explicit I2C STOP condition (SDA low -> high while SCL is high)
+        pinMode(I2C_SDA_PIN, OUTPUT_OPEN_DRAIN);
+        digitalWrite(I2C_SDA_PIN, LOW);
+        delayMicroseconds(5);
+        digitalWrite(I2C_SCL_PIN, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(I2C_SDA_PIN, HIGH);
+        delayMicroseconds(5);
+        if (digitalRead(I2C_SDA_PIN) == HIGH) {
+            LOGI("HardwareHAL", "I2C bus recovered successfully.");
+        } else {
+            LOGE("HardwareHAL", "I2C bus recovery failed: SDA still held LOW.");
+        }
+    }
+
     // 1. Initialize I2C Bus & Scan Devices
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000); // 100kHz standard I2C speed

@@ -41,7 +41,8 @@
 - **🌡️ Temperatura y Humedad Interior (SHTC3):** Pantalla adaptativa (°C/°F), iconos Pixel Art de termómetro y agua, y endpoint REST  para integración con Home Assistant.
 - **🔊 Sonómetro y Medidor de Decibelios (Uso para Salón de Arcade / Gaming Room :) :** Medición en tiempo real del nivel de ruido con 6 smileys en Pixel Art (<45dB 😊 a >88dB 🚨) y Visualizador de Audio. **¡Ideal para controlar el nivel sonoro en una sala de arcade ruidosa, gaming room o fiesta retro!** ([🎥 Ver la Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualizador de Música Rítmica:** 4 modos de visualización prioritaria (Spectrum Equalizer con retención de picos, Oscilloscope Waveform, Radial Circles y Neon Fire).
-- **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para subir GIF, calibrar la orientación de la pantalla y cambiar la configuración en vivo.
+- **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para gestionar playlists, calibrar la orientación de la pantalla y cambiar la configuración en vivo.
+- **🗂️ Biblioteca GIF de Red y Gestor de Archivos Web (`gifs`):** Tarjeta de gestor de archivos integrada en la Web UI que permite explorar carpetas, subir GIFs animados por Wi-Fi sin extraer la tarjeta SD, crear/eliminar carpetas, renombrar y reindexar automáticamente en segundo plano. Soporte nativo de doble orientación (`?orientation=yoko|tate`) para muebles arcade horizontales (Yoko) y verticales (Tate) — realizado por [@TooncesToo](https://github.com/TooncesToo).
 - **Motor GIF (`gifs`):** Reproducción fluida de GIFs almacenados en la tarjeta SD.
 - **Soporte MQTT (`marquee`):** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
@@ -95,6 +96,10 @@ BACKGROUND_SPRITE=stage1.raw
 
 ## Indexación de playlists GIF (selección de carpetas en la Web UI)
 La Web UI te permite marcar/desmarcar qué subcarpetas de `gifs/` se reproducen durante la rotación en reposo, pero necesita un manifiesto `playlists.json` para saber qué hay en la tarjeta SD. La reproducción de GIF funciona perfectamente sin él (el motor siempre lee los archivos directamente desde la tarjeta SD) - este paso solo es necesario si quieres usar ese selector de casillas.
+
+> [!TIP]
+> **Gestor de Archivos y Subida Web (¡Sin extraer la tarjeta SD!):**
+> Ahora puedes gestionar playlists, crear/eliminar carpetas, renombrar y subir GIFs animados directamente desde tu navegador con la tarjeta **GIF File Manager** en la Web UI, con soporte nativo Horizontal / Vertical y reindexación automática en segundo plano — desarrollado por [@TooncesToo](https://github.com/TooncesToo).
 
 1. Organiza tus GIF en subcarpetas dentro de `gifs/` en tu tarjeta SD, por ejemplo `gifs/mario/`, `gifs/sonic/` (cada subcarpeta se convierte en una playlist seleccionable; los archivos `.gif` sueltos directamente en `gifs/` siempre se reproducen y no necesitan este paso).
 2. Ejecuta uno de los scripts nativos en `tools/gif_indexation/` - sin necesidad de Python:
@@ -175,6 +180,7 @@ Un enorme agradecimiento a la comunidad de código abierto y a los creadores de 
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** por mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** por Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** por greiman
+- **[@TooncesToo](https://github.com/TooncesToo)** por desarrollar la API de biblioteca GIF de red, subida de archivos múltiples y gestor de archivos Web UI con soporte de doble orientación tanto en ESP32 como en Raspberry Pi.
 
 ¡Un agradecimiento especial al **RPiTeam** por el increíble pack de 600 GIFs!
 

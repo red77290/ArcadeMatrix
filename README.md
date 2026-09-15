@@ -42,7 +42,8 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and REST endpoint for Home Assistant integration!
 - **🔊 Decibel & Sound Level Meter (Arcade / Gaming Room):** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Rhythmic Music Visualizer:** 4 priority display modes (Spectrum Equalizer with peak hold, Oscilloscope Waveform, Radial Circles, and Neon Fire).
-- **Wi-Fi Web UI:** Access `http://arcadematrix.local` to upload GIFs, calibrate screen orientation, and change settings live!
+- **Wi-Fi Web UI:** Access `http://arcadematrix.local` to manage playlists, calibrate screen orientation, and change settings live!
+- **🗂️ Network GIF Library & Web File Manager (`gifs`):** Built-in file manager card in the Web UI allowing you to browse playlist folders, upload animated GIFs over Wi-Fi without removing the SD card, create/delete folders, rename items, and trigger automatic background re-indexing. Features native dual-orientation support (`?orientation=yoko|tate`) for both Horizontal (Yoko) and Vertical (Tate) cabinets — implemented by [@TooncesToo](https://github.com/TooncesToo)!
 - **GIF Engine (`gifs`):** Smooth playback of GIFs and auto-discovered playlists stored on the SD card.
 - **MQTT Support (`marquee`):** Integrates seamlessly with Batocera, Recalbox, and RetroPie to display official scraped game marquees via your Pixelcade fork.
 - **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI or Web Installer.
@@ -97,7 +98,11 @@ BACKGROUND_SPRITE=stage1.raw
 ## GIF Playlist Indexing (Web UI folder selection)
 The Web UI lets you tick/untick which `gifs/` subfolders play during the idle rotation, but it needs a `playlists.json` manifest to know what's on the SD card. GIF playback itself works fine without it (the engine always reads files directly from the SD card) - this step is only needed if you want to use that checkbox selector.
 
-1. Organize your GIFs into subfolders under `gifs/` on your SD card, e.g. `gifs/mario/`, `gifs/sonic/` (each subfolder becomes one selectable playlist; loose `.gif` files directly under `gifs/` always play and don't need this step).
+> [!TIP]
+> **Web UI File Manager & Uploader (No SD card removal needed!):**
+> You can now manage playlists, create/delete folders, rename items, and upload animated GIFs directly through the browser using the Web UI **GIF File Manager** card with native Horizontal / Vertical orientation support, with automatic background re-indexing — implemented by [@TooncesToo](https://github.com/TooncesToo)!
+> 
+> Alternatively, for batch offline preparation on your computer:
 2. Run one of the native scripts in `tools/gif_indexation/` - no Python required:
    ```bash
    ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - pass the SD root or its gifs/ folder
@@ -176,6 +181,7 @@ A huge thanks to the open-source community and the creators of the incredible li
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** by mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** by Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** by greiman
+- **[@TooncesToo](https://github.com/TooncesToo)** for developing the network GIF library API, multi-file uploader, and Web UI file manager with dual-orientation support on both ESP32 and Raspberry Pi.
 
 Special thanks to the **RPiTeam** for the awesome pack of 600 GIFs!
 

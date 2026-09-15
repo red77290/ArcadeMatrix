@@ -167,7 +167,7 @@ private:
     // for MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512) failures observed in the field.
     FighterPlayer nextP1;
     FighterPlayer nextP2;
-    volatile bool isNextReady = false;
+    std::atomic<bool> isNextReady{false};
     volatile bool isPreloading = false;
     volatile bool m_taskShouldExit = false;
     std::atomic<bool> m_loaderStopped{false};
