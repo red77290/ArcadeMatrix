@@ -586,6 +586,8 @@ paths:
       responses:
         '200':
           description: '`{"root":"/gifs_tate","orientation":"tate","folders":{"Arcade":{"path":"/gifs_tate/Arcade","count":120}}}`'
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
 
   /api/gifs/files:
     get:
@@ -614,6 +616,8 @@ paths:
           description: Missing or invalid folder name.
         '404':
           description: Folder not found.
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
 
   /api/gifs/file:
     get:
@@ -651,6 +655,8 @@ paths:
           description: The file bytes with an image content type.
         '404':
           description: File not found.
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
     delete:
       tags:
         - GIF Library
@@ -679,6 +685,8 @@ paths:
           description: '`{"status":"ok","orientation":"yoko","deleted":"/gifs/Arcade/a.gif"}`'
         '404':
           description: File not found.
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
 
   /api/gifs/upload:
     post:
@@ -743,6 +751,8 @@ paths:
           description: Folder created.
         '409':
           description: Folder already exists.
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
 
   /api/gifs/rename:
     post:
@@ -781,6 +791,8 @@ paths:
           description: Source not found.
         '409':
           description: Target already exists.
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
 
   /api/gifs/reindex:
     post:
@@ -835,6 +847,8 @@ paths:
       responses:
         '200':
           description: '`{"status":"ok","orientation":"yoko","deleted":"/gifs/Arcade","files":120}`'
+        '503':
+          description: SD card busy (a rescan holds the card) - retry shortly
         '404':
           description: Folder not found.
 

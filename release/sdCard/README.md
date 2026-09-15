@@ -9,6 +9,7 @@ a **FAT32**-formatted SD card, edit `config.json` for your Wi-Fi/hardware, and y
 sdCard/
   ├─ config.json            <- your settings, see docs/CONFIGURATION.md for the full reference
   ├─ gifs/                <- sample GIF playlist manifest (see docs/... or gif_indexation/ below)
+  ├─ gifs_tate/           <- vertical (Tate) library, same layout; ships one 32x128 sample so a rotated panel shows something
   ├─ fighters_32/         <- sample MUGEN sprite export for 32px-tall matrices
   └─ gif_indexation/      <- PC-side tool, NOT required on the SD card itself (see below)
 ```
