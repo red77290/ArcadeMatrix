@@ -474,6 +474,13 @@ Engines are always destroyed on Core 0 (`Core0LifecycleDispatcher`), never on Co
 
 This single barrier function replaced three previously-duplicated, slightly-inconsistent inline retirement sequences (instance recreation, rotation pruning, and pending-retry-on-full-queue), one of which did not clear `currentActiveInstanceId` before moving the engine, and none of which purged `DisplayRuntime`'s preemption stack — a latent dangling-pointer risk if a retired engine was still present in the preemption stack (e.g. immediately after preempting the module the user just removed from rotation).
 
+#### Memory Domain Segregation & PSRAM-First for Large Transient Buffers
+To prevent concurrent network consumers (AsyncWebServer / AsyncTCP serving WebUI requests) and cryptographic engines (Google Cast mbedTLS) from starving LwIP and triggering software socket aborts (`ECONNABORTED = 113`):
+1. **Application-Owned JSON in PSRAM:** All REST API schema and configuration endpoints in `WebServerAPI` instantiate `SpiRamJsonDocument` instead of `DynamicJsonDocument`, routing large JSON trees and string dictionaries to the 15 MB PSRAM pool. AsyncTCP and LwIP transport buffers remain in internal DRAM.
+2. **Graphics Canvas Buffer in PSRAM:** Large non-DMA framebuffers (such as `GifEngine`'s 32 KB canvas) prioritize PSRAM allocation (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), freeing over 32 KB of permanent internal DRAM at boot.
+3. **AsyncTCP Task Core Isolation & Sizing:** The `async_tcp` service task is sized to 8192 bytes and pinned strictly to Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), isolating network callbacks from the Core 1 60 FPS display hot path.
+4. **Google Cast Reconnect Backoff:** Reconnections are paced with exponential backoff (5s, 10s, 20s, 60s) initialized upon session drop, avoiding tight reconnection loops during bursty HTTP activity.
+
 #### Concurrency: Seamless Simultaneous Audio & 60 FPS Video
 Real-time audio decoding and HUB75 matrix scanning operate concurrently without micro-stutters:
 - **Core 0 (Audio & Network Pipeline):** Runs `WebRadioService` MP3 frame decoding (`minimp3`) and audio network stream management into a lock-free circular buffer, continuously feeding the Everest `ES8311` I2S DAC.

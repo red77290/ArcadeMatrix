@@ -263,12 +263,17 @@ bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
 
 uint16_t* GifEngine::allocateCanvasBuffer(size_t matrixPixels) {
     if (matrixPixels == 0) return nullptr;
-    uint16_t* buf = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!buf && m_hasPsram) {
-        LOGW("GifEngine", "Internal SRAM canvas allocation failed (%u bytes), falling back to PSRAM.",
+    uint16_t* buf = nullptr;
+    if (m_hasPsram) {
+        buf = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (buf) {
+            LOGI("GifEngine", "Allocated %u bytes canvas buffer in PSRAM.", (unsigned)(matrixPixels * 2));
+            return buf;
+        }
+        LOGW("GifEngine", "PSRAM canvas allocation failed (%u bytes), falling back to internal DRAM.",
              (unsigned)(matrixPixels * 2));
-        buf = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM);
     }
+    buf = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!buf) {
         LOGE("GifEngine", "Canvas buffer allocation failed (%u bytes).", (unsigned)(matrixPixels * 2));
     }
@@ -396,6 +401,10 @@ bool GifEngine::decodePng(const char* filepath) {
     // Lazily allocate the ~38KB PNGdec decoder only on first actual use - see the `png` member
     // comment in GifEngine.h for why this isn't a permanent value member.
     if (!png) png = new PNG();
+
+    if (canvasBuffer && matrix) {
+        memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+    }
 
     if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
         LOGE("GifEngine", "Failed to acquire sdMutex for %s", filepath);
@@ -686,9 +695,14 @@ bool GifEngine::loop() {
     if (isRaw) {
         return playRawFrame();
     } else if (isPng) {
-        if (needsInitialFlip) {
-            needsInitialFlip = false;
-            return true; // Return true to force main.cpp to flip the buffer once
+        if (canvasBuffer && matrix) {
+            int mW = matrix->width();
+            int mH = matrix->height();
+            for (int y = 0; y < mH; y++) {
+                for (int x = 0; x < mW; x++) {
+                    matrix->drawPixel(x, y, canvasBuffer[y * mW + x]);
+                }
+            }
         }
         if (millis() - pngShowStartTime > pngHoldDurationMs) {
             if (playlistMode) {
@@ -698,7 +712,7 @@ bool GifEngine::loop() {
                 pngShowStartTime = millis(); // Loop single file
             }
         }
-        return false; // PNG is static, no need to flip once displayed
+        return true; // Continuously render static PNG onto alternating DMA framebuffers
     } else {
         if (millis() - gifLastFrameTime < gifCurrentDelay) return false;
         // Advance target time by the intended delay.
@@ -1056,15 +1070,27 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
 
     int y = pDraw->y;
     int baseY = offsetY + y * scaleY;
+    int mW = self->matrix->width();
+    int mH = self->matrix->height();
 
     for (int x = 0; x < iWidth; x++) {
         uint16_t color = lineBuffer[x];
         int px = offsetX + x * scaleX;
         if (scaleX == 1 && scaleY == 1) {
-            if (px >= 0 && px < self->matrix->width() && baseY >= 0 && baseY < self->matrix->height()) {
+            if (px >= 0 && px < mW && baseY >= 0 && baseY < mH) {
+                if (self->canvasBuffer) self->canvasBuffer[baseY * mW + px] = color;
                 self->matrix->drawPixel(px, baseY, color);
             }
         } else {
+            for (int dy = 0; dy < scaleY; dy++) {
+                int py = baseY + dy;
+                if (py < 0 || py >= mH) continue;
+                for (int dx = 0; dx < scaleX; dx++) {
+                    int ppx = px + dx;
+                    if (ppx < 0 || ppx >= mW) continue;
+                    if (self->canvasBuffer) self->canvasBuffer[py * mW + ppx] = color;
+                }
+            }
             self->matrix->fillRect(px, baseY, scaleX, scaleY, color);
         }
     }

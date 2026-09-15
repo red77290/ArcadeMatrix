@@ -22,11 +22,14 @@
  */
 namespace NetworkBudget {
 
-/// Hard safety admission threshold for internal DRAM.
-static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 30u * 1024u; // 30,720 bytes
+/// Hard safety admission threshold for internal DRAM (needs ~33.8 KB record buffers + ~5 KB context/crypto + ~6 KB margin).
+static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 45u * 1024u; // 46,080 bytes
 
-/// Contiguous allocation watermark to satisfy the 16 KB mbedTLS input record buffer.
+/// Contiguous allocation watermark to satisfy a single 16 KB mbedTLS record buffer.
 static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
+
+/// Contiguous watermark guaranteed to satisfy BOTH 16 KB mbedTLS record buffers simultaneously.
+static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 35328u; // 34.5 KB
 
 /// Healthy operation target for internal DRAM with active stream.
 static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
@@ -43,6 +46,32 @@ inline uint32_t freeInternal() {
  */
 inline uint32_t largestInternalBlock() {
     return (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+}
+
+/**
+ * @brief Evaluates whether internal DRAM can accommodate both mbedTLS record buffers (in + out).
+ *
+ * mbedTLS setup allocates TWO separate record buffers (~16.7 KB each, ~33.4 KB total).
+ * If the largest block is >= 34.5 KB, both buffers will fit in that single block.
+ * If largest < 16.5 KB, even a single buffer cannot be allocated.
+ * If in between, it probes whether two simultaneous 16.5 KB allocations can actually succeed,
+ * eliminating false admissions that would otherwise crash mbedtls_ssl_setup with -32512.
+ */
+inline bool hasTlsRecordBufferHeadroom() {
+    const uint32_t largest = largestInternalBlock();
+    if (largest >= TLS_MIN_COMBINED_BLOCK) {
+        return true;
+    }
+    if (largest < TLS_MIN_LARGEST_BLOCK) {
+        return false;
+    }
+    void* b1 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!b1) return false;
+    void* b2 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    heap_caps_free(b1);
+    if (!b2) return false;
+    heap_caps_free(b2);
+    return true;
 }
 
 /// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
@@ -74,8 +103,8 @@ inline std::atomic<uint32_t>& getTlsDeniedCount() {
 /**
  * @brief Tells whether a TLS handshake may reasonably be attempted right now.
  *
- * Checks both the total free internal DRAM, largest contiguous block, and
- * DMA-capable heap for hardware SHA acceleration (esp-sha buffer allocation).
+ * Checks total free internal DRAM, dual-buffer contiguous capacity (mbedTLS in/out buffers),
+ * and DMA-capable heap for hardware SHA acceleration (esp-sha buffer allocation).
  *
  * @return true when there is enough internal DRAM and DMA headroom for a TLS session.
  */
@@ -84,7 +113,8 @@ inline bool canStartTlsSession() {
     const uint32_t largest = largestInternalBlock();
     const uint32_t freeDma = freeDmaInternal();
     const uint32_t largestDma = largestDmaInternalBlock();
-    const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && largest >= TLS_MIN_LARGEST_BLOCK &&
+    const bool hasBuffers = hasTlsRecordBufferHeadroom();
+    const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && hasBuffers &&
                            freeDma >= TLS_MIN_FREE_DMA && largestDma >= TLS_MIN_LARGEST_DMA_BLOCK);
     if (!admitted) {
         getTlsDeniedCount().fetch_add(1, std::memory_order_relaxed);
@@ -92,9 +122,10 @@ inline bool canStartTlsSession() {
         uint32_t now = millis();
         uint32_t last = lastDenialLogMs.load(std::memory_order_relaxed);
         if (now - last > 10000 && lastDenialLogMs.compare_exchange_strong(last, now)) {
-            log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), freeDma=%u (req %u), largestDma=%u (req %u), total denied=%u",
+            log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), freeDma=%u (req %u), largestDma=%u (req %u), buffers=%s, total denied=%u",
                   free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_LARGEST_BLOCK,
                   freeDma, TLS_MIN_FREE_DMA, largestDma, TLS_MIN_LARGEST_DMA_BLOCK,
+                  hasBuffers ? "OK" : "INSUFFICIENT",
                   getTlsDeniedCount().load(std::memory_order_relaxed));
         }
     }

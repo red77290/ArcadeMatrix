@@ -1778,7 +1778,46 @@ select.input option {
 
         <!-- OTA Firmware Update -->
         <div id="sys-tab-ota" class="tab-pane">
-          <!-- 2. Manual Binary Upload (Offline) -->
+          <!-- 1. Online Automatic Update (GitHub Releases) -->
+          <div class="card glass shadow ota-card" style="margin-bottom: 1.5rem;">
+            <div class="card-header-badge">
+              <h3 data-i18n="ota_online_title">🌐 Online Update (GitHub Releases)</h3>
+              <span class="badge badge-accent">1-Click OTA</span>
+            </div>
+            <p class="text-muted" data-i18n="ota_online_desc">Check GitHub Releases for new updates matching your device architecture and update automatically.</p>
+
+            <div class="ota-info-box" style="margin-bottom: 1rem;">
+              <div><span data-i18n="ota_cur_ver">Current Version:</span> <strong id="ota-current-version">--</strong></div>
+              <div><span data-i18n="ota_sys_arch">System Architecture:</span> <strong id="ota-current-arch">ESP32</strong></div>
+            </div>
+
+            <div id="ota-online-card" style="display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <span id="ota-online-badge" class="badge badge-accent">Update Available</span>
+                  <strong id="ota-online-target-ver" style="margin-left: 0.5rem; font-size: 1.1rem;">--</strong>
+                </div>
+                <span id="ota-online-size" class="text-muted" style="font-size: 0.85rem;">--</span>
+              </div>
+              <div id="ota-online-notes" class="text-muted" style="margin-top: 0.75rem; font-size: 0.85rem; max-height: 140px; overflow-y: auto; white-space: pre-wrap; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px;"></div>
+            </div>
+
+            <div id="ota-auto-progress" class="progress-bar-container" style="display: none; margin-bottom: 1rem;">
+              <div id="ota-auto-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+              <span id="ota-auto-progress-text" class="progress-text">Downloading from GitHub...</span>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+              <button id="btn-ota-check" class="btn btn-primary" style="flex: 1;" data-i18n="ota_check_btn">
+                🔍 Check for Updates
+              </button>
+              <button id="btn-ota-auto-install" class="btn btn-warning" style="flex: 1; display: none;" data-i18n="ota_download_btn">
+                ⬇️ Download & Install Update
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. Manual Binary Upload (Offline / Custom) -->
           <div class="card glass shadow ota-card">
             <div class="card-header-badge">
               <h3 data-i18n="ota_manual_title">📁 Manual File Upload</h3>
@@ -1793,8 +1832,8 @@ select.input option {
             </div>
 
             <div id="ota-file-details" class="file-details" style="display: none;">
-              <span id="ota-filename">arcadematrix</span>
-              <span id="ota-filesize" class="badge">4.8 MB</span>
+              <span id="ota-filename">firmware.bin</span>
+              <span id="ota-filesize" class="badge">~1.5 MB</span>
             </div>
 
             <div id="ota-progress-container" class="progress-bar-container" style="display: none;">
@@ -1913,13 +1952,7 @@ const API = {
     });
   },
 
-  async checkOtaUpdate() {
-    return this.get('/api/ota/check?_t=' + Date.now());
-  },
 
-  async triggerAutoOta(downloadUrl = null) {
-    return this.post('/api/ota/auto-update', { download_url: downloadUrl });
-  },
 
   async getVersion() {
     return this.get('/api/version?_t=' + Date.now()).catch(() => this.get('/api/stats?_t=' + Date.now())).catch(() => ({ version: '--' }));
@@ -5810,14 +5843,14 @@ function initNavigation() {
 
 async function loadVersion() {
   try {
-    const data = await API.get('/api/version?_t=' + Date.now()).catch(() => API.get('/api/stats?_t=' + Date.now())).catch(() => ({version: '--', arch: 'aarch64'}));
+    const data = await API.get('/api/version?_t=' + Date.now()).catch(() => API.get('/api/stats?_t=' + Date.now())).catch(() => ({version: '--', arch: 'esp32'}));
     const versionTag = document.getElementById('version-tag');
     const otaVer = document.getElementById('ota-current-version');
     const otaArch = document.getElementById('ota-current-arch');
 
     if (versionTag) versionTag.textContent = `v${data.version}`;
     if (otaVer) otaVer.textContent = `v${data.version}`;
-    if (otaArch) otaArch.textContent = data.arch || 'aarch64';
+    if (otaArch) otaArch.textContent = (data.arch || 'esp32').toUpperCase();
   } catch (e) {
     console.error('Failed to load version:', e);
   }
@@ -5960,10 +5993,54 @@ function initOta() {
   const onlineSize = document.getElementById('ota-online-size');
   const onlineNotes = document.getElementById('ota-online-notes');
   const autoProgress = document.getElementById('ota-auto-progress');
+  const autoProgressFill = document.getElementById('ota-auto-progress-fill');
   const autoProgressText = document.getElementById('ota-auto-progress-text');
 
   let latestDownloadUrl = null;
   let targetVersionName = '';
+
+  function parseSemVer(s) {
+    if (!s) return null;
+    s = s.trim().replace(/^[vV]/, '');
+    const parts = s.split('-');
+    const mainPart = parts[0];
+    const prePart = parts[1] || null;
+
+    const numParts = mainPart.split('.').map(n => parseInt(n, 10) || 0);
+    const major = numParts[0] || 0;
+    const minor = numParts[1] || 0;
+    const patch = numParts[2] || 0;
+
+    let prerelease = null;
+    if (prePart) {
+      const pLower = prePart.toLowerCase();
+      const pNumMatch = pLower.match(/\d+/);
+      const pNum = pNumMatch ? parseInt(pNumMatch[0], 10) : 0;
+      const pName = pLower.replace(/[^a-z]/g, '');
+      prerelease = { name: pName, num: pNum };
+    }
+
+    return { major, minor, patch, prerelease };
+  }
+
+  function isSemVerLower(currStr, latStr) {
+    const curr = parseSemVer(currStr);
+    const lat = parseSemVer(latStr);
+    if (!curr || !lat) return false;
+
+    if (curr.major !== lat.major) return curr.major < lat.major;
+    if (curr.minor !== lat.minor) return curr.minor < lat.minor;
+    if (curr.patch !== lat.patch) return curr.patch < lat.patch;
+
+    if (!curr.prerelease && !lat.prerelease) return false;
+    if (curr.prerelease && !lat.prerelease) return true;  // e.g. 3.0.0-beta.3 < 3.0.0
+    if (!curr.prerelease && lat.prerelease) return false; // e.g. 3.0.0 > 3.0.0-beta.3
+
+    if (curr.prerelease.name !== lat.prerelease.name) {
+      return curr.prerelease.name < lat.prerelease.name;
+    }
+    return curr.prerelease.num < lat.prerelease.num;
+  }
 
   if (btnCheck) {
     btnCheck.addEventListener('click', async () => {
@@ -5972,45 +6049,79 @@ function initOta() {
       window.showToast('Checking GitHub for latest release...', 'info');
 
       try {
-        const data = await API.checkOtaUpdate();
-        if (data.status === 'error') {
-          window.showToast(`❌ ${data.message}`, 'error');
-          return;
+        const sysInfo = await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32' }));
+        const currentVer = sysInfo.version || '3.0.0';
+        const isS3 = (sysInfo.arch || '').toLowerCase().includes('s3');
+
+        const res = await fetch('https://api.github.com/repos/red77290/ArcadeMatrix/releases');
+        if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+        const releases = await res.json();
+        if (!releases || !releases.length) throw new Error('No releases found on GitHub');
+
+        const latestRel = releases[0];
+        const latestVer = (latestRel.tag_name || '').replace(/^[vV]/, '');
+        targetVersionName = latestVer;
+
+        // Find matching asset for ESP32 board
+        let matchingAsset = null;
+        const binAssets = (latestRel.assets || []).filter(a => (a.name || '').toLowerCase().endsWith('.bin'));
+        for (const asset of binAssets) {
+          const nameLower = asset.name.toLowerCase();
+          if (isS3 && (nameLower.includes('s3') || nameLower.includes('waveshare'))) {
+            matchingAsset = asset;
+            break;
+          } else if (!isS3 && (nameLower.includes('esp32dev') || nameLower.includes('esp32.bin') || (!nameLower.includes('s3') && !nameLower.includes('waveshare')))) {
+            matchingAsset = asset;
+            break;
+          }
+        }
+        if (!matchingAsset && binAssets.length === 1) {
+          matchingAsset = binAssets[0];
         }
 
         onlineCard.style.display = 'block';
-        targetVersionName = data.latest_version;
-        onlineTargetVer.textContent = `v${data.latest_version}`;
-
-        if (data.asset_size) {
-          onlineSize.textContent = `${(data.asset_size / (1024 * 1024)).toFixed(1)} MB (${data.current_arch})`;
+        onlineTargetVer.textContent = `v${latestVer}`;
+        if (matchingAsset) {
+          onlineSize.textContent = `${(matchingAsset.size / (1024 * 1024)).toFixed(2)} MB (${isS3 ? 'ESP32-S3' : 'ESP32'})`;
         } else {
-          onlineSize.textContent = data.current_arch;
+          onlineSize.textContent = isS3 ? 'ESP32-S3' : 'ESP32';
         }
 
-        if (data.release_notes) {
-          onlineNotes.textContent = data.release_notes;
+        if (latestRel.body) {
+          onlineNotes.textContent = latestRel.body;
           onlineNotes.style.display = 'block';
         } else {
           onlineNotes.style.display = 'none';
         }
 
-        if (data.update_available && data.download_url) {
-          latestDownloadUrl = data.download_url;
+        const updateAvailable = isSemVerLower(currentVer, latestVer);
+
+        if (updateAvailable && matchingAsset) {
+          latestDownloadUrl = matchingAsset.browser_download_url;
           onlineBadge.className = 'badge badge-accent';
           onlineBadge.textContent = 'New Update Available';
           btnAutoInstall.style.display = 'inline-block';
-          btnAutoInstall.textContent = `⬇️ Download & Install v${data.latest_version}`;
-          window.showToast(`🎉 New update v${data.latest_version} available!`, 'success');
+          btnAutoInstall.textContent = `⬇️ Download & Install v${latestVer}`;
+          window.showToast(`🎉 New update v${latestVer} available!`, 'success');
+        } else if (!matchingAsset) {
+          latestDownloadUrl = null;
+          onlineBadge.className = 'badge';
+          onlineBadge.textContent = updateAvailable ? 'No Binary for Arch' : 'Up to Date';
+          btnAutoInstall.style.display = 'none';
+          if (updateAvailable) {
+            window.showToast(`⚠️ v${latestVer} is available, but no matching binary found for ${isS3 ? 'ESP32-S3' : 'ESP32'}.`, 'warning');
+          } else {
+            window.showToast(`✅ You are already on the latest version (v${currentVer}).`, 'info');
+          }
         } else {
           latestDownloadUrl = null;
           onlineBadge.className = 'badge';
           onlineBadge.textContent = 'Up to Date';
           btnAutoInstall.style.display = 'none';
-          window.showToast(`✅ You are already on the latest version (v${data.current_version}).`, 'info');
+          window.showToast(`✅ You are already on the latest version (v${currentVer}).`, 'info');
         }
       } catch (err) {
-        window.showToast(`❌ Failed to check updates: ${err.message || err.status}`, 'error');
+        window.showToast(`❌ Failed to check updates: ${err.message || err}`, 'error');
       } finally {
         btnCheck.disabled = false;
         btnCheck.textContent = '🔍 Check for Updates';
@@ -6020,31 +6131,40 @@ function initOta() {
 
   if (btnAutoInstall) {
     btnAutoInstall.addEventListener('click', async () => {
-      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName || ''} from GitHub? The service will automatically restart.`)) {
+      if (!latestDownloadUrl) return;
+      if (!confirm(`⚠️ Download and install ArcadeMatrix v${targetVersionName} on ESP32? The device will automatically restart.`)) {
         return;
       }
 
       btnCheck.disabled = true;
       btnAutoInstall.disabled = true;
       autoProgress.style.display = 'block';
-      autoProgressText.textContent = 'Downloading binary from GitHub & verifying...';
+      if (autoProgressFill) autoProgressFill.style.width = '0%';
+      autoProgressText.textContent = '1/2 Downloading from GitHub...';
       window.showToast('Downloading firmware from GitHub...', 'info');
 
       try {
         const oldVersionData = await API.getVersion().catch(() => null);
         const oldVer = oldVersionData?.version || '';
 
-        const resp = await API.triggerAutoOta(latestDownloadUrl);
-        if (resp.status === 'error') {
-          throw new Error(resp.message || 'Auto-update failed');
-        }
+        const resp = await fetch(latestDownloadUrl);
+        if (!resp.ok) throw new Error(`GitHub download failed: HTTP ${resp.status}`);
+        const blob = await resp.blob();
 
-        autoProgressText.textContent = 'Restarting daemon...';
-        window.showToast('Firmware downloaded & replaced! Waiting for restart...', 'info');
+        autoProgressText.textContent = '2/2 Flashing ESP32 firmware (0%)...';
+        window.showToast('Flashing binary to ESP32...', 'info');
+
+        await API.uploadFirmware(blob, (percent) => {
+          if (autoProgressFill) autoProgressFill.style.width = `${percent}%`;
+          autoProgressText.textContent = `2/2 Flashing ESP32 firmware (${percent}%)...`;
+        });
+
+        autoProgressText.textContent = 'Rebooting ESP32...';
+        window.showToast('Firmware flashed! Reconnecting to device...', 'info');
 
         const versionData = await API.waitForReconnect(60000, 2000, oldVer);
         if (oldVer && versionData.version === oldVer) {
-          window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}. (Check /tmp/arcadematrix_ota.log)`, 'warning');
+          window.showToast(`⚠️ Device reconnected, but version is still v${versionData.version}.`, 'warning');
         } else {
           window.showToast(`✅ Firmware successfully updated to v${versionData.version}!`, 'success');
         }

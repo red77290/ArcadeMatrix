@@ -70,7 +70,7 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
                           + fieldCount * JSON_OBJECT_SIZE(12)
                           + 512;                           // headroom
 
-    DynamicJsonDocument doc(capacity);
+    SpiRamJsonDocument doc(capacity);
     JsonObject obj = doc.to<JsonObject>();
 
     JsonObject metaObj = obj.createNestedObject("metadata");
@@ -202,7 +202,7 @@ static bool refillInstanceStream(InstanceStreamState& state) {
                               + stringBytes
                               + 256;
 
-        DynamicJsonDocument doc(capacity);
+        SpiRamJsonDocument doc(capacity);
         JsonObject obj = doc.to<JsonObject>();
         obj["instance_id"] = inst.instance_id;
         obj["engine_id"] = inst.engine_id;
@@ -347,7 +347,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/hardware (Hardware Profile & Runtime Capabilities)
     server.on("/api/hardware", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(512);
+        SpiRamJsonDocument doc(512);
         const auto& caps = hardwareHAL.capabilities();
         doc["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
         JsonObject psramObj = doc.createNestedObject("psram");
@@ -399,7 +399,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/themes (Dynamic options endpoint for themes)
     server.on("/api/themes", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(2048);
+        SpiRamJsonDocument doc(2048);
         JsonArray arr = doc.to<JsonArray>();
         struct ThemeItem { int id; const char* name; };
         static const ThemeItem themes[] = {
@@ -425,7 +425,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/timezones (Dynamic options endpoint for timezones)
     server.on("/api/timezones", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(4096);
+        SpiRamJsonDocument doc(4096);
         JsonArray arr = doc.to<JsonArray>();
         struct TzItem { const char* value; const char* label; };
         static const TzItem timezones[] = {
@@ -579,7 +579,7 @@ void WebServerAPI::setupRoutes() {
 
         auto reqCheck = EngineRegistrar::checkRequirements(desc->requirements);
         if (!reqCheck.satisfied) {
-            DynamicJsonDocument errDoc(256);
+            SpiRamJsonDocument errDoc(256);
             errDoc["error"] = "engine_unavailable";
             errDoc["reason"] = reqCheck.reason;
             String errResp;
@@ -741,7 +741,7 @@ void WebServerAPI::setupRoutes() {
                               + config.rotation.size() * (JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1))
                               + stringBytes
                               + 256;
-        DynamicJsonDocument doc(capacity);
+        SpiRamJsonDocument doc(capacity);
         JsonArray arr = doc.to<JsonArray>();
         for (const auto& rot : config.rotation) {
             JsonObject obj = arr.createNestedObject();
@@ -800,22 +800,26 @@ void WebServerAPI::setupRoutes() {
 
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(512);
+        SpiRamJsonDocument doc(512);
         doc["status"] = "online";
         doc["uptime"] = millis();
         doc["free_heap"] = ESP.getFreeHeap();
         doc["min_free_heap"] = ESP.getMinFreeHeap();
         doc["max_alloc_heap"] = ESP.getMaxAllocHeap();
+        doc["internal_free"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        doc["internal_largest"] = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
         doc["psram_found"] = hardwareHAL.capabilities().hasPsram;
         if (hardwareHAL.capabilities().hasPsram) {
             doc["free_psram"] = ESP.getFreePsram();
         }
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+        doc["async_tcp_hwm_bytes"] = (uint32_t)(hwm * sizeof(StackType_t));
         sendJsonResponse(request, doc);
     });
 
     // API: System Info & Stats (Dashboard metrics compatibility)
     auto sendSysStats = [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(1024);
+        SpiRamJsonDocument doc(1024);
         float tempC = 0.0f;
         float humidity = 0.0f;
         if (hardwareHAL.capabilities().hasTempSensor) {
@@ -855,7 +859,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: List fonts (Built-in + custom SD .amf files)
     server.on("/api/fonts", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(2048);
+        SpiRamJsonDocument doc(2048);
         JsonArray arr = doc.to<JsonArray>();
         
         arr.add("Default");
@@ -892,7 +896,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Return version with Git commit and build timestamp
     server.on("/api/version", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(256);
+        SpiRamJsonDocument doc(256);
         doc["version"] = FIRMWARE_VERSION;
         doc["git_commit"] = BUILD_GIT_COMMIT;
         doc["build_timestamp"] = BUILD_TIMESTAMP;
@@ -910,7 +914,7 @@ void WebServerAPI::setupRoutes() {
     server.on("/api/sensor", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
         EnvironmentData data = hardwareHAL.readEnvironment();
-        DynamicJsonDocument doc(256);
+        SpiRamJsonDocument doc(256);
         doc["available"] = data.available;
         doc["temperature_c"] = data.temperatureC;
         doc["temperature_f"] = data.temperatureF;
@@ -1635,7 +1639,7 @@ void WebServerAPI::setupRoutes() {
                 cfg.matrix.matrix_power = doc["state"].as<bool>();
             });
         }
-        DynamicJsonDocument resp(1024);
+        SpiRamJsonDocument resp(1024);
         resp["status"] = "success";
         resp["matrix_power"] = config.acquireSnapshot()->matrix.matrix_power;
         String response;
@@ -1649,7 +1653,7 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
-        DynamicJsonDocument doc(4096);
+        SpiRamJsonDocument doc(4096);
         JsonObject sys = doc.createNestedObject("system");
         sys["lang"] = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
         sys["timezone"] = snap.system.timezone;
@@ -1864,7 +1868,7 @@ void WebServerAPI::setupRoutes() {
             }
         }
 
-        DynamicJsonDocument resp(512);
+        SpiRamJsonDocument resp(512);
         resp["status"] = willReboot ? "rebooting" : "success";
         resp["lang"] = config.acquireSnapshot()->system.lang;
         String response;
@@ -1964,7 +1968,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/ota/check (Parity with RPi & OpenAPI specification)
     server.on("/api/ota/check", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(512);
+        SpiRamJsonDocument doc(512);
         doc["current_version"] = FIRMWARE_VERSION;
         #if defined(CONFIG_IDF_TARGET_ESP32S3)
         doc["current_arch"] = "esp32s3";
@@ -2140,7 +2144,7 @@ void WebServerAPI::setupRoutes() {
     // API: GET /api/audio/status — Returns current audio playback snapshot
     server.on("/api/audio/status", HTTP_GET, [](AsyncWebServerRequest *request){
         auto st = audioHub.getPlaybackStateSnapshot();
-        DynamicJsonDocument doc(512);
+        SpiRamJsonDocument doc(512);
         doc["source"] = AudioHub::getSourceName(st.source);
         doc["status"] = (int)st.status;
         doc["title"] = st.title;
@@ -2205,7 +2209,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: GET /api/gyro/status — Returns gravity vector and suggested orientation
     server.on("/api/gyro/status", HTTP_GET, [](AsyncWebServerRequest *request){
-        DynamicJsonDocument doc(512);
+        SpiRamJsonDocument doc(512);
         GyroOrientation orient = gyroHAL.getOrientation();
         doc["available"] = gyroHAL.isAvailable();
         doc["sensor"] = orient.sensorName;
@@ -2232,7 +2236,7 @@ void WebServerAPI::setupRoutes() {
         config.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
         ConfigSanitizer::sanitize(config);
         config.saveToSD("/config.json");
-        DynamicJsonDocument doc(256);
+        SpiRamJsonDocument doc(256);
         doc["success"] = true;
         doc["rotation_offset"] = displayOrientationManager.getRotationOffset();
         doc["current_rotation"] = displayOrientationManager.getRotation();

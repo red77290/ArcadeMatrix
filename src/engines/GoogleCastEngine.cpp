@@ -345,6 +345,12 @@ void GoogleCastEngine::pollCastStatus() {
 
     // 1. Establish or recover persistent TLS connection if not connected
     if (!m_client.connected()) {
+        if (m_nextReconnectMs == 0) {
+            // Active session dropped; give LwIP and sockets 5s to settle before first reconnect attempt
+            m_reconnectFailures = 1;
+            m_nextReconnectMs = now + 5000;
+            return;
+        }
         if (now < m_nextReconnectMs) {
             return;
         }

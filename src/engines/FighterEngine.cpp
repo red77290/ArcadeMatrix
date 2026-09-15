@@ -5,7 +5,6 @@
 #include "../core/ConfigLoader.h"
 #include "../core/SdLockGuard.h"
 
-extern SemaphoreHandle_t sdMutex;
 
 FighterEngine::FighterEngine() : matrix(nullptr) {}
 
@@ -92,11 +91,11 @@ String FighterEngine::getFightersDir() {
     bool has64 = false;
     bool has32 = false;
     bool hasDef = false;
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    SdLockGuard guard(pdMS_TO_TICKS(1000));
+    if (guard) {
         if (targetHeight == 64 && sd.exists("/fighters_64/index.txt")) has64 = true;
         if (sd.exists("/fighters_32/index.txt")) has32 = true;
         if (sd.exists("/fighters/index.txt")) hasDef = true;
-        xSemaphoreGive(sdMutex);
     }
     if (has64) {
         cachedFightersDir = "/fighters_64";
@@ -118,13 +117,13 @@ void FighterEngine::loadRoster() {
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+    SdLockGuard guard(pdMS_TO_TICKS(3000));
+    if (guard) {
         FsFile f;
         if (sd.exists(indexPath.c_str())) {
             f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
         }
         if (!f) {
-            xSemaphoreGive(sdMutex);
             Serial.println("FighterEngine: No index.txt found!");
             return;
         }
@@ -140,7 +139,6 @@ void FighterEngine::loadRoster() {
             }
         }
         f.close();
-        xSemaphoreGive(sdMutex);
 
         numAvailableFighters = (int)offsets.size();
         if (numAvailableFighters > 0) {
@@ -164,7 +162,8 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
     
     String indexPath = getFightersDir() + "/index.txt";
     bool success = false;
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    SdLockGuard guard(pdMS_TO_TICKS(1000));
+    if (guard) {
         FsFile f = sd.open(indexPath, FILE_OPEN_READ);
         if (f) {
             int targetLine = esp_random() % numAvailableFighters;
@@ -189,7 +188,6 @@ bool FighterEngine::getRandomFighter(FighterPlayer& p) {
                 success = true;
             }
         }
-        xSemaphoreGive(sdMutex);
     }
     return success;
 }
@@ -502,7 +500,8 @@ void FighterEngine::runBackgroundPreload() {
     float bestRatio = 0.0f;
 
     if (numAvailableFighters > 0 && fighterOffsets) {
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+        SdLockGuard guard(pdMS_TO_TICKS(3000));
+        if (guard) {
             FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
             if (f) {
                 int p1Line = esp_random() % numAvailableFighters;
@@ -549,7 +548,6 @@ void FighterEngine::runBackgroundPreload() {
                 }
                 f.close();
             }
-            xSemaphoreGive(sdMutex);
         }
     }
 
@@ -571,11 +569,7 @@ void FighterEngine::runBackgroundPreload() {
                  (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
             return false;
         }
-        bool res = false;
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            res = loadFighterAnim(anim, path.c_str());
-            xSemaphoreGive(sdMutex);
-        }
+        bool res = loadFighterAnim(anim, path.c_str());
         vTaskDelay(pdMS_TO_TICKS(10)); // Breathe! Yield SD bus and CPU to Core 1 rendering
         return res;
     };

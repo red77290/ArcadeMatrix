@@ -41,16 +41,21 @@ void ArtworkService::clear() {
 
 String ArtworkService::normalizeArtworkUrl(const String& url) {
     if (url.isEmpty()) return "";
+    String result = url;
+    // Prefer plain HTTP to bypass TLS memory footprint and avoid contention with persistent Cast TLS socket
+    if (result.startsWith("https://")) {
+        result = "http://" + result.substring(8);
+    }
     // Handle Google CDN URLs (YouTube Music / Google Cast / Google Photos)
-    if (url.indexOf("googleusercontent.com") != -1 || url.indexOf("ggpht.com") != -1) {
-        int eqPos = url.lastIndexOf('=');
-        if (eqPos != -1 && eqPos > (int)url.length() - 20) {
-            return url.substring(0, eqPos) + "=w64-h64-c";
+    if (result.indexOf("googleusercontent.com") != -1 || result.indexOf("ggpht.com") != -1) {
+        int eqPos = result.lastIndexOf('=');
+        if (eqPos != -1 && eqPos > (int)result.length() - 20) {
+            return result.substring(0, eqPos) + "=w64-h64-c";
         } else {
-            return url + "=w64-h64-c";
+            return result + "=w64-h64-c";
         }
     }
-    return url;
+    return result;
 }
 
 #include <PNGdec.h>

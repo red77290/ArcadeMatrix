@@ -44,6 +44,11 @@ public:
         }
         return false;
     }
+    bool hasNewFrame() const override {
+        if (m_hasRawBuffer) return true;
+        if (m_gifEngine) return m_gifEngine->hasNewFrame();
+        return true;
+    }
 
     size_t expectedBufferBytes() const { return (size_t)panelWidth * panelHeight * 2; }
 

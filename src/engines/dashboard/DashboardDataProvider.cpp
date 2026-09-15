@@ -126,7 +126,7 @@ void DashboardDataProvider::start() {
     BaseType_t res = xTaskCreatePinnedToCore(
         fetchTaskStatic,
         "DashFetch",
-        10240,
+        8192,
         this,
         1,
         &m_fetchTaskHandle,

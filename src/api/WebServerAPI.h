@@ -10,6 +10,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <AsyncJson.h>
+#include "../core/SpiRamJsonDocument.h"
 #include "../core/ConfigLoader.h"
 #include "../engines/MessageEngine.h"
 #include "../engines/MarqueeEngine.h"

@@ -355,17 +355,75 @@ Une itération précédente de ce code tentait de résoudre ce problème en rout
 L'intégrité de l'affichage prime strictement sur la fiabilité TLS : un échec TLS dû à la pression sur la SRAM interne dégrade proprement (les valeurs en cache sont conservées — voir `DashboardDataProvider`, `YahooFinanceProvider`, `BinanceProvider`), alors qu'un affichage corrompu ne peut se rétablir sans redémarrage. La SRAM interne étant désormais l'unique foyer du TLS et du DMA/réseau, la vraie solution est un **contrôle d'admission + sérialisation**, pas un routage d'allocateur :
 1. **Filtrage via capacités sur ESP32 Classic :** Les moteurs réseau lourds (`CryptoEngine`, `StockEngine`) déclarent `EngineRequirements::needsPsram = true`. Sur les cartes sans PSRAM, `ConfigSanitizer` les désactive automatiquement sans crash.
 2. **Sérialisation TLS Système (`NetworkBudget::ScopedTlsHandshakeLock`) :** Chaque point d'appel TLS du code (météo/marchés du Dashboard, Crypto, Bourse, Spotify, Google Cast, Artwork, repli HTTPS Marquee, GNews, synchronisation Pixelcade) construit un `ScopedTlsHandshakeLock` immédiatement avant `WiFiClientSecure::connect()`. Il s'agit d'un unique mutex FreeRTOS global : une seule poignée de main TLS peut être en cours n'importe où dans le firmware à un instant donné, bornant la demande de pointe en SRAM interne à une seule réservation d'environ 32 Ko au lieu d'un chevauchement à N voies. **Correction d'atomicité (ce tour) :** le constructeur revalide `NetworkBudget::canStartTlsSession()` *alors qu'il détient déjà le mutex*, juste avant de signaler le succès — fermant une fenêtre de compétition TOCTOU où le budget aurait pu être vérifié suffisant puis invalidé par une autre poignée de main/allocation pendant que la tâche attendait (jusqu'à 5s) le mutex contesté. Une pré-vérification bon marché et non-autoritative de `canStartTlsSession()` reste autorisée aux points d'appel, uniquement pour éviter de bloquer sur un budget déjà connu insuffisant ; seule la revérification interne du verrou, après acquisition, fait autorité.
-3. **Limite connue non résolue :** cette sérialisation évite les crashs/corruptions d'affichage, mais ne résout **pas** la fragmentation sous-jacente de la SRAM interne. Sur matériel réel, avec `Dashboard` actif, la SRAM interne libre a été observée chutant de ~65 Ko à un plateau fragmenté d'environ 11-12 Ko (plus gros bloc ~3 Ko) en environ 3 minutes d'exécution. Comme `canStartTlsSession()` exige `largestInternalBlock >= 16896 octets`, **une fois ce plateau atteint, `GoogleCastEngine` (et tout autre consommateur TLS) peut se voir refuser l'admission indéfiniment** — cela se manifeste actuellement par **Google Cast qui ne se connecte/n'affiche jamais rien** une fois le système monté depuis quelques minutes avec Dashboard ou d'autres moteurs actifs, même si la découverte mDNS de l'appareil Cast réussit. C'est une dégradation acceptée (pas de crash, pas de corruption) mais **pas encore résolue** — voir la note Fragmentation / Travaux Futurs ci-dessous.
+3. **Limite connue et fiabilisation de l'admission :** cette sérialisation évite les crashs/corruptions d'affichage. Comme `canStartTlsSession()` exige désormais `freeInternal >= 45 Ko` et une marge de double buffer vérifiée (soit `largestInternalBlock >= 34.5 Ko` soit deux blocs indépendants de 16.5 Ko) pour allouer simultanément les tampons d'entrée et de sortie de mbedTLS (~33.4 Ko au total), **les tentatives de poignée de main vouées à l'échec sont rejetées proprement (`result=REJECTED_BY_BUDGET`) sans crash `MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512)`**. Si la SRAM interne est fragmentée par d'autres moteurs, `GoogleCastEngine` temporise avec un backoff exponentiel sans déstabiliser le système.
 
 #### Concurrence : Audio Simultané & Rendu 60 FPS
 - **Core 0 :** Décodage MP3 (`minimp3`), gestion des flux audio, Wi-Fi et requêtes réseau.
 - **Core 1 :** Rendu matriciel à 60 FPS ininterrompu et affichage d'overlays.
 - **Communication sans verrou :** `AudioHub` publie des snapshots atomiques `AudioPlaybackState` avec identifiant `generation` incrémental, lus instantanément par le Core 1 sans blocage ni mutex.
 
-#### Problèmes Connus Non Résolus (à ce stade, pas encore corrigés)
-- **Google Cast n'affiche actuellement rien / ne se connecte jamais** une fois le système monté depuis quelques minutes avec d'autres moteurs (notamment `Dashboard`) actifs : la découverte mDNS réussit, mais la poignée de main TLS est systématiquement refusée par `canStartTlsSession()` car le système se stabilise sur un plateau de SRAM interne fragmenté (~11-12 Ko libres, ~3 Ko de plus gros bloc), sous le seuil d'admission de 16896 octets. Aucun crash ni corruption d'affichage ne se produit — c'est le comportement de sécurité voulu de la porte d'admission — mais la fragmentation sous-jacente n'est pas résolue, seules ses conséquences sont contenues.
-- **`sdmmc_read_blocks failed (257)`** survient encore par intermittence sous forte fragmentation (observé en parallèle du point ci-dessus) ; `ConfigLoader` et `GifEngine` se rétablissent proprement (restauration de sauvegarde / saut), mais la cause racine de pression d'allocation est partagée avec le problème d'admission TLS ci-dessus et nécessite une stratégie dédiée de défragmentation ou de réservation (par ex. un petit pool de SRAM interne réservé au démarrage pour les transactions compatibles DMA) plutôt qu'un contrôle d'admission au mieux.
-- Une session précédente sur matériel réel a observé un dépassement de délai du Task Watchdog / `abort()` / redémarrage à environ 5,5 minutes de fonctionnement pendant que `GifEngine` était actif avec une heap sévèrement fragmentée et des tentatives de reconnexion TLS Cast en cours en parallèle. Le test d'endurance le plus récent (après la correction d'atomicité de l'admission TLS) a tourné environ 6 minutes sans que ce crash ne se reproduise, mais le test a été interrompu par un débranchement USB physique intentionnel avant qu'une fenêtre plus longue ne puisse confirmer la durabilité de la correction — **ce crash n'est pas encore confirmé comme corrigé**, seulement non reproduit sous la nouvelle sérialisation.
+#### Hiérarchie des Ressources & Tiers de Services Opportunistes
+
+Pour maintenir la stabilité du système entier sous la pression mémoire FreeRTOS, ArcadeMatrix applique une politique explicite de priorisation des ressources :
+
+```text
+                    CORE 0
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+      Réseau         Audio         Stockage
+        │              │              │
+     Cast TLS       ES7210/I2S       SDMMC
+        │              │              │
+        └──────────────┼──────────────┘
+                       │
+                 budget ressources
+                       │
+                FighterEngine
+                ArtworkService
+                  (optionnel)
+```
+
+1. **Services Critiques (Ressources Garanties) :**
+   - **DMA Affichage & Balayage Matrice :** La boucle de balayage du Core 1 a une priorité temps réel absolue.
+   - **AsyncWebServer (Port 80) & mDNS :** Les sockets du Core 0 ne doivent jamais être affamés par des sockets clients en arrière-plan.
+   - **Sous-système Audio :** Capture micro I2S (ES7210) et DAC de restitution (ES8311).
+   - **Flux Cast Transversal :** Moteur de streaming CastV2 persistant sur Core 0.
+   - **Couche de Stockage (SDMMC) :** Nécessite des bounce buffers DMA internes contigus (`MALLOC_CAP_DMA`).
+2. **Services Opportunistes (Strictement Subordonnés & Abandonnables) :**
+   - **Overlay `FighterEngine` :** Doit s'interrompre immédiatement en cas de pénurie mémoire (`heap < 30 Ko`, `dma < 16 Ko`, `psram < 1 Mo`) ou de fichier manquant, sans monopoliser le bus SDMMC ni le CPU.
+   - **Téléchargements HTTPS `ArtworkService` :** Doit vérifier `NetworkBudget::canStartTlsSession()` avant d'allouer et de requêter les pochettes d'albums. Les paramètres de vignettes (`=w64-h64-c` sur Google CDN) plafonnent la taille à 16 Ko pour préserver la bande passante GDMA de la PSRAM. Le Core 1 lit des snapshots POD immuables sans verrou (`ArtworkSnapshot`) sans allocation sur le tas ni mutex.
+
+#### Réseau Stateful vs Épuisement des Descripteurs de Socket (CastV2)
+- Les protocoles transversaux (Google Cast) maintiennent une connexion `WiFiClientSecure` persistante entre les cycles de scrutation avec des heartbeats actifs (`PING` toutes les 5s).
+- La destruction et recréation répétée de clients TLS crée une accumulation de sockets TCP en `TIME_WAIT` (durée de vie lwIP de 120 secondes). Lorsque 48 descripteurs sont occupés, l'OS rejette les nouvelles connexions entrantes (`ECONNABORTED = 113`), rendant l'interface Web inaccessible (`ERR_ADDRESS_UNREACHABLE`).
+- Le délai de reconnexion est espacé d'au moins $\ge 15\text{ secondes}$, limitant le nombre maximal de sockets `TIME_WAIT` simultanés à 8.
+- Le chemin de reconnexion est régulé par `NetworkBudget::ScopedTlsHandshakeLock` comme tout autre point d'appel TLS ; une reconnexion refusée est réessayée après un court délai de 2s sans boucle active.
+
+#### Gating DMA Matériel (`esp-sha` & SDMMC)
+- L'accélération matérielle SHA (`esp-sha`) de l'ESP32-S3 alloue de la mémoire DMA interne (`MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL`). Si le plus grand bloc DMA est $< 4096$ octets, `esp-sha: Failed to allocate buf memory` fait échouer les poignées de main TLS.
+- `NetworkBudget::canStartTlsSession()` n'admet les poignées de main TLS que si `freeDma >= 16 Ko` et `largestDma >= 4 Ko`.
+- `sdmmc_read_blocks failed (257)` (`ESP_ERR_NO_MEM`) survient sous de fortes conditions de fragmentation de la SRAM interne : SDMMC nécessite un bounce buffer DMA interne contigu qu'il ne peut pas placer en PSRAM.
+
+#### Barrière de Libération pour Retraite de Moteur (Anti-UAF, transfert Core 1 → Core 0)
+Les moteurs sont toujours détruits sur le Core 0 (`Core0LifecycleDispatcher`), jamais sur le Core 1, et jamais de façon synchrone avec l'appel `deactivate()` qui les retire de la rotation. Pour garantir zéro utilisation après libération (Use-After-Free) entre le moment où le Core 1 cesse d'utiliser un moteur et le moment où le Core 0 le détruit effectivement, `RotationManager::retireEngineSlot()` applique une **Barrière de Libération** ordonnée et explicite avant que le `unique_ptr` d'un moteur ne soit déplacé vers `EngineRetirementQueue` :
+1. `engine->deactivate()` — non bloquant, changement d'état uniquement (Core 1).
+2. Effacer `currentActiveInstanceId` s'il correspond.
+3. `DisplayRuntime::purgeEngineReferences(engine, instanceId)` — supprime le pointeur de `m_session.activeEngine` **et** de chaque entrée correspondante dans la pile de préemption bornée, afin qu'aucune référence résiduelle détenue par le Core 1 ne puisse déréférencer le moteur après ce point.
+4. `engine->setResourceState(EngineResourceState::CORE1_RELEASED)` — nouvel état explicite (`EngineContract.h`) marquant le point au-delà duquel le Core 1 ne détient de manière prouvable plus aucune référence.
+5. Rompre immédiatement le slot local `instanceId` (plus jamais trouvable via `findActiveEngine()`).
+6. Déplacer le `unique_ptr` vers `Core0LifecycleDispatcher::retire()` ; l'état n'avance vers `RETIRED` (ou `QUARANTINED` sur timeout) qu'après un `shutdownForDestruction()` réussi sur le Core 0.
+
+#### Ségrégation des Domaines Mémoire & PSRAM en Priorité pour les Gros Tampons
+Pour éviter que les consommateurs réseau concurrents (AsyncWebServer / AsyncTCP servant l'interface WebUI) et les moteurs cryptographiques (Google Cast mbedTLS) n'asphyxient LwIP et ne déclenchent des avortements logiciels de sockets (`ECONNABORTED = 113`) :
+1. **JSON Applicatif en PSRAM :** Tous les schémas d'API REST et endpoints de configuration dans `WebServerAPI` instancient `SpiRamJsonDocument` au lieu de `DynamicJsonDocument`, routant les gros arbres JSON et dictionnaires de chaînes vers le pool de 15 Mo de PSRAM. AsyncTCP et les tampons de transport LwIP restent dans la DRAM interne.
+2. **Buffer Canvas Graphique en PSRAM :** Les gros framebuffers hors DMA direct (comme le canvas de 32 Ko de `GifEngine`) priorisent l'allocation en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), libérant plus de 32 Ko de DRAM interne permanente au démarrage.
+3. **Isolation de Cœur & Dimensionnement AsyncTCP :** La tâche de service `async_tcp` est dimensionnée à 8192 octets et strictement épinglée au Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), isolant les callbacks réseau du hot-path d'affichage 60 FPS du Core 1.
+4. **Backoff de Reconnexion Google Cast :** Les reconnexions sont rythmées par un backoff exponentiel (5s, 10s, 20s, 60s) initialisé dès la rupture de session, évitant les tempêtes de reconnexion pendant les salves de requêtes HTTP.
+
+#### Problèmes Connus et Statut de Fiabilisation
+- **Google Cast :** La découverte mDNS réussit ; lorsque la SRAM interne subit une forte fragmentation sous d'autres moteurs, l'admission TLS est désormais refusée de façon sûre par `canStartTlsSession()` (`buffers=INSUFFICIENT`) sans provoquer de plantage `MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512)`. Dès que la SRAM interne retrouve sa capacité de double buffer (~34 Ko contigus ou deux blocs $\ge 16.5$ Ko), la connexion TLS Cast aboutit.
+- **`sdmmc_read_blocks failed (257)`** est atténué par la libération du deadlock SD du Fighter et la sérialisation TLS globale.
 
 ---
 
