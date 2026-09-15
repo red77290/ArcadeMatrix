@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <memory>
 #include "../core/SDUtils.h"
+#include <functional>
 #include <Update.h>
 #include <esp_ota_ops.h>
 #include <HTTPUpdate.h>
@@ -22,8 +23,11 @@
 #include "../services/DLNAService.h"
 #include "../core/DisplayOrientationManager.h"
 #include "../hal/GyroHAL.h"
+#include <atomic>
+#include "../core/SdLockGuard.h"
 
 extern RotationManager* rotationManager;
+extern GifEngine* gifEngine;
 
 // In-RAM cache for /api/playlists. Enumerating the GIF folders costs many SD round-trips; doing it
 // on every request keeps sdMutex held on the AsyncTCP task and stalls the whole HTTP server, which
@@ -307,7 +311,151 @@ void WebServerAPI::setVisualizerEngine(VisualizerEngine* engine) {
 
 extern String getPosixTimezone(String tz);
 
+// ---- GIF library: background full reindex -----------------------------------------------------------
+// A full directory walk of a large library (10k+ files) takes minutes on the S3's SD_MMC bus; doing it inside an
+// HTTP handler starves the async TCP task and trips the watchdog. The walk therefore runs in its own low-priority
+// task on core 0, one folder per sdMutex hold, while the rotation is suspended and the panel shows a notice.
+namespace {
+// Which GIF library a request targets. The engine keeps the two orientations in separate roots
+// (GifEngine selects /gifs_tate in vertical mode), so the management API has to do the same.
+String gifOrientationOf(AsyncWebServerRequest* request) {
+    String o = request->hasParam("orientation") ? request->getParam("orientation")->value() : String();
+    o.trim(); o.toLowerCase();
+    return o == "tate" ? String("tate") : String("yoko");   // anything unrecognised stays horizontal
+}
+String gifRootFor(const String& orientation) {
+    return orientation == "tate" ? String("/gifs_tate") : String("/gifs");
+}
+String gifRootOf(AsyncWebServerRequest* request) { return gifRootFor(gifOrientationOf(request)); }
+
+// Both library roots, in the order the UI shows them; the rescan walks every one of them.
+const char* const GIF_ROOTS[] = { "/gifs", "/gifs_tate" };
+const size_t GIF_ROOT_COUNT = sizeof(GIF_ROOTS) / sizeof(GIF_ROOTS[0]);
+
+struct GifReindexState {
+    // Claimed with compare_exchange_strong: the reindex worker runs pinned to core 0 while the
+    // handlers run on the async TCP task, so a plain check-then-set can let two rescans overlap.
+    std::atomic<bool> running{false};
+    volatile int total = 0;
+    volatile int done = 0;
+    volatile long files = 0;      // directory entries seen so far (updated by the folder walk)
+    volatile long expected = 0;   // files listed in playlists.json at start (for the ETA)
+    volatile bool cancel = false;
+    unsigned long lastMsgMs = 0;
+    String current;
+    String lastResult;          // "ok: N folders" / "error: ..."
+    unsigned long startedMs = 0, finishedMs = 0;
+};
+GifReindexState g_gifReindex;
+MessageEngine* g_gifMsg = nullptr;
+std::function<int(const String&, const String&)> g_gifWriteFolderIndex;   // bound in begin()
+std::function<String(const String&)> g_gifBuildPlaylistsFromIndexes;      // bound in begin()
+std::function<bool(const String&)> g_gifIsMacJunk;                          // bound in begin()
+std::function<String(const String&)> g_gifReadPlaylistsJson;                // bound in begin()
+
+void gifReindexEnterMaintenance() {
+    if (gifEngine) gifEngine->stop();
+    if (rotationManager) rotationManager->setSuspended(true);
+    if (g_gifMsg) {
+        MessageConfig m; m.text = "Reindexing GIF library..."; m.offsetY = -8; m.color = 0x07FF; m.size = 1; m.direction = "rtl"; m.speed = 50; m.timeoutSeconds = 7200;
+        g_gifMsg->queueMessage(m);
+    }
+}
+String gifReindexEta() {
+    unsigned long el = millis() - g_gifReindex.startedMs;
+    if (g_gifReindex.expected <= 0 || g_gifReindex.files < 50 || el < 5000) return String();
+    float rate = (float)g_gifReindex.files / (el / 1000.0f);                 // files per second so far
+    long remaining = g_gifReindex.expected - g_gifReindex.files; if (remaining < 0) remaining = 0;
+    long secs = rate > 0.01f ? (long)(remaining / rate) : 0;
+    char buf[24]; snprintf(buf, sizeof(buf), "~%ld:%02ld left", secs / 60, secs % 60);
+    return String(buf);
+}
+void gifReindexShowProgress() {
+    if (!g_gifMsg) return;
+    g_gifReindex.lastMsgMs = millis();
+    MessageConfig m;
+    String eta = gifReindexEta();
+    m.text = "Indexing " + String(g_gifReindex.done) + "/" + String(g_gifReindex.total) + " folders - " + String((long)g_gifReindex.files) +
+             (g_gifReindex.expected > 0 ? "/" + String((long)g_gifReindex.expected) : String()) + " files" + (eta.length() ? " - " + eta : String());
+    m.offsetY = -8;   // one text line above centre, per Erik
+    m.color = 0x07FF; m.size = 1; m.direction = "rtl"; m.speed = 50; m.timeoutSeconds = 7200;
+    g_gifMsg->queueMessage(m);
+}
+void gifReindexLeaveMaintenance() {
+    if (g_gifMsg) g_gifMsg->deactivate();
+    if (rotationManager) rotationManager->setSuspended(false);
+}
+
+void gifReindexTask(void*) {
+    // Both orientations are rebuilt: a portrait cabinet keeps its playlists under /gifs_tate, and a
+    // rescan that only walked /gifs would leave those index.txt files stale for ever.
+    std::vector<std::pair<String, String>> work;   // (root, folder)
+    for (size_t r = 0; r < GIF_ROOT_COUNT; ++r) {
+        const String root = GIF_ROOTS[r];
+        SdLockGuard guard(pdMS_TO_TICKS(15000));   // one coarse hold per root: exists() + full directory scan
+        if (guard) {
+            FsFile dir = sd.exists(root.c_str()) ? sd.open(root.c_str(), FILE_OPEN_READ) : FsFile();
+            if (dir && isDirectory(dir)) {
+                FsFile f;
+                while (getNextFile(dir, f)) {
+                    if (!isDirectory(f)) continue;
+                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
+                    if (g_gifIsMacJunk && g_gifIsMacJunk(name)) continue;
+                    work.push_back({ root, name });
+                }
+                dir.close();
+            }
+        }
+    }
+    g_gifReindex.total = (int)work.size();
+    if (g_gifReadPlaylistsJson) {
+        long sum = 0;
+        for (size_t r = 0; r < GIF_ROOT_COUNT; ++r) {
+            const String root = GIF_ROOTS[r];
+            String pl;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (!guard) continue;
+                pl = sd.exists(root.c_str()) ? g_gifReadPlaylistsJson(root) : String();
+            }
+            if (!pl.length()) continue;
+            SpiRamJsonDocument doc(pl.length() * 2 + 1024);   // transient parse buffer belongs in PSRAM (Golden Rule #14)
+            if (deserializeJson(doc, pl) == DeserializationError::Ok && doc.is<JsonObject>()) {
+                for (JsonPair kv : doc.as<JsonObject>()) sum += kv.value()["count"] | 0;
+            }
+        }
+        g_gifReindex.expected = sum;
+    }
+    for (auto& item : work) {
+        if (g_gifReindex.cancel) break;
+        g_gifReindex.current = item.second;
+        gifReindexShowProgress();
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(30000));
+            if (guard && g_gifWriteFolderIndex) g_gifWriteFolderIndex(item.first, item.second);
+        }
+        g_gifReindex.done = g_gifReindex.done + 1;
+        vTaskDelay(pdMS_TO_TICKS(20));   // let the web server breathe between folders
+    }
+    {
+        SdLockGuard guard(pdMS_TO_TICKS(15000));
+        if (guard) {
+            for (size_t r = 0; r < GIF_ROOT_COUNT; ++r) {
+                if (sd.exists(GIF_ROOTS[r]) && g_gifBuildPlaylistsFromIndexes) g_gifBuildPlaylistsFromIndexes(GIF_ROOTS[r]);
+            }
+        }
+    }
+    g_gifReindex.lastResult = g_gifReindex.cancel ? ("cancelled after " + String(g_gifReindex.done) + "/" + String(g_gifReindex.total) + " folders") : ("ok: " + String(g_gifReindex.total) + " folders, " + String((long)g_gifReindex.files) + " files");
+    g_gifReindex.current = "";
+    g_gifReindex.finishedMs = millis();
+    gifReindexLeaveMaintenance();
+    g_gifReindex.running = false;
+    vTaskDelete(nullptr);
+}
+} // namespace
+
 void WebServerAPI::begin() {
+    g_gifMsg = msg;
     setupRoutes();
     
     // Default headers for CORS
@@ -2096,6 +2244,602 @@ void WebServerAPI::setupRoutes() {
         .setFilter([](AsyncWebServerRequest *req) { return req->url().equals("/api/update"); });
     server.on("/api/ota", HTTP_POST, otaResponseHandler, otaUploadHandler)
         .setFilter([](AsyncWebServerRequest *req) { return req->url().equals("/api/ota"); });
+
+    // =====================================================================================
+    // GIF LIBRARY MANAGEMENT (parity with ArcadeMatrix_RPI: /api/gifs/*)
+    //   GET    /api/gifs/library                  -> live scan of /gifs (folders + counts)
+    //   POST   /api/gifs/upload?folder=<Name>     -> multipart upload of one or many files
+    //   POST   /api/gifs/reindex                  -> rebuild index.txt + playlists.json
+    //   DELETE /api/gifs/file?folder=<N>&name=<F> -> delete one file, refresh indexes
+    // =====================================================================================
+    {
+        struct GifUploadCtx {
+            String folder;
+            String orientation = "yoko";
+            String root = "/gifs";   // resolved from ?orientation= when the first body chunk arrives
+            FsFile file;
+            String currentName;
+            bool currentOk = false;
+            size_t currentBytes = 0;
+            String saved;    // JSON array body (without brackets)
+            String skipped;  // JSON array body of {"name","reason"}
+            int savedCount = 0;
+            std::vector<String> savedNames;
+            bool engineStopped = false;
+            bool badFolder = false;
+            bool modeOn = false;   // rotation suspended + "upload mode" notice on the panel
+            ~GifUploadCtx() { if (file) file.close(); }
+        };
+
+        // Upload mode: per DEVELOPER.md §3 (Golden Rules #2/#5 - lock-free render core, sdMutex around SD access) the
+        // S3 cannot absorb a multi-file SD write while an engine renders, so for the duration of an upload the
+        // rotation is suspended and the panel shows a notice (same pattern as the OTA handler stopping the GifEngine).
+        // Both are undone when the request completes or the client disconnects. Idempotent on purpose.
+        auto enterUploadMode = [this]() {
+            extern RotationManager* rotationManager;
+            if (rotationManager) rotationManager->setSuspended(true);
+            if (msg) {
+                MessageConfig m;
+                m.text = "Upload mode - receiving files...";
+                m.offsetY = -8;   // one text line above centre
+                m.color = 0x07FF;
+                m.size = 1;
+                m.direction = "rtl";
+                m.speed = 50;
+                m.timeoutSeconds = 1800;
+                msg->queueMessage(m);
+            }
+        };
+        auto leaveUploadMode = [this]() {
+            extern RotationManager* rotationManager;
+            if (msg) msg->deactivate();
+            if (rotationManager) rotationManager->setSuspended(false);
+        };
+
+        static auto sanitizeName = [](const String& in, bool allowExt) -> String {
+            String s = in;
+            int slash = s.lastIndexOf('/'); if (slash >= 0) s = s.substring(slash + 1);
+            slash = s.lastIndexOf('\\'); if (slash >= 0) s = s.substring(slash + 1);
+            String out = "";
+            for (size_t i = 0; i < s.length(); i++) {
+                char c = s[i];
+                bool ok = isalnum((unsigned char)c) || c == '_' || c == '-' || c == ' ' || (allowExt && c == '.');
+                if (ok) out += c;
+            }
+            out.trim();
+            while (out.startsWith(".")) out = out.substring(1);
+            if (out.length() > 64) out = out.substring(0, 64);
+            return out;
+        };
+        static auto hasGifExt = [](const String& name) -> bool {
+            String l = name; l.toLowerCase();
+            return l.endsWith(".gif") || l.endsWith(".png") || l.endsWith(".raw");
+        };
+        static auto jsonEsc = [](const String& s) -> String {
+            String o = ""; for (size_t i = 0; i < s.length(); i++) { char c = s[i]; if (c == '"' || c == '\\') o += '\\'; o += c; } return o;
+        };
+
+        // List media files of one folder (sorted order not required by the engine).
+        static auto listFolderFiles = [](const String& folderPath, std::vector<String>& out) {
+            out.clear();
+            FsFile dir = sd.open(folderPath.c_str(), FILE_OPEN_READ);
+            if (!dir || !isDirectory(dir)) return;
+            FsFile f;
+            while (getNextFile(dir, f)) {
+                if (isDirectory(f)) continue;
+                if (g_gifReindex.running) { g_gifReindex.files = g_gifReindex.files + 1; if ((g_gifReindex.files % 64) == 0) vTaskDelay(1); if (millis() - g_gifReindex.lastMsgMs > 30000) gifReindexShowProgress(); }   // 30 s: each refresh restarts the scroll
+                String n = getFileName(f);
+                int ls = n.lastIndexOf('/'); if (ls >= 0) n = n.substring(ls + 1);
+                if (!isMacJunk(n) && n != "index.txt" && hasGifExt(n)) out.push_back(n);
+            }
+            dir.close();
+        };
+
+        // Rewrite <root>/<folder>/index.txt from the real directory contents.
+        static auto writeFolderIndex = [](const String& root, const String& folder) -> int {
+            std::vector<String> files; listFolderFiles(root + "/" + folder, files);
+            String idxPath = root + "/" + folder + "/index.txt";
+            FsFile idx = sd.open(idxPath.c_str(), FILE_OPEN_WRITE);
+            if (idx) { for (auto& n : files) { idx.print(n); idx.print('\n'); } idx.close(); }
+            return (int)files.size();
+        };
+
+        // Rewrite <root>/playlists.json from the real directory contents (same shape as generate_index.sh).
+        static auto writePlaylistsJson = [](const String& root) -> String {
+            String json = "{"; bool first = true;
+            FsFile dir = sd.open(root.c_str(), FILE_OPEN_READ);
+            if (dir && isDirectory(dir)) {
+                FsFile f;
+                while (getNextFile(dir, f)) {
+                    if (!isDirectory(f)) continue;
+                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
+                    if (isMacJunk(name)) continue;
+                    int count = writeFolderIndex(root, name);
+                    if (count <= 0) continue;
+                    if (!first) json += ",";
+                    json += "\"" + jsonEsc(name) + "\":{\"path\":\"" + root + "/" + jsonEsc(name) + "\",\"count\":" + String(count) + "}";
+                    first = false;
+                }
+                dir.close();
+            }
+            json += "}";
+            String plPath = root + "/playlists.json";
+            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
+            if (pl) { pl.print(json); pl.close(); }
+            return json;
+        };
+
+        // ---- incremental index maintenance (no directory walks in request handlers) -------------------------
+        // index.txt is the source of truth per folder; playlists.json is rebuilt from the index line counts only.
+        static auto indexLineCount = [](const String& root, const String& folder) -> int {
+            String p = root + "/" + folder + "/index.txt";
+            FsFile f = sd.open(p.c_str(), FILE_OPEN_READ);
+            if (!f) return 0;
+            int n = 0; bool lastNl = true; uint8_t buf[256]; int r;
+            while ((r = f.read(buf, sizeof(buf))) > 0) { for (int i = 0; i < r; i++) if (buf[i] == '\n') n++; lastNl = (buf[r - 1] == '\n'); }
+            if (!lastNl) n++;
+            f.close();
+            return n;
+        };
+        // Rewrite index.txt once: current lines minus `remove` plus `add` (deduplicated). Returns the new count.
+        static auto updateFolderIndex = [](const String& root, const String& folder, const std::vector<String>& add, const std::vector<String>& remove) -> int {
+            String p = root + "/" + folder + "/index.txt";
+            std::vector<String> lines;
+            FsFile f = sd.open(p.c_str(), FILE_OPEN_READ);
+            if (f) {
+                while (f.available()) { String l = f.readStringUntil('\n'); l.trim(); if (l.length()) lines.push_back(l); }
+                f.close();
+            }
+            auto contains = [](const std::vector<String>& v, const String& x) { for (auto& e : v) if (e == x) return true; return false; };
+            std::vector<String> out;
+            for (auto& l : lines) if (!contains(remove, l) && !contains(out, l)) out.push_back(l);
+            for (auto& a : add) if (a.length() && !contains(out, a) && !contains(remove, a)) out.push_back(a);
+            FsFile w = sd.open(p.c_str(), FILE_OPEN_WRITE);
+            if (w) { for (auto& l : out) { w.print(l); w.print('\n'); } w.close(); }
+            return (int)out.size();
+        };
+        // playlists.json from the folders' index.txt line counts (cheap: one small read per folder, no file walks).
+        static auto buildPlaylistsFromIndexes = [](const String& root) -> String {
+            String json = "{"; bool first = true;
+            FsFile dir = sd.open(root.c_str(), FILE_OPEN_READ);
+            if (dir && isDirectory(dir)) {
+                FsFile f;
+                while (getNextFile(dir, f)) {
+                    if (!isDirectory(f)) continue;
+                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
+                    if (isMacJunk(name)) continue;
+                    int count = indexLineCount(root, name);
+                    if (!first) json += ",";
+                    json += "\"" + jsonEsc(name) + "\":{\"path\":\"" + root + "/" + jsonEsc(name) + "\",\"count\":" + String(count) + "}";
+                    first = false;
+                }
+                dir.close();
+            }
+            json += "}";
+            String plPath = root + "/playlists.json";
+            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
+            if (pl) { pl.print(json); pl.close(); }
+            return json;
+        };
+        static auto readPlaylistsJson = [](const String& root) -> String {
+            String plPath = root + "/playlists.json";
+            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_READ);
+            if (!pl) return String();
+            String json; json.reserve(pl.size() + 16);
+            uint8_t buf[256]; int r;
+            while ((r = pl.read(buf, sizeof(buf))) > 0) for (int i = 0; i < r; i++) json += (char)buf[i];
+            pl.close();
+            json.trim();
+            return json.startsWith("{") ? json : String();
+        };
+        // Set (count >= 0) or remove (count < 0) one folder entry in playlists.json; falls back to a rebuild when the
+        // file is missing or unparsable. Returns the JSON written.
+        static auto updatePlaylistsEntry = [](const String& root, const String& folder, int count) -> String {
+            String cur = readPlaylistsJson(root);
+            if (cur.isEmpty()) cur = buildPlaylistsFromIndexes(root);
+            size_t cap = cur.length() * 2 + 1024; if (cap < 4096) cap = 4096; if (cap > 24576) cap = 24576;
+            SpiRamJsonDocument doc(cap);   // Golden Rule #14: application JSON lives in PSRAM
+            if (deserializeJson(doc, cur) != DeserializationError::Ok || !doc.is<JsonObject>()) {
+                cur = buildPlaylistsFromIndexes(root);
+                doc.clear();
+                if (deserializeJson(doc, cur) != DeserializationError::Ok) return cur;
+            }
+            JsonObject obj = doc.as<JsonObject>();
+            if (count < 0) obj.remove(folder);
+            else { JsonObject e = obj.containsKey(folder) ? obj[folder].as<JsonObject>() : obj.createNestedObject(folder); e["path"] = root + "/" + folder; e["count"] = count; }
+            String out; serializeJson(doc, out);
+            String plPath = root + "/playlists.json";
+            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
+            if (pl) { pl.print(out); pl.close(); }
+            return out;
+        };
+        g_gifWriteFolderIndex = writeFolderIndex;
+        g_gifBuildPlaylistsFromIndexes = buildPlaylistsFromIndexes;
+        g_gifIsMacJunk = isMacJunk;
+        g_gifReadPlaylistsJson = readPlaylistsJson;
+
+        // Live library scan (does NOT touch index files).
+        static auto scanLibrary = [](const String& root) -> String {
+            String json = "{"; bool first = true;
+            FsFile dir = sd.open(root.c_str(), FILE_OPEN_READ);
+            if (dir && isDirectory(dir)) {
+                FsFile f;
+                while (getNextFile(dir, f)) {
+                    if (!isDirectory(f)) continue;
+                    String name = getFileName(f); int ls = name.lastIndexOf('/'); if (ls >= 0) name = name.substring(ls + 1);
+                    if (isMacJunk(name)) continue;
+                    std::vector<String> files; listFolderFiles(root + "/" + name, files);
+                    if (!first) json += ",";
+                    json += "\"" + jsonEsc(name) + "\":{\"path\":\"" + root + "/" + jsonEsc(name) + "\",\"count\":" + String(files.size()) + "}";
+                    first = false;
+                }
+                dir.close();
+            }
+            json += "}";
+            return json;
+        };
+
+        server.on("/api/gifs/library", HTTP_GET, [](AsyncWebServerRequest *request){
+            // Served from playlists.json (kept current by the upload/delete/rename handlers); never walks the files here.
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String folders = "{}";
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard) {
+                    folders = readPlaylistsJson(root);
+                    if (folders.isEmpty()) folders = buildPlaylistsFromIndexes(root);
+                }
+            }
+            request->send(200, "application/json", "{\"root\":\"" + root + "\",\"orientation\":\"" + orientation + "\",\"reindexing\":" + String(g_gifReindex.running ? "true" : "false") + ",\"folders\":" + folders + "}");
+        });
+
+        // Full rescan of every folder from the real directory contents: runs in the background (202) — see gifReindexTask.
+        server.on("/api/gifs/reindex", HTTP_POST, [](AsyncWebServerRequest *request){
+            // Claim the slot atomically: a plain check-then-set lets two concurrent requests both
+            // start, and the first to finish clears the panel notice and the flag under the second.
+            bool expected = false;
+            if (!g_gifReindex.running.compare_exchange_strong(expected, true)) {
+                request->send(409, "application/json", "{\"status\":\"busy\",\"message\":\"Reindex already running\"}");
+                return;
+            }
+            g_gifReindex.total = 0; g_gifReindex.done = 0; g_gifReindex.files = 0; g_gifReindex.expected = 0; g_gifReindex.cancel = false; g_gifReindex.lastMsgMs = 0; g_gifReindex.current = ""; g_gifReindex.lastResult = "";
+            g_gifReindex.startedMs = millis(); g_gifReindex.finishedMs = 0;
+            gifReindexEnterMaintenance();
+            if (xTaskCreatePinnedToCore(gifReindexTask, "gif_reindex", 12288, nullptr, 1, nullptr, 0) != pdPASS) {
+                g_gifReindex.running = false; g_gifReindex.lastResult = "error: task";
+                gifReindexLeaveMaintenance();
+                request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Could not start reindex task\"}");
+                return;
+            }
+            request->send(202, "application/json", "{\"status\":\"started\"}");
+        });
+        server.on("/api/gifs/reindex", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            if (!g_gifReindex.running) { request->send(409, "application/json", "{\"status\":\"idle\"}"); return; }
+            g_gifReindex.cancel = true;   // honoured between folders; the folder being indexed completes first
+            request->send(202, "application/json", "{\"status\":\"cancelling\"}");
+        });
+        server.on("/api/gifs/reindex/status", HTTP_GET, [](AsyncWebServerRequest *request){
+            String j = "{\"running\":" + String(g_gifReindex.running ? "true" : "false") +
+                       ",\"total\":" + String(g_gifReindex.total) + ",\"done\":" + String(g_gifReindex.done) + ",\"files\":" + String((long)g_gifReindex.files) + ",\"expected\":" + String((long)g_gifReindex.expected) + ",\"eta\":\"" + jsonEsc(gifReindexEta()) + "\"" + ",\"cancelling\":" + String(g_gifReindex.cancel ? "true" : "false") +
+                       ",\"current\":\"" + jsonEsc(g_gifReindex.current) + "\",\"last_result\":\"" + jsonEsc(g_gifReindex.lastResult) + "\"" +
+                       ",\"elapsed_ms\":" + String(g_gifReindex.running ? (millis() - g_gifReindex.startedMs) : (g_gifReindex.finishedMs ? g_gifReindex.finishedMs - g_gifReindex.startedMs : 0)) + "}";
+            request->send(200, "application/json", j);
+        });
+
+        server.on("/api/gifs/file", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String rawName   = request->hasParam("name")   ? request->getParam("name")->value()   : "";
+            String folder = sanitizeName(rawFolder, false);
+            String name   = sanitizeName(rawName, true);
+            if (rawFolder.indexOf('/') >= 0 || rawName.indexOf('/') >= 0 || rawFolder.indexOf("..") >= 0 || rawName.indexOf("..") >= 0 || folder.isEmpty() || name.isEmpty() || !hasGifExt(name)) {
+                request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder and name (.gif/.png/.raw) are required\"}");
+                return;
+            }
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String path = root + "/" + folder + "/" + name;
+            bool removed = false;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard) {
+                    if (sd.exists(path.c_str())) removed = sd.remove(path.c_str());
+                    if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); }
+                }
+            }
+            if (!removed) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
+            request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"deleted\":\"" + jsonEsc(path) + "\"}");
+        });
+
+        server.on("/api/gifs/files", HTTP_GET, [](AsyncWebServerRequest *request){
+            // Streamed from the folder's index.txt in chunks: a 3,600-entry folder is ~150 KB of JSON, far more than
+            // the S3 can hold in one String. Falls back to a (small-folder) directory walk with sizes when no index exists.
+            String raw = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String folder = sanitizeName(raw, false);
+            if (raw.indexOf('/') >= 0 || raw.indexOf("..") >= 0 || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain playlist name\"}"); return; }
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String path = root + "/" + folder;
+            struct FilesCtx { FsFile idx; String head; String carry; bool first = true; bool done = false; };
+            FilesCtx* ctx = new FilesCtx();
+            bool found = false; bool haveIndex = false;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard && sd.exists(path.c_str())) {
+                    found = true;
+                    String idxPath = path + "/index.txt";
+                    ctx->idx = sd.open(idxPath.c_str(), FILE_OPEN_READ);
+                    haveIndex = (bool)ctx->idx;
+                }
+            }
+            if (!found) { delete ctx; request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"Folder not found\"}"); return; }
+            if (!haveIndex) {
+                // no index yet (folder created offline): walk the directory; such folders are small in practice
+                String json = "["; bool first = true;
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard) {
+                    FsFile dir = sd.open(path.c_str(), FILE_OPEN_READ);
+                    if (dir && isDirectory(dir)) {
+                        FsFile f;
+                        while (getNextFile(dir, f)) {
+                            if (isDirectory(f)) continue;
+                            String n = getFileName(f); int ls = n.lastIndexOf('/'); if (ls >= 0) n = n.substring(ls + 1);
+                            if (isMacJunk(n) || n == "index.txt" || !hasGifExt(n)) continue;
+                            if (!first) json += ","; first = false;
+                            json += "{\"name\":\"" + jsonEsc(n) + "\",\"bytes\":" + String((unsigned long)f.size()) + "}";
+                        }
+                        dir.close();
+                    }
+                }
+                guard.unlock();
+                delete ctx;
+                request->send(200, "application/json", "{\"folder\":\"" + jsonEsc(folder) + "\",\"orientation\":\"" + orientation + "\",\"path\":\"" + jsonEsc(path) + "\",\"source\":\"scan\",\"files\":" + json + "]}");
+                return;
+            }
+            ctx->head = "{\"folder\":\"" + jsonEsc(folder) + "\",\"orientation\":\"" + orientation + "\",\"path\":\"" + jsonEsc(path) + "\",\"source\":\"index\",\"files\":[";
+            AsyncWebServerResponse* resp = request->beginChunkedResponse("application/json", [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+                size_t out = 0;
+                auto emit = [&](const String& piece) -> bool {   // append if it fits, else keep it in carry
+                    if (out + piece.length() > maxLen) { ctx->carry = piece; return false; }
+                    memcpy(buf + out, piece.c_str(), piece.length()); out += piece.length(); return true;
+                };
+                if (ctx->head.length()) { String h = ctx->head; ctx->head = ""; if (!emit(h)) return out; }
+                if (ctx->carry.length()) { String c = ctx->carry; ctx->carry = ""; if (!emit(c)) return out; }
+                if (ctx->done) return 0;   // 0 = end of body (only reached after the closing bracket went out)
+                {
+                    // One bounded hold per chunk (a Core 0 producer, Golden Rule #5): holding the card for the
+                    // whole streamed response would stall GifEngine for as long as the download takes.
+                    SdLockGuard guard(pdMS_TO_TICKS(5000));
+                    if (guard) {
+                        while (ctx->idx.available()) {
+                            String n = ctx->idx.readStringUntil('\n'); n.trim();
+                            if (n.isEmpty() || !hasGifExt(n)) continue;
+                            String piece = String(ctx->first ? "" : ",") + "{\"name\":\"" + jsonEsc(n) + "\"}";
+                            ctx->first = false;
+                            if (!emit(piece)) return out;   // the guard releases the card on this early return
+                            if (out > maxLen - 96) break;   // leave room; next call continues
+                        }
+                        if (!ctx->idx.available()) { ctx->idx.close(); ctx->done = true; }
+                    }
+                }
+                if (ctx->done && ctx->carry.isEmpty()) { emit("]}"); }   // may land in carry if the buffer is full
+                if (out == 0 && !ctx->done && ctx->carry.isEmpty()) { ctx->done = true; emit("]}"); }   // safety: never return 0 mid-body
+                return out;
+            });
+            resp->addHeader("Cache-Control", "no-cache");
+            request->onDisconnect([ctx]() { if (ctx->idx) ctx->idx.close(); delete ctx; });
+            request->send(resp);
+        });
+
+        // recursive folder delete (playlist folders may hold subfolders, e.g. Logo/256)
+        static std::function<int(const String&)> removeTree = [](const String& path) -> int {
+            int n = 0; std::vector<String> subdirs; std::vector<String> files;
+            FsFile dir = sd.open(path.c_str(), FILE_OPEN_READ);
+            if (!dir || !isDirectory(dir)) return 0;
+            FsFile f;
+            while (getNextFile(dir, f)) {
+                String nm = getFileName(f); int ls = nm.lastIndexOf('/'); if (ls >= 0) nm = nm.substring(ls + 1);
+                if (isDirectory(f)) subdirs.push_back(path + "/" + nm); else files.push_back(path + "/" + nm);
+            }
+            dir.close();
+            for (auto& fp : files) { if (sd.remove(fp.c_str())) n++; }
+            for (auto& sp : subdirs) n += removeTree(sp);
+            sd.rmdir(path.c_str());
+            return n;
+        };
+
+        server.on("/api/gifs/folder", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            String raw = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String folder = sanitizeName(raw, false);
+            if (raw.indexOf('/') >= 0 || raw.indexOf("..") >= 0 || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder is required\"}"); return; }
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String path = root + "/" + folder; int n = -1;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(30000));
+                if (guard && sd.exists(path.c_str())) {
+                    extern GifEngine* gifEngine; if (gifEngine) gifEngine->stop();
+                    n = removeTree(path); updatePlaylistsEntry(root, folder, -1);
+                }
+            }
+            if (n < 0) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"Folder not found\"}"); return; }
+            request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"deleted\":\"" + jsonEsc(path) + "\",\"files\":" + String(n) + "}");
+        });
+
+        static auto badName = [](const String& raw) -> bool { return raw.indexOf('/') >= 0 || raw.indexOf('\\') >= 0 || raw.indexOf("..") >= 0; };
+
+        server.on("/api/gifs/mkdir", HTTP_POST, [](AsyncWebServerRequest *request){
+            String raw = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String folder = sanitizeName(raw, false);
+            if (badName(raw) || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain name\"}"); return; }
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String path = root + "/" + folder; int code = 500; String msg = "SD busy";
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard) {
+                    if (sd.exists(path.c_str())) { code = 409; msg = "Folder already exists"; }
+                    else if (sd.mkdir(path.c_str())) { code = 200; }
+                    else { msg = "mkdir failed"; }
+                    if (code == 200) { String ip = path + "/index.txt"; FsFile ix = sd.open(ip.c_str(), FILE_OPEN_WRITE); if (ix) ix.close(); updatePlaylistsEntry(root, folder, 0); }
+                }
+            }
+            if (code != 200) { request->send(code, "application/json", "{\"status\":\"error\",\"message\":\"" + msg + "\"}"); return; }
+            request->send(200, "application/json", "{\"status\":\"ok\",\"folder\":\"" + jsonEsc(folder) + "\",\"orientation\":\"" + orientation + "\",\"path\":\"" + jsonEsc(path) + "\"}");
+        });
+
+        // rename a file (folder+name+to) or a folder (folder+to)
+        server.on("/api/gifs/rename", HTTP_POST, [](AsyncWebServerRequest *request){
+            String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String rawName   = request->hasParam("name")   ? request->getParam("name")->value()   : "";
+            String rawTo     = request->hasParam("to")     ? request->getParam("to")->value()     : "";
+            String folder = sanitizeName(rawFolder, false);
+            if (badName(rawFolder) || badName(rawName) || badName(rawTo) || folder.isEmpty() || rawTo.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder and to are required (plain names)\"}"); return; }
+            const String orientation = gifOrientationOf(request);
+            const String root = gifRootFor(orientation);
+            String from, to, what, oldName, newName;
+            if (rawName.isEmpty()) {
+                String toFolder = sanitizeName(rawTo, false); if (toFolder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"bad target name\"}"); return; }
+                from = root + "/" + folder; to = root + "/" + toFolder; what = to;
+            } else {
+                String name = sanitizeName(rawName, true); String toName = sanitizeName(rawTo, true);
+                if (!hasGifExt(toName)) { int d = name.lastIndexOf('.'); if (d >= 0) toName += name.substring(d); }
+                if (name.isEmpty() || toName.isEmpty() || !hasGifExt(toName)) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"bad file name\"}"); return; }
+                from = root + "/" + folder + "/" + name; to = root + "/" + folder + "/" + toName; what = to; oldName = name; newName = toName;
+            }
+            int code = 500; String msg = "SD busy";
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard) {
+                    if (!sd.exists(from.c_str())) { code = 404; msg = "Source not found"; }
+                    else if (sd.exists(to.c_str())) { code = 409; msg = "Target already exists"; }
+                    else if (sd.rename(from.c_str(), to.c_str())) { code = 200; }
+                    else { msg = "rename failed"; }
+                    if (code == 200) {
+                        if (rawName.isEmpty()) { String tf = sanitizeName(rawTo, false); updatePlaylistsEntry(root, folder, -1); updatePlaylistsEntry(root, tf, indexLineCount(root, tf)); }
+                        else { int c = updateFolderIndex(root, folder, { newName }, { oldName }); updatePlaylistsEntry(root, folder, c); }
+                    }
+                }
+            }
+            if (code != 200) { request->send(code, "application/json", "{\"status\":\"error\",\"message\":\"" + msg + "\"}"); return; }
+            request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"renamed_to\":\"" + jsonEsc(what) + "\"}");
+        });
+
+        // serve one media file (inline preview, or attachment with ?download=1) — chunked from the SD under the mutex
+        server.on("/api/gifs/file", HTTP_GET, [](AsyncWebServerRequest *request){
+            String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+            String rawName   = request->hasParam("name")   ? request->getParam("name")->value()   : "";
+            String folder = sanitizeName(rawFolder, false); String name = sanitizeName(rawName, true);
+            if (badName(rawFolder) || badName(rawName) || folder.isEmpty() || name.isEmpty() || !hasGifExt(name)) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder and name are required\"}"); return; }
+            const String root = gifRootOf(request);
+            String path = root + "/" + folder + "/" + name;
+            struct FileCtx { FsFile f; size_t size = 0; };
+            FileCtx* ctx = new FileCtx();
+            bool ok = false;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(5000));
+                if (guard && sd.exists(path.c_str())) { ctx->f = sd.open(path.c_str(), FILE_OPEN_READ); ok = (bool)ctx->f; if (ok) ctx->size = ctx->f.size(); }
+            }
+            if (!ok) { delete ctx; request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
+            String lower = name; lower.toLowerCase();
+            const char* mime = lower.endsWith(".png") ? "image/png" : lower.endsWith(".gif") ? "image/gif" : "application/octet-stream";
+            AsyncWebServerResponse* resp = request->beginResponse(mime, ctx->size, [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+                size_t n = 0;
+                SdLockGuard guard(pdMS_TO_TICKS(5000));   // one bounded hold per chunk, see /api/gifs/files
+                if (guard) n = ctx->f.read(buf, maxLen);
+                return n;
+            });
+            resp->addHeader("Cache-Control", "no-cache");
+            if (request->hasParam("download") && request->getParam("download")->value() == "1") resp->addHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+            request->onDisconnect([ctx]() { if (ctx->f) ctx->f.close(); delete ctx; });
+            request->send(resp);
+        });
+
+        server.on("/api/gifs/upload", HTTP_POST,
+            [leaveUploadMode](AsyncWebServerRequest *request) {
+                GifUploadCtx* ctx = (GifUploadCtx*)request->_tempObject;
+                if (!ctx) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"No file received\"}"); return; }
+                if (ctx->badFolder) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain playlist name (no path separators)\"}"); delete ctx; request->_tempObject = nullptr; return; }
+                {
+                    SdLockGuard guard(pdMS_TO_TICKS(15000));
+                    if (guard && ctx->savedCount > 0) { int c = updateFolderIndex(ctx->root, ctx->folder, ctx->savedNames, {}); updatePlaylistsEntry(ctx->root, ctx->folder, c); }
+                }
+                String body = "{\"status\":\"" + String(ctx->savedCount > 0 ? "ok" : "error") + "\",\"folder\":\"" + jsonEsc(ctx->folder) +
+                              "\",\"orientation\":\"" + ctx->orientation + "\",\"count\":" + String(ctx->savedCount) + ",\"saved\":[" + ctx->saved + "],\"skipped\":[" + ctx->skipped + "]}";
+                request->send(ctx->savedCount > 0 ? 200 : 400, "application/json", body);
+                if (ctx->modeOn) leaveUploadMode();
+                delete ctx; request->_tempObject = nullptr;
+            },
+            [enterUploadMode, leaveUploadMode](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+                GifUploadCtx* ctx = (GifUploadCtx*)request->_tempObject;
+                if (!ctx) {
+                    ctx = new GifUploadCtx();
+                    String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
+                    ctx->badFolder = rawFolder.indexOf('/') >= 0 || rawFolder.indexOf('\\') >= 0 || rawFolder.indexOf("..") >= 0;
+                    ctx->folder = ctx->badFolder ? "" : sanitizeName(rawFolder, false);
+                    if (ctx->folder.isEmpty() && !ctx->badFolder) ctx->folder = "Uploads";
+                    ctx->orientation = gifOrientationOf(request);
+                    ctx->root = gifRootFor(ctx->orientation);
+                    request->_tempObject = ctx;
+                    // free the context if the client disconnects mid-upload (the final handler nulls _tempObject after deleting it)
+                    request->onDisconnect([request, leaveUploadMode]() {
+                        GifUploadCtx* c = (GifUploadCtx*)request->_tempObject;
+                        if (c) { if (c->modeOn) leaveUploadMode(); delete c; request->_tempObject = nullptr; }
+                    });
+                    extern GifEngine* gifEngine;
+                    if (gifEngine) { gifEngine->stop(); ctx->engineStopped = true; }   // no concurrent SD reads during the write
+                    enterUploadMode(); ctx->modeOn = true;
+                    {
+                        SdLockGuard guard(pdMS_TO_TICKS(5000));
+                        if (guard) {
+                            if (!sd.exists(ctx->root.c_str())) sd.mkdir(ctx->root.c_str());
+                            String fp = ctx->root + "/" + ctx->folder; if (!sd.exists(fp.c_str())) sd.mkdir(fp.c_str());
+                        }
+                    }
+                }
+                if (ctx->badFolder) return;   // rejected folder name: swallow the body, final handler answers 400
+                if (index == 0) {
+                    // new part begins: close any previous file
+                    if (ctx->file) ctx->file.close();
+                    ctx->currentName = sanitizeName(filename, true); ctx->currentBytes = 0; ctx->currentOk = false;
+                    if (ctx->currentName.isEmpty() || !hasGifExt(ctx->currentName)) {
+                        if (ctx->skipped.length()) ctx->skipped += ",";
+                        ctx->skipped += "{\"name\":\"" + jsonEsc(filename) + "\",\"reason\":\"unsupported type\"}";
+                    } else {
+                        bool busy = false;
+                        {
+                            SdLockGuard guard(pdMS_TO_TICKS(5000));
+                            if (guard) {
+                                String path = ctx->root + "/" + ctx->folder + "/" + ctx->currentName;
+                                ctx->file = sd.open(path.c_str(), FILE_OPEN_WRITE);
+                                ctx->currentOk = (bool)ctx->file;
+                            } else busy = true;   // previously a silent drop; report it like any other skipped file
+                        }
+                        if (!ctx->currentOk) { if (ctx->skipped.length()) ctx->skipped += ","; ctx->skipped += "{\"name\":\"" + jsonEsc(ctx->currentName) + "\",\"reason\":\"" + (busy ? "SD busy" : "open failed") + "\"}"; }
+                    }
+                }
+                if (ctx->currentOk && len > 0) {
+                    SdLockGuard guard(pdMS_TO_TICKS(5000));
+                    if (guard) {
+                        size_t w = ctx->file.write(data, len); ctx->currentBytes += w;
+                        if (w != len) { ctx->currentOk = false; }
+                    } else ctx->currentOk = false;   // a chunk we could not write means the file is incomplete
+                }
+                if (final) {
+                    if (ctx->file) { SdLockGuard guard(pdMS_TO_TICKS(5000)); if (guard) ctx->file.close(); }
+                    if (ctx->currentOk) {
+                        if (ctx->saved.length()) ctx->saved += ",";
+                        ctx->saved += "{\"name\":\"" + jsonEsc(ctx->currentName) + "\",\"bytes\":" + String(ctx->currentBytes) + "}"; ctx->savedNames.push_back(ctx->currentName);
+                        ctx->savedCount++;
+                        LOGI("GIFS", "Uploaded %s/%s/%s (%u bytes)", ctx->root.c_str(), ctx->folder.c_str(), ctx->currentName.c_str(), (unsigned)ctx->currentBytes);
+                    } else if (!ctx->currentName.isEmpty() && hasGifExt(ctx->currentName)) {
+                        if (ctx->skipped.length()) ctx->skipped += ",";
+                        ctx->skipped += "{\"name\":\"" + jsonEsc(ctx->currentName) + "\",\"reason\":\"write failed\"}";
+                    }
+                    ctx->currentOk = false;
+                }
+            });
+    }
 
     // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's
     // /api/wifi). Unlike the generic /api/settings handler, this persists the new credentials to

@@ -11,6 +11,7 @@ struct MessageConfig {
     String direction; // "rtl" (Right-To-Left), "ltr", "ttb", "btt"
     int speed;        // Lower is faster (ms per pixel shift)
     unsigned long timeoutSeconds; // 30 by default
+    int offsetY;      // vertical shift in pixels for the horizontal directions (negative = higher); brace-initialised messages leave it 0 (centred). No default initialiser: keeps the struct an aggregate for the existing {..} initialisers.
 };
 
 #include "../../include/core/EngineContract.h"
@@ -28,6 +29,9 @@ public:
     void onConfigChanged(const EngineConfig* engineConfig) override;
     
     void displayMessage(const MessageConfig& config);
+    /// Thread-safe variant for callers on the other core (web server, background tasks): the message is parked and
+    /// applied by update() on the render core, so the text is never swapped underneath render().
+    void queueMessage(const MessageConfig& config);
     bool isActive() const { return active; }
     bool allowsOverlay() const override { return false; }
     bool needsClear() const override { return true; }
@@ -40,6 +44,9 @@ public:
 private:
 
     MessageConfig currentMsg;
+    MessageConfig pendingMsg;
+    volatile bool pendingFlag = false;
+    portMUX_TYPE pendingMux = portMUX_INITIALIZER_UNLOCKED;
     bool active;
     GFXfont* customFont;
     BitmapFontLoader fontLoader;

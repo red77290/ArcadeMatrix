@@ -482,6 +482,23 @@ ArcadeMatrix prend en charge toutes les résolutions et orientations (`64x32`, `
 | `POST`| `/api/gyro/calibrate` | Calibration du point zéro de référence ($0^\circ$ Normal). |
 | `POST`| `/api/display/orientation` | Forçage de rotation, offset de montage et effet de transition. |
 | `POST`| `/api/display/test-transition` | Déclenche un test visuel de l'effet de transition. |
+| `GET` | `/api/gifs/library` | Dossiers de playlists d'une bibliothèque avec le nombre de fichiers (via `playlists.json`). |
+| `GET` | `/api/gifs/files` | Fichiers d'un dossier de playlist, diffusés depuis son `index.txt`. |
+| `GET` | `/api/gifs/file` | Sert un fichier média (aperçu inline ; `download=1` pour un téléchargement). |
+| `POST`| `/api/gifs/upload` | Envoi multipart dans un dossier de playlist (rotation suspendue pendant l'écriture). |
+| `POST`| `/api/gifs/mkdir` | Crée un dossier de playlist. |
+| `POST`| `/api/gifs/rename` | Renomme un dossier, ou un fichier si `name` est fourni. |
+| `POST`| `/api/gifs/reindex` | Reconstruit `index.txt` + `playlists.json` des **deux** bibliothèques (tâche de fond, `202`). |
+| `GET` | `/api/gifs/reindex/status` | Progression du rescan (`running`, `done/total`, `files`, `eta`, `last_result`). |
+| `DELETE`| `/api/gifs/reindex` | Annule un rescan en cours (pris en compte entre deux dossiers). |
+| `DELETE`| `/api/gifs/file` | Supprime un fichier. |
+| `DELETE`| `/api/gifs/folder` | Supprime récursivement un dossier de playlist. |
+
+Chaque route `/api/gifs/*` accepte un paramètre optionnel `orientation=yoko|tate` qui sélectionne la
+bibliothèque horizontale (`/gifs`) ou verticale (`/gifs_tate`), suivant la séparation que `GifEngine` fait
+déjà entre les deux racines. Sans ce paramètre, `yoko` est utilisé. `POST /api/gifs/reindex` l'ignore et
+parcourt toujours les deux racines, afin que les playlists d'une borne verticale soient également
+reconstruites ; le créneau de rescan est réservé de façon atomique et une seconde requête répond `409`.
 
 ---
 

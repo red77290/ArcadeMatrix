@@ -641,6 +641,23 @@ enum class LayoutClass : uint8_t {
 | `POST`| `/api/gyro/calibrate` | 1-Click zero reference calibration ($0^\circ$ Normal). |
 | `POST`| `/api/display/orientation` | Sets manual rotation, mounting offset, and transition FX. |
 | `POST`| `/api/display/test-transition` | Triggers a live preview of rotation transition effects. |
+| `GET` | `/api/gifs/library` | Playlist folders of one library with file counts (from `playlists.json`). |
+| `GET` | `/api/gifs/files` | Files of one playlist folder, streamed from its `index.txt`. |
+| `GET` | `/api/gifs/file` | Serve one media file (inline preview; `download=1` for an attachment). |
+| `POST`| `/api/gifs/upload` | Multipart upload into a playlist folder (rotation suspended while writing). |
+| `POST`| `/api/gifs/mkdir` | Create a playlist folder. |
+| `POST`| `/api/gifs/rename` | Rename a folder, or a file when `name` is given. |
+| `POST`| `/api/gifs/reindex` | Rebuild `index.txt` + `playlists.json` for **both** libraries (background task, `202`). |
+| `GET` | `/api/gifs/reindex/status` | Rescan progress (`running`, `done/total`, `files`, `eta`, `last_result`). |
+| `DELETE`| `/api/gifs/reindex` | Cancel a running rescan (honoured between folders). |
+| `DELETE`| `/api/gifs/file` | Delete one file. |
+| `DELETE`| `/api/gifs/folder` | Delete a playlist folder recursively. |
+
+Every `/api/gifs/*` route takes an optional `orientation=yoko|tate` parameter selecting the horizontal
+(`/gifs`) or vertical (`/gifs_tate`) library, matching the split `GifEngine` already makes between the two
+roots. Omitting it means `yoko`. `POST /api/gifs/reindex` ignores it and always walks both roots, so a
+portrait cabinet's playlists are rebuilt too; the rescan slot is claimed atomically, and a second request
+while one is running answers `409`.
 
 ---
 

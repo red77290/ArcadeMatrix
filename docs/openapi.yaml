@@ -374,7 +374,7 @@ paths:
       tags:
         - Media
       summary: Get indexed GIF playlists (Horizontal YOKO and Vertical TATE)
-      description: Returns indexed GIF playlists from SD card storage (/gifs and /gifs_tate). Returns grouped { yoko: {...}, tate: {...} } or orientation-specific playlists when filtered with query parameter.
+      description: 'Returns indexed GIF playlists from SD card storage (/gifs and /gifs_tate). Returns grouped { yoko: {...}, tate: {...} } or orientation-specific playlists when filtered with query parameter.'
       parameters:
         - name: type
           in: query
@@ -567,6 +567,276 @@ paths:
           description: Asset uploaded successfully.
         '400':
           description: No file received or upload error.
+
+  /api/gifs/library:
+    get:
+      tags:
+        - GIF Library
+      summary: List playlist folders
+      description: Playlist folders of one library with their media file counts. `orientation` selects the horizontal (`/gifs`) or vertical (`/gifs_tate`) root, matching the split GifEngine makes between the two.
+      parameters:
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: '`{"root":"/gifs_tate","orientation":"tate","folders":{"Arcade":{"path":"/gifs_tate/Arcade","count":120}}}`'
+
+  /api/gifs/files:
+    get:
+      tags:
+        - GIF Library
+      summary: List files of one playlist folder
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Plain playlist folder name (no path separators)
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: '`{"folder":"Arcade","orientation":"yoko","path":"/gifs/Arcade","files":[{"name":"a.gif","bytes":1234}]}`'
+        '400':
+          description: Missing or invalid folder name.
+        '404':
+          description: Folder not found.
+
+  /api/gifs/file:
+    get:
+      tags:
+        - GIF Library
+      summary: Serve one media file (preview or download)
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: File name (.gif, .png or .raw)
+        - name: download
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'Set to `1` to receive a `Content-Disposition: attachment` header.'
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: The file bytes with an image content type.
+        '404':
+          description: File not found.
+    delete:
+      tags:
+        - GIF Library
+      summary: Delete one media file
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: '`{"status":"ok","orientation":"yoko","deleted":"/gifs/Arcade/a.gif"}`'
+        '404':
+          description: File not found.
+
+  /api/gifs/upload:
+    post:
+      tags:
+        - GIF Library
+      summary: Upload one or many media files into a playlist folder
+      description: Multipart upload; every `file` part is written to `<root>/<folder>/<basename>`, where `<root>` is the library chosen by `orientation`. The folder is created when missing. While the upload runs the screen rotation is suspended and the panel shows an upload notice; both are restored when the request completes or the client disconnects. Unsupported types are reported in `skipped`. Names are sanitized to plain file names.
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Target playlist folder (plain name, no path separators)
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: '`{"status":"ok","folder":"Arcade","count":2,"saved":[{"name":"a.gif","bytes":1234}],"skipped":[{"name":"notes.txt","reason":"unsupported type"}]}`'
+        '400':
+          description: Invalid folder name, or no file could be saved.
+
+  /api/gifs/mkdir:
+    post:
+      tags:
+        - GIF Library
+      summary: Create a playlist folder
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: Folder created.
+        '409':
+          description: Folder already exists.
+
+  /api/gifs/rename:
+    post:
+      tags:
+        - GIF Library
+      summary: Rename a playlist folder or one of its files
+      description: Without `name` the folder itself is renamed to `to`; with `name` that file is renamed (a bare `to` keeps the original extension). Index files are refreshed.
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: '`{"status":"ok","orientation":"yoko","renamed_to":"/gifs/NewName"}`'
+        '404':
+          description: Source not found.
+        '409':
+          description: Target already exists.
+
+  /api/gifs/reindex:
+    post:
+      tags:
+        - GIF Library
+      summary: Rebuild every folder's index.txt and playlists.json from the card (background)
+      description: Rebuilds **both** libraries (`/gifs` and `/gifs_tate`), so a portrait cabinet's playlists are rebuilt too; the `orientation` parameter does not apply here. The walk over the whole library is too slow to run inside a request on the ESP32, so it is started as a background task while the screen rotation is suspended and the panel shows a notice. Poll `/api/gifs/reindex/status`. The rescan slot is claimed atomically, so a second request while one is running answers `409`. Uploads, deletes and renames keep `index.txt` / `playlists.json` current on their own, so a rescan is only needed after the card was edited offline.
+      responses:
+        '202':
+          description: Rescan started
+        '409':
+          description: A rescan is already running
+        '500':
+          description: The background task could not be started
+    delete:
+      tags:
+        - GIF Library
+      summary: Cancel a running rescan
+      description: Sets the cancel flag; it is honoured between folders, so the folder being indexed finishes first.
+      responses:
+        '202':
+          description: '`{"status":"cancelling"}`'
+        '409':
+          description: '`{"status":"idle"}` - no rescan is running'
+  /api/gifs/reindex/status:
+    get:
+      tags:
+        - GIF Library
+      summary: Progress of the background rescan
+      responses:
+        '200':
+          description: '`{ running, total, done, files, expected, eta, cancelling, current, last_result, elapsed_ms }` - totals cover both libraries'
+  /api/gifs/folder:
+    delete:
+      tags:
+        - GIF Library
+      summary: Delete a playlist folder recursively
+      parameters:
+        - name: folder
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: orientation
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [yoko, tate]
+            default: yoko
+          description: Which library to act on - `yoko` is the horizontal root (`/gifs`), `tate` the vertical one (`/gifs_tate`). Unrecognised values fall back to `yoko`.
+      responses:
+        '200':
+          description: '`{"status":"ok","orientation":"yoko","deleted":"/gifs/Arcade","files":120}`'
+        '404':
+          description: Folder not found.
 
   /api/marquee:
     post:
