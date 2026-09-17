@@ -71,7 +71,14 @@ FighterEngine::~FighterEngine() {
         }
         // Strict cooperative shutdown: ZERO forced vTaskDelete() fallback
     }
-    if (fighterOffsets) free(fighterOffsets);
+    if (m_roster) {
+        if (esp_ptr_external_ram(m_roster)) {
+            heap_caps_free(m_roster);
+        } else {
+            free(m_roster);
+        }
+        m_roster = nullptr;
+    }
     freeFighter(p1);
     freeFighter(p2);
     freeFighter(nextP1);
@@ -115,106 +122,182 @@ String FighterEngine::getFightersDir() {
 }
 
 void FighterEngine::loadRoster() {
+    if (m_roster) {
+        if (esp_ptr_external_ram(m_roster)) heap_caps_free(m_roster);
+        else free(m_roster);
+        m_roster = nullptr;
+    }
     numAvailableFighters = 0;
     String indexPath = getFightersDir() + "/index.txt";
     
     SdLockGuard guard(pdMS_TO_TICKS(3000));
-    if (guard) {
-        FsFile f;
-        if (sd.exists(indexPath.c_str())) {
-            f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
-        }
-        if (!f) {
-            Serial.println("FighterEngine: No index.txt found!");
-            return;
-        }
-        
-        std::vector<uint32_t> offsets;
-        offsets.reserve(1200);
-        while (f.available()) {
-            uint32_t pos = f.position();
-            String line = f.readStringUntil('\n');
-            line.trim();
-            if (line.length() > 0 && !isMacJunk(line)) {
-                offsets.push_back(pos);
-            }
-        }
-        f.close();
+    if (!guard) {
+        LOGW("FighterEngine", "Could not acquire sdMutex to load roster.");
+        return;
+    }
 
-        numAvailableFighters = (int)offsets.size();
-        if (numAvailableFighters > 0) {
-            if (fighterOffsets) free(fighterOffsets);
-            fighterOffsets = (uint32_t*)heap_caps_malloc(numAvailableFighters * sizeof(uint32_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!fighterOffsets) {
-                fighterOffsets = (uint32_t*)malloc(numAvailableFighters * sizeof(uint32_t));
+    if (!sd.exists(indexPath.c_str())) {
+        LOGW("FighterEngine", "No index.txt found at %s!", indexPath.c_str());
+        return;
+    }
+
+    FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+    if (!f) {
+        LOGE("FighterEngine", "Failed to open %s", indexPath.c_str());
+        return;
+    }
+
+    size_t fileSize = f.size();
+    if (fileSize == 0 || fileSize > 256 * 1024) {
+        LOGW("FighterEngine", "Invalid index.txt size: %u", (unsigned)fileSize);
+        f.close();
+        return;
+    }
+
+    // Allocate temporary read buffer in PSRAM if available, or internal DRAM
+    char* rawBuf = nullptr;
+    if (m_hasPsram) {
+        rawBuf = (char*)heap_caps_malloc(fileSize + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!rawBuf) {
+        rawBuf = (char*)malloc(fileSize + 1);
+    }
+
+    if (!rawBuf) {
+        LOGE("FighterEngine", "Failed to allocate %u bytes for index.txt buffer.", (unsigned)(fileSize + 1));
+        f.close();
+        return;
+    }
+
+    size_t bytesRead = f.read((uint8_t*)rawBuf, fileSize);
+    f.close();
+    guard.unlock(); // SD access complete in ~15ms!
+
+    if (bytesRead != fileSize) {
+        LOGE("FighterEngine", "Short read on index.txt: %u of %u bytes.", (unsigned)bytesRead, (unsigned)fileSize);
+        if (esp_ptr_external_ram(rawBuf)) heap_caps_free(rawBuf);
+        else free(rawBuf);
+        return;
+    }
+    rawBuf[fileSize] = '\0';
+
+    std::vector<FighterMeta> parsed;
+    parsed.reserve(1200);
+
+    char* line = rawBuf;
+    while (line < rawBuf + fileSize) {
+        char* nextLine = strchr(line, '\n');
+        if (nextLine) {
+            *nextLine = '\0';
+        }
+        char* cr = strchr(line, '\r');
+        if (cr) *cr = '\0';
+
+        while (*line == ' ' || *line == '\t') line++;
+
+        if (*line != '\0' && *line != '.') {
+            char* c1 = strchr(line, ',');
+            if (c1) {
+                *c1 = '\0';
+                char* c2 = strchr(c1 + 1, ',');
+                if (c2) *c2 = '\0';
+                char* c3 = c2 ? strchr(c2 + 1, ',') : nullptr;
+                if (c3) *c3 = '\0';
+                char* c4 = c3 ? strchr(c3 + 1, ',') : nullptr;
+                if (c4) *c4 = '\0';
+                char* c5 = c4 ? strchr(c4 + 1, ',') : nullptr;
+                if (c5) *c5 = '\0';
+
+                FighterMeta entry;
+                strncpy(entry.name, line, sizeof(entry.name) - 1);
+                entry.name[sizeof(entry.name) - 1] = '\0';
+                entry.height = atoi(c1 + 1);
+                entry.ground_y = c2 ? atoi(c2 + 1) : 0;
+                entry.origin_x = c3 ? atoi(c3 + 1) : 0;
+                entry.width_px = c4 ? atoi(c4 + 1) : 32;
+                entry.head_y = c5 ? atoi(c5 + 1) : 0;
+
+                parsed.push_back(entry);
             }
-            if (fighterOffsets) {
-                memcpy(fighterOffsets, offsets.data(), numAvailableFighters * sizeof(uint32_t));
-            }
+        }
+
+        if (!nextLine) break;
+        line = nextLine + 1;
+    }
+
+    if (esp_ptr_external_ram(rawBuf)) heap_caps_free(rawBuf);
+    else free(rawBuf);
+
+    numAvailableFighters = (int)parsed.size();
+    if (numAvailableFighters > 0) {
+        size_t rosterBytes = numAvailableFighters * sizeof(FighterMeta);
+        if (m_hasPsram) {
+            m_roster = (FighterMeta*)heap_caps_malloc(rosterBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        if (!m_roster) {
+            m_roster = (FighterMeta*)malloc(rosterBytes);
+        }
+        if (m_roster) {
+            memcpy(m_roster, parsed.data(), rosterBytes);
+        } else {
+            numAvailableFighters = 0;
         }
     }
-    LOGI("FighterEngine", "Loaded %d fighters (Fast Offset mode: %d bytes %s)",
-         numAvailableFighters, numAvailableFighters * 4,
-         (fighterOffsets && esp_ptr_external_ram(fighterOffsets)) ? "PSRAM" : "internal DRAM");
+
+    LOGI("FighterEngine", "Loaded %d fighters (Fast PSRAM Roster: %u bytes %s)",
+         numAvailableFighters, (unsigned)(numAvailableFighters * sizeof(FighterMeta)),
+         (m_roster && esp_ptr_external_ram(m_roster)) ? "PSRAM" : "internal DRAM");
 }
 
 bool FighterEngine::getRandomFighter(FighterPlayer& p) {
-    if (numAvailableFighters == 0 || !fighterOffsets) return false;
+    if (numAvailableFighters == 0 || !m_roster) return false;
     
-    String indexPath = getFightersDir() + "/index.txt";
-    bool success = false;
-    SdLockGuard guard(pdMS_TO_TICKS(1000));
-    if (guard) {
-        FsFile f = sd.open(indexPath, FILE_OPEN_READ);
-        if (f) {
-            int targetLine = esp_random() % numAvailableFighters;
-            f.seek(fighterOffsets[targetLine]);
-            String result = f.readStringUntil('\n');
-            result.trim();
-            f.close();
-            
-            int comma1 = result.indexOf(',');
-            int comma2 = result.indexOf(',', comma1 + 1);
-            int comma3 = result.indexOf(',', comma2 + 1);
-            int comma4 = result.indexOf(',', comma3 + 1);
-            int comma5 = result.indexOf(',', comma4 + 1);
-
-            if (comma1 > 0) {
-                p.name = result.substring(0, comma1);
-                p.height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
-                p.ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
-                p.origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
-                p.width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
-                p.head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
-                success = true;
-            }
-        }
-    }
-    return success;
+    int target = esp_random() % numAvailableFighters;
+    const FighterMeta& meta = m_roster[target];
+    p.name = meta.name;
+    p.height = meta.height;
+    p.ground_y = meta.ground_y;
+    p.origin_x = meta.origin_x;
+    p.width_px = meta.width_px;
+    p.head_y = meta.head_y;
+    return true;
 }
 
 bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (m_taskShouldExit) return false;
-    if (ESP.getFreeHeap() < 32768) return false;
-    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 18432) return false;
-    if (m_hasPsram && ESP.getFreePsram() < 1048576) return false;
+    if (ESP.getFreeHeap() < 32768) {
+        LOGW("FighterEngine", "Skip anim %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
+        return false;
+    }
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 18432) {
+        LOGW("FighterEngine", "Skip anim %s: low DMA heap %u", filepath, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+        return false;
+    }
+    if (m_hasPsram && ESP.getFreePsram() < 1048576) {
+        LOGW("FighterEngine", "Skip anim %s: low PSRAM %u", filepath, (unsigned)ESP.getFreePsram());
+        return false;
+    }
 
     // Do not stress SD bus / memory while another task on Core 0 is performing a heavy TLS handshake
     if (NetworkBudget::getTlsHandshakeMutex()) {
         if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), 0) == pdTRUE) {
             xSemaphoreGive(NetworkBudget::getTlsHandshakeMutex());
         } else {
+            LOGD("FighterEngine", "Waiting for TLS handshake before loading %s", filepath);
             return false;
         }
     }
 
     SdLockGuard sdGuard(pdMS_TO_TICKS(3000));
     if (!sdGuard) {
-        LOGW("FighterEngine", "Could not acquire sdMutex for %s (timeout)", filepath);
+        LOGW("FighterEngine", "Could not acquire sdMutex for %s (timeout 3s)", filepath);
         return false;
     }
 
-    if (!sd.exists(filepath)) return false;
+    if (!sd.exists(filepath)) {
+        LOGD("FighterEngine", "Anim not found on SD: %s", filepath);
+        return false;
+    }
     
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
@@ -223,18 +306,21 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     }
     
     if (f.available() < 11) {
+        LOGW("FighterEngine", "Anim truncated header (%d bytes): %s", (int)f.available(), filepath);
         f.close();
         return false;
     }
 
     char magic[3];
     if (f.read((uint8_t*)magic, 3) != 3 || magic[0] != 'F' || magic[1] != 'G' || magic[2] != 'T') {
+        LOGW("FighterEngine", "Anim invalid header (magic: %.3s): %s", magic, filepath);
         f.close();
         return false;
     }
     
     uint8_t version = f.read();
     if (version != 1) {
+        LOGW("FighterEngine", "Anim unsupported version %u: %s", (unsigned)version, filepath);
         f.close();
         return false;
     }
@@ -246,6 +332,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     f.read((uint8_t*)&anim.transparentColor, 2);
     
     if (fileNumFrames == 0 || anim.width == 0 || anim.height == 0 || anim.width > 256 || anim.height > 256) {
+        LOGW("FighterEngine", "Anim invalid geometry (%ux%u, %u frames): %s", anim.width, anim.height, fileNumFrames, filepath);
         f.close();
         return false;
     }
@@ -255,10 +342,12 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     anim.frameDelays = (uint16_t*)malloc(anim.numFrames * 2);
     if (!anim.frameDelays) {
+        LOGW("FighterEngine", "Anim failed to allocate %u frame delays: %s", anim.numFrames, filepath);
         f.close();
         return false;
     }
     if (f.read((uint8_t*)anim.frameDelays, anim.numFrames * 2) != (int)(anim.numFrames * 2)) {
+        LOGW("FighterEngine", "Anim failed reading %u frame delays: %s", anim.numFrames, filepath);
         free(anim.frameDelays);
         anim.frameDelays = nullptr;
         f.close();
@@ -428,6 +517,11 @@ void FighterEngine::loaderTaskFunc(void* param) {
 }
 
 void FighterEngine::runBackgroundPreload() {
+    if (m_taskShouldExit || millis() < retryDelayEnd) {
+        isPreloading = false;
+        return;
+    }
+
     freeFighter(nextP1);
     freeFighter(nextP2);
 
@@ -435,10 +529,11 @@ void FighterEngine::runBackgroundPreload() {
     static constexpr uint32_t PRELOAD_MIN_FREE_DMA = 16 * 1024;
     static constexpr uint32_t PRELOAD_MIN_FREE_PSRAM = 1024 * 1024; // 1 MB safety reserve
 
-    if (m_taskShouldExit || ESP.getFreeHeap() < PRELOAD_MIN_FREE_HEAP ||
+    if (ESP.getFreeHeap() < PRELOAD_MIN_FREE_HEAP ||
         heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < PRELOAD_MIN_FREE_DMA ||
-        (m_hasPsram && ESP.getFreePsram() < PRELOAD_MIN_FREE_PSRAM)) {
-        LOGW("FighterEngine", "Aborting background preload: insufficient memory (heap: %u, dma: %u, psram: %u)",
+        (m_hasPsram && ESP.getFreePsram() < PRELOAD_MIN_FREE_PSRAM) ||
+        numAvailableFighters < 2 || !m_roster) {
+        LOGW("FighterEngine", "Aborting background preload: insufficient memory or empty roster (heap: %u, dma: %u, psram: %u)",
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
              (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
@@ -447,108 +542,13 @@ void FighterEngine::runBackgroundPreload() {
         return;
     }
 
-    auto readFighterLine = [&](FsFile& f, int lineIdx, String& name, int& height, int& ground_y, int& origin_x, int& width_px, int& head_y) -> bool {
-        f.seek(fighterOffsets[lineIdx]);
-        String result = f.readStringUntil('\n');
-        result.trim();
-        int comma1 = result.indexOf(',');
-        int comma2 = result.indexOf(',', comma1 + 1);
-        int comma3 = result.indexOf(',', comma2 + 1);
-        int comma4 = result.indexOf(',', comma3 + 1);
-        int comma5 = result.indexOf(',', comma4 + 1);
-        if (comma1 <= 0) return false;
-        name = result.substring(0, comma1);
-        height = result.substring(comma1 + 1, comma2 > 0 ? comma2 : result.length()).toInt();
-        ground_y = comma2 > 0 ? result.substring(comma2 + 1, comma3 > 0 ? comma3 : result.length()).toInt() : 0;
-        origin_x = comma3 > 0 ? result.substring(comma3 + 1, comma4 > 0 ? comma4 : result.length()).toInt() : 0;
-        width_px = comma4 > 0 ? result.substring(comma4 + 1, comma5 > 0 ? comma5 : result.length()).toInt() : 32;
-        head_y = comma5 > 0 ? result.substring(comma5 + 1).toInt() : 0;
-        return true;
-    };
-
-    // Height actually occupied on screen, i.e. the exact metric the renderer uses to
-    // place a sprite. The index "height" column can disagree with it, so it is only a
-    // last-resort fallback: matching candidates on a different metric than the one
-    // used for drawing is what let visibly mismatched pairs through.
     auto renderedHeight = [](int ground_y, int head_y, int declaredHeight) -> int {
         int h = ground_y - head_y;
         if (h > 0) return h;
         return declaredHeight > 0 ? declaredHeight : 32;
     };
 
-    bool gotP1 = false;
     String dir = getFightersDir();
-    String indexPath = dir + "/index.txt";
-
-    struct SimpleMeta {
-        String name = "";
-        int height = 0;
-        int ground_y = 0;
-        int head_y = 0;
-        int origin_x = 0;
-        int width_px = 0;
-    } bestMeta, candMeta;
-    float bestRatio = 0.0f;
-
-    if (numAvailableFighters > 0 && fighterOffsets) {
-        SdLockGuard guard(pdMS_TO_TICKS(3000));
-        if (guard) {
-            FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
-            if (f) {
-                int p1Line = esp_random() % numAvailableFighters;
-                if (readFighterLine(f, p1Line, nextP1.name, nextP1.height, nextP1.ground_y, nextP1.origin_x, nextP1.width_px, nextP1.head_y)) {
-                    gotP1 = true;
-                    int h1 = renderedHeight(nextP1.ground_y, nextP1.head_y, nextP1.height);
-                    for (int i = 0; i < 40; i++) {
-                        int candLine = esp_random() % numAvailableFighters;
-                        if (readFighterLine(f, candLine, candMeta.name, candMeta.height, candMeta.ground_y, candMeta.origin_x, candMeta.width_px, candMeta.head_y)) {
-                            if (candMeta.name != nextP1.name) {
-                                int h2 = renderedHeight(candMeta.ground_y, candMeta.head_y, candMeta.height);
-                                if (h1 > 0 && h2 > 0) {
-                                    // Similarity score in (0,1]; 1.0 means identical
-                                    // heights. Both directions are now acceptable
-                                    // because the ground line is sized for the tallest
-                                    // sprite, so P2 may legitimately be taller than P1.
-                                    float ratio = (h2 <= h1) ? ((float)h2 / (float)h1)
-                                                             : ((float)h1 / (float)h2);
-                                    if (ratio > bestRatio) {
-                                        bestRatio = ratio;
-                                        bestMeta = candMeta;
-                                    }
-                                    if (ratio >= 0.80f) {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Always adopt the best candidate seen. Leaving nextP2 untouched
-                    // made it keep metadata from the previous match, pairing a sprite
-                    // with another fighter's ground/head offsets.
-                    if (bestMeta.name.length() > 0) {
-                        nextP2.name = bestMeta.name;
-                        nextP2.height = bestMeta.height;
-                        nextP2.ground_y = bestMeta.ground_y;
-                        nextP2.head_y = bestMeta.head_y;
-                        nextP2.origin_x = bestMeta.origin_x;
-                        nextP2.width_px = bestMeta.width_px;
-                    } else {
-                        gotP1 = false; // No usable opponent: abort and retry later.
-                    }
-                }
-                f.close();
-            }
-        }
-    }
-
-    if (!gotP1) {
-        isPreloading = false;
-        retryDelayEnd = millis() + 10000;
-        return;
-    }
-
-    bool ok = true;
 
     auto loadAnimThreadSafe = [&](FgtAnimation& anim, const String& path) -> bool {
         if (m_taskShouldExit) return false;
@@ -562,91 +562,147 @@ void FighterEngine::runBackgroundPreload() {
             return false;
         }
         bool res = loadFighterAnim(anim, path.c_str());
-        vTaskDelay(pdMS_TO_TICKS(10)); // Breathe! Yield SD bus and CPU to Core 1 rendering
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield SD bus and CPU to Core 1 rendering
         return res;
     };
 
-    auto abortPreload = [&]() {
+    bool matchFoundAndLoaded = false;
+
+    // Try up to 4 distinct fighter pairings in case one fighter has missing files on SD
+    for (int attempt = 0; attempt < 4 && !m_taskShouldExit; attempt++) {
         freeFighter(nextP1);
         freeFighter(nextP2);
-        isPreloading = false;
+
+        int p1Idx = esp_random() % numAvailableFighters;
+        const FighterMeta& p1Meta = m_roster[p1Idx];
+
+        int h1 = renderedHeight(p1Meta.ground_y, p1Meta.head_y, p1Meta.height);
+        float bestRatio = 0.0f;
+        int bestIdx = -1;
+
+        // Check 40 candidate opponents entirely in PSRAM (0 SD access, <5 microseconds!)
+        for (int i = 0; i < 40; i++) {
+            int candIdx = esp_random() % numAvailableFighters;
+            if (candIdx == p1Idx) continue;
+            const FighterMeta& candMeta = m_roster[candIdx];
+            if (strcmp(candMeta.name, p1Meta.name) == 0) continue;
+
+            int h2 = renderedHeight(candMeta.ground_y, candMeta.head_y, candMeta.height);
+            if (h1 > 0 && h2 > 0) {
+                float ratio = (h2 <= h1) ? ((float)h2 / (float)h1)
+                                         : ((float)h1 / (float)h2);
+                if (ratio > bestRatio) {
+                    bestRatio = ratio;
+                    bestIdx = candIdx;
+                }
+                if (ratio >= 0.80f) {
+                    break;
+                }
+            }
+        }
+
+        if (bestIdx < 0) {
+            LOGW("FighterEngine", "Preload attempt [%d/4]: no suitable opponent found for %s", attempt + 1, p1Meta.name);
+            continue;
+        }
+
+        const FighterMeta& p2Meta = m_roster[bestIdx];
+
+        nextP1.name = p1Meta.name;
+        nextP1.height = p1Meta.height;
+        nextP1.ground_y = p1Meta.ground_y;
+        nextP1.head_y = p1Meta.head_y;
+        nextP1.origin_x = p1Meta.origin_x;
+        nextP1.width_px = p1Meta.width_px;
+
+        nextP2.name = p2Meta.name;
+        nextP2.height = p2Meta.height;
+        nextP2.ground_y = p2Meta.ground_y;
+        nextP2.head_y = p2Meta.head_y;
+        nextP2.origin_x = p2Meta.origin_x;
+        nextP2.width_px = p2Meta.width_px;
+
+        int h2 = renderedHeight(p2Meta.ground_y, p2Meta.head_y, p2Meta.height);
+        LOGI("FighterEngine", "Preload candidate [%d/4]: P1 [%s] (H:%d) vs P2 [%s] (H:%d, ratio: %.2f)",
+             attempt + 1, nextP1.name.c_str(), h1, nextP2.name.c_str(), h2, bestRatio);
+
+        // P1 Required Animations: walk, attack, hit, win
+        if (!loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed walk for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            continue;
+        }
+        loadAnimThreadSafe(nextP1.animStand, dir + "/" + nextP1.name + "/stand.fgt");
+
+        if (!loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed attack for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            continue;
+        }
+        if (!loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed hit for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            continue;
+        }
+        if (!loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed win for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            continue;
+        }
+
+        int t1[3] = {1, 2, 3};
+        for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t1[i]; t1[i]=t1[r]; t1[r]=temp; }
+        for(int i=0; i<3; i++) {
+            if (loadAnimThreadSafe(nextP1.animSpecial, dir + "/" + nextP1.name + "/special" + String(t1[i]) + ".fgt")) break;
+        }
+        for(int i=0; i<3; i++) {
+            if (loadAnimThreadSafe(nextP1.animSuper, dir + "/" + nextP1.name + "/super" + String(t1[i]) + ".fgt")) break;
+        }
+        loadAnimThreadSafe(nextP1.animFall, dir + "/" + nextP1.name + "/fall.fgt");
+
+        // P2 Required Animations: walk, attack, hit, win
+        if (!loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed walk for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            continue;
+        }
+        loadAnimThreadSafe(nextP2.animStand, dir + "/" + nextP2.name + "/stand.fgt");
+
+        if (!loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed attack for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            continue;
+        }
+        if (!loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed hit for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            continue;
+        }
+        if (!loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt")) {
+            LOGW("FighterEngine", "Preload cut short: failed win for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            continue;
+        }
+
+        int t2[3] = {1, 2, 3};
+        for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t2[i]; t2[i]=t2[r]; t2[r]=temp; }
+        for(int i=0; i<3; i++) {
+            if (loadAnimThreadSafe(nextP2.animSpecial, dir + "/" + nextP2.name + "/special" + String(t2[i]) + ".fgt")) break;
+        }
+        for(int i=0; i<3; i++) {
+            if (loadAnimThreadSafe(nextP2.animSuper, dir + "/" + nextP2.name + "/super" + String(t2[i]) + ".fgt")) break;
+        }
+        loadAnimThreadSafe(nextP2.animFall, dir + "/" + nextP2.name + "/fall.fgt");
+
+        computeStandBounds(nextP1);
+        computeStandBounds(nextP2);
+        isNextReady.store(true, std::memory_order_release);
+        LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
+             nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
+             nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
+        matchFoundAndLoaded = true;
+        break;
+    }
+
+    if (!matchFoundAndLoaded) {
+        LOGW("FighterEngine", "Preload exhausted all 4 pairing attempts (missing animations on SD). Retrying in 10s...");
+        freeFighter(nextP1);
+        freeFighter(nextP2);
         retryDelayEnd = millis() + 10000;
-    };
-
-    // P1 Required Animations: walk, attack, hit, win
-    if (!loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed walk for %s", nextP1.name.c_str());
-        abortPreload();
-        return;
-    }
-    loadAnimThreadSafe(nextP1.animStand, dir + "/" + nextP1.name + "/stand.fgt");
-
-    if (!loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed attack for %s", nextP1.name.c_str());
-        abortPreload();
-        return;
-    }
-    if (!loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed hit for %s", nextP1.name.c_str());
-        abortPreload();
-        return;
-    }
-    if (!loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed win for %s", nextP1.name.c_str());
-        abortPreload();
-        return;
     }
 
-    int t1[3] = {1, 2, 3};
-    for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t1[i]; t1[i]=t1[r]; t1[r]=temp; }
-    for(int i=0; i<3; i++) {
-        if (loadAnimThreadSafe(nextP1.animSpecial, dir + "/" + nextP1.name + "/special" + String(t1[i]) + ".fgt")) break;
-    }
-    for(int i=0; i<3; i++) {
-        if (loadAnimThreadSafe(nextP1.animSuper, dir + "/" + nextP1.name + "/super" + String(t1[i]) + ".fgt")) break;
-    }
-    loadAnimThreadSafe(nextP1.animFall, dir + "/" + nextP1.name + "/fall.fgt");
-
-    // P2 Required Animations: walk, attack, hit, win
-    if (!loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed walk for %s", nextP2.name.c_str());
-        abortPreload();
-        return;
-    }
-    loadAnimThreadSafe(nextP2.animStand, dir + "/" + nextP2.name + "/stand.fgt");
-
-    if (!loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed attack for %s", nextP2.name.c_str());
-        abortPreload();
-        return;
-    }
-    if (!loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed hit for %s", nextP2.name.c_str());
-        abortPreload();
-        return;
-    }
-    if (!loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt")) {
-        LOGW("FighterEngine", "Preload cut short: failed win for %s", nextP2.name.c_str());
-        abortPreload();
-        return;
-    }
-
-    int t2[3] = {1, 2, 3};
-    for(int i=0; i<3; i++) { int r = esp_random() % 3; int temp=t2[i]; t2[i]=t2[r]; t2[r]=temp; }
-    for(int i=0; i<3; i++) {
-        if (loadAnimThreadSafe(nextP2.animSpecial, dir + "/" + nextP2.name + "/special" + String(t2[i]) + ".fgt")) break;
-    }
-    for(int i=0; i<3; i++) {
-        if (loadAnimThreadSafe(nextP2.animSuper, dir + "/" + nextP2.name + "/super" + String(t2[i]) + ".fgt")) break;
-    }
-    loadAnimThreadSafe(nextP2.animFall, dir + "/" + nextP2.name + "/fall.fgt");
-
-    computeStandBounds(nextP1);
-    computeStandBounds(nextP2);
-    isNextReady.store(true, std::memory_order_release);
-    LOGI("FighterEngine", "Background preload completed on Core 0: %s (front:%d, back:%d) vs %s (front:%d, back:%d)",
-         nextP1.name.c_str(), nextP1.frontExtent, nextP1.backExtent,
-         nextP2.name.c_str(), nextP2.frontExtent, nextP2.backExtent);
     isPreloading = false;
 }
 
@@ -681,7 +737,7 @@ void FighterEngine::computeStandBounds(FighterPlayer& p) {
         if (path.length() > 0) {
             SdLockGuard guard(pdMS_TO_TICKS(1500));
             if (guard && sd.exists(path.c_str())) {
-                FsFile f = sd.open(path.c_str(), O_RDONLY);
+                FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
                 if (f) {
                 f.seek(anim.pixelsOffset);
                 int minX = anim.width;

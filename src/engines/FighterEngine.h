@@ -176,8 +176,17 @@ private:
     void runBackgroundPreload();
     void triggerBackgroundPreload();
 
-    int numAvailableFighters = 0;   ///< Number of total indexed fighters on SD
-    uint32_t* fighterOffsets = nullptr; ///< File offsets for the fighter index
+    struct FighterMeta {
+        char name[32];
+        int16_t height;
+        int16_t ground_y;
+        int16_t head_y;
+        int16_t origin_x;
+        int16_t width_px;
+    };
+
+    int numAvailableFighters = 0;   ///< Number of total indexed fighters in PSRAM roster
+    FighterMeta* m_roster = nullptr; ///< Fast roster cache stored in PSRAM (or DRAM)
     uint32_t retryDelayEnd = 0;     ///< Delay timer for retry logic
     uint32_t lastMoveTime = 0;      ///< Timer for horizontal movement pacing
     

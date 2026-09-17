@@ -11,6 +11,7 @@
 #include <PNGdec.h>
 #include "../../core/Globals.h"
 #include "../../core/SDUtils.h"
+#include "../../core/SdLockGuard.h"
 
 struct DashPngDecodeContext {
     uint16_t* outPixels;
@@ -484,38 +485,36 @@ void DashboardDataProvider::fetchWeather() {
 bool DashboardDataProvider::loadIconFromSd(const String& path, uint16_t outPixels[64]) {
     if (!outPixels) return false;
 
-    if (!sdMutex || xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) != pdTRUE) {
+    SdLockGuard guard(pdMS_TO_TICKS(1500));
+    if (!guard) {
+        LOGW("Dashboard", "Could not acquire SD lock to read icon: %s (timeout)", path.c_str());
         return false;
     }
 
     if (!sd.exists(path)) {
-        xSemaphoreGive(sdMutex);
         return false;
     }
 
     FsFile f = sd.open(path, FILE_OPEN_READ);
     if (!f) {
-        xSemaphoreGive(sdMutex);
         return false;
     }
 
     size_t size = f.size();
     if (size == 0 || size > 16384) {
         f.close();
-        xSemaphoreGive(sdMutex);
         return false;
     }
 
     uint8_t* buf = (uint8_t*)malloc(size);
     if (!buf) {
         f.close();
-        xSemaphoreGive(sdMutex);
         return false;
     }
 
     size_t bytesRead = f.read(buf, size);
     f.close();
-    xSemaphoreGive(sdMutex);
+    guard.unlock(); // Release SD card lock before PNG decoding!
 
     if (bytesRead != size) {
         free(buf);
@@ -530,34 +529,53 @@ bool DashboardDataProvider::loadIconFromSd(const String& path, uint16_t outPixel
 bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const String& destPath) {
     if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
 
-    // Use weserv proxy to downscale and convert to PNG 16x16 directly (matching CryptoEngine/StockEngine standard)
-    // Using HTTP plain on images.weserv.nl avoids SSL handshake overhead on ESP32
-    String proxyUrl = "http://images.weserv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
-
-    HTTPClient http;
     WiFiClient client;
+    HTTPClient http;
     http.setTimeout(4000);
     http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.1");
 
+    // Try fast HTTP via wsrv.nl proxy (resizes directly to 16x16 PNG)
+    String proxyUrl = "http://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
     bool success = false;
     if (http.begin(client, proxyUrl)) {
         int code = http.GET();
         if (code == 200) {
             int len = http.getSize();
             if (len > 0 && len < 12000) {
-                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                    int lastSlash = destPath.lastIndexOf('/');
-                    if (lastSlash > 0) {
-                        String dir = destPath.substring(0, lastSlash);
-                        if (!sd.exists(dir)) sd.mkdir(dir);
+                std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
+                if (iconData) {
+                    WiFiClient* stream = http.getStreamPtr();
+                    size_t totalRead = 0;
+                    uint32_t startMs = millis();
+                    while (totalRead < (size_t)len && (millis() - startMs < 3000)) {
+                        size_t avail = stream->available();
+                        if (avail > 0) {
+                            size_t toRead = std::min(avail, (size_t)len - totalRead);
+                            int bytesRead = stream->read(iconData.get() + totalRead, toRead);
+                            if (bytesRead > 0) totalRead += bytesRead;
+                        } else {
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
                     }
-                    FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
-                    if (f) {
-                        http.writeToStream(&f);
-                        f.close();
-                        success = true;
+                    if (totalRead == (size_t)len) {
+                        SdLockGuard guard(pdMS_TO_TICKS(2000));
+                        if (guard) {
+                            int lastSlash = destPath.lastIndexOf('/');
+                            if (lastSlash > 0) {
+                                String dir = destPath.substring(0, lastSlash);
+                                if (!sd.exists(dir)) sd.mkdir(dir);
+                            }
+                            FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
+                            if (f) {
+                                f.write(iconData.get(), totalRead);
+                                f.close();
+                                success = true;
+                                LOGI("Dashboard", "Saved icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
+                            }
+                        } else {
+                            LOGW("Dashboard", "Could not acquire SD lock to save icon: %s (timeout)", destPath.c_str());
+                        }
                     }
-                    xSemaphoreGive(sdMutex);
                 }
             }
         }
@@ -583,19 +601,40 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
             if (code == 200) {
                 int len = secureHttp.getSize();
                 if (len > 0 && len < 12000) {
-                    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                        int lastSlash = destPath.lastIndexOf('/');
-                        if (lastSlash > 0) {
-                            String dir = destPath.substring(0, lastSlash);
-                            if (!sd.exists(dir)) sd.mkdir(dir);
+                    std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
+                    if (iconData) {
+                        WiFiClientSecure* stream = static_cast<WiFiClientSecure*>(secureHttp.getStreamPtr());
+                        size_t totalRead = 0;
+                        uint32_t startMs = millis();
+                        while (totalRead < (size_t)len && (millis() - startMs < 3000)) {
+                            size_t avail = stream->available();
+                            if (avail > 0) {
+                                size_t toRead = std::min(avail, (size_t)len - totalRead);
+                                int bytesRead = stream->read(iconData.get() + totalRead, toRead);
+                                if (bytesRead > 0) totalRead += bytesRead;
+                            } else {
+                                vTaskDelay(pdMS_TO_TICKS(10));
+                            }
                         }
-                        FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
-                        if (f) {
-                            secureHttp.writeToStream(&f);
-                            f.close();
-                            success = true;
+                        if (totalRead == (size_t)len) {
+                            SdLockGuard guard(pdMS_TO_TICKS(2000));
+                            if (guard) {
+                                int lastSlash = destPath.lastIndexOf('/');
+                                if (lastSlash > 0) {
+                                    String dir = destPath.substring(0, lastSlash);
+                                    if (!sd.exists(dir)) sd.mkdir(dir);
+                                }
+                                FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
+                                if (f) {
+                                    f.write(iconData.get(), totalRead);
+                                    f.close();
+                                    success = true;
+                                    LOGI("Dashboard", "Saved HTTPS icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
+                                }
+                            } else {
+                                LOGW("Dashboard", "Could not acquire SD lock to save HTTPS icon: %s (timeout)", destPath.c_str());
+                            }
                         }
-                        xSemaphoreGive(sdMutex);
                     }
                 }
             }
