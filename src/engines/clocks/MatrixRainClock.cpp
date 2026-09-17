@@ -8,7 +8,7 @@ static uint8_t randomGlyph() {
 }
 
 MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) 
-    : ClockFace(display, config), numColumns(0), numRows(0), initialized(false), lastFrameTime(0) {
+    : ClockFace(display, config), numColumns(0), numRows(0), initialized(false), lastFrameTime(0) { faceFont.load(config);
     storedTime = {0, 0, 0};
 }
 
@@ -45,15 +45,17 @@ void MatrixRainClock::drawTime() {
 
         int scale = (w >= 64) ? 3 : 2;
         if (logicalSize >= 1 && logicalSize <= 4) scale = min(scale, logicalSize);
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, "88", w, h / 3);
+        int16_t bx, by;
+        uint16_t bw, bh;
+        matrix->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = 11 * scale; bh = 7 * scale; }
 
-        int textW = 12 * scale - scale;
-        int textH = 8 * scale;
-        int tx = (w - textW) / 2 + offX;
-
-        int yH = (h / 6) - (textH / 2) + offY;
-        int yM = (h / 2) - (textH / 2) + offY;
-        int yS = (5 * h / 6) - (textH / 2) + offY;
+        // measured box instead of 6x8 arithmetic; print at (top - by) for custom fonts (baseline cursor)
+        int tx = (w - bw) / 2 + offX - bx;
+        int yH = (h / 6) - (bh / 2) + offY - by;
+        int yM = (h / 2) - (bh / 2) + offY - by;
+        int yS = (5 * h / 6) - (bh / 2) + offY - by;
 
         // Tier 1: Hours (Glow + Core)
         matrix->setTextColor(glowGreen);
@@ -107,7 +109,7 @@ void MatrixRainClock::drawTime() {
         }
         refStr[tLen] = '\0';
 
-        matrix->setTextSize(1);
+        faceFont.apply(*matrix, 1, refStr, w - 8, h - 6);
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
@@ -122,10 +124,8 @@ void MatrixRainClock::drawTime() {
         matrix->setTextSize(gfxSize);
         matrix->getTextBounds(refStr, 0, 0, &bx, &by, &bw, &bh);
 
-        int textW = strlen(refStr) * 6 * gfxSize - gfxSize;
-        int textH = 8 * gfxSize;
-        int x = (w - textW) / 2 + offX;
-        int y = (h - textH) / 2 + offY;
+        int x = (w - bw) / 2 + offX - bx;   // measured box, baseline-corrected cursor
+        int y = (h - bh) / 2 + offY - by;
 
         // Outer Neon Glow
         matrix->setTextColor(glowGreen);
