@@ -4932,10 +4932,21 @@ function buildMultiSelectGroup(opts, targetFieldId, instId, initVal) {
   function syncInputFromTags() {
     const currentTokens = textInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0 && s.toUpperCase() !== 'ALL');
     const knownTagVals = opts.map(o => String(o.value).trim().toUpperCase());
-    const customTokens = currentTokens.filter(tok => !knownTagVals.includes(tok.toUpperCase()));
+    // Recognise a token as a known option with the same tolerance syncTagsFromInput uses to tick it:
+    // a bare "Arcade" IS the option "/gifs/Arcade". Otherwise a hand-entered bare name survives as a
+    // "custom" token next to the ticked prefixed value and the folder ends up listed twice (#30).
+    const matchesKnown = (tok) => { const T = tok.toUpperCase(); return knownTagVals.some(v => v === T || v.endsWith('/' + T) || T.endsWith('/' + v)); };
+    const customTokens = currentTokens.filter(tok => !matchesKnown(tok));
     
     const checkedTagVals = Array.from(container.querySelectorAll(`input[type="checkbox"].multi-cb-${instId}-${targetFieldId}:checked`)).map(cb => cb.value);
-    const allTokens = [...checkedTagVals, ...customTokens];
+    const seen = new Set();
+    const allTokens = [];
+    for (const tok of [...checkedTagVals, ...customTokens]) {
+      const key = tok.trim().toUpperCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      allTokens.push(tok);
+    }
     textInput.value = (allTokens.length === 0) ? 'all' : allTokens.join(',');
     textInput.dispatchEvent(new Event('input', { bubbles: true }));
   }
