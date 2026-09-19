@@ -1,4 +1,7 @@
 #include "MatrixEngine.h"
+#include "RenderStats.h"
+
+RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
 #include "Logger.h"
 #include "../../include/HardwareProfile.h"
@@ -116,12 +119,20 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     }
 
     display->setBrightness8(64); // Safe default brightness
+    m_doubleBuffered = mxconfig.double_buff;
     display->clearScreen();
-    display->flipDMABuffer();
+    present();
     display->clearScreen();
-    display->flipDMABuffer();
+    present();
 
     return true;
+}
+
+void MatrixEngine::present() {
+    if (!display) return;
+    display->flipDMABuffer();
+    m_flipCount++;
+    g_renderStats.presents++;
 }
 
 void MatrixEngine::clear() {

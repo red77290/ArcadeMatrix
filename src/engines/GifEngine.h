@@ -50,6 +50,8 @@ public:
     void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
     bool hasNewFrame() const override { return m_lastFrameDrew; }
     bool needsClear() const override { return false; }
+    uint32_t nextFrameDueInMs() const override;
+    void resume() override { invalidateShadows(); }
 
     ~GifEngine();
 
@@ -102,7 +104,7 @@ public:
      */
     bool isDisplayVertical() const;
 
-    void setFitMode(const String& mode) { m_fitMode = mode; }
+    void setFitMode(const String& mode) { m_fitMode = mode; if (m_srcW > 0) updateFitGeometry(m_srcW, m_srcH); }
     const String& getFitMode() const { return m_fitMode; }
     void setSpeedMultiplier(float speed) { m_speedMultiplier = (speed > 0.05f) ? speed : 1.0f; }
     float getSpeedMultiplier() const { return m_speedMultiplier; }
@@ -163,6 +165,29 @@ private:
     uint8_t* psramBuffer = nullptr;
     size_t psramBufferSize = 0;
     void freePsramBuffer();
+
+    /**
+     * Dirty-pixel presentation. Pushing a whole 256x64 frame through drawPixel costs 8 PSRAM
+     * read-modify-writes plus 8 cache write-backs per pixel (the HUB75 DMA buffer lives in PSRAM),
+     * about 100 ms per frame, which is what held GIF playback to ~7 fps. We keep one shadow copy of
+     * what was last drawn into each DMA buffer and write only the pixels that differ; a typical
+     * animation changes a small fraction of the panel per frame. The shadows are invalidated whenever
+     * something else may have drawn into the buffers (activation, resume, overlays, notices,
+     * transitions: see MatrixEngine::markExternalDraw), which falls back to a full repaint.
+     */
+    uint16_t* m_shadow[2] = { nullptr, nullptr };
+    bool m_shadowValid[2] = { false, false };
+    uint32_t m_shadowGeneration = 0;
+    void allocateShadows(size_t matrixPixels);
+    void freeShadows();
+    void invalidateShadows() { m_shadowValid[0] = m_shadowValid[1] = false; }
+    bool blitCanvas();
+
+    /// Placement of the current file on the panel, computed once per file/fit-mode/geometry change
+    /// instead of on every scanline.
+    int m_srcW = 0, m_srcH = 0;
+    int m_fitScaleX = 1, m_fitScaleY = 1, m_fitOffX = 0, m_fitOffY = 0;
+    void updateFitGeometry(int srcW, int srcH);
 
     /**
      * @brief Normalize a user/config-provided playlist path to a full SD path under /gifs or

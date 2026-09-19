@@ -45,6 +45,33 @@ paths:
                     type: integer
                   psram_found:
                     type: boolean
+                  render:
+                    type: object
+                    description: >-
+                      Render-loop rates over the window since the previous /api/status call
+                      (absent on the first call and for windows under 500 ms). Poll twice, a few
+                      seconds apart, to read them.
+                    properties:
+                      window_ms:
+                        type: integer
+                      loop_fps:
+                        type: number
+                        description: Main render-loop iterations per second
+                      present_fps:
+                        type: number
+                        description: Framebuffer flips per second
+                      gif_fps:
+                        type: number
+                        description: GIF/PNG frames pushed to the panel per second
+                      gif_blit_ms:
+                        type: number
+                        description: Average time per GIF frame spent writing pixels to the panel
+                      gif_decode_ms:
+                        type: number
+                        description: Average time per GIF frame spent decoding
+                      gif_pixels_written_pct:
+                        type: number
+                        description: Share of panel pixels actually written per GIF frame (dirty-pixel blit)
 
   /api/settings:
     get:

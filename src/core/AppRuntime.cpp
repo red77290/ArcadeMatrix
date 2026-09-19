@@ -7,6 +7,7 @@
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
 #include "Logger.h"
+#include "RenderStats.h"
 #include <time.h>
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
@@ -331,7 +332,7 @@ void AppRuntime::initialize() {
             matrixEngine.getDisplay()->fillScreen(0);
             m_messageEngine->update(m_appCtx);
             m_messageEngine->render(m_appCtx);
-            matrixEngine.getDisplay()->flipDMABuffer();
+            matrixEngine.present();
             attempts++;
         }
         Serial.println();
@@ -420,7 +421,7 @@ void AppRuntime::initialize() {
         matrixEngine.getDisplay()->fillScreen(0);
         m_messageEngine->update(m_appCtx);
         m_messageEngine->render(m_appCtx);
-        matrixEngine.getDisplay()->flipDMABuffer();
+        matrixEngine.present();
         delay(5);
         if (millis() - startWait > 5000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
@@ -634,7 +635,8 @@ void AppRuntime::update() {
 
     if (m_displayRuntime.isTransitioning()) {
         m_displayRuntime.renderTransition();
-        matrixEngine.getDisplay()->flipDMABuffer();
+        matrixEngine.markExternalDraw();
+        matrixEngine.present();
         m_displayRuntime.getScheduler().delayUntilNextFrame(true);
         return;
     }
@@ -650,9 +652,10 @@ void AppRuntime::update() {
         if (m_wasPoweredOn) {
             matrixEngine.setBrightness(0);
             matrixEngine.getDisplay()->fillScreen(0);
-            matrixEngine.getDisplay()->flipDMABuffer();
+            matrixEngine.present();
             matrixEngine.getDisplay()->fillScreen(0);
-            matrixEngine.getDisplay()->flipDMABuffer();
+            matrixEngine.present();
+            matrixEngine.markExternalDraw();
             m_wasPoweredOn = false;
             m_lastAppliedBrightness = 0;
         }
@@ -669,6 +672,7 @@ void AppRuntime::update() {
     // running on a stalled render loop; this reports the second case explicitly.
     static unsigned long lastFrameEnd = 0;
     unsigned long tFrameStart = millis();
+    g_renderStats.loops++;
 
     DisplayDecision decision = m_displayRuntime.update(snapshot);
     unsigned long tAfterUpdate = millis();
@@ -686,9 +690,9 @@ void AppRuntime::update() {
     lastFrameEnd = tAfterRender;
 
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
-        matrixEngine.getDisplay()->flipDMABuffer();
+        matrixEngine.present();
     }
 
     bool isRealtime = decision.isRealtime || (rotationManager && rotationManager->isCurrentRealtime());
-    m_displayRuntime.getScheduler().delayUntilNextFrame(isRealtime);
+    m_displayRuntime.getScheduler().delayUntilNextFrame(isRealtime, renderResult.nextDueInMs);
 }

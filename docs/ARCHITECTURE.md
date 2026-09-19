@@ -396,7 +396,7 @@ Transverse visual effects (such as **MUGEN Fighters**) composite on top of the a
   - Sensor polling (`HardwareHAL`, `GyroHAL`).
 - **Core 1 (Realtime Graphics):**
   - `DisplayRuntime::update()` & `DisplayArbiter::evaluate()`.
-  - Frame pacing via `FrameScheduler` (60 FPS for realtime engines, 20-30 FPS for static screens).
+  - Frame pacing via `FrameScheduler` (60 FPS for realtime engines, 20-30 FPS for static screens). A self-pacing engine can report `nextFrameDueInMs()` and the scheduler wakes for it, so GIF frame delays are honoured to the millisecond instead of being rounded up to the next 16 ms tick.
   - Active engine `update()` & `render()`.
   - Transverse Overlay compositing (`OverlayManager::render()`).
   - HUB75 DMA buffer swap.
@@ -478,6 +478,7 @@ This single barrier function replaced three previously-duplicated, slightly-inco
 To prevent concurrent network consumers (AsyncWebServer / AsyncTCP serving WebUI requests) and cryptographic engines (Google Cast mbedTLS) from starving LwIP and triggering software socket aborts (`ECONNABORTED = 113`):
 1. **Application-Owned JSON in PSRAM:** All REST API schema and configuration endpoints in `WebServerAPI` instantiate `SpiRamJsonDocument` instead of `DynamicJsonDocument`, routing large JSON trees and string dictionaries to the 15 MB PSRAM pool. AsyncTCP and LwIP transport buffers remain in internal DRAM.
 2. **Graphics Canvas Buffer in PSRAM:** Large non-DMA framebuffers (such as `GifEngine`'s 32 KB canvas) prioritize PSRAM allocation (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), freeing over 32 KB of permanent internal DRAM at boot.
+3. **Dirty-pixel presentation (`GifEngine::blitCanvas`):** with the HUB75 DMA buffer in PSRAM, every `drawPixel` costs one read-modify-write plus one cache write-back per colour bit-plane, so pushing a full 256×64 frame (16 384 pixels × 8 planes) took on the order of 100 ms and held GIF playback to ~7 fps on the ESP32-S3 Waveshare board. `GifEngine` now keeps one shadow copy (PSRAM) of what it last drew into each DMA buffer and writes only the pixels that differ; a typical animation changes a small fraction of the panel per frame. `MatrixEngine::present()` is the single flip site so the flip count's parity identifies the current back buffer, and `MatrixEngine::markExternalDraw()` is called wherever something other than the active engine paints a framebuffer (overlays, notices, the power-off clear, orientation transitions) so the engine falls back to a full repaint afterwards. `/api/status` reports the resulting rates (`render.gif_fps`, `render.gif_blit_ms`, `render.gif_pixels_written_pct`).
 3. **AsyncTCP Task Core Isolation & Sizing:** The `async_tcp` service task is sized to 8192 bytes and pinned strictly to Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), isolating network callbacks from the Core 1 60 FPS display hot path.
 4. **Google Cast Reconnect Backoff:** Reconnections are paced with exponential backoff (5s, 10s, 20s, 60s) initialized upon session drop, avoiding tight reconnection loops during bursty HTTP activity.
 

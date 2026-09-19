@@ -60,7 +60,29 @@ public:
      */
     MatrixPanel_I2S_DMA* getDisplay();
 
+    /**
+     * @brief Flip the DMA buffers (show the back buffer, draw into the other one) and count it.
+     *
+     * Every flip in the firmware goes through here so the count's parity always says which physical
+     * buffer is currently the back buffer. GifEngine relies on that to keep one shadow copy per
+     * buffer and push only the pixels that changed since that buffer was last drawn.
+     */
+    void present();
+    uint32_t flipCount() const { return m_flipCount; }
+    bool isDoubleBuffered() const { return m_doubleBuffered; }
+
+    /**
+     * @brief Record that something other than the active engine drew into a framebuffer: an overlay,
+     * a notice, the power-off clear, an orientation transition. Engines that skip unchanged pixels
+     * compare this generation with the one they last synced to and redraw everything after a change.
+     */
+    void markExternalDraw() { m_externalDrawGeneration++; }
+    uint32_t externalDrawGeneration() const { return m_externalDrawGeneration; }
+
 private:
     MatrixPanel_I2S_DMA* display; ///< Pointer to the underlying DMA library instance
+    uint32_t m_flipCount = 0;
+    uint32_t m_externalDrawGeneration = 0;
+    bool m_doubleBuffered = false;
 };
 

@@ -1,4 +1,5 @@
 #include "WebServerAPI.h"
+#include "../core/RenderStats.h"
 #include <core/EngineRegistry.h>
 #include <ArduinoJson.h>
 #include <memory>
@@ -951,9 +952,10 @@ void WebServerAPI::setupRoutes() {
 
     // API: Get Device Status
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
-        SpiRamJsonDocument doc(512);
+        SpiRamJsonDocument doc(1024);
         doc["status"] = "online";
         doc["uptime"] = millis();
+        doc["cpu_mhz"] = getCpuFrequencyMhz();
         doc["free_heap"] = ESP.getFreeHeap();
         doc["min_free_heap"] = ESP.getMinFreeHeap();
         doc["max_alloc_heap"] = ESP.getMaxAllocHeap();
@@ -965,6 +967,34 @@ void WebServerAPI::setupRoutes() {
         }
         UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
         doc["async_tcp_hwm_bytes"] = (uint32_t)(hwm * sizeof(StackType_t));
+
+        // Render rates since the previous /api/status call (poll it twice, a few seconds apart).
+        {
+            static uint32_t lastMs = 0, lastLoops = 0, lastPresents = 0, lastGifFrames = 0,
+                            lastWritten = 0, lastTotal = 0, lastBlitUs = 0, lastDecodeUs = 0;
+            uint32_t nowMs = millis();
+            uint32_t loops = g_renderStats.loops.load(), presents = g_renderStats.presents.load(),
+                     gifFrames = g_renderStats.gifFrames.load(), written = g_renderStats.gifPixelsWritten.load(),
+                     total = g_renderStats.gifPixelsTotal.load(), blitUs = g_renderStats.gifBlitMicros.load(),
+                     decodeUs = g_renderStats.gifDecodeMicros.load();
+            uint32_t dtMs = nowMs - lastMs;
+            if (lastMs != 0 && dtMs >= 500) {
+                JsonObject r = doc.createNestedObject("render");
+                r["window_ms"] = dtMs;
+                r["loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
+                r["present_fps"] = (float)(presents - lastPresents) * 1000.0f / dtMs;
+                uint32_t gf = gifFrames - lastGifFrames;
+                r["gif_fps"] = (float)gf * 1000.0f / dtMs;
+                if (gf > 0) {
+                    r["gif_blit_ms"] = (float)(blitUs - lastBlitUs) / 1000.0f / gf;
+                    r["gif_decode_ms"] = (float)(decodeUs - lastDecodeUs) / 1000.0f / gf;
+                    uint32_t tot = total - lastTotal;
+                    if (tot > 0) r["gif_pixels_written_pct"] = (float)(written - lastWritten) * 100.0f / tot;
+                }
+            }
+            lastMs = nowMs; lastLoops = loops; lastPresents = presents; lastGifFrames = gifFrames;
+            lastWritten = written; lastTotal = total; lastBlitUs = blitUs; lastDecodeUs = decodeUs;
+        }
         sendJsonResponse(request, doc);
     });
 
@@ -2137,7 +2167,7 @@ void WebServerAPI::setupRoutes() {
             extern MatrixEngine matrixEngine;
             if (matrixEngine.getDisplay()) {
                 matrixEngine.getDisplay()->fillScreen(0);
-                matrixEngine.getDisplay()->flipDMABuffer();
+                matrixEngine.present();
             }
 
             WiFiClientSecure secureClient;
@@ -2168,7 +2198,7 @@ void WebServerAPI::setupRoutes() {
                 vTaskDelay(pdMS_TO_TICKS(250));
                 if (matrixEngine.getDisplay()) {
                     matrixEngine.getDisplay()->fillScreen(0);
-                    matrixEngine.getDisplay()->flipDMABuffer();
+                    matrixEngine.present();
                 }
                 WiFi.disconnect(true, true);
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -2205,7 +2235,7 @@ void WebServerAPI::setupRoutes() {
                 extern MatrixEngine matrixEngine;
                 if (matrixEngine.getDisplay()) {
                     matrixEngine.getDisplay()->fillScreen(0);
-                    matrixEngine.getDisplay()->flipDMABuffer();
+                    matrixEngine.present();
                 }
                 WiFi.disconnect(true, true);
                 vTaskDelay(pdMS_TO_TICKS(100));

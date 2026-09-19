@@ -4,7 +4,10 @@
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
+#include "MatrixEngine.h"
 #include <WiFi.h>
+
+extern MatrixEngine matrixEngine;
 
 extern ConfigLoader config;
 
@@ -290,6 +293,7 @@ void RotationManager::switchToModule(int index) {
       }
       if (m_ctx && m_ctx->getMatrix()) {
           m_ctx->getMatrix()->fillScreen(0);
+          matrixEngine.markExternalDraw();
       }
   }
 
@@ -393,6 +397,7 @@ bool RotationManager::loop() {
     if (activeEngine) {
         if (activeEngine->needsClear() && m_ctx && m_ctx->getMatrix()) {
             m_ctx->getMatrix()->fillScreen(0);
+            matrixEngine.markExternalDraw();
         }
         activeEngine->update(m_ctx);
         activeEngine->render(m_ctx);
