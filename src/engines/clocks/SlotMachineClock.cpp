@@ -29,6 +29,7 @@ void SlotMachineClock::update() {
     } else if ((lastMinute != storedTime.minutes || strcmp(currentTime, timeStr) != 0) && !spinning) {
         spinning = true;
         spinSpeed = 15.0f;
+        lastSpinMs = 0;
         strcpy(targetTime, timeStr);
     } else if (!spinning) {
         strcpy(currentTime, timeStr);
@@ -39,8 +40,15 @@ void SlotMachineClock::update() {
         animFrame++;
         
         if (spinning) {
-            yOffset += spinSpeed;
-            spinSpeed *= 0.95f;
+            // Decay on elapsed time, not per rendered frame: the 0.95-per-frame factor assumed 60 fps and
+            // needs ~66 updates to settle, which is ~1 s there but ~6 s at the 10-13 updates/s a 256x64
+            // panel gets - the reels showed the 88:88 / 00:00 blur for a whole rotation slot.
+            unsigned long nowMs = millis();
+            float frames = (lastSpinMs == 0) ? 1.0f : (float)(nowMs - lastSpinMs) / 16.6667f;   // 60 fps-equivalent steps
+            if (frames > 12.0f) frames = 12.0f;   // cap a stall so the reel does not teleport
+            lastSpinMs = nowMs;
+            yOffset += spinSpeed * frames;
+            spinSpeed *= powf(0.95f, frames);
 
             if (spinSpeed < 0.5f) {
                 spinning = false;

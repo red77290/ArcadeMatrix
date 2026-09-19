@@ -16,6 +16,7 @@ private:
     bool spinning;
     float spinSpeed;
     float yOffset;
+    unsigned long lastSpinMs = 0;   ///< time base for the frame-rate independent spin decay
     char currentTime[12];
     char targetTime[12];
     uint32_t lastFrameTime;
