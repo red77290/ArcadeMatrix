@@ -84,9 +84,13 @@ void MatrixRainClock::drawTime() {
         // ====================================================================
         // Landscape / Widescreen Layout ("HH:MM:SS" or configured format)
         // ====================================================================
-        String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
-        if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
-        if (fmt.isEmpty()) fmt = "%H:%M:%S";
+        // "system" is the Time Format setting's default placeholder (see ClockEngine), not a strftime
+        // pattern: passing it through printed the literal word "system" on the panel (#33). The engine has
+        // already applied the 12/24-hour preference to storedTime, so the plain pattern is the right fallback.
+        auto isPlaceholder = [](const String& f) { return f.isEmpty() || f.equalsIgnoreCase("system"); };
+        String fmt = engineConfig ? engineConfig->getString("clock_format", "") : "";
+        if (isPlaceholder(fmt) && engineConfig) fmt = engineConfig->getString("format", "");
+        if (isPlaceholder(fmt)) fmt = "%H:%M:%S";
 
         char timeStr[32];
         struct tm timeinfo;
