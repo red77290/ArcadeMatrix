@@ -15,7 +15,7 @@ static Drop drops[MAX_DROPS];
 static bool dropsInit = false;
 static int activeDropCount = 0;
 
-CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lineY(0), lastFrameTime(0) {}
+CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lineY(0), lastFrameTime(0) { faceFont.load(config);}
 
 void CyberpunkClock::draw(const TimeData& t) {
     storedTime = t;
@@ -37,13 +37,18 @@ void CyberpunkClock::drawTime() {
         sprintf(sStr, "%02d", storedTime.seconds);
 
         int scale = (w >= 64) ? 2 : 1;
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, "88", w, h / 3);
+        int16_t bx, by;
+        uint16_t bw, bh;
+        matrix->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
+        if (bw == 0 || bh == 0) { bw = 11 * scale; bh = 7 * scale; }
 
-        int tx = (w - (12 * scale)) / 2 + offX;
+        // getTextBounds gives the box; print at (top - by) since custom fonts take the cursor as baseline
+        int tx = (w - bw) / 2 + offX - bx;
         if (h >= 96) {
-            int yH = (h / 6) - (4 * scale) + offY;
-            int yM = (h / 2) - (4 * scale) + offY;
-            int yS = (5 * h / 6) - (4 * scale) + offY;
+            int yH = (h / 6) - (bh / 2) + offY - by;
+            int yM = (h / 2) - (bh / 2) + offY - by;
+            int yS = (5 * h / 6) - (bh / 2) + offY - by;
 
             matrix->setTextColor(0);
             matrix->setCursor(tx - 1, yH); matrix->print(hStr);
@@ -60,8 +65,8 @@ void CyberpunkClock::drawTime() {
             matrix->setCursor(tx + 1, yS); matrix->print(sStr);
             matrix->setCursor(tx, yS); matrix->setTextColor(matrix->color565(0, 140, 60)); matrix->print(sStr);
         } else {
-            int yH = (h / 4) - (4 * scale) + offY + 2;
-            int yM = (3 * h / 4) - (4 * scale) + offY - 2;
+            int yH = (h / 4) - (bh / 2) + offY + 2 - by;
+            int yM = (3 * h / 4) - (bh / 2) + offY - 2 - by;
 
             matrix->setTextColor(0);
             matrix->setCursor(tx - 1, yH); matrix->print(hStr);
@@ -77,7 +82,7 @@ void CyberpunkClock::drawTime() {
         char timeStr[12];
         sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
         
-        matrix->setTextSize(1);
+        faceFont.apply(*matrix, 1, "88:88:88", w, h);
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds("88:88:88", 0, 0, &bx, &by, &bw, &bh);

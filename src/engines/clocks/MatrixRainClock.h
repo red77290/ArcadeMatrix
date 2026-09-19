@@ -2,6 +2,7 @@
 #define MATRIXRAINCLOCK_H
 
 #include "../ClockEngine.h"
+#include "ClockFaceFont.h"
 
 // Character-based "digital rain" clock face, mirroring ArcadeMatrix_RPi's TrueMatrixRenderer
 // (theme ID 21). Unlike CyberpunkClock (theme 18), which only animates single falling pixels,
@@ -15,6 +16,7 @@ public:
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
 private:
+    ClockFaceFont faceFont;   ///< configured clock_font (shared resolver, see ClockFaceFont.h)
     static const int MAX_COLUMNS = 48; // Covers up to 256px wide
     static const int MAX_ROWS = 32;    // Covers up to 256px tall
     int8_t colHead[MAX_COLUMNS];       // Primary drop head

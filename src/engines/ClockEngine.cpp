@@ -169,6 +169,7 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
         ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("clock_speed", ConfigType::INTEGER, "Animation Speed", "Animation speed in percent (Tetris block fall, Pac-Man sweep); lower is slower", "100", false, "25", "300", "25", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
         ConfigField("clock_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#ff00ff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
         ConfigField("clock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),

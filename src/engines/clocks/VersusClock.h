@@ -2,6 +2,7 @@
 #define VERSUSCLOCK_H
 
 #include "../ClockEngine.h"
+#include "ClockFaceFont.h"
 
 class VersusClock : public ClockFace {
 public:
@@ -11,6 +12,7 @@ public:
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
 
 private:
+    ClockFaceFont faceFont;   ///< configured clock_font (shared resolver, see ClockFaceFont.h)
     TimeData storedTime;
     int lastMinute;
     bool animating;
