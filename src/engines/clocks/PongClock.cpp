@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) {
+PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) { faceFont.load(config);
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));
@@ -32,10 +32,10 @@ void PongClock::draw(const TimeData& t) {
 }
 
 void PongClock::drawScores() {
-    matrix->setFont(NULL);
     int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
     if (gfxSize < 1) gfxSize = 1;
-    matrix->setTextSize(gfxSize);
+    // one score fits in a half-panel minus the centre gap; otherwise fall back to the built-in font
+    faceFont.apply(*matrix, gfxSize, "88", matrix->width() / 2 - 8, matrix->height());
     
     char scoreLeft[3];
     char scoreRight[3];
@@ -51,11 +51,11 @@ void PongClock::drawScores() {
     
     // Draw left score
     matrix->setTextColor(matrix->color565(255, 255, 255));
-    matrix->setCursor(center - bw - 8, yOffset - by);
+    matrix->setCursor(center - bw - 8 - bx, yOffset - by);
     matrix->print(scoreLeft);
     
     // Draw right score
-    matrix->setCursor(center + 8, yOffset - by);
+    matrix->setCursor(center + 8 - bx, yOffset - by);
     matrix->print(scoreRight);
 }
 

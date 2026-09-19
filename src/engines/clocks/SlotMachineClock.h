@@ -2,6 +2,7 @@
 #define SLOTMACHINECLOCK_H
 
 #include "../ClockEngine.h"
+#include "ClockFaceFont.h"
 
 class SlotMachineClock : public ClockFace {
 public:
@@ -10,6 +11,7 @@ public:
     void update() override;
 
 private:
+    ClockFaceFont faceFont;   ///< configured clock_font (shared resolver, see ClockFaceFont.h)
     TimeData storedTime;
     int lastMinute;
     uint32_t animFrame;

@@ -2,6 +2,7 @@
 #define PACMANCLOCK_H
 
 #include "../ClockEngine.h"
+#include "ClockFaceFont.h"
 
 class PacmanClock : public ClockFace {
 public:
@@ -10,6 +11,7 @@ public:
     void update() override;
 
 private:
+    ClockFaceFont faceFont;   ///< configured clock_font (shared resolver, see ClockFaceFont.h)
     TimeData storedTime;
     char oldTimeStr[12];
     char newTimeStr[12];

@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <string.h>
 
-SlotMachineClock::SlotMachineClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+SlotMachineClock::SlotMachineClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animFrame = 0;
@@ -88,16 +88,17 @@ void SlotMachineClock::update() {
 
         int scale = (w >= 64) ? 3 : 2;
         if (gfxSize >= 1 && gfxSize <= 4) scale = min(scale, gfxSize);
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, "88", w, h / 2);
 
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0) bw = 11 * scale; if (bh == 0) bh = 7 * scale;
 
-        int tx = (w - bw) / 2 + offX;
+        int tx = (w - bw) / 2 + offX;            // text box (used for the reel frames and clipping)
         int tyH = (h / 4) - (bh / 2) + offY;
         int tyM = (3 * h / 4) - (bh / 2) + offY;
+        int cx = tx - bx, cyH = tyH - by, cyM = tyM - by;   // print cursor: custom fonts use the baseline
 
         // Slot Machine Reels Boxes
         matrix->drawRect(tx - 3, tyH - 2, bw + 6, bh + 4, frameColor);
@@ -108,12 +109,12 @@ void SlotMachineClock::update() {
             int blurY = (int)yOffset % th2;
 
             matrix->setTextColor(matrix->color565(80, 80, 80));
-            matrix->setCursor(tx, tyH + blurY - th2); matrix->print("88");
-            matrix->setCursor(tx, tyM + blurY - th2); matrix->print("88");
+            matrix->setCursor(cx, cyH + blurY - th2); matrix->print("88");
+            matrix->setCursor(cx, cyM + blurY - th2); matrix->print("88");
 
             matrix->setTextColor(matrix->color565(40, 40, 40));
-            matrix->setCursor(tx, tyH + blurY); matrix->print("00");
-            matrix->setCursor(tx, tyM + blurY); matrix->print("00");
+            matrix->setCursor(cx, cyH + blurY); matrix->print("00");
+            matrix->setCursor(cx, cyM + blurY); matrix->print("00");
 
             // Clip overflow
             matrix->fillRect(0, 0, w, tyH - 2, 0);
@@ -122,14 +123,14 @@ void SlotMachineClock::update() {
         } else {
             // Outline & Text
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, tyH); matrix->print(hStr);
-            matrix->setCursor(tx + 1, tyH); matrix->print(hStr);
-            matrix->setCursor(tx, tyH); matrix->setTextColor(color1); matrix->print(hStr);
+            matrix->setCursor(cx - 1, cyH); matrix->print(hStr);
+            matrix->setCursor(cx + 1, cyH); matrix->print(hStr);
+            matrix->setCursor(cx, cyH); matrix->setTextColor(color1); matrix->print(hStr);
 
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, tyM); matrix->print(mStr);
-            matrix->setCursor(tx + 1, tyM); matrix->print(mStr);
-            matrix->setCursor(tx, tyM); matrix->setTextColor(color1); matrix->print(mStr);
+            matrix->setCursor(cx - 1, cyM); matrix->print(mStr);
+            matrix->setCursor(cx + 1, cyM); matrix->print(mStr);
+            matrix->setCursor(cx, cyM); matrix->setTextColor(color1); matrix->print(mStr);
         }
 
         // Blinking LEDs
@@ -139,15 +140,16 @@ void SlotMachineClock::update() {
         matrix->drawPixel(tx + bw + 5, tyM + bh / 2, leftCol);
     } else {
         // Landscape / Widescreen Layout
-        matrix->setTextSize(gfxSize);
+        faceFont.apply(*matrix, gfxSize, "88:88", w, h);
         int16_t bx, by;
         uint16_t bw, bh;
         // Use fixed reference "88:88" to avoid shifting when '1' appears
         matrix->getTextBounds("88:88", 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0) bw = 29 * gfxSize; if (bh == 0) bh = 7 * gfxSize;
         
-        int tx = (w - bw) / 2 + offX;
+        int tx = (w - bw) / 2 + offX;            // text box (frame + clipping)
         int ty = (h - bh) / 2 + offY;
+        int cx = tx - bx, cy = ty - by;          // print cursor (baseline for custom fonts)
 
         matrix->drawRect(tx - 4, ty - 2, bw + 8, bh + 4, frameColor);
         
@@ -156,11 +158,11 @@ void SlotMachineClock::update() {
             int blurY = ty + ((int)yOffset % th2);
             
             matrix->setTextColor(matrix->color565(80, 80, 80));
-            matrix->setCursor(tx, blurY - th2);
+            matrix->setCursor(cx, blurY - th2 - by);
             matrix->print("88:88");
             
             matrix->setTextColor(matrix->color565(40, 40, 40));
-            matrix->setCursor(tx, blurY);
+            matrix->setCursor(cx, blurY - by);
             matrix->print("00:00");
             
             // Clip overflow
@@ -169,13 +171,13 @@ void SlotMachineClock::update() {
         } else {
             // Black outline
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, ty); matrix->print(currentTime);
-            matrix->setCursor(tx + 1, ty); matrix->print(currentTime);
-            matrix->setCursor(tx, ty - 1); matrix->print(currentTime);
-            matrix->setCursor(tx, ty + 1); matrix->print(currentTime);
+            matrix->setCursor(cx - 1, cy); matrix->print(currentTime);
+            matrix->setCursor(cx + 1, cy); matrix->print(currentTime);
+            matrix->setCursor(cx, cy - 1); matrix->print(currentTime);
+            matrix->setCursor(cx, cy + 1); matrix->print(currentTime);
 
             matrix->setTextColor(color1);
-            matrix->setCursor(tx, ty);
+            matrix->setCursor(cx, cy);
             matrix->print(currentTime);
         }
         

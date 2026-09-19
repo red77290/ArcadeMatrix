@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
     storedTime = {0, 0, 0};
     strcpy(oldTimeStr, "");
     strcpy(newTimeStr, "");
@@ -130,13 +130,13 @@ void PacmanClock::update() {
     if (isTate) {
         scale = (w >= 64) ? 3 : 2;
         if (gfxSize >= 1 && gfxSize <= 4) scale = min(scale, gfxSize);
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, "88", w, h / 2);
         matrix->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0) bw = 11 * scale;
         if (bh == 0) bh = 7 * scale;
     } else {
         scale = gfxSize;
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, newTimeStr, w, h);
         matrix->getTextBounds(newTimeStr, 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0) bw = 30 * scale;
         if (bh == 0) bh = 7 * scale;
@@ -177,9 +177,10 @@ void PacmanClock::update() {
         hOld[0] = oldTimeStr[0]; hOld[1] = oldTimeStr[1]; hOld[2] = '\0';
         mOld[0] = oldTimeStr[3]; mOld[1] = oldTimeStr[4]; mOld[2] = '\0';
 
-        int tx = (w - bw) / 2 + offX;
+        int tx = (w - bw) / 2 + offX;            // text box (clip rectangles, Pac-Man path)
         int tyH = (h / 4) - (bh / 2) + offY;
         int tyM = (3 * h / 4) - (bh / 2) + offY;
+        int cx = tx - bx, cyH = tyH - by, cyM = tyM - by;   // print cursor: custom fonts use the baseline
         int dotY = (h / 2) + offY;
         uint16_t dotColor = matrix->color565(255, 183, 174);
         int dotX[3] = {
@@ -190,18 +191,18 @@ void PacmanClock::update() {
 
         if (!transitioning) {
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, tyH); matrix->print(hNew);
-            matrix->setCursor(tx + 1, tyH); matrix->print(hNew);
-            matrix->setCursor(tx, tyH - 1); matrix->print(hNew);
-            matrix->setCursor(tx, tyH + 1); matrix->print(hNew);
-            matrix->setCursor(tx, tyH); matrix->setTextColor(color1); matrix->print(hNew);
+            matrix->setCursor(cx - 1, cyH); matrix->print(hNew);
+            matrix->setCursor(cx + 1, cyH); matrix->print(hNew);
+            matrix->setCursor(cx, cyH - 1); matrix->print(hNew);
+            matrix->setCursor(cx, cyH + 1); matrix->print(hNew);
+            matrix->setCursor(cx, cyH); matrix->setTextColor(color1); matrix->print(hNew);
 
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, tyM); matrix->print(mNew);
-            matrix->setCursor(tx + 1, tyM); matrix->print(mNew);
-            matrix->setCursor(tx, tyM - 1); matrix->print(mNew);
-            matrix->setCursor(tx, tyM + 1); matrix->print(mNew);
-            matrix->setCursor(tx, tyM); matrix->setTextColor(color1); matrix->print(mNew);
+            matrix->setCursor(cx - 1, cyM); matrix->print(mNew);
+            matrix->setCursor(cx + 1, cyM); matrix->print(mNew);
+            matrix->setCursor(cx, cyM - 1); matrix->print(mNew);
+            matrix->setCursor(cx, cyM + 1); matrix->print(mNew);
+            matrix->setCursor(cx, cyM); matrix->setTextColor(color1); matrix->print(mNew);
 
             for (int i = 0; i < 3; i++) {
                 matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
@@ -215,7 +216,7 @@ void PacmanClock::update() {
                 float currentPacX = -pacRadius * 2.0f + pacX;
 
                 matrix->setTextColor(matrix->color565(100, 100, 100));
-                matrix->setCursor(tx, tyH); matrix->print(hOld);
+                matrix->setCursor(cx, cyH); matrix->print(hOld);
 
                 if (currentPacX > 0) {
                     matrix->fillRect(0, tyH - 2, min(w, (int)currentPacX), bh + 4, 0);
@@ -223,7 +224,7 @@ void PacmanClock::update() {
                 int revealX = (int)currentPacX - (pacRadius * 3 + 4 * ghostSpacing);
                 if (revealX > 0) {
                     matrix->setTextColor(color1);
-                    matrix->setCursor(tx, tyH); matrix->print(hNew);
+                    matrix->setCursor(cx, cyH); matrix->print(hNew);
                     if (revealX < w) {
                         matrix->fillRect(revealX, tyH - 2, w - revealX, bh + 4, 0);
                     }
@@ -234,7 +235,7 @@ void PacmanClock::update() {
                 }
 
                 matrix->setTextColor(matrix->color565(100, 100, 100));
-                matrix->setCursor(tx, tyM); matrix->print(mOld);
+                matrix->setCursor(cx, cyM); matrix->print(mOld);
 
                 drawPacman((int)currentPacX, tyH + bh / 2, pacRadius, mouthAngle, true);
                 for (int i = 0; i < 4; i++) {
@@ -248,7 +249,7 @@ void PacmanClock::update() {
                 float currentPacX = (w + pacRadius * 2.0f) - progress;
 
                 matrix->setTextColor(color1);
-                matrix->setCursor(tx, tyH); matrix->print(hNew);
+                matrix->setCursor(cx, cyH); matrix->print(hNew);
 
                 for (int i = 0; i < 3; i++) {
                     int px = dotX[i];
@@ -260,7 +261,7 @@ void PacmanClock::update() {
                 }
 
                 matrix->setTextColor(matrix->color565(100, 100, 100));
-                matrix->setCursor(tx, tyM); matrix->print(mOld);
+                matrix->setCursor(cx, cyM); matrix->print(mOld);
 
                 drawPacman((int)currentPacX, dotY, pacRadius, mouthAngle, false);
                 for (int i = 0; i < 4; i++) {
@@ -274,14 +275,14 @@ void PacmanClock::update() {
                 float currentPacX = -pacRadius * 2.0f + progress;
 
                 matrix->setTextColor(color1);
-                matrix->setCursor(tx, tyH); matrix->print(hNew);
+                matrix->setCursor(cx, cyH); matrix->print(hNew);
 
                 for (int i = 0; i < 3; i++) {
                     matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
                 }
 
                 matrix->setTextColor(matrix->color565(100, 100, 100));
-                matrix->setCursor(tx, tyM); matrix->print(mOld);
+                matrix->setCursor(cx, cyM); matrix->print(mOld);
 
                 if (currentPacX > 0) {
                     matrix->fillRect(0, tyM - 2, min(w, (int)currentPacX), bh + 4, 0);
@@ -289,7 +290,7 @@ void PacmanClock::update() {
                 int revealX = (int)currentPacX - (pacRadius * 3 + 4 * ghostSpacing);
                 if (revealX > 0) {
                     matrix->setTextColor(color1);
-                    matrix->setCursor(tx, tyM); matrix->print(mNew);
+                    matrix->setCursor(cx, cyM); matrix->print(mNew);
                     if (revealX < w) {
                         matrix->fillRect(revealX, tyM - 2, w - revealX, bh + 4, 0);
                     }
@@ -307,16 +308,17 @@ void PacmanClock::update() {
         // Landscape / Widescreen Layout
         int tx = (w - bw) / 2 + offX;
         int ty = (h - bh) / 2 + offY;
+        int cx = tx - bx, cy = ty - by;
         
         if (!transitioning) {
             matrix->setTextColor(0);
-            matrix->setCursor(tx - 1, ty); matrix->print(newTimeStr);
-            matrix->setCursor(tx + 1, ty); matrix->print(newTimeStr);
-            matrix->setCursor(tx, ty - 1); matrix->print(newTimeStr);
-            matrix->setCursor(tx, ty + 1); matrix->print(newTimeStr);
+            matrix->setCursor(cx - 1, cy); matrix->print(newTimeStr);
+            matrix->setCursor(cx + 1, cy); matrix->print(newTimeStr);
+            matrix->setCursor(cx, cy - 1); matrix->print(newTimeStr);
+            matrix->setCursor(cx, cy + 1); matrix->print(newTimeStr);
 
             matrix->setTextColor(color1);
-            matrix->setCursor(tx, ty);
+            matrix->setCursor(cx, cy);
             matrix->print(newTimeStr);
             
             uint16_t dotColor = matrix->color565(255, 183, 174);
@@ -329,7 +331,7 @@ void PacmanClock::update() {
             int mouthAngle = (int)(abs(sin(animFrame * 0.25f)) * 45);
             
             // Draw old time being eaten
-            matrix->setCursor(tx, ty);
+            matrix->setCursor(cx, cy);
             matrix->setTextColor(matrix->color565(100, 100, 100));
             matrix->print(oldTimeStr);
             
@@ -341,7 +343,7 @@ void PacmanClock::update() {
             // Draw new time revealed behind pacman
             int revealX = (int)(pacX - (pacRadius * 2.5f + 4 * ghostSpacing));
             if (revealX > 0) {
-                matrix->setCursor(tx, ty);
+                matrix->setCursor(cx, cy);
                 matrix->setTextColor(color1);
                 matrix->print(newTimeStr);
                 
