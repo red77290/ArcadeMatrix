@@ -1308,7 +1308,8 @@ void WebServerAPI::setupRoutes() {
 
         // Bounded wait: never block the AsyncTCP task indefinitely on the SD mutex, otherwise a
         // long Core 1 decode stalls every pending HTTP connection.
-        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        SdLockGuard guard(pdMS_TO_TICKS(5000));
+        if (!guard) {
             if (s_playlistCacheValid[cacheSlot]) {
                 // Serve the stale snapshot rather than failing the whole Display tab.
                 request->send(200, "application/json", s_playlistCache[cacheSlot]);
@@ -1342,7 +1343,7 @@ void WebServerAPI::setupRoutes() {
             }
             payload = "{\"yoko\":" + yoko + ",\"tate\":" + tate + "}";
         }
-        xSemaphoreGive(sdMutex);
+        guard.unlock();
 
         s_playlistCache[cacheSlot] = payload;
         s_playlistCacheStamp[cacheSlot] = millis();
@@ -3043,32 +3044,40 @@ void WebServerAPI::setupRoutes() {
 
         if (!index) {
             LOGI("WebServer", "Asset upload start: %s -> %s", filename.c_str(), destPath.c_str());
-            if (!sd.exists("/marquees")) {
-                sd.mkdir("/marquees");
-            }
-            // Enforce single-file overwrite: remove any previous marquee files
-            const char* oldFiles[] = {
-                "/marquees/marquee.gif", "/marquees/marquee.png", "/marquees/marquee.jpg", "/marquees/marquee.jpeg",
-                "/marquees/custom_marquee.gif", "/marquees/custom_marquee.png", "/marquees/custom_marquee.jpg", "/marquees/custom_marquee.raw"
-            };
-            for (const char* f : oldFiles) {
-                if (sd.exists(f)) {
-                    sd.remove(f);
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (guard) {
+                if (!sd.exists("/marquees")) {
+                    sd.mkdir("/marquees");
                 }
-            }
-            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-            if (uploadFile) {
-                uploadFile.write(data, len);
-                uploadFile.close();
-                request->_tempObject = new String(destPath);
+                // Enforce single-file overwrite: remove any previous marquee files
+                const char* oldFiles[] = {
+                    "/marquees/marquee.gif", "/marquees/marquee.png", "/marquees/marquee.jpg", "/marquees/marquee.jpeg",
+                    "/marquees/custom_marquee.gif", "/marquees/custom_marquee.png", "/marquees/custom_marquee.jpg", "/marquees/custom_marquee.raw"
+                };
+                for (const char* f : oldFiles) {
+                    if (sd.exists(f)) {
+                        sd.remove(f);
+                    }
+                }
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                    request->_tempObject = new String(destPath);
+                } else {
+                    LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
+                }
             } else {
-                LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
+                LOGE("WebServer", "Failed to acquire SD lock for marquee file upload: %s", destPath.c_str());
             }
         } else if (request->_tempObject) {
-            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
-            if (uploadFile) {
-                uploadFile.write(data, len);
-                uploadFile.close();
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (guard) {
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                }
             }
         }
 

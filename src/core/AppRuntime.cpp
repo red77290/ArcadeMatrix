@@ -190,7 +190,9 @@ void AppRuntime::initialize() {
         Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
         while (1) { delay(100); }
     }
-    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 10)) {
+    // Configure SD_MMC with max_files=5 so vfs_fat_ctx_t (~3.5KB) stays in fast internal DRAM (<4KB threshold)
+    // rather than spilling into external PSRAM where HUB75 DMA bus contention and cache invalidations can occur.
+    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 5)) {
         Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
         while (1) { delay(100); }
     }
