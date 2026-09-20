@@ -149,7 +149,7 @@ public:
 
 private:
     static FighterEngine* s_lastInstance;   ///< most recently initialised overlay, for debugStatusJson()
-    String m_lastNote;                      ///< last warning/error this engine logged
+    const char* m_lastNote = nullptr;       ///< last warning/error this engine logged (zero-allocation string literal)
 
 
     
