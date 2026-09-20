@@ -5,6 +5,9 @@
 #include "../core/ConfigLoader.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/MatrixEngine.h"
+
+extern MatrixEngine matrixEngine;
 
 
 FighterEngine::FighterEngine() : matrix(nullptr) {}
@@ -35,6 +38,11 @@ void FighterEngine::deactivate() {
     m_taskShouldExit = true;
     if (loaderTaskHandle) {
         xTaskNotifyGive(loaderTaskHandle);
+    }
+    for (int b = 0; b < 2; b++) {
+        prevBoxes[b][0].valid = false;
+        prevBoxes[b][1].valid = false;
+        prevHud[b].valid = false;
     }
 }
 
@@ -1288,15 +1296,60 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     }
 }
 
+FgtAnimation* FighterEngine::getActiveAnim(FighterPlayer& p) {
+    if (p.state == FIGHTER_STAND) return p.animStand.loaded ? &p.animStand : &p.animWalk;
+    else if (p.state == FIGHTER_WALK) return &p.animWalk;
+    else if (p.state == FIGHTER_ATTACK) return &p.animAttack;
+    else if (p.state == FIGHTER_HIT) return &p.animHit;
+    else if (p.state == FIGHTER_WIN) return &p.animWin;
+    else if (p.state == FIGHTER_SPECIAL) return &p.animSpecial;
+    else if (p.state == FIGHTER_SUPER) return &p.animSuper;
+    else if (p.state == FIGHTER_FALL) return &p.animFall;
+    return nullptr;
+}
+
+int FighterEngine::getScale() const {
+    if (!matrix) return 1;
+    int screenW = matrix->width();
+    int screenH = matrix->height();
+    bool isTate = (screenW < 48 || screenH > (screenW * 3) / 2);
+    int scale = 1;
+    if (!isTate && screenH >= 64 && loadDir.endsWith("32")) {
+        scale = screenH / 32;
+    } else if (isTate && screenW >= 96 && loadDir.endsWith("32")) {
+        scale = screenW / 64;
+    }
+    return scale;
+}
+
 void FighterEngine::draw() {
     if (!active || !matrix) return;
-    
+
+    int bufId = matrixEngine.isDoubleBuffered() ? (int)(matrixEngine.flipCount() & 1u) : 0;
+
+    // Self-cleaning overlay: erase previous bounding boxes for this physical buffer
+    if (prevBoxes[bufId][0].valid) {
+        matrix->fillRect(prevBoxes[bufId][0].x, prevBoxes[bufId][0].y,
+                         prevBoxes[bufId][0].w, prevBoxes[bufId][0].h, 0);
+        prevBoxes[bufId][0].valid = false;
+    }
+    if (prevBoxes[bufId][1].valid) {
+        matrix->fillRect(prevBoxes[bufId][1].x, prevBoxes[bufId][1].y,
+                         prevBoxes[bufId][1].w, prevBoxes[bufId][1].h, 0);
+        prevBoxes[bufId][1].valid = false;
+    }
+    if (prevHud[bufId].valid) {
+        matrix->fillRect(prevHud[bufId].x, prevHud[bufId].y,
+                         prevHud[bufId].w, prevHud[bufId].h, 0);
+        prevHud[bufId].valid = false;
+    }
+
     int globalOffsetY = 0;
     if (shakeRemainingFrames > 0) {
         globalOffsetY = random(-2, 3);
         shakeRemainingFrames--;
     }
-    
+
     int screenW = matrix->width();
     int screenH = matrix->height();
     bool isTateMode = (screenH > (screenW * 3) / 2 || screenW < 48);
@@ -1310,9 +1363,35 @@ void FighterEngine::draw() {
         drawPlayer(p1, globalOffsetY);
     }
 
+    // Record new player bounding boxes for this buffer
+    int scale = getScale();
+    FgtAnimation* a1 = getActiveAnim(p1);
+    if (a1 && a1->loaded) {
+        prevBoxes[bufId][0].x = p1.x;
+        prevBoxes[bufId][0].y = p1.y + globalOffsetY;
+        prevBoxes[bufId][0].w = a1->width * scale;
+        prevBoxes[bufId][0].h = a1->height * scale;
+        prevBoxes[bufId][0].valid = true;
+    }
+    FgtAnimation* a2 = getActiveAnim(p2);
+    if (a2 && a2->loaded) {
+        prevBoxes[bufId][1].x = p2.x;
+        prevBoxes[bufId][1].y = p2.y + globalOffsetY;
+        prevBoxes[bufId][1].w = a2->width * scale;
+        prevBoxes[bufId][1].h = a2->height * scale;
+        prevBoxes[bufId][1].valid = true;
+    }
+
     // Responsive Arcade HUD in Tate mode (only 64x256+) / Large horizontal screens
     bool showHud = isTateMode ? (screenW >= 64) : (screenH >= 32);
     if (showHud) {
+        bool showTags = (isTateMode && screenW >= 64 && screenH >= 200) || (!isTateMode && screenH >= 64);
+        prevHud[bufId].x = 0;
+        prevHud[bufId].y = 0;
+        prevHud[bufId].w = screenW;
+        prevHud[bufId].h = showTags ? 18 : 8;
+        prevHud[bufId].valid = true;
+
         int barW = min(20, (screenW - 16) / 2);
         if (barW > 2) {
             // Player 1 Health Bar (Left)
@@ -1335,7 +1414,6 @@ void FighterEngine::draw() {
         }
 
         // On ultra-tall screens (64x256), draw MUGEN arcade banner under health bars
-        bool showTags = (isTateMode && screenW >= 64 && screenH >= 200) || (!isTateMode && screenH >= 64);
         if (showTags) {
             matrix->setFont(nullptr);
             matrix->setTextSize(1);

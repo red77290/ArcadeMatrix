@@ -165,3 +165,151 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
 MatrixPanel_I2S_DMA* MatrixEngine::getDisplay() {
     return display;
 }
+
+void MatrixEngine::blitCanvas565(const uint16_t* src, int canvasWidth, int canvasHeight) {
+    if (m_panel) {
+        m_panel->blitCanvas565(src, canvasWidth, canvasHeight);
+    }
+}
+
+void FastMatrixPanel::fillScreen(uint16_t color) {
+    if (color != 0) {
+        MatrixPanel_I2S_DMA::fillScreen(color);
+        return;
+    }
+    clearFrameBuffer(m_back);
+    setBrightness8(m_brightness8);
+}
+
+void FastMatrixPanel::setBuffering(bool doubleBuffered) {
+    m_double = doubleBuffered;
+    m_back = doubleBuffered ? 1 : 0;
+    initLuts(m_cfg.getPixelColorDepthBits());
+}
+
+void FastMatrixPanel::initLuts(uint8_t depth) {
+    if (depth < 2) depth = 8;
+    if (depth > 8) depth = 8;
+    m_depth = depth;
+    uint8_t shift = 8 - depth;
+    uint8_t round = (shift > 0) ? (1 << (shift - 1)) : 0;
+    uint16_t maxVal = (1 << depth) - 1;
+
+    for (int r = 0; r < 32; r++) {
+        uint8_t r8 = (r << 3) | (r >> 2);
+        uint16_t val = lumConvTab_8bit[r8];
+        uint16_t scaled = (val + round) >> shift;
+        m_lut_r[r] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+    }
+    for (int g = 0; g < 64; g++) {
+        uint8_t g8 = (g << 2) | (g >> 4);
+        uint16_t val = lumConvTab_8bit[g8];
+        uint16_t scaled = (val + round) >> shift;
+        m_lut_g[g] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+    }
+    for (int b = 0; b < 32; b++) {
+        uint8_t b8 = (b << 3) | (b >> 2);
+        uint16_t val = lumConvTab_8bit[b8];
+        uint16_t scaled = (val + round) >> shift;
+        m_lut_b[b] = (scaled > maxVal) ? (uint8_t)maxVal : (uint8_t)scaled;
+    }
+}
+
+void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
+    if (!initialized || x < 0 || x >= _width || y < 0 || y >= _height) return;
+    int16_t w = 1, h = 1;
+    transform(x, y, w, h);
+
+    if (x < 0 || x >= (int16_t)PIXELS_PER_ROW || y < 0 || y >= (int16_t)m_cfg.mx_height) return;
+
+    uint8_t r_val = m_lut_r[(color >> 11) & 0x1F];
+    uint8_t g_val = m_lut_g[(color >> 5) & 0x3F];
+    uint8_t b_val = m_lut_b[color & 0x1F];
+
+    uint16_t x_adj = MATRIX_TX_ADJUST(x);
+    uint16_t colourbitclear = BITMASK_RGB1_CLEAR;
+    uint16_t colourbitoffset = 0;
+
+    if (y >= ROWS_PER_FRAME) {
+        colourbitoffset = BITS_RGB2_OFFSET;
+        colourbitclear = BITMASK_RGB2_CLEAR;
+        y -= ROWS_PER_FRAME;
+    }
+
+    auto& targetFb = frame_buffer[m_back];
+    if (y >= (int16_t)targetFb.rowBits.size()) return;
+
+    for (uint8_t p = 0; p < m_depth; ++p) {
+        uint16_t mask = (1 << p);
+        uint16_t rgb = 0;
+        if (r_val & mask) rgb |= 1;
+        if (g_val & mask) rgb |= 2;
+        if (b_val & mask) rgb |= 4;
+        rgb <<= colourbitoffset;
+
+        uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
+        ptr[x_adj] = (ptr[x_adj] & colourbitclear) | rgb;
+    }
+}
+
+void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int canvasHeight) {
+    if (!src || !initialized) return;
+
+    if (getRotation() != 0 && getRotation() != 2) {
+        for (int y = 0; y < canvasHeight; y++) {
+            const uint16_t* r = src + (size_t)y * canvasWidth;
+            for (int x = 0; x < canvasWidth; x++) {
+                drawPixel(x, y, r[x]);
+            }
+        }
+        return;
+    }
+
+    const int w = PIXELS_PER_ROW;
+    const int rpf = ROWS_PER_FRAME;
+    if (canvasWidth != w || canvasHeight != (int)m_cfg.mx_height) {
+        return;
+    }
+
+    auto& targetFb = frame_buffer[m_back];
+    if ((int)targetFb.rowBits.size() < rpf) return;
+
+    bool rot180 = (getRotation() == 2);
+
+    for (int y = 0; y < rpf; y++) {
+        const uint16_t* src1;
+        const uint16_t* src2;
+        if (!rot180) {
+            src1 = src + (size_t)y * w;
+            src2 = src + (size_t)(y + rpf) * w;
+        } else {
+            src1 = src + (size_t)(m_cfg.mx_height - 1 - y) * w;
+            src2 = src + (size_t)(m_cfg.mx_height - 1 - (y + rpf)) * w;
+        }
+
+        for (uint8_t p = 0; p < m_depth; p++) {
+            uint16_t* dmaRow = targetFb.rowBits[y]->getDataPtr(p);
+            for (int x = 0; x < w; x++) {
+                uint16_t c1, c2;
+                if (!rot180) {
+                    c1 = src1[x];
+                    c2 = src2[x];
+                } else {
+                    c1 = src1[w - 1 - x];
+                    c2 = src2[w - 1 - x];
+                }
+
+                uint8_t r1 = (m_lut_r[(c1 >> 11) & 0x1F] >> p) & 1;
+                uint8_t g1 = (m_lut_g[(c1 >> 5) & 0x3F] >> p) & 1;
+                uint8_t b1 = (m_lut_b[c1 & 0x1F] >> p) & 1;
+                uint8_t r2 = (m_lut_r[(c2 >> 11) & 0x1F] >> p) & 1;
+                uint8_t g2 = (m_lut_g[(c2 >> 5) & 0x3F] >> p) & 1;
+                uint8_t b2 = (m_lut_b[c2 & 0x1F] >> p) & 1;
+
+                uint16_t rgb = r1 | (g1 << 1) | (b1 << 2) | (r2 << 3) | (g2 << 4) | (b2 << 5);
+                int ax = MATRIX_TX_ADJUST(x);
+                dmaRow[ax] = (dmaRow[ax] & BITMASK_RGB12_CLEAR) | rgb;
+            }
+        }
+    }
+}
