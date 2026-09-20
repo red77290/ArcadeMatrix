@@ -60,6 +60,84 @@ const char* I18n::getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorro
     }
 }
 
+// Long forms for wide panels. Accented capitals are avoided because the built-in 5x7 font has none.
+const char* I18n::getWeatherDayLabelLong(int dayOfWeek, bool isToday, bool isTomorrow, Lang l) {
+    if (isToday) {
+        switch (l) {
+            case Lang::EN: return "TODAY";
+            case Lang::ES: return "HOY";
+            default: return "AUJOURD'HUI";
+        }
+    }
+    if (isTomorrow) {
+        switch (l) {
+            case Lang::EN: return "TOMORROW";
+            case Lang::ES: return "MANANA";
+            default: return "DEMAIN";
+        }
+    }
+    switch (l) {
+        case Lang::EN: {
+            static const char* enDays[] = {"SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"};
+            return enDays[dayOfWeek % 7];
+        }
+        case Lang::ES: {
+            static const char* esDays[] = {"DOMINGO", "LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"};
+            return esDays[dayOfWeek % 7];
+        }
+        default: {
+            static const char* frDays[] = {"DIMANCHE", "LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI"};
+            return frDays[dayOfWeek % 7];
+        }
+    }
+}
+
+String I18n::getWeatherConditionLong(const String& raw, Lang l) {
+    String lower = raw;
+    lower.toLowerCase();
+    switch (l) {
+        case Lang::EN: {
+            if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Clear";
+            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Partly Cloudy";
+            if (lower.indexOf("overcast") >= 0) return "Overcast";
+            if (lower.indexOf("cloud") >= 0) return "Cloudy";
+            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Thunderstorm";
+            if (lower.indexOf("drizzle") >= 0) return "Drizzle";
+            if (lower.indexOf("rain") >= 0) return "Rain";
+            if (lower.indexOf("snow") >= 0) return "Snow";
+            if (lower.indexOf("mist") >= 0) return "Mist";
+            if (lower.indexOf("fog") >= 0) return "Fog";
+            return "Clear";
+        }
+        case Lang::ES: {
+            if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Soleado";
+            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Parcialmente Nublado";
+            if (lower.indexOf("overcast") >= 0) return "Cubierto";
+            if (lower.indexOf("cloud") >= 0) return "Nublado";
+            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Tormenta";
+            if (lower.indexOf("drizzle") >= 0) return "Llovizna";
+            if (lower.indexOf("rain") >= 0) return "Lluvia";
+            if (lower.indexOf("snow") >= 0) return "Nieve";
+            if (lower.indexOf("mist") >= 0) return "Bruma";
+            if (lower.indexOf("fog") >= 0) return "Niebla";
+            return "Variable";
+        }
+        default: { // FR
+            if (lower.indexOf("clear") >= 0 || lower.indexOf("sun") >= 0) return "Soleil";
+            if (lower.indexOf("few clouds") >= 0 || lower.indexOf("scattered") >= 0) return "Eclaircies";
+            if (lower.indexOf("overcast") >= 0) return "Couvert";
+            if (lower.indexOf("cloud") >= 0) return "Nuageux";
+            if (lower.indexOf("thunder") >= 0 || lower.indexOf("storm") >= 0) return "Orage";
+            if (lower.indexOf("drizzle") >= 0) return "Bruine";
+            if (lower.indexOf("rain") >= 0) return "Pluie";
+            if (lower.indexOf("snow") >= 0) return "Neige";
+            if (lower.indexOf("mist") >= 0) return "Brume";
+            if (lower.indexOf("fog") >= 0) return "Brouillard";
+            return "Variable";
+        }
+    }
+}
+
 String I18n::getWeatherCondition(const String& raw) {
     return getWeatherCondition(raw, getLang());
 }
