@@ -217,6 +217,29 @@ void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, co
             }
         }
         m_snapshot.marketItems = placeholders;
+
+        // Also align m_netBuffers so background network fetch never scrambles the order
+        for (int b = 0; b < 2; ++b) {
+            uint8_t count = (uint8_t)min((size_t)8, symbols.size());
+            MarketItem newItems[8];
+            for (uint8_t i = 0; i < count; ++i) {
+                bool found = false;
+                for (uint8_t j = 0; j < m_netBuffers[b].marketCount; ++j) {
+                    if (m_netBuffers[b].marketItems[j].symbol == symbols[i]) {
+                        newItems[i] = m_netBuffers[b].marketItems[j];
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    newItems[i] = MarketItem(symbols[i], 0.0f, 0.0f, false);
+                }
+            }
+            m_netBuffers[b].marketCount = count;
+            for (uint8_t i = 0; i < count; ++i) {
+                m_netBuffers[b].marketItems[i] = newItems[i];
+            }
+        }
     }
 
     updateWorldTimes(config.worldClocks);
@@ -848,7 +871,8 @@ void DashboardDataProvider::fetchMarkets() {
 
     YahooFinanceProvider yahooProvider;
 
-    for (const auto& sym : symbols) {
+    for (size_t s = 0; s < symbols.size() && s < 8; ++s) {
+        const auto& sym = symbols[s];
         if (!m_isActive) break;
 
         // Abandon the whole round as soon as internal DRAM can no longer sustain a
@@ -912,38 +936,30 @@ void DashboardDataProvider::fetchMarkets() {
             }
         }
 
-        // 3. Patch quote in-place into double-buffered network payload
+        // 3. Patch quote in-place into double-buffered network payload matching exact configured symbol slot
         if (fetchSuccess) {
             uint16_t iconPixels[64];
             bool hasIcon = resolveMarketIcon(sym, fetchedImgUrl, iconPixels);
             uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
             uint8_t writeIdx = 1 - pubIdx;
             m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
-            bool found = false;
-            for (uint8_t i = 0; i < m_netBuffers[writeIdx].marketCount; ++i) {
-                if (m_netBuffers[writeIdx].marketItems[i].symbol == sym) {
-                    m_netBuffers[writeIdx].marketItems[i].price = fetchedPrice;
-                    m_netBuffers[writeIdx].marketItems[i].change24h = fetchedChange;
-                    m_netBuffers[writeIdx].marketItems[i].valid = true;
-                    if (hasIcon) {
-                        m_netBuffers[writeIdx].marketItems[i].hasIcon = true;
-                        memcpy(m_netBuffers[writeIdx].marketItems[i].iconPixels, iconPixels, sizeof(iconPixels));
-                    }
-                    found = true;
-                    break;
-                }
+
+            if (s >= m_netBuffers[writeIdx].marketCount) {
+                m_netBuffers[writeIdx].marketCount = (uint8_t)(s + 1);
             }
-            if (!found && m_netBuffers[writeIdx].marketCount < 8) {
-                uint8_t idx = m_netBuffers[writeIdx].marketCount++;
-                m_netBuffers[writeIdx].marketItems[idx] = MarketItem(sym, fetchedPrice, fetchedChange, true);
-                if (hasIcon) {
-                    m_netBuffers[writeIdx].marketItems[idx].hasIcon = true;
-                    memcpy(m_netBuffers[writeIdx].marketItems[idx].iconPixels, iconPixels, sizeof(iconPixels));
-                }
+            auto& item = m_netBuffers[writeIdx].marketItems[s];
+            item.symbol = sym;
+            item.price = fetchedPrice;
+            item.change24h = fetchedChange;
+            item.valid = true;
+            if (hasIcon) {
+                item.hasIcon = true;
+                memcpy(item.iconPixels, iconPixels, sizeof(iconPixels));
             }
+
             m_netPublishedIdx.store(writeIdx, std::memory_order_release);
             m_netHasNewData.store(true, std::memory_order_release);
-            LOGD("Dashboard", "Market ticker %s updated: price=%.2f, change=%.2f%%", sym.c_str(), fetchedPrice, fetchedChange);
+            LOGD("Dashboard", "Market ticker [%u] %s updated: price=%.2f, change=%.2f%%", (unsigned)s, sym.c_str(), fetchedPrice, fetchedChange);
         } else {
             LOGW("Dashboard", "Failed to update market ticker %s; keeping previous cached quote.", sym.c_str());
         }
