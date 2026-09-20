@@ -35,6 +35,8 @@ static void time_sync_notification_cb(struct timeval *tv) {
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
+TaskHandle_t s_sdOwnerTask = nullptr;
+uint32_t s_sdRecursionCount = 0;
 std::mutex configMutex;
 #if !USE_SD_MMC
 SdFs sd;
