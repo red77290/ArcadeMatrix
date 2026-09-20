@@ -92,6 +92,7 @@ public:
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
     virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
@@ -526,16 +527,32 @@ matrix->fillRect(x, y, w, h, color);
 ```
 *Nunca llame a `flipDMABuffer()` en el motor — el bucle principal lo gestiona de forma centralizada.*
 
+### 15.1 Vídeo en Movimiento Completo, Streaming de Canvas y FastBlit (`blitCanvas565`)
+
+En paneles de alta resolución (`256x64`) con búfer DMA en PSRAM, las escrituras píxel por píxel (`drawPixel()`) sufren penalizaciones por operaciones de lectura-modificación-escritura en múltiples planos de bits, limitando las animaciones a 7–14 FPS.
+
+Para motores de animación a pantalla completa (clips de vídeo, secuencias arcade continuas):
+1. **Renderizar en un búfer de memoria canvas RGB565 de 16 bits en PSRAM** (`uint16_t* canvasBuffer`).
+2. **Transmitir mediante FastBlit:** Llame a `matrixEngine.blitCanvas565(canvasBuffer, width, height)`. Esto ejecuta escrituras en ráfagas secuenciales por fila directamente en las palabras de planos DMA del back-buffer, eliminando el coste por píxel y completando una copia completa de 256×64 en **~26 ms** (30 a 33+ FPS constantes).
+3. **Desactivar overlays:** Si su motor requiere máxima fluidez, anule `bool allowsOverlay() const override { return false; }`.
+
+### 15.2 Overlays vs Lienzo de Fondo (Composición Transparente)
+
+Los overlays (como `FighterEngine`) se superponen dinámicamente al motor de fondo:
+- **Nunca borrar con rectángulos opacos:** **No** llame a `fillRect(..., 0)` para limpiar cuadros delimitadores anteriores. El motor subyacente (ej: `TetrisClock`) redibuja todo su cuadro en cada tick. Dibujar rectángulos negros crearía huecos opacos en los números del reloj y en el fondo.
+- **Trazado estrictamente transparente:** Compruebe los colores antes de dibujar (`if (color != anim->transparentColor) matrix->drawPixel(...)`).
+- **Borrado de pantalla (`fillScreen(0)`):** Cuando un motor limpia su fondo, `FastMatrixPanel::fillScreen(0)` enmascara automáticamente los bits de color (`BITMASK_RGB12_CLEAR`) en el búfer trasero inactivo. Nunca toca el búfer frontal en emisión física, eliminando cualquier parpadeo de barrido o líneas de desgarro.
+
 ---
 
 ## 16. Pruebas y Compilación Local
 
 ```bash
 # ESP32 Estándar
-pio run -e esp32dev
+rtk pio run -e esp32dev
 
 # Waveshare ESP32-S3
-pio run -e esp32s3_waveshare
+rtk pio run -e esp32s3_waveshare
 ```
 
 ---
