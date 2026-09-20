@@ -36,7 +36,7 @@ void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
         int cycle = (nowSec / 3) % 2;
 
         const char* label = (cycle == 0) ? "CPU" : "RAM";
-        float usageVal = (cycle == 0) ? 15.0f : sys.ramUsagePct;
+        float usageVal = (cycle == 0) ? sys.cpuLoadPct : sys.ramUsagePct;
 
         // Label on top
         drawClippedString(matrix, label, rect.x + 2, rect.y + 2, minX, rect.x + availW, minY, maxY, theme.primary);
@@ -134,7 +134,9 @@ void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const 
                 drawClippedString(matrix, psramBuf, rect.x + 2, baseY, minX, maxX, minY, maxY, theme.primary);
 
                 if (rect.height >= 22) {
-                    drawClippedString(matrix, "CPU:OK", rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.accent);
+                    char cpuBuf[12];
+                    snprintf(cpuBuf, sizeof(cpuBuf), "CPU:%.0f%%", sys.cpuLoadPct);
+                    drawClippedString(matrix, cpuBuf, rect.x + 2, baseY + 10, minX, maxX, minY, maxY, theme.accent);
                 }
             }
         };
