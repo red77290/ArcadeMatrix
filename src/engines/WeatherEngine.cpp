@@ -178,50 +178,61 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city, cons
     }
 }
 
-void WeatherEngine::drawIcon(const String& icon, int x, int y) {
-    // 24x24 pixel area for icons
+void WeatherEngine::drawIcon(const String& icon, int x, int y, int scale) {
+    // 24x24 pixel design, scaled by an integer factor for larger panels.
+    const int s = max(1, scale);
+    auto X = [&](int v) { return x + v * s; };
+    auto Y = [&](int v) { return y + v * s; };
+    auto line = [&](int x0, int y0, int x1, int y1, uint16_t c) {
+        // A scaled 1-px line becomes an s-px thick stroke: draw s parallel offsets.
+        for (int o = 0; o < s; o++) matrix->drawLine(X(x0) + o, Y(y0), X(x1) + o, Y(y1), c);
+    };
     if (icon.indexOf("01") != -1) { // Sun
-        matrix->fillCircle(x + 12, y + 12, 6, matrix->color565(255, 255, 0));
-        matrix->drawLine(x + 12, y + 2, x + 12, y + 4, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 12, y + 20, x + 12, y + 22, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 2, y + 12, x + 4, y + 12, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 20, y + 12, x + 22, y + 12, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 5, y + 5, x + 7, y + 7, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 19, y + 19, x + 17, y + 17, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 19, y + 5, x + 17, y + 7, matrix->color565(255, 200, 0));
-        matrix->drawLine(x + 5, y + 19, x + 7, y + 17, matrix->color565(255, 200, 0));
+        matrix->fillCircle(X(12), Y(12), 6 * s, matrix->color565(255, 255, 0));
+        uint16_t ray = matrix->color565(255, 200, 0);
+        line(12, 2, 12, 4, ray);
+        line(12, 20, 12, 22, ray);
+        line(2, 12, 4, 12, ray);
+        line(20, 12, 22, 12, ray);
+        line(5, 5, 7, 7, ray);
+        line(19, 19, 17, 17, ray);
+        line(19, 5, 17, 7, ray);
+        line(5, 19, 7, 17, ray);
     } else if (icon.indexOf("02") != -1 || icon.indexOf("03") != -1 || icon.indexOf("04") != -1) { // Clouds
         if (icon.indexOf("02") != -1) { // Sun behind cloud
-            matrix->fillCircle(x + 8, y + 8, 4, matrix->color565(255, 255, 0));
+            matrix->fillCircle(X(8), Y(8), 4 * s, matrix->color565(255, 255, 0));
         }
-        matrix->fillCircle(x + 8, y + 14, 5, matrix->color565(200, 200, 200));
-        matrix->fillCircle(x + 14, y + 11, 6, matrix->color565(255, 255, 255));
-        matrix->fillCircle(x + 20, y + 14, 5, matrix->color565(200, 200, 200));
-        matrix->fillRect(x + 8, y + 14, 12, 6, matrix->color565(200, 200, 200));
+        matrix->fillCircle(X(8), Y(14), 5 * s, matrix->color565(200, 200, 200));
+        matrix->fillCircle(X(14), Y(11), 6 * s, matrix->color565(255, 255, 255));
+        matrix->fillCircle(X(20), Y(14), 5 * s, matrix->color565(200, 200, 200));
+        matrix->fillRect(X(8), Y(14), 12 * s, 6 * s, matrix->color565(200, 200, 200));
     } else if (icon.indexOf("09") != -1 || icon.indexOf("10") != -1) { // Rain
-        matrix->fillCircle(x + 8, y + 10, 5, matrix->color565(150, 150, 150));
-        matrix->fillCircle(x + 14, y + 8, 6, matrix->color565(200, 200, 200));
-        matrix->fillCircle(x + 20, y + 10, 5, matrix->color565(150, 150, 150));
-        matrix->fillRect(x + 8, y + 10, 12, 6, matrix->color565(150, 150, 150));
-        matrix->drawLine(x + 8, y + 18, x + 6, y + 22, matrix->color565(0, 150, 255));
-        matrix->drawLine(x + 14, y + 18, x + 12, y + 22, matrix->color565(0, 150, 255));
-        matrix->drawLine(x + 20, y + 18, x + 18, y + 22, matrix->color565(0, 150, 255));
+        matrix->fillCircle(X(8), Y(10), 5 * s, matrix->color565(150, 150, 150));
+        matrix->fillCircle(X(14), Y(8), 6 * s, matrix->color565(200, 200, 200));
+        matrix->fillCircle(X(20), Y(10), 5 * s, matrix->color565(150, 150, 150));
+        matrix->fillRect(X(8), Y(10), 12 * s, 6 * s, matrix->color565(150, 150, 150));
+        uint16_t drop = matrix->color565(0, 150, 255);
+        line(8, 18, 6, 22, drop);
+        line(14, 18, 12, 22, drop);
+        line(20, 18, 18, 22, drop);
     } else if (icon.indexOf("11") != -1) { // Thunder
-        matrix->fillCircle(x + 8, y + 10, 5, matrix->color565(100, 100, 100));
-        matrix->fillCircle(x + 14, y + 8, 6, matrix->color565(150, 150, 150));
-        matrix->fillCircle(x + 20, y + 10, 5, matrix->color565(100, 100, 100));
-        matrix->fillRect(x + 8, y + 10, 12, 6, matrix->color565(100, 100, 100));
-        matrix->drawLine(x + 14, y + 16, x + 10, y + 20, matrix->color565(255, 255, 0));
-        matrix->drawLine(x + 10, y + 20, x + 16, y + 20, matrix->color565(255, 255, 0));
-        matrix->drawLine(x + 16, y + 20, x + 12, y + 24, matrix->color565(255, 255, 0));
+        matrix->fillCircle(X(8), Y(10), 5 * s, matrix->color565(100, 100, 100));
+        matrix->fillCircle(X(14), Y(8), 6 * s, matrix->color565(150, 150, 150));
+        matrix->fillCircle(X(20), Y(10), 5 * s, matrix->color565(100, 100, 100));
+        matrix->fillRect(X(8), Y(10), 12 * s, 6 * s, matrix->color565(100, 100, 100));
+        uint16_t bolt = matrix->color565(255, 255, 0);
+        line(14, 16, 10, 20, bolt);
+        line(10, 20, 16, 20, bolt);
+        line(16, 20, 12, 24, bolt);
     } else if (icon.indexOf("13") != -1) { // Snow
-        matrix->fillCircle(x + 14, y + 14, 2, matrix->color565(255, 255, 255));
-        matrix->drawLine(x + 14, y + 8, x + 14, y + 20, matrix->color565(255, 255, 255));
-        matrix->drawLine(x + 8, y + 14, x + 20, y + 14, matrix->color565(255, 255, 255));
-        matrix->drawLine(x + 10, y + 10, x + 18, y + 18, matrix->color565(255, 255, 255));
-        matrix->drawLine(x + 18, y + 10, x + 10, y + 18, matrix->color565(255, 255, 255));
+        uint16_t white = matrix->color565(255, 255, 255);
+        matrix->fillCircle(X(14), Y(14), 2 * s, white);
+        line(14, 8, 14, 20, white);
+        line(8, 14, 20, 14, white);
+        line(10, 10, 18, 18, white);
+        line(18, 10, 10, 18, white);
     } else { // Unknown
-        matrix->fillCircle(x + 12, y + 12, 6, matrix->color565(0, 255, 0)); // Green dot
+        matrix->fillCircle(X(12), Y(12), 6 * s, matrix->color565(0, 255, 0)); // Green dot
     }
 }
 
@@ -260,42 +271,56 @@ void WeatherEngine::drawForecast(const WeatherData& data) {
     uint16_t colorDesc = matrix->color565(210, 210, 210);     // Light silver
 
     if (mw >= 256 && mh >= 64) {
-        // --- 256x64 Ultra-Widescreen HD Layout ---
-        int iconX = 20 + config_offset_x;
-        int iconY = (mh - 24) / 2 + config_offset_y;
-        drawIcon(data.iconCode, iconX, iconY);
+        // --- 256x64 wide layout ---
+        // Three columns that use the whole width: a 2x icon on the left, the unabbreviated day and
+        // condition in the middle, and the temperatures right-aligned on the right so three digits
+        // and a minus sign always fit. Long text falls back to the short label / size-1 condition.
+        const int margin = 8;
+        const int iconScale = 2;
+        int iconX = margin + config_offset_x;
+        int iconY = (mh - 24 * iconScale) / 2 + config_offset_y;
+        drawIcon(data.iconCode, iconX, iconY, iconScale);
 
-        int tempX = iconX + 36;
-        int textW = max((int)strlen(tempMinStr), (int)strlen(tempMaxStr)) * 12;
+        const int rowTopY = 10 + config_offset_y;
+        const int rowBottomY = 38 + config_offset_y;
+        auto textW = [](const String& t, int size) { return t.length() > 0 ? (int)t.length() * 6 * size - size : 0; };
 
-        // Matin (Haut) - Size 2
+        // Right column: widest temperature decides the column, both right-aligned to the same edge.
+        int rightEdge = mw - margin + config_offset_x;
+        int tempW = max(textW(tempMinStr, 2), textW(tempMaxStr, 2));
         matrix->setTextSize(2);
         matrix->setTextColor(shadowColor);
-        matrix->setCursor(tempX + 1, 10 + 1 + config_offset_y);
+        matrix->setCursor(rightEdge - textW(tempMinStr, 2) + 1, rowTopY + 1);
         matrix->print(tempMinStr);
         matrix->setTextColor(colorMorning);
-        matrix->setCursor(tempX, 10 + config_offset_y);
+        matrix->setCursor(rightEdge - textW(tempMinStr, 2), rowTopY);
         matrix->print(tempMinStr);
-
-        // Afternoon (bottom row) - Size 2
         matrix->setTextColor(shadowColor);
-        matrix->setCursor(tempX + 1, 38 + 1 + config_offset_y);
+        matrix->setCursor(rightEdge - textW(tempMaxStr, 2) + 1, rowBottomY + 1);
         matrix->print(tempMaxStr);
         matrix->setTextColor(colorAfternoon);
-        matrix->setCursor(tempX, 38 + config_offset_y);
+        matrix->setCursor(rightEdge - textW(tempMaxStr, 2), rowBottomY);
         matrix->print(tempMaxStr);
 
-        // Right Column: Label & Condition
-        int rightX = tempX + textW + 18;
+        // Middle column: between the icon and the temperature column.
+        int midX = iconX + 24 * iconScale + margin;
+        int midW = (rightEdge - tempW - margin) - midX;
+
+        String label = data.labelLong.length() > 0 ? data.labelLong : data.label;
+        if (textW(label, 2) > midW) label = data.label;            // "AUJOURD'HUI" -> "AUJ."
         matrix->setTextSize(2);
         matrix->setTextColor(colorLabel);
-        matrix->setCursor(rightX, 10 + config_offset_y);
-        matrix->print(data.label);
+        matrix->setCursor(midX, rowTopY);
+        matrix->print(label);
 
-        if (data.description.length() > 0) {
+        String desc = data.descriptionLong.length() > 0 ? data.descriptionLong : data.description;
+        if (desc.length() > 0) {
+            int size = (textW(desc, 2) <= midW) ? 2 : 1;
+            if (size == 1 && textW(desc, 1) > midW) desc = data.description;   // last resort: short form
+            matrix->setTextSize(size);
             matrix->setTextColor(colorDesc);
-            matrix->setCursor(rightX, 38 + config_offset_y);
-            matrix->print(data.description);
+            matrix->setCursor(midX, size == 2 ? rowBottomY : rowBottomY + 4);
+            matrix->print(desc);
         }
     } else if (mw >= 128 && mh <= 32) {
         // --- 128x32 Widescreen Layout ---

@@ -19,8 +19,12 @@ public:
     // Weather & Climate
     static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow);
     static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow, Lang l);
+    /// Unabbreviated day label ("TODAY", "TOMORROW", "WEDNESDAY") for panels wide enough to show it.
+    static const char* getWeatherDayLabelLong(int dayOfWeek, bool isToday, bool isTomorrow, Lang l);
     static String getWeatherCondition(const String& raw);
     static String getWeatherCondition(const String& raw, Lang l);
+    /// Unabbreviated condition ("Partly Cloudy", "Thunderstorm") for panels wide enough to show it.
+    static String getWeatherConditionLong(const String& raw, Lang l);
     static const char* getOutdoorLabel(Lang l);
     static const char* getIndoorLabel(Lang l);
     static const char* getClimateLabel(Lang l);

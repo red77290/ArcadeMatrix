@@ -57,7 +57,7 @@ private:
     unsigned long lastSlideChange;
     static const unsigned long slideDurationMs = 5000;
 
-    void drawIcon(const String& icon, int x, int y);
+    void drawIcon(const String& icon, int x, int y, int scale = 1);   ///< 24x24 icon, drawn at `scale`x
     void drawForecast(const WeatherData& data);
 };
 

@@ -75,15 +75,12 @@ bool OpenWeatherMapProvider::parsePayload(const String& payload, WeatherData out
             String rawDesc = item["weather"][0]["description"] | "";
             String combined = rawMain + " " + rawDesc;
             d.description = I18n::getWeatherCondition(combined);
+            d.descriptionLong = I18n::getWeatherConditionLong(combined, I18n::getLang());
             d.iconCode = item["weather"][0]["icon"].as<String>();
 
-            if (i == 0) {
-                d.label = I18n::getWeatherDayLabel(currentWday, true, false);
-            } else if (i == 1) {
-                d.label = I18n::getWeatherDayLabel((currentWday + 1) % 7, false, true);
-            } else {
-                d.label = I18n::getWeatherDayLabel((currentWday + 2) % 7, false, false);
-            }
+            int wday = (currentWday + i) % 7;
+            d.label = I18n::getWeatherDayLabel(wday, i == 0, i == 1);
+            d.labelLong = I18n::getWeatherDayLabelLong(wday, i == 0, i == 1, I18n::getLang());
             outNumForecasts++;
         }
         return true;
