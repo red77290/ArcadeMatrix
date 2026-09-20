@@ -55,7 +55,7 @@ void DashboardEngine::render(EngineContext* context) {
     }
 
     DashboardTheme theme = getDashboardTheme(matrix, m_config.theme);
-    DashboardSnapshot snap = m_dataProvider.getSnapshot();
+    const DashboardSnapshot& snap = m_dataProvider.getSnapshot();
 
     extern ConfigLoader config;
     ConfigSnapshotGuard guard = config.acquireSnapshot();

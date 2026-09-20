@@ -448,6 +448,10 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
                     toRead = 1; // force abort
                     break;
                 }
+                if (!f || !f.available()) {
+                    LOGW("FighterEngine", "File stream unavailable during chunk read for %s", filepath);
+                    break;
+                }
                 size_t chunk = (toRead > bounce.size) ? bounce.size : toRead;
                 size_t r = f.read(bounce.ptr, chunk);
                 if (r == 0) break;
