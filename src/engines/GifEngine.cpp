@@ -1,4 +1,5 @@
 #include "GifEngine.h"
+#include "../core/SpiRamJsonDocument.h"
 #include "../core/MatrixEngine.h"
 #include "../core/RenderStats.h"
 
@@ -670,6 +671,69 @@ void GifEngine::playDefaultPlaylists(int numGifs) {
     remainingGifsToPlay = numGifs;
 }
 
+// Weight every active folder by its file count from the root's playlists.json (kept current by the
+// rescan/upload/delete handlers). Folders missing from it weigh 1. Refreshed when the playlist set
+// changes and every 10 minutes; one small file read per orientation root under the SD lock.
+void GifEngine::refreshPlaylistWeights() {
+    playlistWeights.assign(playlists.size(), 1);
+    playlistWeightsLoadedMs = millis();
+    static const char* ROOTS[] = { "/gifs", "/gifs_tate" };
+    for (const char* rootP : ROOTS) {
+        String prefix = String(rootP) + "/";
+        bool rootUsed = false;
+        for (const auto& p : playlists) { if (p.startsWith(prefix)) { rootUsed = true; break; } }
+        if (!rootUsed) continue;
+        String plJson = String(rootP) + "/playlists.json";
+        if (!(sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE)) continue;
+        if (sd.exists(plJson.c_str())) {
+            FsFile f = sd.open(plJson.c_str(), FILE_OPEN_READ);
+            if (f) {
+                size_t sz = f.size();
+                if (sz > 0 && sz < 131072) {
+                    char* buf = psramFound() ? (char*)ps_malloc(sz + 1) : (char*)malloc(sz + 1);
+                    if (buf) {
+                        size_t n = f.read((uint8_t*)buf, sz);
+                        buf[n] = '\0';
+                        char* js = buf;
+                        while (*js && *js != '{') js++;
+                        SpiRamJsonDocument doc(sz + 2048);   // Golden Rule: JSON scratch lives in PSRAM
+                        if (!deserializeJson(doc, js) && doc.is<JsonObject>()) {
+                            for (size_t i = 0; i < playlists.size(); i++) {
+                                if (!playlists[i].startsWith(prefix)) continue;
+                                String leaf = extractPlaylistLeaf(playlists[i]);
+                                if (leaf.isEmpty()) continue;
+                                JsonVariant e = doc[leaf.c_str()];
+                                if (!e.isNull() && e["count"].is<int>() && e["count"].as<int>() > 0) {
+                                    playlistWeights[i] = (uint32_t)e["count"].as<int>();
+                                }
+                            }
+                        }
+                        free(buf);
+                    }
+                }
+                f.close();
+            }
+        }
+        xSemaphoreGive(sdMutex);
+    }
+}
+
+int GifEngine::pickPlaylistIndex() {
+    if (playlists.empty()) return -1;
+    if (playlistWeights.size() != playlists.size() || millis() - playlistWeightsLoadedMs > 600000UL) {
+        refreshPlaylistWeights();
+    }
+    uint32_t total = 0;
+    for (uint32_t w : playlistWeights) total += w;
+    if (total == 0) return random(playlists.size());
+    uint32_t r = (uint32_t)random(total);
+    for (size_t i = 0; i < playlistWeights.size(); i++) {
+        if (r < playlistWeights[i]) return (int)i;
+        r -= playlistWeights[i];
+    }
+    return (int)playlists.size() - 1;
+}
+
 void GifEngine::loadNextFileInPlaylist() {
     if (playlists.empty()) {
         stop();
@@ -685,7 +749,8 @@ void GifEngine::loadNextFileInPlaylist() {
     
     int attempts = 0;
     while(attempts < 5) {
-        int pIndex = random(playlists.size());
+        int pIndex = pickPlaylistIndex();
+        if (pIndex < 0) { stop(); return; }
         String pPath = playlists[pIndex];
         
         String indexPath = pPath + "/index.txt";
@@ -758,6 +823,7 @@ void GifEngine::loadNextFileInPlaylist() {
             if (sdAccessOk && playlists.size() > 1) {
                 LOGW("GifEngine", "No valid files or index.txt found in %s. Removing from active playlists.", pPath.c_str());
                 playlists.erase(playlists.begin() + pIndex);
+                if (pIndex < (int)playlistWeights.size()) playlistWeights.erase(playlistWeights.begin() + pIndex);
             } else {
                 LOGW("GifEngine", "Could not resolve a file in %s this round (sdAccess=%d). Keeping playlist.",
                      pPath.c_str(), (int)sdAccessOk);
@@ -798,6 +864,7 @@ bool GifEngine::loop() {
     if (hasPendingPlaylists) {
         stop();
         playlists = pendingPlaylists;
+        playlistWeights.clear();   // re-read the folder sizes for the new set
         playlistMode = true;
         hasPendingPlaylists = false;
         loadNextFileInPlaylist();

@@ -131,6 +131,16 @@ private:
     
     // Playlist state
     std::vector<String> playlists;
+    /**
+     * File count per entry of `playlists`, read from each root's playlists.json, so the next folder
+     * is chosen in proportion to its size: a file in a 1,400-file folder then plays as often as one
+     * in a 30-file folder, which is what the RPi build gets by pooling every file before choosing.
+     * Picking the folder uniformly first made small folders repeat dozens of times more often.
+     */
+    std::vector<uint32_t> playlistWeights;
+    uint32_t playlistWeightsLoadedMs = 0;
+    void refreshPlaylistWeights();
+    int pickPlaylistIndex();
     std::vector<String> defaultPlaylists;
     std::vector<String> m_configuredFolders;
     std::vector<String> activeFiles;
