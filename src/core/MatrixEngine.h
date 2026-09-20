@@ -11,6 +11,47 @@
 #include "ConfigLoader.h"
 
 /**
+ * @class FastMatrixPanel
+ * @brief The HUB75 panel with a cheap black fill.
+ *
+ * `fillScreen(0)` is what nearly every engine does first on every frame. The library implements it
+ * as a per-pixel write, which on a PSRAM-resident DMA buffer costs a read-modify-write plus a cache
+ * write-back per colour plane per pixel: about 100 ms for 256x64, and the reason the animated clock
+ * faces ran at 7-8 fps on the ESP32-S3 Waveshare board. The library also has the row-wise
+ * initialiser it uses at boot (`clearFrameBuffer`), which rewrites each row sequentially with one
+ * write-back per row and leaves the buffer exactly as a black fill would, once the brightness (OE)
+ * bits are re-applied. Black fills go there; any other colour takes the library path.
+ *
+ * `clearFrameBuffer` needs the id of the buffer being drawn, which the library keeps private, so
+ * MatrixEngine tells the panel about every flip (there is a single flip site, `present()`) and the
+ * brightness it last applied.
+ */
+class FastMatrixPanel : public MatrixPanel_I2S_DMA {
+public:
+    using MatrixPanel_I2S_DMA::MatrixPanel_I2S_DMA;
+
+    void fillScreen(uint16_t color) override {
+        if (color != 0) {
+            MatrixPanel_I2S_DMA::fillScreen(color);
+            return;
+        }
+        clearFrameBuffer(m_back);
+        setBrightness8(m_brightness8);   // the row initialiser resets the OE bits as well
+    }
+
+    /// Called once after begin(): the library flips once inside begin(), so with double buffering
+    /// the back buffer is 1 at that point.
+    void setBuffering(bool doubleBuffered) { m_double = doubleBuffered; m_back = doubleBuffered ? 1 : 0; }
+    void noteFlip() { if (m_double) m_back ^= 1; }
+    void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
+
+private:
+    bool m_double = false;
+    int m_back = 0;
+    uint8_t m_brightness8 = 64;
+};
+
+/**
  * @class MatrixEngine
  * @brief Wrapper for the HUB75 I2S DMA Matrix Panel.
  */
@@ -81,6 +122,7 @@ public:
 
 private:
     MatrixPanel_I2S_DMA* display; ///< Pointer to the underlying DMA library instance
+    FastMatrixPanel* m_panel = nullptr; ///< same object as `display`, typed for the fast clear hooks
     uint32_t m_flipCount = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;

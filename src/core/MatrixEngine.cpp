@@ -110,7 +110,8 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     }
 
     // Initialize display object
-    display = new MatrixPanel_I2S_DMA(mxconfig);
+    m_panel = new FastMatrixPanel(mxconfig);
+    display = m_panel;
     
     // Allocate memory and start DMA
     if (!display->begin()) {
@@ -118,8 +119,10 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         return false;
     }
 
-    display->setBrightness8(64); // Safe default brightness
     m_doubleBuffered = mxconfig.double_buff;
+    m_panel->setBuffering(m_doubleBuffered);
+    display->setBrightness8(64); // Safe default brightness
+    m_panel->rememberBrightness8(64);
     display->clearScreen();
     present();
     display->clearScreen();
@@ -131,6 +134,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
 void MatrixEngine::present() {
     if (!display) return;
     display->flipDMABuffer();
+    if (m_panel) m_panel->noteFlip();
     m_flipCount++;
     g_renderStats.presents++;
 }
@@ -145,6 +149,7 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
     if (display) {
         if (brightness == 0) {
             display->setBrightness8(0);
+            if (m_panel) m_panel->rememberBrightness8(0);
             return;
         }
         // brightness is 0-100 (percentage), setBrightness8 expects 0-255
@@ -153,6 +158,7 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
             scaledBrightness = 25; // Minimum floor to prevent driver chip OE pulse blanking
         }
         display->setBrightness8(scaledBrightness);
+        if (m_panel) m_panel->rememberBrightness8(scaledBrightness);
     }
 }
 
