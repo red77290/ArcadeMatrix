@@ -383,6 +383,11 @@ bool RotationManager::loop() {
         return true;
     }
 
+    if (currentIndex >= guard->rotation.size()) {
+        currentIndex = 0;
+        switchToModule(0);
+    }
+
     uint32_t now = millis();
     const char* inst_id = guard->rotation[currentIndex].instance_id.c_str();
     uint32_t dur = guard->rotation[currentIndex].duration_sec;
@@ -428,7 +433,7 @@ bool RotationManager::loop() {
         if (!m_slotMissing) {
             m_slotMissing = true;
             LOGW("RotationManager", "Rotation slot %d refers to instance '%s' which does not exist or could not be loaded; %s",
-                 (int)currentIndex, inst_id, isSoloMode ? "showing a blank panel" : "skipping it");
+                 (int)currentIndex, (inst_id ? inst_id : "(null)"), isSoloMode ? "showing a blank panel" : "skipping it");
         }
         if (m_missingClears < 2) {
             if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
