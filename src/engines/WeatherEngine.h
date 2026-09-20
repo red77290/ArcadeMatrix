@@ -20,6 +20,13 @@ public:
     void render(EngineContext* context) override;
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
+    void onDisplayGeometryChanged(const DisplayGeometry& geometry) override { requestRedraw(); }
+    /// The screen is static between slides: it is painted once into each DMA buffer after a change
+    /// and not presented again until the next one. Repainting every frame (clear, then draw) let the
+    /// panel show the black gap for a few milliseconds after each flip, which read as a flicker in
+    /// the light grey of the cloud icon. The runtime's per-frame clear is declined for the same reason.
+    bool needsClear() const override { return false; }
+    bool hasNewFrame() const override { return m_presented; }
 
     void addProvider(IWeatherProvider* provider);
     
@@ -55,6 +62,9 @@ private:
     // MCU with no GPU/compositing hardware).
     int activeSlide;
     unsigned long lastSlideChange;
+    uint8_t m_redrawFrames = 0;   ///< frames left to paint (2 = one per DMA buffer)
+    bool m_presented = false;     ///< whether the last update() painted a frame
+    void requestRedraw() { m_redrawFrames = 2; }
     static const unsigned long slideDurationMs = 5000;
 
     void drawIcon(const String& icon, int x, int y, int scale = 1);   ///< 24x24 icon, drawn at `scale`x

@@ -50,6 +50,7 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
 }
 
 void WeatherEngine::activate() {
+    requestRedraw();
     if (config_api_key.isEmpty() || config_city.isEmpty()) {
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
@@ -63,7 +64,7 @@ void WeatherEngine::activate() {
 }
 
 void WeatherEngine::update(EngineContext* context) {
-    loop();
+    m_presented = loop();
 }
 
 void WeatherEngine::render(EngineContext* context) {}
@@ -95,6 +96,7 @@ void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     }
     config_offset_x = engineConfig->getInt("weather_offset_x", 0);
     config_offset_y = engineConfig->getInt("weather_offset_y", 0);
+    requestRedraw();
 }
 
 void WeatherEngine::addProvider(IWeatherProvider* provider) {
@@ -170,6 +172,7 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city, cons
     
     if (fetched && numForecasts > 0) {
         validData = true;
+        requestRedraw();
         activeSlide = 0;
         lastSlideChange = millis();
         LOGI("WeatherEngine", "Success! Parsed %d forecast days in %s units.", numForecasts, units.c_str());
@@ -237,18 +240,25 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y, int scale) {
 }
 
 bool WeatherEngine::loop() {
+    bool hadData = validData;
     updateWeather(config_api_key, config_city, config_units);
-
-    if (!validData || numForecasts == 0) return true;
+    if (hadData != validData) requestRedraw();   // data appeared or was lost
 
     // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
     // horizontal-scroll transition (see WeatherEngine.h for rationale).
-    if (numForecasts > 1 && millis() - lastSlideChange >= slideDurationMs) {
+    if (validData && numForecasts > 1 && millis() - lastSlideChange >= slideDurationMs) {
         activeSlide = (activeSlide + 1) % numForecasts;
         lastSlideChange = millis();
+        requestRedraw();
     }
 
-    drawForecast(forecasts[activeSlide]);
+    if (m_redrawFrames == 0) return false;   // both DMA buffers already show this screen
+    m_redrawFrames--;
+
+    matrix->fillScreen(0);
+    if (validData && numForecasts > 0) {
+        drawForecast(forecasts[activeSlide % numForecasts]);
+    }
     return true;
 }
 
