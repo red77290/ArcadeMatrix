@@ -1,5 +1,8 @@
 #include "MatrixEngine.h"
 #include "RenderStats.h"
+#if defined(SPIRAM_DMA_BUFFER)
+#include "rom/cache.h"   // the DMA engine reads PSRAM directly: every write below must be written back
+#endif
 
 RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
@@ -185,6 +188,9 @@ void FastMatrixPanel::fillScreen(uint16_t color) {
             for (size_t x = 0; x < w; ++x) {
                 ptr[x] &= BITMASK_RGB12_CLEAR;
             }
+#if defined(SPIRAM_DMA_BUFFER)
+            Cache_WriteBack_Addr((uint32_t)ptr, w * sizeof(uint16_t));
+#endif
         }
     }
 }
@@ -257,6 +263,9 @@ void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
         uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
         ptr[x_adj] = (ptr[x_adj] & colourbitclear) | rgb;
+#if defined(SPIRAM_DMA_BUFFER)
+        Cache_WriteBack_Addr((uint32_t)&ptr[x_adj], sizeof(uint16_t));
+#endif
     }
 }
 
@@ -318,6 +327,9 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
                 int ax = MATRIX_TX_ADJUST(x);
                 dmaRow[ax] = (dmaRow[ax] & BITMASK_RGB12_CLEAR) | rgb;
             }
+#if defined(SPIRAM_DMA_BUFFER)
+            Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)w * sizeof(uint16_t));
+#endif
         }
     }
 }
