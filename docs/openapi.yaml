@@ -73,6 +73,65 @@ paths:
                         type: number
                         description: Share of panel pixels actually written per GIF frame (dirty-pixel blit)
 
+  /api/fighter/status:
+    get:
+      tags:
+        - System
+      summary: Fighter overlay diagnostics
+      description: >-
+        State of the fighter overlay for troubleshooting: whether it has been instantiated (it is only
+        created when the global fighter switch is on and a rotation slot asks for it), the sprite
+        folder and roster size, loader/preload state, current and next players, memory floors and the
+        last warning it logged.
+      responses:
+        '200':
+          description: Fighter state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instantiated:
+                    type: boolean
+                  dir:
+                    type: string
+                    example: "/fighters_32"
+                  roster_count:
+                    type: integer
+                  has_roster:
+                    type: boolean
+                  has_psram:
+                    type: boolean
+                  active:
+                    type: boolean
+                    description: A fight is being drawn right now
+                  loader_task:
+                    type: boolean
+                  preloading:
+                    type: boolean
+                  next_ready:
+                    type: boolean
+                  retry_in_ms:
+                    type: integer
+                    description: Milliseconds until the next fight or preload attempt
+                  p1:
+                    type: string
+                  p2:
+                    type: string
+                  next_p1:
+                    type: string
+                  next_p2:
+                    type: string
+                  free_heap:
+                    type: integer
+                  free_dma:
+                    type: integer
+                  free_psram:
+                    type: integer
+                  last_note:
+                    type: string
+                    description: Last warning or error the engine logged
+
   /api/settings:
     get:
       tags:

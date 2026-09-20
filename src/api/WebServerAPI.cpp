@@ -1,6 +1,7 @@
 #include "WebServerAPI.h"
 #include "../core/SdSpace.h"
 #include "../core/CpuLoad.h"
+#include "../engines/FighterEngine.h"
 #include "../core/RenderStats.h"
 #include <core/EngineRegistry.h>
 #include <ArduinoJson.h>
@@ -966,6 +967,12 @@ void WebServerAPI::setupRoutes() {
     server.addHandler(rotationHandler);
 
     // API: Get Device Status
+    // Fighter overlay diagnostics (roster, loader, memory floors, last warning): the overlay has no
+    // other network-visible state and its failures are otherwise only on the serial console.
+    server.on("/api/fighter/status", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", FighterEngine::debugStatusJson());
+    });
+
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
         SpiRamJsonDocument doc(1024);
         doc["status"] = "online";
