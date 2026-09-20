@@ -265,16 +265,16 @@ El audio en segundo plano continúa sonando incluso si un mensaje prioritario to
 
 ## 13. El Compositor de Superposiciones Transversales (`OverlayManager`)
 
-- Renderizado superpuesto tras el paso gráfico del motor activo.
-- Decodificación de sprites animados `.fgt.gz` para luchadores MUGEN.
-- **Fighter es un overlay transversal, NO un engine en `EngineRegistry`.**
+- Renderizado superpu- **Fighter es un overlay transversal, NO un engine en `EngineRegistry`.**
+- **Aislamiento de Overlays por Motor (`allowsOverlay()`):** Los motores de alta tasa de cuadros (`GifEngine`) anulan `bool allowsOverlay() const override { return false; }`, evitando sobrecarga de composición y preservando un renderizado superior a 30 FPS en animaciones fluidas.
+- **Renderizado Transparente No Destructivo:** Los overlays (`FighterEngine`) se dibujan exclusivamente mediante trazado de píxeles transparentes (`if (color != anim->transparentColor) matrix->drawPixel(...)`). Nunca borran cuadros delimitadores anteriores con rectángulos negros opacos (`fillRect(..., 0)`), manteniendo intactos los dígitos del reloj y el fondo subyacente.
 
 ---
 
 ## 14. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
 
 - **Núcleo 0:** Tareas asíncronas (Web, Audio, Sensores, Análisis FFT).
-- **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual.
+- **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual. La regulación de cuadros mediante `FrameScheduler` respeta los retardos GIF al milisegundo en vez de redondearlos al tick de 16 ms.
 
 ### Estrategia TLS / mbedTLS: 100% SRAM Interna, Nunca PSRAM
 
@@ -288,8 +288,17 @@ La integridad de la pantalla tiene prioridad estricta sobre la fiabilidad TLS. C
 Para evitar que consumidores de red concurrentes (AsyncWebServer / AsyncTCP sirviendo WebUI) y motores criptográficos (Google Cast mbedTLS) agoten los buffers de LwIP y provoquen abortos de sockets por software (`ECONNABORTED = 113`):
 1. **JSON de la Aplicación en PSRAM:** Todos los endpoints y esquemas REST en `WebServerAPI` instancian `SpiRamJsonDocument` en vez de `DynamicJsonDocument`, derivando árboles JSON y cadenas hacia el pool de 15 MB de PSRAM. Los búferes de transporte de AsyncTCP y LwIP permanecen en la DRAM interna.
 2. **Búfer de Canvas Gráfico en PSRAM:** Los búferes gráficos fuera de DMA directo (como el canvas de 32 KB de `GifEngine`) priorizan la asignación en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), liberando más de 32 KB de DRAM interna permanente al inicio.
-3. **Aislamiento de Núcleo y Pila de AsyncTCP:** La tarea de servicio `async_tcp` se dimensiona en 8192 bytes y se fija estrictamente al Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), aislando callbacks de red del hot-path de 60 FPS del Core 1.
-4. **Backoff de Reconexión de Google Cast:** Las reconexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
+3. **Presentación en Modo Dual: Shadow Buffer vs. FastBlit en Ráfaga de Filas (`GifEngine::blitCanvas` y `FastMatrixPanel::blitCanvas565`):**
+   Con el búfer DMA HUB75 alojado en PSRAM en paneles de 256×64, cada `drawPixel()` incurre en una lectura-modificación-escritura más un volcado de caché por plano de color. Escribir un cuadro completo de 256×64 mediante píxeles dispersos tardaba ~68 ms y limitaba la animación a 7–14 FPS. ArcadeMatrix implementa una estrategia dual:
+   - **Delta Blit con Shadow Buffer ($< 400$ píxeles modificados):** Para animaciones de baja dinámica o arte estático, `GifEngine` mantiene una copia espejo en PSRAM del último envío al búfer DMA y solo actualiza los píxeles modificados.
+   - **FastBlit por Ráfaga de Filas ($\ge 400$ píxeles modificados, ~2.4% de la pantalla):** Para vídeo en movimiento, fondos arcade continuos (Metal Slug, Dragon Ball Z) y escenas de acción rápida, el motor conmuta automáticamente a `FastMatrixPanel::blitCanvas565()`. Esto evita 131.072 accesos dispersos de 16 bits convirtiendo líneas completas en ráfagas secuenciales escritas directamente en las palabras de planos DMA del back-buffer. La latencia de volcado cae de ~68 ms a **~26 ms**, desbloqueando **30 a 33+ FPS** estables en paneles de 256×64.
+4. **Tablas de Profundidad de Color CIE 1931 Escaladas (`initLuts(depth)`):**
+   Cuando la biblioteca HUB75 compila con tabla nativa de 8 bits, configurar una profundidad menor (`colorDepth < 8`, ej. 5 o 6 bits por canal) provoca que los valores altos de brillo ($\ge 64$ o $32$) se desborden módulo $2^{\text{depth}}$, corrompiendo colores claros y gradientes. `FastMatrixPanel::initLuts(depth)` precalcula tablas de luminancia corregidas por gamma escaladas a $(1 \ll \text{depth}) - 1$ con redondeo aritmético (`(lumConvTab_8bit[val] + round) >> (8 - depth)`). Esto permite operar con **5 bits** de forma segura: el búfer DMA se reduce de 262 KB a 163 KB, la tasa de refresco alcanza 120 Hz sin truncar bits PWM (`lsbMsbTransitionBit`), y se eliminan las pausas de cuadros de Core 1 en relojes complejos.
+5. **Borrado de Pantalla sin Parpadeos (`FastMatrixPanel::fillScreen(0)`):**
+   `fillScreen(0)` abre casi cada cuadro de los motores. La función original `setBrightness8()` escribe pulsos de modulación OE tanto en el **búfer 0 como en el búfer 1**. En modo de doble búfer, alterar el búfer frontal mientras GDMA transmite activamente los datos a los LEDs produce desgarro horizontal y parpadeo de barrido (análogo a la interferencia PWM en Raspberry Pi). `FastMatrixPanel::fillScreen(0)` enmascara directamente los bits de color (`ptr[x] &= BITMASK_RGB12_CLEAR`) exclusivamente en el **búfer trasero (`m_back`)** en $\sim 0.8\text{ ms}$, preservando las líneas OE, LAT y de dirección sin tocar el búfer frontal en emisión.
+6. **Aislamiento de Núcleo y Pila de AsyncTCP:** La tarea de servicio `async_tcp` se dimensiona en 8192 bytes y se fija estrictamente al Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), aislando callbacks de red del hot-path de 60 FPS del Core 1.
+7. **Backoff de Reconexión de Google Cast:** Las reconnexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
+8. **Telemetría Periódica de Renderizado (5s):** Registro escalar sin bloqueos en `AppRuntime::update()` que reporta en consola serie el framerate del bucle, el framerate físico en pantalla, el framerate del GIF, la duración de volcado (`blit`), decodificación y DRAM libre cada 5 segundos, sin asignaciones dinámicas en el heap.onexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
 
 ---
 

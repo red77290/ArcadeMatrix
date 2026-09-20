@@ -103,6 +103,7 @@ public:
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
     virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
@@ -121,6 +122,7 @@ public:
 | `isRealtime()` | `true` | Return `true` for 60 FPS animations; return `false` for static 20 FPS displays. |
 | `setRotationBudget()`| no-op | If count-based (e.g. play N GIFs). Receives the rotation entry count. |
 | `selfPaced()` | `false` | If true, duration timer does not force-advance; engine drives advance via `isFinished()`. |
+| `allowsOverlay()` | `true` | Return `false` for bandwidth-heavy engines (e.g. `GifEngine`) to bypass overlay compositing overhead and maintain maximum framerate. |
 
 ---
 
@@ -676,6 +678,22 @@ void MusicEngine::render(EngineContext* context) {
 
 #### Rebuilding Geometry-Derived Caches
 Only implement `onDisplayGeometryChanged(const DisplayGeometry& geometry)` if your engine allocates fixed column counts, FFT arrays, or target grids (e.g. `MatrixRainClock`, `TetrisClock`, `VisualizerEngine`). Reallocate or adjust your caches non-destructively without resetting gameplay, scores, or timers.
+
+### 15.2 Full-Motion Video, Canvas Streaming & FastBlit (`blitCanvas565`)
+
+On high-resolution panels (`256x64`) utilizing PSRAM-resident DMA buffers, per-pixel writes (`drawPixel()`) incur read-modify-write operations across multiple bitplanes, capping full-frame animation throughput to 7–14 FPS.
+
+For full-frame animation engines (e.g. video clips, scrolling arcade sequences):
+1. **Render into a 16-bit RGB565 memory canvas buffer in PSRAM** (`uint16_t* canvasBuffer`).
+2. **Stream via FastBlit:** Call `matrixEngine.blitCanvas565(canvasBuffer, width, height)`. This executes row-burst sequential DMA word writes directly into the back-buffer plane words, bypassing per-pixel overhead and completing a 256×64 frame copy in **~26 ms** (solid 30–33+ FPS).
+3. **Opt out of overlays:** If your engine requires maximum frame throughput, override `bool allowsOverlay() const override { return false; }`.
+
+### 15.3 Overlays vs Background Canvas (Transparent Compositing)
+
+Overlays (such as `FighterEngine`) composite dynamically over the active engine:
+- **Never erase with opaque rectangles:** Do **not** call `fillRect(..., 0)` to clear old sprite bounding boxes. The underlying engine (e.g. `TetrisClock`) already redraws its frame every tick. Calling `fillRect(..., 0)` will punch black holes into the background digits and canvas.
+- **Draw strictly transparently:** Inspect pixel colors before drawing (`if (color != anim->transparentColor) matrix->drawPixel(...)`).
+- **Screen clearing (`fillScreen(0)`):** When an engine clears its background, `FastMatrixPanel::fillScreen(0)` automatically clears only the color bits (`BITMASK_RGB12_CLEAR`) on the inactive back buffer. It never touches the active scanning front buffer, preventing horizontal scanline flicker.
 
 ## 16. Testing, QEMU Emulation & Local Compilation
 
