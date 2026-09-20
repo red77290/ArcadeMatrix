@@ -1224,6 +1224,9 @@ void WebServerAPI::setupRoutes() {
         }
 
         auto readOrScan = [](const String& rootDir) -> String {
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (!guard) return "{}";
+
             String cleanRoot = rootDir;
             if (!sd.exists(cleanRoot.c_str()) && cleanRoot.startsWith("/")) {
                 cleanRoot = cleanRoot.substring(1);
