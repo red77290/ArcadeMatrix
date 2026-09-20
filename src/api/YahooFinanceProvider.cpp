@@ -19,7 +19,11 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
     // happen even when canStartTlsSession() was satisfied moments earlier.
     NetworkBudget::ScopedTlsHandshakeLock tlsLock;
     if (!tlsLock) {
-        LOGW("Yahoo", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
+        if (tlsLock.isDeniedByBudget()) {
+            LOGW("Yahoo", "Skipping quote for %s: internal DRAM budget denied TLS admission.", symbol.c_str());
+        } else {
+            LOGW("Yahoo", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
+        }
         return false;
     }
 
@@ -109,7 +113,11 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
 
     NetworkBudget::ScopedTlsHandshakeLock tlsLock;
     if (!tlsLock) {
-        LOGW("Yahoo", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
+        if (tlsLock.isDeniedByBudget()) {
+            LOGW("Yahoo", "Skipping history for %s: internal DRAM budget denied TLS admission.", symbol.c_str());
+        } else {
+            LOGW("Yahoo", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
+        }
         return false;
     }
 
