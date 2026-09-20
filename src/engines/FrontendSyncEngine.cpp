@@ -981,7 +981,15 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
                 
                 // Verify file was written
                 if (bytesWrittenTotal > 0) {
-                    if (sd.exists(savePath.c_str()) && sd.open(savePath.c_str(), FILE_OPEN_READ).size() > 100) {
+                    bool validFile = false;
+                    if (sd.exists(savePath.c_str())) {
+                        FsFile checkFile = sd.open(savePath.c_str(), FILE_OPEN_READ);
+                        if (checkFile) {
+                            validFile = (checkFile.size() > 100);
+                            checkFile.close();
+                        }
+                    }
+                    if (validFile) {
                         outPath = savePath;
                         http.end();
                         client.stop();

@@ -98,10 +98,23 @@ DashboardDataProvider::DashboardDataProvider()
     m_snapshot.weather.description = "Sunny";
     m_snapshot.weatherValid = true;
 
+    m_snapshot.marketItems.reserve(8);
     m_snapshot.marketItems.push_back(MarketItem("BTC", 90000.0f, 2.5f, true));
     m_snapshot.marketItems.push_back(MarketItem("ETH", 3300.0f, -1.2f, true));
     m_snapshot.marketItems.push_back(MarketItem("SOL", 190.0f, 5.8f, true));
     m_snapshot.marketItems.push_back(MarketItem("NVDA", 135.0f, 3.4f, true));
+
+    m_snapshot.worldTimes.reserve(8);
+
+    for (int b = 0; b < 2; ++b) {
+        m_netBuffers[b].weather = m_snapshot.weather;
+        m_netBuffers[b].weatherValid = true;
+        m_netBuffers[b].marketCount = 4;
+        m_netBuffers[b].marketItems[0] = MarketItem("BTC", 90000.0f, 2.5f, true);
+        m_netBuffers[b].marketItems[1] = MarketItem("ETH", 3300.0f, -1.2f, true);
+        m_netBuffers[b].marketItems[2] = MarketItem("SOL", 190.0f, 5.8f, true);
+        m_netBuffers[b].marketItems[3] = MarketItem("NVDA", 135.0f, 3.4f, true);
+    }
 }
 
 DashboardDataProvider::~DashboardDataProvider() {
@@ -166,11 +179,14 @@ void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, co
     String oldCity = m_weatherCity;
     String oldApiKey = m_weatherApiKey;
 
-    m_config = config;
-    m_weatherApiKey = weatherApiKey;
-    m_weatherCity = weatherCity;
-    m_weatherUnits = weatherUnits;
-    m_cachedTrackedMarkets = config.trackedMarkets;
+    {
+        std::lock_guard<std::mutex> lock(m_configMutex);
+        m_config = config;
+        m_weatherApiKey = weatherApiKey;
+        m_weatherCity = weatherCity;
+        m_weatherUnits = weatherUnits;
+        m_cachedTrackedMarkets = config.trackedMarkets;
+    }
 
     std::vector<String> symbols;
     String raw = config.trackedMarkets;
@@ -185,8 +201,8 @@ void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, co
         start = comma + 1;
     }
     if (!symbols.empty()) {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
         std::vector<MarketItem> placeholders;
+        placeholders.reserve(symbols.size());
         for (const auto& sym : symbols) {
             bool found = false;
             for (const auto& cur : m_snapshot.marketItems) {
@@ -198,12 +214,6 @@ void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, co
             }
             if (!found) {
                 MarketItem placeholder(sym, 0.0f, 0.0f, false);
-                // In-memory cache lookup only (Core 1 zero-allocation and zero I/O)
-                auto it = m_iconCache.find(sym);
-                if (it != m_iconCache.end() && it->second.valid) {
-                    placeholder.hasIcon = true;
-                    memcpy(placeholder.iconPixels, it->second.pixels, sizeof(placeholder.iconPixels));
-                }
                 placeholders.push_back(placeholder);
             }
         }
@@ -219,8 +229,7 @@ void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, co
     }
 }
 
-DashboardSnapshot DashboardDataProvider::getSnapshot() const {
-    std::lock_guard<std::mutex> lock(m_snapshotMutex);
+const DashboardSnapshot& DashboardDataProvider::getSnapshot() const {
     return m_snapshot;
 }
 
@@ -284,7 +293,6 @@ void DashboardDataProvider::fetchTaskLoop() {
 }
 
 void DashboardDataProvider::updateWorldTimes(const String& clocks) {
-    std::lock_guard<std::mutex> lock(m_snapshotMutex);
     m_snapshot.worldTimes.clear();
 
     struct TzDef { const char* code; int offsetMin; };
@@ -388,9 +396,15 @@ void DashboardDataProvider::fetchWeather() {
         return;
     }
 
-    String apiKey = m_weatherApiKey;
-    String city = m_weatherCity.isEmpty() ? "Paris" : m_weatherCity;
-    String lang = m_config.lang;
+    String apiKey;
+    String city;
+    String lang;
+    {
+        std::lock_guard<std::mutex> lock(m_configMutex);
+        apiKey = m_weatherApiKey;
+        city = m_weatherCity.isEmpty() ? "Paris" : m_weatherCity;
+        lang = m_config.lang;
+    }
     lang.toLowerCase();
     if (lang.isEmpty() || lang == "system" || lang == "auto") {
         lang = String(I18n::getLangCode(I18n::getLang()));
@@ -402,10 +416,14 @@ void DashboardDataProvider::fetchWeather() {
         int numFc = 0;
         if (m_weatherProvider->fetchForecast(apiKey, city, lang, "metric", fc, 1, numFc)) {
             if (numFc > 0) {
-                std::lock_guard<std::mutex> lock(m_snapshotMutex);
-                m_snapshot.weather = fc[0];
-                m_snapshot.weatherValid = true;
-                LOGI("Dashboard", "Weather updated (OpenWeatherMap): %.1f°C (%s)", m_snapshot.weather.temp, m_snapshot.weather.description.c_str());
+                uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+                uint8_t writeIdx = 1 - pubIdx;
+                m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+                m_netBuffers[writeIdx].weather = fc[0];
+                m_netBuffers[writeIdx].weatherValid = true;
+                m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+                m_netHasNewData.store(true, std::memory_order_release);
+                LOGI("Dashboard", "Weather updated (OpenWeatherMap): %.1f°C (%s)", fc[0].temp, fc[0].description.c_str());
                 return;
             }
         }
@@ -476,9 +494,13 @@ void DashboardDataProvider::fetchWeather() {
 
                 wd.description = I18n::getWeatherCondition(wd.description, l);
 
-                std::lock_guard<std::mutex> lock(m_snapshotMutex);
-                m_snapshot.weather = wd;
-                m_snapshot.weatherValid = true;
+                uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+                uint8_t writeIdx = 1 - pubIdx;
+                m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+                m_netBuffers[writeIdx].weather = wd;
+                m_netBuffers[writeIdx].weatherValid = true;
+                m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+                m_netHasNewData.store(true, std::memory_order_release);
                 LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s)", wd.temp, wd.description.c_str());
             }
         }
@@ -654,9 +676,18 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
 void DashboardDataProvider::preloadIconsFromSd() {
     std::vector<String> symbols;
     {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
-        for (const auto& item : m_snapshot.marketItems) {
-            symbols.push_back(item.symbol);
+        std::lock_guard<std::mutex> lock(m_configMutex);
+        String raw = m_cachedTrackedMarkets;
+        if (raw.isEmpty()) raw = "BTC,ETH,SOL,NVDA";
+        int start = 0;
+        while (start < (int)raw.length()) {
+            int comma = raw.indexOf(',', start);
+            String token = (comma == -1) ? raw.substring(start) : raw.substring(start, comma);
+            token.trim();
+            token.toUpperCase();
+            if (token.length() > 0) symbols.push_back(token);
+            if (comma == -1) break;
+            start = comma + 1;
         }
     }
 
@@ -668,7 +699,8 @@ void DashboardDataProvider::preloadIconsFromSd() {
         String symLower = symUpper;
         symLower.toLowerCase();
 
-        if (m_iconCache.find(symUpper) != m_iconCache.end() && m_iconCache[symUpper].valid) {
+        auto it = m_iconCache.find(symUpper);
+        if (it != m_iconCache.end() && (it->second.valid || it->second.notFound)) {
             continue;
         }
 
@@ -683,18 +715,24 @@ void DashboardDataProvider::preloadIconsFromSd() {
             if (loadIconFromSd(p, pixels)) {
                 CachedIcon entry;
                 entry.valid = true;
+                entry.notFound = false;
+                entry.lastAttemptMs = millis();
                 memcpy(entry.pixels, pixels, sizeof(entry.pixels));
                 m_iconCache[symUpper] = entry;
 
-                std::lock_guard<std::mutex> lock(m_snapshotMutex);
-                for (auto& cur : m_snapshot.marketItems) {
-                    if (cur.symbol == symUpper) {
-                        cur.hasIcon = true;
-                        memcpy(cur.iconPixels, pixels, sizeof(cur.iconPixels));
+                uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+                uint8_t writeIdx = 1 - pubIdx;
+                m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+                for (uint8_t i = 0; i < m_netBuffers[writeIdx].marketCount; ++i) {
+                    if (m_netBuffers[writeIdx].marketItems[i].symbol == symUpper) {
+                        m_netBuffers[writeIdx].marketItems[i].hasIcon = true;
+                        memcpy(m_netBuffers[writeIdx].marketItems[i].iconPixels, pixels, sizeof(pixels));
                         anyUpdated = true;
                         break;
                     }
                 }
+                m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+                m_netHasNewData.store(true, std::memory_order_release);
                 break;
             }
         }
@@ -711,11 +749,16 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
     String symLower = symUpper;
     symLower.toLowerCase();
 
-    // Check memory cache first
+    // Check memory cache first (including negative cache with 1-hour TTL)
     auto it = m_iconCache.find(symUpper);
-    if (it != m_iconCache.end() && it->second.valid) {
-        memcpy(outPixels, it->second.pixels, 64 * sizeof(uint16_t));
-        return true;
+    if (it != m_iconCache.end()) {
+        if (it->second.valid) {
+            memcpy(outPixels, it->second.pixels, 64 * sizeof(uint16_t));
+            return true;
+        }
+        if (it->second.notFound && (millis() - it->second.lastAttemptMs < 3600000UL)) {
+            return false;
+        }
     }
 
     // 1. Check SD card candidate paths:
@@ -730,6 +773,8 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
         if (loadIconFromSd(path, outPixels)) {
             CachedIcon entry;
             entry.valid = true;
+            entry.notFound = false;
+            entry.lastAttemptMs = millis();
             memcpy(entry.pixels, outPixels, 64 * sizeof(uint16_t));
             m_iconCache[symUpper] = entry;
             LOGI("Dashboard", "Loaded icon for %s from SD: %s", symUpper.c_str(), path.c_str());
@@ -760,6 +805,8 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
                 if (loadIconFromSd(destPath, outPixels)) {
                     CachedIcon entry;
                     entry.valid = true;
+                    entry.notFound = false;
+                    entry.lastAttemptMs = millis();
                     memcpy(entry.pixels, outPixels, 64 * sizeof(uint16_t));
                     m_iconCache[symUpper] = entry;
                     LOGI("Dashboard", "Downloaded & cached icon for %s via proxy -> %s", symUpper.c_str(), destPath.c_str());
@@ -769,6 +816,13 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
         }
     }
 
+    // Not found on SD or web: record negative cache entry (1 hour TTL)
+    CachedIcon entry;
+    entry.valid = false;
+    entry.notFound = true;
+    entry.lastAttemptMs = millis();
+    m_iconCache[symUpper] = entry;
+    LOGI("Dashboard", "Icon for %s not found on SD or web; negative cached for 1h.", symUpper.c_str());
     return false;
 }
 
@@ -777,6 +831,7 @@ void DashboardDataProvider::fetchMarkets() {
 
     std::vector<String> symbols;
     {
+        std::lock_guard<std::mutex> lock(m_configMutex);
         String raw = m_cachedTrackedMarkets;
         int start = 0;
         while (start < (int)raw.length()) {
@@ -858,33 +913,37 @@ void DashboardDataProvider::fetchMarkets() {
             }
         }
 
-        // 3. Patch quote in-place: preserve previous cached quotes if individual fetch fails
+        // 3. Patch quote in-place into double-buffered network payload
         if (fetchSuccess) {
             uint16_t iconPixels[64];
             bool hasIcon = resolveMarketIcon(sym, fetchedImgUrl, iconPixels);
-            std::lock_guard<std::mutex> lock(m_snapshotMutex);
+            uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+            uint8_t writeIdx = 1 - pubIdx;
+            m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
             bool found = false;
-            for (auto& item : m_snapshot.marketItems) {
-                if (item.symbol == sym) {
-                    item.price = fetchedPrice;
-                    item.change24h = fetchedChange;
-                    item.valid = true;
+            for (uint8_t i = 0; i < m_netBuffers[writeIdx].marketCount; ++i) {
+                if (m_netBuffers[writeIdx].marketItems[i].symbol == sym) {
+                    m_netBuffers[writeIdx].marketItems[i].price = fetchedPrice;
+                    m_netBuffers[writeIdx].marketItems[i].change24h = fetchedChange;
+                    m_netBuffers[writeIdx].marketItems[i].valid = true;
                     if (hasIcon) {
-                        item.hasIcon = true;
-                        memcpy(item.iconPixels, iconPixels, sizeof(item.iconPixels));
+                        m_netBuffers[writeIdx].marketItems[i].hasIcon = true;
+                        memcpy(m_netBuffers[writeIdx].marketItems[i].iconPixels, iconPixels, sizeof(iconPixels));
                     }
                     found = true;
                     break;
                 }
             }
-            if (!found) {
-                MarketItem newItem(sym, fetchedPrice, fetchedChange, true);
+            if (!found && m_netBuffers[writeIdx].marketCount < 8) {
+                uint8_t idx = m_netBuffers[writeIdx].marketCount++;
+                m_netBuffers[writeIdx].marketItems[idx] = MarketItem(sym, fetchedPrice, fetchedChange, true);
                 if (hasIcon) {
-                    newItem.hasIcon = true;
-                    memcpy(newItem.iconPixels, iconPixels, sizeof(newItem.iconPixels));
+                    m_netBuffers[writeIdx].marketItems[idx].hasIcon = true;
+                    memcpy(m_netBuffers[writeIdx].marketItems[idx].iconPixels, iconPixels, sizeof(iconPixels));
                 }
-                m_snapshot.marketItems.push_back(newItem);
             }
+            m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+            m_netHasNewData.store(true, std::memory_order_release);
             LOGD("Dashboard", "Market ticker %s updated: price=%.2f, change=%.2f%%", sym.c_str(), fetchedPrice, fetchedChange);
         } else {
             LOGW("Dashboard", "Failed to update market ticker %s; keeping previous cached quote.", sym.c_str());
@@ -895,6 +954,20 @@ void DashboardDataProvider::fetchMarkets() {
 }
 
 void DashboardDataProvider::update(const DashboardConfigParams& config) {
+    // 0. Consume Core 0 network updates lock-free if ready
+    if (m_netHasNewData.load(std::memory_order_acquire)) {
+        uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_acquire);
+        const auto& net = m_netBuffers[pubIdx];
+        m_snapshot.weather = net.weather;
+        m_snapshot.weatherValid = net.weatherValid;
+
+        m_snapshot.marketItems.resize(net.marketCount);
+        for (uint8_t i = 0; i < net.marketCount; ++i) {
+            m_snapshot.marketItems[i] = net.marketItems[i];
+        }
+        m_netHasNewData.store(false, std::memory_order_release);
+    }
+
     updateSnapshot(config);
 }
 
@@ -904,7 +977,6 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
     // 1. Time & Synchronized Sub-Second Progress
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
         m_snapshot.time.hours = timeinfo.tm_hour;
         m_snapshot.time.minutes = timeinfo.tm_min;
         m_snapshot.time.seconds = timeinfo.tm_sec;
@@ -919,14 +991,11 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
-        if (config.smoothSeconds) {
-            uint32_t elapsed = now - m_secondStartMillis;
-            m_snapshot.subSecondFraction = (elapsed < 1000) ? ((float)elapsed / 1000.0f) : 0.999f;
-        } else {
-            m_snapshot.subSecondFraction = 0.0f;
-        }
+    if (config.smoothSeconds) {
+        uint32_t elapsed = now - m_secondStartMillis;
+        m_snapshot.subSecondFraction = (elapsed < 1000) ? ((float)elapsed / 1000.0f) : 0.999f;
+    } else {
+        m_snapshot.subSecondFraction = 0.0f;
     }
 
     // 2. Compute World Clocks Time
@@ -934,7 +1003,6 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
     time(&rawtime);
     struct tm* gm = gmtime(&rawtime);
     if (gm) {
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
         int utcMinTotal = gm->tm_hour * 60 + gm->tm_min;
         for (auto& item : m_snapshot.worldTimes) {
             int localMin = (utcMinTotal + item.offsetMinutes + 1440) % 1440;
@@ -947,7 +1015,6 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
     if (config.showIndoorTemp && (m_lastSensorFetch == 0 || (now - m_lastSensorFetch >= 2000UL))) {
         m_lastSensorFetch = now;
         EnvironmentData env = hardwareHAL.readEnvironment(0.0f);
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
         m_snapshot.indoor.valid = env.available;
         m_snapshot.indoor.temperatureC = env.temperatureC;
         m_snapshot.indoor.temperatureF = env.temperatureF;
@@ -957,7 +1024,6 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
     // 4. System Metrics Snapshot (every 1 second)
     if (config.showSysInfo && (m_lastSystemFetch == 0 || (now - m_lastSystemFetch >= 1000UL))) {
         m_lastSystemFetch = now;
-        std::lock_guard<std::mutex> lock(m_snapshotMutex);
         uint32_t heapSize = ESP.getHeapSize();
         m_snapshot.system.ramUsagePct = (heapSize > 0) ? ((1.0f - ((float)ESP.getFreeHeap() / (float)heapSize)) * 100.0f) : 0.0f;
         m_snapshot.system.cpuLoadPct = CpuLoad::total();
