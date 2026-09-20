@@ -332,6 +332,13 @@ public:
 
     // Self-paced engines (e.g. GIF player counting N items instead of seconds)
     virtual bool selfPaced() const { return false; }
+
+    /**
+     * @brief Milliseconds until this engine wants its next frame, or 0xFFFFFFFF if it has no
+     * opinion. Self-pacing engines (GIF) report their next frame delay so the render loop can wake
+     * for it instead of on its fixed tick.
+     */
+    virtual uint32_t nextFrameDueInMs() const { return 0xFFFFFFFFu; }
     virtual void setRotationBudget(uint32_t budget) {}
 
     /**

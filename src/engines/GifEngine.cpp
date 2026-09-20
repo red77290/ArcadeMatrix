@@ -1,4 +1,8 @@
 #include "GifEngine.h"
+#include "../core/MatrixEngine.h"
+#include "../core/RenderStats.h"
+
+extern MatrixEngine matrixEngine;
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/Logger.h"
@@ -12,6 +16,7 @@ GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false),
 }
 
 GifEngine::~GifEngine() {
+    freeShadows();
     stop();
     delete png;
 }
@@ -136,6 +141,7 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
 
 void GifEngine::activate() {
     instance = this;
+    invalidateShadows();
     int count = 1;
     if (m_rotationBudget > 0) {
         count = (int)m_rotationBudget;
@@ -223,6 +229,8 @@ void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
         if (canvasBuffer) {
             memset(canvasBuffer, 0, matrixPixels * 2);
         }
+        allocateShadows(matrixPixels);
+        if (m_srcW > 0) updateFitGeometry(m_srcW, m_srcH);
     }
     
     rebuildActivePlaylists();
@@ -258,7 +266,113 @@ bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
     if (canvasBuffer) {
         memset(canvasBuffer, 0, matrixPixels * 2);
     }
+    allocateShadows(matrixPixels);
     return true;
+}
+
+void GifEngine::allocateShadows(size_t matrixPixels) {
+    freeShadows();
+    if (matrixPixels == 0) return;
+    // Read sequentially once per frame, so PSRAM is fine here; internal DRAM stays free for TLS/DMA.
+    for (int i = 0; i < 2; i++) {
+        m_shadow[i] = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!m_shadow[i]) m_shadow[i] = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_8BIT);
+        if (!m_shadow[i]) {
+            LOGW("GifEngine", "Shadow buffer %d allocation failed (%u bytes); frames will be repainted in full.", i, (unsigned)(matrixPixels * 2));
+        }
+    }
+    invalidateShadows();
+}
+
+void GifEngine::freeShadows() {
+    for (int i = 0; i < 2; i++) {
+        if (m_shadow[i]) { heap_caps_free(m_shadow[i]); m_shadow[i] = nullptr; }
+    }
+    invalidateShadows();
+}
+
+void GifEngine::updateFitGeometry(int srcW, int srcH) {
+    if (!matrix) return;
+    if (srcW <= 0) srcW = 128;
+    if (srcH <= 0) srcH = 32;
+    m_srcW = srcW; m_srcH = srcH;
+    int mw = matrix->width(), mh = matrix->height();
+    String mode = m_fitMode;
+    mode.toLowerCase();
+    if (mode == "stretch") {
+        m_fitScaleX = max(1, mw / srcW);
+        m_fitScaleY = max(1, mh / srcH);
+    } else if (mode == "center") {
+        m_fitScaleX = m_fitScaleY = 1;
+    } else { // "fit" (default): integer scale that keeps the aspect ratio
+        int sc = max(1, min(mw / srcW, mh / srcH));
+        m_fitScaleX = m_fitScaleY = sc;
+    }
+    m_fitOffX = (mw - srcW * m_fitScaleX) / 2;
+    m_fitOffY = (mh - srcH * m_fitScaleY) / 2;
+}
+
+/**
+ * Push the canvas to the current back buffer, writing only pixels that differ from what that buffer
+ * last received. Returns true when a frame was pushed (a flip is due either way: the front buffer
+ * shows the previous frame).
+ */
+bool GifEngine::blitCanvas() {
+    if (!canvasBuffer || !matrix) return false;
+    const int w = matrix->width();
+    const int h = matrix->height();
+    const size_t n = (size_t)w * h;
+
+    uint32_t gen = matrixEngine.externalDrawGeneration();
+    if (gen != m_shadowGeneration) {
+        m_shadowGeneration = gen;
+        invalidateShadows();
+    }
+    int idx = matrixEngine.isDoubleBuffered() ? (int)(matrixEngine.flipCount() & 1u) : 0;
+    uint16_t* shadow = m_shadow[idx];
+    bool full = (shadow == nullptr) || !m_shadowValid[idx];
+
+    // Only pixels that differ from the shadow are written. Each drawPixel is expensive on this board
+    // (per colour plane: a read-modify-write into the PSRAM DMA buffer plus a cache write-back, about
+    // 14 us per pixel measured on the S3 Waveshare at 256x64), so the number of pixels written is the
+    // whole cost; the scan over canvas and shadow is a few milliseconds. Writing runs through the
+    // library's hlineDMA is no cheaper per pixel and needs a global cache write-back that collides
+    // with flash writes (OTA failed while a GIF was playing), so the per-pixel path stays.
+    uint32_t t0 = micros();
+    size_t written = 0;
+    for (int y = 0; y < h; y++) {
+        const uint16_t* row = canvasBuffer + (size_t)y * w;
+        if (full) {
+            for (int x = 0; x < w; x++) matrix->drawPixel(x, y, row[x]);
+            written += (size_t)w;
+        } else {
+            uint16_t* srow = shadow + (size_t)y * w;
+            for (int x = 0; x < w; x++) {
+                uint16_t c = row[x];
+                if (c != srow[x]) {
+                    matrix->drawPixel(x, y, c);
+                    srow[x] = c;
+                    written++;
+                }
+            }
+        }
+    }
+    if (full && shadow) {
+        memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
+        m_shadowValid[idx] = true;
+    }
+    g_renderStats.gifBlitMicros += micros() - t0;
+    g_renderStats.gifPixelsWritten += (uint32_t)written;
+    g_renderStats.gifPixelsTotal += (uint32_t)n;
+    g_renderStats.gifFrames++;
+    return true;
+}
+
+uint32_t GifEngine::nextFrameDueInMs() const {
+    if (!isPlaying || isPng) return 0xFFFFFFFFu;
+    unsigned long due = isRaw ? (rawLastFrameTime + 50) : (gifLastFrameTime + gifCurrentDelay);
+    long remaining = (long)(due - millis());
+    return remaining <= 0 ? 0u : (uint32_t)remaining;
 }
 
 uint16_t* GifEngine::allocateCanvasBuffer(size_t matrixPixels) {
@@ -354,6 +468,7 @@ bool GifEngine::playGif(const char* filepath) {
             }
             if (loaded) {
                 if (gif.open(psramBuffer, psramBufferSize, GIFDraw)) {
+                    updateFitGeometry(gif.getCanvasWidth(), gif.getCanvasHeight());
                     LOGI("GifEngine", "GIF loaded directly into PSRAM: %s (%zu bytes)", path.c_str(), psramBufferSize);
                     if (canvasBuffer && matrix) {
                         memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
@@ -373,6 +488,7 @@ bool GifEngine::playGif(const char* filepath) {
             xSemaphoreGive(sdMutex);
         }
         if (streamOpened) {
+            updateFitGeometry(gif.getCanvasWidth(), gif.getCanvasHeight());
             LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);
             if (canvasBuffer && matrix) {
                 memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
@@ -420,6 +536,7 @@ bool GifEngine::decodePng(const char* filepath) {
         xSemaphoreGive(sdMutex);
         return false;
     }
+    updateFitGeometry(png->getWidth(), png->getHeight());
     rc = png->decode((void*)this, 0);
     png->close();
     xSemaphoreGive(sdMutex);
@@ -695,15 +812,7 @@ bool GifEngine::loop() {
     if (isRaw) {
         return playRawFrame();
     } else if (isPng) {
-        if (canvasBuffer && matrix) {
-            int mW = matrix->width();
-            int mH = matrix->height();
-            for (int y = 0; y < mH; y++) {
-                for (int x = 0; x < mW; x++) {
-                    matrix->drawPixel(x, y, canvasBuffer[y * mW + x]);
-                }
-            }
-        }
+        blitCanvas();   // both DMA buffers end up holding the image; cheap once they do
         if (millis() - pngShowStartTime > pngHoldDurationMs) {
             if (playlistMode) {
                 loadNextFileInPlaylist();
@@ -723,32 +832,12 @@ bool GifEngine::loop() {
         }
         
         unsigned long startDecode = millis();
+        uint32_t decodeStartUs = micros();
         int delayMs = 0;
         int result = gif.playFrame(false, &delayMs, (void*)this);
-        
-        if (canvasBuffer && matrix) {
-            int canvasW = gif.getCanvasWidth();
-            int canvasH = gif.getCanvasHeight();
-            if (canvasW <= 0) canvasW = 128;
-            if (canvasH <= 0) canvasH = 32;
-            
-            int scaleX = max(1, matrix->width() / canvasW);
-            int scaleY = max(1, matrix->height() / canvasH);
-            
-            int offsetX = (matrix->width() - (canvasW * scaleX)) / 2;
-            int offsetY = (matrix->height() - (canvasH * scaleY)) / 2;
-            int drawW = canvasW * scaleX;
-            int drawH = canvasH * scaleY;
-            
-            // Only push pixels within the GIF's actual scaled bounding box
-            for (int y = offsetY; y < offsetY + drawH; y++) {
-                if (y < 0 || y >= matrix->height()) continue;
-                for (int x = offsetX; x < offsetX + drawW; x++) {
-                    if (x < 0 || x >= matrix->width()) continue;
-                    matrix->drawPixel(x, y, canvasBuffer[y * matrix->width() + x]);
-                }
-            }
-        }
+        g_renderStats.gifDecodeMicros += micros() - decodeStartUs;
+
+        blitCanvas();
         
         unsigned long decodeTime = millis() - startDecode;
         
@@ -877,41 +966,11 @@ void GifEngine::GIFDraw(GIFDRAW *pDraw) {
     if (!self) self = instance;
     if (!self || !self->matrix) return;
     
-    int canvasW = self->gif.getCanvasWidth();
-    int canvasH = self->gif.getCanvasHeight();
-    if (canvasW <= 0) canvasW = 128; // Fallback
-    if (canvasH <= 0) canvasH = 32;
-    
-    int scaleX = 1;
-    int scaleY = 1;
-    int offsetX = 0;
-    int offsetY = 0;
-
-    String mode = self->m_fitMode;
-    mode.toLowerCase();
-
-    if (mode == "stretch") {
-        scaleX = self->matrix->width() / canvasW;
-        scaleY = self->matrix->height() / canvasH;
-        if (scaleX < 1) scaleX = 1;
-        if (scaleY < 1) scaleY = 1;
-        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
-    } else if (mode == "center") {
-        scaleX = 1;
-        scaleY = 1;
-        offsetX = (self->matrix->width() - canvasW) / 2;
-        offsetY = (self->matrix->height() - canvasH) / 2;
-    } else { // "fit" (default)
-        int sX = self->matrix->width() / canvasW;
-        int sY = self->matrix->height() / canvasH;
-        int scale = min(sX, sY);
-        if (scale < 1) scale = 1;
-        scaleX = scale;
-        scaleY = scale;
-        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
-    }
+    // Placement was computed when the file opened (updateFitGeometry); nothing per scanline.
+    const int scaleX = self->m_fitScaleX;
+    const int scaleY = self->m_fitScaleY;
+    const int offsetX = self->m_fitOffX;
+    const int offsetY = self->m_fitOffY;
 
     uint8_t *s;
     uint16_t *usPalette;
@@ -1026,41 +1085,11 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
     if (!self) self = instance;
     if (!self || !self->matrix || !self->png) return 0;
 
-    int canvasW = self->png->getWidth();
-    int canvasH = self->png->getHeight();
-    if (canvasW <= 0) canvasW = 128;
-    if (canvasH <= 0) canvasH = 32;
-
-    int scaleX = 1;
-    int scaleY = 1;
-    int offsetX = 0;
-    int offsetY = 0;
-
-    String mode = self->m_fitMode;
-    mode.toLowerCase();
-
-    if (mode == "stretch") {
-        scaleX = self->matrix->width() / canvasW;
-        scaleY = self->matrix->height() / canvasH;
-        if (scaleX < 1) scaleX = 1;
-        if (scaleY < 1) scaleY = 1;
-        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
-    } else if (mode == "center") {
-        scaleX = 1;
-        scaleY = 1;
-        offsetX = (self->matrix->width() - canvasW) / 2;
-        offsetY = (self->matrix->height() - canvasH) / 2;
-    } else { // "fit" (default)
-        int sX = self->matrix->width() / canvasW;
-        int sY = self->matrix->height() / canvasH;
-        int scale = min(sX, sY);
-        if (scale < 1) scale = 1;
-        scaleX = scale;
-        scaleY = scale;
-        offsetX = (self->matrix->width() - (canvasW * scaleX)) / 2;
-        offsetY = (self->matrix->height() - (canvasH * scaleY)) / 2;
-    }
+    // Placement was computed in decodePng (updateFitGeometry) before decoding started.
+    const int scaleX = self->m_fitScaleX;
+    const int scaleY = self->m_fitScaleY;
+    const int offsetX = self->m_fitOffX;
+    const int offsetY = self->m_fitOffY;
 
     static uint16_t lineBuffer[512]; // Increased to 512 for safety
     int iWidth = pDraw->iWidth;
@@ -1079,7 +1108,7 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
         if (scaleX == 1 && scaleY == 1) {
             if (px >= 0 && px < mW && baseY >= 0 && baseY < mH) {
                 if (self->canvasBuffer) self->canvasBuffer[baseY * mW + px] = color;
-                self->matrix->drawPixel(px, baseY, color);
+                else self->matrix->drawPixel(px, baseY, color);
             }
         } else {
             for (int dy = 0; dy < scaleY; dy++) {
@@ -1091,7 +1120,7 @@ int GifEngine::PNGDrawCallback(PNGDRAW *pDraw) {
                     if (self->canvasBuffer) self->canvasBuffer[py * mW + ppx] = color;
                 }
             }
-            self->matrix->fillRect(px, baseY, scaleX, scaleY, color);
+            if (!self->canvasBuffer) self->matrix->fillRect(px, baseY, scaleX, scaleY, color);
         }
     }
     return 1;

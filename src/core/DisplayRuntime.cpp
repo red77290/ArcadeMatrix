@@ -1,5 +1,8 @@
 #include "DisplayRuntime.h"
 #include "Logger.h"
+#include "MatrixEngine.h"
+
+extern MatrixEngine matrixEngine;
 
 DisplayRuntime::DisplayRuntime()
     : m_ctx(nullptr), m_matrixEngine(nullptr), m_rotationManager(nullptr),
@@ -309,6 +312,7 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
     if (decision.sourceId != DisplaySourceId::ROTATION && activeEngine != nullptr) {
         if (activeEngine->needsClear()) {
             m_matrixEngine->getDisplay()->fillScreen(0);
+            matrixEngine.markExternalDraw();
         }
         activeEngine->update(appCtx);
         activeEngine->render(appCtx);
@@ -318,6 +322,9 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         result.rendered = m_rotationManager->loop();
         result.framebufferChanged = true;
         activeEngine = m_rotationManager->getCurrentActiveEngine();
+    }
+    if (activeEngine) {
+        result.nextDueInMs = activeEngine->nextFrameDueInMs();
     }
 
     // Render Overlays (Fighter etc.) if enabled by decision and active rotation slot
@@ -331,6 +338,8 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         m_overlayManager->configure(activeOverlayConfig);
         m_overlayManager->update();
         m_overlayManager->render();
+        // An active overlay draws over the engine's frame; a dirty-pixel engine must repaint under it.
+        if (m_overlayManager->isActive()) matrixEngine.markExternalDraw();
     } else if (m_overlayManager) {
         m_overlayManager->deactivate();
     }
