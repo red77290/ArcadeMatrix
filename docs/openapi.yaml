@@ -153,6 +153,23 @@ paths:
                     type: boolean
                   warning:
                     type: string
+        '503':
+          description: >-
+            The change was applied in memory but could not be written to the SD card (card busy with a
+            rescan or upload, or the write failed); it will be lost at reboot. Retry in a moment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  sd_saved:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
 
   /api/system:
     get:
@@ -1019,6 +1036,23 @@ paths:
       responses:
         '200':
           description: Configuration updated and hot reloaded.
+        '503':
+          description: >-
+            The change was applied in memory but could not be written to the SD card (card busy with a
+            rescan or upload, or the write failed); it will be lost at reboot. Retry in a moment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  sd_saved:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
 
   /api/rotation:
     get:
@@ -1073,6 +1107,23 @@ paths:
       responses:
         '200':
           description: Rotation updated
+        '503':
+          description: >-
+            The change was applied in memory but could not be written to the SD card (card busy with a
+            rescan or upload, or the write failed); it will be lost at reboot. Retry in a moment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  sd_saved:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
 
   /api/engines:
     get:
