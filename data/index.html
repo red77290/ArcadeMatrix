@@ -1330,6 +1330,67 @@ select.input option {
             <button id="gif-lib-upload-btn" class="btn btn-primary" disabled data-i18n="gifs_upload">Upload</button>
           </div>
         </div>
+
+        <!-- WebRadio & Audio Streaming Hub Card -->
+        <div class="card glass shadow">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3>📻 <span data-i18n="radio_title">WebRadio & Audio Streaming Hub</span></h3>
+            <span id="audio-live-status-badge" class="version-badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8;">● Idle</span>
+          </div>
+          <p class="text-muted" data-i18n="radio_desc">Stream live Web Radios or broadcast music from your phone/PC via DLNA/UPnP (AudioCast, RiMusic, BubbleUPnP, VLC).</p>
+
+          <div class="form-grid col-2" style="margin-top: 1rem;">
+            <div class="form-group">
+              <label data-i18n="radio_preset">Radio Preset</label>
+              <select id="radio-preset-select" class="input">
+                <option value="http://ice1.somafm.com/vaporwaves-128-mp3" data-name="SomaFM Vaporwaves">🕹️ SomaFM Vaporwaves (Synthwave / Retrowave)</option>
+                <option value="http://ice1.somafm.com/groovesalad-128-mp3" data-name="SomaFM Groove Salad">☕ SomaFM Groove Salad (Ambient / Chillout)</option>
+                <option value="http://relay1.slayradio.org:8000/" data-name="SlayRadio C64/Amiga">👾 SlayRadio (Commodore 64 & Amiga Remixes)</option>
+                <option value="http://stream.rainwave.cc:8000/all.mp3" data-name="Rainwave Gaming">🎮 Rainwave (Arcade & Chiptune Gaming)</option>
+                <option value="http://stream.zeno.fm/f3wvbbqmdg8uv" data-name="Lofi Girl">🎧 Lofi Girl / ChilledCow (Lo-Fi Hip Hop)</option>
+                <option value="http://direct.fipradio.fr/live/fip-midfi.mp3" data-name="FIP Radio">🎵 FIP Radio (Éclectique & Jazz/Groove)</option>
+                <option value="http://radionova.ice.infomaniak.ch/radionova-high.mp3" data-name="Radio Nova">🎸 Radio Nova (Groove, Funk & World)</option>
+                <option value="http://tsfjazz.ice.infomaniak.ch/tsfjazz-high.mp3" data-name="TSF Jazz">🎺 TSF Jazz (Jazz & Soul)</option>
+                <option value="http://direct.franceinter.fr/live/franceinter-midfi.mp3" data-name="France Inter">🎙️ France Inter (Actu & Culture)</option>
+                <option value="custom" data-name="Custom Stream">✍️ Custom URL (Flux Personnalisé)...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label data-i18n="radio_station_name">Station Name / Label</label>
+              <input type="text" id="radio-name-input" class="input" value="SomaFM Vaporwaves" placeholder="Nom de la station">
+            </div>
+          </div>
+
+          <div class="form-group" id="radio-custom-url-group" style="margin-top: 1rem;">
+            <label data-i18n="radio_custom_url">Stream URL (HTTP / MP3 / Icecast / Shoutcast)</label>
+            <input type="url" id="radio-url-input" class="input" value="http://ice1.somafm.com/vaporwaves-128-mp3" placeholder="http://stream.example.com/radio.mp3">
+          </div>
+
+          <div class="form-grid col-3" style="margin-top: 1.25rem; align-items: center;">
+            <button id="btn-play-radio" class="btn btn-primary" style="font-weight: 700; font-size: 1rem;" data-i18n="radio_play_btn">▶️ Play Stream 🚀</button>
+            <button id="btn-stop-radio" class="btn btn-danger" style="font-weight: 700; font-size: 1rem;" data-i18n="radio_stop_btn">⏹️ Stop Audio</button>
+            <div class="slider-group">
+              <label><span data-i18n="radio_volume_label">Master Volume</span> (<span id="val-audio-volume">80</span>%)</label>
+              <input type="range" id="slider-audio-volume" min="0" max="100" value="80">
+            </div>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: flex-end;">
+            <button id="btn-test-audio" class="btn btn-secondary btn-sm" style="font-weight: 600;" data-i18n="radio_test_btn">🔊 Tester le Haut-Parleur (Bip 880Hz)</button>
+          </div>
+
+          <!-- Live Now Playing Info Box -->
+          <div id="audio-now-playing-box" style="margin-top: 1.25rem; padding: 1rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;" data-i18n="radio_now_playing">Currently Playing</div>
+              <div id="audio-track-title" style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-top: 0.25rem;">No stream active</div>
+              <div id="audio-track-artist" style="font-size: 0.9rem; color: var(--text-muted);" data-i18n="radio_idle_desc">Launch a radio preset or stream via DLNA</div>
+            </div>
+            <div style="text-align: right;">
+              <span id="audio-source-badge" class="version-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent-primary);" data-i18n="radio_ready_badge">DLNA / Radio Ready</span>
+            </div>
+          </div>
+        </div>
+
         <div class="card glass shadow">
           <h3>🥊 <span data-i18n="fighter_title">Fighter Overlay</span></h3>
           <p class="text-muted" data-i18n="fighter_desc">Animated fighter sprites composited on top of idle rotation screens. Enable it per screen from the Rotation panel.</p>
@@ -2568,6 +2629,18 @@ const translations = {
     tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
     tt_hw_clk_phase: "Inverts the HUB75 clock phase. Enable it only if the panel shows shifted or duplicated columns.",
     tt_hw_single_buffer: "Forces a single DMA framebuffer instead of double buffering. Halves SRAM usage at the cost of possible tearing.",
+    radio_title: "WebRadio & Audio Streaming Hub",
+    radio_desc: "Stream live Web Radios or broadcast music from your phone/PC via DLNA/UPnP (AudioCast, RiMusic, BubbleUPnP, VLC).",
+    radio_preset: "Radio Preset",
+    radio_station_name: "Station Name / Label",
+    radio_custom_url: "Stream URL (HTTP / MP3 / Icecast / Shoutcast)",
+    radio_play_btn: "▶️ Play Stream 🚀",
+    radio_stop_btn: "⏹️ Stop Audio",
+    radio_test_btn: "🔊 Test Speaker (880Hz Tone)",
+    radio_now_playing: "Currently Playing",
+    radio_idle_desc: "Launch a radio preset or stream via DLNA",
+    radio_ready_badge: "DLNA / Radio Ready",
+    radio_volume_label: "Master Volume",
   },
   fr: {
     gifs_queued: "{n} fichier(s) en file pour {k} playlist(s) : {list}. Cliquez sur Envoyer.",
@@ -3045,6 +3118,18 @@ const translations = {
     tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
     tt_hw_clk_phase: "Inverse la phase d'horloge HUB75. À activer uniquement si la dalle affiche des colonnes décalées ou dupliquées.",
     tt_hw_single_buffer: "Force un unique framebuffer DMA au lieu du double buffering. Divise par deux la SRAM utilisée au prix d'un possible tearing.",
+    radio_title: "WebRadio & Streaming Audio",
+    radio_desc: "Diffusez des web-radios en direct ou envoyez le son de votre smartphone/PC via DLNA (AudioCast, RiMusic, BubbleUPnP, VLC).",
+    radio_preset: "Station Prédéfinie",
+    radio_station_name: "Nom de la station / Label",
+    radio_custom_url: "URL du flux (HTTP / MP3 / Icecast / Shoutcast)",
+    radio_play_btn: "▶️ Lancer le Flux 🚀",
+    radio_stop_btn: "⏹️ Arrêter l'Audio",
+    radio_test_btn: "🔊 Tester le Haut-Parleur (Bip 880Hz)",
+    radio_now_playing: "En cours de lecture",
+    radio_idle_desc: "Sélectionnez une radio ou diffusez via DLNA",
+    radio_ready_badge: "DLNA / Radio Prêt",
+    radio_volume_label: "Volume Général",
   },
   es: {
     gifs_queued: "{n} archivo(s) en cola para {k} playlist(s): {list}. Pulsa Subir para enviar.",
@@ -3522,6 +3607,18 @@ const translations = {
     tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
     tt_hw_clk_phase: "Invierte la fase de reloj HUB75. Actívalo solo si el panel muestra columnas desplazadas o duplicadas.",
     tt_hw_single_buffer: "Fuerza un único framebuffer DMA en lugar de doble búfer. Reduce a la mitad el uso de SRAM a costa de posible tearing.",
+    radio_title: "WebRadio y Streaming de Audio",
+    radio_desc: "Transmita radios web en vivo o reproduzca audio desde su teléfono/PC mediante DLNA (AudioCast, RiMusic, BubbleUPnP, VLC).",
+    radio_preset: "Emisora Predefinida",
+    radio_station_name: "Nombre de la emisora / Etiqueta",
+    radio_custom_url: "URL de transmisión (HTTP / MP3 / Icecast / Shoutcast)",
+    radio_play_btn: "▶️ Reproducir Emisión 🚀",
+    radio_stop_btn: "⏹️ Detener Audio",
+    radio_test_btn: "🔊 Probar Altavoz (Tono 880Hz)",
+    radio_now_playing: "Reproduciendo",
+    radio_idle_desc: "Inicie una radio o transmita mediante DLNA",
+    radio_ready_badge: "DLNA / Radio Listo",
+    radio_volume_label: "Volumen Principal",
   }
 };
 
@@ -6050,6 +6147,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initCustomMarquee();
   initFighterOverlay();
   initGifLibrary();
+  initAudioStreaming();
   initNetworkSettings();
   initSettings();
 });
@@ -6074,6 +6172,15 @@ function switchPage(pageName) {
     if (hwPane && hwPane.classList.contains('active')) {
       initHardwareCapabilities();
     }
+  } else if (pageName === 'media') {
+    refreshAudioStatus();
+    if (!_audioStatusPollInterval) {
+      _audioStatusPollInterval = setInterval(fetchAudioStatus, 3000);
+    }
+  }
+  if (pageName !== 'media' && _audioStatusPollInterval) {
+    clearInterval(_audioStatusPollInterval);
+    _audioStatusPollInterval = null;
   }
 }
 window.switchPage = switchPage;
@@ -6870,6 +6977,134 @@ function initFighterOverlay() {
       window.showToast('Failed to save fighter settings', 'error');
     }
   });
+}
+
+let _audioStatusPollInterval = null;
+
+async function fetchAudioStatus() {
+  try {
+    const st = await API.get('/api/audio/status');
+    if (!st) return;
+
+    const isPlaying = st.status === 1; // STATUS_PLAYING
+    const statusBadge = document.getElementById('audio-live-status-badge');
+    const trackTitle = document.getElementById('audio-track-title');
+    const trackArtist = document.getElementById('audio-track-artist');
+    const sourceBadge = document.getElementById('audio-source-badge');
+    const volSlider = document.getElementById('slider-audio-volume');
+    const volLabel = document.getElementById('val-audio-volume');
+
+    if (statusBadge) {
+      statusBadge.textContent = isPlaying ? '● Playing' : '● Idle';
+      statusBadge.style.background = isPlaying ? 'rgba(34, 197, 94, 0.2)' : 'rgba(100, 116, 139, 0.2)';
+      statusBadge.style.color = isPlaying ? '#22c55e' : '#94a3b8';
+    }
+    if (trackTitle) {
+      trackTitle.textContent = st.title || (isPlaying ? 'Active Audio Stream' : 'No stream active');
+    }
+    if (trackArtist) {
+      trackArtist.textContent = st.artist || (isPlaying ? (st.source || 'WebRadio') : 'Launch a radio preset or stream via DLNA');
+    }
+    if (sourceBadge) {
+      sourceBadge.textContent = st.source ? `Source: ${st.source}` : 'DLNA / Radio Ready';
+    }
+    if (volSlider && typeof st.volume === 'number') {
+      volSlider.value = st.volume;
+      if (volLabel) volLabel.textContent = st.volume;
+    }
+  } catch (e) {
+    // Silent fail for polling
+  }
+}
+
+function refreshAudioStatus() {
+  fetchAudioStatus();
+}
+
+function initAudioStreaming() {
+  const presetSelect = document.getElementById('radio-preset-select');
+  const nameInput = document.getElementById('radio-name-input');
+  const urlInput = document.getElementById('radio-url-input');
+  const playBtn = document.getElementById('btn-play-radio');
+  const stopBtn = document.getElementById('btn-stop-radio');
+  const volSlider = document.getElementById('slider-audio-volume');
+  const volLabel = document.getElementById('val-audio-volume');
+  const testBtn = document.getElementById('btn-test-audio');
+
+  if (!presetSelect || !playBtn) return;
+
+  presetSelect.addEventListener('change', () => {
+    const val = presetSelect.value;
+    const selectedOpt = presetSelect.options[presetSelect.selectedIndex];
+    if (val !== 'custom') {
+      urlInput.value = val;
+      nameInput.value = selectedOpt.getAttribute('data-name') || 'Web Radio';
+    } else {
+      urlInput.value = '';
+      nameInput.value = 'Custom Radio';
+      urlInput.focus();
+    }
+  });
+
+  playBtn.addEventListener('click', async () => {
+    const url = urlInput.value.trim();
+    const name = nameInput.value.trim() || 'Web Radio';
+    if (!url) {
+      window.showToast?.('Please select or enter a radio stream URL', 'warning');
+      return;
+    }
+    playBtn.disabled = true;
+    playBtn.textContent = 'Connecting...';
+    try {
+      await API.post('/api/audio/radio', { url, name });
+      window.showToast?.(`Streaming ${name}!`, 'success');
+      fetchAudioStatus();
+    } catch (e) {
+      window.showToast?.('Failed to start radio stream: ' + (e.message || ''), 'error');
+    } finally {
+      playBtn.disabled = false;
+      playBtn.textContent = '▶️ Play Stream 🚀';
+    }
+  });
+
+  stopBtn.addEventListener('click', async () => {
+    try {
+      await API.post('/api/audio/stop', {});
+      window.showToast?.('Audio playback stopped', 'info');
+      fetchAudioStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      testBtn.disabled = true;
+      try {
+        await API.post('/api/audio/test', {});
+        window.showToast?.('Bip de test envoyé au haut-parleur ! 🔊', 'success');
+      } catch (e) {
+        window.showToast?.('Erreur test audio: ' + (e.message || ''), 'error');
+      } finally {
+        testBtn.disabled = false;
+      }
+    });
+  }
+
+  if (volSlider) {
+    volSlider.addEventListener('input', (e) => {
+      const vol = e.target.value;
+      if (volLabel) volLabel.textContent = vol;
+    });
+    volSlider.addEventListener('change', async (e) => {
+      const vol = parseInt(e.target.value);
+      try {
+        await API.post('/api/audio/volume', { volume: vol });
+      } catch (err) {
+        console.error('Failed to set volume', err);
+      }
+    });
+  }
 }
 
 function initNetworkSettings() {
