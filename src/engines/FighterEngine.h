@@ -213,18 +213,6 @@ private:
     String cachedFightersDir;
     int cachedScaleClass = 0;
     bool m_hasPsram = false;
-
-    struct SpriteBox {
-        int16_t x = 0;
-        int16_t y = 0;
-        int16_t w = 0;
-        int16_t h = 0;
-        bool valid = false;
-    };
-    SpriteBox prevBoxes[2][2];
-    SpriteBox prevHud[2];
-    FgtAnimation* getActiveAnim(FighterPlayer& p);
-    int getScale() const;
 };
 
 #endif
