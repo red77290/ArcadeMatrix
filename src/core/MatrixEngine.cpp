@@ -177,8 +177,16 @@ void FastMatrixPanel::fillScreen(uint16_t color) {
         MatrixPanel_I2S_DMA::fillScreen(color);
         return;
     }
-    clearFrameBuffer(m_back);
-    setBrightness8(m_brightness8);
+    auto& targetFb = frame_buffer[m_back];
+    for (uint8_t p = 0; p < m_depth; ++p) {
+        for (size_t y = 0; y < targetFb.rowBits.size(); ++y) {
+            uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
+            size_t w = targetFb.rowBits[y]->width;
+            for (size_t x = 0; x < w; ++x) {
+                ptr[x] &= BITMASK_RGB12_CLEAR;
+            }
+        }
+    }
 }
 
 void FastMatrixPanel::setBuffering(bool doubleBuffered) {

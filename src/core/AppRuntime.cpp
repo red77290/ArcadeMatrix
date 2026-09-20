@@ -697,6 +697,49 @@ void AppRuntime::update() {
         matrixEngine.present();
     }
 
+    // Periodic 5s render performance telemetry to serial logs
+    static uint32_t lastPerfLogMs = 0;
+    static uint32_t lastLoops = 0, lastPresents = 0, lastGifFrames = 0, lastBlitUs = 0, lastDecodeUs = 0;
+    uint32_t nowMs = millis();
+    if (nowMs - lastPerfLogMs >= 5000) {
+        if (lastPerfLogMs != 0) {
+            uint32_t dtMs = nowMs - lastPerfLogMs;
+            uint32_t loops = g_renderStats.loops.load();
+            uint32_t presents = g_renderStats.presents.load();
+            uint32_t gifFrames = g_renderStats.gifFrames.load();
+            uint32_t blitUs = g_renderStats.gifBlitMicros.load();
+            uint32_t decodeUs = g_renderStats.gifDecodeMicros.load();
+
+            float loopFps = (float)(loops - lastLoops) * 1000.0f / (float)dtMs;
+            float presentFps = (float)(presents - lastPresents) * 1000.0f / (float)dtMs;
+            uint32_t gf = gifFrames - lastGifFrames;
+
+            if (gf > 0) {
+                float gifFps = (float)gf * 1000.0f / (float)dtMs;
+                float avgBlit = (float)(blitUs - lastBlitUs) / 1000.0f / (float)gf;
+                float avgDecode = (float)(decodeUs - lastDecodeUs) / 1000.0f / (float)gf;
+                LOGI("RenderStats", "FPS: %.1f present | GIF: %.1f FPS (blit=%.2f ms, decode=%.2f ms, loop=%.1f)",
+                     presentFps, gifFps, avgBlit, avgDecode, loopFps);
+            } else {
+                LOGI("RenderStats", "FPS: %.1f present | loop=%.1f (freeHeap=%u)",
+                     presentFps, loopFps, (unsigned)ESP.getFreeHeap());
+            }
+
+            lastLoops = loops;
+            lastPresents = presents;
+            lastGifFrames = gifFrames;
+            lastBlitUs = blitUs;
+            lastDecodeUs = decodeUs;
+        } else {
+            lastLoops = g_renderStats.loops.load();
+            lastPresents = g_renderStats.presents.load();
+            lastGifFrames = g_renderStats.gifFrames.load();
+            lastBlitUs = g_renderStats.gifBlitMicros.load();
+            lastDecodeUs = g_renderStats.gifDecodeMicros.load();
+        }
+        lastPerfLogMs = nowMs;
+    }
+
     bool isRealtime = decision.isRealtime || (rotationManager && rotationManager->isCurrentRealtime());
     m_displayRuntime.getScheduler().delayUntilNextFrame(isRealtime, renderResult.nextDueInMs);
 }
