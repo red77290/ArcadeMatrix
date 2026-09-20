@@ -2847,7 +2847,12 @@ void WebServerAPI::setupRoutes() {
             AsyncWebServerResponse* resp = request->beginResponse(mime, ctx->size, [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
                 size_t n = 0;
                 SdLockGuard guard(pdMS_TO_TICKS(5000));   // one bounded hold per chunk, see /api/gifs/files
-                if (guard) n = ctx->f.read(buf, maxLen);
+                if (guard && ctx->f) {
+                    n = ctx->f.read(buf, maxLen);
+                    if (index + n >= ctx->size || n == 0) {
+                        ctx->f.close();
+                    }
+                }
                 return n;
             });
             resp->addHeader("Cache-Control", "no-cache");
@@ -2855,7 +2860,7 @@ void WebServerAPI::setupRoutes() {
             request->onDisconnect([ctx]() {
                 if (ctx->f) {
                     SdLockGuard guard(portMAX_DELAY);
-                    ctx->f.close();
+                    if (ctx->f) ctx->f.close();
                 }
                 delete ctx;
             });

@@ -167,7 +167,7 @@ inline SemaphoreHandle_t getTlsHandshakeMutex() {
 class ScopedTlsHandshakeLock {
 public:
     explicit ScopedTlsHandshakeLock(TickType_t timeout = pdMS_TO_TICKS(5000))
-        : _locked(false) {
+        : _locked(false), _deniedByBudget(false) {
         SemaphoreHandle_t m = getTlsHandshakeMutex();
         if (m && xSemaphoreTake(m, timeout) == pdTRUE) {
             // Authoritative admission check, performed atomically under the mutex: no other
@@ -176,6 +176,7 @@ public:
             if (canStartTlsSession()) {
                 _locked = true;
             } else {
+                _deniedByBudget = true;
                 xSemaphoreGive(m);
             }
         }
@@ -195,12 +196,15 @@ public:
 
     bool isLocked() const { return _locked; }
     explicit operator bool() const { return _locked; }
+    bool isDeniedByBudget() const { return _deniedByBudget; }
+    bool isContended() const { return !_locked && !_deniedByBudget; }
 
     ScopedTlsHandshakeLock(const ScopedTlsHandshakeLock&) = delete;
     ScopedTlsHandshakeLock& operator=(const ScopedTlsHandshakeLock&) = delete;
 
 private:
     bool _locked;
+    bool _deniedByBudget;
 };
 
 /**

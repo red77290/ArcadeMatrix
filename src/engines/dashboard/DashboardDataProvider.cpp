@@ -380,7 +380,11 @@ void DashboardDataProvider::fetchWeather() {
     // corrupt the HUB75 display), so overlapping handshakes compound peak internal DRAM demand.
     NetworkBudget::ScopedTlsHandshakeLock tlsLock;
     if (!tlsLock) {
-        LOGW("Dashboard", "Skipping weather fetch: another TLS handshake is in progress.");
+        if (tlsLock.isDeniedByBudget()) {
+            LOGW("Dashboard", "Skipping weather fetch: internal DRAM budget denied TLS admission.");
+        } else {
+            LOGW("Dashboard", "Skipping weather fetch: another TLS handshake is in progress.");
+        }
         return;
     }
 
@@ -492,10 +496,6 @@ bool DashboardDataProvider::loadIconFromSd(const String& path, uint16_t outPixel
         return false;
     }
 
-    if (!sd.exists(path)) {
-        return false;
-    }
-
     FsFile f = sd.open(path, FILE_OPEN_READ);
     if (!f) {
         return false;
@@ -588,7 +588,11 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
     if (!success && NetworkBudget::canStartTlsSession()) {
         NetworkBudget::ScopedTlsHandshakeLock tlsLock;
         if (!tlsLock) {
-            LOGW("Dashboard", "Skipping HTTPS icon fallback: another TLS handshake is in progress.");
+            if (tlsLock.isDeniedByBudget()) {
+                LOGW("Dashboard", "Skipping HTTPS icon fallback: internal DRAM budget denied TLS admission.");
+            } else {
+                LOGW("Dashboard", "Skipping HTTPS icon fallback: another TLS handshake is in progress.");
+            }
             return false;
         }
         WiFiClientSecure secureClient;
@@ -813,7 +817,11 @@ void DashboardDataProvider::fetchMarkets() {
         {
             NetworkBudget::ScopedTlsHandshakeLock tlsLock;
             if (!tlsLock) {
-                LOGW("Dashboard", "Skipping Binance quote for %s: another TLS handshake is in progress.", sym.c_str());
+                if (tlsLock.isDeniedByBudget()) {
+                    LOGW("Dashboard", "Skipping Binance quote for %s: internal DRAM budget denied TLS admission.", sym.c_str());
+                } else {
+                    LOGW("Dashboard", "Skipping Binance quote for %s: another TLS handshake is in progress.", sym.c_str());
+                }
             } else {
                 WiFiClientSecure binanceClient;
                 binanceClient.setInsecure();
@@ -841,8 +849,12 @@ void DashboardDataProvider::fetchMarkets() {
         if (!fetchSuccess && m_isActive) {
             if (yahooProvider.fetchQuote(sym, fetchedPrice, fetchedChange, fetchedImgUrl)) {
                 fetchSuccess = true;
-            } else if (yahooProvider.fetchQuote(sym + "-USD", fetchedPrice, fetchedChange, fetchedImgUrl)) {
-                fetchSuccess = true;
+            } else if (m_isActive) {
+                // Cooling-off pause before fallback query: allow mbedTLS and lwIP socket memory to coalesce
+                vTaskDelay(pdMS_TO_TICKS(50));
+                if (yahooProvider.fetchQuote(sym + "-USD", fetchedPrice, fetchedChange, fetchedImgUrl)) {
+                    fetchSuccess = true;
+                }
             }
         }
 
