@@ -2712,8 +2712,8 @@ void WebServerAPI::setupRoutes() {
             resp->addHeader("Cache-Control", "no-cache");
             request->onDisconnect([ctx]() {
                 if (ctx->idx) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1000));
-                    if (guard) ctx->idx.close();
+                    SdLockGuard guard(portMAX_DELAY);
+                    ctx->idx.close();
                 }
                 delete ctx;
             });
@@ -2847,8 +2847,8 @@ void WebServerAPI::setupRoutes() {
             if (request->hasParam("download") && request->getParam("download")->value() == "1") resp->addHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
             request->onDisconnect([ctx]() {
                 if (ctx->f) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1000));
-                    if (guard) ctx->f.close();
+                    SdLockGuard guard(portMAX_DELAY);
+                    ctx->f.close();
                 }
                 delete ctx;
             });
