@@ -96,6 +96,7 @@ public:
     virtual bool isRealtime() const { return true; }
     virtual void setRotationBudget(uint32_t budget) {}
     virtual bool selfPaced() const { return false; }
+    virtual bool allowsOverlay() const { return true; }
 };
 ```
 
@@ -597,6 +598,22 @@ public:
     }
 };
 ```
+
+### 15.2 Vidéo Plein Mouvement, Streaming Canvas & FastBlit (`blitCanvas565`)
+
+Sur les panneaux haute résolution (`256x64`) avec mémoire tampon DMA en PSRAM, l'écriture pixel par pixel (`drawPixel()`) subit des opérations read-modify-write coûteuses à travers plusieurs plans de bits, bridant le débit d'animation globale à 7–14 FPS.
+
+Pour les moteurs d'animation plein écran (clips vidéo, défilements arcade rapides) :
+1. **Rendu dans un tampon canvas mémoire RGB565 en PSRAM** (`uint16_t* canvasBuffer`).
+2. **Streaming via FastBlit :** Appelez `matrixEngine.blitCanvas565(canvasBuffer, width, height)`. Cela exécute des écritures en rafale séquentielle par ligne directement dans les mots de plans DMA du back-buffer, court-circuitant le surcoût pixel par pixel et achevant la copie d'un écran 256×64 en **~26 ms** (30 à 33+ FPS constants).
+3. **Désactivation d'overlay :** Si votre moteur exige une fluidité maximale, surchargez `bool allowsOverlay() const override { return false; }`.
+
+### 15.3 Overlays vs Toile d'Arrière-Plan (Composition Transparente)
+
+Les overlays (comme `FighterEngine`) se superposent dynamiquement au moteur d'arrière-plan :
+- **Ne jamais effacer avec des rectangles opaques :** N'appelez **pas** `fillRect(..., 0)` pour effacer d'anciennes boîtes englobantes de sprites. Le moteur sous-jacent (ex: `TetrisClock`) redessine déjà l'intégralité de son image à chaque frame. Dessiner des rectangles noirs créerait des trous opaques dans les chiffres et le décor.
+- **Dessin strictement transparent :** Vérifiez les couleurs avant tracé (`if (color != anim->transparentColor) matrix->drawPixel(...)`).
+- **Effacement d'écran (`fillScreen(0)`) :** Quand un moteur efface son arrière-plan, `FastMatrixPanel::fillScreen(0)` masque automatiquement les bits de couleur (`BITMASK_RGB12_CLEAR`) sur le back-buffer inactif. Il ne touche jamais au front-buffer en cours de balayage physique, éliminant tout scintillement ou déchirement de lignes.
 
 ---
 
