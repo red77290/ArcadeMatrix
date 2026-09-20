@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-VersusClock::VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+VersusClock::VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animating = false; // Kept for compatibility but unused
@@ -121,8 +121,7 @@ void VersusClock::update() {
         int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
         int scale = (w >= 64) ? 3 : 2;
         if (gfxSize >= 1 && gfxSize <= 4) scale = min(scale, gfxSize);
-        matrix->setFont(NULL);
-        matrix->setTextSize(scale);
+        faceFont.apply(*matrix, scale, "88", w, h / 2);
 
         char hStr[8], mStr[8];
         sprintf(hStr, "%02d", storedTime.hours);
@@ -136,16 +135,17 @@ void VersusClock::update() {
         int tx = (w - bw) / 2 + offX;
         int tyH = (h / 2) - bh - 1 + offY;
         int tyM = (h / 2) + 3 + offY;
+        int cx = tx - bx, cyH = tyH - by, cyM = tyM - by;   // custom fonts take the cursor as baseline
 
         matrix->setTextColor(0);
-        matrix->setCursor(tx - 1, tyH); matrix->print(hStr);
-        matrix->setCursor(tx + 1, tyH); matrix->print(hStr);
-        matrix->setCursor(tx, tyH); matrix->setTextColor(color1); matrix->print(hStr);
+        matrix->setCursor(cx - 1, cyH); matrix->print(hStr);
+        matrix->setCursor(cx + 1, cyH); matrix->print(hStr);
+        matrix->setCursor(cx, cyH); matrix->setTextColor(color1); matrix->print(hStr);
 
         matrix->setTextColor(0);
-        matrix->setCursor(tx - 1, tyM); matrix->print(mStr);
-        matrix->setCursor(tx + 1, tyM); matrix->print(mStr);
-        matrix->setCursor(tx, tyM); matrix->setTextColor(color1); matrix->print(mStr);
+        matrix->setCursor(cx - 1, cyM); matrix->print(mStr);
+        matrix->setCursor(cx + 1, cyM); matrix->print(mStr);
+        matrix->setCursor(cx, cyM); matrix->setTextColor(color1); matrix->print(mStr);
 
         matrix->fillRect(2, h - 8 + bounce1, 5, 5, blue);
         matrix->fillRect(w - 7, h - 8 + bounce2, 5, 5, orange);
@@ -163,8 +163,7 @@ void VersusClock::update() {
         sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
         
         int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
-        matrix->setTextSize(gfxSize);
-        matrix->setFont(NULL);
+        faceFont.apply(*matrix, gfxSize, "88:88", w, h);
         
         int16_t bx, by;
         uint16_t bw, bh;
@@ -173,14 +172,15 @@ void VersusClock::update() {
         
         int tx = (w - bw) / 2 + offX;
         int ty = (h - bh) / 2 + 4 + offY;
+        int cx = tx - bx, cy = ty - by;
         
         matrix->setTextColor(0);
-        matrix->setCursor(tx - 1, ty); matrix->print(timeStr);
-        matrix->setCursor(tx + 1, ty); matrix->print(timeStr);
-        matrix->setCursor(tx, ty - 1); matrix->print(timeStr);
-        matrix->setCursor(tx, ty + 1); matrix->print(timeStr);
+        matrix->setCursor(cx - 1, cy); matrix->print(timeStr);
+        matrix->setCursor(cx + 1, cy); matrix->print(timeStr);
+        matrix->setCursor(cx, cy - 1); matrix->print(timeStr);
+        matrix->setCursor(cx, cy + 1); matrix->print(timeStr);
 
-        matrix->setCursor(tx, ty);
+        matrix->setCursor(cx, cy);
         matrix->setTextColor(color1);
         matrix->print(timeStr);
         

@@ -2,13 +2,17 @@
 #define TETRISCLOCK_H
 
 #include "../ClockEngine.h"
+#include "ClockFaceFont.h"
 #include <list>
 
 struct TetrisBlock {
     int charIndex;
     float x, y;
     float tx, ty;
-    float dy;
+    float dy;              // OUT: fall speed (px per 60 fps frame)
+    float startY;          // IN: where the block spawned above its target
+    uint32_t spawnMs;      // IN: when it spawned
+    uint32_t durationMs;   // IN: how long it takes to land, whatever the frame rate
     uint16_t color;
     int state; // 0=in, 1=fixed, 2=out
 };
@@ -27,8 +31,11 @@ private:
     char lastTimeStr[12];
     uint32_t lastFrameTime;
     int blockSize;
-    
+    ClockFaceFont faceFont;   ///< configured clock_font; the block digits are shaped from its glyphs
+
     void buildTargets(const char* timeStr, const std::vector<int>& targetIndices);
+    void emitBlocksFor(const char* str, int charIdx, int labelIdx, const GFXfont* font, int16_t bx, int16_t by,
+                       uint16_t bw, uint16_t bh, int originX, int originY, int fallFrom, int fallJitter, uint32_t landMs);
 };
 
 #endif
