@@ -60,11 +60,17 @@ bool FighterEngine::shutdownForDestruction() {
     }
 
     // 2. Safe resource cleanup on Core 0 (closes SD file handles and frees frame buffers)
+    if (s_lastInstance == this) {
+        s_lastInstance = nullptr;
+    }
     stop();
     return true;
 }
 
 FighterEngine::~FighterEngine() {
+    if (s_lastInstance == this) {
+        s_lastInstance = nullptr;
+    }
     if (loaderTaskHandle && !m_loaderStopped.load(std::memory_order_acquire)) {
         m_taskShouldExit = true;
         xTaskNotifyGive(loaderTaskHandle);
@@ -1363,8 +1369,9 @@ String FighterEngine::debugStatusJson() {
     j += ",\"free_heap\":" + String(ESP.getFreeHeap());
     j += ",\"free_dma\":" + String((uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     j += ",\"free_psram\":" + String(f->m_hasPsram ? ESP.getFreePsram() : 0);
-    String note = f->m_lastNote; note.replace("\"", "'");
-    j += ",\"last_note\":\"" + note + "\"";
-    j += "}";
+    const char* note = f->m_lastNote ? f->m_lastNote : "";
+    j += ",\"last_note\":\"";
+    j += note;
+    j += "\"}";
     return j;
 }
