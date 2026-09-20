@@ -18,12 +18,13 @@ struct DashPngDecodeContext {
     PNG* png;
     int srcW;
     int srcH;
+    uint16_t* lineBuf;
 };
 
 static DashPngDecodeContext s_dashPngContext;
 
 static int dashPngDrawCallback(PNGDRAW* pDraw) {
-    if (!s_dashPngContext.outPixels || !s_dashPngContext.png) return 0;
+    if (!s_dashPngContext.outPixels || !s_dashPngContext.png || !s_dashPngContext.lineBuf) return 0;
     int y = pDraw->y;
     int srcW = pDraw->iWidth;
     int srcH = (s_dashPngContext.srcH > 0) ? s_dashPngContext.srcH : 8;
@@ -34,14 +35,12 @@ static int dashPngDrawCallback(PNGDRAW* pDraw) {
     int rowBucketStart = (targetY * srcH) / 8;
     if (y != rowBucketStart) return 1;
 
-    uint16_t lineBuf[128];
-    int fetchW = min(srcW, 128);
-    s_dashPngContext.png->getLineAsRGB565(pDraw, lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+    s_dashPngContext.png->getLineAsRGB565(pDraw, s_dashPngContext.lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
 
     for (int tx = 0; tx < 8; tx++) {
         int srcX = (tx * srcW) / 8;
-        if (srcX < fetchW) {
-            uint16_t col = lineBuf[srcX];
+        if (srcX < srcW) {
+            uint16_t col = s_dashPngContext.lineBuf[srcX];
             s_dashPngContext.outPixels[targetY * 8 + tx] = col;
         }
     }
@@ -58,6 +57,7 @@ static bool decodePngTo8x8(const uint8_t* buf, size_t size, uint16_t outPixels[6
 
     s_dashPngContext.outPixels = outPixels;
     s_dashPngContext.png = png;
+    s_dashPngContext.lineBuf = nullptr;
 
     int rc = png->openRAM((uint8_t*)buf, size, dashPngDrawCallback);
     if (rc != PNG_SUCCESS) {
@@ -69,9 +69,32 @@ static bool decodePngTo8x8(const uint8_t* buf, size_t size, uint16_t outPixels[6
 
     s_dashPngContext.srcW = png->getWidth();
     s_dashPngContext.srcH = png->getHeight();
+
+    // Reject degenerate or excessively large images (> 256x256) to protect memory and avoid crashes
+    if (s_dashPngContext.srcW <= 0 || s_dashPngContext.srcH <= 0 ||
+        s_dashPngContext.srcW > 256 || s_dashPngContext.srcH > 256) {
+        png->close();
+        s_dashPngContext.png = nullptr;
+        s_dashPngContext.outPixels = nullptr;
+        delete png;
+        return false;
+    }
+
+    uint16_t* lineBuf = (uint16_t*)malloc(s_dashPngContext.srcW * sizeof(uint16_t));
+    if (!lineBuf) {
+        png->close();
+        s_dashPngContext.png = nullptr;
+        s_dashPngContext.outPixels = nullptr;
+        delete png;
+        return false;
+    }
+    s_dashPngContext.lineBuf = lineBuf;
+
     rc = png->decode(NULL, 0);
     png->close();
 
+    free(lineBuf);
+    s_dashPngContext.lineBuf = nullptr;
     s_dashPngContext.png = nullptr;
     s_dashPngContext.outPixels = nullptr;
     delete png;
