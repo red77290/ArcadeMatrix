@@ -606,7 +606,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncGif.priority = priority;
                 DisplayRequest req{DisplaySourceId::GIF, priority, RequestLifecycle::UNTIL_CANCELLED, true};
                 req.engineHandle = handle;
-                req.allowsOverlay = snapshot.mqtt.enabled ? snapshot.mqtt.allow_overlay : true;
+                req.allowsOverlay = false;
                 m_displayArbiter.submitRequest(req);
             }
         } else {
