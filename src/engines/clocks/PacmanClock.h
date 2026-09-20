@@ -22,10 +22,10 @@ public:
 
 private:
     TimeData storedTime;
-    char timeStr[12];
+    char oldTimeStr[12];
+    char newTimeStr[12];
     bool primed;                ///< first time string captured
     uint32_t lastUpdateMs;      ///< last update(); a gap means the face was off screen
-    uint32_t appearedMs;        ///< when the face last came on screen
     uint32_t paradeDueMs;       ///< scheduled parade start (0 = none)
     int lastMinute;
     bool transitioning;
@@ -37,7 +37,7 @@ private:
     void formatTime(char* out, size_t n) const;
     static void splitTime(const char* str, char* hours, char* minutes);
     void printTime(const char* str, int centreX, int centreY, int scale, const GFXfont* font,
-                   uint16_t digitColor, uint16_t colonColor);
+                   uint16_t digitColor, uint16_t colonColor, int minX = -1000, int maxX = 10000);
     void blit(const uint16_t* rows, int nRows, int nCols, int left, int top, int s, uint16_t color, bool mirror);
     void drawPacman(int cx, int cy, int s, int frame, bool facingRight);
     void drawGhost(int cx, int cy, int s, uint16_t color, int skirtFrame, bool lookRight, bool frightened);
