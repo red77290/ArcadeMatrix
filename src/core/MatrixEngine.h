@@ -58,12 +58,14 @@ public:
     void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
+    void flushDirtyRows();
 
 private:
     bool m_double = false;
     int m_back = 0;
     uint8_t m_brightness8 = 64;
     uint8_t m_depth = 8;
+    uint32_t m_dirtyRows[2] = {0, 0};
     uint8_t m_lut_r[32];
     uint8_t m_lut_g[64];
     uint8_t m_lut_b[32];

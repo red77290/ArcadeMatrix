@@ -136,6 +136,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
 
 void MatrixEngine::present() {
     if (!display) return;
+    if (m_panel) m_panel->flushDirtyRows();
     display->flipDMABuffer();
     if (m_panel) m_panel->noteFlip();
     m_flipCount++;
@@ -193,6 +194,25 @@ void FastMatrixPanel::fillScreen(uint16_t color) {
 #endif
         }
     }
+    m_dirtyRows[m_back] = 0;
+}
+
+void FastMatrixPanel::flushDirtyRows() {
+#if defined(SPIRAM_DMA_BUFFER)
+    uint32_t dirty = m_dirtyRows[m_back];
+    if (dirty != 0) {
+        auto& targetFb = frame_buffer[m_back];
+        for (size_t y = 0; y < targetFb.rowBits.size(); ++y) {
+            if (dirty & (1UL << y)) {
+                for (uint8_t p = 0; p < m_depth; ++p) {
+                    uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
+                    Cache_WriteBack_Addr((uint32_t)ptr, (uint32_t)targetFb.rowBits[y]->width * sizeof(uint16_t));
+                }
+            }
+        }
+        m_dirtyRows[m_back] = 0;
+    }
+#endif
 }
 
 void FastMatrixPanel::setBuffering(bool doubleBuffered) {
@@ -253,6 +273,10 @@ void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
     auto& targetFb = frame_buffer[m_back];
     if (y >= (int16_t)targetFb.rowBits.size()) return;
 
+#if defined(SPIRAM_DMA_BUFFER)
+    m_dirtyRows[m_back] |= (1UL << y);
+#endif
+
     for (uint8_t p = 0; p < m_depth; ++p) {
         uint16_t mask = (1 << p);
         uint16_t rgb = 0;
@@ -263,9 +287,6 @@ void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
         uint16_t* ptr = targetFb.rowBits[y]->getDataPtr(p);
         ptr[x_adj] = (ptr[x_adj] & colourbitclear) | rgb;
-#if defined(SPIRAM_DMA_BUFFER)
-        Cache_WriteBack_Addr((uint32_t)&ptr[x_adj], sizeof(uint16_t));
-#endif
     }
 }
 
@@ -332,4 +353,5 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
 #endif
         }
     }
+    m_dirtyRows[m_back] = 0;
 }
