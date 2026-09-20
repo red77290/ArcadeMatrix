@@ -280,10 +280,10 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
 
     // Do not stress SD bus / memory while another task on Core 0 is performing a heavy TLS handshake
     if (NetworkBudget::getTlsHandshakeMutex()) {
-        if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), 0) == pdTRUE) {
+        if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), pdMS_TO_TICKS(2000)) == pdTRUE) {
             xSemaphoreGive(NetworkBudget::getTlsHandshakeMutex());
         } else {
-            LOGD("FighterEngine", "Waiting for TLS handshake before loading %s", filepath);
+            LOGD("FighterEngine", "Waiting for TLS handshake before loading %s (timeout)", filepath);
             return false;
         }
     }
@@ -395,17 +395,13 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         if (anim.psramBuffer) {
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            // Use a compact 512-byte (single SD sector) DRAM bounce buffer for SD reads
-            // to conserve task stack and prevent stack overflow / memory corruption.
-            uint8_t bounceBuf[512];
+            // Use a 2048-byte DRAM bounce buffer for fast sequential SD reads
+            // without bus thrashing or in-loop sleep while holding sdGuard.
+            uint8_t bounceBuf[2048];
             while (toRead > 0) {
-                if (m_taskShouldExit || ESP.getFreeHeap() < 30720 || heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) {
+                if (m_taskShouldExit || ESP.getFreeHeap() < 24576) {
                     LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
                     toRead = 1; // force abort
-                    break;
-                }
-                if (!f || !f.available()) {
-                    toRead = 1;
                     break;
                 }
                 size_t chunk = (toRead > sizeof(bounceBuf)) ? sizeof(bounceBuf) : toRead;
@@ -414,7 +410,6 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
                 memcpy(anim.psramBuffer + offset, bounceBuf, r);
                 offset += r;
                 toRead -= r;
-                vTaskDelay(pdMS_TO_TICKS(1)); // Yield to keep Core 0 responsive and allow other tasks to breathe
             }
             if (toRead > 0) {
                 LOGW("FighterEngine", "Incomplete read for %s (%u remaining)", filepath, (uint32_t)toRead);
@@ -971,35 +966,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     p.animSpecial.cachedFrameIndex = -1;
     p.animSuper.cachedFrameIndex = -1;
     p.animFall.cachedFrameIndex = -1;
-
-    if (anim && anim->loaded && !anim->psramBuffer) {
-        int newSize = anim->width * anim->height * 2;
-        if (newSize > p.currentBufferSize) {
-            if (p.currentFrameBuffer) {
-                if (m_hasPsram) heap_caps_free(p.currentFrameBuffer);
-                else free(p.currentFrameBuffer);
-                p.currentFrameBuffer = nullptr;
-                p.currentBufferSize = 0;
-            }
-            if (m_hasPsram) {
-                p.currentFrameBuffer = (uint8_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
-            } else {
-                // Never drain internal DRAM: it is the only memory mbedTLS can use for its small
-                // handshake allocations, so give up this frame rather than starve the network stack.
-                const size_t INTERNAL_HEAP_HEADROOM = 48 * 1024;
-                size_t freeInternal = ESP.getFreeHeap();
-                if (freeInternal < INTERNAL_HEAP_HEADROOM + (size_t)newSize) {
-                    LOGW("FighterEngine", "Skipping frame buffer of %d bytes: only %u bytes of internal heap left",
-                         newSize, (unsigned)freeInternal);
-                } else {
-                    p.currentFrameBuffer = (uint8_t*)malloc(newSize);
-                }
-            }
-            // Only advertise the capacity once the allocation actually succeeded, otherwise a later
-            // call with a smaller frame would skip the retry and write through a null pointer.
-            p.currentBufferSize = p.currentFrameBuffer ? newSize : 0;
-        }
-    }
 }
 
 bool FighterEngine::loop() {
@@ -1197,7 +1163,8 @@ bool FighterEngine::loop() {
         freeFighter(p1);
         freeFighter(p2);
         extern ConfigLoader config;
-        retryDelayEnd = now + (config.system.idle_fighter_interval * 1000);
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        retryDelayEnd = now + (guard->system.idle_fighter_interval * 1000);
         triggerBackgroundPreload();
     }
     return true;
@@ -1214,36 +1181,15 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     else if (p.state == FIGHTER_SUPER) anim = &p.animSuper;
     else if (p.state == FIGHTER_FALL) anim = &p.animFall;
     
-    if (!anim || !anim->loaded) return;
+    if (!anim || !anim->loaded || !anim->psramBuffer) return;
     
     if (p.currentFrame >= anim->numFrames) return;
     
     int frameSize = anim->width * anim->height * 2;
     uint8_t* ptr = nullptr;
     
-    if (anim->psramBuffer) {
-        if ((size_t)(p.currentFrame + 1) * (size_t)frameSize <= anim->totalPixelsSize) {
-            ptr = anim->psramBuffer + (p.currentFrame * frameSize);
-        }
-    } else {
-        if (p.currentFrame != anim->cachedFrameIndex) {
-            if (p.currentFrameBuffer && anim->filepath.length() > 0) {
-                uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-                SdLockGuard guard(pdMS_TO_TICKS(100));
-                if (guard) {
-                    FsFile f = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
-                    if (f) {
-                        f.seek(offset);
-                        f.read(p.currentFrameBuffer, frameSize);
-                        f.close();
-                        anim->cachedFrameIndex = p.currentFrame;
-                    }
-                }
-            } else {
-                return;
-            }
-        }
-        ptr = p.currentFrameBuffer;
+    if ((size_t)(p.currentFrame + 1) * (size_t)frameSize <= anim->totalPixelsSize) {
+        ptr = anim->psramBuffer + (p.currentFrame * frameSize);
     }
     
     if (!ptr) return;
