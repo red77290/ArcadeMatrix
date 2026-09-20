@@ -145,16 +145,10 @@ void FighterEngine::loadRoster() {
         return;
     }
 
-    if (!sd.exists(indexPath.c_str())) {
-        LOGW("FighterEngine", "No index.txt found at %s!", indexPath.c_str());
-        m_lastNote = "No index.txt found at";
-        return;
-    }
-
     FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
     if (!f) {
-        LOGE("FighterEngine", "Failed to open %s", indexPath.c_str());
-        m_lastNote = "Failed to open";
+        LOGW("FighterEngine", "No index.txt found or failed to open at %s!", indexPath.c_str());
+        m_lastNote = "No index.txt found at";
         return;
     }
 
@@ -312,15 +306,9 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         return false;
     }
 
-    if (!sd.exists(filepath)) {
-        LOGD("FighterEngine", "Anim not found on SD: %s", filepath);
-        return false;
-    }
-    
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
-        LOGE("FighterEngine", "Could not open file: %s", filepath);
-        m_lastNote = "Could not open file";
+        LOGD("FighterEngine", "Anim not found on SD or failed to open: %s", filepath);
         return false;
     }
     
@@ -421,11 +409,38 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         }
         anim.psramBuffer = (uint8_t*)heap_caps_malloc(anim.totalPixelsSize, MALLOC_CAP_SPIRAM);
         if (anim.psramBuffer) {
+            // Allocate a dedicated word-aligned, DMA-capable internal DRAM bounce buffer for fast sequential SD reads.
+            // Stack-allocated buffers violate cache-line alignment and cause data cache incoherency/corruption on ESP32-S3.
+            size_t bounceSize = 4096;
+            uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            if (!bounceBuf) {
+                bounceSize = 2048;
+                bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            }
+            if (!bounceBuf) {
+                bounceSize = 1024;
+                bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            }
+
+            struct DmaBufferGuard {
+                uint8_t* ptr;
+                size_t size;
+                ~DmaBufferGuard() { if (ptr) heap_caps_free(ptr); }
+            } bounce{ bounceBuf, bounceSize };
+
+            if (!bounce.ptr) {
+                LOGW("FighterEngine", "Failed to allocate internal DMA bounce buffer for %s", filepath);
+                m_lastNote = "Failed to allocate bounce buffer";
+                heap_caps_free(anim.psramBuffer);
+                anim.psramBuffer = nullptr;
+                free(anim.frameDelays);
+                anim.frameDelays = nullptr;
+                f.close();
+                return false;
+            }
+
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            // Use a 2048-byte DRAM bounce buffer for fast sequential SD reads
-            // without bus thrashing or in-loop sleep while holding sdGuard.
-            uint8_t bounceBuf[2048];
             while (toRead > 0) {
                 if (m_taskShouldExit || ESP.getFreeHeap() < 24576) {
                     LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
@@ -433,10 +448,10 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
                     toRead = 1; // force abort
                     break;
                 }
-                size_t chunk = (toRead > sizeof(bounceBuf)) ? sizeof(bounceBuf) : toRead;
-                size_t r = f.read(bounceBuf, chunk);
+                size_t chunk = (toRead > bounce.size) ? bounce.size : toRead;
+                size_t r = f.read(bounce.ptr, chunk);
                 if (r == 0) break;
-                memcpy(anim.psramBuffer + offset, bounceBuf, r);
+                memcpy(anim.psramBuffer + offset, bounce.ptr, r);
                 offset += r;
                 toRead -= r;
             }
@@ -502,7 +517,7 @@ void FighterEngine::startLoaderTaskIfNeeded() {
 
     m_taskShouldExit = false;
     m_loaderStopped.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 10240, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 16384, this, 1, &loaderTaskHandle, 0) != pdPASS) {
         LOGE("FighterEngine", "Failed to spawn preload worker task.");
         m_lastNote = "Failed to spawn preload worker task.";
         loaderTaskHandle = nullptr;
