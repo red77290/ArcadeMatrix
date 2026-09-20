@@ -47,6 +47,7 @@ public:
     bool isFinished() const override;
     bool isRealtime() const override { return true; }
     bool selfPaced() const override { return true; }
+    bool allowsOverlay() const override { return false; }
     void setRotationBudget(uint32_t budget) override { m_rotationBudget = budget; }
     bool hasNewFrame() const override { return m_lastFrameDrew; }
     bool needsClear() const override { return false; }
