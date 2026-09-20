@@ -92,6 +92,8 @@ private:
     
     size_t currentIndex = 0;
     uint32_t moduleStartTime = 0;
+    bool m_slotMissing = false;      ///< current slot has no engine (instance missing or failed to load); logged once
+    uint8_t m_missingClears = 0;     ///< framebuffers blanked so far for a missing slot (one per DMA buffer)
     uint8_t switchDepth = 0;
     bool suspended = false;
     char currentActiveInstanceId[32]{0};

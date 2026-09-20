@@ -271,6 +271,8 @@ void RotationManager::switchToModule(int index) {
   switchDepth++;
 
   moduleStartTime = millis();
+  m_slotMissing = false;
+  m_missingClears = 0;
   String newInstanceId = guard->rotation[index].instance_id;
   uint32_t dur = guard->rotation[index].duration_sec;
   
@@ -385,8 +387,8 @@ bool RotationManager::loop() {
     bool isSoloMode = (guard->rotation.size() == 1);
 
     IEngine* activeEngine = findActiveEngine(inst_id);
-    if (!activeEngine) {
-        activeEngine = getOrCreateEngine(inst_id);
+    if (!activeEngine && !m_slotMissing) {
+        activeEngine = getOrCreateEngine(inst_id);   // logs the reason itself; asked once per slot
     }
     
     bool shouldFlip = true;
@@ -414,8 +416,23 @@ bool RotationManager::loop() {
             }
         }
     } else {
-        // Fallback if engine fails to load or id is invalid
-        if (!isSoloMode && (now - moduleStartTime >= dur * 1000UL)) {
+        // No engine for this slot: the instance is missing from the config (a save that never reached
+        // the card, a deleted instance) or failed to load. Blank both framebuffers so the panel does not
+        // hold whatever was drawn last (at boot, the IP notice), say so once, and move straight on
+        // instead of sitting out the slot's duration. A solo rotation stays blank rather than frozen.
+        if (!m_slotMissing) {
+            m_slotMissing = true;
+            LOGW("RotationManager", "Rotation slot %d refers to instance '%s' which does not exist or could not be loaded; %s",
+                 (int)currentIndex, inst_id, isSoloMode ? "showing a blank panel" : "skipping it");
+        }
+        if (m_missingClears < 2) {
+            if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
+            m_missingClears++;
+            shouldFlip = true;
+        } else {
+            shouldFlip = false;
+        }
+        if (!isSoloMode) {
             advance = true;
         }
     }
