@@ -2194,6 +2194,7 @@ const translations = {
     move_down_title: "Move Down",
     remove_from_loop_title: "Remove from rotation loop",
     fighter_tooltip: "Show Street Fighter battle animation overlay on this screen",
+    fighter_global_off_hint: "Fighter overlay is off globally. Enable it under Settings > Fighter.",
     dur_tooltip_sec: "Duration in seconds",
     dur_tooltip_gifs: "Number of GIFs to play before rotating",
     copy_suffix: "Copy",
@@ -2670,6 +2671,7 @@ const translations = {
     move_down_title: "Descendre",
     remove_from_loop_title: "Retirer de la boucle de rotation",
     fighter_tooltip: "Afficher l'animation de combat Street Fighter sur cet écran",
+    fighter_global_off_hint: "L'overlay Fighter est désactivé globalement. Activez-le dans Réglages > Fighter.",
     dur_tooltip_sec: "Durée en secondes",
     dur_tooltip_gifs: "Nombre de GIFs à jouer avant de changer",
     copy_suffix: "Copie",
@@ -3146,6 +3148,7 @@ const translations = {
     move_down_title: "Bajar",
     remove_from_loop_title: "Eliminar del bucle de rotación",
     fighter_tooltip: "Mostrar la animación de combate Street Fighter en esta pantalla",
+    fighter_global_off_hint: "El overlay Fighter está desactivado globalmente. Actívalo en Ajustes > Fighter.",
     dur_tooltip_sec: "Duración en segundos",
     dur_tooltip_gifs: "Cantidad de GIFs a reproducir antes de rotar",
     copy_suffix: "Copia",
@@ -4640,10 +4643,29 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
         ? entry.overlays.fighter
         : (entry.fighter_overlay === true);
       fightCb.checked = isFighter;
+      // The slot switch only takes effect while the global fighter switch (Settings) is on; say so
+      // right here instead of letting the toggle silently do nothing.
+      const fightWarn = document.createElement('span');
+      fightWarn.className = 'rotation-fighter-warn';
+      fightWarn.style = "display:none; margin-left:0.5rem; font-size:0.75rem; color: var(--warning, #f0ad4e);";
+      fightWarn.innerText = t('fighter_global_off_hint', 'Fighter overlay is off globally. Enable it under Settings > Fighter.');
+      const updateFightWarn = () => {
+        fightWarn.style.display = (fightCb.checked && window._fighterGlobalEnabled === false) ? 'inline' : 'none';
+      };
+      if (idx === 0) {
+        window._fighterWarnUpdaters = [];
+        API.get('/api/system').then(cfg => {
+          window._fighterGlobalEnabled = !!((cfg && cfg.system) || {}).idle_fighter_enabled;
+          (window._fighterWarnUpdaters || []).forEach(fn => fn());
+        }).catch(() => {});
+      }
+      (window._fighterWarnUpdaters = window._fighterWarnUpdaters || []).push(updateFightWarn);
+      updateFightWarn();
       fightCb.onchange = () => {
         if (!entry.overlays) entry.overlays = {};
         entry.overlays.fighter = fightCb.checked;
         entry.fighter_overlay = fightCb.checked;
+        updateFightWarn();
         markDirty();
       };
       fightLbl.appendChild(fightCb);
@@ -4651,6 +4673,7 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
       fightTxt.innerText = `🥊 ${t('fighter_title', 'Overlay')}`;
       fightLbl.appendChild(fightTxt);
       settingsBar.appendChild(fightLbl);
+      settingsBar.appendChild(fightWarn);
 
       // Direct settings button to jump to the instance tab
       const editBtn = document.createElement('button');
@@ -6873,6 +6896,8 @@ function initFighterOverlay() {
         idle_fighter_interval: parseInt(intervalEl.value) || 1,
         idle_fighter_speed: parseInt(speedEl?.value) || 100,
       });
+      window._fighterGlobalEnabled = enabledEl.checked;
+      (window._fighterWarnUpdaters || []).forEach(fn => fn());
       window.showToast('Fighter overlay settings saved!', 'success');
     } catch (e) {
       window.showToast('Failed to save fighter settings', 'error');
@@ -7316,6 +7341,8 @@ async function initSettings() {
       const format24h = document.getElementById('sys-format-24h')?.value === 'true';
       const tempUnit = document.getElementById('sys-unit')?.value || 'C';
       const idleFighterEnabled = document.getElementById('sys-idle-fighter-enabled')?.checked ?? true;
+      window._fighterGlobalEnabled = idleFighterEnabled;
+      (window._fighterWarnUpdaters || []).forEach(fn => fn());
       const idleFighterInterval = parseInt(document.getElementById('sys-idle-fighter-interval')?.value) || 10;
       const idleFighterSpeed = parseInt(document.getElementById('sys-idle-fighter-speed')?.value) || 100;
       const rotation = parseInt(document.getElementById('sys-screen-rotation')?.value) || 0;
