@@ -1,6 +1,7 @@
 #include "SysInfoEngine.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
+#include "../core/CpuLoad.h"
 
 extern ConfigLoader config;
 
@@ -74,14 +75,8 @@ void SysInfoEngine::update(EngineContext* context) {
     uint32_t now = millis();
     if (now - lastCpuSampleTime >= 500) {
         lastCpuSampleTime = now;
-        // On ESP32, calculate load estimate based on active tasks and heap pressure
-        uint32_t freeH = ESP.getFreeHeap();
-        uint32_t totalH = ESP.getHeapSize();
-        float heapStress = (totalH > 0) ? (1.0f - (float)freeH / (float)totalH) * 30.0f : 10.0f;
-        float jitter = (float)((now % 13) - 6);
-        float target = 18.0f + heapStress + jitter;
-        if (target < 5.0f) target = 5.0f;
-        if (target > 98.0f) target = 98.0f;
+        // Measured: share of the last second each core spent outside its idle task (CpuLoad).
+        float target = CpuLoad::total();
         smoothedCpuLoad = (smoothedCpuLoad * 0.7f) + (target * 0.3f);
     }
 }

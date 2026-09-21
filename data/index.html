@@ -1229,20 +1229,23 @@ select.input option {
             <h3>System Metrics</h3>
             <div class="metrics-grid">
               <div class="metric-box">
-                <div class="metric-label">CPU Load</div>
+                <div class="metric-label" id="metric-cpu-label">CPU Load</div>
                 <div class="metric-val" id="metric-cpu">-- %</div>
+                <div class="metric-label" id="metric-cpu-sub" style="display:none; margin-top:0.25rem;"></div>
               </div>
               <div class="metric-box">
                 <div class="metric-label">Temperature</div>
                 <div class="metric-val" id="metric-temp">-- °C</div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">RAM Memory</div>
+                <div class="metric-label" id="metric-ram-label">RAM Memory</div>
                 <div class="metric-val" id="metric-ram">-- MB</div>
+                <div class="metric-label" id="metric-ram-sub" style="display:none; margin-top:0.25rem;"></div>
               </div>
               <div class="metric-box">
-                <div class="metric-label">Disk Storage</div>
+                <div class="metric-label" id="metric-disk-label">Disk Storage</div>
                 <div class="metric-val" id="metric-disk">-- GB</div>
+                <div class="metric-label" id="metric-disk-sub" style="display:none; margin-top:0.25rem;"></div>
               </div>
             </div>
           </div>
@@ -6183,13 +6186,43 @@ function initDashboard() {
       const ramEl = document.getElementById('metric-ram');
       const diskEl = document.getElementById('metric-disk');
 
-      if (cpuEl && info.cpu_load !== undefined) cpuEl.textContent = `${info.cpu_load.toFixed(1)} %`;
+      // Same four tiles and meanings as the RPi dashboard (CPU load %, temperature, RAM used, disk free),
+      // with a sub-line where the ESP32 has more to say: render rate, PSRAM, card size.
+      const setSub = (id, text) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (text) { el.textContent = text; el.style.display = 'block'; } else { el.style.display = 'none'; }
+      };
+      if (cpuEl && info.cpu_load !== undefined) {
+        cpuEl.textContent = `${info.cpu_load.toFixed(1)} %`;
+        setSub('metric-cpu-sub', (typeof info.render_present_fps === 'number') ? `render ${info.render_present_fps.toFixed(1)} fps` : '');
+      }
       if (tempEl && info.temperature_c !== undefined) tempEl.textContent = `${info.temperature_c.toFixed(1)} °C`;
       if (ramEl) {
-        if (info.ram_used_mb !== undefined) ramEl.textContent = `${typeof info.ram_used_mb === 'number' ? info.ram_used_mb.toFixed(1) : info.ram_used_mb} MB`;
-        else if (info.free_heap !== undefined) ramEl.textContent = `${(info.free_heap / 1024).toFixed(0)} KB Free`;
+        if (typeof info.free_heap_kb === 'number' && typeof info.total_heap_kb === 'number') {
+          ramEl.textContent = `${info.total_heap_kb - info.free_heap_kb} KB`;
+          let sub = `used of ${info.total_heap_kb} KB`;
+          if (info.psram_found && typeof info.psram_free_mb === 'number') {
+            sub += ` · PSRAM ${info.psram_free_mb.toFixed(1)} MB free of ${info.psram_total_mb.toFixed(1)} MB`;
+          }
+          setSub('metric-ram-sub', sub);
+        } else if (info.ram_used_mb !== undefined) {
+          ramEl.textContent = `${typeof info.ram_used_mb === 'number' ? info.ram_used_mb.toFixed(1) : info.ram_used_mb} MB`;
+        } else if (info.free_heap !== undefined) {
+          ramEl.textContent = `${(info.free_heap / 1024).toFixed(0)} KB Free`;
+        }
       }
-      if (diskEl && info.disk_free_gb !== undefined) diskEl.textContent = `${typeof info.disk_free_gb === 'number' ? info.disk_free_gb.toFixed(1) : info.disk_free_gb} GB`;
+      if (diskEl) {
+        if (info.sd_measured === true && typeof info.sd_free_gb === 'number') {
+          diskEl.textContent = `${info.sd_free_gb.toFixed(1)} GB`;
+          setSub('metric-disk-sub', `free of ${info.sd_total_gb.toFixed(1)} GB`);
+        } else if (info.sd_measured === false) {
+          diskEl.textContent = 'measuring…';
+          setSub('metric-disk-sub', '');
+        } else if (info.disk_free_gb !== undefined) {
+          diskEl.textContent = `${typeof info.disk_free_gb === 'number' ? info.disk_free_gb.toFixed(1) : info.disk_free_gb} GB`;
+        }
+      }
     } catch {}
   };
 

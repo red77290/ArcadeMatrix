@@ -8,6 +8,8 @@
 #include <esp_task_wdt.h>
 #include "Logger.h"
 #include "RenderStats.h"
+#include "SdSpace.h"
+#include "CpuLoad.h"
 #include <time.h>
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
@@ -201,6 +203,8 @@ void AppRuntime::initialize() {
     }
 #endif
     LOGI("SD", "SD Card mounted successfully.");
+    SdSpace::start();
+    CpuLoad::start();
 
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);

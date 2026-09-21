@@ -293,6 +293,20 @@ paths:
                   arch: { type: string, example: "esp32s3" }
                   uptime: { type: integer, description: "Uptime in seconds", example: 3600 }
                   cpu_load: { type: number, example: 15.2 }
+                  cpu_load_core0: { type: number, description: Load of core 0 over the last second (share of ticks not spent in the idle task) }
+                  cpu_load_core1: { type: number }
+                  render_loop_fps: { type: number, description: Render-loop iterations per second since the previous call }
+                  render_present_fps: { type: number, description: Framebuffer flips per second since the previous call (the ESP32 has no CPU-load figure; this is the nearest thing) }
+                  free_heap_kb: { type: integer }
+                  total_heap_kb: { type: integer }
+                  psram_found: { type: boolean }
+                  psram_free_mb: { type: number }
+                  psram_total_mb: { type: number }
+                  sd_measured: { type: boolean, description: SD free space is measured off the render core shortly after boot and after library changes; false until then }
+                  sd_total_gb: { type: number }
+                  sd_free_gb: { type: number }
+                  sd_measured_age_s: { type: integer }
+                  arch: { type: string, example: esp32s3 }
                   ram_used_mb: { type: integer, example: 55 }
                   ram_total_mb: { type: integer, example: 320 }
                   temperature_c: { type: number, example: 42.5 }
