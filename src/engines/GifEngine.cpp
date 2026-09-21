@@ -718,6 +718,40 @@ void GifEngine::refreshPlaylistWeights() {
     }
 }
 
+uint32_t GifEngine::pathHash(const char* s) {
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; }
+    return h;
+}
+
+// True when this file is inside the window of recent plays. The window never covers more than half
+// of a folder, so small folders keep playing and only genuine near-repeats are skipped.
+bool GifEngine::playedRecently(uint32_t h, size_t folderFiles) {
+    if (!recentHashes || recentCount == 0 || folderFiles < 8) return false;
+    uint32_t window = (folderFiles * 3) / 4;   // never the whole folder, so a pick is always possible
+    if (window > recentCount) window = recentCount;
+    if (window > recentCap) window = recentCap;
+    for (uint32_t back = 1; back <= window; back++) {
+        uint16_t idx = (uint16_t)((recentHead + recentCap - back) % recentCap);
+        if (recentHashes[idx] == h) return true;
+    }
+    return false;
+}
+
+void GifEngine::rememberPlayed(uint32_t h) {
+    if (!recentHashes) {
+        recentCap = RECENT_MAX;
+        recentHashes = (uint32_t*)(psramFound() ? ps_malloc(recentCap * sizeof(uint32_t))
+                                                : malloc(recentCap * sizeof(uint32_t)));
+        if (!recentHashes) { recentCap = 0; return; }   // no window: behaves as before
+        memset(recentHashes, 0, recentCap * sizeof(uint32_t));
+        recentCount = 0; recentHead = 0;
+    }
+    recentHashes[recentHead] = h;
+    recentHead = (uint16_t)((recentHead + 1) % recentCap);
+    if (recentCount < recentCap) recentCount++;
+}
+
 int GifEngine::pickPlaylistIndex() {
     if (playlists.empty()) return -1;
     if (playlistWeights.size() != playlists.size() || millis() - playlistWeightsLoadedMs > 600000UL) {
@@ -816,6 +850,12 @@ void GifEngine::loadNextFileInPlaylist() {
                 selectedIdx = (selectedIdx + 1 + random(validFiles.size() - 1)) % validFiles.size();
                 candidate = pPath + "/" + validFiles[selectedIdx];
             }
+            // Pass over files seen recently; give up after a few tries so a folder always yields one.
+            for (int tries = 0; tries < 16 && validFiles.size() > 1; tries++) {
+                if (!playedRecently(pathHash(candidate.c_str()), validFiles.size())) break;
+                selectedIdx = random(validFiles.size());
+                candidate = pPath + "/" + validFiles[selectedIdx];
+            }
             targetPath = candidate;
         }
         
@@ -837,6 +877,7 @@ void GifEngine::loadNextFileInPlaylist() {
             if (playGif(targetPath.c_str())) {
                 playlistMode = true;
                 lastPlayedGif = targetPath;
+                rememberPlayed(pathHash(targetPath.c_str()));
                 return; // SUCCESS!
             }
         }
