@@ -296,7 +296,7 @@ paths:
                   cpu_load_core0: { type: number, description: Load of core 0 over the last second (share of ticks not spent in the idle task) }
                   cpu_load_core1: { type: number }
                   render_loop_fps: { type: number, description: Render-loop iterations per second since the previous call }
-                  render_present_fps: { type: number, description: Framebuffer flips per second since the previous call (the ESP32 has no CPU-load figure; this is the nearest thing) }
+                  render_present_fps: { type: number, description: Framebuffer flips per second since the previous call }
                   free_heap_kb: { type: integer }
                   total_heap_kb: { type: integer }
                   psram_found: { type: boolean }
