@@ -6,6 +6,7 @@
 extern MatrixEngine matrixEngine;
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/SdLockGuard.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Globals.h"
@@ -19,6 +20,10 @@ GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false),
 GifEngine::~GifEngine() {
     freeShadows();
     stop();
+    if (recentHashes) {
+        free(recentHashes);
+        recentHashes = nullptr;
+    }
     delete png;
 }
 
@@ -684,7 +689,8 @@ void GifEngine::refreshPlaylistWeights() {
         for (const auto& p : playlists) { if (p.startsWith(prefix)) { rootUsed = true; break; } }
         if (!rootUsed) continue;
         String plJson = String(rootP) + "/playlists.json";
-        if (!(sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE)) continue;
+        SdLockGuard guard(pdMS_TO_TICKS(1500));
+        if (!guard) continue;
         if (sd.exists(plJson.c_str())) {
             FsFile f = sd.open(plJson.c_str(), FILE_OPEN_READ);
             if (f) {
@@ -714,7 +720,6 @@ void GifEngine::refreshPlaylistWeights() {
                 f.close();
             }
         }
-        xSemaphoreGive(sdMutex);
     }
 }
 
@@ -740,7 +745,7 @@ bool GifEngine::playedRecently(uint32_t h, size_t folderFiles) {
 
 void GifEngine::rememberPlayed(uint32_t h) {
     if (!recentHashes) {
-        recentCap = RECENT_MAX;
+        recentCap = psramFound() ? RECENT_MAX : 256;
         recentHashes = (uint32_t*)(psramFound() ? ps_malloc(recentCap * sizeof(uint32_t))
                                                 : malloc(recentCap * sizeof(uint32_t)));
         if (!recentHashes) { recentCap = 0; return; }   // no window: behaves as before
