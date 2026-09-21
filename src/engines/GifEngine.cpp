@@ -346,26 +346,48 @@ bool GifEngine::blitCanvas() {
     // with flash writes (OTA failed while a GIF was playing), so the per-pixel path stays.
     uint32_t t0 = micros();
     size_t written = 0;
-    for (int y = 0; y < h; y++) {
-        const uint16_t* row = canvasBuffer + (size_t)y * w;
-        if (full) {
-            for (int x = 0; x < w; x++) matrix->drawPixel(x, y, row[x]);
-            written += (size_t)w;
+    if (full) {
+        matrixEngine.blitCanvas565(canvasBuffer, w, h);
+        if (shadow) {
+            memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
+            m_shadowValid[idx] = true;
+        }
+        written = n;
+    } else {
+        // Fast dirty-pixel threshold scan using 32-bit word comparisons (2 pixels per test)
+        const uint32_t* c32 = (const uint32_t*)canvasBuffer;
+        const uint32_t* s32 = (const uint32_t*)shadow;
+        size_t n32 = n / 2;
+        size_t dirtyWords = 0;
+        const size_t dirtyThresholdWords = 200; // ~400 dirty pixels threshold (2.4% of 256x64)
+
+        for (size_t i = 0; i < n32; i++) {
+            if (c32[i] != s32[i]) {
+                dirtyWords++;
+                if (dirtyWords >= dirtyThresholdWords) break;
+            }
+        }
+
+        if (dirtyWords >= dirtyThresholdWords) {
+            // High motion frame: FastBlit sequential row writes are faster than hundreds of drawPixel calls
+            matrixEngine.blitCanvas565(canvasBuffer, w, h);
+            memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
+            written = n;
         } else {
-            uint16_t* srow = shadow + (size_t)y * w;
-            for (int x = 0; x < w; x++) {
-                uint16_t c = row[x];
-                if (c != srow[x]) {
-                    matrix->drawPixel(x, y, c);
-                    srow[x] = c;
-                    written++;
+            // Low delta: update only the sparse changed pixels
+            for (int y = 0; y < h; y++) {
+                const uint16_t* row = canvasBuffer + (size_t)y * w;
+                uint16_t* srow = shadow + (size_t)y * w;
+                for (int x = 0; x < w; x++) {
+                    uint16_t c = row[x];
+                    if (c != srow[x]) {
+                        matrix->drawPixel(x, y, c);
+                        srow[x] = c;
+                        written++;
+                    }
                 }
             }
         }
-    }
-    if (full && shadow) {
-        memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
-        m_shadowValid[idx] = true;
     }
     g_renderStats.gifBlitMicros += micros() - t0;
     g_renderStats.gifPixelsWritten += (uint32_t)written;

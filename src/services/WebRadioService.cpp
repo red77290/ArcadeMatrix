@@ -2,6 +2,7 @@
 #define MINIMP3_ONLY_MP3
 #include "WebRadioService.h"
 #include "../core/Logger.h"
+#include "../core/NetworkBudget.h"
 #include "AudioAnalysisService.h"
 #include <esp_heap_caps.h>
 
@@ -231,13 +232,6 @@ bool WebRadioService::connectStreamInternal(const String& url) {
     while (redirectCount < 3) {
         _isHttps = currentUrl.startsWith("https://");
 
-        if (_isHttps) {
-            _secureClient.setInsecure();
-            _activeClient = (WiFiClient*)&_secureClient;
-        } else {
-            _activeClient = (WiFiClient*)&_client;
-        }
-
         // Parse host, port, path from URL
         String host;
         int port = _isHttps ? 443 : 80;
@@ -260,9 +254,33 @@ bool WebRadioService::connectStreamInternal(const String& url) {
             host = host.substring(0, colonIdx);
         }
 
+        if (_isHttps) {
+            if (!NetworkBudget::canStartTlsSession()) {
+                LOGW("WebRadio", "TLS admission denied (insufficient internal DRAM/DMA); cannot stream HTTPS %s", host.c_str());
+                return false;
+            }
+            _secureClient.setInsecure();
+            _activeClient = (WiFiClient*)&_secureClient;
+        } else {
+            _activeClient = (WiFiClient*)&_client;
+        }
+
         LOGI("WebRadio", "Connecting to %s:%d%s (%s)...", host.c_str(), port, path.c_str(), _isHttps ? "HTTPS" : "HTTP");
 
-        if (!_activeClient->connect(host.c_str(), port)) {
+        bool connected = false;
+        if (_isHttps) {
+            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+            if (!tlsLock) {
+                LOGW("WebRadio", "Failed to acquire TLS handshake lock (timeout/denied); cannot stream %s", host.c_str());
+                return false;
+            }
+            connected = _activeClient->connect(host.c_str(), port);
+            // tlsLock unlocks immediately here as it leaves scope, before HTTP headers / payload transfer.
+        } else {
+            connected = _activeClient->connect(host.c_str(), port);
+        }
+
+        if (!connected) {
             LOGE("WebRadio", "Failed to connect to host %s:%d", host.c_str(), port);
             return false;
         }

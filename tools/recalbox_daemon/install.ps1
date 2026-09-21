@@ -64,8 +64,9 @@ function Invoke-RemoteCommand {
 
 function Copy-ToRemote {
     param([string]$User, [string]$LocalPath, [string]$RemotePath)
-    & scp @SshOpts $LocalPath "${User}@${TargetIp}:${RemotePath}"
-    if ($LASTEXITCODE -ne 0) { throw "scp failed uploading $LocalPath" }
+    # Using SSH pipe instead of SCP avoids all OpenSSH SFTP legacy incompatibilities (e.g. on Batocera)
+    Get-Content $LocalPath -Raw | & ssh @SshOpts "${User}@${TargetIp}" "cat > '$RemotePath'"
+    if ($LASTEXITCODE -ne 0) { throw "upload failed for $LocalPath" }
 }
 
 $system = "unknown"
@@ -151,7 +152,7 @@ try {
     } elseif ($system -eq "batocera") {
         $TargetDir = "/userdata/system/scripts"
         Write-Host "Cleaning up previous install..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh $TargetDir/arcadematrix_hook.sh /userdata/system/arcadematrix_daemon.py; rm -f $TargetDir/game-selected $TargetDir/game-start $TargetDir/game-end $TargetDir/system-selected; rm -f /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected; if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" | Out-Null
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh $TargetDir/arcadematrix_hook.sh /userdata/system/arcadematrix_daemon.py; rm -rf $TargetDir/game-selected $TargetDir/game-start $TargetDir/game-end $TargetDir/system-selected /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected; if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" | Out-Null
         Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir" | Out-Null
 
         Write-Host "Preparing Batocera event hook..."

@@ -1,6 +1,7 @@
 #include "WebServerAPI.h"
 #include "../core/SdSpace.h"
 #include "../core/CpuLoad.h"
+#include "../engines/FighterEngine.h"
 #include "../core/RenderStats.h"
 #include <core/EngineRegistry.h>
 #include <ArduinoJson.h>
@@ -966,6 +967,12 @@ void WebServerAPI::setupRoutes() {
     server.addHandler(rotationHandler);
 
     // API: Get Device Status
+    // Fighter overlay diagnostics (roster, loader, memory floors, last warning): the overlay has no
+    // other network-visible state and its failures are otherwise only on the serial console.
+    server.on("/api/fighter/status", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "application/json", FighterEngine::debugStatusJson());
+    });
+
     server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *request){
         SpiRamJsonDocument doc(1024);
         doc["status"] = "online";
@@ -1301,7 +1308,8 @@ void WebServerAPI::setupRoutes() {
 
         // Bounded wait: never block the AsyncTCP task indefinitely on the SD mutex, otherwise a
         // long Core 1 decode stalls every pending HTTP connection.
-        if (xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        SdLockGuard guard(pdMS_TO_TICKS(5000));
+        if (!guard) {
             if (s_playlistCacheValid[cacheSlot]) {
                 // Serve the stale snapshot rather than failing the whole Display tab.
                 request->send(200, "application/json", s_playlistCache[cacheSlot]);
@@ -1335,7 +1343,7 @@ void WebServerAPI::setupRoutes() {
             }
             payload = "{\"yoko\":" + yoko + ",\"tate\":" + tate + "}";
         }
-        xSemaphoreGive(sdMutex);
+        guard.unlock();
 
         s_playlistCache[cacheSlot] = payload;
         s_playlistCacheStamp[cacheSlot] = millis();
@@ -2641,7 +2649,7 @@ void WebServerAPI::setupRoutes() {
             const String orientation = gifOrientationOf(request);
             const String root = gifRootFor(orientation);
             String path = root + "/" + folder;
-            struct FilesCtx { FsFile idx; String head; String carry; bool first = true; bool done = false; };
+            struct FilesCtx { FsFile idx; String head; String carry; bool first = true; bool done = false; bool closed = false; };
             FilesCtx* ctx = new FilesCtx();
             bool found = false; bool haveIndex = false;
             {
@@ -2693,7 +2701,7 @@ void WebServerAPI::setupRoutes() {
                     // One bounded hold per chunk (a Core 0 producer, Golden Rule #5): holding the card for the
                     // whole streamed response would stall GifEngine for as long as the download takes.
                     SdLockGuard guard(pdMS_TO_TICKS(5000));
-                    if (guard) {
+                    if (guard && !ctx->closed) {
                         while (ctx->idx.available()) {
                             String n = ctx->idx.readStringUntil('\n'); n.trim();
                             if (n.isEmpty() || !hasGifExt(n)) continue;
@@ -2702,7 +2710,7 @@ void WebServerAPI::setupRoutes() {
                             if (!emit(piece)) return out;   // the guard releases the card on this early return
                             if (out > maxLen - 96) break;   // leave room; next call continues
                         }
-                        if (!ctx->idx.available()) { ctx->idx.close(); ctx->done = true; }
+                        if (!ctx->idx.available()) { ctx->idx.close(); ctx->closed = true; ctx->done = true; }
                     }
                 }
                 if (ctx->done && ctx->carry.isEmpty()) { emit("]}"); }   // may land in carry if the buffer is full
@@ -2711,9 +2719,12 @@ void WebServerAPI::setupRoutes() {
             });
             resp->addHeader("Cache-Control", "no-cache");
             request->onDisconnect([ctx]() {
-                if (ctx->idx) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1000));
-                    if (guard) ctx->idx.close();
+                if (ctx->idx && !ctx->closed) {
+                    SdLockGuard guard(portMAX_DELAY);
+                    if (ctx->idx && !ctx->closed) {
+                        ctx->idx.close();
+                        ctx->closed = true;
+                    }
                 }
                 delete ctx;
             });
@@ -2826,7 +2837,7 @@ void WebServerAPI::setupRoutes() {
             if (badName(rawFolder) || badName(rawName) || folder.isEmpty() || name.isEmpty() || !hasGifExt(name)) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder and name are required\"}"); return; }
             const String root = gifRootOf(request);
             String path = root + "/" + folder + "/" + name;
-            struct FileCtx { FsFile f; size_t size = 0; };
+            struct FileCtx { FsFile f; size_t size = 0; bool closed = false; };
             FileCtx* ctx = new FileCtx();
             bool ok = false;
             {
@@ -2840,15 +2851,24 @@ void WebServerAPI::setupRoutes() {
             AsyncWebServerResponse* resp = request->beginResponse(mime, ctx->size, [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
                 size_t n = 0;
                 SdLockGuard guard(pdMS_TO_TICKS(5000));   // one bounded hold per chunk, see /api/gifs/files
-                if (guard) n = ctx->f.read(buf, maxLen);
+                if (guard && ctx->f && !ctx->closed) {
+                    n = ctx->f.read(buf, maxLen);
+                    if (index + n >= ctx->size || n == 0) {
+                        ctx->f.close();
+                        ctx->closed = true;
+                    }
+                }
                 return n;
             });
             resp->addHeader("Cache-Control", "no-cache");
             if (request->hasParam("download") && request->getParam("download")->value() == "1") resp->addHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
             request->onDisconnect([ctx]() {
-                if (ctx->f) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1000));
-                    if (guard) ctx->f.close();
+                if (ctx->f && !ctx->closed) {
+                    SdLockGuard guard(portMAX_DELAY);
+                    if (ctx->f && !ctx->closed) {
+                        ctx->f.close();
+                        ctx->closed = true;
+                    }
                 }
                 delete ctx;
             });
@@ -3031,32 +3051,40 @@ void WebServerAPI::setupRoutes() {
 
         if (!index) {
             LOGI("WebServer", "Asset upload start: %s -> %s", filename.c_str(), destPath.c_str());
-            if (!sd.exists("/marquees")) {
-                sd.mkdir("/marquees");
-            }
-            // Enforce single-file overwrite: remove any previous marquee files
-            const char* oldFiles[] = {
-                "/marquees/marquee.gif", "/marquees/marquee.png", "/marquees/marquee.jpg", "/marquees/marquee.jpeg",
-                "/marquees/custom_marquee.gif", "/marquees/custom_marquee.png", "/marquees/custom_marquee.jpg", "/marquees/custom_marquee.raw"
-            };
-            for (const char* f : oldFiles) {
-                if (sd.exists(f)) {
-                    sd.remove(f);
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (guard) {
+                if (!sd.exists("/marquees")) {
+                    sd.mkdir("/marquees");
                 }
-            }
-            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-            if (uploadFile) {
-                uploadFile.write(data, len);
-                uploadFile.close();
-                request->_tempObject = new String(destPath);
+                // Enforce single-file overwrite: remove any previous marquee files
+                const char* oldFiles[] = {
+                    "/marquees/marquee.gif", "/marquees/marquee.png", "/marquees/marquee.jpg", "/marquees/marquee.jpeg",
+                    "/marquees/custom_marquee.gif", "/marquees/custom_marquee.png", "/marquees/custom_marquee.jpg", "/marquees/custom_marquee.raw"
+                };
+                for (const char* f : oldFiles) {
+                    if (sd.exists(f)) {
+                        sd.remove(f);
+                    }
+                }
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                    request->_tempObject = new String(destPath);
+                } else {
+                    LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
+                }
             } else {
-                LOGE("WebServer", "Failed to create marquee file: %s", destPath.c_str());
+                LOGE("WebServer", "Failed to acquire SD lock for marquee file upload: %s", destPath.c_str());
             }
         } else if (request->_tempObject) {
-            FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
-            if (uploadFile) {
-                uploadFile.write(data, len);
-                uploadFile.close();
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (guard) {
+                FsFile uploadFile = sd.open(destPath.c_str(), FILE_OPEN_APPEND);
+                if (uploadFile) {
+                    uploadFile.write(data, len);
+                    uploadFile.close();
+                }
             }
         }
 
@@ -3267,12 +3295,77 @@ void WebServerAPI::setupRoutes() {
     // Register DLNA MediaRenderer description, SCPD and SOAP endpoints
     dlnaService.registerRoutes(&server);
 
-    // Handle Preflight CORS
-    server.onNotFound([](AsyncWebServerRequest *request) {
+    // Helper to serve marquee and custom assets from SD card
+    auto serveMarqueeFile = [](AsyncWebServerRequest *request, const String& path) {
+        struct MarqueeFileCtx {
+            FsFile f;
+            size_t size = 0;
+            bool closed = false;
+        };
+        MarqueeFileCtx* ctx = new MarqueeFileCtx();
+        bool ok = false;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(3000));
+            if (!guard) {
+                delete ctx;
+                request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD busy\"}");
+                return;
+            }
+            if (sd.exists(path.c_str())) {
+                ctx->f = sd.open(path.c_str(), FILE_OPEN_READ);
+                if (ctx->f) {
+                    ctx->size = ctx->f.size();
+                    ok = true;
+                }
+            }
+        }
+        if (!ok) {
+            delete ctx;
+            request->send(404, "text/plain", "File not found");
+            return;
+        }
+        String lower = path; lower.toLowerCase();
+        const char* mime = lower.endsWith(".png") ? "image/png" :
+                           lower.endsWith(".gif") ? "image/gif" :
+                           (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) ? "image/jpeg" :
+                           "application/octet-stream";
+        AsyncWebServerResponse* resp = request->beginResponse(mime, ctx->size, [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+            size_t n = 0;
+            SdLockGuard guard(pdMS_TO_TICKS(5000));
+            if (guard && ctx->f && !ctx->closed) {
+                n = ctx->f.read(buf, maxLen);
+                if (index + n >= ctx->size || n == 0) {
+                    ctx->f.close();
+                    ctx->closed = true;
+                }
+            }
+            return n;
+        });
+        resp->addHeader("Cache-Control", "no-cache");
+        request->onDisconnect([ctx]() {
+            if (ctx->f && !ctx->closed) {
+                SdLockGuard guard(portMAX_DELAY);
+                if (ctx->f && !ctx->closed) {
+                    ctx->f.close();
+                    ctx->closed = true;
+                }
+            }
+            delete ctx;
+        });
+        request->send(resp);
+    };
+
+    // Handle Preflight CORS & asset routes (e.g. /marquees/...)
+    server.onNotFound([serveMarqueeFile](AsyncWebServerRequest *request) {
         if (request->method() == HTTP_OPTIONS) {
             request->send(200);
-        } else {
-            request->send(404, "text/plain", "Not found");
+            return;
         }
+        String url = request->url();
+        if (url.startsWith("/marquees/")) {
+            serveMarqueeFile(request, url);
+            return;
+        }
+        request->send(404, "text/plain", "Not found");
     });
 }

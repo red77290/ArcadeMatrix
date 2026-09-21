@@ -303,6 +303,8 @@ Pour éliminer les courses entre cœurs et éviter tout mutex sur la boucle de r
 - Décodage des sprites animés `.fgt.gz` pour les combattants MUGEN.
 - Activation par rotation dans `config.rotation[i].overlays.fighter`.
 - **Fighter est un overlay transverse, PAS un engine dans `EngineRegistry`.** En cas de préemption par une alerte prioritaire, `DisplayRuntime` suspend l'overlay en douceur sans détruire les assets d'arrière-plan.
+- **Gating d'Overlay par Moteur (`allowsOverlay()`) :** Les moteurs à cadence maximale (`GifEngine`) surchargent `bool allowsOverlay() const override { return false; }`, évitant la surcharge de composition et préservant un affichage fluide à plus de 30 FPS sur les animations plein écran.
+- **Rendu Transparent Non Destructif :** Les overlays (`FighterEngine`) s'exécutent strictement via des tracés de pixels transparents (`if (color != anim->transparentColor) matrix->drawPixel(...)`). Ils n'effacent jamais les boîtes englobantes précédentes avec des rectangles noirs opaques (`fillRect(..., 0)`), préservant intégralement les chiffres d'horloge et le fond sous-jacent.
 
 ---
 
@@ -314,7 +316,7 @@ Pour éliminer les courses entre cœurs et éviter tout mutex sur la boucle de r
   - Analyse audio FFT et sondes de capteurs.
 - **Cœur 1 (Graphisme Temps Réel) :**
   - Évaluation de l'arbitre (`DisplayRuntime::update()`).
-  - Régulation de cadence via `FrameScheduler` (60 FPS pour les moteurs temps réel, 20-30 FPS pour les écrans statiques).
+  - Régulation de cadence via `FrameScheduler` (60 FPS pour les moteurs temps réel, 20-30 FPS pour les écrans statiques). Les délais GIF sont respectés à la milliseconde près au lieu d'être arrondis au tick supérieur.
   - Rendu moteur actif (`update()` / `render()`), passe d'overlay (`OverlayManager`) et DMA flip buffer.
 
 ---
@@ -418,8 +420,17 @@ Les moteurs sont toujours détruits sur le Core 0 (`Core0LifecycleDispatcher`), 
 Pour éviter que les consommateurs réseau concurrents (AsyncWebServer / AsyncTCP servant l'interface WebUI) et les moteurs cryptographiques (Google Cast mbedTLS) n'asphyxient LwIP et ne déclenchent des avortements logiciels de sockets (`ECONNABORTED = 113`) :
 1. **JSON Applicatif en PSRAM :** Tous les schémas d'API REST et endpoints de configuration dans `WebServerAPI` instancient `SpiRamJsonDocument` au lieu de `DynamicJsonDocument`, routant les gros arbres JSON et dictionnaires de chaînes vers le pool de 15 Mo de PSRAM. AsyncTCP et les tampons de transport LwIP restent dans la DRAM interne.
 2. **Buffer Canvas Graphique en PSRAM :** Les gros framebuffers hors DMA direct (comme le canvas de 32 Ko de `GifEngine`) priorisent l'allocation en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), libérant plus de 32 Ko de DRAM interne permanente au démarrage.
-3. **Isolation de Cœur & Dimensionnement AsyncTCP :** La tâche de service `async_tcp` est dimensionnée à 8192 octets et strictement épinglée au Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), isolant les callbacks réseau du hot-path d'affichage 60 FPS du Core 1.
-4. **Backoff de Reconnexion Google Cast :** Les reconnexions sont rythmées par un backoff exponentiel (5s, 10s, 20s, 60s) initialisé dès la rupture de session, évitant les tempêtes de reconnexion pendant les salves de requêtes HTTP.
+3. **Présentation Double Mode : Shadow Buffer vs FastBlit en Rafale Ligne (`GifEngine::blitCanvas` & `FastMatrixPanel::blitCanvas565`) :**
+   Avec le tampon DMA HUB75 résidant en PSRAM sur écran 256×64, chaque `drawPixel()` subit un cycle read-modify-write plus un write-back de cache par plan de couleur. Envoyer une frame 256×64 complète par pixels dispersés prenait ~68 ms et bridait les animations à 7–14 FPS. ArcadeMatrix implémente une stratégie double :
+   - **Delta Blit par Shadow Buffer ($< 400$ pixels modifiés) :** Pour les animations légères ou les mises à jour partielles, `GifEngine` maintient une copie miroir en PSRAM de ce qu'il a envoyé au buffer DMA et ne met à jour que les pixels modifiés.
+   - **FastBlit par Rafale de Lignes ($\ge 400$ pixels modifiés, ~2.4% de l'écran) :** Pour les vidéos plein mouvement, défilements d'arcade continus (Metal Slug, Dragon Ball Z) et scènes rapides, le moteur bascule automatiquement sur `FastMatrixPanel::blitCanvas565()`. Ce chemin court-circuite 131 072 accès 16 bits dispersés en convertissant les lignes entières en flux séquentiels écrits directement dans les mots de plans DMA du back-buffer. La latence de blit chute de ~68 ms à **~26 ms**, débloquant une cadence stable de **30 à 33+ FPS** sur panneau 256×64.
+4. **Tables CIE 1931 Pré-Mises à l'Échelle par Profondeur (`initLuts(depth)`) :**
+   Quand la bibliothèque amont compile avec la table native 8 bits, configurer une profondeur de couleur inférieure (`colorDepth < 8`, ex. 5 ou 6 bits par canal) fait reboucler les fortes luminosités ($\ge 64$ ou $32$) modulo $2^{\text{depth}}$, corrompant les couleurs claires et dégradés. `FastMatrixPanel::initLuts(depth)` précalcule les tables de luminance gamma corrigées à $(1 \ll \text{depth}) - 1$ avec arrondi arithmétique (`(lumConvTab_8bit[val] + round) >> (8 - depth)`). Cela permet d'exploiter sans danger une profondeur de **5 bits** : le framebuffer DMA passe de 262 Ko à 163 Ko, le taux de rafraîchissement atteint 120 Hz sans perte de bits PWM (`lsbMsbTransitionBit`), et les stalls de Core 1 sur horloges complexes sont totalement éliminés.
+5. **Effacement d'Écran Zéro-Scintillement (`FastMatrixPanel::fillScreen(0)`) :**
+   `fillScreen(0)` ouvre presque chaque trame moteur. Dans la bibliothèque d'origine, `setBrightness8()` écrit les impulsions OE de modulation sur **le buffer 0 ET le buffer 1**. En double-buffering, modifier le front-buffer pendant que le GDMA transmet activement les données aux LEDs physiques génère un déchirement horizontal et un scintillement de balayage (analogue au conflit PWM sur Raspberry Pi). `FastMatrixPanel::fillScreen(0)` masque directement les bits de couleur (`ptr[x] &= BITMASK_RGB12_CLEAR`) exclusivement sur le **back-buffer (`m_back`)** en $\sim 0.8\text{ ms}$, préservant les lignes OE, LAT et d'adresse sans jamais toucher au front-buffer en cours de balayage.
+6. **Isolation de Cœur & Dimensionnement AsyncTCP :** La tâche de service `async_tcp` est dimensionnée à 8192 octets et strictement épinglée au Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), isolant les callbacks réseau du hot-path d'affichage 60 FPS du Core 1.
+7. **Backoff de Reconnexion Google Cast :** Les reconnexions sont rythmées par un backoff exponentiel (5s, 10s, 20s, 60s) initialisé dès la rupture de session, évitant les tempêtes de reconnexion pendant les salves de requêtes HTTP.
+8. **Télémétrie Périodique de Rendu (5s) :** Une télémétrie scalaire non bloquante dans `AppRuntime::update()` consigne sur le port série le framerate de la boucle, le framerate physique affiché, le framerate GIF, la durée du blit, la durée du décodage et la DRAM libre toutes les 5 secondes, sans aucune allocation dynamique.
 
 #### Problèmes Connus et Statut de Fiabilisation
 - **Google Cast :** La découverte mDNS réussit ; lorsque la SRAM interne subit une forte fragmentation sous d'autres moteurs, l'admission TLS est désormais refusée de façon sûre par `canStartTlsSession()` (`buffers=INSUFFICIENT`) sans provoquer de plantage `MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512)`. Dès que la SRAM interne retrouve sa capacité de double buffer (~34 Ko contigus ou deux blocs $\ge 16.5$ Ko), la connexion TLS Cast aboutit.

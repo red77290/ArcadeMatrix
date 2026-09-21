@@ -119,17 +119,19 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
         // Multi-line Horizontal Ticker for taller slots (e.g. 256x64 when market has 30px+ height)
         int itemW = 56;
         int totalW = (int)count * itemW;
+        if (totalW < 1) totalW = 1;
         uint32_t now = millis();
-        int scrollOffset = (int)((now * 12) / 1000) % max(1, totalW);
+        int scrollOffset = (int)((now * 12) / 1000) % totalW;
 
-        for (size_t i = 0; i < count; i++) {
-            int slotBaseX = (int)(i * itemW) - scrollOffset;
+        int minK = -1;
+        int maxK = (rect.width + scrollOffset) / totalW + 1;
 
-            while (slotBaseX < -itemW) slotBaseX += totalW;
-            while (slotBaseX > rect.width) slotBaseX -= totalW;
+        for (int k = minK; k <= maxK; k++) {
+            int curX = rect.x + 2 + (k * totalW) - scrollOffset;
+            for (size_t i = 0; i < count; i++) {
+                int posX = curX;
+                curX += itemW;
 
-            for (int k = 0; k < 2; k++) {
-                int posX = rect.x + 2 + slotBaseX + (k * totalW);
                 if (posX + itemW < minX || posX >= maxX) continue;
 
                 renderMarketIcon(matrix, posX, rect.y + 3, minX, maxX, minY, maxY, items[i]);
@@ -149,23 +151,28 @@ void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const s
         // Vertical rolling list for narrow portrait layouts
         int rowH = 14;
         int totalH = (int)count * rowH;
+        if (totalH < 1) totalH = 1;
         uint32_t now = millis();
-        int scrollOffsetY = (totalH > rect.height) ? ((int)((now * 10) / 1000) % max(1, totalH)) : 0;
+        int scrollOffsetY = (totalH > rect.height) ? ((int)((now * 10) / 1000) % totalH) : 0;
 
-        for (size_t i = 0; i < count; i++) {
-            int slotBaseY = (int)(i * rowH) - scrollOffsetY;
-            while (slotBaseY < -rowH) slotBaseY += totalH;
-            while (slotBaseY > rect.height) slotBaseY -= totalH;
+        int minK = (totalH > rect.height) ? -1 : 0;
+        int maxK = (totalH > rect.height) ? ((rect.height + scrollOffsetY) / totalH + 1) : 0;
 
-            int posY = rect.y + 2 + slotBaseY;
-            if (posY + rowH < minY || posY >= maxY) continue;
+        for (int k = minK; k <= maxK; k++) {
+            int curY = rect.y + 2 + (k * totalH) - scrollOffsetY;
+            for (size_t i = 0; i < count; i++) {
+                int posY = curY;
+                curY += rowH;
 
-            renderMarketIcon(matrix, rect.x + 3, posY + 2, minX, maxX, minY, maxY, items[i]);
-            drawClippedString(matrix, items[i].symbol, rect.x + 13, posY, minX, maxX, minY, maxY, theme.text);
+                if (posY + rowH < minY || posY >= maxY) continue;
 
-            char priceBuf[16];
-            formatMarketPrice(priceBuf, sizeof(priceBuf), items[i].price);
-            drawClippedString(matrix, priceBuf, rect.x + 13, posY + 7, minX, maxX, minY, maxY, theme.primary);
+                renderMarketIcon(matrix, rect.x + 3, posY + 2, minX, maxX, minY, maxY, items[i]);
+                drawClippedString(matrix, items[i].symbol, rect.x + 13, posY, minX, maxX, minY, maxY, theme.text);
+
+                char priceBuf[16];
+                formatMarketPrice(priceBuf, sizeof(priceBuf), items[i].price);
+                drawClippedString(matrix, priceBuf, rect.x + 13, posY + 7, minX, maxX, minY, maxY, theme.primary);
+            }
         }
     }
 

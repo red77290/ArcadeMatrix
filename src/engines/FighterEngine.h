@@ -99,6 +99,11 @@ struct FighterPlayer {
 
 class FighterEngine : public IEngine {
 public:
+    /// JSON snapshot of the overlay's state for GET /api/fighter/status: roster, loader, players,
+    /// memory floors and the last notable event. The fighter has no other observable state over the
+    /// network, and its failures are otherwise only visible on the serial console.
+    static String debugStatusJson();
+
     FighterEngine();
     ~FighterEngine();
 
@@ -143,6 +148,9 @@ public:
     bool isActive() const { return active; }
 
 private:
+    static FighterEngine* s_lastInstance;   ///< most recently initialised overlay, for debugStatusJson()
+    const char* m_lastNote = nullptr;       ///< last warning/error this engine logged (zero-allocation string literal)
+
 
     
     MatrixPanel_I2S_DMA* matrix; ///< DMA Matrix instance

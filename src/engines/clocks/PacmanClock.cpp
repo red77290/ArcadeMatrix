@@ -6,10 +6,10 @@
 PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     faceFont.load(config);
     storedTime = {0, 0, 0};
-    strcpy(timeStr, "");
+    strcpy(oldTimeStr, "");
+    strcpy(newTimeStr, "");
     primed = false;
     lastUpdateMs = 0;
-    appearedMs = 0;
     paradeDueMs = 0;
     lastMinute = -1;
     transitioning = false;
@@ -68,28 +68,46 @@ void PacmanClock::splitTime(const char* str, char* hours, char* minutes) {
  * Colons take `colonColor`; 0 hides the colon (blink off) without disturbing the layout.
  */
 void PacmanClock::printTime(const char* str, int centreX, int centreY, int scale, const GFXfont* font,
-                            uint16_t digitColor, uint16_t colonColor) {
+                            uint16_t digitColor, uint16_t colonColor, int minX, int maxX) {
     int n = strlen(str);
     if (n <= 0 || n > 11) return;
     int16_t bx, by;
     uint16_t bw, bh;
 
-    // Digit gap = the font's own inter-digit spacing at this size.
-    matrix->getTextBounds("0", 0, 0, &bx, &by, &bw, &bh);
-    int gap = max(1, ClockFaceFont::advance(font, '0') * scale - (int)bw);
+    // Fixed tabular digit slot width across '0'-'9' so digits never shift horizontally
+    int maxDigitInk = 0;
+    for (char c = '0'; c <= '9'; c++) {
+        char s[2] = { c, '\0' };
+        matrix->getTextBounds(s, 0, 0, &bx, &by, &bw, &bh);
+        if ((int)bw > maxDigitInk) maxDigitInk = bw;
+    }
+    int digitAdv = ClockFaceFont::advance(font, '0') * scale;
+    int slotDigitW = max(maxDigitInk, digitAdv);
+
+    // Fixed colon slot width
+    char colChar[2] = { ':', '\0' };
+    matrix->getTextBounds(colChar, 0, 0, &bx, &by, &bw, &bh);
+    int colonAdv = ClockFaceFont::advance(font, ':') * scale;
+    int slotColonW = max((int)bw, colonAdv);
+
+    int gap = max(1, scale);
 
     int cellW[11], inkOff[11];
     int total = 0;
     for (int i = 0; i < n; i++) {
-        char one[2] = { str[i], '\0' };
+        char c = str[i];
+        char one[2] = { c, '\0' };
         matrix->getTextBounds(one, 0, 0, &bx, &by, &bw, &bh);
-        int adv = ClockFaceFont::advance(font, str[i]) * scale;
-        if (str[i] >= '0' && str[i] <= '9') {
-            cellW[i] = bw;                          // ink only
-            inkOff[i] = -bx;                        // cursor so the ink starts at the cell's left edge
+        if (c >= '0' && c <= '9') {
+            cellW[i] = slotDigitW;
+            inkOff[i] = (slotDigitW - (int)bw) / 2 - bx;
+        } else if (c == ':') {
+            cellW[i] = slotColonW;
+            inkOff[i] = (slotColonW - (int)bw) / 2 - bx;
         } else {
-            cellW[i] = adv;                         // full cell, ink centred in it
-            inkOff[i] = (adv - (int)bw) / 2 - bx;
+            int adv = ClockFaceFont::advance(font, c) * scale;
+            cellW[i] = max((int)bw, adv);
+            inkOff[i] = (cellW[i] - (int)bw) / 2 - bx;
         }
         total += cellW[i] + (i ? gap : 0);
     }
@@ -98,11 +116,15 @@ void PacmanClock::printTime(const char* str, int centreX, int centreY, int scale
     int cursorY = centreY - (int)bh / 2 - by;
     int x = centreX - total / 2;
     for (int i = 0; i < n; i++) {
-        uint16_t col = (str[i] == ':') ? colonColor : digitColor;
-        if (col != 0) {
-            matrix->setTextColor(col);
-            matrix->setCursor(x + inkOff[i], cursorY);
-            matrix->write((uint8_t)str[i]);
+        int charLeft = x + inkOff[i];
+        int charRight = charLeft + cellW[i];
+        if (charRight > minX && charLeft < maxX) {
+            uint16_t col = (str[i] == ':') ? colonColor : digitColor;
+            if (col != 0) {
+                matrix->setTextColor(col);
+                matrix->setCursor(charLeft, cursorY);
+                matrix->write((uint8_t)str[i]);
+            }
         }
         x += cellW[i] + gap;
     }
@@ -134,9 +156,13 @@ void PacmanClock::blit(const uint16_t* rows, int nRows, int nCols, int left, int
 // frame: 0 closed, 1 half open, 2 wide open. Sprite is 13x13, centred on (cx, cy).
 void PacmanClock::drawPacman(int cx, int cy, int s, int frame, bool facingRight) {
     if (!matrix || s < 1) return;
+    int w = PAC_FRAME_CLOSED_COLS * s;
+    int h = PAC_FRAME_CLOSED_ROWS * s;
+    int left = cx - w / 2;
+    int top = cy - h / 2;
+    if (left + w <= 0 || left >= matrix->width()) return;
+    matrix->fillRect(left, top, w, h, 0);
     const uint16_t* rows = (frame == 0) ? PAC_FRAME_CLOSED : (frame == 1) ? PAC_FRAME_HALF : PAC_FRAME_OPEN;
-    int left = cx - (PAC_FRAME_CLOSED_COLS * s) / 2;
-    int top = cy - (PAC_FRAME_CLOSED_ROWS * s) / 2;
     blit(rows, PAC_FRAME_CLOSED_ROWS, PAC_FRAME_CLOSED_COLS, left, top, s, matrix->color565(255, 255, 0), !facingRight);
 }
 
@@ -145,9 +171,12 @@ void PacmanClock::drawPacman(int cx, int cy, int s, int frame, bool facingRight)
 void PacmanClock::drawGhost(int cx, int cy, int s, uint16_t color, int skirtFrame, bool lookRight, bool frightened) {
     if (!matrix || s < 1) return;
     int cols = GHOST_BODY_COLS;
-    int left = cx - (cols * s) / 2;
-    int top = cy - ((GHOST_BODY_ROWS + SKIRT_A_ROWS) * s) / 2;
-    if (left + cols * s <= 0 || left >= matrix->width()) return;
+    int w = cols * s;
+    int h = (GHOST_BODY_ROWS + SKIRT_A_ROWS) * s;
+    int left = cx - w / 2;
+    int top = cy - h / 2;
+    if (left + w <= 0 || left >= matrix->width()) return;
+    matrix->fillRect(left, top, w, h, 0);
 
     uint16_t body = frightened ? matrix->color565(33, 33, 255) : color;
     blit(GHOST_BODY, GHOST_BODY_ROWS, cols, left, top, s, body, false);
@@ -166,27 +195,38 @@ void PacmanClock::update() {
     formatTime(nowStr, sizeof(nowStr));
     uint32_t now = millis();
 
-    // One parade each time the face comes on screen (first update, or the first update after a gap:
-    // only the active engine is updated), starting shortly after the time is readable. A face left up
-    // for a long stretch parades again on each minute change, but never twice inside a short slot.
     bool appeared = !primed || (now - lastUpdateMs > 1500);
     lastUpdateMs = now;
-    if (appeared) {
+    if (!primed) {
         primed = true;
-        appearedMs = now;
-        paradeDueMs = now + 600;
+        strcpy(oldTimeStr, nowStr);
+        strcpy(newTimeStr, nowStr);
         lastMinute = storedTime.minutes;
-    } else if (storedTime.minutes != lastMinute) {
+        paradeDueMs = now + 400;
+    } else if (appeared) {
+        if (storedTime.minutes != lastMinute || strcmp(oldTimeStr, nowStr) != 0) {
+            strcpy(newTimeStr, nowStr);
+            paradeDueMs = now + 300;
+        } else {
+            paradeDueMs = now + 400;
+        }
+    } else if (storedTime.minutes != lastMinute && !transitioning) {
         lastMinute = storedTime.minutes;
-        if (now - appearedMs >= 30000 && !transitioning) paradeDueMs = now;
+        strcpy(newTimeStr, nowStr);
+        paradeDueMs = now;
     }
+
     if (paradeDueMs && now >= paradeDueMs && !transitioning) {
         transitioning = true;
         transStartMs = now;
         pacX = 0.0f;
         paradeDueMs = 0;
     }
-    strcpy(timeStr, nowStr);
+
+    if (!transitioning) {
+        strcpy(oldTimeStr, nowStr);
+        strcpy(newTimeStr, nowStr);
+    }
 
     int w = matrix->width();
     int h = matrix->height();
@@ -208,6 +248,8 @@ void PacmanClock::update() {
     if (color1 == 0) color1 = matrix->color565(255, 255, 255);
     uint16_t colonColor = matrix->color565(60, 100, 255);
     uint16_t dotColor = matrix->color565(255, 183, 174);
+    uint16_t oldDigitColor = matrix->color565(110, 110, 110);
+    uint16_t oldColonColor = matrix->color565(50, 70, 130);
 
     // Font: the configured face font at the configured size, falling back to the built-in one if the
     // time would not fit.
@@ -220,7 +262,7 @@ void PacmanClock::update() {
         font = faceFont.apply(*matrix, scale, "88", w, h / 2);
     } else {
         scale = gfxSize;
-        font = faceFont.apply(*matrix, scale, timeStr, w, h);
+        font = faceFont.apply(*matrix, scale, newTimeStr, w, h);
     }
 
     // Sprite scale: the 14-px ghost fills the panel (or the tier, in tate) with a small margin.
@@ -231,9 +273,6 @@ void PacmanClock::update() {
     int ghostSpacing = ghostW + 2 * s;                              // ghost centre -> next ghost centre
     int firstGhost = pacW / 2 + 4 * s + ghostW / 2;                 // Pac-Man centre -> first ghost centre
 
-    // Out leg: Pac-Man leads, ghosts chase (left -> right). Return leg: the ghosts flee back blue and
-    // frightened with Pac-Man chasing (right -> left). Clocked on wall time, two ghost widths per
-    // second at 100%; tate runs out over the hours, back over the pellets, out again over the minutes.
     float speed = 2.0f * ghostW * (speedPct / 100.0f);
     int chaseLen = firstGhost + 3 * ghostSpacing;                   // leader centre -> last follower centre
     float legOut = w + pacW / 2 + chaseLen + ghostW / 2;            // Pac-Man enters left, last ghost exits right
@@ -245,8 +284,13 @@ void PacmanClock::update() {
     for (int i = 0; i < legs; i++) maxPath += path[i] + (i ? pauseLen : 0);
     if (transitioning) {
         pacX = ((now - transStartMs) / 1000.0f) * speed;
-        if (pacX >= maxPath) transitioning = false;
+        if (pacX >= maxPath) {
+            transitioning = false;
+            strcpy(oldTimeStr, newTimeStr);
+            lastMinute = storedTime.minutes;
+        }
     }
+
     // Which leg are we in, and how far along it (negative during a pause)?
     int leg = 0;
     float legPos = pacX;
@@ -263,17 +307,13 @@ void PacmanClock::update() {
     if (isTate) {
         // Stacked portrait layout: hours on the top tier, pellets in the middle, minutes on the bottom.
         // The parade runs three legs: hours left->right, pellets right->left, minutes left->right.
-        char hStr[6], mStr[6];
-        splitTime(timeStr, hStr, mStr);
+        char hOld[6], mOld[6], hNew[6], mNew[6];
+        splitTime(oldTimeStr, hOld, mOld);
+        splitTime(newTimeStr, hNew, mNew);
         int cX = w / 2 + offX;
         int cyH = h / 4 + offY, cyM = 3 * h / 4 + offY, dotY = h / 2 + offY;
         int dotX[3] = { w / 4 + offX, w / 2 + offX, 3 * w / 4 + offX };
 
-        printTime(hStr, cX, cyH, scale, font, color1, color1);
-        printTime(mStr, cX, cyM, scale, font, color1, color1);
-
-        // Parade helper: out legs lead with Pac-Man moving right; the back leg leads with a frightened
-        // ghost moving left and Pac-Man chasing.
         auto parade = [&](int legIdx, float pos, int cY) {
             if (legIdx == 1) {
                 float headX = (w + ghostW / 2) - pos;
@@ -286,33 +326,162 @@ void PacmanClock::update() {
             }
         };
 
-        float eatenFrom = 1, eatenTo = 0;   // empty range: every pellet showing
-        if (transitioning && !inPause && leg == 1) {
-            float headX = (w + ghostW / 2) - legPos;
-            eatenFrom = headX - ghostW / 2;
-            eatenTo = headX + chaseLen + pacW / 2;   // pellets regrow behind Pac-Man
-        }
-        for (int i = 0; i < 3; i++) {
-            if (dotX[i] >= eatenFrom && dotX[i] <= eatenTo) continue;
-            matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
-        }
+        if (!transitioning) {
+            printTime(hNew, cX, cyH, scale, font, color1, color1);
+            printTime(mNew, cX, cyM, scale, font, color1, color1);
+            for (int i = 0; i < 3; i++) {
+                matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
+            }
+        } else {
+            if (leg == 0) {
+                // Leg 0: Pac-Man eats old hours transformed into pellets, reveals new hours
+                int headX = (int)roundf(-pacW / 2.0f + legPos);
+                int cutX = headX + pacW / 2;
+                int revealX = (int)(headX - chaseLen - ghostW / 2);
+                int margin = max(1, (cutX - revealX) / 2);
+                int dissolveDist = 10 * s;
+                int oldMinX = cutX + dissolveDist;
 
-        if (transitioning && !inPause) {
-            parade(leg, legPos, (leg == 0) ? cyH : (leg == 1) ? dotY : cyM);
+                printTime(hNew, cX, cyH, scale, font, color1, color1, -100, revealX + margin);
+                printTime(hOld, cX, cyH, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
+                if (cutX > 0 && revealX < w) {
+                    int rL = max(0, revealX);
+                    int rR = min(w, oldMinX);
+                    if (rR > rL) matrix->fillRect(rL, 0, rR - rL, h / 2, 0);
+                }
+
+                // Pellets ahead of Pac-Man on the hours tier
+                int pelletStep = max(4, 4 * s);
+                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < w - 2; px += pelletStep) {
+                    if (px > cutX && px < w) matrix->fillRect(px - 1, cyH - 1, 2, 2, dotColor);
+                }
+
+                for (int i = 0; i < 3; i++) matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
+                printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor);
+                if (!inPause) parade(0, legPos, cyH);
+            } else if (leg == 1) {
+                // Leg 1: Frightened ghosts flee across middle dots, Pac-Man chases
+                printTime(hNew, cX, cyH, scale, font, color1, color1);
+                printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor);
+
+                float headX = roundf((w + ghostW / 2.0f) - legPos);
+                float eatenFrom = headX - ghostW / 2;
+                float eatenTo = headX + chaseLen + pacW / 2;
+                for (int i = 0; i < 3; i++) {
+                    if (dotX[i] >= eatenFrom && dotX[i] <= eatenTo) continue;
+                    matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
+                }
+                if (!inPause) parade(1, legPos, dotY);
+            } else {
+                // Leg 2: Pac-Man eats old minutes transformed into pellets, reveals new minutes
+                printTime(hNew, cX, cyH, scale, font, color1, color1);
+                for (int i = 0; i < 3; i++) matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
+
+                int headX = (int)roundf(-pacW / 2.0f + legPos);
+                int cutX = headX + pacW / 2;
+                int revealX = (int)(headX - chaseLen - ghostW / 2);
+                int margin = max(1, (cutX - revealX) / 2);
+                int dissolveDist = 10 * s;
+                int oldMinX = cutX + dissolveDist;
+
+                printTime(mNew, cX, cyM, scale, font, color1, color1, -100, revealX + margin);
+                printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
+                if (cutX > 0 && revealX < w) {
+                    int rL = max(0, revealX);
+                    int rR = min(w, oldMinX);
+                    if (rR > rL) matrix->fillRect(rL, h / 2, rR - rL, h - h / 2, 0);
+                }
+
+                // Pellets ahead of Pac-Man on the minutes tier
+                int pelletStep = max(4, 4 * s);
+                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < w - 2; px += pelletStep) {
+                    if (px > cutX && px < w) matrix->fillRect(px - 1, cyM - 1, 2, 2, dotColor);
+                }
+
+                if (!inPause) parade(2, legPos, cyM);
+            }
         }
     } else {
-        // Landscape: one row, time centred, parade left -> right over it.
-        printTime(timeStr, w / 2 + offX, h / 2 + offY, scale, font, color1,
-                  (transitioning || colonOn) ? colonColor : 0);
-        if (transitioning && !inPause) {
+        // Landscape: one row, time centred
+        int cX = w / 2 + offX;
+        int cY = h / 2 + offY;
+
+        if (!transitioning) {
+            printTime(newTimeStr, cX, cY, scale, font, color1, colonOn ? colonColor : 0);
+        } else {
             if (leg == 0) {
-                float headX = -pacW / 2 + legPos;
-                drawPacman((int)headX, h / 2, s, pacFrame, true);
-                for (int i = 0; i < 4; i++) drawGhost((int)headX - firstGhost - i * ghostSpacing, h / 2, s, ghostColors[i], skirtFrame, true, false);
+                // Leg 0: Old time transforms into pellets, Pac-Man eats pellets, new time revealed behind Clyde
+                int headX = (int)roundf(-pacW / 2.0f + legPos);
+                int cutX = headX + pacW / 2;
+                int revealX = (int)(headX - chaseLen - ghostW / 2);
+                int margin = max(1, (cutX - revealX) / 2);
+
+                // 1. Draw new time revealed on left behind Clyde
+                printTime(newTimeStr, cX, cY, scale, font, color1, colonColor, -100, revealX + margin);
+
+                // 2. Old time starts dissolving into pellets ahead of Pac-Man:
+                int dissolveDist = 14 * s;
+                int oldMinX = cutX + dissolveDist;
+                printTime(oldTimeStr, cX, cY, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
+
+                // 3. Clear the parade gap and dissolve zone
+                if (cutX > 0 && revealX < w) {
+                    int rL = max(0, revealX);
+                    int rR = min(w, oldMinX);
+                    if (rR > rL) matrix->fillRect(rL, 0, rR - rL, h, 0);
+                }
+
+                // 4. In the dissolve zone, draw the pellets (points que Pac-Man mange!)
+                int pelletStep = max(5, 5 * s);
+                int energizerX = w - 4 * s;
+
+                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < energizerX - pelletStep / 2; px += pelletStep) {
+                    if (px > cutX && px < w) {
+                        matrix->fillRect(px - 1, cY - 1, 2, 2, dotColor);
+                    }
+                }
+
+                // Crumbling particle dissolution effect at the dissolve front:
+                if (oldMinX < w - 6) {
+                    uint8_t seed = (now / 40) ^ (uint8_t)oldMinX;
+                    for (int p = 0; p < 6; p++) {
+                        int pOffX = ((seed + p * 7) % (6 * s)) - 3 * s;
+                        int pOffY = ((seed * 3 + p * 11) % (12 * s)) - 6 * s;
+                        int px = oldMinX + pOffX;
+                        int py = cY + pOffY;
+                        if (px > cutX && px < w && py >= 0 && py < h) {
+                            matrix->drawPixel(px, py, dotColor);
+                        }
+                    }
+                }
+
+                // 5. Flashing Energizer (Power Pellet) waiting at the far right edge:
+                if (energizerX > cutX) {
+                    bool flash = ((now / 180) & 1);
+                    if (flash) {
+                        int er = max(2, 2 * s);
+                        matrix->fillRect(energizerX - er / 2, cY - er / 2, er, er, dotColor);
+                    }
+                }
+
+                // 6. Draw Pac-Man and 4 ghosts parading across
+                if (!inPause) {
+                    drawPacman(headX, cY, s, pacFrame, true);
+                    for (int i = 0; i < 4; i++) {
+                        drawGhost(headX - firstGhost - i * ghostSpacing, cY, s, ghostColors[i], skirtFrame, true, false);
+                    }
+                }
             } else {
-                float headX = (w + ghostW / 2) - legPos;
-                for (int i = 0; i < 4; i++) drawGhost((int)headX + i * ghostSpacing, h / 2, s, ghostColors[i], skirtFrame, false, true);
-                drawPacman((int)headX + chaseLen, h / 2, s, pacFrame, false);
+                // Leg 1: The 4 ghosts flee back BLUE and frightened (right->left), Pac-Man chases!
+                printTime(newTimeStr, cX, cY, scale, font, color1, colonColor);
+
+                if (!inPause) {
+                    float headX = roundf((w + ghostW / 2.0f) - legPos);
+                    for (int i = 0; i < 4; i++) {
+                        drawGhost((int)headX + i * ghostSpacing, cY, s, ghostColors[i], skirtFrame, /*lookRight=*/ false, /*frightened=*/ true);
+                    }
+                    drawPacman((int)headX + chaseLen, cY, s, pacFrame, /*facingRight=*/ false);
+                }
             }
         }
     }

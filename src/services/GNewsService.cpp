@@ -7,6 +7,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
+#include "../core/SdLockGuard.h"
 #include <esp_heap_caps.h>
 
 GNewsService gnewsService;
@@ -135,19 +136,13 @@ static String cleanNewsText(const char* raw) {
     return s;
 }
 
-extern SemaphoreHandle_t sdMutex;
-
 void GNewsService::saveToSd() {
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
-    if (!sd.exists("/")) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        return;
-    }
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) return;
+    if (!sd.exists("/")) return;
+
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
-    if (!f) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        return;
-    }
+    if (!f) return;
 
     DynamicJsonDocument doc(12288);
     doc["last_fetch_time"] = _snapshot.lastFetchTime;
@@ -175,28 +170,23 @@ void GNewsService::saveToSd() {
 
     serializeJson(doc, f);
     f.close();
-    if (sdMutex) xSemaphoreGive(sdMutex);
+    guard.unlock();
     LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json (epoch: %u)", (int)_snapshot.count, _snapshot.lastFetchEpoch);
 }
 
 void GNewsService::loadFromSd() {
     _loadedFromSd = true;
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
-    if (!sd.exists("/gnews_cache.json")) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        return;
-    }
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) return;
+    if (!sd.exists("/gnews_cache.json")) return;
 
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_READ);
-    if (!f) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        return;
-    }
+    if (!f) return;
 
     DynamicJsonDocument doc(12288);
     DeserializationError error = deserializeJson(doc, f);
     f.close();
-    if (sdMutex) xSemaphoreGive(sdMutex);
+    guard.unlock();
     if (error) {
         LOGW("GNewsService", "Failed to parse SD cache: %s", error.c_str());
         return;
