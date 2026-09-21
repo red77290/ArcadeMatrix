@@ -294,7 +294,15 @@ void RotationManager::switchToModule(int index) {
           oldEngine->deactivate();
       }
       if (m_ctx && m_ctx->getMatrix()) {
+          // Both DMA buffers have to go black. Clearing once only blanks the back buffer, so the
+          // front one still holds the engine that just ended; while the next engine loads its first
+          // frame (a GIF read from the card takes a moment) any flip puts that old frame back on the
+          // panel for an instant.
           m_ctx->getMatrix()->fillScreen(0);
+          if (matrixEngine.isDoubleBuffered()) {
+              matrixEngine.present();
+              m_ctx->getMatrix()->fillScreen(0);
+          }
           matrixEngine.markExternalDraw();
       }
   }
