@@ -12,6 +12,7 @@ FighterEngine::FighterEngine() : matrix(nullptr) {}
 EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
     matrix = context ? context->getMatrix() : nullptr;
     m_hasPsram = context ? context->hasPsram() : false;
+    s_lastInstance = this;
     initialize();
     return EngineError::OK;
 }
@@ -53,16 +54,23 @@ bool FighterEngine::shutdownForDestruction() {
         }
         if (!m_loaderStopped.load(std::memory_order_acquire)) {
             LOGE("FighterEngine", "CRITICAL: FgtLoader task failed to stop within 300ms!");
+            m_lastNote = "CRITICAL: FgtLoader task failed to stop within 300ms!";
             return false; // Quarantined: do not delete object, no UAF
         }
     }
 
     // 2. Safe resource cleanup on Core 0 (closes SD file handles and frees frame buffers)
+    if (s_lastInstance == this) {
+        s_lastInstance = nullptr;
+    }
     stop();
     return true;
 }
 
 FighterEngine::~FighterEngine() {
+    if (s_lastInstance == this) {
+        s_lastInstance = nullptr;
+    }
     if (loaderTaskHandle && !m_loaderStopped.load(std::memory_order_acquire)) {
         m_taskShouldExit = true;
         xTaskNotifyGive(loaderTaskHandle);
@@ -133,23 +141,21 @@ void FighterEngine::loadRoster() {
     SdLockGuard guard(pdMS_TO_TICKS(3000));
     if (!guard) {
         LOGW("FighterEngine", "Could not acquire sdMutex to load roster.");
-        return;
-    }
-
-    if (!sd.exists(indexPath.c_str())) {
-        LOGW("FighterEngine", "No index.txt found at %s!", indexPath.c_str());
+        m_lastNote = "Could not acquire sdMutex to load roster.";
         return;
     }
 
     FsFile f = sd.open(indexPath.c_str(), FILE_OPEN_READ);
     if (!f) {
-        LOGE("FighterEngine", "Failed to open %s", indexPath.c_str());
+        LOGW("FighterEngine", "No index.txt found or failed to open at %s!", indexPath.c_str());
+        m_lastNote = "No index.txt found at";
         return;
     }
 
     size_t fileSize = f.size();
     if (fileSize == 0 || fileSize > 256 * 1024) {
         LOGW("FighterEngine", "Invalid index.txt size: %u", (unsigned)fileSize);
+        m_lastNote = "Invalid index.txt size";
         f.close();
         return;
     }
@@ -165,6 +171,7 @@ void FighterEngine::loadRoster() {
 
     if (!rawBuf) {
         LOGE("FighterEngine", "Failed to allocate %u bytes for index.txt buffer.", (unsigned)(fileSize + 1));
+        m_lastNote = "Failed to allocate";
         f.close();
         return;
     }
@@ -175,6 +182,7 @@ void FighterEngine::loadRoster() {
 
     if (bytesRead != fileSize) {
         LOGE("FighterEngine", "Short read on index.txt: %u of %u bytes.", (unsigned)bytesRead, (unsigned)fileSize);
+        m_lastNote = "Short read on index.txt";
         if (esp_ptr_external_ram(rawBuf)) heap_caps_free(rawBuf);
         else free(rawBuf);
         return;
@@ -267,23 +275,26 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     if (m_taskShouldExit) return false;
     if (ESP.getFreeHeap() < 32768) {
         LOGW("FighterEngine", "Skip anim %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
+        m_lastNote = "Skip anim";
         return false;
     }
     if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 18432) {
         LOGW("FighterEngine", "Skip anim %s: low DMA heap %u", filepath, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+        m_lastNote = "Skip anim";
         return false;
     }
     if (m_hasPsram && ESP.getFreePsram() < 1048576) {
         LOGW("FighterEngine", "Skip anim %s: low PSRAM %u", filepath, (unsigned)ESP.getFreePsram());
+        m_lastNote = "Skip anim";
         return false;
     }
 
     // Do not stress SD bus / memory while another task on Core 0 is performing a heavy TLS handshake
     if (NetworkBudget::getTlsHandshakeMutex()) {
-        if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), 0) == pdTRUE) {
+        if (xSemaphoreTake(NetworkBudget::getTlsHandshakeMutex(), pdMS_TO_TICKS(2000)) == pdTRUE) {
             xSemaphoreGive(NetworkBudget::getTlsHandshakeMutex());
         } else {
-            LOGD("FighterEngine", "Waiting for TLS handshake before loading %s", filepath);
+            LOGD("FighterEngine", "Waiting for TLS handshake before loading %s (timeout)", filepath);
             return false;
         }
     }
@@ -291,22 +302,19 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     SdLockGuard sdGuard(pdMS_TO_TICKS(3000));
     if (!sdGuard) {
         LOGW("FighterEngine", "Could not acquire sdMutex for %s (timeout 3s)", filepath);
+        m_lastNote = "Could not acquire sdMutex for";
         return false;
     }
 
-    if (!sd.exists(filepath)) {
-        LOGD("FighterEngine", "Anim not found on SD: %s", filepath);
-        return false;
-    }
-    
     FsFile f = sd.open(filepath, FILE_OPEN_READ);
     if (!f) {
-        LOGE("FighterEngine", "Could not open file: %s", filepath);
+        LOGD("FighterEngine", "Anim not found on SD or failed to open: %s", filepath);
         return false;
     }
     
     if (f.available() < 11) {
         LOGW("FighterEngine", "Anim truncated header (%d bytes): %s", (int)f.available(), filepath);
+        m_lastNote = "Anim truncated header";
         f.close();
         return false;
     }
@@ -314,6 +322,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     char magic[3];
     if (f.read((uint8_t*)magic, 3) != 3 || magic[0] != 'F' || magic[1] != 'G' || magic[2] != 'T') {
         LOGW("FighterEngine", "Anim invalid header (magic: %.3s): %s", magic, filepath);
+        m_lastNote = "Anim invalid header (magic";
         f.close();
         return false;
     }
@@ -321,6 +330,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     uint8_t version = f.read();
     if (version != 1) {
         LOGW("FighterEngine", "Anim unsupported version %u: %s", (unsigned)version, filepath);
+        m_lastNote = "Anim unsupported version";
         f.close();
         return false;
     }
@@ -333,6 +343,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     
     if (fileNumFrames == 0 || anim.width == 0 || anim.height == 0 || anim.width > 256 || anim.height > 256) {
         LOGW("FighterEngine", "Anim invalid geometry (%ux%u, %u frames): %s", anim.width, anim.height, fileNumFrames, filepath);
+        m_lastNote = "Anim invalid geometry";
         f.close();
         return false;
     }
@@ -343,11 +354,13 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     anim.frameDelays = (uint16_t*)malloc(anim.numFrames * 2);
     if (!anim.frameDelays) {
         LOGW("FighterEngine", "Anim failed to allocate %u frame delays: %s", anim.numFrames, filepath);
+        m_lastNote = "Anim failed to allocate";
         f.close();
         return false;
     }
     if (f.read((uint8_t*)anim.frameDelays, anim.numFrames * 2) != (int)(anim.numFrames * 2)) {
         LOGW("FighterEngine", "Anim failed reading %u frame delays: %s", anim.numFrames, filepath);
+        m_lastNote = "Anim failed reading";
         free(anim.frameDelays);
         anim.frameDelays = nullptr;
         f.close();
@@ -366,6 +379,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     int maxFrameSize = m_hasPsram ? (2 * 1024 * 1024) : 32768;
     if (frameSize > maxFrameSize) {
         LOGE("FighterEngine", "Frame too big! %d bytes for %s", frameSize, filepath);
+        m_lastNote = "Frame too big!";
         free(anim.frameDelays);
         anim.frameDelays = nullptr;
         f.close();
@@ -375,6 +389,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
     size_t fileSize = f.size();
     if (fileSize < anim.pixelsOffset + anim.totalPixelsSize) {
         LOGW("FighterEngine", "Corrupt/truncated animation %s: size %u < expected %u", filepath, (uint32_t)fileSize, (uint32_t)(anim.pixelsOffset + anim.totalPixelsSize));
+        m_lastNote = "Corrupt/truncated animation";
         free(anim.frameDelays);
         anim.frameDelays = nullptr;
         f.close();
@@ -386,6 +401,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         size_t safetyHeadroom = 1048576; // 1 MB safety reserve
         if (freePsram <= safetyHeadroom || anim.totalPixelsSize > (freePsram - safetyHeadroom)) {
             LOGW("FighterEngine", "Animation too large (%d bytes, free PSRAM: %u) for %s", anim.totalPixelsSize, (uint32_t)freePsram, filepath);
+            m_lastNote = "Animation too large";
             free(anim.frameDelays);
             anim.frameDelays = nullptr;
             f.close();
@@ -393,31 +409,59 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
         }
         anim.psramBuffer = (uint8_t*)heap_caps_malloc(anim.totalPixelsSize, MALLOC_CAP_SPIRAM);
         if (anim.psramBuffer) {
+            // Allocate a dedicated word-aligned, DMA-capable internal DRAM bounce buffer for fast sequential SD reads.
+            // Stack-allocated buffers violate cache-line alignment and cause data cache incoherency/corruption on ESP32-S3.
+            size_t bounceSize = 4096;
+            uint8_t* bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            if (!bounceBuf) {
+                bounceSize = 2048;
+                bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            }
+            if (!bounceBuf) {
+                bounceSize = 1024;
+                bounceBuf = (uint8_t*)heap_caps_malloc(bounceSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+            }
+
+            struct DmaBufferGuard {
+                uint8_t* ptr;
+                size_t size;
+                ~DmaBufferGuard() { if (ptr) heap_caps_free(ptr); }
+            } bounce{ bounceBuf, bounceSize };
+
+            if (!bounce.ptr) {
+                LOGW("FighterEngine", "Failed to allocate internal DMA bounce buffer for %s", filepath);
+                m_lastNote = "Failed to allocate bounce buffer";
+                heap_caps_free(anim.psramBuffer);
+                anim.psramBuffer = nullptr;
+                free(anim.frameDelays);
+                anim.frameDelays = nullptr;
+                f.close();
+                return false;
+            }
+
             size_t toRead = anim.totalPixelsSize;
             size_t offset = 0;
-            // Use a compact 512-byte (single SD sector) DRAM bounce buffer for SD reads
-            // to conserve task stack and prevent stack overflow / memory corruption.
-            uint8_t bounceBuf[512];
             while (toRead > 0) {
-                if (m_taskShouldExit || ESP.getFreeHeap() < 30720 || heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) < 16384) {
+                if (m_taskShouldExit || ESP.getFreeHeap() < 24576) {
                     LOGW("FighterEngine", "Cut short chunk read for %s: low heap %u", filepath, (unsigned)ESP.getFreeHeap());
+                    m_lastNote = "Cut short chunk read for";
                     toRead = 1; // force abort
                     break;
                 }
                 if (!f || !f.available()) {
-                    toRead = 1;
+                    LOGW("FighterEngine", "File stream unavailable during chunk read for %s", filepath);
                     break;
                 }
-                size_t chunk = (toRead > sizeof(bounceBuf)) ? sizeof(bounceBuf) : toRead;
-                size_t r = f.read(bounceBuf, chunk);
+                size_t chunk = (toRead > bounce.size) ? bounce.size : toRead;
+                size_t r = f.read(bounce.ptr, chunk);
                 if (r == 0) break;
-                memcpy(anim.psramBuffer + offset, bounceBuf, r);
+                memcpy(anim.psramBuffer + offset, bounce.ptr, r);
                 offset += r;
                 toRead -= r;
-                vTaskDelay(pdMS_TO_TICKS(1)); // Yield to keep Core 0 responsive and allow other tasks to breathe
             }
             if (toRead > 0) {
                 LOGW("FighterEngine", "Incomplete read for %s (%u remaining)", filepath, (uint32_t)toRead);
+                m_lastNote = "Incomplete read for";
                 heap_caps_free(anim.psramBuffer);
                 anim.psramBuffer = nullptr;
                 free(anim.frameDelays);
@@ -427,6 +471,7 @@ bool FighterEngine::loadFighterAnim(FgtAnimation& anim, const char* filepath) {
             }
         } else {
             LOGW("FighterEngine", "PSRAM alloc failed for %d bytes (%s). Skipping fighter.", anim.totalPixelsSize, filepath);
+            m_lastNote = "PSRAM alloc failed for";
             free(anim.frameDelays);
             anim.frameDelays = nullptr;
             f.close();
@@ -476,8 +521,9 @@ void FighterEngine::startLoaderTaskIfNeeded() {
 
     m_taskShouldExit = false;
     m_loaderStopped.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 10240, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 16384, this, 1, &loaderTaskHandle, 0) != pdPASS) {
         LOGE("FighterEngine", "Failed to spawn preload worker task.");
+        m_lastNote = "Failed to spawn preload worker task.";
         loaderTaskHandle = nullptr;
     }
 }
@@ -496,6 +542,7 @@ void FighterEngine::triggerBackgroundPreload() {
             lastSkipLogMs = now;
             LOGW("FighterEngine", "Skipping background preload: free heap %u < %u bytes required.",
                  (unsigned)freeHeap, (unsigned)PRELOAD_MIN_FREE_HEAP);
+            m_lastNote = "Skipping background preload: free heap";
         }
         return;
     }
@@ -537,6 +584,7 @@ void FighterEngine::runBackgroundPreload() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
              (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
+        m_lastNote = "Aborting background preload: insufficient memory or empty roster (heap";
         isPreloading = false;
         retryDelayEnd = millis() + 10000;
         return;
@@ -559,6 +607,7 @@ void FighterEngine::runBackgroundPreload() {
                  (unsigned)ESP.getFreeHeap(),
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
                  (unsigned)(m_hasPsram ? ESP.getFreePsram() : 0));
+            m_lastNote = "Preload cut short: memory below floor (heap";
             return false;
         }
         bool res = loadFighterAnim(anim, path.c_str());
@@ -603,6 +652,7 @@ void FighterEngine::runBackgroundPreload() {
 
         if (bestIdx < 0) {
             LOGW("FighterEngine", "Preload attempt [%d/4]: no suitable opponent found for %s", attempt + 1, p1Meta.name);
+            m_lastNote = "Preload attempt [";
             continue;
         }
 
@@ -629,20 +679,24 @@ void FighterEngine::runBackgroundPreload() {
         // P1 Required Animations: walk, attack, hit, win
         if (!loadAnimThreadSafe(nextP1.animWalk, dir + "/" + nextP1.name + "/walk.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed walk for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed walk for";
             continue;
         }
         loadAnimThreadSafe(nextP1.animStand, dir + "/" + nextP1.name + "/stand.fgt");
 
         if (!loadAnimThreadSafe(nextP1.animAttack, dir + "/" + nextP1.name + "/attack.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed attack for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed attack for";
             continue;
         }
         if (!loadAnimThreadSafe(nextP1.animHit, dir + "/" + nextP1.name + "/hit.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed hit for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed hit for";
             continue;
         }
         if (!loadAnimThreadSafe(nextP1.animWin, dir + "/" + nextP1.name + "/win.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed win for %s (attempt %d/4)", nextP1.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed win for";
             continue;
         }
 
@@ -659,20 +713,24 @@ void FighterEngine::runBackgroundPreload() {
         // P2 Required Animations: walk, attack, hit, win
         if (!loadAnimThreadSafe(nextP2.animWalk, dir + "/" + nextP2.name + "/walk.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed walk for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed walk for";
             continue;
         }
         loadAnimThreadSafe(nextP2.animStand, dir + "/" + nextP2.name + "/stand.fgt");
 
         if (!loadAnimThreadSafe(nextP2.animAttack, dir + "/" + nextP2.name + "/attack.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed attack for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed attack for";
             continue;
         }
         if (!loadAnimThreadSafe(nextP2.animHit, dir + "/" + nextP2.name + "/hit.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed hit for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed hit for";
             continue;
         }
         if (!loadAnimThreadSafe(nextP2.animWin, dir + "/" + nextP2.name + "/win.fgt")) {
             LOGW("FighterEngine", "Preload cut short: failed win for %s (attempt %d/4)", nextP2.name.c_str(), attempt + 1);
+            m_lastNote = "Preload cut short: failed win for";
             continue;
         }
 
@@ -698,6 +756,7 @@ void FighterEngine::runBackgroundPreload() {
 
     if (!matchFoundAndLoaded) {
         LOGW("FighterEngine", "Preload exhausted all 4 pairing attempts (missing animations on SD). Retrying in 10s...");
+        m_lastNote = "Preload exhausted all 4 pairing attempts (missing animations on SD). Retrying in 10s...";
         freeFighter(nextP1);
         freeFighter(nextP2);
         retryDelayEnd = millis() + 10000;
@@ -971,7 +1030,6 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
     p.animSpecial.cachedFrameIndex = -1;
     p.animSuper.cachedFrameIndex = -1;
     p.animFall.cachedFrameIndex = -1;
-
     if (anim && anim->loaded && !anim->psramBuffer) {
         int newSize = anim->width * anim->height * 2;
         if (newSize > p.currentBufferSize) {
@@ -991,6 +1049,7 @@ void FighterEngine::setPlayerState(FighterPlayer& p, FighterState newState) {
                 if (freeInternal < INTERNAL_HEAP_HEADROOM + (size_t)newSize) {
                     LOGW("FighterEngine", "Skipping frame buffer of %d bytes: only %u bytes of internal heap left",
                          newSize, (unsigned)freeInternal);
+                    m_lastNote = "Skipping frame buffer of";
                 } else {
                     p.currentFrameBuffer = (uint8_t*)malloc(newSize);
                 }
@@ -1197,7 +1256,8 @@ bool FighterEngine::loop() {
         freeFighter(p1);
         freeFighter(p2);
         extern ConfigLoader config;
-        retryDelayEnd = now + (config.system.idle_fighter_interval * 1000);
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        retryDelayEnd = now + (guard->system.idle_fighter_interval * 1000);
         triggerBackgroundPreload();
     }
     return true;
@@ -1214,36 +1274,15 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
     else if (p.state == FIGHTER_SUPER) anim = &p.animSuper;
     else if (p.state == FIGHTER_FALL) anim = &p.animFall;
     
-    if (!anim || !anim->loaded) return;
+    if (!anim || !anim->loaded || !anim->psramBuffer) return;
     
     if (p.currentFrame >= anim->numFrames) return;
     
     int frameSize = anim->width * anim->height * 2;
     uint8_t* ptr = nullptr;
     
-    if (anim->psramBuffer) {
-        if ((size_t)(p.currentFrame + 1) * (size_t)frameSize <= anim->totalPixelsSize) {
-            ptr = anim->psramBuffer + (p.currentFrame * frameSize);
-        }
-    } else {
-        if (p.currentFrame != anim->cachedFrameIndex) {
-            if (p.currentFrameBuffer && anim->filepath.length() > 0) {
-                uint32_t offset = anim->pixelsOffset + (p.currentFrame * frameSize);
-                SdLockGuard guard(pdMS_TO_TICKS(100));
-                if (guard) {
-                    FsFile f = sd.open(anim->filepath.c_str(), FILE_OPEN_READ);
-                    if (f) {
-                        f.seek(offset);
-                        f.read(p.currentFrameBuffer, frameSize);
-                        f.close();
-                        anim->cachedFrameIndex = p.currentFrame;
-                    }
-                }
-            } else {
-                return;
-            }
-        }
-        ptr = p.currentFrameBuffer;
+    if ((size_t)(p.currentFrame + 1) * (size_t)frameSize <= anim->totalPixelsSize) {
+        ptr = anim->psramBuffer + (p.currentFrame * frameSize);
     }
     
     if (!ptr) return;
@@ -1290,13 +1329,13 @@ void FighterEngine::drawPlayer(FighterPlayer& p, int offsetY) {
 
 void FighterEngine::draw() {
     if (!active || !matrix) return;
-    
+
     int globalOffsetY = 0;
     if (shakeRemainingFrames > 0) {
         globalOffsetY = random(-2, 3);
         shakeRemainingFrames--;
     }
-    
+
     int screenW = matrix->width();
     int screenH = matrix->height();
     bool isTateMode = (screenH > (screenW * 3) / 2 || screenW < 48);
@@ -1313,6 +1352,7 @@ void FighterEngine::draw() {
     // Responsive Arcade HUD in Tate mode (only 64x256+) / Large horizontal screens
     bool showHud = isTateMode ? (screenW >= 64) : (screenH >= 32);
     if (showHud) {
+        bool showTags = (isTateMode && screenW >= 64 && screenH >= 200) || (!isTateMode && screenH >= 64);
         int barW = min(20, (screenW - 16) / 2);
         if (barW > 2) {
             // Player 1 Health Bar (Left)
@@ -1335,7 +1375,6 @@ void FighterEngine::draw() {
         }
 
         // On ultra-tall screens (64x256), draw MUGEN arcade banner under health bars
-        bool showTags = (isTateMode && screenW >= 64 && screenH >= 200) || (!isTateMode && screenH >= 64);
         if (showTags) {
             matrix->setFont(nullptr);
             matrix->setTextSize(1);
@@ -1353,4 +1392,34 @@ void FighterEngine::draw() {
             matrix->print(p2Tag);
         }
     }
+}
+
+
+FighterEngine* FighterEngine::s_lastInstance = nullptr;
+
+String FighterEngine::debugStatusJson() {
+    FighterEngine* f = s_lastInstance;
+    String j = "{";
+    if (!f) { j += "\"instantiated\":false}"; return j; }
+    uint32_t now = millis();
+    j += "\"instantiated\":true";
+    j += ",\"dir\":\"" + f->cachedFightersDir + "\"";
+    j += ",\"roster_count\":" + String(f->numAvailableFighters);
+    j += ",\"has_roster\":" + String(f->m_roster ? "true" : "false");
+    j += ",\"has_psram\":" + String(f->m_hasPsram ? "true" : "false");
+    j += ",\"active\":" + String(f->active ? "true" : "false");
+    j += ",\"loader_task\":" + String(f->loaderTaskHandle ? "true" : "false");
+    j += ",\"preloading\":" + String(f->isPreloading ? "true" : "false");
+    j += ",\"next_ready\":" + String(f->isNextReady.load() ? "true" : "false");
+    j += ",\"retry_in_ms\":" + String((int32_t)(f->retryDelayEnd - now) > 0 ? (int32_t)(f->retryDelayEnd - now) : 0);
+    j += ",\"p1\":\"" + f->p1.name + "\",\"p2\":\"" + f->p2.name + "\"";
+    j += ",\"next_p1\":\"" + f->nextP1.name + "\",\"next_p2\":\"" + f->nextP2.name + "\"";
+    j += ",\"free_heap\":" + String(ESP.getFreeHeap());
+    j += ",\"free_dma\":" + String((uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    j += ",\"free_psram\":" + String(f->m_hasPsram ? ESP.getFreePsram() : 0);
+    const char* note = f->m_lastNote ? f->m_lastNote : "";
+    j += ",\"last_note\":\"";
+    j += note;
+    j += "\"}";
+    return j;
 }

@@ -73,6 +73,65 @@ paths:
                         type: number
                         description: Share of panel pixels actually written per GIF frame (dirty-pixel blit)
 
+  /api/fighter/status:
+    get:
+      tags:
+        - System
+      summary: Fighter overlay diagnostics
+      description: >-
+        State of the fighter overlay for troubleshooting: whether it has been instantiated (it is only
+        created when the global fighter switch is on and a rotation slot asks for it), the sprite
+        folder and roster size, loader/preload state, current and next players, memory floors and the
+        last warning it logged.
+      responses:
+        '200':
+          description: Fighter state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instantiated:
+                    type: boolean
+                  dir:
+                    type: string
+                    example: "/fighters_32"
+                  roster_count:
+                    type: integer
+                  has_roster:
+                    type: boolean
+                  has_psram:
+                    type: boolean
+                  active:
+                    type: boolean
+                    description: A fight is being drawn right now
+                  loader_task:
+                    type: boolean
+                  preloading:
+                    type: boolean
+                  next_ready:
+                    type: boolean
+                  retry_in_ms:
+                    type: integer
+                    description: Milliseconds until the next fight or preload attempt
+                  p1:
+                    type: string
+                  p2:
+                    type: string
+                  next_p1:
+                    type: string
+                  next_p2:
+                    type: string
+                  free_heap:
+                    type: integer
+                  free_dma:
+                    type: integer
+                  free_psram:
+                    type: integer
+                  last_note:
+                    type: string
+                    description: Last warning or error the engine logged
+
   /api/settings:
     get:
       tags:
@@ -1328,20 +1387,90 @@ paths:
   /api/audio/status:
     get:
       tags:
-        - System
-      summary: Get audio subsystem status and gain
-      description: Returns ES7210 microphone codec status, hardware microphone gain, and playback capabilities.
+        - Audio
+      summary: Get audio subsystem and playback status
+      description: Returns current audio playback snapshot (source, title, artist, volume, status).
       responses:
         '200':
-          description: Audio status
+          description: Audio status snapshot
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  mic_available: { type: boolean, example: true }
-                  mic_gain_db: { type: integer, example: 24 }
-                  out_available: { type: boolean, example: true }
+                  source: { type: string, example: "WebRadio" }
+                  status: { type: integer, description: "0=STOPPED, 1=PLAYING, 2=PAUSED, 3=BUFFERING, 4=ERROR", example: 1 }
+                  title: { type: string, example: "SomaFM Vaporwaves" }
+                  artist: { type: string, example: "Synthwave Artist" }
+                  album: { type: string, example: "" }
+                  duration_ms: { type: integer, example: 0 }
+                  position_ms: { type: integer, example: 12400 }
+                  volume: { type: integer, minimum: 0, maximum: 100, example: 80 }
+                  artwork_id: { type: string, example: "" }
+                  generation: { type: integer, example: 3 }
+
+  /api/audio/radio:
+    post:
+      tags:
+        - Audio
+      summary: Control WebRadio playback
+      description: Starts streaming a WebRadio station from an HTTP/HTTPS stream URL, or stops it if url is empty.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, example: "http://ice1.somafm.com/vaporwaves-128-mp3" }
+                name: { type: string, example: "SomaFM Vaporwaves" }
+      responses:
+        '200':
+          description: WebRadio stream started or stopped
+        '400':
+          description: Invalid request payload
+        '500':
+          description: Failed to connect to radio stream
+
+  /api/audio/volume:
+    post:
+      tags:
+        - Audio
+      summary: Set audio master volume
+      description: Sets the global audio playback volume (0 to 100%).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - volume
+              properties:
+                volume: { type: integer, minimum: 0, maximum: 100, example: 80 }
+      responses:
+        '200':
+          description: Volume updated
+
+  /api/audio/stop:
+    post:
+      tags:
+        - Audio
+      summary: Stop active audio playback
+      description: Stops active WebRadio, DLNA or Bluetooth audio streaming.
+      responses:
+        '200':
+          description: Audio stopped
+
+  /api/audio/test:
+    post:
+      tags:
+        - Audio
+      summary: Play audio test tone
+      description: Plays a short 880 Hz diagnostic test tone on the speaker.
+      responses:
+        '200':
+          description: Test tone played
 
   /api/audio/gain:
     post:

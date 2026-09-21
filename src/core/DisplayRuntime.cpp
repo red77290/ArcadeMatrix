@@ -328,11 +328,11 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
     }
 
     // Render Overlays (Fighter etc.) if enabled by decision and active rotation slot
-    if (m_overlayManager && decision.allowsOverlay) {
+    if (m_overlayManager && decision.allowsOverlay && (!activeEngine || activeEngine->allowsOverlay())) {
         OverlayConfig activeOverlayConfig;
         if (decision.sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
             activeOverlayConfig = m_rotationManager->getCurrentOverlays();
-        } else if (decision.sourceId == DisplaySourceId::MQTT || decision.sourceId == DisplaySourceId::MARQUEE || decision.sourceId == DisplaySourceId::GIF) {
+        } else if (decision.sourceId == DisplaySourceId::MQTT || decision.sourceId == DisplaySourceId::MARQUEE) {
             activeOverlayConfig.fighter = FighterOverride::Enabled;
         }
         m_overlayManager->configure(activeOverlayConfig);
