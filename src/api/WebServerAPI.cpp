@@ -1,4 +1,6 @@
 #include "WebServerAPI.h"
+#include "../core/SdSpace.h"
+#include "../core/CpuLoad.h"
 #include "../core/RenderStats.h"
 #include <core/EngineRegistry.h>
 #include <ArduinoJson.h>
@@ -391,6 +393,7 @@ void gifReindexShowProgress() {
     g_gifMsg->queueMessage(m);
 }
 void gifReindexLeaveMaintenance() {
+    SdSpace::requestRefresh();
     if (g_gifMsg) g_gifMsg->deactivate();
     if (rotationManager) rotationManager->setSuspended(false);
 }
@@ -1023,7 +1026,9 @@ void WebServerAPI::setupRoutes() {
             tempC = temperatureRead();
         }
         
-        doc["cpu_load"] = 0.0f;
+        doc["cpu_load"] = CpuLoad::total();   // measured per-core idle sampling, same meaning as the RPi figure
+        doc["cpu_load_core0"] = CpuLoad::core(0);
+        doc["cpu_load_core1"] = CpuLoad::core(1);
         doc["temperature_c"] = tempC;
         doc["humidity"] = humidity;
         doc["free_heap"] = ESP.getFreeHeap();
@@ -1034,7 +1039,33 @@ void WebServerAPI::setupRoutes() {
         doc["psram_found"] = hardwareHAL.capabilities().hasPsram;
         doc["psram_free_mb"] = (float)ESP.getFreePsram() / (1024.0f * 1024.0f);
         doc["psram_total_mb"] = (float)ESP.getPsramSize() / (1024.0f * 1024.0f);
-        doc["disk_free_gb"] = 0.0f;
+        // SD card space, measured off the render core and cached (SdSpace); absent until measured.
+        {
+            uint64_t total = 0, freeB = 0; uint32_t age = 0;
+            if (SdSpace::get(total, freeB, age)) {
+                doc["sd_measured"] = true;
+                doc["sd_total_gb"] = (float)(total / 1073741824.0);
+                doc["sd_free_gb"] = (float)(freeB / 1073741824.0);
+                doc["sd_measured_age_s"] = age / 1000;
+                doc["disk_free_gb"] = (float)(freeB / 1073741824.0);
+            } else {
+                doc["sd_measured"] = false;
+                doc["disk_free_gb"] = 0.0f;
+            }
+        }
+        // Render rate since the previous /api/stats call: the closest thing this board has to a load figure.
+        {
+            static uint32_t lastMs = 0, lastLoops = 0, lastPresents = 0;
+            uint32_t nowMs = millis();
+            uint32_t loops = g_renderStats.loops.load(), presents = g_renderStats.presents.load();
+            uint32_t dtMs = nowMs - lastMs;
+            if (lastMs != 0 && dtMs >= 500) {
+                doc["render_loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
+                doc["render_present_fps"] = (float)(presents - lastPresents) * 1000.0f / dtMs;
+            }
+            lastMs = nowMs; lastLoops = loops; lastPresents = presents;
+        }
+        doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
         doc["uptime_sec"] = millis() / 1000;
         doc["has_temp_sensor"] = hardwareHAL.capabilities().hasTempSensor;
         doc["has_microphone"] = hardwareHAL.capabilities().hasMicrophone;
@@ -2595,7 +2626,7 @@ void WebServerAPI::setupRoutes() {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
                 if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
                 if (sd.exists(path.c_str())) removed = sd.remove(path.c_str());
-                if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); }
+                if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); SdSpace::requestRefresh(); }
             }
             if (!removed) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
             request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"deleted\":\"" + jsonEsc(path) + "\"}");
@@ -2779,7 +2810,7 @@ void WebServerAPI::setupRoutes() {
                     else { msg = "rename failed"; }
                     if (code == 200) {
                         if (rawName.isEmpty()) { String tf = sanitizeName(rawTo, false); updatePlaylistsEntry(root, folder, -1); updatePlaylistsEntry(root, tf, indexLineCount(root, tf)); }
-                        else { int c = updateFolderIndex(root, folder, { newName }, { oldName }); updatePlaylistsEntry(root, folder, c); }
+                        else { int c = updateFolderIndex(root, folder, { newName }, { oldName }); updatePlaylistsEntry(root, folder, c); SdSpace::requestRefresh(); }
                     }
                 }
             }
@@ -2831,7 +2862,7 @@ void WebServerAPI::setupRoutes() {
                 if (ctx->badFolder) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain playlist name (no path separators)\"}"); delete ctx; request->_tempObject = nullptr; return; }
                 {
                     SdLockGuard guard(pdMS_TO_TICKS(15000));
-                    if (guard && ctx->savedCount > 0) { int c = updateFolderIndex(ctx->root, ctx->folder, ctx->savedNames, {}); updatePlaylistsEntry(ctx->root, ctx->folder, c); }
+                    if (guard && ctx->savedCount > 0) { int c = updateFolderIndex(ctx->root, ctx->folder, ctx->savedNames, {}); updatePlaylistsEntry(ctx->root, ctx->folder, c); SdSpace::requestRefresh(); }
                 }
                 String body = "{\"status\":\"" + String(ctx->savedCount > 0 ? "ok" : "error") + "\",\"folder\":\"" + jsonEsc(ctx->folder) +
                               "\",\"orientation\":\"" + ctx->orientation + "\",\"count\":" + String(ctx->savedCount) + ",\"saved\":[" + ctx->saved + "],\"skipped\":[" + ctx->skipped + "]}";

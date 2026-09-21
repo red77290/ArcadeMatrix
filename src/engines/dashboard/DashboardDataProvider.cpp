@@ -1,5 +1,6 @@
 #include "DashboardDataProvider.h"
 #include "../../core/Logger.h"
+#include "../../core/CpuLoad.h"
 #include "../../core/I18n.h"
 #include "../../hal/HardwareHAL.h"
 #include "../../api/YahooFinanceProvider.h"
@@ -947,6 +948,7 @@ void DashboardDataProvider::updateSnapshot(const DashboardConfigParams& config) 
         std::lock_guard<std::mutex> lock(m_snapshotMutex);
         uint32_t heapSize = ESP.getHeapSize();
         m_snapshot.system.ramUsagePct = (heapSize > 0) ? ((1.0f - ((float)ESP.getFreeHeap() / (float)heapSize)) * 100.0f) : 0.0f;
+        m_snapshot.system.cpuLoadPct = CpuLoad::total();
         m_snapshot.system.wifiRssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
         m_snapshot.system.uptimeSec = now / 1000;
     }
