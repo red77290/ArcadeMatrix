@@ -170,9 +170,17 @@ public:
 
     static DisplaySourceId parseSourceId(const String& name);
     
+    /**
+     * @brief Get count of commands dropped due to SPSC queue saturation.
+     */
+    uint32_t getDroppedCommandCount() const {
+        return _droppedCommands.load(std::memory_order_relaxed);
+    }
+
 private:
     mutable std::mutex _producerMutex;
     LockFreeSPSCQueue<ArbiterCommand, QUEUE_CAPACITY> _commandQueue;
+    std::atomic<uint32_t> _droppedCommands{0};
     std::array<DisplayRequestSlot, MAX_REQUESTS> slots{};
     uint32_t _nextRequestId = 1;
 
