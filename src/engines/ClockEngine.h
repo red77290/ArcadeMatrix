@@ -27,6 +27,12 @@ protected:
     MatrixPanel_I2S_DMA* matrix;
 };
 
+enum class ClockFormatMode : uint8_t {
+    SYSTEM = 0,
+    FORCE_12H = 1,
+    FORCE_24H = 2
+};
+
 class ClockEngine : public IEngine {
 public:
     ClockEngine();
@@ -53,6 +59,9 @@ private:
     const EngineConfig* currentConfig = nullptr;
     volatile bool configDirty = false;
     MatrixPanel_I2S_DMA* matrixDisplay;
+    ClockFormatMode _formatMode = ClockFormatMode::SYSTEM;
+
+    void updateFormatMode(const EngineConfig* config);
 };
 
 class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
