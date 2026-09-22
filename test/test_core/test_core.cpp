@@ -554,6 +554,15 @@ void test_arbiter_spsc_lockfree(void) {
     DisplayDecision d3 = arbiter.evaluate();
     TEST_ASSERT_TRUE(d3.valid);
     TEST_ASSERT_EQUAL(DisplaySourceId::ROTATION, d3.sourceId);
+
+    // Test queue saturation: QUEUE_CAPACITY is 16.
+    // Submitting 20 commands without evaluate() fills 16 slots and drops 4 commands.
+    TEST_ASSERT_EQUAL_UINT32(0, arbiter.getDroppedCommandCount());
+    for (int i = 0; i < 20; ++i) {
+        DisplayRequest extraReq{DisplaySourceId::MQTT, DisplayPriority::MQTT, RequestLifecycle::ONE_SHOT, false, (uint32_t)(100 + i), EngineHandle("msg", "i")};
+        arbiter.submitRequest(extraReq);
+    }
+    TEST_ASSERT_EQUAL_UINT32(4, arbiter.getDroppedCommandCount());
 }
 
 /**

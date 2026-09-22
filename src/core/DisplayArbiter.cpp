@@ -1,4 +1,5 @@
 #include "DisplayArbiter.h"
+#include "Logger.h"
 
 DisplaySourceId DisplayArbiter::parseSourceId(const String& name) {
     if (name.equalsIgnoreCase("VISUALIZER") || name.equalsIgnoreCase("AUDIOVISUALIZER")) {
@@ -44,7 +45,12 @@ void DisplayArbiter::submitRequest(const DisplayRequest& request, bool restartTi
     cmd.type = ArbiterCommandType::SUBMIT;
     cmd.request = request;
     cmd.restartTimer = restartTimer;
-    _commandQueue.push(cmd);
+    if (!_commandQueue.push(cmd)) {
+        uint32_t drops = _droppedCommands.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (drops == 1 || (drops % 50) == 0) {
+            LOGW("DisplayArbiter", "Command queue full, dropped submit request (total drops: %u)", drops);
+        }
+    }
 }
 
 void DisplayArbiter::cancelRequest(DisplaySourceId sourceId) {
@@ -55,7 +61,12 @@ void DisplayArbiter::cancelRequest(DisplaySourceId sourceId) {
     ArbiterCommand cmd;
     cmd.type = ArbiterCommandType::CANCEL;
     cmd.request.sourceId = sourceId;
-    _commandQueue.push(cmd);
+    if (!_commandQueue.push(cmd)) {
+        uint32_t drops = _droppedCommands.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (drops == 1 || (drops % 50) == 0) {
+            LOGW("DisplayArbiter", "Command queue full, dropped cancel request (total drops: %u)", drops);
+        }
+    }
 }
 
 void DisplayArbiter::applySubmit(const DisplayRequest& request, bool restartTimer) {
