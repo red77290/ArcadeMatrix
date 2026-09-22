@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include <ArduinoJson.h>
 #include "SDUtils.h"
+#include "Core0Lifecycle.h"
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -34,7 +35,28 @@ ConfigSnapshotGuard ConfigLoader::acquireSnapshot() const {
 void ConfigLoader::releaseSnapshot(uint8_t slot) const {
     if (slot < 3) {
         _readers[slot].fetch_sub(1, std::memory_order_release);
+        if (_publishPending.load(std::memory_order_acquire)) {
+            Core0LifecycleDispatcher::instance().notify();
+        }
     }
+}
+
+bool ConfigLoader::checkDeferredPublish() {
+    if (xPortGetCoreID() != 0) {
+        return false;
+    }
+    if (!_publishPending.load(std::memory_order_acquire)) {
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return false;
+    }
+    if (!_publishPending.load(std::memory_order_acquire)) {
+        return false;
+    }
+    publishSnapshot_locked();
+    return true;
 }
 
 void ConfigLoader::publishSnapshot() {
@@ -79,8 +101,8 @@ void ConfigLoader::publishSnapshot_locked() {
         s.config = inst.config;
         snap.instances.push_back(s);
     }
-    // Compute crc32 structural checksum for linearizability verification
-    snap.crc32 = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    // Compute real CRC32 structural checksum for linearizability verification
+    snap.crc32 = ConfigSnapshot::calculateCRC32(newVer, instances.size());
     snap.magic_end = ConfigSnapshot::MAGIC_END;
 
     // Publish snapshot atomically

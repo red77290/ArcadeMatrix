@@ -113,8 +113,21 @@ struct ConfigSnapshot {
     std::vector<EngineInstanceSnapshot> instances;
     uint32_t magic_end = MAGIC_END;
 
+    static uint32_t calculateCRC32(uint32_t ver, size_t numInstances) {
+        uint32_t val[2] = { ver, static_cast<uint32_t>(numInstances) };
+        uint32_t crc = 0xFFFFFFFF;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(val);
+        for (size_t i = 0; i < sizeof(val); ++i) {
+            crc ^= p[i];
+            for (int b = 0; b < 8; ++b) {
+                crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+            }
+        }
+        return ~crc;
+    }
+
     bool isValid() const {
-        return magic_start == MAGIC_START && magic_end == MAGIC_END;
+        return magic_start == MAGIC_START && magic_end == MAGIC_END && crc32 == calculateCRC32(version, instances.size());
     }
 
     ConfigSnapshot clone() const {
@@ -131,6 +144,11 @@ struct ConfigSnapshot {
     }
 };
 
+/**
+ * @enum SlotState
+ * @brief Formal state model of the SRSW triple-buffer slots (Invariant 2).
+ * Documents the linearizable atomic lifecycle: FREE -> WRITING -> PUBLISHED -> READING.
+ */
 enum class SlotState : uint8_t {
     FREE = 0,        // Available for writer reservation
     WRITING = 1,     // Reserved and in progress of construction by Core 0
@@ -206,6 +224,12 @@ public:
     }
 
     void publishSnapshot();
+
+    /**
+     * @brief Completes any pending deferred publication when executed on Core 0.
+     * Complies with Invariant 2. Returns true if publication occurred.
+     */
+    bool checkDeferredPublish();
 
     bool getInstanceSnapshot(const String& instanceId, EngineInstanceSnapshot& out) const {
         ConfigSnapshotGuard guard = acquireSnapshot();

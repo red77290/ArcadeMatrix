@@ -516,7 +516,7 @@ void test_snapshot_publication_linearizability(void) {
 
         // Core 1 reader acquire via RAII guard
         ConfigSnapshotGuard snap = cfg.acquireSnapshot();
-        uint32_t expectedCrc32 = (snap->version ^ 0x5A5A5A5A) + (uint32_t)snap->instances.size();
+        uint32_t expectedCrc32 = ConfigSnapshot::calculateCRC32(snap->version, snap->instances.size());
         TEST_ASSERT_TRUE(snap->isValid());
         TEST_ASSERT_EQUAL_HEX32(expectedCrc32, snap->crc32);
         TEST_ASSERT_TRUE(snap->wifi.ssid.startsWith("WiFi_Network_"));
