@@ -41,6 +41,9 @@ jobs:
       - name: Validate WebInstaller manifest
         run: python3 scripts/validate_webinstaller.py
 
+      - name: Validate UI & I18n contracts
+        run: python3 scripts/validate_ui_and_i18n.py
+
       - name: Build & validate unit test suites (${{ matrix.env }})
         run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
 
@@ -64,19 +67,6 @@ jobs:
               sys.exit(1)
           print('✅ Application firmware verified successfully.')
           "
-
-#      - name: Install QEMU ESP32 (esp32dev)
-#        if: matrix.env == 'esp32dev'
-#        run: |
-#          sudo apt-get update -y
-#          sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
-#          mkdir -p $HOME/.qemu-xtensa
-#          curl -sSL https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz | tar -xJ -C $HOME/.qemu-xtensa --strip-components=1
-#          echo "$HOME/.qemu-xtensa/bin" >> $GITHUB_PATH
-
-#      - name: Execute unit test suites in QEMU (esp32dev)
-#        if: matrix.env == 'esp32dev'
-#        run: python3 scripts/run_qemu_tests.py
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
