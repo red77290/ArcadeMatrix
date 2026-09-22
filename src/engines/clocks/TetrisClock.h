@@ -33,7 +33,7 @@ private:
     int blockSize;
     ClockFaceFont faceFont;   ///< configured clock_font; the block digits are shaped from its glyphs
 
-    void buildTargets(const char* timeStr, const std::vector<int>& targetIndices);
+    void buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount);
     void emitBlocksFor(const char* str, int charIdx, int labelIdx, const GFXfont* font, int16_t bx, int16_t by,
                        uint16_t bw, uint16_t bh, int originX, int originY, int fallFrom, int fallJitter, uint32_t landMs);
 };
