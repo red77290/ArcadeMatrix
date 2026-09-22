@@ -4,11 +4,12 @@
 AudioHub audioHub;
 
 AudioHub::AudioHub()
-    : _activeSource(AudioSource::NONE) {
+    : _activeSource(AudioSource::NONE), _publishedPodIdx(0) {
     _state.source = AudioSource::NONE;
     _state.status = PlaybackStatus::STATUS_STOPPED;
     _state.volume = 80;
     _state.generation = 1;
+    syncPodState();
 }
 
 bool AudioHub::begin() {
@@ -27,13 +28,40 @@ const char* AudioHub::getSourceName(AudioSource src) {
     }
 }
 
+void AudioHub::syncPodState() {
+    uint8_t nextIdx = 1 - _publishedPodIdx.load(std::memory_order_relaxed);
+    AudioPlaybackStatePOD& target = _podBuffers[nextIdx];
+    target.source = _state.source;
+    target.status = _state.status;
+    strncpy(target.title, _state.title.c_str(), sizeof(target.title) - 1);
+    target.title[sizeof(target.title) - 1] = '\0';
+    strncpy(target.artist, _state.artist.c_str(), sizeof(target.artist) - 1);
+    target.artist[sizeof(target.artist) - 1] = '\0';
+    strncpy(target.album, _state.album.c_str(), sizeof(target.album) - 1);
+    target.album[sizeof(target.album) - 1] = '\0';
+    strncpy(target.artworkId, _state.artworkId.c_str(), sizeof(target.artworkId) - 1);
+    target.artworkId[sizeof(target.artworkId) - 1] = '\0';
+    target.durationMs = _state.durationMs;
+    target.positionMs = _state.positionMs;
+    target.volume = _state.volume;
+    target.generation = _state.generation;
+
+    _publishedPodIdx.store(nextIdx, std::memory_order_release);
+}
+
 void AudioHub::notifyStateChanged() {
     _state.generation++;
+    syncPodState();
 }
 
 AudioPlaybackState AudioHub::getPlaybackStateSnapshot() {
     std::lock_guard<std::mutex> lock(_mutex);
     return _state; // Returns copy
+}
+
+AudioPlaybackStatePOD AudioHub::getPlaybackStatePOD() const {
+    uint8_t idx = _publishedPodIdx.load(std::memory_order_acquire);
+    return _podBuffers[idx];
 }
 
 bool AudioHub::requestPlayback(AudioSource source) {
@@ -109,6 +137,7 @@ void AudioHub::updatePosition(AudioSource source, uint32_t positionMs) {
     std::lock_guard<std::mutex> lock(_mutex);
     if (_activeSource == source) {
         _state.positionMs = positionMs;
+        syncPodState();
     }
 }
 

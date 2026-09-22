@@ -57,6 +57,23 @@ struct AudioPlaybackState {
 };
 
 /**
+ * @struct AudioPlaybackStatePOD
+ * @brief Zero-allocation POD snapshot of current audio playback state for Core 1 hot-path.
+ */
+struct AudioPlaybackStatePOD {
+    AudioSource source = AudioSource::NONE;
+    PlaybackStatus status = PlaybackStatus::STATUS_STOPPED;
+    char title[64] = {0};
+    char artist[48] = {0};
+    char album[48] = {0};
+    char artworkId[32] = {0};
+    uint32_t durationMs = 0;
+    uint32_t positionMs = 0;
+    uint8_t volume = 100;
+    uint32_t generation = 0;
+};
+
+/**
  * @class AudioHub
  * @brief Central Logical Orchestrator for all Audio Streaming Services.
  * Arbitrates active source, manages normalized state snapshots, and routes PCM to AudioOutputHAL.
@@ -72,9 +89,15 @@ public:
     bool begin();
 
     /**
-     * @brief Thread-safe getter returning an immutable snapshot of current playback state.
+     * @brief Thread-safe getter returning an immutable snapshot of current playback state (for Core 0 / WebServerAPI).
      */
     AudioPlaybackState getPlaybackStateSnapshot();
+
+    /**
+     * @brief Lock-free, zero-allocation getter returning a POD snapshot for Core 1 hot-path.
+     * Compliant with Invariant 1 (Zero-Allocation & Zero-Mutex).
+     */
+    AudioPlaybackStatePOD getPlaybackStatePOD() const;
 
     /**
      * @brief Requests playback ownership for a specific audio source.
@@ -133,8 +156,11 @@ private:
     std::mutex _mutex;
     AudioSource _activeSource;
     AudioPlaybackState _state;
+    AudioPlaybackStatePOD _podBuffers[2];
+    std::atomic<uint8_t> _publishedPodIdx{0};
 
     void notifyStateChanged();
+    void syncPodState();
 };
 
 extern AudioHub audioHub;
