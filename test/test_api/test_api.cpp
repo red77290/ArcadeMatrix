@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <unity.h>
 #include <ArduinoJson.h>
+#include "api/WebServerAPI.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -139,6 +140,26 @@ void test_rotation_entry_sync(void) {
     TEST_ASSERT_EQUAL_STRING("clock_01", arr[0]["instance_id"].as<const char*>());
 }
 
+/**
+ * @brief Tests WebServerAPI::timingSafeCompare correctness and resistance to side channels.
+ */
+void test_timing_safe_compare(void) {
+    // Identical strings
+    TEST_ASSERT_TRUE(WebServerAPI::timingSafeCompare("secret_token_123", "secret_token_123"));
+    TEST_ASSERT_TRUE(WebServerAPI::timingSafeCompare("", ""));
+
+    // Different lengths
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("secret", "secret_longer"));
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("secret_longer", "secret"));
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("", "token"));
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("token", ""));
+
+    // Same length, 1 byte difference at various positions
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("xecret_token_123", "secret_token_123"));
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("secret_t0ken_123", "secret_token_123"));
+    TEST_ASSERT_FALSE(WebServerAPI::timingSafeCompare("secret_token_124", "secret_token_123"));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -149,6 +170,7 @@ void setup() {
     RUN_TEST(test_api_settings_validation);
     RUN_TEST(test_instance_creation_without_variant);
     RUN_TEST(test_rotation_entry_sync);
+    RUN_TEST(test_timing_safe_compare);
     UNITY_END();
 }
 

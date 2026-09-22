@@ -88,6 +88,8 @@ struct SystemConfig {
     bool idle_fighter_enabled = true;
     int idle_fighter_interval = 60;
     int idle_fighter_speed = 100;
+    bool api_auth_enabled = false;
+    String api_token = "";
 };
 
 struct EngineInstanceSnapshot {

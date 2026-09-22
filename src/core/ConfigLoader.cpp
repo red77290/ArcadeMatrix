@@ -170,6 +170,11 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
+    system.idle_fighter_enabled = true;
+    system.idle_fighter_interval = 60;
+    system.idle_fighter_speed = 100;
+    system.api_auth_enabled = false;
+    system.api_token = "";
     publishSnapshot_locked();
 }
 
@@ -201,6 +206,8 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
         system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
         system.idle_fighter_speed = sys["idle_fighter_speed"] | system.idle_fighter_speed;
+        system.api_auth_enabled = sys["api_auth_enabled"] | system.api_auth_enabled;
+        if (sys.containsKey("api_token")) system.api_token = sys["api_token"].as<String>();
     }
 
     JsonObjectConst disp;
@@ -389,6 +396,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     sysObj["idle_fighter_enabled"] = system.idle_fighter_enabled;
     sysObj["idle_fighter_interval"] = system.idle_fighter_interval;
     sysObj["idle_fighter_speed"] = system.idle_fighter_speed;
+    sysObj["api_auth_enabled"] = system.api_auth_enabled;
+    sysObj["api_token"] = system.api_token;
 
     JsonObject dispObj = doc.createNestedObject("display");
     dispObj["width"] = matrix.width;
