@@ -185,90 +185,112 @@ void SpotifyEngine::pollSpotifyStatus() {
 
     int httpCode = http.GET();
     if (httpCode == 204) {
-        m_state.isActive = false;
-        m_state.isPlaying = false;
         http.end();
         client.stop();
 
-        {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
-            m_renderState = m_state;
-        }
+        uint8_t target = 1 - m_publishedPodIdx.load(std::memory_order_relaxed);
+        m_podBuffers[target].isActive = false;
+        m_podBuffers[target].isPlaying = false;
+        m_podBuffers[target].generation++;
+        m_publishedPodIdx.store(target, std::memory_order_release);
         return;
     }
+
+    bool isPlaying = false;
+    uint32_t progressMs = 0;
+    uint32_t durationMs = 0;
+    uint8_t volumePercent = 50;
+    String title = "";
+    String artist = "";
+    String album = "";
+    String imageUrl = "";
 
     if (httpCode == 200) {
         // PSRAM-backed: this poll cycle runs every ~1.5s while the engine is active.
         SpiRamJsonDocument doc(4096);
         deserializeJson(doc, http.getString());
 
-        m_state.isActive = true;
-        m_state.isPlaying = doc["is_playing"] | false;
-        m_state.progressMs = doc["progress_ms"] | 0;
+        isPlaying = doc["is_playing"] | false;
+        progressMs = doc["progress_ms"] | 0;
 
         JsonObject item = doc["item"];
         if (!item.isNull()) {
-            m_state.title = item["name"].as<String>();
-            m_state.durationMs = item["duration_ms"] | 0;
+            title = item["name"].as<String>();
+            durationMs = item["duration_ms"] | 0;
 
             JsonArray artists = item["artists"];
             if (artists.size() > 0) {
-                m_state.artist = artists[0]["name"].as<String>();
+                artist = artists[0]["name"].as<String>();
             }
 
-            JsonObject album = item["album"];
-            if (!album.isNull()) {
-                m_state.album = album["name"].as<String>();
-                JsonArray images = album["images"];
+            JsonObject albumObj = item["album"];
+            if (!albumObj.isNull()) {
+                album = albumObj["name"].as<String>();
+                JsonArray images = albumObj["images"];
                 if (images.size() > 0) {
-                    m_state.imageUrl = images[images.size() - 1]["url"].as<String>();
+                    imageUrl = images[images.size() - 1]["url"].as<String>();
                 }
             }
         }
 
         JsonObject device = doc["device"];
         if (!device.isNull()) {
-            m_state.volumePercent = device["volume_percent"] | 50;
+            volumePercent = device["volume_percent"] | 50;
         }
     }
 
     http.end();
     client.stop();
 
-    if (m_hasPsram && m_showAlbumArt && !m_state.imageUrl.isEmpty()) {
-        if (m_state.imageUrl != m_loadedImageUrl) {
-            m_loadedImageUrl = m_state.imageUrl;
+    String artworkId = "";
+    if (m_hasPsram && m_showAlbumArt && !imageUrl.isEmpty()) {
+        if (imageUrl != m_loadedImageUrl) {
+            m_loadedImageUrl = imageUrl;
             int imgSize = 52;
             m_artworkId = artworkService.loadArtwork(m_loadedImageUrl, imgSize, imgSize);
         }
-    } else if (m_state.imageUrl.isEmpty()) {
+        artworkId = m_artworkId;
+    } else if (imageUrl.isEmpty()) {
         m_artworkId = "";
         m_loadedImageUrl = "";
     }
 
-    m_state.localTimestampMs = millis();
+    uint8_t target = 1 - m_publishedPodIdx.load(std::memory_order_relaxed);
+    SpotifyMediaStatePOD& next = m_podBuffers[target];
+    next.isActive = (httpCode == 200);
+    next.isPlaying = isPlaying;
+    next.progressMs = progressMs;
+    next.durationMs = durationMs;
+    strncpy(next.title, title.c_str(), sizeof(next.title) - 1);
+    next.title[sizeof(next.title) - 1] = '\0';
+    strncpy(next.artist, artist.c_str(), sizeof(next.artist) - 1);
+    next.artist[sizeof(next.artist) - 1] = '\0';
+    strncpy(next.album, album.c_str(), sizeof(next.album) - 1);
+    next.album[sizeof(next.album) - 1] = '\0';
+    strncpy(next.imageUrl, imageUrl.c_str(), sizeof(next.imageUrl) - 1);
+    next.imageUrl[sizeof(next.imageUrl) - 1] = '\0';
+    strncpy(next.artworkId, artworkId.c_str(), sizeof(next.artworkId) - 1);
+    next.artworkId[sizeof(next.artworkId) - 1] = '\0';
+    next.volumePercent = volumePercent;
+    next.localTimestampMs = millis();
+    next.generation++;
 
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        m_renderState = m_state;
-    }
+    m_publishedPodIdx.store(target, std::memory_order_release);
 }
 
 void SpotifyEngine::update(EngineContext* context) {
     uint32_t now = millis();
 
-    SpotifyMediaState st;
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        st = m_renderState;
-    }
+    // Lock-free atomic acquisition of published snapshot (zero allocation, zero mutex)
+    uint8_t idx = m_publishedPodIdx.load(std::memory_order_acquire);
+    m_cachedRenderState = m_podBuffers[idx];
 
     if (now - m_lastMarqueeTick >= 40) {
         m_marqueeOffset++;
         m_lastMarqueeTick = now;
     }
 
-    if (st.isPlaying && (now - m_lastAnimTick >= 80)) {
+    if (m_cachedRenderState.isPlaying && (now - m_lastAnimTick >= 80)) {
         m_animFrame = (m_animFrame + 1) % 100;
         m_lastAnimTick = now;
     }
@@ -276,10 +298,11 @@ void SpotifyEngine::update(EngineContext* context) {
 
 #include <glcdfont.c>
 
-static void drawClippedString(Adafruit_GFX* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
-    if (!display || text.isEmpty()) return;
+static void drawClippedString(Adafruit_GFX* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || !text || text[0] == '\0') return;
     int curX = x;
-    for (size_t i = 0; i < text.length(); i++) {
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len; i++) {
         char c = text[i];
         if (curX >= clipMinX && curX + 6 <= clipMaxX) {
             display->drawChar(curX, y, c, color, 0, 1);
@@ -301,9 +324,9 @@ static void drawClippedString(Adafruit_GFX* display, const String& text, int x, 
     }
 }
 
-static void renderMarquee(Adafruit_GFX* display, const String& text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
-    if (!display || text.isEmpty()) return;
-    int textW = text.length() * 6;
+static void renderMarquee(Adafruit_GFX* display, const char* text, int y, int clipMinX, int clipMaxX, int availW, int offset, uint16_t color) {
+    if (!display || !text || text[0] == '\0') return;
+    int textW = (int)strlen(text) * 6;
     if (textW <= availW) {
         drawClippedString(display, text, clipMinX, y, clipMinX, clipMaxX, color);
     } else {
@@ -331,17 +354,14 @@ void SpotifyEngine::render(EngineContext* context) {
     int w = display->width();
     int h = display->height();
 
-    SpotifyMediaState st;
-    {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        st = m_renderState;
-    }
+    // Zero-allocation, zero-mutex: use cached snapshot updated in update()
+    const SpotifyMediaStatePOD& st = m_cachedRenderState;
 
-    if (!st.isActive || st.title.isEmpty()) {
-        String title = "Spotify";
-        String subtitle = "Ready to stream";
+    if (!st.isActive || st.title[0] == '\0') {
+        const char* title = "Spotify";
+        const char* subtitle = "Ready to stream";
 
-        int titleW = title.length() * 6;
+        int titleW = (int)strlen(title) * 6;
         int yIdleTitle = (h >= 64) ? ((h / 2) - 10) : 4;
         int yIdleSub = (h >= 64) ? ((h / 2) + 4) : 16;
 
@@ -352,7 +372,7 @@ void SpotifyEngine::render(EngineContext* context) {
             renderMarquee(display, title, yIdleTitle, 2, w - 2, w - 4, m_marqueeOffset, display->color565(30, 215, 96));
         }
 
-        int subW = subtitle.length() * 6;
+        int subW = (int)strlen(subtitle) * 6;
         int clipMinX = 2;
         int clipMaxX = w - 2;
         int availW = clipMaxX - clipMinX;
@@ -367,7 +387,7 @@ void SpotifyEngine::render(EngineContext* context) {
     }
 
     int textX = 2;
-    bool hasArt = (m_hasPsram && m_showAlbumArt && !st.imageUrl.isEmpty());
+    bool hasArt = (m_hasPsram && m_showAlbumArt && st.imageUrl[0] != '\0');
 
     if (hasArt) {
         int imgSize = (h >= 64) ? 52 : 24;
@@ -376,9 +396,9 @@ void SpotifyEngine::render(EngineContext* context) {
 
         display->drawRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2, display->color565(30, 45, 35));
 
-        if (!m_artworkId.isEmpty()) {
+        if (st.artworkId[0] != '\0') {
             int artW = 0, artH = 0;
-            const uint16_t* artBmp = artworkService.getArtworkBitmap(m_artworkId, artW, artH);
+            const uint16_t* artBmp = artworkService.getArtworkBitmap(st.artworkId, artW, artH);
             if (artBmp && artW > 0 && artH > 0) {
                 int drawW = min(imgSize, artW);
                 int drawH = min(imgSize, artH);
@@ -405,7 +425,7 @@ void SpotifyEngine::render(EngineContext* context) {
 
     renderMarquee(display, st.title, yTitle, clipMinX, clipMaxX, availW, m_marqueeOffset, display->color565(255, 255, 255));
 
-    String artistStr = !st.artist.isEmpty() ? st.artist : (!st.album.isEmpty() ? st.album : "Spotify");
+    const char* artistStr = (st.artist[0] != '\0') ? st.artist : ((st.album[0] != '\0') ? st.album : "Spotify");
     renderMarquee(display, artistStr, yArtist, clipMinX, clipMaxX, availW, m_marqueeOffset / 2, display->color565(30, 215, 96));
 
     if (m_showVisualizer && st.isPlaying) {
