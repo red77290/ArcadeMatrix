@@ -474,7 +474,7 @@ void WebServerAPI::begin() {
     // Default headers for CORS
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Token, Authorization");
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
     // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion.
@@ -499,6 +499,77 @@ void WebServerAPI::begin() {
 
     server.begin();
     LOGI("WebServer", "Web Server Started.");
+}
+
+bool WebServerAPI::timingSafeCompare(const String& a, const String& b) {
+    size_t lenA = a.length();
+    size_t lenB = b.length();
+    volatile uint8_t diff = (lenA == lenB) ? 0 : 1;
+    size_t maxLen = (lenA > lenB) ? lenA : lenB;
+    for (size_t i = 0; i < maxLen; ++i) {
+        char ca = (i < lenA) ? a[i] : 0;
+        char cb = (i < lenB) ? b[i] : 0;
+        diff |= (uint8_t)(ca ^ cb);
+    }
+    return diff == 0;
+}
+
+bool WebServerAPI::isRequestAuthorized(AsyncWebServerRequest* request) {
+    if (!request) return false;
+
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const auto& snapshot = guard.get();
+
+    if (!snapshot.system.api_auth_enabled) {
+        return true;
+    }
+
+    const String& expectedToken = snapshot.system.api_token;
+    if (expectedToken.length() == 0) {
+        return true; // No token configured -> avoid admin lockout
+    }
+
+    // 1. Header: X-API-Token
+    if (request->hasHeader("X-API-Token")) {
+        const AsyncWebHeader* h = request->getHeader("X-API-Token");
+        if (h && timingSafeCompare(h->value(), expectedToken)) {
+            return true;
+        }
+    }
+
+    // 2. Header: Authorization: Bearer <token>
+    if (request->hasHeader("Authorization")) {
+        const AsyncWebHeader* h = request->getHeader("Authorization");
+        if (h) {
+            String val = h->value();
+            if (val.startsWith("Bearer ") || val.startsWith("bearer ")) {
+                String token = val.substring(7);
+                token.trim();
+                if (timingSafeCompare(token, expectedToken)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 3. Query param: ?token=<token>
+    if (request->hasParam("token")) {
+        const AsyncWebParameter* p = request->getParam("token");
+        if (p && timingSafeCompare(p->value(), expectedToken)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool checkAuth(AsyncWebServerRequest* request) {
+    if (!WebServerAPI::isRequestAuthorized(request)) {
+        request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized: missing or invalid API token\"}");
+        return false;
+    }
+    return true;
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
@@ -708,6 +779,7 @@ void WebServerAPI::setupRoutes() {
     });
 
     AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -800,6 +872,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: DELETE /api/instances/{id} — Remove an instance by ID
     server.on("/api/instances", HTTP_DELETE, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         // ESPAsyncWebServer doesn't natively support path parameters,
         // so we look for ?id=xxx or parse the URL path manually.
         String instanceId = "";
@@ -854,6 +927,7 @@ void WebServerAPI::setupRoutes() {
 
     // Also handle path-style DELETE: /api/instances/xxx (catchall for sub-paths)
     server.on("/api/instances/*", HTTP_DELETE, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         String url = request->url();
         String instanceId = "";
         if (url.startsWith("/api/instances/")) {
@@ -930,6 +1004,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/rotation — Replace the entire rotation list
     AsyncCallbackJsonWebHandler* rotationHandler = new AsyncCallbackJsonWebHandler("/api/rotation", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonArray>()) {
             request->send(400, "application/json", "{\"error\":\"Expected a JSON array of rotation entries\"}");
             return;
@@ -1161,6 +1236,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Music Visualizer Control (Priority Display Override)
     AsyncCallbackJsonWebHandler* visHandler = new AsyncCallbackJsonWebHandler("/api/visualizer", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1353,6 +1429,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Play GIF Playlists immediately
     AsyncCallbackJsonWebHandler* playHandler = new AsyncCallbackJsonWebHandler("/api/playlists/play", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1519,6 +1596,8 @@ void WebServerAPI::setupRoutes() {
         // WiFi
         doc["wifi_ssid"] = snap.wifi.ssid;
         doc["wifi_hostname"] = snap.wifi.hostname;
+        doc["api_auth_enabled"] = snap.system.api_auth_enabled;
+        doc["api_token"] = snap.system.api_token;
 
         // MQTT
         doc["mqtt_enabled"] = snap.mqtt.enabled;
@@ -1535,6 +1614,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Settings (POST) — saves immediately to SD
     AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1746,6 +1826,8 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
             if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
+            if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
+            if (!doc["api_token"].isNull()) cfg.system.api_token = doc["api_token"].as<String>();
         });
 
         // Sanitize all instances before persisting
@@ -1796,6 +1878,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Send Marquee Message
     AsyncCallbackJsonWebHandler* msgHandler = new AsyncCallbackJsonWebHandler("/api/message", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1834,6 +1917,7 @@ void WebServerAPI::setupRoutes() {
     
     // API: Change Clock Theme (also updates config + saves to SD)
     AsyncCallbackJsonWebHandler* clockHandler = new AsyncCallbackJsonWebHandler("/api/clock", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1864,6 +1948,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: Toggle Panel Power
     AsyncCallbackJsonWebHandler* powerHandler = new AsyncCallbackJsonWebHandler("/api/system/power", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -1907,6 +1992,8 @@ void WebServerAPI::setupRoutes() {
         sys["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
         sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
         sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
+        sys["api_auth_enabled"] = snap.system.api_auth_enabled;
+        sys["api_token"] = snap.system.api_token;
 
         JsonObject mat = doc.createNestedObject("matrix");
         mat["height"] = snap.matrix.height;
@@ -1950,8 +2037,8 @@ void WebServerAPI::setupRoutes() {
         hw["temperature_sensor"] = caps.hasTempSensor;
         hw["gyroscope"] = gyroHAL.isAvailable();
 
-        doc["api_auth_enabled"] = false;
-        doc["api_token"] = "";
+        doc["api_auth_enabled"] = snap.system.api_auth_enabled;
+        doc["api_token"] = snap.system.api_token;
 
         String response;
         serializeJson(doc, response);
@@ -1960,6 +2047,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: System settings update (POST /api/system)
     AsyncCallbackJsonWebHandler* sysHandler = new AsyncCallbackJsonWebHandler("/api/system", [this](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -2037,6 +2125,14 @@ void WebServerAPI::setupRoutes() {
             }
             if (!sys["idle_fighter_speed"].isNull()) {
                 cfg.system.idle_fighter_speed = sys["idle_fighter_speed"].as<int>();
+                changed = true;
+            }
+            if (!sys["api_auth_enabled"].isNull()) {
+                cfg.system.api_auth_enabled = sys["api_auth_enabled"].as<bool>();
+                changed = true;
+            }
+            if (!sys["api_token"].isNull()) {
+                cfg.system.api_token = sys["api_token"].as<String>();
                 changed = true;
             }
 
@@ -2129,6 +2225,7 @@ void WebServerAPI::setupRoutes() {
     
     // API: System commands (Reboot / Shutdown / Restart)
     server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":true}");
         xTaskCreate([](void *param) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -2136,6 +2233,7 @@ void WebServerAPI::setupRoutes() {
         }, "shutdown_task", 2048, NULL, 1, NULL);
     });
     server.on("/api/system/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":true}");
         xTaskCreate([](void *param) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -2143,6 +2241,7 @@ void WebServerAPI::setupRoutes() {
         }, "reboot_task", 2048, NULL, 1, NULL);
     });
     server.on("/api/system/restart", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":true}");
         xTaskCreate([](void *param) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -2150,6 +2249,7 @@ void WebServerAPI::setupRoutes() {
         }, "restart_task", 2048, NULL, 1, NULL);
     });
     server.on("/api/system/restart_app", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":true}");
         xTaskCreate([](void *param) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -2183,6 +2283,7 @@ void WebServerAPI::setupRoutes() {
     // API: POST /api/ota/auto-update (Autonomous ESP32 background download & flash)
     // Registered BEFORE generic /api/ota to prevent ESPAsyncWebServer prefix matching collision
     AsyncCallbackJsonWebHandler* autoOtaHandler = new AsyncCallbackJsonWebHandler("/api/ota/auto-update", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON payload\"}");
             return;
@@ -2273,6 +2374,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: OTA Firmware Update (/api/update and /api/ota alias)
     auto otaResponseHandler = [](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
         bool shouldReboot = s_otaUploadSuccess.exchange(false) && !Update.hasError();
         AsyncWebServerResponse *response = request->beginResponse(
             shouldReboot ? 200 : 400,
@@ -2304,6 +2406,7 @@ void WebServerAPI::setupRoutes() {
     };
 
     auto otaUploadHandler = [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (!WebServerAPI::isRequestAuthorized(request)) return;
         if (!index) {
             const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
             LOGI("OTA", "Update Start: %s -> target partition %s (0x%08X)",
@@ -2586,6 +2689,7 @@ void WebServerAPI::setupRoutes() {
 
         // Full rescan of every folder from the real directory contents: runs in the background (202) — see gifReindexTask.
         server.on("/api/gifs/reindex", HTTP_POST, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             // Claim the slot atomically: a plain check-then-set lets two concurrent requests both
             // start, and the first to finish clears the panel notice and the flag under the second.
             bool expected = false;
@@ -2605,6 +2709,7 @@ void WebServerAPI::setupRoutes() {
             request->send(202, "application/json", "{\"status\":\"started\"}");
         });
         server.on("/api/gifs/reindex", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             if (!g_gifReindex.running) { request->send(409, "application/json", "{\"status\":\"idle\"}"); return; }
             g_gifReindex.cancel = true;   // honoured between folders; the folder being indexed completes first
             request->send(202, "application/json", "{\"status\":\"cancelling\"}");
@@ -2618,6 +2723,7 @@ void WebServerAPI::setupRoutes() {
         });
 
         server.on("/api/gifs/file", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
             String rawName   = request->hasParam("name")   ? request->getParam("name")->value()   : "";
             String folder = sanitizeName(rawFolder, false);
@@ -2749,6 +2855,7 @@ void WebServerAPI::setupRoutes() {
         };
 
         server.on("/api/gifs/folder", HTTP_DELETE, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             String raw = request->hasParam("folder") ? request->getParam("folder")->value() : "";
             String folder = sanitizeName(raw, false);
             if (raw.indexOf('/') >= 0 || raw.indexOf("..") >= 0 || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder is required\"}"); return; }
@@ -2770,6 +2877,7 @@ void WebServerAPI::setupRoutes() {
         static auto badName = [](const String& raw) -> bool { return raw.indexOf('/') >= 0 || raw.indexOf('\\') >= 0 || raw.indexOf("..") >= 0; };
 
         server.on("/api/gifs/mkdir", HTTP_POST, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             String raw = request->hasParam("folder") ? request->getParam("folder")->value() : "";
             String folder = sanitizeName(raw, false);
             if (badName(raw) || folder.isEmpty()) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain name\"}"); return; }
@@ -2794,6 +2902,7 @@ void WebServerAPI::setupRoutes() {
 
         // rename a file (folder+name+to) or a folder (folder+to)
         server.on("/api/gifs/rename", HTTP_POST, [](AsyncWebServerRequest *request){
+            if (!checkAuth(request)) return;
             String rawFolder = request->hasParam("folder") ? request->getParam("folder")->value() : "";
             String rawName   = request->hasParam("name")   ? request->getParam("name")->value()   : "";
             String rawTo     = request->hasParam("to")     ? request->getParam("to")->value()     : "";
@@ -2877,6 +2986,7 @@ void WebServerAPI::setupRoutes() {
 
         server.on("/api/gifs/upload", HTTP_POST,
             [leaveUploadMode](AsyncWebServerRequest *request) {
+                if (!checkAuth(request)) return;
                 GifUploadCtx* ctx = (GifUploadCtx*)request->_tempObject;
                 if (!ctx) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"No file received\"}"); return; }
                 if (ctx->badFolder) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain playlist name (no path separators)\"}"); delete ctx; request->_tempObject = nullptr; return; }
@@ -2891,6 +3001,7 @@ void WebServerAPI::setupRoutes() {
                 delete ctx; request->_tempObject = nullptr;
             },
             [enterUploadMode, leaveUploadMode](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+                if (!WebServerAPI::isRequestAuthorized(request)) return;
                 GifUploadCtx* ctx = (GifUploadCtx*)request->_tempObject;
                 if (!ctx) {
                     ctx = new GifUploadCtx();
@@ -2977,6 +3088,7 @@ void WebServerAPI::setupRoutes() {
     // SD *and* tries to associate right away, reporting success/failure synchronously instead of
     // requiring a full reboot to find out if the new SSID/password actually work.
     AsyncCallbackJsonWebHandler* wifiHandler = new AsyncCallbackJsonWebHandler("/api/wifi", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"success\":false,\"message\":\"Invalid JSON\"}");
             return;
@@ -3019,9 +3131,11 @@ void WebServerAPI::setupRoutes() {
 
     // API: MQTT SSH helpers (Parity stubs for ESP32)
     server.on("/api/mqtt/install", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":false,\"message\":\"SSH install is only available on Raspberry Pi. On ESP32, configure Recalbox/Batocera/RetroPie manually with tools/rpi_emulationstation_base_os_setup.sh to send MQTT to this device's IP.\"}");
     });
     server.on("/api/mqtt/logs", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         request->send(200, "application/json", "{\"success\":true,\"logs\":\"SSH logs are only available on Raspberry Pi.\"}");
     });
 
@@ -3029,6 +3143,7 @@ void WebServerAPI::setupRoutes() {
     // API: Marquee & Upload endpoints — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/marquee.<ext>)
     // with single-file overwrite and zero rotation preemption, as well as direct raw RGB565 streaming (application/octet-stream).
     auto uploadHandler = [this](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
         if (request->_tempObject) {
             String* pPath = (String*)request->_tempObject;
             String json = "{\"success\":true,\"path\":\"" + *pPath + "\",\"message\":\"Asset uploaded successfully\"}";
@@ -3041,6 +3156,7 @@ void WebServerAPI::setupRoutes() {
     };
 
     auto uploadFileHandler = [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (!WebServerAPI::isRequestAuthorized(request)) return;
         String ext = ".gif";
         int dotIdx = filename.lastIndexOf('.');
         if (dotIdx >= 0) {
@@ -3101,6 +3217,10 @@ void WebServerAPI::setupRoutes() {
         uploadHandler,
         uploadFileHandler,
         [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            if (!WebServerAPI::isRequestAuthorized(request)) {
+                if (index == 0) request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
+                return;
+            }
             if (request->contentType().startsWith("multipart/")) {
                 return;
             }
@@ -3153,6 +3273,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/audio/volume — Adjusts master volume (0-100%)
     AsyncCallbackJsonWebHandler* audioVolHandler = new AsyncCallbackJsonWebHandler("/api/audio/volume", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -3168,6 +3289,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/audio/radio — Controls WebRadio playback
     AsyncCallbackJsonWebHandler* radioHandler = new AsyncCallbackJsonWebHandler("/api/audio/radio", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;
@@ -3187,6 +3309,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/audio/stop — Stops active audio stream
     server.on("/api/audio/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         webRadioService.stop();
         bluetoothAudioService.stop();
         request->send(200, "application/json", "{\"success\":true}");
@@ -3194,6 +3317,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/audio/test — Plays a short diagnostic test tone (880 Hz) on the onboard speaker
     server.on("/api/audio/test", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         audioOutputHAL.playSine(880.0f, 500);
         request->send(200, "application/json", "{\"success\":true,\"message\":\"Test tone played\"}");
     });
@@ -3222,6 +3346,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/gyro/calibrate — Calibrates current physical position as 0° reference
     server.on("/api/gyro/calibrate", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (!checkAuth(request)) return;
         displayOrientationManager.calibrateZeroReference();
         extern ConfigLoader config;
         config.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
@@ -3239,6 +3364,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/display/test-transition — Triggers a preview of the rotation transition FX
     AsyncCallbackJsonWebHandler* testFxHandler = new AsyncCallbackJsonWebHandler("/api/display/test-transition", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         RotationEffect eff = displayOrientationManager.getTransitionEffect();
         if (json.is<JsonObject>()) {
             JsonObject obj = json.as<JsonObject>();
@@ -3253,6 +3379,7 @@ void WebServerAPI::setupRoutes() {
 
     // API: POST /api/display/orientation — Sets manual rotation index, rotation offset, or transition effect
     AsyncCallbackJsonWebHandler* orientHandler = new AsyncCallbackJsonWebHandler("/api/display/orientation", [](AsyncWebServerRequest *request, JsonVariant &json) {
+        if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
             request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
             return;

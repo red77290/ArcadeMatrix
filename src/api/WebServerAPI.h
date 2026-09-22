@@ -64,4 +64,22 @@ private:
      * @param doc The JsonDocument to serialize and send.
      */
     void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
+
+public:
+    /**
+     * @brief Timing-safe string comparison to prevent side-channel timing attacks.
+     * 
+     * @param a First string.
+     * @param b Second string.
+     * @return true if strings match, false otherwise.
+     */
+    static bool timingSafeCompare(const String& a, const String& b);
+
+    /**
+     * @brief Checks whether the given HTTP request is authorized against the configured API token.
+     * 
+     * @param request The active HTTP request.
+     * @return true if authorized (or auth disabled), false otherwise.
+     */
+    static bool isRequestAuthorized(AsyncWebServerRequest* request);
 };
