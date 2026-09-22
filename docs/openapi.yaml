@@ -1690,3 +1690,20 @@ paths:
         '409':
           description: OTA update already in progress.
 
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Optional API token configured in System Settings passed via Authorization header (Bearer <token>).
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Token
+      description: Optional API token configured in System Settings passed via X-API-Token header.
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+  - {}
+
+
