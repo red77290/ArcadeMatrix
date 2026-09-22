@@ -37,7 +37,7 @@ void MusicEngine::activate() {
     _marqueeOffset = 0;
     _lastMarqueeTick = millis();
     _lastAnimTick = millis();
-    _cachedState = audioHub.getPlaybackStateSnapshot();
+    _cachedState = audioHub.getPlaybackStatePOD();
     _cachedGeneration = _cachedState.generation;
 }
 
@@ -50,11 +50,16 @@ void MusicEngine::onConfigChanged(const EngineConfig* config) {
 void MusicEngine::update(EngineContext* context) {
     uint32_t now = millis();
 
-    // Check for updated state snapshot from AudioHub
-    AudioPlaybackState current = audioHub.getPlaybackStateSnapshot();
+    // Check for updated state snapshot from AudioHub (lock-free, zero-alloc, zero-mutex)
+    AudioPlaybackStatePOD current = audioHub.getPlaybackStatePOD();
     if (current.generation != _cachedGeneration) {
         _cachedState = current;
         _cachedGeneration = current.generation;
+        _marqueeOffset = 0;
+    } else {
+        _cachedState.positionMs = current.positionMs;
+        _cachedState.status = current.status;
+        _cachedState.volume = current.volume;
     }
 
     // Marquee scroll step interval inversely proportional to speed (1..5)
@@ -85,10 +90,11 @@ uint16_t MusicEngine::getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* di
 
 #include <glcdfont.c>
 
-static void drawClippedText(MatrixPanel_I2S_DMA* display, const String& text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
-    if (!display || text.isEmpty()) return;
+static void drawClippedText(MatrixPanel_I2S_DMA* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || !text || text[0] == '\0') return;
     int curX = x;
-    for (size_t i = 0; i < text.length(); i++) {
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len; i++) {
         char c = text[i];
         if (curX >= clipMinX && curX + 6 <= clipMaxX) {
             display->drawChar(curX, y, c, color, 0, 1);
@@ -110,10 +116,10 @@ static void drawClippedText(MatrixPanel_I2S_DMA* display, const String& text, in
     }
 }
 
-void MusicEngine::renderMarqueeText(MatrixPanel_I2S_DMA* display, const String& text, int y, int clipMinX, int clipMaxX, uint16_t color) {
-    if (!display || text.isEmpty()) return;
+void MusicEngine::renderMarqueeText(MatrixPanel_I2S_DMA* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color) {
+    if (!display || !text || text[0] == '\0') return;
     int availW = clipMaxX - clipMinX;
-    int textW = (int)text.length() * 6;
+    int textW = (int)strlen(text) * 6;
 
     if (textW <= availW) {
         drawClippedText(display, text, clipMinX, y, clipMinX, clipMaxX, color);
@@ -172,10 +178,10 @@ void MusicEngine::renderIdle(MatrixPanel_I2S_DMA* display, int w, int h) {
     display->setFont(nullptr);
     display->setTextSize(1);
 
-    String title = "ArcadeMatrix Music";
-    String sub = "Ready to stream";
+    const char* title = "ArcadeMatrix Music";
+    const char* sub = "Ready to stream";
 
-    int titleW = title.length() * 6;
+    int titleW = (int)strlen(title) * 6;
     int xTitle = (titleW <= w - 4) ? (w - titleW) / 2 : 2;
     int yTitle = (h >= 64) ? ((h / 2) - 10) : 4;
     int ySub = (h >= 64) ? ((h / 2) + 4) : 16;
@@ -275,7 +281,7 @@ public:
     }
 };
 
-void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackState& state) {
+void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackStatePOD& state) {
     display->fillScreen(0);
     display->setFont(nullptr);
     display->setTextSize(1);
@@ -284,7 +290,7 @@ void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, cons
 
     // 0. Check Album Artwork in PSRAM cache
     int artW = 0, artH = 0;
-    const uint16_t* artBmp = (_showAlbumArt && !state.artworkId.isEmpty()) ? artworkService.getArtworkBitmap(state.artworkId, artW, artH) : nullptr;
+    const uint16_t* artBmp = (_showAlbumArt && state.artworkId[0] != '\0') ? artworkService.getArtworkBitmap(state.artworkId, artW, artH) : nullptr;
     bool hasArt = (artBmp && artW > 0 && artH > 0);
 
     DisplayGeometry geom;
@@ -306,24 +312,26 @@ void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, cons
     int titleMaxX = layout.titleRect.x + layout.titleRect.width;
 
     if (!layout.isVertical && _showSource && state.source != AudioSource::NONE) {
-        String srcBadge = "[" + String(AudioHub::getSourceName(state.source)) + "]";
+        char srcBadge[32];
+        snprintf(srcBadge, sizeof(srcBadge), "[%s]", AudioHub::getSourceName(state.source));
         display->setTextColor(srcColor);
         display->setCursor(titleMinX, layout.titleRect.y);
         display->print(srcBadge);
-        titleMinX += (srcBadge.length() * 6 + 4);
+        titleMinX += ((int)strlen(srcBadge) * 6 + 4);
     } else if (layout.isVertical && _showSource && state.source != AudioSource::NONE && !layout.badgeRect.isEmpty()) {
-        String srcBadge = "[" + String(AudioHub::getSourceName(state.source)) + "]";
-        int badgeX = (w - (int)(srcBadge.length() * 6)) / 2;
+        char srcBadge[32];
+        snprintf(srcBadge, sizeof(srcBadge), "[%s]", AudioHub::getSourceName(state.source));
+        int badgeX = (w - (int)(strlen(srcBadge) * 6)) / 2;
         display->setTextColor(srcColor);
         display->setCursor(max(2, badgeX), layout.badgeRect.y);
         display->print(srcBadge);
     }
 
-    String titleText = state.title.length() > 0 ? state.title : "Audio Stream";
+    const char* titleText = (state.title[0] != '\0') ? state.title : "Audio Stream";
     renderMarqueeText(display, titleText, layout.titleRect.y, titleMinX, titleMaxX, display->color565(255, 255, 255));
 
     // 3. Draw Artist
-    if (_showArtist && state.artist.length() > 0 && !layout.artistRect.isEmpty()) {
+    if (_showArtist && state.artist[0] != '\0' && !layout.artistRect.isEmpty()) {
         renderMarqueeText(display, state.artist, layout.artistRect.y, layout.artistRect.x, layout.artistRect.x + layout.artistRect.width, display->color565(190, 190, 200));
     }
 
@@ -350,7 +358,7 @@ void MusicEngine::render(EngineContext* context) {
     int w = _matrix->width();
     int h = _matrix->height();
 
-    if (_cachedState.status == PlaybackStatus::STATUS_STOPPED || _cachedState.title.isEmpty()) {
+    if (_cachedState.status == PlaybackStatus::STATUS_STOPPED || _cachedState.title[0] == '\0') {
         renderIdle(_matrix, w, h);
     } else {
         renderPlaying(_matrix, w, h, _cachedState);

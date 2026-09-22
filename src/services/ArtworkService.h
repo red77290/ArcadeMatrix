@@ -48,8 +48,9 @@ public:
     ArtworkSnapshot getSnapshot() const;
 
     /**
-     * @brief Legacy helper: returns raw RGB565 pixel buffer for the specified artwork ID.
+     * @brief Helper: returns raw RGB565 pixel buffer for the specified artwork ID.
      */
+    const uint16_t* getArtworkBitmap(const char* artworkId, int& width, int& height);
     const uint16_t* getArtworkBitmap(const String& artworkId, int& width, int& height);
 
     /**
