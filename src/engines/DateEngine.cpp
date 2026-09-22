@@ -61,6 +61,7 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
     
     reloadCustomFont();
     
+    m_dateDirty = true;
     setTheme(static_cast<PublisherTheme>(m_config.theme));
     return EngineError::OK;
 }
@@ -82,6 +83,7 @@ void DateEngine::onConfigChanged(const EngineConfig* config) {
         m_config.date_color_2 = config->getString("date_color_2", "");
         
         reloadCustomFont();
+        m_dateDirty = true;
         setTheme(static_cast<PublisherTheme>(m_config.theme));
     }
 }
@@ -140,28 +142,35 @@ static void formatLocalizedDate(char* dest, size_t maxLen, const String& format,
     dest[maxLen - 1] = '\0';
 }
 
+void DateEngine::reformatDate(const struct tm* timeinfo) {
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    String format = m_config.format;
+    if (format.isEmpty() || format.equalsIgnoreCase("system")) format = "%d/%m/%Y";
+
+    String lang = m_config.lang;
+    if (lang.isEmpty() || lang.equalsIgnoreCase("system")) {
+        const auto& snap = guard.get();
+        lang = snap.system.lang.length() > 0 ? snap.system.lang : "en";
+    }
+    formatLocalizedDate(currentDate, sizeof(currentDate), format, timeinfo, lang);
+}
+
 void DateEngine::update(EngineContext* context) {
     if (context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
         currentDateData = {(uint8_t)timeinfo.tm_mday, (uint8_t)(timeinfo.tm_mon + 1), (uint8_t)((timeinfo.tm_year + 1900) % 100)};
         
-        extern ConfigLoader config;
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        String format = m_config.format;
-        if (format.isEmpty() || format.equalsIgnoreCase("system")) format = "%d/%m/%Y";
+        if (timeinfo.tm_mday != m_lastMday || timeinfo.tm_mon != m_lastMon || timeinfo.tm_year != m_lastYear || m_dateDirty) {
+            m_lastMday = timeinfo.tm_mday;
+            m_lastMon = timeinfo.tm_mon;
+            m_lastYear = timeinfo.tm_year;
+            m_dateDirty = false;
+            reformatDate(&timeinfo);
 
-        String lang = m_config.lang;
-        if (lang.isEmpty() || lang.equalsIgnoreCase("system")) {
-            lang = guard->system.lang.length() > 0 ? guard->system.lang : "en";
-        }
-        formatLocalizedDate(currentDate, sizeof(currentDate), format, &timeinfo, lang);
-        
-        // Handle random theme changes per day if THEME_NONE
-        if (m_config.theme == THEME_NONE) {
-            static int lastDay = -1;
-            if (timeinfo.tm_mday != lastDay) {
-                lastDay = timeinfo.tm_mday;
+            // Handle random theme changes per day if THEME_NONE
+            if (m_config.theme == THEME_NONE) {
                 setTheme(THEME_NONE); // Triggers random pick
             }
         }
