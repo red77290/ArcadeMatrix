@@ -44,8 +44,12 @@ jobs:
       - name: Validate UI & I18n contracts
         run: python3 scripts/validate_ui_and_i18n.py
 
+      - name: Execute host native unit test suite
+        run: python3 scripts/run_native_tests.py
+
       - name: Build & validate unit test suites (${{ matrix.env }})
         run: pio test -e ${{ matrix.env }} --without-uploading --without-testing
+
 
       - name: Build firmware (${{ matrix.env }})
         run: pio run -e ${{ matrix.env }}
