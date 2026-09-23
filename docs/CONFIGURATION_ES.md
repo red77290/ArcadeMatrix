@@ -108,16 +108,103 @@ El daemon de sincronización puede instalarse en la consola (Recalbox, Batocera,
 
 ## 6. Seguridad de la API (`api_auth_enabled` / `api_token`)
 
-Estas dos claves de nivel superior protegen los endpoints de escritura/administración.
+Estos parámetros determinan si los endpoints de escritura y administración (reinicio, brillo, guardado de configuración, modificación de motores, actualizaciones OTA y subida de GIFs) requieren un token de autenticación secreto válido.
 
-| Clave | Tipo | Descripción |
-| :--- | :--- | :--- |
-| `api_auth_enabled` | `bool` | Si es `true`, los endpoints sensibles requieren que la cabecera `X-API-Token` coincida con `api_token`. |
-| `api_token` | `String` | Token secreto (generado automáticamente en el primer arranque). La interfaz Web lo envía como `X-API-Token`. |
+| Clave | Tipo | Valor por defecto | Descripción |
+| :--- | :--- | :--- | :--- |
+| `api_auth_enabled` | `bool` | `false` | Si es `false`, todos los endpoints son accesibles sin contraseña. Si es `true`, los endpoints sensibles requieren un token válido. |
+| `api_token` | `String` | `""` | El token secreto de autenticación. De solo escritura (*write-only*): nunca expuesto en las peticiones `GET` (que devuelven `api_token_configured: true`). |
 
-Está desactivado por defecto para que la interfaz Web incluida funcione inmediatamente. Actívalo si el dispositivo es accesible más allá de una LAN de confianza.
+> [!NOTE]
+> Los endpoints públicos de telemetría de solo lectura (`/api/status`, `/api/metrics`, `/api/health`, `/api/i18n/current`) permanecen siempre accesibles sin autenticación para garantizar el funcionamiento ininterrumpido de dashboards y herramientas de monitorización.
+
+### 6.1 Cómo Activar o Desactivar la Autenticación
+
+#### Opción A: A través de la Interfaz Web (Recomendado)
+1. Abre la WebUI en tu navegador (`http://arcadematrix.local` o la dirección IP de tu dispositivo).
+2. Ve a la pestaña **Sistema** (`sys-tab-hardware`) y localiza la tarjeta **Autenticación de API**.
+3. Cambia **Requerir autenticación para API** a **Habilitado** (`Enabled`).
+4. Introduce el token secreto deseado en el campo **Token de API**.
+5. Haz clic en **Guardar autenticación API**. El token se guarda inmediatamente en `/config.json` en la tarjeta SD y se almacena en caché en el `localStorage` de tu navegador.
+6. Para **desactivar** la autenticación en cualquier momento, cambia el selector a **Deshabilitado** (`Disabled`) y pulsa **Guardar autenticación API**.
+
+#### Opción B: A través del archivo `config.json` en la tarjeta SD
+Edita `/config.json` directamente y configura el bloque `system`:
+```json
+{
+  "system": {
+    "api_auth_enabled": true,
+    "api_token": "mi_token_secreto_super_seguro_123"
+  }
+}
+```
+
+### 6.2 Cómo Crear un Token Seguro
+Puedes usar cualquier cadena alfanumérica. Para una seguridad óptima, genera un token aleatorio de 32 caracteres hexadecimales en tu terminal:
+```bash
+# En Linux / macOS:
+openssl rand -hex 16
+# Ejemplo de salida: a3f89e2b109c4d5e7812bc34567890ef
+```
+Alternativamente, elige una contraseña robusta que puedas recordar.
+
+### 6.3 Cómo Conectarse a la WebUI Como Nuevo Usuario
+
+Cuando la seguridad API está habilitada (`api_auth_enabled: true`), un nuevo usuario o un navegador nuevo accede al dispositivo de forma fluida e intuitiva:
+
+1. **Acceso Inicial Libre a la WebUI**:
+   La interfaz web (`GET /`, `GET /index.html`) y los endpoints de telemetría y lectura (estado del hardware, hora, versión, métricas) están siempre accesibles sin autenticación. Por tanto, la página carga con normalidad en cualquier nuevo dispositivo.
+
+2. **Tres Formas de Autenticar un Nuevo Navegador**:
+
+   * **Opción 1: Automático en la 1ª Acción (Diálogo Interactivo)**
+     Tan pronto como el nuevo usuario intenta una acción que modifica el estado (ajustar brillo, cambiar reloj, modificar color o guardar ajustes), el ESP32 responde `401 Unauthorized`.
+     La interfaz Web intercepta automáticamente el error 401 y muestra un cuadro de diálogo (*prompt*):
+     > `Token API requerido o inválido. Ingrese su token API:`
+     El usuario introduce su token secreto. La WebUI lo almacena inmediatamente en el `localStorage` del navegador (`api_token`). A partir de ese momento, todas las acciones posteriores quedan autorizadas sin volver a solicitar el token.
+
+   * **Opción 2: Entrada Proactiva en Ajustes del Sistema**
+     Sin esperar a que una acción falle, el usuario puede ir directamente a:
+     **Sistema** ➔ pestaña **Ajustes** ➔ tarjeta **Autenticación API**.
+     Introduce el token en el campo **Token de API** y pulsa **Guardar Autenticación API**. El token se guarda en el navegador y se verifica en el dispositivo.
+
+   * **Opción 3: Enlace Directo / Marcador (*Magic Link*)**
+     Un administrador puede compartir o guardar en marcadores una URL con el parámetro `?token=`:
+     `http://arcadematrix.local/?token=mi_token_secreto_super_seguro_123`
+     Al cargar la página, la WebUI detecta automáticamente el parámetro `token` y lo guarda en el `localStorage`. El usuario queda autenticado de inmediato sin que aparezca ninguna ventana emergente.
+
+* **Seguridad de Solo Escritura (*Write-Only*)**: El ESP32 nunca devuelve el token secreto en `GET /api/system` o `GET /api/settings` (indica únicamente `"api_token_configured": true`), protegiendo totalmente la clave secreta de miradas indiscretas en la red local.
+* **Modificación o Eliminación del Token**: Introducir un token válido nuevo en el aviso o en Ajustes sobrescribe el valor previo. Dejar el campo vacío y guardar desactiva la autenticación.
+
+### 6.4 Llamar a la API REST desde Scripts Externos o Home Assistant
+Cuando `api_auth_enabled` es `true`, los clientes externos se autentican mediante cabeceras HTTP estándar o parámetro URL:
+
+1. **Recomendado: Cabecera `X-API-Token`**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/brightness \
+     -H "Content-Type: application/json" \
+     -H "X-API-Token: mi_token_secreto_super_seguro_123" \
+     -d '{"brightness": 80}'
+   ```
+
+2. **Cabecera Bearer Estándar (`Authorization`)**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/restart \
+     -H "Authorization: Bearer mi_token_secreto_super_seguro_123"
+   ```
+
+3. **Parámetro Query en URL (Pruebas Rápidas / Atajos)**
+   ```bash
+   curl -X POST "http://arcadematrix.local/api/system/restart?token=mi_token_secreto_super_seguro_123"
+   ```
+
+### 6.5 Protección Anti-Bloqueo (*Anti-Lockout*)
+Para evitar quedar bloqueado fuera de tu dispositivo:
+* Si `api_auth_enabled` es `true` pero `api_token` está vacío (`""`), el firmware considera la autenticación inactiva y permite el acceso.
+* La verificación del token se realiza en tiempo constante (`TimingSafe::compare`), evitando ataques por medición de latencia (*timing attacks*).
 
 ---
+
 
 ## 7. Motores: `"instances"` & `"rotation"`
 

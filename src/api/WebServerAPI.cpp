@@ -501,19 +501,6 @@ void WebServerAPI::begin() {
     LOGI("WebServer", "Web Server Started.");
 }
 
-bool WebServerAPI::timingSafeCompare(const String& a, const String& b) {
-    size_t lenA = a.length();
-    size_t lenB = b.length();
-    volatile uint8_t diff = (lenA == lenB) ? 0 : 1;
-    size_t maxLen = (lenA > lenB) ? lenA : lenB;
-    for (size_t i = 0; i < maxLen; ++i) {
-        char ca = (i < lenA) ? a[i] : 0;
-        char cb = (i < lenB) ? b[i] : 0;
-        diff |= (uint8_t)(ca ^ cb);
-    }
-    return diff == 0;
-}
-
 bool WebServerAPI::isRequestAuthorized(AsyncWebServerRequest* request) {
     if (!request) return false;
 
@@ -1597,7 +1584,7 @@ void WebServerAPI::setupRoutes() {
         doc["wifi_ssid"] = snap.wifi.ssid;
         doc["wifi_hostname"] = snap.wifi.hostname;
         doc["api_auth_enabled"] = snap.system.api_auth_enabled;
-        doc["api_token"] = snap.system.api_token;
+        doc["api_token_configured"] = snap.system.api_token.length() > 0;
 
         // MQTT
         doc["mqtt_enabled"] = snap.mqtt.enabled;
@@ -1827,7 +1814,14 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
             if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
             if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
-            if (!doc["api_token"].isNull()) cfg.system.api_token = doc["api_token"].as<String>();
+            if (!doc["api_token"].isNull()) {
+                String newTok = doc["api_token"].as<String>();
+                if (newTok.length() > 0) {
+                    cfg.system.api_token = newTok;
+                } else if (!cfg.system.api_auth_enabled) {
+                    cfg.system.api_token = "";
+                }
+            }
         });
 
         // Sanitize all instances before persisting
@@ -1993,7 +1987,7 @@ void WebServerAPI::setupRoutes() {
         sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
         sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
         sys["api_auth_enabled"] = snap.system.api_auth_enabled;
-        sys["api_token"] = snap.system.api_token;
+        sys["api_token_configured"] = snap.system.api_token.length() > 0;
 
         JsonObject mat = doc.createNestedObject("matrix");
         mat["height"] = snap.matrix.height;
@@ -2038,7 +2032,7 @@ void WebServerAPI::setupRoutes() {
         hw["gyroscope"] = gyroHAL.isAvailable();
 
         doc["api_auth_enabled"] = snap.system.api_auth_enabled;
-        doc["api_token"] = snap.system.api_token;
+        doc["api_token_configured"] = snap.system.api_token.length() > 0;
 
         String response;
         serializeJson(doc, response);
@@ -2132,8 +2126,14 @@ void WebServerAPI::setupRoutes() {
                 changed = true;
             }
             if (!sys["api_token"].isNull()) {
-                cfg.system.api_token = sys["api_token"].as<String>();
-                changed = true;
+                String newTok = sys["api_token"].as<String>();
+                if (newTok.length() > 0) {
+                    cfg.system.api_token = newTok;
+                    changed = true;
+                } else if (!cfg.system.api_auth_enabled && cfg.system.api_token.length() > 0) {
+                    cfg.system.api_token = "";
+                    changed = true;
+                }
             }
 
             if (doc.containsKey("matrix")) {

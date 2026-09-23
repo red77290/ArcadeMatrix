@@ -2012,6 +2012,13 @@ select.input option {
 
   <script>
 // --- js/api.js ---
+try {
+  const _urlTok = new URLSearchParams(window.location.search).get('token');
+  if (_urlTok && _urlTok.trim().length > 0) {
+    localStorage.setItem('api_token', _urlTok.trim());
+  }
+} catch (_) {}
+
 function authHeaders(base = {}) {
   const headers = { ...base };
   const token = localStorage.getItem('api_token');
@@ -6742,7 +6749,13 @@ function initGifLibrary() {
   const toast = (m, kind) => (window.showToast ? window.showToast(m, kind) : console.log(kind, m));
   const tr = (k, f, v) => { let s = (typeof t === 'function') ? t(k, f) : f; if (v) Object.keys(v).forEach(x => { s = s.split('{' + x + '}').join(v[x]); }); return s; };
   const headers = () => { const h = {}; const tok = localStorage.getItem('api_token'); if (tok) h['X-API-Token'] = tok; return h; };
-  const api = async (url, opts) => { const r = await fetch(url, Object.assign({ headers: headers() }, opts || {})); let b = {}; try { b = await r.json(); } catch (_) {} if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status)); return b; };
+  const api = async (url, opts) => {
+    const r = await fetch(url, Object.assign({ headers: headers() }, opts || {}));
+    if (r.status === 401 && typeof handleUnauthorized === 'function') handleUnauthorized();
+    let b = {}; try { b = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status));
+    return b;
+  };
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const enc = encodeURIComponent;
   const fmtBytes = (b) => (b === undefined || b === null) ? '' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? Math.round(b / 1024) + ' KB' : b + ' B';
@@ -7325,13 +7338,19 @@ function initNetworkSettings() {
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', async () => {
       const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
-      const api_token = document.getElementById('hw-api-token').value;
+      const api_token = document.getElementById('hw-api-token').value.trim();
       try {
-        await API.post('/api/system', { api_auth_enabled, api_token });
+        const payload = { api_auth_enabled };
+        if (api_token) {
+          payload.api_token = api_token;
+        }
+        await API.post('/api/system', payload);
         if (api_auth_enabled && api_token) {
           localStorage.setItem('api_token', api_token);
         } else if (!api_auth_enabled) {
           localStorage.removeItem('api_token');
+          const tokenInput = document.getElementById('hw-api-token');
+          if (tokenInput) tokenInput.placeholder = '';
         }
         window.showToast('API Auth Settings Saved!', 'success');
       } catch (e) {
@@ -7546,11 +7565,17 @@ async function initSettings() {
 
     // API auth (top-level or nested in system)
     const authEn = (cfg.api_auth_enabled !== undefined) ? cfg.api_auth_enabled : (sys.api_auth_enabled ?? false);
-    const authTok = cfg.api_token || sys.api_token || '';
+    const authConfigured = (cfg.api_token_configured !== undefined) ? cfg.api_token_configured : (sys.api_token_configured ?? false);
+    const localTok = localStorage.getItem('api_token') || '';
     setVal('hw-api-auth', authEn ? 'true' : 'false');
-    setVal('hw-api-token', authTok);
-    if (authEn && authTok && !localStorage.getItem('api_token')) {
-      localStorage.setItem('api_token', authTok);
+    const tokenInput = document.getElementById('hw-api-token');
+    if (tokenInput) {
+      if (localTok) {
+        tokenInput.value = localTok;
+      } else {
+        tokenInput.value = '';
+        tokenInput.placeholder = authConfigured ? '••••••••' : '';
+      }
     }
   } catch (e) {
     console.error('Failed to load settings', e);
