@@ -151,8 +151,14 @@ try {
 
     } elseif ($system -eq "batocera") {
         $TargetDir = "/userdata/system/scripts"
-        Write-Host "Cleaning up previous install..."
-        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TargetDir/arcadematrix_mqtt.sh $TargetDir/arcadematrix_hook.sh /userdata/system/arcadematrix_daemon.py; rm -rf $TargetDir/game-selected $TargetDir/game-start $TargetDir/game-end $TargetDir/system-selected /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected; if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" | Out-Null
+        Write-Host "Cleaning up legacy daemons..."
+        Invoke-RemoteCommand $activeUser "pkill -f arcadematrix_daemon.py 2>/dev/null; pkill -f arcadematrix_mqtt.sh 2>/dev/null; true" | Out-Null
+        Write-Host "Removing legacy script files..."
+        Invoke-RemoteCommand $activeUser "rm -f /userdata/system/arcadematrix_daemon.py $TargetDir/arcadematrix_hook.sh $TargetDir/arcadematrix_mqtt.sh" | Out-Null
+        Write-Host "Removing legacy ES event directories..."
+        Invoke-RemoteCommand $activeUser "rm -rf $TargetDir/game-selected $TargetDir/game-start $TargetDir/game-end $TargetDir/system-selected" | Out-Null
+        Invoke-RemoteCommand $activeUser "rm -rf /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected" | Out-Null
+        Invoke-RemoteCommand $activeUser "if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" | Out-Null
         Invoke-RemoteCommand $activeUser "mkdir -p $TargetDir" | Out-Null
 
         Write-Host "Preparing Batocera event hook..."
@@ -165,9 +171,23 @@ try {
         Copy-ToRemote $activeUser $batoceraHookLocal "$TargetDir/arcadematrix_mqtt.sh"
         Invoke-RemoteCommand $activeUser "chmod 755 $TargetDir/arcadematrix_mqtt.sh" | Out-Null
 
+        Write-Host "Verifying hook deployment..."
+        $verifyOutput = & ssh @SshOpts "${activeUser}@${TargetIp}" "test -f $TargetDir/arcadematrix_mqtt.sh && wc -c < $TargetDir/arcadematrix_mqtt.sh && head -1 $TargetDir/arcadematrix_mqtt.sh" 2>$null
+        if ([string]::IsNullOrWhiteSpace($verifyOutput)) {
+            Write-Error "CRITICAL: Hook script was NOT written to the Batocera filesystem!"
+            exit 1
+        }
+        Write-Host "  Hook verified: $verifyOutput"
+
         Write-Host "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
-        $esCmd = 'for evt in game-selected system-selected game-start game-end; do dir="/userdata/system/configs/emulationstation/scripts/$evt"; mkdir -p "$dir"; printf ''#!/bin/sh\n/userdata/system/scripts/arcadematrix_mqtt.sh %s "$@"\n'' "$evt" > "$dir/arcadematrix_mqtt.sh"; chmod 755 "$dir/arcadematrix_mqtt.sh"; done; chmod -R 755 /userdata/system/configs/emulationstation/scripts'
-        Invoke-RemoteCommand $activeUser $esCmd | Out-Null
+        foreach ($evt in @("game-selected", "system-selected", "game-start", "game-end")) {
+            $esCmd = "mkdir -p /userdata/system/configs/emulationstation/scripts/$evt && printf '#!/bin/sh\n/userdata/system/scripts/arcadematrix_mqtt.sh $evt `"`$@`"`\n' > /userdata/system/configs/emulationstation/scripts/$evt/arcadematrix_mqtt.sh && chmod 755 /userdata/system/configs/emulationstation/scripts/$evt/arcadematrix_mqtt.sh"
+            Invoke-RemoteCommand $activeUser $esCmd | Out-Null
+        }
+        Invoke-RemoteCommand $activeUser "chmod -R 755 /userdata/system/configs/emulationstation/scripts" | Out-Null
+
+        Write-Host "Syncing filesystem..."
+        Invoke-RemoteCommand $activeUser "sync" | Out-Null
 
         Write-Host "Batocera one-shot event hooks successfully installed!"
 
