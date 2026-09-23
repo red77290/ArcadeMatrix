@@ -54,6 +54,14 @@ def main():
         os.path.join(PROJECT_ROOT, "src"),
     ]
 
+    for aj_path in [
+        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32dev", "ArduinoJson", "src"),
+        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32s3_waveshare", "ArduinoJson", "src"),
+    ]:
+        if os.path.exists(aj_path):
+            include_dirs.append(aj_path)
+            break
+
     cmd = [
         compiler,
         "-std=c++17",

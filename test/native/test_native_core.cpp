@@ -2,28 +2,14 @@
 #include "Arduino.h"
 #include "core/DisplayArbiter.h"
 #include "core/EngineRegistry.h"
+#include "core/TimingSafe.h"
+#include "core/ConfigLoader.h"
 #include "../../include/core/EngineContract.h"
 
 // =========================================================================
-// 1. WebServerAPI timingSafeCompare Implementation (Algorithm Verification)
+// 1. Minimal Mock Engine for Registry Tests
 // =========================================================================
 
-static bool timingSafeCompare(const String& a, const String& b) {
-    size_t lenA = a.length();
-    size_t lenB = b.length();
-    volatile uint8_t diff = (lenA == lenB) ? 0 : 1;
-    size_t maxLen = (lenA > lenB) ? lenA : lenB;
-    for (size_t i = 0; i < maxLen; ++i) {
-        char ca = (i < lenA) ? a[i] : 0;
-        char cb = (i < lenB) ? b[i] : 0;
-        diff |= (uint8_t)(ca ^ cb);
-    }
-    return diff == 0;
-}
-
-// =========================================================================
-// 2. Minimal Mock Engine for Registry Tests
-// =========================================================================
 
 class MockNativeEngine : public IEngine {
 public:
@@ -218,42 +204,14 @@ void test_arbiter_queue_saturation_and_dropped_counter(void) {
 }
 
 // =========================================================================
-// 6. ConfigSnapshot CRC32 & Triple-Buffer State Machine Tests
+// 5. ConfigSnapshot CRC32 & Triple-Buffer State Machine Tests
 // =========================================================================
 
-struct NativeSnapshot {
-    static constexpr uint32_t MAGIC_START = 0x5A5A5A5A;
-    static constexpr uint32_t MAGIC_END = 0xA5A5A5A5;
-
-    uint32_t magic_start = MAGIC_START;
-    uint32_t version = 1;
-    uint32_t crc32 = 0;
-    size_t numInstances = 0;
-    uint32_t magic_end = MAGIC_END;
-
-    static uint32_t calculateCRC32(uint32_t ver, size_t instances) {
-        uint32_t val[2] = { ver, static_cast<uint32_t>(instances) };
-        uint32_t crc = 0xFFFFFFFF;
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(val);
-        for (size_t i = 0; i < sizeof(val); ++i) {
-            crc ^= p[i];
-            for (int b = 0; b < 8; ++b) {
-                crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
-            }
-        }
-        return ~crc;
-    }
-
-    bool isValid() const {
-        return magic_start == MAGIC_START && magic_end == MAGIC_END && crc32 == calculateCRC32(version, numInstances);
-    }
-};
-
 void test_config_snapshot_crc32_and_magic(void) {
-    NativeSnapshot snap;
+    ConfigSnapshot snap;
     snap.version = 42;
-    snap.numInstances = 5;
-    snap.crc32 = NativeSnapshot::calculateCRC32(snap.version, snap.numInstances);
+    snap.instances.resize(5);
+    snap.crc32 = ConfigSnapshot::calculateCRC32(snap.version, snap.instances.size());
 
     TEST_ASSERT_TRUE(snap.isValid());
 
@@ -261,11 +219,17 @@ void test_config_snapshot_crc32_and_magic(void) {
     snap.version = 43;
     TEST_ASSERT_FALSE(snap.isValid());
 
-    // Restore version, corrupt magic
+    // Restore version, corrupt start magic
     snap.version = 42;
     snap.magic_start = 0x12345678;
     TEST_ASSERT_FALSE(snap.isValid());
+
+    // Restore start magic, corrupt end magic
+    snap.magic_start = ConfigSnapshot::MAGIC_START;
+    snap.magic_end = 0x87654321;
+    TEST_ASSERT_FALSE(snap.isValid());
 }
+
 
 void test_srsw_triple_buffer_linearizability(void) {
     // Emulate SRSW triple-buffer state machine with 3 slots
@@ -305,25 +269,26 @@ void test_srsw_triple_buffer_linearizability(void) {
 }
 
 // =========================================================================
-// 7. WebServerAPI timingSafeCompare Tests
+// 6. TimingSafe Comparison Tests (Production Algorithm)
 // =========================================================================
 
 void test_timing_safe_compare(void) {
     // Identical strings
-    TEST_ASSERT_TRUE(timingSafeCompare("secret_token_123", "secret_token_123"));
-    TEST_ASSERT_TRUE(timingSafeCompare("", ""));
+    TEST_ASSERT_TRUE(TimingSafe::compare("secret_token_123", "secret_token_123"));
+    TEST_ASSERT_TRUE(TimingSafe::compare("", ""));
 
     // Different lengths
-    TEST_ASSERT_FALSE(timingSafeCompare("secret", "secret_longer"));
-    TEST_ASSERT_FALSE(timingSafeCompare("secret_longer", "secret"));
-    TEST_ASSERT_FALSE(timingSafeCompare("", "token"));
-    TEST_ASSERT_FALSE(timingSafeCompare("token", ""));
+    TEST_ASSERT_FALSE(TimingSafe::compare("secret", "secret_longer"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("secret_longer", "secret"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("", "token"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("token", ""));
 
     // Same length, 1-byte difference
-    TEST_ASSERT_FALSE(timingSafeCompare("xecret_token_123", "secret_token_123"));
-    TEST_ASSERT_FALSE(timingSafeCompare("secret_t0ken_123", "secret_token_123"));
-    TEST_ASSERT_FALSE(timingSafeCompare("secret_token_124", "secret_token_123"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("xecret_token_123", "secret_token_123"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("secret_t0ken_123", "secret_token_123"));
+    TEST_ASSERT_FALSE(TimingSafe::compare("secret_token_124", "secret_token_123"));
 }
+
 
 // =========================================================================
 // 8. EngineRegistry Tests

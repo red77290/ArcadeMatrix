@@ -12,6 +12,7 @@
 #include <AsyncJson.h>
 #include "../core/SpiRamJsonDocument.h"
 #include "../core/ConfigLoader.h"
+#include "../core/TimingSafe.h"
 #include "../engines/MessageEngine.h"
 #include "../engines/MarqueeEngine.h"
 #include "../engines/VisualizerEngine.h"
@@ -73,7 +74,9 @@ public:
      * @param b Second string.
      * @return true if strings match, false otherwise.
      */
-    static bool timingSafeCompare(const String& a, const String& b);
+    static inline bool timingSafeCompare(const String& a, const String& b) {
+        return TimingSafe::compare(a, b);
+    }
 
     /**
      * @brief Checks whether the given HTTP request is authorized against the configured API token.
