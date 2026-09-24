@@ -12,6 +12,7 @@
 #include <AsyncJson.h>
 #include "../core/SpiRamJsonDocument.h"
 #include "../core/ConfigLoader.h"
+#include "../core/TimingSafe.h"
 #include "../engines/MessageEngine.h"
 #include "../engines/MarqueeEngine.h"
 #include "../engines/VisualizerEngine.h"
@@ -64,4 +65,24 @@ private:
      * @param doc The JsonDocument to serialize and send.
      */
     void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
+
+public:
+    /**
+     * @brief Timing-safe string comparison to prevent side-channel timing attacks.
+     * 
+     * @param a First string.
+     * @param b Second string.
+     * @return true if strings match, false otherwise.
+     */
+    static inline bool timingSafeCompare(const String& a, const String& b) {
+        return TimingSafe::compare(a, b);
+    }
+
+    /**
+     * @brief Checks whether the given HTTP request is authorized against the configured API token.
+     * 
+     * @param request The active HTTP request.
+     * @return true if authorized (or auth disabled), false otherwise.
+     */
+    static bool isRequestAuthorized(AsyncWebServerRequest* request);
 };

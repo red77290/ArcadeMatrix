@@ -2012,11 +2012,32 @@ select.input option {
 
   <script>
 // --- js/api.js ---
+try {
+  const _urlTok = new URLSearchParams(window.location.search).get('token');
+  if (_urlTok && _urlTok.trim().length > 0) {
+    localStorage.setItem('api_token', _urlTok.trim());
+  }
+} catch (_) {}
+
 function authHeaders(base = {}) {
   const headers = { ...base };
   const token = localStorage.getItem('api_token');
   if (token) headers['X-API-Token'] = token;
   return headers;
+}
+
+function handleUnauthorized() {
+  const cur = localStorage.getItem('api_token') || '';
+  const promptMsg = (typeof t === 'function') ? t('api_auth_prompt', 'API Token required or invalid. Enter your API Token:') : 'API Token required or invalid. Enter your API Token:';
+  const tok = prompt(promptMsg, cur);
+  if (tok !== null) {
+    if (tok.trim().length > 0) {
+      localStorage.setItem('api_token', tok.trim());
+      if (typeof window.showToast === 'function') window.showToast('API Token saved', 'info');
+    } else {
+      localStorage.removeItem('api_token');
+    }
+  }
 }
 
 // The ESP32 AsyncWebServer has a very small socket pool: a request that never settles keeps a
@@ -2035,6 +2056,10 @@ function withTimeout(ms = API_TIMEOUT_MS) {
 const API = {
   async get(url, timeoutMs = API_TIMEOUT_MS) {
     const res = await fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error(`HTTP Error 401: Unauthorized`);
+    }
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     const text = await res.text();
     try {
@@ -2051,6 +2076,10 @@ const API = {
       body: data ? JSON.stringify(data) : undefined,
       signal: withTimeout(timeoutMs),
     });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error(`HTTP Error 401: Unauthorized`);
+    }
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     const text = await res.text();
     try {
@@ -2066,6 +2095,10 @@ const API = {
 
   async delete(url) {
     const res = await fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error(`HTTP Error 401: Unauthorized`);
+    }
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -2383,6 +2416,7 @@ const translations = {
     api_auth_title: "API Authentication",
     api_auth_enable: "Require Auth for API",
     api_token: "API Token",
+    api_auth_prompt: "API Token required or invalid. Enter your API Token:",
     api_save_btn: "Save API Auth",
     ota_online_title: "🌐 Online Update (GitHub Releases)",
     ota_online_desc: "Check GitHub Releases for new updates matching your device architecture and update automatically.",
@@ -2872,6 +2906,7 @@ const translations = {
     api_auth_title: "Authentification API",
     api_auth_enable: "Authentification API requise",
     api_token: "Jeton API (Token)",
+    api_auth_prompt: "Jeton API requis ou invalide. Entrez votre jeton API :",
     api_save_btn: "Enregistrer l'authentification API",
     ota_online_title: "🌐 Mise à jour en ligne (GitHub Releases)",
     ota_online_desc: "Vérifie les mises à jour sur GitHub Releases selon votre matériel et met à jour automatiquement.",
@@ -3361,6 +3396,7 @@ const translations = {
     api_auth_title: "Autenticación API",
     api_auth_enable: "Requerir autenticación para la API",
     api_token: "Token de API",
+    api_auth_prompt: "Token API requerido o inválido. Ingrese su token API:",
     api_save_btn: "Guardar autenticación API",
     ota_online_title: "🌐 Actualización en línea (GitHub Releases)",
     ota_online_desc: "Comprueba si hay actualizaciones en GitHub Releases y actualiza automáticamente.",
@@ -6713,7 +6749,13 @@ function initGifLibrary() {
   const toast = (m, kind) => (window.showToast ? window.showToast(m, kind) : console.log(kind, m));
   const tr = (k, f, v) => { let s = (typeof t === 'function') ? t(k, f) : f; if (v) Object.keys(v).forEach(x => { s = s.split('{' + x + '}').join(v[x]); }); return s; };
   const headers = () => { const h = {}; const tok = localStorage.getItem('api_token'); if (tok) h['X-API-Token'] = tok; return h; };
-  const api = async (url, opts) => { const r = await fetch(url, Object.assign({ headers: headers() }, opts || {})); let b = {}; try { b = await r.json(); } catch (_) {} if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status)); return b; };
+  const api = async (url, opts) => {
+    const r = await fetch(url, Object.assign({ headers: headers() }, opts || {}));
+    if (r.status === 401 && typeof handleUnauthorized === 'function') handleUnauthorized();
+    let b = {}; try { b = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status));
+    return b;
+  };
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const enc = encodeURIComponent;
   const fmtBytes = (b) => (b === undefined || b === null) ? '' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? Math.round(b / 1024) + ' KB' : b + ' B';
@@ -7296,9 +7338,20 @@ function initNetworkSettings() {
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', async () => {
       const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
-      const api_token = document.getElementById('hw-api-token').value;
+      const api_token = document.getElementById('hw-api-token').value.trim();
       try {
-        await API.post('/api/system', { api_auth_enabled, api_token });
+        const payload = { api_auth_enabled };
+        if (api_token) {
+          payload.api_token = api_token;
+        }
+        await API.post('/api/system', payload);
+        if (api_auth_enabled && api_token) {
+          localStorage.setItem('api_token', api_token);
+        } else if (!api_auth_enabled) {
+          localStorage.removeItem('api_token');
+          const tokenInput = document.getElementById('hw-api-token');
+          if (tokenInput) tokenInput.placeholder = '';
+        }
         window.showToast('API Auth Settings Saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save API Auth Settings', 'error');
@@ -7510,9 +7563,20 @@ async function initSettings() {
     setVal('hw-mqtt-user', mqtt.user || '');
     setVal('hw-mqtt-pass', mqtt.pass || '');
 
-    // API auth (top-level)
-    setVal('hw-api-auth', cfg.api_auth_enabled ? 'true' : 'false');
-    setVal('hw-api-token', cfg.api_token || '');
+    // API auth (top-level or nested in system)
+    const authEn = (cfg.api_auth_enabled !== undefined) ? cfg.api_auth_enabled : (sys.api_auth_enabled ?? false);
+    const authConfigured = (cfg.api_token_configured !== undefined) ? cfg.api_token_configured : (sys.api_token_configured ?? false);
+    const localTok = localStorage.getItem('api_token') || '';
+    setVal('hw-api-auth', authEn ? 'true' : 'false');
+    const tokenInput = document.getElementById('hw-api-token');
+    if (tokenInput) {
+      if (localTok) {
+        tokenInput.value = localTok;
+      } else {
+        tokenInput.value = '';
+        tokenInput.placeholder = authConfigured ? '••••••••' : '';
+      }
+    }
   } catch (e) {
     console.error('Failed to load settings', e);
   }

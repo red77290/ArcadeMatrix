@@ -188,9 +188,9 @@ elif [ "$SYSTEM" = "batocera" ]; then
     HOOK_FILE="$TARGET_DIR/arcadematrix_mqtt.sh"
 
     # Clean up any legacy daemons or broken shims
-    pkill -f arcadematrix_daemon.py || true
-    pkill -f arcadematrix_mqtt.sh || true
-    rm -f /userdata/system/arcadematrix_daemon.py "$TARGET_DIR/arcadematrix_hook.sh"
+    pkill -f arcadematrix_daemon.py 2>/dev/null || true
+    pkill -f arcadematrix_mqtt.sh 2>/dev/null || true
+    rm -f /userdata/system/arcadematrix_daemon.py "$TARGET_DIR/arcadematrix_hook.sh" "$TARGET_DIR/arcadematrix_mqtt.sh"
     rm -rf "$TARGET_DIR/game-selected" "$TARGET_DIR/game-start" "$TARGET_DIR/game-end" "$TARGET_DIR/system-selected"
     rm -rf /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected
     if [ -f /userdata/system/custom.sh ]; then

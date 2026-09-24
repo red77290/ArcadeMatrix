@@ -83,13 +83,32 @@ bool ClockEngine::loop() {
     return true;
 }
 
+void ClockEngine::updateFormatMode(const EngineConfig* config) {
+    if (!config) {
+        _formatMode = ClockFormatMode::SYSTEM;
+        return;
+    }
+    String fmt = config->getString("clock_format", "system");
+    if (fmt.isEmpty() || fmt.equalsIgnoreCase("system")) {
+        fmt = config->getString("format", "system");
+    }
+    if (fmt.indexOf("%I") >= 0) {
+        _formatMode = ClockFormatMode::FORCE_12H;
+    } else if (fmt.indexOf("%H") >= 0) {
+        _formatMode = ClockFormatMode::FORCE_24H;
+    } else {
+        _formatMode = ClockFormatMode::SYSTEM;
+    }
+}
+
 // =========================================================
 // IEngine Implementation
 // =========================================================
 
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrixDisplay = context->getMatrix();
+    matrixDisplay = context ? context->getMatrix() : nullptr;
     currentConfig = config;
+    updateFormatMode(config);
     int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;
     setTheme(static_cast<PublisherTheme>(theme), true, config);
     return EngineError::OK;
@@ -103,6 +122,7 @@ void ClockEngine::update(EngineContext* context) {
     if (configDirty) {
         configDirty = false;
         if (currentConfig) {
+            updateFormatMode(currentConfig);
             int theme = currentConfig->getInt("clock_theme", currentConfig->getInt("theme", 0));
             setTheme(static_cast<PublisherTheme>(theme), true, currentConfig);
         }
@@ -111,13 +131,15 @@ void ClockEngine::update(EngineContext* context) {
     if (context) {
         struct tm timeinfo;
         context->getSystemTime(&timeinfo);
-        extern ConfigLoader config;
-        bool is24h = config.acquireSnapshot()->system.format24h;
-        if (currentConfig) {
-            String fmt = currentConfig->getString("clock_format", "system");
-            if (fmt.isEmpty() || fmt.equalsIgnoreCase("system")) fmt = currentConfig->getString("format", "system");
-            if (fmt.indexOf("%I") >= 0) is24h = false;
-            else if (fmt.indexOf("%H") >= 0) is24h = true;
+        bool is24h = true;
+        if (_formatMode == ClockFormatMode::FORCE_12H) {
+            is24h = false;
+        } else if (_formatMode == ClockFormatMode::FORCE_24H) {
+            is24h = true;
+        } else {
+            extern ConfigLoader config;
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            is24h = guard.get().system.format24h;
         }
         int h = timeinfo.tm_hour;
         if (!is24h) {
@@ -147,6 +169,7 @@ void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentConfig = config;
         configDirty = true;
+        updateFormatMode(config);
         int theme = config->getInt("clock_theme", config->getInt("theme", 0));
         setTheme(static_cast<PublisherTheme>(theme), true, config);
     }

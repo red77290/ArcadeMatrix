@@ -108,16 +108,103 @@ The sync daemon can be installed on the console (Recalbox, Batocera, RetroPie) o
 
 ## 6. API Security (`api_auth_enabled` / `api_token`)
 
-These two top-level keys secure the write/administrative endpoints.
+These settings control whether write/mutating endpoints (reboots, brightness adjustments, configuration saves, engine modifications, OTA updates, and GIF uploads) require a valid secret authentication token.
 
-| Key | Type | Description |
-| :--- | :--- | :--- |
-| `api_auth_enabled` | `bool` | If `true`, sensitive endpoints require the `X-API-Token` header to match `api_token`. |
-| `api_token` | `String` | Secret token (auto-generated on first boot). Sent by the Web UI as `X-API-Token`. |
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `api_auth_enabled` | `bool` | `false` | When `false`, all endpoints are accessible without authentication. When `true`, mutating endpoints require a matching token. |
+| `api_token` | `String` | `""` | The secret authentication token. Write-only: never exposed by `GET` requests (which return `api_token_configured: true`). |
 
-Disabled by default so the bundled Web UI works out of the box. Enable it if the device is reachable beyond a trusted LAN.
+> [!NOTE]
+> Public read endpoints (`/api/status`, `/api/metrics`, `/api/health`, `/api/i18n/current`) remain unblocked regardless of authentication state so local dashboards and monitoring tools continue to operate smoothly.
+
+### 6.1 How to Enable or Disable Authentication
+
+#### Option A: Via the Web Interface (Recommended)
+1. Open the Web UI in your browser (`http://arcadematrix.local` or your device's IP address).
+2. Navigate to the **System** tab (`sys-tab-hardware`) and locate the **API Authentication** card.
+3. Set **Require Auth for API** to **Enabled**.
+4. Enter your desired secret token into the **API Token** field (see below for suggestions).
+5. Click **Save API Auth**. The token is saved immediately to `/config.json` on the SD card, and automatically cached in your browser's `localStorage`.
+6. To **disable** authentication at any time, simply switch the selector to **Disabled** and click **Save API Auth**.
+
+#### Option B: Via `config.json` on the SD card
+Edit `/config.json` directly and configure the `system` block:
+```json
+{
+  "system": {
+    "api_auth_enabled": true,
+    "api_token": "my_super_secret_token_123"
+  }
+}
+```
+
+### 6.2 How to Create a Secure Token
+You can use any alphanumeric string as your token. For maximum security, generate a random 32-character hex token in your terminal:
+```bash
+# On Linux / macOS:
+openssl rand -hex 16
+# Example output: a3f89e2b109c4d5e7812bc34567890ef
+```
+Alternatively, choose any strong passphrase you can remember.
+
+### 6.3 How to Connect to the Web UI as a New User
+
+When API security is enabled (`api_auth_enabled: true`), a new user or a fresh browser connects seamlessly and intuitively:
+
+1. **Free Initial Web UI Loading**:
+   The web page (`GET /`, `GET /index.html`) and public read-only telemetry endpoints (clock display, hardware status, version, metrics) are always accessible without authentication. The page loads normally on any new device.
+
+2. **Three Ways to Authenticate a New Browser**:
+
+   * **Option 1: Automatic on First Action (Interactive Dialog)**
+     As soon as the new user triggers a mutating action (adjusting brightness, switching clocks, modifying colors, saving settings), the ESP32 returns `401 Unauthorized`.
+     The Web UI intercepts this 401 response and immediately presents an input prompt:
+     > `API Token required or invalid. Enter your API Token:`
+     The user pastes the secret token. The Web UI persists it in browser storage (`localStorage.getItem('api_token')`). All subsequent actions are automatically authorized without prompting again.
+
+   * **Option 2: Proactive Entry in System Settings**
+     Without waiting for an action to fail, the user can navigate to:
+     **System** ➔ **Settings** tab ➔ **API Authentication** card.
+     Enter the token into the **API Token** field and click **Save API Auth**. The token is saved in the browser and verified against the device.
+
+   * **Option 3: Direct Link / Bookmark (*Magic Link*)**
+     An administrator can share or bookmark a direct link containing the token:
+     `http://arcadematrix.local/?token=my_super_secret_token_123`
+     Upon loading, the Web UI automatically extracts the `token` parameter and saves it to `localStorage`. The user is immediately authenticated with zero popup dialogs.
+
+* **Write-Only Security**: The ESP32 never transmits the secret token back over `GET /api/system` or `GET /api/settings` (it returns `"api_token_configured": true`), completely protecting the secret from local network inspection.
+* **Updating or Clearing the Token**: Entering a new valid token in the prompt or Settings tab overrides the old value. Clearing the token and saving turns off authentication.
+
+### 6.4 Calling the REST API from External Scripts & Home Assistant
+When `api_auth_enabled` is `true`, external callers can authenticate using either standard headers or a URL query parameter:
+
+1. **Recommended: `X-API-Token` Header**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/brightness \
+     -H "Content-Type: application/json" \
+     -H "X-API-Token: my_super_secret_token_123" \
+     -d '{"brightness": 80}'
+   ```
+
+2. **Standard Bearer Header (`Authorization`)**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/restart \
+     -H "Authorization: Bearer my_super_secret_token_123"
+   ```
+
+3. **Query Parameter (Quick Testing / Automation Shortcuts)**
+   ```bash
+   curl -X POST "http://arcadematrix.local/api/system/restart?token=my_super_secret_token_123"
+   ```
+
+### 6.5 Anti-Lockout Protection
+To prevent users from being permanently locked out of their devices:
+* If `api_auth_enabled` is set to `true` but `api_token` is empty (`""`), the firmware treats authentication as inactive and allows access.
+* Timing attacks against token verification are prevented using constant-time comparison (`TimingSafe::compare`).
 
 ---
+
 
 ## 7. Engines: `"instances"` & `"rotation"`
 

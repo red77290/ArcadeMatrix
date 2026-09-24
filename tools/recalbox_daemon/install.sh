@@ -188,31 +188,48 @@ if [ "$SYSTEM" = "recalbox" ]; then
     ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod +x '$TARGET_DIR/arcadematrix_launcher(permanent).sh'" || true
 
     echo "Rebooting $TARGET_IP to apply changes..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "sleep 1 && reboot" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "sync && sleep 1 && reboot" || true
 
 elif [ "$SYSTEM" = "batocera" ]; then
     TARGET_DIR="/userdata/system/scripts"
-    echo "Cleaning up any previous install..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f arcadematrix_daemon.py || true; pkill -f arcadematrix_mqtt.sh || true; rm -f $TARGET_DIR/arcadematrix_mqtt.sh $TARGET_DIR/arcadematrix_hook.sh /userdata/system/arcadematrix_daemon.py; rm -rf $TARGET_DIR/game-selected $TARGET_DIR/game-start $TARGET_DIR/game-end $TARGET_DIR/system-selected /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected; if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" || true
+    echo "Cleaning up legacy daemons..."
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "pkill -f arcadematrix_daemon.py 2>/dev/null; pkill -f arcadematrix_mqtt.sh 2>/dev/null; true" || true
+    echo "Removing legacy script files..."
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "rm -f /userdata/system/arcadematrix_daemon.py $TARGET_DIR/arcadematrix_hook.sh $TARGET_DIR/arcadematrix_mqtt.sh" || true
+    echo "Removing legacy ES event directories..."
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "rm -rf $TARGET_DIR/game-selected $TARGET_DIR/game-start $TARGET_DIR/game-end $TARGET_DIR/system-selected" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "rm -rf /userdata/system/configs/emulationstation/scripts/game-selected /userdata/system/configs/emulationstation/scripts/game-start /userdata/system/configs/emulationstation/scripts/game-end /userdata/system/configs/emulationstation/scripts/system-selected" || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "if [ -f /userdata/system/custom.sh ]; then sed -i '/arcadematrix_daemon.py/d' /userdata/system/custom.sh; fi" || true
     ssh_run "$ACTIVE_USER" "$PASSWORD" "mkdir -p $TARGET_DIR" || true
 
     echo "Preparing Batocera event hook..."
     sed -e "s/{{BROKER}}/$BROKER_IP/g" "$SCRIPT_DIR/arcadematrix_mqtt_batocera.sh" > "$TMP_DIR/arcadematrix_mqtt.sh"
 
     echo "Uploading hook to $TARGET_DIR/arcadematrix_mqtt.sh..."
-    scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh" || { echo "SCP failed!"; exit 1; }
+    scp_run "$ACTIVE_USER" "$PASSWORD" "$TMP_DIR/arcadematrix_mqtt.sh" "$TARGET_DIR/arcadematrix_mqtt.sh" || { echo "Upload failed!"; exit 1; }
     ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod 755 $TARGET_DIR/arcadematrix_mqtt.sh" || true
 
+    echo "Verifying hook deployment..."
+    VERIFY=$(ssh_run "$ACTIVE_USER" "$PASSWORD" "test -f $TARGET_DIR/arcadematrix_mqtt.sh && wc -c < $TARGET_DIR/arcadematrix_mqtt.sh && head -1 $TARGET_DIR/arcadematrix_mqtt.sh" 2>/dev/null || true)
+    if [ -z "$VERIFY" ]; then
+        echo "ERROR: Hook script was NOT written to the Batocera filesystem!" >&2
+        exit 1
+    fi
+    echo "  Hook verified: $VERIFY"
+
     echo "Configuring EmulationStation UI hooks (game-selected, system-selected)..."
-    ssh_run "$ACTIVE_USER" "$PASSWORD" '
     for evt in game-selected system-selected game-start game-end; do
-        dir="/userdata/system/configs/emulationstation/scripts/$evt"
-        mkdir -p "$dir"
-        printf "#!/bin/sh\n/userdata/system/scripts/arcadematrix_mqtt.sh %s \"\$@\"\n" "$evt" > "$dir/arcadematrix_mqtt.sh"
-        chmod 755 "$dir/arcadematrix_mqtt.sh"
+        ssh_run "$ACTIVE_USER" "$PASSWORD" "
+            mkdir -p /userdata/system/configs/emulationstation/scripts/$evt && \
+            printf '#!/bin/sh\n/userdata/system/scripts/arcadematrix_mqtt.sh $evt \"\$@\"\n' \
+            > /userdata/system/configs/emulationstation/scripts/$evt/arcadematrix_mqtt.sh && \
+            chmod 755 /userdata/system/configs/emulationstation/scripts/$evt/arcadematrix_mqtt.sh
+        " || true
     done
-    chmod -R 755 /userdata/system/configs/emulationstation/scripts
-    ' || true
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "chmod -R 755 /userdata/system/configs/emulationstation/scripts" || true
+
+    echo "Syncing filesystem..."
+    ssh_run "$ACTIVE_USER" "$PASSWORD" "sync" || true
 
     echo "Batocera one-shot event hooks successfully installed!"
 
