@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include <ArduinoJson.h>
 #include "SDUtils.h"
+#include "Core0Lifecycle.h"
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -34,7 +35,28 @@ ConfigSnapshotGuard ConfigLoader::acquireSnapshot() const {
 void ConfigLoader::releaseSnapshot(uint8_t slot) const {
     if (slot < 3) {
         _readers[slot].fetch_sub(1, std::memory_order_release);
+        if (_publishPending.load(std::memory_order_acquire)) {
+            Core0LifecycleDispatcher::instance().notify();
+        }
     }
+}
+
+bool ConfigLoader::checkDeferredPublish() {
+    if (xPortGetCoreID() != 0) {
+        return false;
+    }
+    if (!_publishPending.load(std::memory_order_acquire)) {
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return false;
+    }
+    if (!_publishPending.load(std::memory_order_acquire)) {
+        return false;
+    }
+    publishSnapshot_locked();
+    return true;
 }
 
 void ConfigLoader::publishSnapshot() {
@@ -79,8 +101,8 @@ void ConfigLoader::publishSnapshot_locked() {
         s.config = inst.config;
         snap.instances.push_back(s);
     }
-    // Compute crc32 structural checksum for linearizability verification
-    snap.crc32 = (newVer ^ 0x5A5A5A5A) + (uint32_t)instances.size();
+    // Compute real CRC32 structural checksum for linearizability verification
+    snap.crc32 = ConfigSnapshot::calculateCRC32(newVer, instances.size());
     snap.magic_end = ConfigSnapshot::MAGIC_END;
 
     // Publish snapshot atomically
@@ -170,6 +192,11 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
+    system.idle_fighter_enabled = true;
+    system.idle_fighter_interval = 60;
+    system.idle_fighter_speed = 100;
+    system.api_auth_enabled = false;
+    system.api_token = "";
     publishSnapshot_locked();
 }
 
@@ -201,6 +228,8 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         system.idle_fighter_enabled = sys["idle_fighter_enabled"] | system.idle_fighter_enabled;
         system.idle_fighter_interval = sys["idle_fighter_interval"] | system.idle_fighter_interval;
         system.idle_fighter_speed = sys["idle_fighter_speed"] | system.idle_fighter_speed;
+        system.api_auth_enabled = sys["api_auth_enabled"] | system.api_auth_enabled;
+        if (sys.containsKey("api_token")) system.api_token = sys["api_token"].as<String>();
     }
 
     JsonObjectConst disp;
@@ -389,6 +418,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     sysObj["idle_fighter_enabled"] = system.idle_fighter_enabled;
     sysObj["idle_fighter_interval"] = system.idle_fighter_interval;
     sysObj["idle_fighter_speed"] = system.idle_fighter_speed;
+    sysObj["api_auth_enabled"] = system.api_auth_enabled;
+    sysObj["api_token"] = system.api_token;
 
     JsonObject dispObj = doc.createNestedObject("display");
     dispObj["width"] = matrix.width;

@@ -48,6 +48,15 @@ public:
      */
     void processRetirements();
 
+    /**
+     * @brief Wake up Core 0 lifecycle dispatcher worker to process retirements or deferred publication.
+     */
+    void notify() {
+        if (_lifecycleTaskHandle) {
+            xTaskNotifyGive(_lifecycleTaskHandle);
+        }
+    }
+
     size_t getQuarantineCount() const { return _quarantineCount; }
 
 private:

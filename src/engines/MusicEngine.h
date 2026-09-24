@@ -38,7 +38,7 @@ private:
     int _marqueeSpeed;
 
     // Runtime state cache
-    AudioPlaybackState _cachedState;
+    AudioPlaybackStatePOD _cachedState;
     uint32_t _cachedGeneration;
     int _marqueeOffset;
     uint32_t _lastMarqueeTick;
@@ -47,8 +47,8 @@ private:
 
     void applyConfig(const EngineConfig* config);
     void renderIdle(MatrixPanel_I2S_DMA* display, int w, int h);
-    void renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackState& state);
-    void renderMarqueeText(MatrixPanel_I2S_DMA* display, const String& text, int y, int clipMinX, int clipMaxX, uint16_t color);
+    void renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackStatePOD& state);
+    void renderMarqueeText(MatrixPanel_I2S_DMA* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color);
     void renderVisualizerBars(MatrixPanel_I2S_DMA* display, int x, int y, int width, int height, uint16_t color);
     uint16_t getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* display);
 };

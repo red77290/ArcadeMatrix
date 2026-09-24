@@ -338,13 +338,13 @@ ArtworkSnapshot ArtworkService::getSnapshot() const {
     return snap;
 }
 
-const uint16_t* ArtworkService::getArtworkBitmap(const String& artworkId, int& width, int& height) {
-    if (artworkId.length() <= 4 || !artworkId.startsWith("art_")) {
+const uint16_t* ArtworkService::getArtworkBitmap(const char* artworkId, int& width, int& height) {
+    if (!artworkId || strlen(artworkId) <= 4 || strncmp(artworkId, "art_", 4) != 0) {
         width = 0;
         height = 0;
         return nullptr;
     }
-    uint32_t reqTs = (uint32_t)strtoul(artworkId.c_str() + 4, nullptr, 10);
+    uint32_t reqTs = (uint32_t)strtoul(artworkId + 4, nullptr, 10);
     if (reqTs == 0 || reqTs != _currentArtworkTimestamp.load(std::memory_order_acquire)) {
         width = 0;
         height = 0;
@@ -359,4 +359,8 @@ const uint16_t* ArtworkService::getArtworkBitmap(const String& artworkId, int& w
     width = _width.load(std::memory_order_relaxed);
     height = _height.load(std::memory_order_relaxed);
     return buf;
+}
+
+const uint16_t* ArtworkService::getArtworkBitmap(const String& artworkId, int& width, int& height) {
+    return getArtworkBitmap(artworkId.c_str(), width, height);
 }

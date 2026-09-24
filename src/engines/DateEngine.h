@@ -92,8 +92,14 @@ private:
     
     int matrixW;
     int matrixH;
+
+    int m_lastMday = -1;
+    int m_lastMon = -1;
+    int m_lastYear = -1;
+    bool m_dateDirty = true;
     
     void applyThemeSettings();
+    void reformatDate(const struct tm* timeinfo);
 };
 
 class DateEngineDescriptorHandler : public IEngineDescriptorHandler {

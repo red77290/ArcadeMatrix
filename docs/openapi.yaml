@@ -6,6 +6,10 @@ info:
 servers:
   - url: http://ArcadeMatrix.local
     description: Default local mDNS address (or use the device's assigned IP)
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+  - {}
 tags:
   - name: System
     description: System status and power controls
@@ -286,6 +290,8 @@ paths:
                       idle_fighter_enabled: { type: boolean, example: false }
                       idle_fighter_interval: { type: integer, example: 30 }
                       idle_fighter_speed: { type: integer, example: 100, minimum: 25, maximum: 200 }
+                      api_auth_enabled: { type: boolean, example: false, description: "Whether API token authentication is enforced for mutating endpoints" }
+                      api_token_configured: { type: boolean, example: false, description: "Whether a non-empty API token is set (write-only, secret token never exposed)" }
                   matrix:
                     type: object
                     properties:
@@ -1689,4 +1695,17 @@ paths:
           description: Missing download_url or invalid URL scheme.
         '409':
           description: OTA update already in progress.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Optional API token configured in System Settings passed via Authorization header (Bearer <token>).
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Token
+      description: Optional API token configured in System Settings passed via X-API-Token header.
+
 

@@ -1,6 +1,7 @@
 # PlatformIO
 .pio/
 .vscode/
+build/
 
 # Build and OS files
 .DS_Store

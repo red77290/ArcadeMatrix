@@ -108,16 +108,103 @@ Le démon de synchronisation peut être installé sur la console (Recalbox, Bato
 
 ## 6. Sécurité de l'API (`api_auth_enabled` / `api_token`)
 
-Ces deux clés de premier niveau sécurisent les endpoints d'écriture et d'administration.
+Ces paramètres déterminent si les points d'entrée (endpoints) mutatifs et administratifs (redémarrages, réglages de luminosité, sauvegarde de configuration, modifications des moteurs, mises à jour OTA et téléversement de GIFs) exigent un jeton d'authentification secret valide.
 
-| Clé | Type | Description |
-| :--- | :--- | :--- |
-| `api_auth_enabled` | `bool` | Si `true`, les endpoints sensibles exigent que l'en-tête `X-API-Token` corresponde à `api_token`. |
-| `api_token` | `String` | Jeton secret (généré automatiquement au premier démarrage). Envoyé par la Web UI comme `X-API-Token`. |
+| Clé | Type | Valeur par défaut | Description |
+| :--- | :--- | :--- | :--- |
+| `api_auth_enabled` | `bool` | `false` | Si `false`, tous les endpoints sont accessibles librement sans mot de passe. Si `true`, les endpoints sensibles requièrent un jeton valide. |
+| `api_token` | `String` | `""` | Le jeton secret d'authentification. En écriture seule (*write-only*) : jamais exposé par les requêtes `GET` (qui renvoient `api_token_configured: true`). |
 
-Désactivé par défaut pour que la Web UI intégrée fonctionne immédiatement. Activez-le si l'appareil est accessible au-delà d'un LAN de confiance.
+> [!NOTE]
+> Les endpoints publics de télémétrie en lecture seule (`/api/status`, `/api/metrics`, `/api/health`, `/api/i18n/current`) restent toujours accessibles sans authentification, garantissant le fonctionnement continu de vos dashboards et sondes de supervision.
+
+### 6.1 Comment Activer ou Désactiver l'Authentification
+
+#### Option A : Via l'Interface Web (Recommandé)
+1. Ouvrez la WebUI dans votre navigateur (`http://arcadematrix.local` ou l'adresse IP de votre appareil).
+2. Rendez-vous dans l'onglet **Système** (`sys-tab-hardware`) et repérez la carte **Authentification API**.
+3. Réglez **Exiger l'authentification API** sur **Activé** (`Enabled`).
+4. Saisissez le jeton secret de votre choix dans le champ **Jeton API (Token)**.
+5. Cliquez sur **Enregistrer l'auth API**. Le jeton est enregistré immédiatement dans `/config.json` sur la carte SD et mis en cache automatiquement dans le `localStorage` de votre navigateur.
+6. Pour **désactiver** l'authentification à tout moment, passez simplement le sélecteur sur **Désactivé** (`Disabled`) et cliquez sur **Enregistrer l'auth API**.
+
+#### Option B : Via le fichier `config.json` sur la carte SD
+Éditez directement `/config.json` et configurez le bloc `system` :
+```json
+{
+  "system": {
+    "api_auth_enabled": true,
+    "api_token": "mon_super_token_secret_123"
+  }
+}
+```
+
+### 6.2 Comment Créer un Jeton Sécurisé
+Vous pouvez utiliser n'importe quelle chaîne alphanumérique. Pour une sécurité optimale, générez un jeton aléatoire de 32 caractères hexadécimaux dans votre terminal :
+```bash
+# Sous Linux / macOS :
+openssl rand -hex 16
+# Exemple de résultat : a3f89e2b109c4d5e7812bc34567890ef
+```
+Vous pouvez également choisir une phrase secrète robuste facile à retenir.
+
+### 6.3 Comment se Connecter à la WebUI en Tant Que Nouvel Utilisateur
+
+Lorsque la sécurité API est activée (`api_auth_enabled: true`), un nouvel utilisateur ou un nouveau navigateur accède à l'appareil de manière transparente et intuitive :
+
+1. **Accès Initial Libre à la WebUI** :
+   L'interface web (`GET /`, `GET /index.html`) et les endpoints de consultation en lecture seule (télémétrie, état matériel, horloge) restent accessibles librement. La page se charge donc normalement sur n'importe quel nouvel appareil.
+
+2. **Trois Façons d'Authentifier un Nouveau Navigateur** :
+
+   * **Option 1 : Automatique lors de la 1ère Action (Boîte de dialogue interactive)**
+     Dès que le nouvel utilisateur tente une action modifiant l'état (changer la luminosité, basculer d'horloge, modifier une couleur, sauvegarder un réglage), l'ESP32 retourne une réponse `401 Unauthorized`.
+     L'interface Web intercepte automatiquement ce code 401 et affiche une invite de saisie (*prompt*) :
+     > `Jeton API requis ou invalide. Entrez votre jeton API :`
+     L'utilisateur colle son jeton secret. L'UI le mémorise immédiatement dans le `localStorage` du navigateur (`api_token`). Toutes les actions suivantes sont alors automatiquement autorisées sans plus jamais rien ressaisir.
+
+   * **Option 2 : Saisie Préalable dans les Paramètres Système**
+     Sans attendre une erreur 401, l'utilisateur peut se rendre directement dans :
+     **Système** ➔ onglet **Paramètres** ➔ carte **Authentification API**.
+     Il lui suffit de saisir le jeton dans le champ **Jeton API (Token)** et de cliquer sur **Enregistrer l'auth API**. Le jeton est enregistré dans le navigateur et validé auprès de l'appareil.
+
+   * **Option 3 : Lien Direct / Favori URL (*Magic Link*)**
+     Un administrateur peut partager ou mettre en favori une URL intégrant le paramètre `?token=` :
+     `http://arcadematrix.local/?token=mon_super_token_secret_123`
+     Dès l'ouverture de la page, la WebUI extrait automatiquement le paramètre `token` et le stocke dans le `localStorage` du navigateur. L'utilisateur est instantanément authentifié pour toute sa navigation future, sans aucune boîte de dialogue requise.
+
+* **Sécurité Écriture Seule (*Write-Only*)** : L'ESP32 ne renvoie jamais le jeton secret lors des requêtes `GET /api/system` ou `GET /api/settings` (il indique seulement `"api_token_configured": true`), éliminant tout risque d'espionnage réseau.
+* **Modification ou Suppression du Jeton** : Si un jeton erroné a été saisi, soumettre le jeton valide dans l'invite ou dans les Paramètres écrase l'ancienne valeur. Vider le champ et enregistrer désactive l'authentification.
+
+### 6.4 Appel de l'API REST depuis des Scripts Externes ou Home Assistant
+Lorsque `api_auth_enabled` est `true`, les clients externes s'authentifient via les en-têtes HTTP standards ou un paramètre d'URL :
+
+1. **Recommandé : En-tête `X-API-Token`**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/brightness \
+     -H "Content-Type: application/json" \
+     -H "X-API-Token: mon_super_token_secret_123" \
+     -d '{"brightness": 80}'
+   ```
+
+2. **En-tête Bearer Standard (`Authorization`)**
+   ```bash
+   curl -X POST http://arcadematrix.local/api/system/restart \
+     -H "Authorization: Bearer mon_super_token_secret_123"
+   ```
+
+3. **Paramètre Query d'URL (Tests Rapides / Raccourcis)**
+   ```bash
+   curl -X POST "http://arcadematrix.local/api/system/restart?token=mon_super_token_secret_123"
+   ```
+
+### 6.5 Protection Anti-Verrouillage (*Anti-Lockout*)
+Afin de ne jamais vous retrouver bloqué hors de votre horloge :
+* Si `api_auth_enabled` est réglé sur `true` mais que `api_token` est vide (`""`), le firmware considère la protection comme inactive et autorise l'accès.
+* La vérification du jeton s'effectue en temps constant (`TimingSafe::compare`), éliminant les attaques par mesure de latence réseau (*timing attacks*).
 
 ---
+
 
 ## 7. Moteurs : `"instances"` & `"rotation"`
 

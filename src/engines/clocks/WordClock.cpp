@@ -21,20 +21,39 @@ WordClock::WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) :
 }
 
 void WordClock::draw(const TimeData& t) {
-    storedTime = t;
+    if (storedTime.hours != t.hours || storedTime.minutes != t.minutes) {
+        storedTime = t;
+        _dirty = true;
+    }
 }
 
 void WordClock::update() {
     matrix->fillScreen(0);
     
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
-    if (gfxSize < 1) gfxSize = 1;
-    
-    std::vector<String> lines = I18n::getWordClockLines(storedTime.hours, storedTime.minutes);
-    drawLines(lines, gfxSize);
+    if (_dirty || storedTime.hours != _lastHours || storedTime.minutes != _lastMinutes) {
+        _lastHours = storedTime.hours;
+        _lastMinutes = storedTime.minutes;
+        _dirty = false;
+        recomputeLines();
+    }
+
+    matrix->setFont(_cachedFont);
+    matrix->setTextSize(_cachedGfxSize);
+    for (uint8_t i = 0; i < _cachedLineCount; i++) {
+        matrix->setTextColor(_cachedLines[i].color);
+        matrix->setCursor(_cachedLines[i].x, _cachedLines[i].y);
+        matrix->print(_cachedLines[i].text);
+    }
 }
 
-void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize) {
+void WordClock::recomputeLines() {
+    _cachedLineCount = 0;
+    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
+    if (gfxSize < 1) gfxSize = 1;
+    _cachedGfxSize = gfxSize;
+
+    std::vector<String> rawLines = I18n::getWordClockLines(storedTime.hours, storedTime.minutes);
+
     const GFXfont* chosenFont = nullptr;
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
     if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
@@ -67,11 +86,9 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
             chosenFont = nullptr;
         }
     }
+    _cachedFont = chosenFont;
 
     matrix->setFont(chosenFont);
-    
-    int gfxSize = requestedSize;
-    if (gfxSize < 1) gfxSize = 1;
     matrix->setTextSize(gfxSize);
 
     // Break down any long lines that exceed screen width into wrapped lines
@@ -103,14 +120,15 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
     
     int lineSpacing = (matrix->height() >= 64 ? 3 : 1) * gfxSize;
     int totalH = 0;
-    std::vector<int> lineHeights;
+    int lineHeights[8] = {0};
+    size_t numLines = min(lines.size(), (size_t)8);
     
-    for (const String& line : lines) {
+    for (size_t i = 0; i < numLines; i++) {
         int16_t bx, by;
         uint16_t bw, bh;
-        matrix->getTextBounds(line, 0, 0, &bx, &by, &bw, &bh);
+        matrix->getTextBounds(lines[i], 0, 0, &bx, &by, &bw, &bh);
         int finalLh = (bh == 0) ? ((chosenFont ? 10 : 8) * gfxSize) : bh;
-        lineHeights.push_back(finalLh);
+        lineHeights[i] = finalLh;
         totalH += finalLh + lineSpacing;
     }
     if (totalH > 0) totalH -= lineSpacing;
@@ -118,7 +136,7 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
     if (totalH > matrix->height() && lineSpacing > 1) {
         lineSpacing = 1;
         totalH = 0;
-        for (int lh : lineHeights) totalH += lh + lineSpacing;
+        for (size_t i = 0; i < numLines; i++) totalH += lineHeights[i] + lineSpacing;
         if (totalH > 0) totalH -= lineSpacing;
     }
     
@@ -127,17 +145,19 @@ void WordClock::drawLines(const std::vector<String>& rawLines, int requestedSize
     uint16_t color1 = matrix->color565(0, 220, 255);
     uint16_t color2 = matrix->color565(255, 120, 0);
     
-    for (size_t i = 0; i < lines.size(); i++) {
+    for (size_t i = 0; i < numLines; i++) {
         int16_t bx, by;
         uint16_t bw, bh;
         matrix->getTextBounds(lines[i], 0, 0, &bx, &by, &bw, &bh);
         int x = (matrix->width() - bw) / 2 + (engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0) - (chosenFont ? bx : 0);
         int curY = y - (chosenFont ? by : 0);
         
-        uint16_t color = (i % 2 == 0) ? color1 : color2;
-        matrix->setTextColor(color);
-        matrix->setCursor(x, curY);
-        matrix->print(lines[i]);
+        WordClockLine& l = _cachedLines[_cachedLineCount++];
+        strncpy(l.text, lines[i].c_str(), sizeof(l.text) - 1);
+        l.text[sizeof(l.text) - 1] = '\0';
+        l.x = x;
+        l.y = curY;
+        l.color = (i % 2 == 0) ? color1 : color2;
         
         y += lineHeights[i] + lineSpacing;
     }

@@ -4,20 +4,21 @@
 #include "../../include/core/EngineContract.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <mutex>
+#include <atomic>
 
-struct SpotifyMediaState {
+struct SpotifyMediaStatePOD {
     bool isActive = false;
     bool isPlaying = false;
-    String title = "";
-    String artist = "";
-    String album = "";
-    String imageUrl = "";
+    char title[64] = {0};
+    char artist[48] = {0};
+    char album[48] = {0};
+    char imageUrl[96] = {0};
+    char artworkId[32] = {0};
     uint32_t progressMs = 0;
     uint32_t durationMs = 0;
     uint8_t volumePercent = 50;
-    uint32_t lastPollTime = 0;
     uint32_t localTimestampMs = 0;
+    uint32_t generation = 0;
 };
 
 class SpotifyEngine : public IEngine {
@@ -45,9 +46,10 @@ private:
     bool m_showVolume = true;
     bool m_showVisualizer = true;
 
-    SpotifyMediaState m_state;
-    SpotifyMediaState m_renderState;
-    std::mutex m_stateMutex;
+    // Lock-free double-buffered state for Core 1 (Invariant 1: Zero-Mutex & Zero-Allocation)
+    SpotifyMediaStatePOD m_podBuffers[2];
+    std::atomic<uint8_t> m_publishedPodIdx{0};
+    SpotifyMediaStatePOD m_cachedRenderState;
     bool m_hasPsram = false;
 
     // Background polling worker task (Core 0)

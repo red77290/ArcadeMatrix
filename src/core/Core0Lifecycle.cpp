@@ -1,4 +1,5 @@
 #include "Core0Lifecycle.h"
+#include "ConfigLoader.h"
 
 void Core0LifecycleDispatcher::lifecycleTaskFunc(void* param) {
     auto* self = static_cast<Core0LifecycleDispatcher*>(param);
@@ -6,6 +7,8 @@ void Core0LifecycleDispatcher::lifecycleTaskFunc(void* param) {
         // Sleep until notified by Core 1 or check every 1000ms
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
         self->processRetirements();
+        extern ConfigLoader config;
+        config.checkDeferredPublish();
     }
 }
 

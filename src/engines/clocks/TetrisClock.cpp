@@ -76,7 +76,7 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
     }
 }
 
-void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targetIndices) {
+void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount) {
     int w = matrix->width();
     int h = matrix->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
@@ -123,7 +123,8 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
             (5 * h / 6) - (scaledH / 2) + offY
         };
 
-        for (int charIdx : targetIndices) {
+        for (size_t k = 0; k < targetCount; k++) {
+            int charIdx = targetIndices[k];
             if (charIdx == 2 || charIdx == 5) continue; // no colons in stacked mode
             int tier = (charIdx < 2) ? 0 : (charIdx < 5 ? 1 : 2);
             int charInTier = (charIdx < 2) ? charIdx : (charIdx < 5 ? charIdx - 3 : charIdx - 6);
@@ -145,7 +146,8 @@ void TetrisClock::buildTargets(const char* timeStr, const std::vector<int>& targ
         int startX = (w - scaledW) / 2 + offX;
         int startY = (h - scaledH) / 2 + offY;
 
-        for (int charIdx : targetIndices) {
+        for (size_t k = 0; k < targetCount; k++) {
+            int charIdx = targetIndices[k];
             emitBlocksFor(timeStr, charIdx, charIdx, font, bx, by, bw, bh, startX, startY, h, h / 2, landMs);
         }
     }
@@ -162,21 +164,24 @@ void TetrisClock::update() {
                 float base_dy = max(1.0f, matrix->height() / 40.0f);
                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
             }
-            std::vector<int> allIndices;
-            for(int i=0; i<strlen(timeStr); i++) allIndices.push_back(i);
-            buildTargets(timeStr, allIndices);
+            int allIndices[10];
+            int len = strlen(timeStr);
+            for (int i = 0; i < len; i++) allIndices[i] = i;
+            buildTargets(timeStr, allIndices, len);
         } else {
-            std::vector<int> changedIndices;
-            for(int i=0; i<strlen(timeStr); i++) {
-                if(timeStr[i] != lastTimeStr[i]) {
-                    changedIndices.push_back(i);
+            int changedIndices[10];
+            size_t changedCount = 0;
+            int len = strlen(timeStr);
+            for (int i = 0; i < len; i++) {
+                if (timeStr[i] != lastTimeStr[i]) {
+                    changedIndices[changedCount++] = i;
                 }
             }
-            if (!changedIndices.empty()) {
+            if (changedCount > 0) {
                 for (auto& b : blocks) {
                     if (b.state != 2) {
-                        for(int idx : changedIndices) {
-                            if(b.charIndex == idx) {
+                        for (size_t c = 0; c < changedCount; c++) {
+                            if (b.charIndex == changedIndices[c]) {
                                 b.state = 2; // OUT
                                 float base_dy = max(1.5f, matrix->height() / 15.0f);
                                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
@@ -185,7 +190,7 @@ void TetrisClock::update() {
                         }
                     }
                 }
-                buildTargets(timeStr, changedIndices);
+                buildTargets(timeStr, changedIndices, changedCount);
             }
         }
         strcpy(lastTimeStr, timeStr);
