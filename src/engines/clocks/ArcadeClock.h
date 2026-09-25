@@ -6,7 +6,7 @@
 
 class ArcadeClock : public ClockFace {
 public:
-    ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    ArcadeClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}

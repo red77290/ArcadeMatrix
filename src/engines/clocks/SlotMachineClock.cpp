@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <string.h>
 
-SlotMachineClock::SlotMachineClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
+SlotMachineClock::SlotMachineClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animFrame = 0;

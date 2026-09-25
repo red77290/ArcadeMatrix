@@ -1,9 +1,10 @@
 #include "ClockWidget.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include "DashboardCommon.h"
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <math.h>
 
-void PixelClockWidget::renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate) {
+void PixelClockWidget::renderAnalog(IDrawingSurface* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate) {
     if (!matrix || rect.width < 14 || rect.height < 14) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
@@ -98,7 +99,7 @@ void PixelClockWidget::renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rec
     }
 }
 
-void PixelClockWidget::renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city, bool format24h) {
+void PixelClockWidget::renderDigital(IDrawingSurface* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city, bool format24h) {
     if (!matrix || rect.width < 20 || rect.height < 12) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);

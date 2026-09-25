@@ -3,6 +3,7 @@
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/BitmapFontLoader.h"
 #include "../../include/core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 #include "TimeData.h"
 
@@ -79,7 +80,7 @@ public:
 
 private:
     bool loop();
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     DateConfig m_config;
     char currentDate[32];
     uint16_t textColor;

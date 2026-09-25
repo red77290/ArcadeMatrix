@@ -16,7 +16,7 @@ ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), curren
     currentTime = {10, 42, 00};
 }
 
-ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrixDisplay(display), activeFace(nullptr), currentTheme(THEME_NONE) {
+ClockEngine::ClockEngine(IDrawingSurface* display) : matrixDisplay(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
 }
 
@@ -106,7 +106,7 @@ void ClockEngine::updateFormatMode(const EngineConfig* config) {
 // =========================================================
 
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrixDisplay = context ? context->getMatrix() : nullptr;
+    matrixDisplay = context ? context->getSurface() : nullptr;
     currentConfig = config;
     updateFormatMode(config);
     int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;

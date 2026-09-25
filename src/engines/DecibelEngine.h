@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "core/drawing/IDrawingSurface.h"
 #include "../hal/HardwareHAL.h"
 
 enum NoiseStatusLevel {
@@ -43,10 +44,10 @@ private:
     bool config_visualizer_enabled = false;
 
     void updateStatusLevel(float db);
-    void drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, NoiseStatusLevel level);
-    void drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db);
-    uint16_t getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float dbVal);
-    uint16_t getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLevel level);
+    void drawSmileyIcon(IDrawingSurface* matrix, int x, int y, NoiseStatusLevel level);
+    void drawVsGauge(IDrawingSurface* matrix, float db);
+    uint16_t getGaugeColorForDb(IDrawingSurface* matrix, float dbVal);
+    uint16_t getLevelColor(IDrawingSurface* matrix, NoiseStatusLevel level);
     const char* getLevelText(NoiseStatusLevel level);
 };
 

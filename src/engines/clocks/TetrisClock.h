@@ -20,7 +20,7 @@ struct TetrisBlock {
 
 class TetrisClock : public ClockFace {
 public:
-    TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode = false, const EngineConfig* config = nullptr);
+    TetrisClock(IDrawingSurface* display, bool gameboyMode = false, const EngineConfig* config = nullptr);
     ~TetrisClock() override;
 
     void draw(const TimeData& t) override;

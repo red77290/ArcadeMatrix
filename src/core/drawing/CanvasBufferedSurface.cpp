@@ -167,3 +167,9 @@ PresentationTiming CanvasBufferedSurface::present() {
     timing.totalPresentUs = (t2 - t0);
     return timing;
 }
+
+void CanvasBufferedSurface::markExternalDraw() {
+    if (_matrixEngine) {
+        _matrixEngine->markExternalDraw();
+    }
+}

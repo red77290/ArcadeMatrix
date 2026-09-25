@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "core/drawing/IDrawingSurface.h"
 #include "../hal/HardwareHAL.h"
 
 enum VisualizerMode {
@@ -46,10 +47,10 @@ private:
     float peakHold[128];
     uint32_t lastPeakDecay;
 
-    void drawSpectrum(MatrixPanel_I2S_DMA* matrix);
-    void drawWaveform(MatrixPanel_I2S_DMA* matrix);
-    void drawRadial(MatrixPanel_I2S_DMA* matrix);
-    void drawNeonFire(MatrixPanel_I2S_DMA* matrix);
+    void drawSpectrum(IDrawingSurface* matrix);
+    void drawWaveform(IDrawingSurface* matrix);
+    void drawRadial(IDrawingSurface* matrix);
+    void drawNeonFire(IDrawingSurface* matrix);
 
     uint16_t getSpectrumColor(int heightIndex, int maxHeight);
 };

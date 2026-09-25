@@ -15,7 +15,7 @@ static Drop drops[MAX_DROPS];
 static bool dropsInit = false;
 static int activeDropCount = 0;
 
-CyberpunkClock::CyberpunkClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lineY(0), lastFrameTime(0) { faceFont.load(config);}
+CyberpunkClock::CyberpunkClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config), lineY(0), lastFrameTime(0) { faceFont.load(config);}
 
 void CyberpunkClock::draw(const TimeData& t) {
     storedTime = t;

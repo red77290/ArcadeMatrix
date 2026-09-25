@@ -38,7 +38,7 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     if (!m_gifEngine) {
         m_gifEngine = new GifEngine();
         m_gifEngine->initialize(context, engineConfig);
-        m_gifEngine->begin(matrix);
+        m_gifEngine->begin(surface ? surface : context->getSurface());
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
     }

@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "DashboardData.h"
 
 /**
@@ -9,6 +9,6 @@ class MatrixPanel_I2S_DMA;
  */
 class PixelClockWidget {
 public:
-    static void renderAnalog(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate);
-    static void renderDigital(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS", bool format24h = true);
+    static void renderAnalog(IDrawingSurface* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate);
+    static void renderDigital(IDrawingSurface* matrix, const Rect& rect, const DashboardTimeData& time, const DashboardTheme& theme, bool showSeconds, bool showDate, const String& city = "PARIS", bool format24h = true);
 };

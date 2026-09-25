@@ -1,22 +1,22 @@
 #pragma once
 #include <Arduino.h>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "DashboardData.h"
 
 int measureText(int len);
 
-void drawClippedPixel(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
+void drawClippedPixel(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
 
-void drawClippedChar(MatrixPanel_I2S_DMA* matrix, int x, int y, unsigned char c, int minX, int maxX, int minY, int maxY, uint16_t color);
+void drawClippedChar(IDrawingSurface* matrix, int x, int y, unsigned char c, int minX, int maxX, int minY, int maxY, uint16_t color);
 
-void drawClippedString(MatrixPanel_I2S_DMA* matrix, const char* text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
+void drawClippedString(IDrawingSurface* matrix, const char* text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
 
-void drawClippedString(MatrixPanel_I2S_DMA* matrix, const String& text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
+void drawClippedString(IDrawingSurface* matrix, const String& text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
 
-void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& iconCode);
+void drawMiniWeatherIcon(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& iconCode);
 
-void drawMiniIndoorIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
+void drawMiniIndoorIcon(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color);
 
-void drawClippedMarketIcon8x8(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& symbol);
+void drawClippedMarketIcon8x8(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& symbol);
 
-DashboardTheme getDashboardTheme(MatrixPanel_I2S_DMA* matrix, int themeId);
+DashboardTheme getDashboardTheme(IDrawingSurface* matrix, int themeId);

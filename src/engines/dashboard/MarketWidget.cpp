@@ -1,6 +1,6 @@
 #include "MarketWidget.h"
 #include "DashboardCommon.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../../core/drawing/IDrawingSurface.h"
 #include <math.h>
 
 static void formatMarketPrice(char* buf, size_t bufSize, float price) {
@@ -25,7 +25,7 @@ static void formatMarketPrice(char* buf, size_t bufSize, float price) {
     }
 }
 
-static void renderMarketIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const MarketItem& item) {
+static void renderMarketIcon(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const MarketItem& item) {
     if (item.hasIcon) {
         for (int r = 0; r < 8; r++) {
             for (int c = 0; c < 8; c++) {
@@ -40,7 +40,7 @@ static void renderMarketIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX
     }
 }
 
-void MarketWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme) {
+void MarketWidget::render(IDrawingSurface* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme) {
     if (!matrix || rect.width < 10 || rect.height < 8) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);

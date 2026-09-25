@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-VersusClock::VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
+VersusClock::VersusClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animating = false; // Kept for compatibility but unused

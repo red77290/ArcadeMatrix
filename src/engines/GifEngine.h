@@ -17,6 +17,7 @@
 #endif
 #include <PNGdec.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+class IDrawingSurface;
 #ifdef FILE_READ
 #undef FILE_READ
 #endif
@@ -65,7 +66,7 @@ public:
     /**
      * @brief Initialize the engine with the matrix display pointer.
      */
-    bool begin(MatrixPanel_I2S_DMA* display);
+    bool begin(IDrawingSurface* display);
     
     /**
      * @brief Play a single GIF file repeatedly.
@@ -133,7 +134,7 @@ private:
     // task" troubleshooting entry in docs/GETTING_STARTED.md for why this matters on a
     // non-PSRAM classic ESP32 (only ~320KB total internal RAM).
     PNG* png = nullptr;              ///< The PNGdec decoder instance, lazily allocated on first PNG decode
-    MatrixPanel_I2S_DMA* matrix;     ///< Matrix hardware reference
+    IDrawingSurface* matrix = nullptr; ///< Drawing surface hardware abstraction reference
     bool isPlaying;                  ///< State flag for active playback
     bool playlistMode;               ///< State flag for playlist rotation
     

@@ -57,7 +57,7 @@ void DecibelEngine::updateStatusLevel(float db) {
     }
 }
 
-uint16_t DecibelEngine::getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float dbVal) {
+uint16_t DecibelEngine::getGaugeColorForDb(IDrawingSurface* matrix, float dbVal) {
     if (!matrix) return 0xFFFF;
     if (dbVal < 20.0f) {
         return matrix->color565(0, 140, 255);   // Blue (0-20 dB) - Quiet / Silence
@@ -74,7 +74,7 @@ uint16_t DecibelEngine::getGaugeColorForDb(MatrixPanel_I2S_DMA* matrix, float db
     }
 }
 
-uint16_t DecibelEngine::getLevelColor(MatrixPanel_I2S_DMA* matrix, NoiseStatusLevel level) {
+uint16_t DecibelEngine::getLevelColor(IDrawingSurface* matrix, NoiseStatusLevel level) {
     if (!matrix) return 0xFFFF;
     switch (level) {
         case NOISE_CALM:     return matrix->color565(0, 140, 255);  // Blue (0-20 dB)
@@ -91,7 +91,7 @@ const char* DecibelEngine::getLevelText(NoiseStatusLevel level) {
     return I18n::getNoiseLevelLabel((int)level);
 }
 
-void DecibelEngine::drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db) {
+void DecibelEngine::drawVsGauge(IDrawingSurface* matrix, float db) {
     if (!matrix) return;
     int width = matrix->width();
     int height = matrix->height();
@@ -123,7 +123,7 @@ void DecibelEngine::drawVsGauge(MatrixPanel_I2S_DMA* matrix, float db) {
     matrix->drawFastHLine(0, gaugeHeight, width, matrix->color565(70, 70, 85));
 }
 
-void DecibelEngine::drawSmileyIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, NoiseStatusLevel level) {
+void DecibelEngine::drawSmileyIcon(IDrawingSurface* matrix, int x, int y, NoiseStatusLevel level) {
     if (!matrix) return;
     uint16_t color = getLevelColor(matrix, level);
     uint16_t eyeColor = (level == NOISE_ALERT || level == NOISE_LIMIT) ? matrix->color565(255, 255, 255) : matrix->color565(0, 0, 0);
@@ -191,7 +191,7 @@ void DecibelEngine::update(EngineContext* context) {
 }
 
 void DecibelEngine::render(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
 
     matrix->fillScreen(0);

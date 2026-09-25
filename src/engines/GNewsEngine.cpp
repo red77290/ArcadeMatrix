@@ -1,4 +1,5 @@
 #include "GNewsEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
 #include <cmath>
@@ -36,9 +37,9 @@ void GNewsEngine::applyConfig(const EngineConfig* config) {
 EngineError GNewsEngine::initialize(EngineContext* context, const EngineConfig* config) {
     if (context) {
         _geometry = context->getGeometry();
-        if (context->getMatrix()) {
-            lastMatrixW = context->getMatrix()->width();
-            lastMatrixH = context->getMatrix()->height();
+        if (context->getSurface()) {
+            lastMatrixW = context->getSurface()->width();
+            lastMatrixH = context->getSurface()->height();
         }
     }
     if (config) applyConfig(config);
@@ -333,8 +334,8 @@ void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
 }
 
 void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows) {
-    if (!context || !context->getMatrix() || !title || *title == '\0') return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface() || !title || *title == '\0') return;
+    auto* matrix = context->getSurface();
 
     int tLen = strlen(title);
     if (tLen == 0) return;
@@ -443,7 +444,7 @@ void GNewsEngine::update(EngineContext* context) {
         lastSourceTick += steps * 35;
     }
 
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    auto* matrix = context ? context->getSurface() : nullptr;
     int mW = matrix ? matrix->width() : (_geometry.width > 0 ? _geometry.width : 64);
     int mH = matrix ? matrix->height() : (_geometry.height > 0 ? _geometry.height : 32);
 
@@ -581,8 +582,8 @@ void GNewsEngine::update(EngineContext* context) {
 }
 
 void GNewsEngine::render(EngineContext* context) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -635,8 +636,8 @@ void GNewsEngine::render(EngineContext* context) {
 }
 
 void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -791,8 +792,8 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
 }
 
 void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -868,8 +869,8 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
 }
 
 void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
