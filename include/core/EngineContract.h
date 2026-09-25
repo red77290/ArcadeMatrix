@@ -16,6 +16,7 @@
 #endif
 
 // Forward declarations to avoid heavy includes in the contract
+class IDrawingSurface;
 class MatrixPanel_I2S_DMA;
 class FrontendSyncEngine; // Represents EventBus/MQTT currently
 // class Logger; // Could be added later
@@ -153,6 +154,23 @@ struct EngineRequirements {
     bool needsGyroscope = false;
     bool needsNetwork = false;
     bool needsSd = false;
+    bool needsTls = false;
+
+    // Conservative runtime admission thresholds (ArcadeMatrix policy margins)
+    uint32_t minFreeInternalHeapBytes = 0;
+    uint32_t minLargestInternalBlockBytes = 0;
+    uint32_t minFreeDmaBytes = 0;
+    uint32_t minFreePsramBytes = 0;
+
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+};
+
+enum class EngineAdmissionStatus : uint8_t {
+    Available = 0,
+    AvailableWithResourceWarning = 1,
+    TemporarilyUnavailable = 2,
+    HardwareConstrained = 3
 };
 
 // =======================================================
@@ -219,8 +237,14 @@ class EngineContext {
 public:
     virtual ~EngineContext() = default;
 
-    // Core matrix wrapper for drawing operations
-    virtual MatrixPanel_I2S_DMA* getMatrix() = 0;
+    // Primary v4 Drawing Surface SPI (Adafruit_GFX derived)
+    virtual IDrawingSurface* getSurface() { return nullptr; }
+
+    // Core matrix wrapper for drawing operations (legacy fallback)
+    virtual MatrixPanel_I2S_DMA* getMatrix() { return nullptr; }
+
+    // Explicit legacy escape hatch: returns nullptr on non-DMA surfaces
+    virtual MatrixPanel_I2S_DMA* getLegacyMatrix() { return getMatrix(); }
     
     // Optional Event Bus (MQTT / Batocera events)
     virtual FrontendSyncEngine* getEventBus() = 0;
