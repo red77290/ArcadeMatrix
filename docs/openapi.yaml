@@ -207,6 +207,11 @@ paths:
                   type: boolean
                   description: "Forces single DMA buffer to reduce RAM usage"
                   example: false
+                matrix_render_pipeline:
+                  type: string
+                  enum: [auto, canvas_single, canvas_double, direct_double, direct_single]
+                  description: "Render pipeline architecture (auto selects optimal drawing surface for target hardware)"
+                  example: "auto"
                 matrix_limit_refresh_rate_hz:
                   type: integer
                   description: "Refresh rate cap in Hz (default 90)"
@@ -303,6 +308,7 @@ paths:
                       rgb_sequence: { type: string, example: "RGB" }
                       pwm_bits: { type: integer, example: 8 }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
+                      render_pipeline: { type: string, example: "auto", enum: [auto, canvas_single, canvas_double, direct_double, direct_single] }
                   mqtt:
                     type: object
                     properties:

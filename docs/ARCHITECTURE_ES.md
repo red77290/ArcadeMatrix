@@ -59,7 +59,8 @@ flowchart TD
         WS["AsyncWebServer (Puerto 80)"]
         WS --> API["API REST (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Guardado Atómico)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (Caché RAM Flyweight)"]
         MDNS["Respondedor mDNS"]
         AH["AudioHub (Árbitro de Audio en Segundo Plano)"]
         AH --> AHAL["AudioOutputHAL (DAC I2S TX)"]
@@ -69,10 +70,11 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["IEngine Activo (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Paso Fighter)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer hacia LEDs HUB75"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["Salida DMA hacia LEDs HUB75"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM

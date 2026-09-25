@@ -520,11 +520,19 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Renderizado en la Matriz LED
 
+ArcadeMatrix v4 abstrae el renderizado detrás de la interfaz independiente del hardware `IDrawingSurface` (que hereda de `Adafruit_GFX`). Obtenga siempre la superficie mediante `context->getSurface()`:
+
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// O transferencia por bloques optimizada para animaciones continuas (GIFs, fighters):
+surface->blit565(canvasBuffer, width, height);
 ```
+*(Por compatibilidad hacia atrás, `context->getMatrix()` se mantiene como pasarela que devuelve `MatrixPanel_I2S_DMA*`).
 *Nunca llame a `flipDMABuffer()` en el motor — el bucle principal lo gestiona de forma centralizada.*
 
 ### 15.1 Vídeo en Movimiento Completo, Streaming de Canvas y FastBlit (`blitCanvas565`)

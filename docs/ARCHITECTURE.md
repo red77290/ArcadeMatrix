@@ -61,7 +61,8 @@ flowchart TD
         WS["AsyncWebServer (Port 80)"]
         WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Atomic LittleFS/SD Save)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (RAM Flyweight Cache)"]
         MDNS["mDNS Responder"]
         AH["AudioHub (Background Audio Arbiter)"]
         AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
@@ -71,10 +72,11 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["Active IEngine (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer to HUB75 LEDs"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["DMA Output to HUB75 LEDs"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
@@ -523,7 +525,8 @@ flowchart TD
         WS["AsyncWebServer (Port 80)"]
         WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Atomic LittleFS/SD Save)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (RAM Flyweight Cache)"]
         MDNS["mDNS Responder"]
         AH["AudioHub (Background Audio Arbiter)"]
         AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
@@ -533,14 +536,15 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["Active IEngine (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer to HUB75 LEDs"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["DMA Output to HUB75 LEDs"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
-```
+```,StartLine:522,TargetContent:
 
 ---
 

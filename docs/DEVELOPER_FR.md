@@ -553,11 +553,19 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Rendu sur la Matrice LED & Géométrie Responsif
 
+ArcadeMatrix v4 abstrait le rendu d'affichage derrière l'interface matérielle agnostique `IDrawingSurface` (qui hérite de `Adafruit_GFX`). Obtenez toujours la surface via `context->getSurface()` :
+
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// Ou transfert par bloc optimisé pour animations en continu (GIFs, fighters) :
+surface->blit565(canvasBuffer, width, height);
 ```
+*(Par rétrocompatibilité, `context->getMatrix()` reste accessible comme passerelle retournant `MatrixPanel_I2S_DMA*`).
 *Ne jamais appeler `flipDMABuffer()` dans le moteur — la boucle principale s'en charge.*
 
 ### 15.1 La Règle d'Or du Rendu Responsif Multi-Résolutions & TATE
