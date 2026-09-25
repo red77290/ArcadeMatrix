@@ -35,6 +35,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include <esp_ota_ops.h>
 #include "BuildInfo.h"
 #include "../hal/BoardProfile.h"
+#include "drawing/DisplaySurfaceFactory.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -267,13 +268,27 @@ void AppRuntime::initialize() {
     audioHub.begin();
 
     Core0LifecycleDispatcher::instance().begin();
+    
+    // Initialize v4 Display Surface SPI via Abstract Factory
+    auto surfaceResult = DisplaySurfaceFactory::createSurface(
+        &matrixEngine,
+        snapshot.matrix.width,
+        snapshot.matrix.height,
+        snapshot.matrix.render_pipeline,
+        snapshot.matrix.forceSingleBuffer
+    );
+    m_drawingSurface = std::move(surfaceResult.surface);
+    LOGI("AppRuntime", "Display surface initialized: %s (%s)",
+         m_drawingSurface ? "OK" : "FAILED", surfaceResult.reasonText);
+
     rotationManager = new RotationManager();
-    m_appCtx = new AppEngineContext(matrixEngine.getDisplay(), m_frontendListener);
+    m_appCtx = new AppEngineContext(m_drawingSurface.get(), matrixEngine.getDisplay(), m_frontendListener);
     rotationManager->setEngineContext(m_appCtx);
     overlayManager.initialize(m_appCtx, &config);
 
     m_displayRuntime.begin(m_appCtx, &matrixEngine, rotationManager,
                            &overlayManager, &displayOrientationManager, &m_displayArbiter);
+    m_displayRuntime.setSurface(m_drawingSurface.get());
 
     auto desc = EngineRegistry::getDescriptor("audiovisualizer");
     if (desc && desc->factory) {
@@ -752,7 +767,11 @@ void AppRuntime::update() {
     lastFrameEnd = tAfterRender;
 
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
-        matrixEngine.present();
+        if (m_drawingSurface) {
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.present();
+        }
     }
 
     // Periodic 5s render performance telemetry to serial logs
