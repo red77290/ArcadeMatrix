@@ -328,6 +328,8 @@ Hide or show fields depending on another field's value:
 #pragma once
 #include "../../include/core/EngineContract.h"
 #include <Arduino.h>
+#include "core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 class MatrixRainEngine : public IEngine {
 public:
@@ -343,7 +345,7 @@ public:
     bool isRealtime() const override { return true; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix = nullptr;
+    IDrawingSurface* surface = nullptr;
     int speed = 2;
     int dropY[128];
 };
@@ -359,8 +361,8 @@ MatrixRainEngine::MatrixRainEngine() {
 }
 
 EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
-    matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
+    surface = context->getSurface();
     if (config) speed = config->getInt("speed", 2);
     return EngineError::OK;
 }
@@ -370,18 +372,18 @@ void MatrixRainEngine::activate() {
 }
 
 void MatrixRainEngine::update(EngineContext* context) {
-    if (!matrix) return;
-    for (int x = 0; x < matrix->width(); x += 4) {
+    if (!surface) return;
+    for (int x = 0; x < surface->width(); x += 4) {
         dropY[x] += speed;
-        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
+        if (dropY[x] > surface->height()) dropY[x] = random(-16, 0);
     }
 }
 
 void MatrixRainEngine::render(EngineContext* context) {
-    if (!matrix) return;
-    matrix->fillScreen(0);
-    for (int x = 0; x < matrix->width(); x += 4) {
-        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
+    if (!surface) return;
+    surface->fillScreen(0);
+    for (int x = 0; x < surface->width(); x += 4) {
+        surface->drawPixel(x, dropY[x], IDrawingSurface::color565(0, 255, 70));
     }
 }
 
@@ -470,10 +472,11 @@ Inherit from the `ClockFace` base class (`src/engines/ClockEngine.h`):
 // src/engines/clocks/SpaceInvadersClock.h
 #pragma once
 #include "../ClockEngine.h"
+#include "../../core/drawing/IDrawingSurface.h"
 
 class SpaceInvadersClock : public ClockFace {
 public:
-    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 
@@ -487,7 +490,7 @@ private:
 // src/engines/clocks/SpaceInvadersClock.cpp
 #include "SpaceInvadersClock.h"
 
-SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+SpaceInvadersClock::SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {}
 
 void SpaceInvadersClock::update() {

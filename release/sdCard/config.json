@@ -5,6 +5,7 @@
         "panel_type": "P3",
         "chain_length": 2,
         "power_limit_percent": 50,
+        "render_pipeline": "auto",
         "force_single_buffer": false,
         "color_depth": 8,
         "rgb_sequence": "RGB",
