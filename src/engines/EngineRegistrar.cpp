@@ -41,6 +41,12 @@ RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequiremen
     if (req.needsSd && !caps.hasSd) {
         return {false, "Requires SD card"};
     }
+    if (req.needsTls && !caps.hasPsram) {
+        uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (req.minFreeInternalHeapBytes > 0 && freeDram < req.minFreeInternalHeapBytes) {
+            return {false, "Requires additional internal heap headroom (≥ 50KB). Canvas Single is one configuration that may provide sufficient headroom."};
+        }
+    }
     return {true, ""};
 }
 
