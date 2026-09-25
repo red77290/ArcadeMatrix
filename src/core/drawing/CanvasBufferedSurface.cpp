@@ -59,7 +59,7 @@ void CanvasBufferedSurface::clear(uint16_t color) {
 
 void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     if (!_canvas) return;
-    Point p = SurfaceCoordinates::logicalToPhysical(x, y, width(), height(), getRotation());
+    Point p = SurfaceCoordinates::logicalToPhysical(x, y, physicalWidth(), physicalHeight(), getRotation());
     if (p.x < 0 || p.x >= physicalWidth() || p.y < 0 || p.y >= physicalHeight()) return;
 
     _canvas[(size_t)p.y * physicalWidth() + p.x] = color;
@@ -67,9 +67,13 @@ void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
 void CanvasBufferedSurface::fillScreen(uint16_t color) {
     if (!_canvas) return;
-    size_t total = (size_t)physicalWidth() * physicalHeight();
-    for (size_t i = 0; i < total; ++i) {
-        _canvas[i] = color;
+    if (color == 0) {
+        memset(_canvas, 0, _canvasBytes);
+    } else {
+        size_t total = (size_t)physicalWidth() * physicalHeight();
+        for (size_t i = 0; i < total; ++i) {
+            _canvas[i] = color;
+        }
     }
 }
 
@@ -104,12 +108,22 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
     int16_t pw = physicalWidth();
     int16_t ph = physicalHeight();
 
-    // Fast path: full-width unrotated copy
-    if (getRotation() == 0 && x == 0 && w == pw && stridePixels == pw) {
-        if (y >= 0 && y + h <= ph) {
-            size_t offset = (size_t)y * pw;
-            size_t copyBytes = (size_t)w * h * sizeof(uint16_t);
-            memcpy(_canvas + offset, src, copyBytes);
+    // Fast path: unrotated row-by-row blit with clipping
+    if (getRotation() == 0) {
+        int16_t x0 = (x < 0) ? 0 : x;
+        int16_t y0 = (y < 0) ? 0 : y;
+        int16_t x1 = (x + w > pw) ? pw : (x + w);
+        int16_t y1 = (y + h > ph) ? ph : (y + h);
+        if (x0 < x1 && y0 < y1) {
+            int16_t clippedW = x1 - x0;
+            size_t rowBytes = (size_t)clippedW * sizeof(uint16_t);
+            for (int16_t row = y0; row < y1; ++row) {
+                int16_t srcY = row - y;
+                int16_t srcX = x0 - x;
+                const uint16_t* srcRow = src + ((size_t)srcY * stridePixels + srcX);
+                uint16_t* dstRow = _canvas + ((size_t)row * pw + x0);
+                memcpy(dstRow, srcRow, rowBytes);
+            }
             return;
         }
     }

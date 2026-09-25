@@ -9,7 +9,7 @@
 #pragma once
 #include <Arduino.h>
 
-#if defined(ESP32_THE_ORIG)
+#if defined(ESP32_THE_ORIG) || ((defined(CONFIG_IDF_TARGET_ESP32) || defined(HARDWARE_PROFILE_ESP32_DEV)) && !defined(CONFIG_IDF_TARGET_ESP32S3))
 #define MATRIX_TX_ADJUST(x_coord) (((x_coord) & 1U) ? ((x_coord) - 1) : ((x_coord) + 1))
 #else
 #define MATRIX_TX_ADJUST(x_coord) (x_coord)

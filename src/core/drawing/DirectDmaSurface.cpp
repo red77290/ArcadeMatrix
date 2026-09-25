@@ -14,14 +14,20 @@ DirectDmaSurface::DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, i
     _dmaBytes = singleBuffer ? singleBuf : (singleBuf * 2);
 }
 
+void DirectDmaSurface::setRotation(uint8_t r) {
+    IDrawingSurface::setRotation(r);
+    if (_matrix) {
+        _matrix->setRotation(r);
+    }
+}
+
 void DirectDmaSurface::clear(uint16_t color) {
     fillScreen(color);
 }
 
 void DirectDmaSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     if (!_matrix) return;
-    Point p = SurfaceCoordinates::logicalToPhysical(x, y, width(), height(), getRotation());
-    _matrix->drawPixel(p.x, p.y, color);
+    _matrix->drawPixel(x, y, color);
 }
 
 void DirectDmaSurface::fillScreen(uint16_t color) {
@@ -29,33 +35,15 @@ void DirectDmaSurface::fillScreen(uint16_t color) {
 }
 
 void DirectDmaSurface::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
-    if (!_matrix) return;
-    uint8_t rot = getRotation();
-    if (rot == 0) {
-        _matrix->drawFastVLine(x, y, h, color);
-    } else {
-        Adafruit_GFX::drawFastVLine(x, y, h, color);
-    }
+    if (_matrix) _matrix->drawFastVLine(x, y, h, color);
 }
 
 void DirectDmaSurface::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
-    if (!_matrix) return;
-    uint8_t rot = getRotation();
-    if (rot == 0) {
-        _matrix->drawFastHLine(x, y, w, color);
-    } else {
-        Adafruit_GFX::drawFastHLine(x, y, w, color);
-    }
+    if (_matrix) _matrix->drawFastHLine(x, y, w, color);
 }
 
 void DirectDmaSurface::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    if (!_matrix) return;
-    uint8_t rot = getRotation();
-    if (rot == 0) {
-        _matrix->fillRect(x, y, w, h, color);
-    } else {
-        Adafruit_GFX::fillRect(x, y, w, h, color);
-    }
+    if (_matrix) _matrix->fillRect(x, y, w, h, color);
 }
 
 void DirectDmaSurface::blit565(const uint16_t* src, int16_t x, int16_t y,

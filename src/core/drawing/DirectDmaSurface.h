@@ -13,6 +13,7 @@ public:
     DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, int16_t height, bool singleBuffer = false);
     virtual ~DirectDmaSurface() = default;
 
+    void setRotation(uint8_t r) override;
     void clear(uint16_t color = 0) override;
     void drawPixel(int16_t x, int16_t y, uint16_t color) override;
     void fillScreen(uint16_t color) override;
