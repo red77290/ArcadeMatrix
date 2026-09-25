@@ -5,6 +5,8 @@
 #include "SDUtils.h"
 #include "Core0Lifecycle.h"
 #include "SdLockGuard.h"
+#include "storage/SdConfigStorage.h"
+#include "storage/ModularConfigManager.h"
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -154,6 +156,7 @@ void ConfigLoader::setDefaults() {
     matrix.auto_rotate = true;
     matrix.rotation_transition = "vortex";
     matrix.rotation_transition_duration_ms = 400;
+    matrix.render_pipeline = "auto";
 
     wifi.ssid = "";
     wifi.password = "";
@@ -274,6 +277,9 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
 
         if (disp.containsKey("matrix_power")) matrix.matrix_power = disp["matrix_power"].as<bool>();
         else if (disp.containsKey("matrixPower")) matrix.matrix_power = disp["matrixPower"].as<bool>();
+
+        if (disp.containsKey("render_pipeline")) matrix.render_pipeline = disp["render_pipeline"].as<String>();
+        else if (disp.containsKey("renderPipeline")) matrix.render_pipeline = disp["renderPipeline"].as<String>();
     }
 
     if (doc.containsKey("wifi")) {
@@ -424,6 +430,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["rotation_transition"] = matrix.rotation_transition;
     dispObj["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
     dispObj["matrix_power"] = matrix.matrix_power;
+    dispObj["render_pipeline"] = matrix.render_pipeline;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;
@@ -564,6 +571,27 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     if (!lock) {
         LOGE("ConfigLoader", "Cannot load %s: SD busy (mutex timeout)", filepath);
         return false;
+    }
+
+    // 1. Check for modular configuration or legacy migration
+    SdConfigStorage sdStorage;
+    ModularConfigManager mgr(sdStorage);
+
+    // If /config/hardware.json already exists, load modularly (micro-buffers, fast, low DRAM)
+    if (sdStorage.exists("/config/hardware.json") && sdStorage.exists("/config/system.json")) {
+        LOGI("ConfigLoader", "Loading modular configuration from /config/...");
+        if (mgr.loadAll(*this)) {
+            publishSnapshot_locked();
+            LOGI("ConfigLoader", "Modular configuration loaded successfully from /config/.");
+            return true;
+        }
+    }
+
+    // Otherwise, check for legacy /config.json and migrate to /config/
+    if (mgr.checkAndMigrateLegacy(*this, filepath)) {
+        publishSnapshot_locked();
+        LOGI("ConfigLoader", "Legacy configuration migrated and loaded successfully.");
+        return true;
     }
 
     auto tryLoad = [this](const char* path) -> bool {
@@ -725,6 +753,11 @@ bool ConfigLoader::saveToSD(const char* filepath) {
 
     if (written >= jsonStr.length()) {
         LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, written);
+        if (strcmp(filepath, "/config.json") == 0) {
+            SdConfigStorage sdStorage;
+            ModularConfigManager mgr(sdStorage);
+            mgr.saveAll(*this);
+        }
         return true;
     }
 
