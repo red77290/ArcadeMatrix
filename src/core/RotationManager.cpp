@@ -218,6 +218,10 @@ IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     for (const auto& inst : guard->instances) {
         if (inst.instance_id == instanceId) {
             auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+            if (desc && !desc->available) {
+                LOGW("RotationManager", "Engine '%s' is unavailable on this hardware profile, skipping instance '%s'", inst.engine_id.c_str(), instanceId);
+                return nullptr;
+            }
             if (desc && desc->factory) {
                 auto engine = desc->factory();
                 if (engine) {

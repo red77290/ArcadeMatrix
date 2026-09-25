@@ -2,6 +2,7 @@
 #include "SDUtils.h"
 #include "SdLockGuard.h"
 #include "Logger.h"
+#include "../hal/BoardProfile.h"
 #include <Arduino.h>
 #include <atomic>
 
@@ -18,24 +19,12 @@ namespace {
     constexpr uint32_t PERIODIC_MS      = 30UL * 60UL * 1000UL;
 
     bool measure(uint64_t& total, uint64_t& freeB) {
+        if (!BoardProfile::current().isStorageAvailable()) return false;
         SdLockGuard guard(pdMS_TO_TICKS(15000));
         if (!guard) return false;
-#if USE_SD_MMC
-        total = SD_MMC.totalBytes();
-        uint64_t used = SD_MMC.usedBytes();
-        if (total == 0) return false;
-        freeB = (used <= total) ? (total - used) : 0;
-        return true;
-#else
-        FsVolume* vol = sd.vol();
-        if (!vol) return false;
-        uint64_t clusterBytes = (uint64_t)vol->sectorsPerCluster() * 512ULL;
-        int32_t freeClusters = vol->freeClusterCount();
-        if (freeClusters < 0) return false;
-        total = (uint64_t)vol->clusterCount() * clusterBytes;
-        freeB = (uint64_t)freeClusters * clusterBytes;
+        total = BoardProfile::current().getStorageTotalBytes();
+        freeB = BoardProfile::current().getStorageFreeBytes();
         return total > 0;
-#endif
     }
 
     void taskFn(void*) {
@@ -69,7 +58,12 @@ namespace {
 namespace SdSpace {
     void start() {
         if (g_task) return;
-        if (xTaskCreatePinnedToCore(taskFn, "sd_space", 6144, nullptr, 1, &g_task, 0) != pdPASS) {
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        constexpr size_t stackSize = 6144;
+#else
+        constexpr size_t stackSize = 3072;
+#endif
+        if (xTaskCreatePinnedToCore(taskFn, "sd_space", stackSize, nullptr, 1, &g_task, 0) != pdPASS) {
             LOGW("SdSpace", "Could not start the SD free-space task");
             g_task = nullptr;
         }

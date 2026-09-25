@@ -25,6 +25,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 
 #include "../include/core/EngineRegistry.h"
 #include "../engines/EngineRegistrar.h"
+#include "../engines/GifEngine.h"
 #include "ConfigSanitizer.h"
 #include "../hal/HardwareHAL.h"
 #include "../hal/GyroHAL.h"
@@ -32,6 +33,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "Core0Lifecycle.h"
 #include <esp_ota_ops.h>
 #include "BuildInfo.h"
+#include "../hal/BoardProfile.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -117,6 +119,9 @@ AppRuntime::~AppRuntime() {
 }
 
 void AppRuntime::initialize() {
+    // Apply board-specific power quirks (e.g. brownout suppression on USB-powered dev boards)
+    BoardProfile::current().applyPowerQuirks();
+
     Serial.begin(115200);
     delay(1000);
     
@@ -177,8 +182,6 @@ void AppRuntime::initialize() {
     esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
 
-    WiFi.mode(WIFI_STA);
-
     if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
              hardwareHAL.capabilities().psramBytes / (1024 * 1024), hardwareHAL.capabilities().psramBytes, ESP.getFreePsram());
@@ -186,28 +189,12 @@ void AppRuntime::initialize() {
         LOGI("System", "No PSRAM detected on hardware.");
     }
 
-    // Initialize SD Card
-#if USE_SD_MMC
-    if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
-        Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
-        while (1) { delay(100); }
+    // Initialize Storage via active BoardProfile (Safe Mode non-blocking)
+    if (!BoardProfile::current().beginStorage()) {
+        LOGW("SD", "Storage unavailable at boot. Starting in Safe Mode (Flash defaults).");
+    } else {
+        SdSpace::start();
     }
-    // Configure SD_MMC with max_files=3 so vfs_fat_ctx_t (~1.7KB) stays strictly in fast internal DRAM (<2KB threshold)
-    // rather than spilling into external PSRAM where HUB75 DMA bus contention and cache invalidations can occur.
-    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 3)) {
-        Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#else
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
-    if (!sd.begin(spiConfig)) {
-        Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#endif
-    LOGI("SD", "SD Card mounted successfully.");
-    SdSpace::start();
     CpuLoad::start();
 
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -224,6 +211,11 @@ void AppRuntime::initialize() {
     LOGI("Config", "ConfigLoader DRAM telemetry: freeInternal=%u (delta=%d), largestInternal=%u, largestDma=%u",
          postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
 
+    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 matrix DMA buffers allocate memory
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(true, true);
+
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
 
@@ -235,6 +227,9 @@ void AppRuntime::initialize() {
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
+
+    // Pre-allocate GIF decoder and canvas buffer before networking / heap fragmentation:
+    GifEngine::preallocateSharedBuffers((size_t)snapshot.matrix.width * snapshot.matrix.height * snapshot.matrix.chainLength);
 
     // NOTE: begin() does NOT re-probe the gyroscope (that's HardwareHAL's job); it only
     // captures the Adafruit_GFX display pointer and reads its real width()/height() to seed
@@ -313,16 +308,26 @@ void AppRuntime::initialize() {
             MDNS.addService("mediarenderer", "tcp", 80);
         };
 
-        String wifiHostname = snapshot.wifi.hostname;
-        WiFi.onEvent([wifiHostname](WiFiEvent_t event, WiFiEventInfo_t info) {
-            (void)info;
+        static String s_wifiHostname;
+        s_wifiHostname = snapshot.wifi.hostname;
+        static bool s_mdnsStarted = false;
+        auto startMdns = []() {
+            if (s_mdnsStarted) return;
+            if (MDNS.begin(s_wifiHostname.c_str())) {
+                s_mdnsStarted = true;
+                LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
+                registerMdnsServices();
+            }
+        };
+
+        WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
             if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-                Serial.println("Wi-Fi disconnected - attempting to reconnect...");
-                WiFi.reconnect();
+                LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
             } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
                 LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-                if (MDNS.begin(wifiHostname.c_str())) {
-                    LOGI("WiFi", "mDNS responder started: http://%s.local", wifiHostname.c_str());
+                if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
+                    s_mdnsStarted = true;
+                    LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
                     registerMdnsServices();
                 }
             }
@@ -330,11 +335,13 @@ void AppRuntime::initialize() {
 
         WiFi.mode(WIFI_STA);
         WiFi.setHostname(snapshot.wifi.hostname.c_str());
+        WiFi.setAutoReconnect(true);
         WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+        BoardProfile::current().configureWifiTxPower();
         WiFi.setSleep(false);
         
         int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        while (WiFi.status() != WL_CONNECTED && attempts < 50) {
             delay(500);
             Serial.print(".");
             matrixEngine.getDisplay()->fillScreen(0);
@@ -342,6 +349,14 @@ void AppRuntime::initialize() {
             m_messageEngine->render(m_appCtx);
             matrixEngine.present();
             attempts++;
+            if (WiFi.status() != WL_CONNECTED && (attempts % 10 == 0)) {
+                LOGW("WiFi", "Wi-Fi connecting... retrying association with AP");
+                WiFi.disconnect(false, false);
+                delay(100);
+                WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+                BoardProfile::current().configureWifiTxPower();
+                WiFi.setSleep(false);
+            }
         }
         Serial.println();
 
@@ -351,13 +366,15 @@ void AppRuntime::initialize() {
             MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 50, 5};
             m_messageEngine->displayMessage(ipConfig);
             
-            if (MDNS.begin(snapshot.wifi.hostname.c_str())) {
-                LOGI("WiFi", "mDNS responder started: http://%s.local", snapshot.wifi.hostname.c_str());
-            }
+            startMdns();
             configTzTime(getPosixTimezone(snapshot.system.timezone).c_str(), "pool.ntp.org");
             
+            LOGI("WebServer", "Starting WebServer... (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer = new WebServerAPI(80, m_messageEngine);
             m_webServer->begin();
+            LOGI("WebServer", "WebServer started successfully! (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer->setVisualizerEngine(visualizerEngine);
 
             auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
@@ -382,14 +399,20 @@ void AppRuntime::initialize() {
             }
         } else {
             Serial.println("Wi-Fi connection timed out. Starting dual Access Point (AP) & Station mode...");
+            WiFi.disconnect(false, false);
+            delay(100);
             WiFi.mode(WIFI_AP_STA);
             WiFi.softAP("ArcadeMatrix", "12345678");
             String apMsg = "Offline Mode (AP: ArcadeMatrix)";
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
             m_messageEngine->displayMessage(failConfig);
             
+            LOGI("WebServer", "Starting WebServer (AP Mode)... (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer = new WebServerAPI(80, m_messageEngine);
             m_webServer->begin();
+            LOGI("WebServer", "WebServer started successfully (AP Mode)! (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer->setVisualizerEngine(visualizerEngine);
             auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
             if (marqueeDesc && marqueeDesc->factory) {
@@ -401,6 +424,8 @@ void AppRuntime::initialize() {
             m_webServer->setMarqueeEngine(m_marqueeEngine);
             // Re-arm background station connection so it automatically connects as soon as AP is ready
             WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+            BoardProfile::current().configureWifiTxPower();
+            WiFi.setSleep(false);
         }
     } else {
         Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
@@ -640,6 +665,16 @@ void AppRuntime::update() {
     evaluateDisplayRequests(snapshot);
 
     audioSessionManager.update(snapshot);
+
+    // Non-blocking Wi-Fi background health check
+    static unsigned long lastWifiCheck = millis();
+    if (snapshot.wifi.ssid.length() > 0 && millis() - lastWifiCheck > 60000) {
+        lastWifiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            LOGW("WiFi", "Wi-Fi disconnected (status=%d), requesting background reconnect...", WiFi.status());
+            WiFi.reconnect();
+        }
+    }
 
     if (m_displayRuntime.isTransitioning()) {
         m_displayRuntime.renderTransition();

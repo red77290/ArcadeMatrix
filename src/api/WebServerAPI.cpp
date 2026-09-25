@@ -471,10 +471,11 @@ void WebServerAPI::begin() {
     g_gifMsg = msg;
     setupRoutes();
     
-    // Default headers for CORS
+    // Default headers for CORS and socket recycling (GEMINI.md Rule 3 / socket pool preservation)
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Token, Authorization");
+    DefaultHeaders::Instance().addHeader("Connection", "close");
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
     // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion.
@@ -492,6 +493,7 @@ void WebServerAPI::begin() {
         response->addHeader("Content-Encoding", "gzip");
         response->addHeader("ETag", WebUI_html_etag);
         response->addHeader("Cache-Control", "no-cache");
+        response->addHeader("Connection", "close");
         request->send(response);
     };
     server.on("/", HTTP_GET, serveWebUi);
@@ -578,10 +580,9 @@ void WebServerAPI::setupRoutes() {
         doc["microphone"] = caps.hasMicrophone;
         doc["temperature_sensor"] = caps.hasTempSensor;
         doc["gyroscope"] = gyroHAL.isAvailable();
+        doc["max_color_depth"] = (caps.profile == HwProfile::WAVESHARE_S3) ? 8 : 6;
         
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: GET /api/engines (schema-driven engine descriptors, streamed chunk by chunk)
@@ -601,19 +602,22 @@ void WebServerAPI::setupRoutes() {
         AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
             [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
                 (void)index;
-                // Returning 0 terminates a chunked response, so a zero-sized window must ask for
-                // another call instead of truncating the array.
                 if (maxLen == 0) return RESPONSE_TRY_AGAIN;
-                if (state->offset >= state->pending.length()) {
-                    if (!refillEngineStream(*state)) {
-                        return 0; // Whole array emitted
+                size_t filled = 0;
+                while (filled < maxLen) {
+                    if (state->offset >= state->pending.length()) {
+                        if (!refillEngineStream(*state)) {
+                            break; // Whole array emitted
+                        }
                     }
+                    size_t remaining = state->pending.length() - state->offset;
+                    size_t space = maxLen - filled;
+                    size_t toCopy = (remaining < space) ? remaining : space;
+                    memcpy(buffer + filled, state->pending.c_str() + state->offset, toCopy);
+                    state->offset += toCopy;
+                    filled += toCopy;
                 }
-                size_t remaining = state->pending.length() - state->offset;
-                size_t toCopy = (remaining < maxLen) ? remaining : maxLen;
-                memcpy(buffer, state->pending.c_str() + state->offset, toCopy);
-                state->offset += toCopy;
-                return toCopy;
+                return filled;
             });
 
         request->send(response);
@@ -640,9 +644,7 @@ void WebServerAPI::setupRoutes() {
             obj["id"] = t.id;
             obj["name"] = t.name;
         }
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: GET /api/timezones (Dynamic options endpoint for timezones)
@@ -732,9 +734,7 @@ void WebServerAPI::setupRoutes() {
             obj["value"] = tz.value;
             obj["label"] = tz.label;
         }
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
@@ -750,16 +750,21 @@ void WebServerAPI::setupRoutes() {
             [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
                 (void)index;
                 if (maxLen == 0) return RESPONSE_TRY_AGAIN;
-                if (state->offset >= state->pending.length()) {
-                    if (!refillInstanceStream(*state)) {
-                        return 0;
+                size_t filled = 0;
+                while (filled < maxLen) {
+                    if (state->offset >= state->pending.length()) {
+                        if (!refillInstanceStream(*state)) {
+                            break;
+                        }
                     }
+                    size_t remaining = state->pending.length() - state->offset;
+                    size_t space = maxLen - filled;
+                    size_t toCopy = (remaining < space) ? remaining : space;
+                    memcpy(buffer + filled, state->pending.c_str() + state->offset, toCopy);
+                    state->offset += toCopy;
+                    filled += toCopy;
                 }
-                size_t remaining = state->pending.length() - state->offset;
-                size_t toCopy = (remaining < maxLen) ? remaining : maxLen;
-                memcpy(buffer, state->pending.c_str() + state->offset, toCopy);
-                state->offset += toCopy;
-                return toCopy;
+                return filled;
             });
 
         request->send(response);
@@ -984,9 +989,7 @@ void WebServerAPI::setupRoutes() {
             LOGE("WebServer", "Rotation list overflowed its %u byte document; entries truncated.",
                  (unsigned)capacity);
         }
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: POST /api/rotation — Replace the entire rotation list
@@ -1143,9 +1146,7 @@ void WebServerAPI::setupRoutes() {
         doc["gyro_sensor"] = gyroHAL.getOrientation().sensorName;
         doc["hardware_profile"] = "Waveshare ESP32-S3 RGB Matrix";
         
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     };
     server.on("/api/system_info", HTTP_GET, sendSysStats);
     server.on("/api/stats", HTTP_GET, sendSysStats);
@@ -1182,9 +1183,7 @@ void WebServerAPI::setupRoutes() {
             }
             xSemaphoreGive(sdMutex);
         }
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: Return version with Git commit and build timestamp
@@ -1196,13 +1195,7 @@ void WebServerAPI::setupRoutes() {
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
         const esp_partition_t* running = esp_ota_get_running_partition();
         doc["partition"] = running ? running->label : "app0";
-        String response;
-        serializeJson(doc, response);
-        AsyncWebServerResponse *res = request->beginResponse(200, "application/json", response);
-        res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-        res->addHeader("Pragma", "no-cache");
-        res->addHeader("Expires", "0");
-        request->send(res);
+        sendJsonResponse(request, doc);
     });
 
     // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)
@@ -1216,9 +1209,7 @@ void WebServerAPI::setupRoutes() {
         doc["humidity"] = data.humidity;
         doc["unit"] = config.system.unit;
         doc["status"] = data.available ? "ok" : "not_detected";
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: Music Visualizer Control (Priority Display Override)
@@ -1958,9 +1949,7 @@ void WebServerAPI::setupRoutes() {
         SpiRamJsonDocument resp(1024);
         resp["status"] = "success";
         resp["matrix_power"] = config.acquireSnapshot()->matrix.matrix_power;
-        String response;
-        serializeJson(resp, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, resp);
     });
     server.addHandler(powerHandler);
 
@@ -2034,9 +2023,7 @@ void WebServerAPI::setupRoutes() {
         doc["api_auth_enabled"] = snap.system.api_auth_enabled;
         doc["api_token_configured"] = snap.system.api_token.length() > 0;
 
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, doc);
     });
 
     // API: System settings update (POST /api/system)
@@ -2207,9 +2194,7 @@ void WebServerAPI::setupRoutes() {
         SpiRamJsonDocument resp(512);
         resp["status"] = willReboot ? "rebooting" : "success";
         resp["lang"] = config.acquireSnapshot()->system.lang;
-        String response;
-        serializeJson(resp, response);
-        request->send(200, "application/json", response);
+        sendJsonResponse(request, resp);
 
         if (willReboot) {
             xTaskCreate([](void *param) {
@@ -3489,6 +3474,9 @@ void WebServerAPI::setupRoutes() {
             return;
         }
         String url = request->url();
+        LOGW("WebServer", "404 Not Found: %s %s from %s",
+             request->methodToString(), url.c_str(),
+             request->client() ? request->client()->remoteIP().toString().c_str() : "unknown");
         if (url.startsWith("/marquees/")) {
             serveMarqueeFile(request, url);
             return;

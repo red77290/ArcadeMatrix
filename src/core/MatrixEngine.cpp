@@ -6,6 +6,7 @@
 
 RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
+#include "../hal/BoardProfile.h"
 #include "Logger.h"
 #include "../../include/HardwareProfile.h"
 
@@ -78,6 +79,10 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     if (depth < 2 || depth > 8) {
         depth = 8; // Safe fallback if invalid range
     }
+    uint8_t maxDepth = BoardProfile::current().display().defaultColorDepth;
+    if (depth > maxDepth) {
+        depth = maxDepth;
+    }
     
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
@@ -96,21 +101,31 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
-    // Apply double buffering if not forced to single
-    mxconfig.double_buff = !config.forceSingleBuffer;
-    
-    // PSRAM Warning for large panels
-    if (config.width * config.height * config.chainLength >= 16384) { 
-        if (!hardwareHAL.capabilities().hasPsram) {
-            Serial.println("WARNING: 256x64 requested but no PSRAM found! This WILL cause Out-Of-Memory bootloops on a standard ESP32 WROOM.");
-            // We no longer force 3-bit color here, because the user explicitly wants 24-bit on ESP32-S3.
-        } else {
-            LOGI("MatrixEngine", "PSRAM found. 256x64 will use PSRAM for DMA buffering safely.");
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-            LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
-#endif
+    // Memory safeguard for classic ESP32 (no PSRAM):
+    // Internal DRAM is strictly bounded (~320KB shared with FreeRTOS, WiFi, AsyncTCP, WebServer, and engines).
+    // Double buffering 128x32 at 8-bit depth consumes >82KB of internal DMA RAM, leaving
+    // <15KB heap and causing AsyncTCP / WebUI starvation. Clamping to 5-bit depth reduces DMA consumption
+    // to ~41KB, preserving >45KB of stable headroom while keeping double buffering 100% active and flicker-free.
+    bool canDoubleBuffer = !config.forceSingleBuffer;
+    if (!hardwareHAL.capabilities().hasPsram) {
+        size_t totalPixels = (size_t)config.width * config.height * config.chainLength;
+        if (totalPixels >= 8192 && canDoubleBuffer) {
+            LOGW("MatrixEngine", "Classic ESP32 (no PSRAM) with %u px: enforcing single buffering to preserve internal DRAM.",
+                 (unsigned)totalPixels);
+            canDoubleBuffer = false;
         }
+        uint8_t profileMaxDepth = BoardProfile::current().display().defaultColorDepth;
+        if (depth > profileMaxDepth) {
+            depth = profileMaxDepth;
+            mxconfig.setPixelColorDepthBits(depth);
+        }
+    } else {
+        LOGI("MatrixEngine", "PSRAM found. DMA buffering will use PSRAM safely.");
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
+#endif
     }
+    mxconfig.double_buff = canDoubleBuffer;
 
     // Initialize display object
     m_panel = new FastMatrixPanel(mxconfig);
