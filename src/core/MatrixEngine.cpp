@@ -52,13 +52,13 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         }
     }
 
-    HUB75_I2S_CFG::i2s_pins _pins = {
-        out1[0], out1[1], out1[2],
-        out2[0], out2[1], out2[2],
-        MATRIX_A_PIN, MATRIX_B_PIN, MATRIX_C_PIN,
-        MATRIX_D_PIN, MATRIX_E_PIN,
-        MATRIX_LAT_PIN, MATRIX_OE_PIN, MATRIX_CLK_PIN
-    };
+    HUB75_I2S_CFG::i2s_pins _pins;
+    BoardProfile::current().populateMatrixPins(_pins);
+    _pins.r1 = out1[0]; _pins.g1 = out1[1]; _pins.b1 = out1[2];
+    _pins.r2 = out2[0]; _pins.g2 = out2[1]; _pins.b2 = out2[2];
+    if (config.height < 64) {
+        _pins.e = -1;
+    }
 
     HUB75_I2S_CFG mxconfig(
         config.width,      // Module width
@@ -97,6 +97,10 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::FM6126A;
     } else if (chip == "ICN2038S" || chip == "ICN2037" || chip == "SM16208") {
         mxconfig.driver = HUB75_I2S_CFG::ICN2038S;
+    } else if (chip == "MBI5124") {
+        mxconfig.driver = HUB75_I2S_CFG::MBI5124;
+    } else if (chip == "DP3246") {
+        mxconfig.driver = HUB75_I2S_CFG::DP3246;
     } else {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }

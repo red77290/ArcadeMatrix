@@ -62,7 +62,7 @@
     #define MATRIX_B_PIN 32
     #define MATRIX_C_PIN 22
     #define MATRIX_D_PIN 17
-    #define MATRIX_E_PIN 21
+    #define MATRIX_E_PIN 18
     #define MATRIX_LAT_PIN 4
     #define MATRIX_OE_PIN 15
     #define MATRIX_CLK_PIN 16
