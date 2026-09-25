@@ -312,16 +312,6 @@ void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
 void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int canvasHeight) {
     if (!src || !initialized) return;
 
-    if (getRotation() != 0 && getRotation() != 2) {
-        for (int y = 0; y < canvasHeight; y++) {
-            const uint16_t* r = src + (size_t)y * canvasWidth;
-            for (int x = 0; x < canvasWidth; x++) {
-                drawPixel(x, y, r[x]);
-            }
-        }
-        return;
-    }
-
     const int w = PIXELS_PER_ROW;
     const int rpf = ROWS_PER_FRAME;
     if (canvasWidth != w || canvasHeight != (int)m_cfg.mx_height) {
@@ -331,30 +321,15 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
     auto& targetFb = frame_buffer[m_back];
     if ((int)targetFb.rowBits.size() < rpf) return;
 
-    bool rot180 = (getRotation() == 2);
-
     for (int y = 0; y < rpf; y++) {
-        const uint16_t* src1;
-        const uint16_t* src2;
-        if (!rot180) {
-            src1 = src + (size_t)y * w;
-            src2 = src + (size_t)(y + rpf) * w;
-        } else {
-            src1 = src + (size_t)(m_cfg.mx_height - 1 - y) * w;
-            src2 = src + (size_t)(m_cfg.mx_height - 1 - (y + rpf)) * w;
-        }
+        const uint16_t* src1 = src + (size_t)y * w;
+        const uint16_t* src2 = src + (size_t)(y + rpf) * w;
 
         for (uint8_t p = 0; p < m_depth; p++) {
             uint16_t* dmaRow = targetFb.rowBits[y]->getDataPtr(p);
             for (int x = 0; x < w; x++) {
-                uint16_t c1, c2;
-                if (!rot180) {
-                    c1 = src1[x];
-                    c2 = src2[x];
-                } else {
-                    c1 = src1[w - 1 - x];
-                    c2 = src2[w - 1 - x];
-                }
+                uint16_t c1 = src1[x];
+                uint16_t c2 = src2[x];
 
                 uint8_t r1 = (m_lut_r[(c1 >> 11) & 0x1F] >> p) & 1;
                 uint8_t g1 = (m_lut_g[(c1 >> 5) & 0x3F] >> p) & 1;

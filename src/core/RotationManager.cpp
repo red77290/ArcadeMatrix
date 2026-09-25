@@ -1,6 +1,7 @@
 #include "../../include/core/EngineRegistry.h"
 #include "RotationManager.h"
 #include "DisplayRuntime.h"
+#include "drawing/IDrawingSurface.h"
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
@@ -297,6 +298,9 @@ void RotationManager::switchToModule(int index) {
       if (oldEngine) {
           oldEngine->deactivate();
       }
+      if (m_ctx && m_ctx->getSurface()) {
+          m_ctx->getSurface()->clear(0);
+      }
       if (m_ctx && m_ctx->getMatrix()) {
           // Both DMA buffers have to go black. Clearing once only blanks the back buffer, so the
           // front one still holds the engine that just ended; while the next engine loads its first
@@ -414,8 +418,13 @@ bool RotationManager::loop() {
     
     bool shouldFlip = true;
     if (activeEngine) {
-        if (activeEngine->needsClear() && m_ctx && m_ctx->getMatrix()) {
-            m_ctx->getMatrix()->fillScreen(0);
+        if (activeEngine->needsClear()) {
+            if (m_ctx && m_ctx->getSurface()) {
+                m_ctx->getSurface()->clear(0);
+            }
+            if (m_ctx && m_ctx->getMatrix()) {
+                m_ctx->getMatrix()->fillScreen(0);
+            }
             matrixEngine.markExternalDraw();
         }
         activeEngine->update(m_ctx);
@@ -448,6 +457,7 @@ bool RotationManager::loop() {
                  (int)currentIndex, (inst_id ? inst_id : "(null)"), isSoloMode ? "showing a blank panel" : "skipping it");
         }
         if (m_missingClears < 2) {
+            if (m_ctx && m_ctx->getSurface()) m_ctx->getSurface()->clear(0);
             if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
             m_missingClears++;
             shouldFlip = true;

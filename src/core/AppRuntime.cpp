@@ -280,6 +280,10 @@ void AppRuntime::initialize() {
     m_drawingSurface = std::move(surfaceResult.surface);
     LOGI("AppRuntime", "Display surface initialized: %s (%s)",
          m_drawingSurface ? "OK" : "FAILED", surfaceResult.reasonText);
+    displayOrientationManager.setSurface(m_drawingSurface.get());
+    if (m_drawingSurface) {
+        m_drawingSurface->setRotation(displayOrientationManager.getRotation());
+    }
 
     rotationManager = new RotationManager();
     m_appCtx = new AppEngineContext(m_drawingSurface.get(), matrixEngine.getDisplay(), m_frontendListener);

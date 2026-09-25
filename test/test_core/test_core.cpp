@@ -2008,6 +2008,55 @@ void test_display_surface_factory_selection(void) {
     TEST_ASSERT_NOT_NULL(resAuto.surface.get());
 }
 
+void test_canvas_buffered_surface_drawing_and_rotation(void) {
+    auto res = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    auto* surface = res.surface.get();
+    TEST_ASSERT_NOT_NULL(surface);
+    
+    // Clear to black
+    surface->clear(0);
+    auto view = surface->acquireCanvas();
+    TEST_ASSERT_TRUE(view.isValid());
+    TEST_ASSERT_EQUAL_UINT16(64, view.width);
+    TEST_ASSERT_EQUAL_UINT16(32, view.height);
+    for (size_t i = 0; i < 64 * 32; ++i) {
+        TEST_ASSERT_EQUAL_UINT16(0, view.data[i]);
+    }
+    surface->releaseCanvas();
+
+    // Draw pixel at (10, 5) with color 0x1234 in rotation 0
+    surface->setRotation(0);
+    surface->drawPixel(10, 5, 0x1234);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0x1234, view.data[5 * 64 + 10]);
+    surface->releaseCanvas();
+
+    // Now set rotation to 1 (90 deg clockwise)
+    // Physical dimensions are 64x32.
+    // In rot 1, logical dimensions are width=32, height=64.
+    // logicalToPhysical(10, 5, 64, 32, 1) -> x = 64 - 1 - 5 = 58, y = 10
+    surface->clear(0);
+    surface->setRotation(1);
+    TEST_ASSERT_EQUAL_INT16(32, surface->width());
+    TEST_ASSERT_EQUAL_INT16(64, surface->height());
+    surface->drawPixel(10, 5, 0x5678);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0x5678, view.data[10 * 64 + 58]);
+    surface->releaseCanvas();
+
+    // Now test blit565 with rotation 0
+    surface->clear(0);
+    surface->setRotation(0);
+    uint16_t sprite[4] = { 0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD }; // 2x2 sprite
+    surface->blit565(sprite, 2, 2, 2, 2, 2);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0xAAAA, view.data[2 * 64 + 2]);
+    TEST_ASSERT_EQUAL_UINT16(0xBBBB, view.data[2 * 64 + 3]);
+    TEST_ASSERT_EQUAL_UINT16(0xCCCC, view.data[3 * 64 + 2]);
+    TEST_ASSERT_EQUAL_UINT16(0xDDDD, view.data[3 * 64 + 3]);
+    surface->releaseCanvas();
+}
+
 // =========================================================================
 // 10. Modular Storage Architecture & Working-Set Cache
 // =========================================================================
@@ -2222,6 +2271,7 @@ void setup() {
     RUN_TEST(test_surface_coordinates_rotation);
     RUN_TEST(test_hub75_bulk_encoder_luts_and_encode);
     RUN_TEST(test_display_surface_factory_selection);
+    RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
 
     // =========================================================================
     // 10. Modular Storage Architecture & Working-Set Cache
