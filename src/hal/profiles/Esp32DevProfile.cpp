@@ -44,36 +44,28 @@ void Esp32DevProfile::configureWifiTxPower() {
 }
 
 bool Esp32DevProfile::beginStorage() {
-    pinMode(SD_CS_PIN, OUTPUT);
-    digitalWrite(SD_CS_PIN, HIGH);
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-
-    // Send 20 dummy bytes (160 clock cycles) with CS HIGH to release SPI bus & exit any active streaming state
-    for (int i = 0; i < 20; i++) {
-        SPI.transfer(0xFF);
-    }
-
     m_storage.sdMounted = false;
-    const uint8_t sckMhz[] = {25, 16, 10, 4};
-    for (uint8_t mhz : sckMhz) {
-        SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(mhz), &SPI);
-        if (sd.begin(spiConfig)) {
-            m_storage.sdMounted = true;
-            m_storage.defaultSckMhz = mhz;
-            if (mhz != 25) {
-                LOGW("SD", "SD Card mounted at fallback frequency: %u MHz", (unsigned)mhz);
-            } else {
-                LOGI("SD", "SD Card mounted successfully at 25 MHz.");
-            }
-            break;
-        }
+    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
+    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
+    if (sd.begin(spiConfig)) {
+        m_storage.sdMounted = true;
+        m_storage.defaultSckMhz = 25;
+        LOGI("SD", "SD Card mounted successfully at 25 MHz.");
+        return true;
     }
 
-    if (!m_storage.sdMounted) {
-        LOGE("SD", "SD Card mount failed. Starting in Safe Mode (Flash defaults, Wi-Fi & WebServer active).");
-        return false;
+    // Fallback attempt at 16 MHz if 25 MHz had signal integrity issues
+    delay(10);
+    SdSpiConfig fallbackConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(16), &SPI);
+    if (sd.begin(fallbackConfig)) {
+        m_storage.sdMounted = true;
+        m_storage.defaultSckMhz = 16;
+        LOGW("SD", "SD Card mounted at fallback frequency: 16 MHz.");
+        return true;
     }
-    return true;
+
+    LOGE("SD", "SD Card mount failed. Starting in Safe Mode (Flash defaults, Wi-Fi & WebServer active).");
+    return false;
 }
 
 void Esp32DevProfile::endStorage() {
