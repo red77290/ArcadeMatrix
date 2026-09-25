@@ -5,7 +5,7 @@
 #include "../fonts/ArcadeFonts.h"
 #include <string.h>
 
-WordClock::WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+WordClock::WordClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
     glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";

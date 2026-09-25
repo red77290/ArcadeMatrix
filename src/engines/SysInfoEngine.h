@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "core/drawing/IDrawingSurface.h"
 #include "../../include/core/EngineContract.h"
 #include "../hal/HardwareHAL.h"
 
@@ -20,7 +21,7 @@ public:
     void deactivate() override;
     void onConfigChanged(const EngineConfig* engineConfig) override;
 
-    static uint16_t getMetricColor(MatrixPanel_I2S_DMA* matrix, float val, float warnThresh, float critThresh);
+    static uint16_t getMetricColor(IDrawingSurface* matrix, float val, float warnThresh, float critThresh);
 
 private:
     int theme;
@@ -36,10 +37,10 @@ private:
     float smoothedCpuLoad;
     uint32_t lastCpuSampleTime;
 
-    void drawGaugeBar(MatrixPanel_I2S_DMA* matrix, int x, int y, int w, int h, float percent, uint16_t color);
-    void renderHudTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
-    void renderCyberpunkTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
-    void renderCompactTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
+    void drawGaugeBar(IDrawingSurface* matrix, int x, int y, int w, int h, float percent, uint16_t color);
+    void renderHudTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
+    void renderCyberpunkTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
+    void renderCompactTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);
 };
 
 class SysInfoEngineDescriptorHandler : public IEngineDescriptorHandler {

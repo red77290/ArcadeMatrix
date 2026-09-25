@@ -3,10 +3,12 @@
  * @brief Implementation of DirectDmaSurface.
  */
 #include "DirectDmaSurface.h"
+#include "../MatrixEngine.h"
 
-DirectDmaSurface::DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, int16_t height, bool singleBuffer)
+DirectDmaSurface::DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, int16_t height, bool singleBuffer, MatrixEngine* engine)
     : IDrawingSurface(width, height, width, height)
     , _matrix(matrix)
+    , _matrixEngine(engine)
     , _strategy(singleBuffer ? PresentationStrategy::DIRECT_DMA_SINGLE : PresentationStrategy::DIRECT_DMA_DOUBLE)
 {
     // Estimated DMA buffer size (2 buffers if double-buffered)
@@ -68,13 +70,21 @@ void DirectDmaSurface::releaseCanvas() {
 
 PresentationTiming DirectDmaSurface::present() {
     PresentationTiming timing;
-    if (!_matrix) return timing;
+    if (!_matrix && !_matrixEngine) return timing;
     uint32_t t0 = micros();
     
-    if (_strategy == PresentationStrategy::DIRECT_DMA_DOUBLE) {
+    if (_matrixEngine) {
+        _matrixEngine->present();
+    } else if (_matrix && _strategy == PresentationStrategy::DIRECT_DMA_DOUBLE) {
         _matrix->flipDMABuffer();
     }
     
     timing.totalPresentUs = (micros() - t0);
     return timing;
+}
+
+void DirectDmaSurface::markExternalDraw() {
+    if (_matrixEngine) {
+        _matrixEngine->markExternalDraw();
+    }
 }

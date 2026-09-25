@@ -1,5 +1,5 @@
 #include "DashboardEngine.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "../api/OpenWeatherMapProvider.h"
@@ -15,11 +15,11 @@ DashboardEngine::~DashboardEngine() {
 
 EngineError DashboardEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
     LOGI("Dashboard", "DashboardEngine::initialize called.");
-    if (!context || !context->getMatrix()) {
-        LOGE("Dashboard", "DashboardEngine::initialize: Invalid context or matrix!");
+    if (!context || !context->getSurface()) {
+        LOGE("Dashboard", "DashboardEngine::initialize: Invalid context or surface!");
         return EngineError::InvalidConfig;
     }
-    matrix = context->getMatrix();
+    matrix = context->getSurface();
     m_geometry = context->getGeometry();
 
     onConfigChanged(engineConfig);
@@ -47,6 +47,9 @@ void DashboardEngine::update(EngineContext* context) {
 }
 
 void DashboardEngine::render(EngineContext* context) {
+    if (context && context->getSurface()) {
+        matrix = context->getSurface();
+    }
     if (!matrix) return;
 
     if (m_layoutDirty) {

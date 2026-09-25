@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "core/drawing/IDrawingSurface.h"
 #include "../hal/HardwareHAL.h"
 
 /**
@@ -31,9 +32,9 @@ private:
     int offsetX;
     int offsetY;
 
-    void drawThermometerIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color);
-    void drawWaterDropIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color);
-    uint16_t getTemperatureColor(MatrixPanel_I2S_DMA* matrix, float tempC);
+    void drawThermometerIcon(IDrawingSurface* matrix, int x, int y, uint16_t color);
+    void drawWaterDropIcon(IDrawingSurface* matrix, int x, int y, uint16_t color);
+    uint16_t getTemperatureColor(IDrawingSurface* matrix, float tempC);
 };
 
 class TempEngineDescriptorHandler : public IEngineDescriptorHandler {

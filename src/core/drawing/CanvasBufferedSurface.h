@@ -31,6 +31,7 @@ public:
     bool hasCanvas() const override { return _canvas != nullptr; }
 
     PresentationTiming present() override;
+    void markExternalDraw() override;
 
     PresentationStrategy presentationStrategy() const override { return _strategy; }
     CanvasStorage canvasStorage() const override { return _storage; }

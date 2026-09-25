@@ -2,7 +2,9 @@
 #include "core/EngineContract.h"
 #include "../hal/HardwareHAL.h"
 
-class IDrawingSurface;
+#include "drawing/IDrawingSurface.h"
+#include "drawing/DirectDmaSurface.h"
+#include <memory>
 
 // Concrete implementation of EngineContext for the main application
 class AppEngineContext : public EngineContext {
@@ -14,7 +16,16 @@ public:
         : m_surface(nullptr), m_matrix(matrix), m_eventBus(eventBus) {}
 
     IDrawingSurface* getSurface() override {
-        return m_surface;
+        if (m_surface) return m_surface;
+        if (m_matrix) {
+            if (!m_fallbackSurface) {
+                m_fallbackSurface = std::unique_ptr<DirectDmaSurface>(
+                    new DirectDmaSurface(m_matrix, m_matrix->width(), m_matrix->height())
+                );
+            }
+            return m_fallbackSurface.get();
+        }
+        return nullptr;
     }
 
     MatrixPanel_I2S_DMA* getMatrix() override {
@@ -48,6 +59,7 @@ public:
 
 private:
     IDrawingSurface* m_surface = nullptr;
+    std::unique_ptr<DirectDmaSurface> m_fallbackSurface;
     MatrixPanel_I2S_DMA* m_matrix;
     FrontendSyncEngine* m_eventBus;
 };

@@ -1,6 +1,6 @@
 #include "BinaryClock.h"
 
-BinaryClock::BinaryClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+BinaryClock::BinaryClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
     storedTime = {0, 0, 0};
 }
 

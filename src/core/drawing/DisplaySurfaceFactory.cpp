@@ -45,7 +45,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
 
     if (pipeline == "direct_double") {
         MatrixPanel_I2S_DMA* disp = matrixEngine ? matrixEngine->getDisplay() : nullptr;
-        result.surface.reset(new DirectDmaSurface(disp, width, height, false));
+        result.surface.reset(new DirectDmaSurface(disp, width, height, false, matrixEngine));
         result.reason = SurfaceSelectionReason::ExplicitUserPolicy;
         result.reasonText = "User requested Direct DMA Double Buffer (Legacy)";
         return result;
@@ -53,7 +53,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
 
     if (pipeline == "direct_single") {
         MatrixPanel_I2S_DMA* disp = matrixEngine ? matrixEngine->getDisplay() : nullptr;
-        result.surface.reset(new DirectDmaSurface(disp, width, height, true));
+        result.surface.reset(new DirectDmaSurface(disp, width, height, true, matrixEngine));
         result.reason = SurfaceSelectionReason::ExplicitUserPolicy;
         result.reasonText = "User requested Direct DMA Single Buffer (Ultra-low RAM)";
         return result;

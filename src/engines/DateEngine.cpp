@@ -40,7 +40,8 @@ DateEngine::DateEngine() : matrix(nullptr), activeFace(nullptr) {
 }
 
 EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrix = context->getMatrix();
+    matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return EngineError::InitializationFailed;
     matrixW = matrix->width();
     matrixH = matrix->height();
     

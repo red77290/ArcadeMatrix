@@ -48,7 +48,7 @@ void SysInfoEngine::onConfigChanged(const EngineConfig* engineConfig) {
     }
 }
 
-uint16_t SysInfoEngine::getMetricColor(MatrixPanel_I2S_DMA* matrix, float val, float warnThresh, float critThresh) {
+uint16_t SysInfoEngine::getMetricColor(IDrawingSurface* matrix, float val, float warnThresh, float critThresh) {
     if (val < warnThresh) {
         return matrix->color565(0, 235, 120); // Neon Green (Healthy)
     } else if (val < critThresh) {
@@ -58,7 +58,7 @@ uint16_t SysInfoEngine::getMetricColor(MatrixPanel_I2S_DMA* matrix, float val, f
     }
 }
 
-void SysInfoEngine::drawGaugeBar(MatrixPanel_I2S_DMA* matrix, int x, int y, int w, int h, float percent, uint16_t color) {
+void SysInfoEngine::drawGaugeBar(IDrawingSurface* matrix, int x, int y, int w, int h, float percent, uint16_t color) {
     if (percent < 0.0f) percent = 0.0f;
     if (percent > 100.0f) percent = 100.0f;
 
@@ -82,7 +82,7 @@ void SysInfoEngine::update(EngineContext* context) {
 }
 
 void SysInfoEngine::render(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
 
     matrix->fillScreen(0);
@@ -112,7 +112,7 @@ void SysInfoEngine::render(EngineContext* context) {
     }
 }
 
-void SysInfoEngine::renderHudTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
+void SysInfoEngine::renderHudTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
     uint16_t cpuColor = getMetricColor(matrix, cpuPct, 60.0f, 80.0f);
     uint16_t ramColor = getMetricColor(matrix, ramPct, 70.0f, 85.0f);
     uint16_t tempColor = getMetricColor(matrix, tempC, 55.0f, 70.0f);
@@ -296,7 +296,7 @@ void SysInfoEngine::renderHudTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, fl
     }
 }
 
-void SysInfoEngine::renderCyberpunkTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
+void SysInfoEngine::renderCyberpunkTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
     uint16_t cpuColor = getMetricColor(matrix, cpuPct, 60.0f, 80.0f);
     uint16_t ramColor = getMetricColor(matrix, ramPct, 70.0f, 85.0f);
     uint16_t tempColor = getMetricColor(matrix, tempC, 55.0f, 70.0f);
@@ -445,7 +445,7 @@ void SysInfoEngine::renderCyberpunkTheme(MatrixPanel_I2S_DMA* matrix, float cpuP
     }
 }
 
-void SysInfoEngine::renderCompactTheme(MatrixPanel_I2S_DMA* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
+void SysInfoEngine::renderCompactTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec) {
     uint16_t cpuColor = getMetricColor(matrix, cpuPct, 60.0f, 80.0f);
     uint16_t ramColor = getMetricColor(matrix, ramPct, 70.0f, 85.0f);
     uint16_t tempColor = getMetricColor(matrix, tempC, 55.0f, 70.0f);

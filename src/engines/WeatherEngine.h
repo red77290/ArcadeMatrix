@@ -8,6 +8,7 @@
 #include "../api/IWeatherProvider.h"
 
 #include "../../include/core/EngineContract.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/AppEngineContext.h"
 
 class WeatherEngine : public IEngine {
@@ -53,7 +54,7 @@ public:
     static FetchState fetchState();
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     std::vector<IWeatherProvider*> providers;
     // The forecast is fetched on a task of its own. Doing it from loop() meant the render path
     // stopped for the length of an HTTPS round trip, which showed as a black panel for a second or

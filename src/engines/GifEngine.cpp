@@ -1,4 +1,5 @@
 #include "GifEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../hal/BoardProfile.h"
 #include "../core/SpiRamJsonDocument.h"
 #include "../core/MatrixEngine.h"
@@ -225,7 +226,7 @@ void GifEngine::rebuildActivePlaylists() {
 
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
     instance = this;
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
+    if (!context || (!context->getSurface() && !context->getMatrix())) return EngineError::InitializationFailed;
     m_context = context;
     m_instanceConfig = config;
     m_hasPsram = context->hasPsram();
@@ -251,7 +252,7 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
     recentCount = 0;
     recentHead = 0;
 
-    if (!begin(context->getMatrix())) return EngineError::InitializationFailed;
+    if (!begin(context->getSurface())) return EngineError::InitializationFailed;
     if (config) onConfigChanged(config);
     else {
         m_configuredFolders = { "all" };
@@ -275,7 +276,8 @@ void GifEngine::activate() {
         playDefaultPlaylists(count);
     } else {
         stop();
-        if (matrix) matrix->fillScreen(0);
+        if (m_context && m_context->getSurface()) m_context->getSurface()->clear(0);
+        else if (matrix) matrix->fillScreen(0);
     }
 }
 
@@ -333,7 +335,8 @@ void GifEngine::onConfigChanged(const EngineConfig* config) {
         if (hasDefaultPlaylists()) {
             playDefaultPlaylists(count);
         } else {
-            if (matrix) matrix->fillScreen(0);
+            if (m_context && m_context->getSurface()) m_context->getSurface()->clear(0);
+            else if (matrix) matrix->fillScreen(0);
         }
     }
 }
@@ -361,7 +364,8 @@ void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
             playDefaultPlaylists(count > 0 ? count : -1);
         } else {
             stop();
-            if (matrix) matrix->fillScreen(0);
+            if (m_context && m_context->getSurface()) m_context->getSurface()->clear(0);
+            else if (matrix) matrix->fillScreen(0);
         }
     }
 }
@@ -370,7 +374,7 @@ bool GifEngine::isFinished() const {
     return !isPlaying && !playlistMode && !hasPendingPlaylists;
 }
 
-bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
+bool GifEngine::begin(IDrawingSurface* display) {
     if (!display) return false;
     matrix = display;
     ensureGifDecoder();
@@ -453,7 +457,11 @@ bool GifEngine::blitCanvas() {
     uint32_t t0 = micros();
     size_t written = 0;
     if (full) {
-        matrixEngine.blitCanvas565(canvasBuffer, w, h);
+        if (m_context && m_context->getSurface()) {
+            m_context->getSurface()->blit565(canvasBuffer, 0, 0, w, h);
+        } else {
+            matrixEngine.blitCanvas565(canvasBuffer, w, h);
+        }
         if (shadow) {
             memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
             m_shadowValid[idx] = true;
@@ -476,7 +484,11 @@ bool GifEngine::blitCanvas() {
 
         if (dirtyWords >= dirtyThresholdWords) {
             // High motion frame: FastBlit sequential row writes are faster than hundreds of drawPixel calls
-            matrixEngine.blitCanvas565(canvasBuffer, w, h);
+            if (m_context && m_context->getSurface()) {
+                m_context->getSurface()->blit565(canvasBuffer, 0, 0, w, h);
+            } else {
+                matrixEngine.blitCanvas565(canvasBuffer, w, h);
+            }
             memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
             written = n;
         } else {
@@ -487,7 +499,11 @@ bool GifEngine::blitCanvas() {
                 for (int x = 0; x < w; x++) {
                     uint16_t c = row[x];
                     if (c != srow[x]) {
-                        matrix->drawPixel(x, y, c);
+                        if (m_context && m_context->getSurface()) {
+                            m_context->getSurface()->drawPixel(x, y, c);
+                        } else if (matrix) {
+                            matrix->drawPixel(x, y, c);
+                        }
                         srow[x] = c;
                         written++;
                     }

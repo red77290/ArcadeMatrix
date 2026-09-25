@@ -8,9 +8,11 @@
 #include "SurfaceCoordinates.h"
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
+class MatrixEngine;
+
 class DirectDmaSurface : public IDrawingSurface {
 public:
-    DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, int16_t height, bool singleBuffer = false);
+    DirectDmaSurface(MatrixPanel_I2S_DMA* matrix, int16_t width, int16_t height, bool singleBuffer = false, MatrixEngine* engine = nullptr);
     virtual ~DirectDmaSurface() = default;
 
     void setRotation(uint8_t r) override;
@@ -29,6 +31,7 @@ public:
     bool hasCanvas() const override { return false; }
 
     PresentationTiming present() override;
+    void markExternalDraw() override;
 
     PresentationStrategy presentationStrategy() const override { return _strategy; }
     CanvasStorage canvasStorage() const override { return CanvasStorage::NONE; }
@@ -38,6 +41,7 @@ public:
 
 private:
     MatrixPanel_I2S_DMA* _matrix = nullptr;
+    MatrixEngine* _matrixEngine = nullptr;
     PresentationStrategy _strategy = PresentationStrategy::DIRECT_DMA_DOUBLE;
     size_t _dmaBytes = 0;
 };

@@ -20,7 +20,7 @@ const uint16_t gameboyColors[4] = {
     0x9DE1  // Lightest green
 };
 
-TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode, const EngineConfig* config)
+TetrisClock::TetrisClock(IDrawingSurface* display, bool gameboyMode, const EngineConfig* config)
     : ClockFace(display, config), isGameboy(gameboyMode), numBlocks(0), lastFrameTime(0), canvas(nullptr) {
     storedTime = {0, 0, 0};
     strcpy(lastTimeStr, "");

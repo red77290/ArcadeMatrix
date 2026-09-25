@@ -32,6 +32,9 @@ void FighterEngine::update(EngineContext* context) {
 }
 
 void FighterEngine::render(EngineContext* context) {
+    if (context && context->getSurface()) {
+        matrix = static_cast<Adafruit_GFX*>(context->getSurface());
+    }
     draw();
 }
 

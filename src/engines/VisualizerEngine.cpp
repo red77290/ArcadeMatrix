@@ -84,7 +84,7 @@ uint16_t VisualizerEngine::getSpectrumColor(int heightIndex, int maxHeight) {
 
 
 
-void VisualizerEngine::drawSpectrum(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawSpectrum(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -134,7 +134,7 @@ void VisualizerEngine::drawSpectrum(MatrixPanel_I2S_DMA* matrix) {
     }
 }
 
-void VisualizerEngine::drawWaveform(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawWaveform(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int midY = height / 2;
@@ -168,7 +168,7 @@ void VisualizerEngine::drawWaveform(MatrixPanel_I2S_DMA* matrix) {
     }
 }
 
-void VisualizerEngine::drawRadial(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawRadial(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int cx = width / 2;
@@ -191,7 +191,7 @@ void VisualizerEngine::drawRadial(MatrixPanel_I2S_DMA* matrix) {
     matrix->drawCircle(cx, cy, currentRadius / 2, matrix->color565(0, 200, 255));
 }
 
-void VisualizerEngine::drawNeonFire(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawNeonFire(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -223,7 +223,7 @@ void VisualizerEngine::update(EngineContext* context) {
 }
 
 void VisualizerEngine::render(EngineContext* context) {
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix || !active) return;
 
     matrix->fillScreen(0);
