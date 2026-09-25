@@ -62,12 +62,7 @@ void ConfigSanitizer::sanitizeMatrix(MatrixConfig& matrix, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
-    uint8_t maxColorDepth = 11;
-#if !defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    // Classic ESP32 (esp32dev) has strictly bounded DRAM (~320KB) and cannot DMA from PSRAM.
-    // Color depth is strictly limited to 5 bits to prevent DMA buffer starvation.
-    maxColorDepth = 5;
-#endif
+    uint8_t maxColorDepth = 8;
     if (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth) {
         matrix.colorDepth = constrain(matrix.colorDepth, (uint8_t)1, maxColorDepth);
         result.values_clamped++;
