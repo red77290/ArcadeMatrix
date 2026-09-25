@@ -1745,6 +1745,17 @@ select.input option {
               </div>
             </div>
 
+            <div class="form-group" style="margin-top: 1rem;">
+              <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
+              <select id="hw-render-pipeline" class="input">
+                <option value="auto" data-i18n="hw_pipeline_auto">✨ Auto (Recommended - Dynamic Allocation)</option>
+                <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM, synchronized presentation)</option>
+                <option value="canvas_double" data-i18n="hw_pipeline_canvas_double">🚀 Canvas Buffered + Double DMA (Maximum Throughput)</option>
+                <option value="direct_double" data-i18n="hw_pipeline_direct_double">🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)</option>
+                <option value="direct_single" data-i18n="hw_pipeline_direct_single">⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)</option>
+              </select>
+            </div>
+
             <div class="form-grid col-2" style="margin-top: 1rem;">
               <div class="form-group">
                 <label><span data-i18n="hw_clk_phase_label">Invert CLK Phase (ESP32)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
@@ -2663,6 +2674,13 @@ const translations = {
     hw_refresh_rate_label: "Target Refresh Rate (Hz)",
     hw_clk_phase_label: "Invert CLK Phase (ESP32)",
     hw_single_buffer_label: "Force Single Buffer (Low SRAM)",
+    hw_pipeline_label: "Rendering & Buffering Pipeline",
+    tt_hw_pipeline: "Display buffering architecture. Canvas Single Buffer halves DMA RAM on classic ESP32, unlocking TLS engines while keeping smooth presentation.",
+    hw_pipeline_auto: "✨ Auto (Recommended - Dynamic Allocation)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM, synchronized presentation)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
     hw_btn_save: "💾 Save Hardware Settings",
     tt_hw_color_depth: "Bits per color channel driven by the DMA engine. Lower values raise the refresh rate but reduce color gradation. 8 is the default.",
     tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
@@ -3155,6 +3173,13 @@ const translations = {
     hw_refresh_rate_label: "Fréquence de Rafraîchissement Cible (Hz)",
     hw_clk_phase_label: "Inverser la Phase d'Horloge (ESP32)",
     hw_single_buffer_label: "Forcer le Simple Buffer (SRAM faible)",
+    hw_pipeline_label: "Pipeline de Rendu & Buffering",
+    tt_hw_pipeline: "Architecture de mémoire tampon. Canvas Simple Buffer divise par 2 la DMA RAM sur ESP32 classique, débloquant les moteurs TLS avec un affichage fluide.",
+    hw_pipeline_auto: "✨ Auto (Recommandé - Allocation Dynamique)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA, présentation synchronisée)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
     hw_btn_save: "💾 Enregistrer les paramètres matériels",
     tt_hw_color_depth: "Bits par canal de couleur pilotés par le moteur DMA. Une valeur plus faible augmente le rafraîchissement mais réduit les nuances. 8 par défaut.",
     tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
@@ -3647,6 +3672,13 @@ const translations = {
     hw_refresh_rate_label: "Frecuencia de Refresco Objetivo (Hz)",
     hw_clk_phase_label: "Invertir Fase de Reloj (ESP32)",
     hw_single_buffer_label: "Forzar Búfer Simple (SRAM baja)",
+    hw_pipeline_label: "Canalización de Renderizado y Búfer",
+    tt_hw_pipeline: "Arquitectura de búfer de pantalla. Canvas Simple divide a la mitad la RAM DMA en ESP32 clásico, desbloqueando motores TLS con visualización fluida.",
+    hw_pipeline_auto: "✨ Auto (Recomendado - Asignación Dinámica)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA, presentación sincronizada)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",
     hw_btn_save: "💾 Guardar la configuración de hardware",
     tt_hw_color_depth: "Bits por canal de color gestionados por el motor DMA. Un valor menor aumenta el refresco pero reduce los matices. 8 por defecto.",
     tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
@@ -7558,6 +7590,7 @@ async function initSettings() {
     setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
+    setVal('hw-render-pipeline', matrix.render_pipeline || (matrix.force_single_buffer ? 'canvas_single' : 'auto'));
     setChk('hw-force-single-buffer', matrix.force_single_buffer ?? false);
 
     // Screen Orientation & Gyroscope
@@ -7744,7 +7777,8 @@ async function initSettings() {
         latch_blanking: numOr('hw-latch-blanking', 4),
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,
-        force_single_buffer: document.getElementById('hw-force-single-buffer')?.checked ?? false,
+        render_pipeline: document.getElementById('hw-render-pipeline')?.value || 'auto',
+        force_single_buffer: (document.getElementById('hw-render-pipeline')?.value === 'canvas_single' || document.getElementById('hw-render-pipeline')?.value === 'direct_single' || document.getElementById('hw-force-single-buffer')?.checked) ? true : false,
         rotation_offset: numOr('hw-screen-rotation', 0),
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
         rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',
