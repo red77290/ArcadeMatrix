@@ -43,11 +43,34 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 | `row_address_mode` | `int` | Type d'adressage des lignes (`0`: Direct Binaire, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
 | `clk_phase` | `bool` | Inverse le front d'horloge CLK (`false` par défaut ; mettre à `true` si la dalle requiert un front inversé). |
 | `latch_blanking` | `int` | Nombre de cycles de masquage de latch (`0`–`8`) pour supprimer le ghosting (lignes fantômes). |
-| `force_single_buffer` | `bool` | Force un simple buffer DMA pour économiser la SRAM interne (`false` par défaut). |
+| `render_pipeline` | `String` | Pipeline de rendu et de buffering (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Défaut `auto`. Contrôle l'allocation du canvas intermédiaire et la synchronisation DMA. |
+| `force_single_buffer` | `bool` | Force un simple buffer DMA pour économiser la SRAM interne (`false` par défaut ; passerelle de compatibilité mappée sur `canvas_single`). |
 | `rotation_offset` | `int` | Décalage physique de montage (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Active l'orientation automatique via le gyroscope/IMU embarqué (`true` par défaut). |
 | `rotation_transition` | `String` | Effet visuel de transition (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Durée de l'effet de transition en millisecondes (défaut `400`). |
+
+### 2.1 Options du Pipeline de Rendu & Buffering
+
+ArcadeMatrix v4 introduit le SPI graphique matériellement agnostique (`IDrawingSurface`), découplant la rasterisation des pixels des contrôleurs DMA physiques. Vous pouvez configurer le pipeline directement dans `config.json` ou depuis l'onglet **Paramètres Système → Matériel** de la Web UI :
+
+- **`auto`** *(Recommandé)* : Résout automatiquement le pipeline optimal selon le profil matériel et le palier de mémoire vive :
+  - **ESP32-S3 / Cartes avec PSRAM** : Alloue un canvas intermédiaire 16 bits RGB565 en PSRAM externe avec double buffer DMA (`canvas_double`) pour un débit maximal et une animation 60 FPS sans déchirement.
+  - **ESP32 Classique (Sans PSRAM)** : Alloue un canvas intermédiaire en SRAM interne avec un simple buffer DMA (`canvas_single`). Cela libère ~16 à 20 Ko de mémoire DMA critique, évitant les erreurs d'init Wi-Fi (`esp_wifi_init 4353`) tout en supprimant le tearing grâce à l'encodage par rafale synchronisé.
+- **`canvas_single`** : Canvas 16 bits RGB565 + simple buffer DMA. Divise par deux la RAM DMA requise tout en utilisant `Hub75BulkEncoder` pour éliminer le déchirement d'écran.
+- **`canvas_double`** : Canvas 16 bits RGB565 + double buffer DMA. Idéal pour les dalles larges (128×64, 256×64) avec PSRAM.
+- **`direct_double`** : Rendu direct hérité dans les doubles buffers HUB75 DMA sans canvas intermédiaire.
+- **`direct_single`** : Rendu direct hérité dans un simple buffer DMA (empreinte mémoire minimale absolue ; risque de déchirement visible pendant le tracé).
+
+> [!NOTE]
+> Pour des raisons de rétrocompatibilité, `force_single_buffer: true` est automatiquement mappé vers `canvas_single` lorsque `render_pipeline` est sur `auto` ou non renseigné.
+
+### 2.2 Intégration dans l'Onglet Matériel de la Web UI
+
+L'interface Web (Paramètres Système → Matériel) pilote directement ces options :
+1. **Menu déroulant Pipeline de Rendu & Buffering (`hw-render-pipeline`)** : Sélection entre `auto`, `canvas_single`, `canvas_double`, `direct_double` ou `direct_single`.
+2. **Interrupteur Forcer Simple Buffer (`hw-force-single-buffer`)** : Bascule de compatibilité pour configurations contraintes en SRAM.
+3. **Enregistrement** : Cliquer sur **Sauvegarder la configuration matérielle** (`btn-save-hw`) transmet les paramètres à `POST /api/system` et `POST /api/settings`, puis redémarre proprement le panneau avec le nouveau pipeline.
 
 > La luminosité de jour en direct **n'est pas** stockée dans ce bloc ; elle est contrôlée à l'exécution depuis la Web UI (curseur du Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). La luminosité de nuit se trouve dans le bloc `system` (§4).
 
@@ -479,6 +502,32 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 | Champ | Type | Défaut | Description |
 | :--- | :--- | :--- | :--- |
 | *(auto)* | `None` | — | Moteur interne de synchronisation des marquees Pixelcade / Recalbox / Batocera reçus via MQTT ou Webhook. |
+
+---
+
+## 10. Architecture de Stockage Modulaire & Cache Working-Set
+
+ArcadeMatrix v4 découple la persistance de configuration du matériel de carte SD physique grâce à la couche d'abstraction `IConfigStorage` :
+
+```text
+ ┌─────────────────────────────────────────────────────────────┐
+ │                      ConfigLoader                           │
+ └──────────────┬───────────────────────────────┬──────────────┘
+                │                               │
+                ▼                               ▼
+ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+ │      WorkingSetCache        │ │       IConfigStorage        │
+ │                             │ │                             │
+ │ • Suivi bits dirty          │ │ • SdConfigStorage (Hardware)│
+ │ • Mutations atomiques RAM   │ │ • MemoryConfigStorage (Mock)│
+ │ • Zéro blocage FS Core 1    │ │ • Sémantique rename atomique│
+ └─────────────────────────────┘ └─────────────────────────────┘
+```
+
+1. **Interface `IConfigStorage`** : Backend de système de fichiers abstrait supportant l'écriture atomique de chaînes (`writeStringAtomic`), la lecture en flux, la vérification d'existence et le listage de répertoires.
+2. **`SdConfigStorage`** : Backend matériel de production gérant SdFat avec verrouillage matériel SPI (`SdLockGuard`), écrivant dans un fichier temporaire (`.tmp`) suivi d'un renommage atomique pour éliminer la corruption lors de coupures d'alimentation impromptues.
+3. **`MemoryConfigStorage`** : Backend en mémoire vive (Heap/RAM) utilisé pour les tests unitaires isolés hors-cible (`test_core`), la simulation et le fonctionnement sans carte SD.
+4. **`WorkingSetCache`** : Gestionnaire d'état dirty en mémoire sur Core 0. Les mutations (sauvegardes Web UI ou mises à jour MQTT) mettent immédiatement à jour le cache en RAM et publient des instantanés atomiques vers Core 1 sans attendre les I/O lentes de la carte SD. Une synchronisation asynchrone écrit les fichiers sales sur le stockage permanent en arrière-plan.
 
 ---
 
