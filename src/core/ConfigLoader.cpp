@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include "SDUtils.h"
 #include "Core0Lifecycle.h"
+#include "SdLockGuard.h"
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -125,26 +126,9 @@ void ConfigLoader::setDefaults() {
     };
     
     addInstance("clock_main", "clock");
-    addInstance("date_main", "date");
-    addInstance("weather_main", "weather");
-    addInstance("temp_main", "temp");
-    addInstance("decibel_main", "decibelMeter");
-    addInstance("crypto_main", "crypto");
-    addInstance("stock_main", "stock");
-    addInstance("visualizer_main", "audiovisualizer");
-    addInstance("gifs_main", "gifs");
-    addInstance("message_main", "message");
 
     RotationEntry re;
     re.instance_id = "clock_main"; re.duration_sec = 15; rotation.push_back(re);
-    re.instance_id = "date_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "weather_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "crypto_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "stock_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "gifs_main"; re.duration_sec = 30; rotation.push_back(re);
-    re.instance_id = "temp_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "decibel_main"; re.duration_sec = 15; rotation.push_back(re);
-    re.instance_id = "message_main"; re.duration_sec = 15; rotation.push_back(re);
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     matrix.width = 256;
@@ -494,7 +478,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
 }
 
 bool ConfigLoader::loadFromSD(const char* filepath) {
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+    SdLockGuard lock(pdMS_TO_TICKS(3000));
+    if (!lock) {
         LOGE("ConfigLoader", "Cannot load %s: SD busy (mutex timeout)", filepath);
         return false;
     }
@@ -530,8 +515,6 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         }
     }
 
-    if (sdMutex) xSemaphoreGive(sdMutex);
-
     if (loaded) {
         LOGI("ConfigLoader", "Configuration loaded successfully from %s", filepath);
         return true;
@@ -543,7 +526,8 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 
 bool ConfigLoader::saveToSD(const char* filepath) {
     publishSnapshot();
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+    SdLockGuard lock(pdMS_TO_TICKS(3000));
+    if (!lock) {
         LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
         return false;
     }
@@ -551,7 +535,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     String jsonStr = serializeToJson(true);
     if (jsonStr.length() < 30) {
         LOGE("ConfigLoader", "Refusing to save truncated JSON to %s", filepath);
-        if (sdMutex) xSemaphoreGive(sdMutex);
         return false;
     }
 
@@ -573,7 +556,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         if (sd.exists(bakPath.c_str())) {
             sd.rename(bakPath.c_str(), filepath);
         }
-        if (sdMutex) xSemaphoreGive(sdMutex);
         return false;
     }
 
@@ -582,7 +564,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     f.close();
 
     if (written >= jsonStr.length()) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
         LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, written);
         return true;
     }
@@ -597,6 +578,5 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     if (sd.exists(bakPath.c_str())) {
         sd.rename(bakPath.c_str(), filepath);
     }
-    if (sdMutex) xSemaphoreGive(sdMutex);
     return false;
 }

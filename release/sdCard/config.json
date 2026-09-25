@@ -51,108 +51,11 @@
             }
         },
         {
-            "instance_id": "date_main",
-            "engine_id": "date",
-            "config": {
-                "format": "%A, %d %B"
-            }
-        },
-        {
-            "instance_id": "weather_main",
-            "engine_id": "weather",
-            "config": {
-                "city": "Paris,FR",
-                "api_key": "",
-                "units": "metric"
-            }
-        },
-        {
-            "instance_id": "temp_main",
-            "engine_id": "temp",
-            "config": {
-                "units": "C"
-            }
-        },
-        {
-            "instance_id": "decibel_main",
-            "engine_id": "decibelMeter",
-            "config": {
-                "threshold": "80"
-            }
-        },
-        {
-            "instance_id": "visualizer_main",
-            "engine_id": "audiovisualizer",
-            "config": {
-                "enabled": "false",
-                "style": "0",
-                "sensitivity": "5"
-            }
-        },
-        {
-            "instance_id": "crypto_main",
-            "engine_id": "crypto",
-            "config": {
-                "symbols": "BTC,ETH,SOL",
-                "currency": "USD"
-            }
-        },
-        {
-            "instance_id": "stock_main",
-            "engine_id": "stock",
-            "config": {
-                "symbols": "AAPL,TSLA,NVDA"
-            }
-        },
-        {
             "instance_id": "gifs_main",
             "engine_id": "gifs",
             "config": {
                 "playlist": "all",
                 "speed": "100"
-            }
-        },
-        {
-            "instance_id": "marquee_main",
-            "engine_id": "marquee",
-            "config": {
-                "text": "ArcadeMatrix",
-                "speed": "2",
-                "color": "#00ffcc"
-            }
-        },
-        {
-            "instance_id": "message_main",
-            "engine_id": "message",
-            "config": {
-                "text": "",
-                "color": "#ffffff"
-            }
-        },
-        {
-            "instance_id": "gnews_main",
-            "engine_id": "gnews",
-            "config": {
-                "api_key": "",
-                "category": "technology",
-                "keywords": "",
-                "lang": "auto",
-                "country": "auto",
-                "max_articles": 5,
-                "requests_per_day": 10,
-                "force_refresh": false,
-                "cache_ttl_min": 30,
-                "display_mode": "smooth_scroll",
-                "scroll_speed": 3,
-                "scroll_pause_start_ms": 1200,
-                "scroll_pause_end_ms": 1000,
-                "article_duration_sec": 12,
-                "theme": "category_dynamic",
-                "show_category_badge": true,
-                "show_source": true,
-                "show_time_ago": true,
-                "show_beacon": true,
-                "show_progress_dots": true
             }
         }
     ],
@@ -160,52 +63,12 @@
         {
             "instance_id": "clock_main",
             "duration_sec": 15,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "date_main",
-            "duration_sec": 10,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "weather_main",
-            "duration_sec": 10,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "crypto_main",
-            "duration_sec": 10,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "stock_main",
-            "duration_sec": 10,
-            "fighter_overlay": true
+            "fighter_overlay": false
         },
         {
             "instance_id": "gifs_main",
-            "duration_sec": 30,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "temp_main",
-            "duration_sec": 10,
-            "fighter_overlay": true
-        },
-        {
-            "instance_id": "decibel_main",
-            "duration_sec": 15,
+            "duration_sec": 20,
             "fighter_overlay": false
-        },
-        {
-            "instance_id": "message_main",
-            "duration_sec": 15,
-            "fighter_overlay": false
-        },
-        {
-            "instance_id": "gnews_main",
-            "duration_sec": 15,
-            "fighter_overlay": true
         }
     ]
 }

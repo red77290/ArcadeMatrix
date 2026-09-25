@@ -57,6 +57,12 @@ public:
     ~GifEngine();
 
     /**
+     * @brief Pre-allocate shared AnimatedGIF decoder and canvas buffer at boot time
+     *        before heap fragmentation can prevent large contiguous allocations.
+     */
+    static void preallocateSharedBuffers(size_t matrixPixels);
+
+    /**
      * @brief Initialize the engine with the matrix display pointer.
      */
     bool begin(MatrixPanel_I2S_DMA* display);
@@ -111,7 +117,12 @@ public:
     float getSpeedMultiplier() const { return m_speedMultiplier; }
 
 private:
-    AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
+    AnimatedGIF* gif = nullptr;      ///< The AnimatedGIF decoder instance, allocated dynamically (or in PSRAM)
+    bool m_gifAllocatedInPsram = false;
+    bool ensureGifDecoder();
+    void freeGifDecoder();
+    bool ensureCanvasBuffer();
+    void freeCanvasBuffer();
     // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
     // pixel buffer, file buffer) directly as class members - NOT heap-allocated. Embedding a
     // `PNG png;` value member here would permanently reserve that ~38KB of static RAM for the
@@ -140,7 +151,9 @@ private:
      */
     // A folder is chosen in proportion to its size; within it, a file that has come up recently is
     // passed over, so a long evening walks the library instead of circling a handful of files.
-    static constexpr uint16_t RECENT_MAX = 4096;   ///< Files remembered (PSRAM ring, 16 KB)
+    static constexpr uint16_t RECENT_MAX = 4096;   ///< Files remembered in EXPANDED tier (PSRAM ring, 16 KB)
+    static constexpr uint16_t STATIC_RECENT_CAP = 64; ///< Fixed preallocated member buffer for CONSTRAINED tier (zero malloc)
+    uint32_t m_staticHashes[STATIC_RECENT_CAP] = {0};
     uint32_t* recentHashes = nullptr;
     uint16_t recentCap = 0, recentCount = 0, recentHead = 0;
     static uint32_t pathHash(const char* s);
@@ -229,7 +242,7 @@ private:
      * @brief Allocate the scanline canvas in internal SRAM (mandatory: it is accessed pixel-by-pixel
      * on the Core 1 hot path), falling back to PSRAM only if internal allocation fails.
      */
-    uint16_t* allocateCanvasBuffer(size_t matrixPixels);
+    static uint16_t* allocateCanvasBuffer(size_t matrixPixels);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;

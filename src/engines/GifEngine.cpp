@@ -1,4 +1,5 @@
 #include "GifEngine.h"
+#include "../hal/BoardProfile.h"
 #include "../core/SpiRamJsonDocument.h"
 #include "../core/MatrixEngine.h"
 #include "../core/RenderStats.h"
@@ -13,18 +14,110 @@ extern MatrixEngine matrixEngine;
 
 GifEngine* GifEngine::instance = nullptr;
 
-GifEngine::GifEngine() : matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), needsInitialFlip(false), rawLastFrameTime(0), pngShowStartTime(0), psramBuffer(nullptr), psramBufferSize(0) {
+GifEngine::GifEngine() : gif(nullptr), m_gifAllocatedInPsram(false), png(nullptr), matrix(nullptr), isPlaying(false), playlistMode(false), isRaw(false), isPng(false), needsInitialFlip(false), rawLastFrameTime(0), pngShowStartTime(0), psramBuffer(nullptr), psramBufferSize(0) {
     instance = this;
 }
 
 GifEngine::~GifEngine() {
     freeShadows();
     stop();
-    if (recentHashes) {
+    if (recentHashes && recentHashes != m_staticHashes) {
         free(recentHashes);
-        recentHashes = nullptr;
     }
+    recentHashes = nullptr;
     delete png;
+    freeGifDecoder();
+    freeCanvasBuffer();
+}
+
+static AnimatedGIF* s_sharedGifDecoder = nullptr;
+static uint16_t* s_sharedCanvasBuffer = nullptr;
+static size_t s_sharedCanvasPixels = 0;
+
+bool GifEngine::ensureCanvasBuffer() {
+    if (!matrix) return false;
+    size_t matrixPixels = (size_t)matrix->width() * matrix->height();
+    if (canvasBuffer && s_sharedCanvasBuffer && s_sharedCanvasPixels >= matrixPixels) {
+        return true;
+    }
+    if (s_sharedCanvasBuffer && s_sharedCanvasPixels >= matrixPixels) {
+        canvasBuffer = s_sharedCanvasBuffer;
+        return true;
+    }
+    if (s_sharedCanvasBuffer && s_sharedCanvasPixels < matrixPixels) {
+        heap_caps_free(s_sharedCanvasBuffer);
+        s_sharedCanvasBuffer = nullptr;
+        s_sharedCanvasPixels = 0;
+    }
+    s_sharedCanvasBuffer = allocateCanvasBuffer(matrixPixels);
+    if (s_sharedCanvasBuffer) {
+        s_sharedCanvasPixels = matrixPixels;
+        memset(s_sharedCanvasBuffer, 0, matrixPixels * 2);
+        canvasBuffer = s_sharedCanvasBuffer;
+        return true;
+    }
+    return false;
+}
+
+void GifEngine::freeCanvasBuffer() {
+    canvasBuffer = nullptr;
+}
+
+
+void GifEngine::preallocateSharedBuffers(size_t matrixPixels) {
+    if (!s_sharedGifDecoder) {
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        void* mem = heap_caps_malloc(sizeof(AnimatedGIF), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (mem) {
+            s_sharedGifDecoder = new (mem) AnimatedGIF();
+            s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
+        }
+#endif
+        if (!s_sharedGifDecoder) {
+            s_sharedGifDecoder = new (std::nothrow) AnimatedGIF();
+            if (s_sharedGifDecoder) {
+                s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
+            }
+        }
+        if (s_sharedGifDecoder) {
+            LOGI("GifEngine", "Pre-allocated shared AnimatedGIF decoder (%u bytes) at boot.", (unsigned)sizeof(AnimatedGIF));
+        } else {
+            LOGE("GifEngine", "Failed to pre-allocate AnimatedGIF decoder (%u bytes) at boot!", (unsigned)sizeof(AnimatedGIF));
+        }
+    }
+
+    if (matrixPixels > 0 && (!s_sharedCanvasBuffer || s_sharedCanvasPixels < matrixPixels)) {
+        if (s_sharedCanvasBuffer) {
+            heap_caps_free(s_sharedCanvasBuffer);
+            s_sharedCanvasBuffer = nullptr;
+            s_sharedCanvasPixels = 0;
+        }
+        s_sharedCanvasBuffer = allocateCanvasBuffer(matrixPixels);
+        if (s_sharedCanvasBuffer) {
+            s_sharedCanvasPixels = matrixPixels;
+            memset(s_sharedCanvasBuffer, 0, matrixPixels * 2);
+            LOGI("GifEngine", "Pre-allocated shared canvas buffer (%u bytes) at boot.", (unsigned)(matrixPixels * 2));
+        }
+    }
+}
+
+bool GifEngine::ensureGifDecoder() {
+    if (gif && s_sharedGifDecoder) return true;
+    if (s_sharedGifDecoder) {
+        gif = s_sharedGifDecoder;
+        return true;
+    }
+    preallocateSharedBuffers(0);
+    if (s_sharedGifDecoder) {
+        gif = s_sharedGifDecoder;
+        return true;
+    }
+    LOGE("GifEngine", "Failed to allocate memory for AnimatedGIF decoder (%u bytes)!", (unsigned)sizeof(AnimatedGIF));
+    return false;
+}
+
+void GifEngine::freeGifDecoder() {
+    gif = nullptr;
 }
 
 #include "../core/LayoutHelper.h"
@@ -136,6 +229,28 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
     m_context = context;
     m_instanceConfig = config;
     m_hasPsram = context->hasPsram();
+
+    if (BoardProfile::currentMemoryTier() == MemoryTier::EXPANDED && psramFound()) {
+        if (!recentHashes) {
+            recentCap = RECENT_MAX;
+            recentHashes = (uint32_t*)ps_malloc(recentCap * sizeof(uint32_t));
+            if (recentHashes) {
+                memset(recentHashes, 0, recentCap * sizeof(uint32_t));
+            } else {
+                recentCap = STATIC_RECENT_CAP;
+                recentHashes = m_staticHashes;
+                memset(m_staticHashes, 0, sizeof(m_staticHashes));
+            }
+        }
+    } else {
+        // CONSTRAINED tier: fixed preallocated member buffer in .bss/DRAM, zero malloc
+        recentCap = STATIC_RECENT_CAP;
+        recentHashes = m_staticHashes;
+        memset(m_staticHashes, 0, sizeof(m_staticHashes));
+    }
+    recentCount = 0;
+    recentHead = 0;
+
     if (!begin(context->getMatrix())) return EngineError::InitializationFailed;
     if (config) onConfigChanged(config);
     else {
@@ -228,12 +343,8 @@ void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     if (matrix) {
         size_t matrixPixels = matrix->width() * matrix->height();
         if (canvasBuffer) {
-            heap_caps_free(canvasBuffer);
-            canvasBuffer = nullptr;
-        }
-        canvasBuffer = allocateCanvasBuffer(matrixPixels);
-        if (canvasBuffer) {
-            memset(canvasBuffer, 0, matrixPixels * 2);
+            freeCanvasBuffer();
+            ensureCanvasBuffer();
         }
         allocateShadows(matrixPixels);
         if (m_srcW > 0) updateFitGeometry(m_srcW, m_srcH);
@@ -262,23 +373,18 @@ bool GifEngine::isFinished() const {
 bool GifEngine::begin(MatrixPanel_I2S_DMA* display) {
     if (!display) return false;
     matrix = display;
-    gif.begin(LITTLE_ENDIAN_PIXELS);
-
-    // Scanline canvas: written pixel-by-pixel by GIFDraw and read pixel-by-pixel by render(),
-    // both on the Core 1 hot path. PSRAM random access is an order of magnitude slower than
-    // internal SRAM, so internal is mandatory here; PSRAM is only a last-resort fallback.
-    size_t matrixPixels = matrix->width() * matrix->height();
-    canvasBuffer = allocateCanvasBuffer(matrixPixels);
-    if (canvasBuffer) {
-        memset(canvasBuffer, 0, matrixPixels * 2);
-    }
-    allocateShadows(matrixPixels);
+    ensureGifDecoder();
+    ensureCanvasBuffer();
+    allocateShadows(matrix->width() * matrix->height());
     return true;
 }
 
 void GifEngine::allocateShadows(size_t matrixPixels) {
     freeShadows();
     if (matrixPixels == 0) return;
+#if !defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    if (!m_hasPsram) return;
+#endif
     // Read sequentially once per frame, so PSRAM is fine here; internal DRAM stays free for TLS/DMA.
     for (int i = 0; i < 2; i++) {
         m_shadow[i] = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -406,7 +512,7 @@ uint32_t GifEngine::nextFrameDueInMs() const {
 uint16_t* GifEngine::allocateCanvasBuffer(size_t matrixPixels) {
     if (matrixPixels == 0) return nullptr;
     uint16_t* buf = nullptr;
-    if (m_hasPsram) {
+    if (psramFound()) {
         buf = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (buf) {
             LOGI("GifEngine", "Allocated %u bytes canvas buffer in PSRAM.", (unsigned)(matrixPixels * 2));
@@ -425,6 +531,7 @@ uint16_t* GifEngine::allocateCanvasBuffer(size_t matrixPixels) {
 bool GifEngine::playGif(const char* filepath) {
     instance = this;
     stop();
+    ensureCanvasBuffer();
     playlistMode = false; // Playing a single GIF stops the playlist
     
     String path = String(filepath);
@@ -495,8 +602,8 @@ bool GifEngine::playGif(const char* filepath) {
                 xSemaphoreGive(sdMutex);
             }
             if (loaded) {
-                if (gif.open(psramBuffer, psramBufferSize, GIFDraw)) {
-                    updateFitGeometry(gif.getCanvasWidth(), gif.getCanvasHeight());
+                if (ensureGifDecoder() && gif->open(psramBuffer, psramBufferSize, GIFDraw)) {
+                    updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
                     LOGI("GifEngine", "GIF loaded directly into PSRAM: %s (%zu bytes)", path.c_str(), psramBufferSize);
                     if (canvasBuffer && matrix) {
                         memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
@@ -511,12 +618,12 @@ bool GifEngine::playGif(const char* filepath) {
         }
         // Fallback to streaming from SD card
         bool streamOpened = false;
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            streamOpened = gif.open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw);
+        if (ensureGifDecoder() && sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            streamOpened = gif->open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw);
             xSemaphoreGive(sdMutex);
         }
-        if (streamOpened) {
-            updateFitGeometry(gif.getCanvasWidth(), gif.getCanvasHeight());
+        if (streamOpened && gif) {
+            updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
             LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);
             if (canvasBuffer && matrix) {
                 memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
@@ -542,6 +649,7 @@ void GifEngine::freePsramBuffer() {
 
 bool GifEngine::decodePng(const char* filepath) {
     instance = this;
+    ensureCanvasBuffer();
     // Lazily allocate the ~38KB PNGdec decoder only on first actual use - see the `png` member
     // comment in GifEngine.h for why this isn't a permanent value member.
     if (!png) png = new PNG();
@@ -629,7 +737,9 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
                         while (getNextFile(rootDir, entry)) {
                             if (!isDirectory(entry)) continue;
                             String name = getFileName(entry);
-                            if (isMacJunk(name)) continue;
+                            int lastSlash = name.lastIndexOf('/');
+                            if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                            if (name.length() == 0 || isMacJunk(name)) continue;
                             outPaths.push_back(rootP + "/" + name);
                         }
                         if (entry) entry.close();
@@ -767,11 +877,21 @@ bool GifEngine::playedRecently(uint32_t h, size_t folderFiles) {
 
 void GifEngine::rememberPlayed(uint32_t h) {
     if (!recentHashes) {
-        recentCap = psramFound() ? RECENT_MAX : 256;
-        recentHashes = (uint32_t*)(psramFound() ? ps_malloc(recentCap * sizeof(uint32_t))
-                                                : malloc(recentCap * sizeof(uint32_t)));
-        if (!recentHashes) { recentCap = 0; return; }   // no window: behaves as before
-        memset(recentHashes, 0, recentCap * sizeof(uint32_t));
+        if (BoardProfile::currentMemoryTier() == MemoryTier::EXPANDED && psramFound()) {
+            recentCap = RECENT_MAX;
+            recentHashes = (uint32_t*)ps_malloc(recentCap * sizeof(uint32_t));
+            if (recentHashes) {
+                memset(recentHashes, 0, recentCap * sizeof(uint32_t));
+            } else {
+                recentCap = STATIC_RECENT_CAP;
+                recentHashes = m_staticHashes;
+                memset(m_staticHashes, 0, sizeof(m_staticHashes));
+            }
+        } else {
+            recentCap = STATIC_RECENT_CAP;
+            recentHashes = m_staticHashes;
+            memset(m_staticHashes, 0, sizeof(m_staticHashes));
+        }
         recentCount = 0; recentHead = 0;
     }
     recentHashes[recentHead] = h;
@@ -795,8 +915,51 @@ int GifEngine::pickPlaylistIndex() {
     return (int)playlists.size() - 1;
 }
 
+static bool readCleanIndexLine(FsFile& file, char* buf, size_t maxLen) {
+    if (!file.available()) return false;
+    size_t idx = 0;
+    while (file.available()) {
+        int c = file.read();
+        if (c < 0) break;
+        if (c == '\n' || c == '\r') {
+            if (idx > 0) break; // Finished reading a non-empty line
+            continue; // Skip leading empty lines or \r\n sequences
+        }
+        if (idx < maxLen - 1) {
+            buf[idx++] = (char)c;
+        }
+    }
+    buf[idx] = '\0';
+    if (idx == 0) return false;
+
+    // Trim leading whitespace & control characters
+    char* start = buf;
+    while (*start && ((uint8_t)*start <= 32 || (uint8_t)*start > 126)) {
+        start++;
+    }
+    // Trim trailing whitespace & control characters
+    char* end = buf + idx - 1;
+    while (end >= start && ((uint8_t)*end <= 32 || (uint8_t)*end > 126)) {
+        *end = '\0';
+        end--;
+    }
+    if (start != buf) {
+        memmove(buf, start, strlen(start) + 1);
+    }
+    if (buf[0] == '\0') return false;
+    if (isMacJunk(buf)) return false;
+    if (strstr(buf, "._") != nullptr || strstr(buf, "System Volume") != nullptr) return false;
+    return true;
+}
+
 void GifEngine::loadNextFileInPlaylist() {
     if (playlists.empty()) {
+        stop();
+        return;
+    }
+
+    if (!ensureGifDecoder() || !ensureCanvasBuffer()) {
+        LOGW("GifEngine", "GIF decoder or canvas buffer allocation failed. Skipping.");
         stop();
         return;
     }
@@ -817,9 +980,8 @@ void GifEngine::loadNextFileInPlaylist() {
         String indexPath = pPath + "/index.txt";
         indexPath.replace("//", "/");
         String targetPath = "";
-        std::vector<String> validFiles;
-        // Distinguishes "this folder is genuinely empty" from "the SD bus was busy this round".
-        // Evicting a playlist on a transient mutex timeout permanently empties the rotation.
+        char selectedFile[128] = {0};
+        size_t totalValidEntries = 0;
         bool sdAccessOk = false;
 
         if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
@@ -827,16 +989,37 @@ void GifEngine::loadNextFileInPlaylist() {
             if (sd.exists(indexPath.c_str())) {
                 FsFile indexFile = sd.open(indexPath.c_str(), FILE_OPEN_READ);
                 if (indexFile && indexFile.size() > 0) {
+                    char lineBuf[128];
+                    // Pass 1: Count valid lines (zero heap allocation)
                     while (indexFile.available()) {
-                        String line = indexFile.readStringUntil('\n');
-                        line.trim();
-                        while (line.length() > 0 && ((uint8_t)line[0] < 32 || (uint8_t)line[0] > 126)) {
-                            line = line.substring(1);
+                        if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
+                            totalValidEntries++;
                         }
-                        if (line.length() > 0 && !isMacJunk(line)) {
-                            if (line.indexOf("._") == -1 && line.indexOf("System Volume") == -1) {
-                                validFiles.push_back(line);
+                    }
+
+                    if (totalValidEntries > 0) {
+                        // Pass 2: Pick a random line and seek to it (trying up to 4 picks if recently played)
+                        size_t chosenIdx = (size_t)random(totalValidEntries);
+                        for (int retry = 0; retry < 4; retry++) {
+                            indexFile.seek(0);
+                            size_t currentValid = 0;
+                            while (indexFile.available()) {
+                                if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
+                                    if (currentValid == chosenIdx) {
+                                        strncpy(selectedFile, lineBuf, sizeof(selectedFile) - 1);
+                                        selectedFile[sizeof(selectedFile) - 1] = '\0';
+                                        break;
+                                    }
+                                    currentValid++;
+                                }
                             }
+                            if (totalValidEntries <= 1) break;
+                            String candidate = pPath + "/" + selectedFile;
+                            candidate.replace("//", "/");
+                            if (candidate != lastPlayedGif && !playedRecently(pathHash(candidate.c_str()), totalValidEntries)) {
+                                break; // Found fresh pick
+                            }
+                            chosenIdx = (size_t)random(totalValidEntries);
                         }
                     }
                     indexFile.close();
@@ -846,44 +1029,58 @@ void GifEngine::loadNextFileInPlaylist() {
         }
 
         // Single-folder directory scan fallback if index.txt is not found or empty (v3.1.0 compatibility)
-        if (validFiles.empty()) {
+        std::vector<String> subDirs;
+        if (selectedFile[0] == '\0') {
             if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
                 sdAccessOk = true;
                 FsFile pDir = sd.open(pPath.c_str(), FILE_OPEN_READ);
                 if (pDir && isDirectory(pDir)) {
                     FsFile fileEntry;
+                    size_t scanCount = 0;
                     while (getNextFile(pDir, fileEntry)) {
-                        if (!isDirectory(fileEntry)) {
-                            String name = getFileName(fileEntry);
-                            if (!isMacJunk(name) && name.indexOf("._") == -1 && name.indexOf("System Volume") == -1) {
-                                String lower = name;
-                                lower.toLowerCase();
-                                if (lower.endsWith(".gif") || lower.endsWith(".png") || lower.endsWith(".raw")) {
-                                    validFiles.push_back(name);
+                        String name = getFileName(fileEntry);
+                        int lastSlash = name.lastIndexOf('/');
+                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                        if (name.length() == 0 || isMacJunk(name)) continue;
+
+                        if (isDirectory(fileEntry)) {
+                            if (subDirs.size() < 16) {
+                                subDirs.push_back(pPath + "/" + name);
+                            }
+                        } else if (name.indexOf("._") == -1 && name.indexOf("System Volume") == -1) {
+                            String lower = name;
+                            lower.toLowerCase();
+                            if (lower.endsWith(".gif") || lower.endsWith(".png") || lower.endsWith(".raw")) {
+                                scanCount++;
+                                // Reservoir sampling (Algorithm R): pick uniform random in single pass without vectors
+                                if (random(scanCount) == 0) {
+                                    strncpy(selectedFile, name.c_str(), sizeof(selectedFile) - 1);
+                                    selectedFile[sizeof(selectedFile) - 1] = '\0';
                                 }
                             }
                         }
                     }
                     pDir.close();
+                    totalValidEntries = scanCount;
                 }
                 xSemaphoreGive(sdMutex);
             }
         }
+
+        // If pPath had no flat files but contained subdirectories (e.g. /gifs/arcade), expand them now:
+        if (selectedFile[0] == '\0' && !subDirs.empty()) {
+            playlists.erase(playlists.begin() + pIndex);
+            for (const auto& sdPath : subDirs) {
+                playlists.push_back(sdPath);
+            }
+            playlistWeights.clear();
+            refreshPlaylistWeights();
+            attempts++;
+            continue;
+        }
         
-        if (!validFiles.empty()) {
-            int selectedIdx = random(validFiles.size());
-            String candidate = pPath + "/" + validFiles[selectedIdx];
-            if (validFiles.size() > 1 && candidate == lastPlayedGif) {
-                selectedIdx = (selectedIdx + 1 + random(validFiles.size() - 1)) % validFiles.size();
-                candidate = pPath + "/" + validFiles[selectedIdx];
-            }
-            // Pass over files seen recently; give up after a few tries so a folder always yields one.
-            for (int tries = 0; tries < 16 && validFiles.size() > 1; tries++) {
-                if (!playedRecently(pathHash(candidate.c_str()), validFiles.size())) break;
-                selectedIdx = random(validFiles.size());
-                candidate = pPath + "/" + validFiles[selectedIdx];
-            }
-            targetPath = candidate;
+        if (selectedFile[0] != '\0') {
+            targetPath = pPath + "/" + selectedFile;
         }
         
         if (targetPath.length() == 0) {
@@ -906,6 +1103,11 @@ void GifEngine::loadNextFileInPlaylist() {
                 lastPlayedGif = targetPath;
                 rememberPlayed(pathHash(targetPath.c_str()));
                 return; // SUCCESS!
+            } else if (!canvasBuffer || !gif) {
+                LOGE("GifEngine", "Aborting playlist playback due to allocation failure.");
+                stop();
+                playlistMode = false;
+                return;
             }
         }
         attempts++;
@@ -918,7 +1120,7 @@ void GifEngine::loadNextFileInPlaylist() {
 
 void GifEngine::stop() {
     if (isPlaying) {
-        if (!isRaw && !isPng) gif.close();
+        if (!isRaw && !isPng && gif) gif->close();
         if (currentFile) currentFile.close();
         isPlaying = false;
     }
@@ -969,7 +1171,7 @@ bool GifEngine::loop() {
         unsigned long startDecode = millis();
         uint32_t decodeStartUs = micros();
         int delayMs = 0;
-        int result = gif.playFrame(false, &delayMs, (void*)this);
+        int result = (gif != nullptr) ? gif->playFrame(false, &delayMs, (void*)this) : 0;
         g_renderStats.gifDecodeMicros += micros() - decodeStartUs;
 
         blitCanvas();
@@ -997,8 +1199,8 @@ bool GifEngine::loop() {
             // End of GIF or error
             if (playlistMode) {
                 loadNextFileInPlaylist();
-            } else {
-                gif.reset(); // Loop single file
+            } else if (gif) {
+                gif->reset(); // Loop single file
             }
         }
         return true; // Frame decoded, requires flip

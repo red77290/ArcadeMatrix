@@ -64,7 +64,7 @@ private:
      * @param request The active HTTP request.
      * @param doc The JsonDocument to serialize and send.
      */
-    void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
+    static void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
 
 public:
     /**

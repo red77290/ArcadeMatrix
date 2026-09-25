@@ -39,8 +39,14 @@ void ConfigSanitizer::sanitizeMatrix(MatrixConfig& matrix, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
-    if (matrix.colorDepth < 1 || matrix.colorDepth > 11) {
-        matrix.colorDepth = constrain(matrix.colorDepth, 1, 11);
+    uint8_t maxColorDepth = 11;
+#if !defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    // Classic ESP32 (esp32dev) has strictly bounded DRAM (~320KB) and cannot DMA from PSRAM.
+    // Color depth is strictly limited to 5 bits to prevent DMA buffer starvation.
+    maxColorDepth = 5;
+#endif
+    if (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth) {
+        matrix.colorDepth = constrain(matrix.colorDepth, (uint8_t)1, maxColorDepth);
         result.values_clamped++;
         result.modified = true;
     }
@@ -292,6 +298,28 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
 }
 
 void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap, SanitizeResult& result) {
+    // 1. Prune rotation entries pointing to engines unavailable on this hardware profile
+    for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
+        const EngineInstance* inst = nullptr;
+        for (const auto& i : config.instances) {
+            if (i.instance_id == it->instance_id) {
+                inst = &i;
+                break;
+            }
+        }
+        if (inst) {
+            const auto* desc = EngineRegistry::getDescriptor(inst->engine_id.c_str());
+            if (desc && !desc->available) {
+                LOGW("ConfigSanitizer", "Removing rotation entry '%s' (engine '%s' unavailable on this hardware)",
+                     it->instance_id.c_str(), inst->engine_id.c_str());
+                it = config.rotation.erase(it);
+                result.modified = true;
+                continue;
+            }
+        }
+        ++it;
+    }
+
     // Seeding the rotation from the instance list is a first-boot convenience, never a
     // repair. Running it on every mutation meant that creating a single screen while the
     // rotation happened to be empty silently enrolled every other configured screen too.
@@ -300,7 +328,7 @@ void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap
     if (config.rotation.empty() && !config.instances.empty()) {
         for (const auto& inst : config.instances) {
             const auto* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
-            if (desc && desc->capabilities.allowRotation) {
+            if (desc && desc->available && desc->capabilities.allowRotation) {
                 config.rotation.emplace_back(inst.instance_id, 15, OverlayConfig{true});
                 result.defaults_injected++;
                 result.modified = true;

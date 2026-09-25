@@ -518,10 +518,12 @@ void FighterEngine::freeFighter(FighterPlayer& p) {
 
 void FighterEngine::startLoaderTaskIfNeeded() {
     if (loaderTaskHandle) return;
+    if (numAvailableFighters < 2) return;
 
     m_taskShouldExit = false;
     m_loaderStopped.store(false, std::memory_order_release);
-    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", 16384, this, 1, &loaderTaskHandle, 0) != pdPASS) {
+    const size_t stackSize = m_hasPsram ? 16384 : 8192;
+    if (xTaskCreatePinnedToCore(loaderTaskFunc, "FgtLoader", stackSize, this, 1, &loaderTaskHandle, 0) != pdPASS) {
         LOGE("FighterEngine", "Failed to spawn preload worker task.");
         m_lastNote = "Failed to spawn preload worker task.";
         loaderTaskHandle = nullptr;
@@ -531,6 +533,7 @@ void FighterEngine::startLoaderTaskIfNeeded() {
 void FighterEngine::triggerBackgroundPreload() {
     if (millis() < retryDelayEnd) return;
     if (isNextReady.load(std::memory_order_acquire) || isPreloading || numAvailableFighters < 2) return;
+    startLoaderTaskIfNeeded();
     if (!loaderTaskHandle) return; // Worker failed to start; nothing to notify.
 
     static constexpr uint32_t PRELOAD_MIN_FREE_HEAP = 30 * 1024;
