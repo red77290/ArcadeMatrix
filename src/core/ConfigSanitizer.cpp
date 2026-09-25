@@ -7,6 +7,29 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotatio
     sanitizeMatrix(config.matrix, result);
     sanitizeSystem(config.system, result);
     sanitizeMqtt(config.mqtt, result);
+
+    // Ensure every rotation entry has a corresponding instance in config.instances
+    for (const auto& rot : config.rotation) {
+        bool found = false;
+        for (const auto& inst : config.instances) {
+            if (inst.instance_id == rot.instance_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found && !rot.instance_id.isEmpty()) {
+            EngineInstance newInst;
+            newInst.instance_id = rot.instance_id;
+            int under = rot.instance_id.indexOf('_');
+            newInst.engine_id = (under > 0) ? rot.instance_id.substring(0, under) : rot.instance_id;
+            config.instances.push_back(newInst);
+            result.defaults_injected++;
+            result.modified = true;
+            LOGI("ConfigSanitizer", "Recreated missing instance '%s' (engine '%s') referenced by rotation",
+                 newInst.instance_id.c_str(), newInst.engine_id.c_str());
+        }
+    }
+
     sanitizeInstances(config.instances, result);
     sanitizeRotation(config, allowRotationBootstrap, result);
 

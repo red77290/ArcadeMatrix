@@ -32,6 +32,12 @@ Esp32DevProfile::Esp32DevProfile() {
     m_display.supportsWideCanvas = true;
 }
 
+extern "C" void __wrap_esp_brownout_init(void) {
+    // Intercept and bypass ESP-IDF early brownout detector initialization.
+    // On classic ESP32 USB development boards with HUB75 panels, transient voltage dips
+    // during boot trip the detector before the kernel or user application can configure power limits.
+}
+
 void Esp32DevProfile::applyPowerQuirks() {
     // Disable brownout detector on classic ESP32 to prevent spurious resets caused by
     // microsecond voltage drops when USB power is shared between HUB75 DMA panels and Wi-Fi bursts.
