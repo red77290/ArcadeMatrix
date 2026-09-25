@@ -5,12 +5,17 @@
 #include "../core/ConfigLoader.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/drawing/IDrawingSurface.h"
 
+
+static inline constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
 
 FighterEngine::FighterEngine() : matrix(nullptr) {}
 
 EngineError FighterEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrix = context ? context->getMatrix() : nullptr;
+    matrix = context ? (context->getSurface() ? static_cast<Adafruit_GFX*>(context->getSurface()) : static_cast<Adafruit_GFX*>(context->getMatrix())) : nullptr;
     m_hasPsram = context ? context->hasPsram() : false;
     s_lastInstance = this;
     initialize();
@@ -1359,21 +1364,21 @@ void FighterEngine::draw() {
         int barW = min(20, (screenW - 16) / 2);
         if (barW > 2) {
             // Player 1 Health Bar (Left)
-            uint16_t p1Color = (p1.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
-            matrix->drawRect(2, 2, barW, 4, matrix->color565(50, 50, 60));
+            uint16_t p1Color = (p1.isDead) ? rgb565(180, 20, 20) : rgb565(30, 220, 60);
+            matrix->drawRect(2, 2, barW, 4, rgb565(50, 50, 60));
             matrix->fillRect(3, 3, p1.isDead ? 1 : (barW - 2), 2, p1Color);
 
             // VS Badge in Center
             int vsX = (screenW / 2) - 1;
-            matrix->drawPixel(vsX, 3, matrix->color565(255, 60, 60));
-            matrix->drawPixel(vsX + 1, 3, matrix->color565(255, 60, 60));
-            matrix->drawPixel(vsX, 4, matrix->color565(255, 220, 0));
-            matrix->drawPixel(vsX + 1, 4, matrix->color565(255, 220, 0));
+            matrix->drawPixel(vsX, 3, rgb565(255, 60, 60));
+            matrix->drawPixel(vsX + 1, 3, rgb565(255, 60, 60));
+            matrix->drawPixel(vsX, 4, rgb565(255, 220, 0));
+            matrix->drawPixel(vsX + 1, 4, rgb565(255, 220, 0));
 
             // Player 2 Health Bar (Right)
-            uint16_t p2Color = (p2.isDead) ? matrix->color565(180, 20, 20) : matrix->color565(30, 220, 60);
+            uint16_t p2Color = (p2.isDead) ? rgb565(180, 20, 20) : rgb565(30, 220, 60);
             int p2BarX = screenW - 2 - barW;
-            matrix->drawRect(p2BarX, 2, barW, 4, matrix->color565(50, 50, 60));
+            matrix->drawRect(p2BarX, 2, barW, 4, rgb565(50, 50, 60));
             matrix->fillRect(p2BarX + 1, 3, p2.isDead ? 1 : (barW - 2), 2, p2Color);
         }
 
@@ -1381,13 +1386,13 @@ void FighterEngine::draw() {
         if (showTags) {
             matrix->setFont(nullptr);
             matrix->setTextSize(1);
-            matrix->setTextColor(matrix->color565(255, 215, 0));
+            matrix->setTextColor(rgb565(255, 215, 0));
             String p1Tag = p1.name.substring(0, 3);
             p1Tag.toUpperCase();
             matrix->setCursor(2, 8);
             matrix->print(p1Tag);
 
-            matrix->setTextColor(matrix->color565(0, 200, 255));
+            matrix->setTextColor(rgb565(0, 200, 255));
             String p2Tag = p2.name.substring(0, 3);
             p2Tag.toUpperCase();
             int p2TagX = max(2, screenW - (int)(p2Tag.length() * 6) - 2);

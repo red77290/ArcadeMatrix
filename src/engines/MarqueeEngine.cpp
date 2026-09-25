@@ -8,6 +8,7 @@
 #include "../core/NetworkBudget.h"
 #include "core/BuildInfo.h"
 #include "../core/Logger.h"
+#include "../core/drawing/IDrawingSurface.h"
 
 MarqueeEngine::MarqueeEngine()
     : panelWidth(0), panelHeight(0), m_rawBuffer(nullptr),
@@ -18,13 +19,14 @@ MarqueeEngine::MarqueeEngine()
 
 EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
     if (!context) return EngineError::InitializationFailed;
+    auto surface = context->getSurface();
     auto matrix = context->getMatrix();
-    if (!matrix) return EngineError::HardwareUnavailable;
+    if (!surface && !matrix) return EngineError::HardwareUnavailable;
 
     m_context = context;
     m_hasPsram = context->hasPsram();
-    panelWidth = matrix->width();
-    panelHeight = matrix->height();
+    panelWidth = surface ? surface->width() : matrix->width();
+    panelHeight = surface ? surface->height() : matrix->height();
 
     size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
     if (m_hasPsram) {
@@ -65,9 +67,14 @@ void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long du
     m_rawStartTime = millis();
     m_rawDurationMs = durationSeconds * 1000UL;
     m_clearFramesRemaining.store(2, std::memory_order_relaxed);
-    auto matrix = m_context ? m_context->getMatrix() : nullptr;
-    if (matrix) {
-        matrix->fillScreen(0);
+    auto surface = m_context ? m_context->getSurface() : nullptr;
+    if (surface) {
+        surface->clear(0);
+    } else {
+        auto matrix = m_context ? m_context->getMatrix() : nullptr;
+        if (matrix) {
+            matrix->fillScreen(0);
+        }
     }
     if (m_gifEngine) {
         m_gifEngine->stop();
@@ -198,9 +205,14 @@ String MarqueeEngine::resolveMarqueeFile() {
 void MarqueeEngine::activate() {
     m_active = true;
     m_clearFramesRemaining.store(2, std::memory_order_relaxed);
-    auto matrix = m_context ? m_context->getMatrix() : nullptr;
-    if (matrix) {
-        matrix->fillScreen(0);
+    auto surface = m_context ? m_context->getSurface() : nullptr;
+    if (surface) {
+        surface->clear(0);
+    } else {
+        auto matrix = m_context ? m_context->getMatrix() : nullptr;
+        if (matrix) {
+            matrix->fillScreen(0);
+        }
     }
     if (m_hasRawBuffer) {
         return;
@@ -263,11 +275,16 @@ bool MarqueeEngine::isFinished() const {
 void MarqueeEngine::render(EngineContext* context) {
     if (!m_active) return;
     if (m_hasRawBuffer && m_rawBuffer) {
-        auto matrix = context ? context->getMatrix() : nullptr;
-        if (!matrix) return;
-        for (int y = 0; y < panelHeight; y++) {
-            for (int x = 0; x < panelWidth; x++) {
-                matrix->drawPixel(x, y, m_rawBuffer[y * panelWidth + x]);
+        auto surface = context ? context->getSurface() : nullptr;
+        if (surface) {
+            surface->blit565(m_rawBuffer, 0, 0, panelWidth, panelHeight, panelWidth);
+        } else {
+            auto matrix = context ? context->getMatrix() : nullptr;
+            if (!matrix) return;
+            for (int y = 0; y < panelHeight; y++) {
+                for (int x = 0; x < panelWidth; x++) {
+                    matrix->drawPixel(x, y, m_rawBuffer[y * panelWidth + x]);
+                }
             }
         }
     } else if (m_gifEngine) {

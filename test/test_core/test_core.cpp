@@ -14,6 +14,8 @@
 #include "core/drawing/SurfaceCoordinates.h"
 #include "core/drawing/Hub75BulkEncoder.h"
 #include "core/drawing/DisplaySurfaceFactory.h"
+#include "core/drawing/MockPresentationBackend.h"
+#include "core/drawing/Hub75PresentationBackend.h"
 #include "core/storage/MemoryConfigStorage.h"
 #include "core/storage/WorkingSetCache.h"
 #include "core/storage/ModularConfigManager.h"
@@ -2057,6 +2059,32 @@ void test_canvas_buffered_surface_drawing_and_rotation(void) {
     surface->releaseCanvas();
 }
 
+void test_presentation_backends(void) {
+    MockPresentationBackend mock(64, 32, 8);
+    TEST_ASSERT_EQUAL_UINT32(64 * 32 * 4, mock.calculateDmaBytes());
+    
+    auto target = mock.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(64, target.width);
+    TEST_ASSERT_EQUAL_UINT16(32, target.height);
+    TEST_ASSERT_EQUAL_UINT16(16, target.rowsPerFrame);
+    TEST_ASSERT_EQUAL_UINT8(8, target.colorDepth);
+    TEST_ASSERT_NOT_NULL(target.buffer);
+    TEST_ASSERT_NOT_NULL(target.plane(0));
+    TEST_ASSERT_NOT_NULL(target.plane(7));
+    TEST_ASSERT_NULL(target.plane(8));
+
+    PresentationPolicy policy;
+    auto timing = mock.commit(policy);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.getCommitCount());
+    TEST_ASSERT_EQUAL_UINT32(150, timing.totalPresentUs);
+
+    Hub75PresentationBackend hub75(nullptr, 64, 32, 8, true);
+    TEST_ASSERT_EQUAL_UINT32(64 * 32 * 4 * 2, hub75.calculateDmaBytes());
+    auto hubTarget = hub75.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(64, hubTarget.width);
+    TEST_ASSERT_EQUAL_UINT16(32, hubTarget.height);
+}
+
 // =========================================================================
 // 10. Modular Storage Architecture & Working-Set Cache
 // =========================================================================
@@ -2272,6 +2300,7 @@ void setup() {
     RUN_TEST(test_hub75_bulk_encoder_luts_and_encode);
     RUN_TEST(test_display_surface_factory_selection);
     RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
+    RUN_TEST(test_presentation_backends);
 
     // =========================================================================
     // 10. Modular Storage Architecture & Working-Set Cache
