@@ -471,6 +471,94 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     return output;
 }
 
+static bool repairTruncatedJson(std::vector<char>& buf) {
+    while (!buf.empty() && (buf.back() == '\0' || isspace((unsigned char)buf.back()))) {
+        buf.pop_back();
+    }
+    if (buf.empty()) return false;
+
+    // 1. Check if truncated inside an open string (odd count of unescaped quotes)
+    bool inString = false;
+    bool escaped = false;
+    for (size_t i = 0; i < buf.size(); i++) {
+        char c = buf[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\' && inString) { escaped = true; continue; }
+        if (c == '"') { inString = !inString; continue; }
+    }
+    if (inString) {
+        // Discard the unclosed string back to its opening quote
+        int openQuote = -1;
+        for (int i = (int)buf.size() - 1; i >= 0; i--) {
+            if (buf[i] == '"' && (i == 0 || buf[i - 1] != '\\')) {
+                openQuote = i;
+                break;
+            }
+        }
+        if (openQuote >= 0) {
+            buf.resize(openQuote);
+        }
+    }
+
+    // 2. Strip trailing whitespace, commas, colons
+    while (!buf.empty()) {
+        char c = buf.back();
+        if (c == '\0' || isspace((unsigned char)c) || c == ',' || c == ':') {
+            buf.pop_back();
+        } else {
+            break;
+        }
+    }
+    if (buf.empty()) return false;
+
+    // 3. Ensure the last element in an object isn't a dangling key without a value
+    if (!buf.empty() && buf.back() == '"') {
+        int quoteStart = -1;
+        for (int i = (int)buf.size() - 2; i >= 0; i--) {
+            if (buf[i] == '"' && (i == 0 || buf[i - 1] != '\\')) {
+                quoteStart = i;
+                break;
+            }
+        }
+        if (quoteStart >= 0) {
+            int prev = quoteStart - 1;
+            while (prev >= 0 && isspace((unsigned char)buf[prev])) prev--;
+            if (prev >= 0 && (buf[prev] == ',' || buf[prev] == '{')) {
+                buf.resize(prev >= 0 && buf[prev] == ',' ? prev : quoteStart);
+                while (!buf.empty() && (buf.back() == '\0' || isspace((unsigned char)buf.back()) || buf.back() == ',')) {
+                    buf.pop_back();
+                }
+            }
+        }
+    }
+    if (buf.empty()) return false;
+
+    // 4. Balance open structures up to this point
+    std::vector<char> stack;
+    inString = false;
+    escaped = false;
+    for (size_t i = 0; i < buf.size(); i++) {
+        char c = buf[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\' && inString) { escaped = true; continue; }
+        if (c == '"') { inString = !inString; continue; }
+        if (!inString) {
+            if (c == '{' || c == '[') stack.push_back(c);
+            else if (c == '}' && !stack.empty() && stack.back() == '{') stack.pop_back();
+            else if (c == ']' && !stack.empty() && stack.back() == '[') stack.pop_back();
+        }
+    }
+
+    // 5. Close any unclosed parent arrays and root object
+    while (!stack.empty()) {
+        char open = stack.back();
+        stack.pop_back();
+        buf.push_back(open == '{' ? '}' : ']');
+    }
+    buf.push_back('\0');
+    return true;
+}
+
 bool ConfigLoader::loadFromSD(const char* filepath) {
     SdLockGuard lock(pdMS_TO_TICKS(3000));
     if (!lock) {
@@ -482,19 +570,92 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         if (!sd.exists(path)) return false;
         FsFile f = sd.open(path, FILE_OPEN_READ);
         if (!f) return false;
+        size_t fsize = f.size();
+        LOGI("ConfigLoader", "Reading %s (%u bytes)...", path, (unsigned)fsize);
+        if (fsize == 0 || fsize > 65536) {
+            LOGW("ConfigLoader", "File %s invalid size: %u bytes", path, (unsigned)fsize);
+            f.close();
+            return false;
+        }
+
+        std::vector<char> buffer(fsize + 1);
+        size_t bytesRead = f.read((uint8_t*)buffer.data(), fsize);
+        f.close();
+
+        if (bytesRead != fsize) {
+            LOGE("ConfigLoader", "Short read on %s: expected %u, got %u", path, (unsigned)fsize, (unsigned)bytesRead);
+            return false;
+        }
+        buffer[fsize] = '\0';
+
+        // Skip BOM or leading garbage until '{'
+        size_t start = 0;
+        if (fsize >= 3 && (uint8_t)buffer[0] == 0xEF && (uint8_t)buffer[1] == 0xBB && (uint8_t)buffer[2] == 0xBF) {
+            start = 3;
+            LOGI("ConfigLoader", "Skipped UTF-8 BOM (3 bytes)");
+        }
+        while (start < fsize && isspace((unsigned char)buffer[start])) {
+            start++;
+        }
+
+        // If file starts directly with key like "system": or "matrix": without opening '{', insert it
+        if (start < fsize && buffer[start] != '{') {
+            size_t firstBrace = start;
+            while (firstBrace < fsize && buffer[firstBrace] != '{') firstBrace++;
+            if (firstBrace < fsize) {
+                LOGW("ConfigLoader", "Skipped %u bytes before opening '{'", (unsigned)(firstBrace - start));
+                start = firstBrace;
+            } else if (buffer[start] == '"') {
+                LOGW("ConfigLoader", "Detected missing opening '{', wrapping root object...");
+                buffer.insert(buffer.begin() + start, '{');
+                buffer.push_back('}');
+                buffer.push_back('\0');
+                fsize = buffer.size() - 1;
+            }
+        }
+
+        if (start > 0) {
+            buffer.erase(buffer.begin(), buffer.begin() + start);
+            fsize = buffer.size() - 1;
+        }
+
+        // Keep a pristine backup of buffer before any parsing
+        // (deserializeJson on non-const char* mutates the buffer in Zero-Copy mode!)
+        std::vector<char> repairBuffer = buffer;
+
         // Reuse the persistent scratch document (see ConfigLoader.h) instead of a fresh
         // 32KB allocation. loadFromSD() only ever runs once at boot before any other task
         // touches config, so there is no concurrency concern with serializeToJson()'s use
         // of the same buffer.
         _jsonScratch.clear();
         auto& doc = _jsonScratch;
-        DeserializationError error = deserializeJson(doc, f);
-        f.close();
+        // Pass const char* to prevent zero-copy in-place mutation of buffer
+        DeserializationError error = deserializeJson(doc, static_cast<const char*>(buffer.data()));
+        bool wasRepaired = false;
+
+        if (error == DeserializationError::IncompleteInput || error == DeserializationError::InvalidInput) {
+            LOGW("ConfigLoader", "Attempting auto-repair on %s (%s)...", path, error.c_str());
+            if (repairTruncatedJson(repairBuffer)) {
+                _jsonScratch.clear();
+                error = deserializeJson(doc, static_cast<const char*>(repairBuffer.data()));
+                if (!error) {
+                    LOGI("ConfigLoader", "REPAIR SUCCESS: Recovered config from %s!", path);
+                    wasRepaired = true;
+                }
+            }
+        }
+
         if (error) {
-            LOGE("ConfigLoader", "JSON parse error in %s: %s", path, error.c_str());
+            LOGE("ConfigLoader", "JSON parse error in %s (%u bytes, doc cap %u): %s",
+                 path, (unsigned)fsize, (unsigned)doc.capacity(), error.c_str());
             return false;
         }
-        return this->parseFromJsonDoc(doc);
+        bool parsed = this->parseFromJsonDoc(doc);
+        if (parsed && wasRepaired) {
+            LOGI("ConfigLoader", "Rewriting cleanly repaired configuration to SD card (%s)...", path);
+            this->saveToSD(path);
+        }
+        return parsed;
     };
 
     bool loaded = tryLoad(filepath);
@@ -527,8 +688,13 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     }
 
     String jsonStr = serializeToJson(true);
+    if (_jsonScratch.overflowed()) {
+        LOGE("ConfigLoader", "CRITICAL: JSON document overflowed capacity (%u bytes)! Refusing to write truncated config to %s",
+             (unsigned)_jsonScratch.capacity(), filepath);
+        return false;
+    }
     if (jsonStr.length() < 30) {
-        LOGE("ConfigLoader", "Refusing to save truncated JSON to %s", filepath);
+        LOGE("ConfigLoader", "Refusing to save truncated JSON to %s (len=%u)", filepath, (unsigned)jsonStr.length());
         return false;
     }
 

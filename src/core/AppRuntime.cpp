@@ -119,9 +119,7 @@ AppRuntime::~AppRuntime() {
 }
 
 void AppRuntime::initialize() {
-    // Apply board-specific power quirks (e.g. brownout suppression on USB-powered dev boards)
     BoardProfile::current().applyPowerQuirks();
-
     Serial.begin(115200);
     delay(1000);
     
@@ -182,6 +180,11 @@ void AppRuntime::initialize() {
     esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
 
+    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 matrix DMA buffers allocate memory
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(true, true);
+
     if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
              hardwareHAL.capabilities().psramBytes / (1024 * 1024), hardwareHAL.capabilities().psramBytes, ESP.getFreePsram());
@@ -210,11 +213,6 @@ void AppRuntime::initialize() {
     uint32_t postConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     LOGI("Config", "ConfigLoader DRAM telemetry: freeInternal=%u (delta=%d), largestInternal=%u, largestDma=%u",
          postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
-
-    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 matrix DMA buffers allocate memory
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(true, true);
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();

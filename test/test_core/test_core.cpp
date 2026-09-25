@@ -364,6 +364,26 @@ void test_sanitizer_night_brightness_allows_zero(void) {
     TEST_ASSERT_TRUE(res.values_clamped >= 1);
 }
 
+/**
+ * @brief Tests that ConfigSanitizer ensures any instance referenced by the rotation list
+ * exists in instances, recreating it if it was omitted or truncated.
+ */
+void test_sanitizer_rotation_recreates_missing_instances(void) {
+    ConfigLoader cfg;
+    cfg.mutate([](ConfigLoader& c) {
+        c.instances.clear();
+        c.rotation.clear();
+        c.rotation.emplace_back("clock_main", 15, OverlayConfig{false});
+        c.rotation.emplace_back("gifs_main", 20, OverlayConfig{false});
+    });
+    SanitizeResult res = ConfigSanitizer::sanitize(cfg, false);
+    TEST_ASSERT_EQUAL(2, cfg.instances.size());
+    TEST_ASSERT_EQUAL_STRING("clock_main", cfg.instances[0].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("clock", cfg.instances[0].engine_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("gifs_main", cfg.instances[1].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("gifs", cfg.instances[1].engine_id.c_str());
+}
+
 // =========================================================================
 // 3. DisplayArbiter & OverlayManager Tests
 // =========================================================================
@@ -1897,6 +1917,7 @@ void setup() {
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     RUN_TEST(test_sanitizer_validation_policy_coverage);
     RUN_TEST(test_sanitizer_night_brightness_allows_zero);
+    RUN_TEST(test_sanitizer_rotation_recreates_missing_instances);
 
     // =========================================================================
     // 3. Display Arbiter & SPSC Queue Lock-Free Invariants

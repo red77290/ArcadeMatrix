@@ -298,7 +298,7 @@ private:
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     mutable SpiRamJsonDocument _jsonScratch{32768};
 #else
-    mutable SpiRamJsonDocument _jsonScratch{6144};
+    mutable SpiRamJsonDocument _jsonScratch{8192};
 #endif
 
     void publishSnapshot_locked();
