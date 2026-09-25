@@ -10,6 +10,13 @@
 #include "core/NetworkBudget.h"
 #include "engines/EngineRegistrar.h"
 #include "hal/HardwareHAL.h"
+#include "core/drawing/IDrawingSurface.h"
+#include "core/drawing/SurfaceCoordinates.h"
+#include "core/drawing/Hub75BulkEncoder.h"
+#include "core/drawing/DisplaySurfaceFactory.h"
+#include "core/storage/MemoryConfigStorage.h"
+#include "core/storage/WorkingSetCache.h"
+#include "core/storage/ModularConfigManager.h"
 
 // Mock Engine implementation for testing
 class MockTestEngine : public IEngine {
@@ -1892,6 +1899,244 @@ void test_engine_retirement_queue_stress_and_saturation(void) {
     TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
 }
 
+// =========================================================================
+// 9. Drawing Surfaces, Hub75BulkEncoder & Coordinates
+// =========================================================================
+void test_surface_coordinates_rotation(void) {
+    const int16_t w = 64;
+    const int16_t h = 32;
+
+    Point p0 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 0);
+    TEST_ASSERT_EQUAL_INT16(10, p0.x);
+    TEST_ASSERT_EQUAL_INT16(5, p0.y);
+
+    Point p1 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 1);
+    TEST_ASSERT_EQUAL_INT16(w - 1 - 5, p1.x); // 58
+    TEST_ASSERT_EQUAL_INT16(10, p1.y);
+
+    Point p2 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 2);
+    TEST_ASSERT_EQUAL_INT16(w - 1 - 10, p2.x); // 53
+    TEST_ASSERT_EQUAL_INT16(h - 1 - 5, p2.y);  // 26
+
+    Point p3 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 3);
+    TEST_ASSERT_EQUAL_INT16(5, p3.x);
+    TEST_ASSERT_EQUAL_INT16(h - 1 - 10, p3.y); // 21
+
+    int16_t lw = 0, lh = 0;
+    SurfaceCoordinates::getLogicalDimensions(w, h, 0, lw, lh);
+    TEST_ASSERT_EQUAL_INT16(64, lw);
+    TEST_ASSERT_EQUAL_INT16(32, lh);
+
+    SurfaceCoordinates::getLogicalDimensions(w, h, 1, lw, lh);
+    TEST_ASSERT_EQUAL_INT16(32, lw);
+    TEST_ASSERT_EQUAL_INT16(64, lh);
+}
+
+static uint16_t s_mockBitplanes[16][8][64];
+
+static uint16_t* mockRowAccessor(void* userCtx, uint8_t row, uint8_t plane) {
+    (void)userCtx;
+    if (row < 16 && plane < 8) {
+        return s_mockBitplanes[row][plane];
+    }
+    return nullptr;
+}
+
+void test_hub75_bulk_encoder_luts_and_encode(void) {
+    uint8_t lutR[32];
+    uint8_t lutG[64];
+    uint8_t lutB[32];
+
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
+    TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
+    TEST_ASSERT_TRUE(lutR[31] >= 250);
+    TEST_ASSERT_TRUE(lutG[63] >= 250);
+    TEST_ASSERT_TRUE(lutB[31] >= 250);
+
+    for (int i = 1; i < 32; ++i) {
+        TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+        TEST_ASSERT_TRUE(lutB[i] >= lutB[i - 1]);
+    }
+    for (int i = 1; i < 64; ++i) {
+        TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+    }
+
+    std::vector<uint16_t> canvas(64 * 32, 0xF800); // Pure red
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+
+    Hub75EncodingParams params;
+    params.colorDepth = 8;
+    params.rowsPerFrame = 16;
+    params.width = 64;
+    params.height = 32;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    Hub75BulkEncoder::encode(
+        canvas.data(),
+        64,
+        mockRowAccessor,
+        nullptr,
+        params
+    );
+
+    // Plane 7 (MSB) for pure red must have R1 bit set (1 << 0)
+    uint16_t sample = s_mockBitplanes[0][7][0];
+    TEST_ASSERT_TRUE((sample & (1 << 0)) != 0);
+    TEST_ASSERT_TRUE((sample & (1 << 1)) == 0);
+    TEST_ASSERT_TRUE((sample & (1 << 2)) == 0);
+}
+
+void test_display_surface_factory_selection(void) {
+    auto resSingle = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    TEST_ASSERT_NOT_NULL(resSingle.surface.get());
+    TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resSingle.reason);
+    TEST_ASSERT_TRUE(resSingle.surface->hasCanvas());
+    TEST_ASSERT_EQUAL(PresentationStrategy::CANVAS_BURST_SINGLE, resSingle.surface->presentationStrategy());
+
+    auto resDirect = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "direct_double", false);
+    TEST_ASSERT_NOT_NULL(resDirect.surface.get());
+    TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resDirect.reason);
+    TEST_ASSERT_FALSE(resDirect.surface->hasCanvas());
+    TEST_ASSERT_EQUAL(PresentationStrategy::DIRECT_DMA_DOUBLE, resDirect.surface->presentationStrategy());
+
+    auto resAuto = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "unknown_pipeline", false);
+    TEST_ASSERT_NOT_NULL(resAuto.surface.get());
+}
+
+// =========================================================================
+// 10. Modular Storage Architecture & Working-Set Cache
+// =========================================================================
+void test_memory_config_storage_crud(void) {
+    MemoryConfigStorage storage;
+
+    TEST_ASSERT_FALSE(storage.exists("/test.json"));
+    bool ok = storage.writeStringAtomic("/test.json", "{\"key\":\"val\"}");
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(storage.exists("/test.json"));
+
+    String readBack;
+    ok = storage.readString("/test.json", readBack);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_STRING("{\"key\":\"val\"}", readBack.c_str());
+
+    std::vector<String> files;
+    storage.listFiles("/", files);
+    TEST_ASSERT_EQUAL(1, files.size());
+    TEST_ASSERT_EQUAL_STRING("test.json", files[0].c_str());
+
+    ok = storage.remove("/test.json");
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_FALSE(storage.exists("/test.json"));
+}
+
+void test_working_set_cache_synchronization_and_eviction(void) {
+    MemoryConfigStorage storage;
+
+    storage.writeStringAtomic("/config/instances/clock.json", "{\"id\":\"clock\",\"engine\":\"ClockEngine\",\"settings\":{}}");
+    storage.writeStringAtomic("/config/instances/sysinfo.json", "{\"id\":\"sysinfo\",\"engine\":\"SysInfoEngine\",\"settings\":{}}");
+    storage.writeStringAtomic("/config/instances/weather.json", "{\"id\":\"weather\",\"engine\":\"WeatherEngine\",\"settings\":{}}");
+
+    WorkingSetCache cache(storage, 2);
+
+    std::vector<RotationEntry> playlist;
+    playlist.push_back(RotationEntry{"clock", 10});
+    playlist.push_back(RotationEntry{"weather", 15});
+
+    bool synced = cache.syncWithPlaylist(playlist);
+    TEST_ASSERT_TRUE(synced);
+    TEST_ASSERT_EQUAL(2, cache.getCachedInstances().size());
+    TEST_ASSERT_NOT_NULL(cache.getInstance("clock"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("weather"));
+    TEST_ASSERT_NULL(cache.getInstance("sysinfo"));
+
+    // Rotate playlist: evict clock, bring in sysinfo
+    playlist.clear();
+    playlist.push_back(RotationEntry{"sysinfo", 10});
+    playlist.push_back(RotationEntry{"weather", 15});
+
+    synced = cache.syncWithPlaylist(playlist);
+    TEST_ASSERT_TRUE(synced);
+    TEST_ASSERT_EQUAL(2, cache.getCachedInstances().size());
+    TEST_ASSERT_NULL(cache.getInstance("clock"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("sysinfo"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("weather"));
+
+    EngineInstance newInst;
+    newInst.instance_id = "alert";
+    newInst.engine_id = "AlertEngine";
+    bool saved = cache.saveAndCacheInstance(newInst);
+    TEST_ASSERT_TRUE(saved);
+    TEST_ASSERT_NOT_NULL(cache.getInstance("alert"));
+    TEST_ASSERT_TRUE(storage.exists("/config/instances/alert.json"));
+
+    bool deleted = cache.deleteInstance("alert");
+    TEST_ASSERT_TRUE(deleted);
+    TEST_ASSERT_NULL(cache.getInstance("alert"));
+    TEST_ASSERT_FALSE(storage.exists("/config/instances/alert.json"));
+}
+
+void test_modular_config_migration_and_partitioning(void) {
+    MemoryConfigStorage storage;
+
+    const char* legacyJson = "{"
+        "\"matrix_rows\":64,"
+        "\"matrix_cols\":128,"
+        "\"wifi_ssid\":\"TestWiFi\","
+        "\"mqtt_enabled\":true,"
+        "\"playlist_items\":[\"clock_1\"],"
+        "\"instances\":["
+            "{\"id\":\"clock_1\",\"engine\":\"ClockEngine\",\"settings\":{\"style\":\"digital\"}}"
+        "]"
+    "}";
+    storage.writeStringAtomic("/config.json", legacyJson);
+
+    ConfigLoader config;
+    ModularConfigManager mgr(storage);
+
+    bool migrated = mgr.checkAndMigrateLegacy(config, "/config.json");
+    TEST_ASSERT_TRUE(migrated);
+
+    TEST_ASSERT_TRUE(storage.exists("/config/hardware.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/network.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/playlist.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/instances/clock_1.json"));
+
+    TEST_ASSERT_TRUE(storage.exists("/config.json.bak"));
+    TEST_ASSERT_FALSE(storage.exists("/config.json"));
+
+    String hwStr;
+    storage.readString("/config/hardware.json", hwStr);
+    TEST_ASSERT_TRUE(hwStr.indexOf("\"matrix_rows\":64") >= 0);
+    TEST_ASSERT_TRUE(hwStr.indexOf("\"matrix_cols\":128") >= 0);
+
+    String netStr;
+    storage.readString("/config/network.json", netStr);
+    TEST_ASSERT_TRUE(netStr.indexOf("\"wifi_ssid\":\"TestWiFi\"") >= 0);
+
+    String instStr;
+    storage.readString("/config/instances/clock_1.json", instStr);
+    TEST_ASSERT_TRUE(instStr.indexOf("\"id\":\"clock_1\"") >= 0);
+    TEST_ASSERT_TRUE(instStr.indexOf("\"engine\":\"ClockEngine\"") >= 0);
+
+    ConfigLoader freshConfig;
+    bool loaded = mgr.loadAll(freshConfig);
+    TEST_ASSERT_TRUE(loaded);
+
+    ConfigSnapshotGuard guard = freshConfig.acquireSnapshot();
+    const auto& snap = guard.get();
+    TEST_ASSERT_EQUAL(64, snap.matrix.height);
+    TEST_ASSERT_EQUAL(128, snap.matrix.width);
+    TEST_ASSERT_EQUAL_STRING("TestWiFi", snap.wifi.ssid.c_str());
+    TEST_ASSERT_TRUE(snap.mqtt.enabled);
+    TEST_ASSERT_EQUAL(1, snap.rotation.size());
+    TEST_ASSERT_EQUAL_STRING("clock_1", snap.rotation[0].instance_id.c_str());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1971,10 +2216,25 @@ void setup() {
     RUN_TEST(test_display_runtime_purge_engine_references);
     RUN_TEST(test_engine_retirement_queue_stress_and_saturation);
 
+    // =========================================================================
+    // 9. Drawing Surfaces, Hub75BulkEncoder & Coordinates
+    // =========================================================================
+    RUN_TEST(test_surface_coordinates_rotation);
+    RUN_TEST(test_hub75_bulk_encoder_luts_and_encode);
+    RUN_TEST(test_display_surface_factory_selection);
+
+    // =========================================================================
+    // 10. Modular Storage Architecture & Working-Set Cache
+    // =========================================================================
+    RUN_TEST(test_memory_config_storage_crud);
+    RUN_TEST(test_working_set_cache_synchronization_and_eviction);
+    RUN_TEST(test_modular_config_migration_and_partitioning);
+
     UNITY_END();
 }
 
 void loop() {
     delay(100);
 }
+
 
