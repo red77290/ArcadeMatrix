@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
+#include <nvs_flash.h>
 #include "Logger.h"
 #include "RenderStats.h"
 #include "SdSpace.h"
@@ -179,6 +180,24 @@ void AppRuntime::initialize() {
 
     esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
+
+    // Ensure NVS is properly initialized (mandated by ESP-IDF Wi-Fi stack)
+    esp_err_t nvsErr = nvs_flash_init();
+    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
+        LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
+        const esp_partition_t* nvsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        if (nvsPart != nullptr) {
+            esp_partition_erase_range(nvsPart, 0, nvsPart->size);
+        } else {
+            nvs_flash_erase();
+        }
+        nvsErr = nvs_flash_init();
+    }
+    if (nvsErr != ESP_OK) {
+        LOGE("System", "Failed to initialize NVS: %d (Wi-Fi may fail)", (int)nvsErr);
+    } else {
+        LOGI("System", "NVS flash partition ready.");
+    }
 
     // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 matrix DMA buffers allocate memory
     WiFi.persistent(false);
@@ -401,6 +420,7 @@ void AppRuntime::initialize() {
             delay(100);
             WiFi.mode(WIFI_AP_STA);
             WiFi.softAP("ArcadeMatrix", "12345678");
+            LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
             String apMsg = "Offline Mode (AP: ArcadeMatrix)";
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
             m_messageEngine->displayMessage(failConfig);
@@ -429,6 +449,7 @@ void AppRuntime::initialize() {
         Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
         WiFi.mode(WIFI_AP);
         WiFi.softAP("ArcadeMatrix", "12345678");
+        LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
         String apMsg = "Offline Mode (AP: ArcadeMatrix)";
         MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
         m_messageEngine->displayMessage(failConfig);
