@@ -613,16 +613,20 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Rendering into the LED Matrix & Responsive Geometry
 
-Always obtain the matrix pointer via `context->getMatrix()`:
+ArcadeMatrix v4 abstracts display rendering behind the hardware-agnostic `IDrawingSurface` interface (which extends `Adafruit_GFX`). Always obtain the drawing surface pointer via `context->getSurface()`:
 
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
-matrix->setCursor(x, y);
-matrix->print("TEXT");
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// Or high-performance block blit for streaming animations (GIFs, fighters):
+surface->blit565(canvasBuffer, width, height);
 ```
-*Never call `flipDMABuffer()` inside an engine — the main display loop handles flipping centrally.*
+*(For backwards compatibility, `context->getMatrix()` is preserved as a shim returning `MatrixPanel_I2S_DMA*`).
+*Never call `flipDMABuffer()` inside an engine — the main display loop handles presentation centrally.*
 
 ### 15.1 The Golden Rule for Multi-Resolution & TATE Responsive Layouts
 
@@ -716,7 +720,7 @@ rtk pio run -e esp32s3_waveshare
 Compile and validate test suites locally via PlatformIO:
 
 ```bash
-# Compile all 7 unit test suites without physical board attached
+# Compile all 8 unit test suites without physical board attached
 rtk pio test -e esp32dev --without-uploading --without-testing
 
 # Compile a specific test suite (e.g. test_core)
