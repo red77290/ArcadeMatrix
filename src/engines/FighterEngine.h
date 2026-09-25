@@ -153,7 +153,7 @@ private:
 
 
     
-    MatrixPanel_I2S_DMA* matrix; ///< DMA Matrix instance
+    Adafruit_GFX* matrix; ///< Display surface/matrix instance
     bool active = false;         ///< Is the engine currently active?
     
     FighterPlayer p1;            ///< Player 1 (Left)
