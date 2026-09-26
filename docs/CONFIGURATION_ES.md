@@ -82,13 +82,13 @@ La interfaz Web (Configuración del Sistema → Hardware) controla directamente 
 
 | Clave | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `ssid` | `String` | El nombre de su red Wi-Fi. |
+| `ssid` | `String` | El nombre de su red Wi-Fi (2.4 GHz). |
 | `password` | `String` | La clave WPA2. |
-| `hostname` | `String` | Nombre de host del dispositivo anunciado en la red. |
-| `configured` | `bool` | Ponlo en `false` para forzar un intento de (re)conexión en el próximo arranque. Se vuelve a poner en `true` automáticamente al tener éxito. |
-| `disable_internal` | `bool` | Si usa un adaptador USB externo, deshabilita el Wi-Fi interno de la Pi (cambiar esto activa un reinicio). |
+| `hostname` | `String` | Nombre de host del dispositivo anunciado mediante mDNS / DHCP (`arcadematrix` por defecto). |
 
-También puedes enviar credenciales en tiempo de ejecución con `POST /api/wifi { "ssid": "...", "password": "..." }`, lo que establece `configured=false` y reinicia el aprovisionamiento de red.
+Si `ssid` está vacío o las credenciales no logran conectarse, ArcadeMatrix genera automáticamente un SoftAP Captive Portal integrado llamado `ArcadeMatrix-Setup` (IP: `192.168.4.1`) que permite el aprovisionamiento inmediato desde un teléfono o portátil.
+
+También puedes enviar nuevas credenciales Wi-Fi en tiempo de ejecución con `POST /api/wifi { "ssid": "...", "password": "..." }`, lo que las guarda en el almacenamiento persistente y se reconecta.
 
 ---
 
@@ -408,7 +408,7 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
    - Puede ingresar múltiples claves API separadas por comas (`api_key: "clave1,clave2,clave3"`).
    - Si una clave resulta inválida (`HTTP 401/403`) o agota su cuota de 100 solicitudes/día (`HTTP 429/403`), el motor conmuta instantáneamente a la siguiente clave y reintenta la solicitud.
    - 2 cuentas = 200 solicitudes/día; 3 cuentas = 300 solicitudes/día.
-2. **Persistencia en Archivo (`/gnews_cache.json` en SD ESP32, `gnews_cache.json` en RPi):**
+2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS):**
    - Los artículos y la telemetría se guardan en almacenamiento local. Al reiniciar, las noticias se muestran al instante sin consumir cuota API.
    - Si no hay conexión o se agota la cuota, las noticias persisten y siguen desplazándose 24/7.
 3. **Presupuesto Diario de Solicitudes (Por defecto: 10 sol/día) y Protección de Claves Compartidas:**

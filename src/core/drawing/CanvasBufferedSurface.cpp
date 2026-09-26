@@ -24,9 +24,18 @@ CanvasBufferedSurface::CanvasBufferedSurface(int16_t width, int16_t height,
         _canvas = static_cast<uint16_t*>(heap_caps_malloc(_canvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 #endif
         if (!_canvas) {
-            LOGW("CanvasBufferedSurface", "PSRAM canvas allocation failed, falling back to internal SRAM");
-            _canvas = static_cast<uint16_t*>(malloc(_canvasBytes));
-            _storage = CanvasStorage::SRAM;
+            LOGW("CanvasBufferedSurface", "PSRAM canvas allocation failed, checking internal SRAM headroom...");
+            size_t freeInternal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            size_t largestInternal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (largestInternal >= _canvasBytes && freeInternal >= (_canvasBytes + 45000)) {
+                _canvas = static_cast<uint16_t*>(malloc(_canvasBytes));
+                _storage = CanvasStorage::SRAM;
+                LOGW("CanvasBufferedSurface", "SRAM budget sufficient: fell back to internal SRAM canvas (%u KB)", (unsigned)(_canvasBytes / 1024));
+            } else {
+                LOGE("CanvasBufferedSurface", "CRITICAL: Insufficient internal SRAM for fallback (free %u, largest %u, need %u). Aborting canvas allocation.",
+                     (unsigned)freeInternal, (unsigned)largestInternal, (unsigned)_canvasBytes);
+                _storage = CanvasStorage::NONE;
+            }
         }
     } else {
         _canvas = static_cast<uint16_t*>(malloc(_canvasBytes));
@@ -150,60 +159,18 @@ void CanvasBufferedSurface::releaseCanvas() {
 }
 
 PresentationTiming CanvasBufferedSurface::present() {
-    PresentationTiming timing;
     if (!_canvas) {
+        PresentationTiming timing;
         timing.result = PresentationResult::EncodingError;
         return timing;
     }
     if (!_backend) {
+        PresentationTiming timing;
         timing.result = PresentationResult::BackendUnavailable;
         return timing;
     }
 
-    uint32_t t0 = micros();
-
-    // 1. Acquire physical DMA target descriptor
-    Hub75DmaTarget target = _backend->acquireDmaTarget();
-    if (!target.rowAccessor && !target.buffer) {
-        timing.result = PresentationResult::DmaTargetUnavailable;
-        return timing;
-    }
-    if (target.width == 0 || target.height == 0 || target.rowsPerFrame == 0) {
-        timing.result = PresentationResult::InvalidTarget;
-        return timing;
-    }
-
-    // 2. Encode Canvas RGB565 directly into HUB75 DMA Target via Hub75BulkEncoder
-    uint32_t t_enc = micros();
-    Hub75EncodingParams params;
-    params.colorDepth = target.colorDepth;
-    params.rowsPerFrame = target.rowsPerFrame;
-    params.width = physicalWidth();
-    params.height = physicalHeight();
-    params.lutR = target.lutR;
-    params.lutG = target.lutG;
-    params.lutB = target.lutB;
-    params.rotation = 0; // Canvas is already maintained in physical orientation
-
-    Hub75BulkEncoder::encode(_canvas, physicalWidth(), target, params);
-    timing.encodeUs = micros() - t_enc;
-
-    // 3. Commit through presentation backend adhering to PresentationPolicy
-    PresentationTiming commitTiming = _backend->commit(_policy);
-    timing.waitForSafeWindowUs = commitTiming.waitForSafeWindowUs;
-    timing.blankUs = commitTiming.blankUs;
-    timing.transferUs = commitTiming.transferUs;
-    timing.totalPresentUs = (micros() - t0);
-
-    if (commitTiming.result != PresentationResult::Ok) {
-        timing.result = commitTiming.result;
-    } else if (_policy.maxFrameUs > 0 && timing.totalPresentUs > _policy.maxFrameUs) {
-        timing.result = PresentationResult::FrameBudgetExceeded;
-    } else {
-        timing.result = PresentationResult::Ok;
-    }
-
-    return timing;
+    return _backend->presentCanvas(_canvas, physicalWidth(), physicalHeight(), _strategy, _policy);
 }
 
 void CanvasBufferedSurface::markExternalDraw() {

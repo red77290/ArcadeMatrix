@@ -68,6 +68,61 @@ public:
         return timing;
     }
 
+    enum class Step {
+        AcquireDmaTarget,
+        WaitForSafeWindow,
+        BlankDisplay,
+        Encode,
+        Commit,
+        UnblankDisplay
+    };
+    std::vector<Step> executionLog;
+
+    PresentationTiming presentCanvas(
+        const uint16_t* canvas,
+        uint16_t canvasWidth,
+        uint16_t canvasHeight,
+        PresentationStrategy strategy,
+        const PresentationPolicy& policy) override
+    {
+        PresentationTiming timing;
+        if (!canvas) {
+            timing.result = PresentationResult::EncodingError;
+            return timing;
+        }
+
+        executionLog.push_back(Step::AcquireDmaTarget);
+        Hub75DmaTarget target = acquireDmaTarget();
+        if (!target.rowAccessor && !target.buffer) {
+            timing.result = PresentationResult::DmaTargetUnavailable;
+            return timing;
+        }
+        if (target.width == 0 || target.height == 0 || target.rowsPerFrame == 0) {
+            timing.result = PresentationResult::InvalidTarget;
+            return timing;
+        }
+
+        if (strategy == PresentationStrategy::CANVAS_BURST_SINGLE) {
+            executionLog.push_back(Step::WaitForSafeWindow);
+            if (policy.allowBlanking) executionLog.push_back(Step::BlankDisplay);
+            executionLog.push_back(Step::Encode);
+            executionLog.push_back(Step::Commit);
+            if (policy.allowBlanking) executionLog.push_back(Step::UnblankDisplay);
+        } else {
+            executionLog.push_back(Step::Encode);
+            executionLog.push_back(Step::WaitForSafeWindow);
+            executionLog.push_back(Step::Commit);
+        }
+
+        PresentationTiming cTiming = commit(policy);
+        cTiming.encodeUs = simulatedEncodeUs;
+        cTiming.totalPresentUs += cTiming.encodeUs;
+        if (cTiming.result == PresentationResult::Ok && policy.maxFrameUs > 0 && cTiming.totalPresentUs > policy.maxFrameUs) {
+            cTiming.result = PresentationResult::FrameBudgetExceeded;
+        }
+        return cTiming;
+    }
+
     size_t calculateDmaBytes() const override {
         return _dmaBytes;
     }
@@ -80,6 +135,7 @@ public:
     std::vector<uint8_t>& getBuffer() { return _buffer; }
 
     // Simulation overrides for testing
+    uint32_t simulatedEncodeUs = 50;
     uint32_t simulatedBlankUs = 0;
     uint32_t simulatedTransferUs = 150;
     uint32_t simulatedTotalUs = 150;

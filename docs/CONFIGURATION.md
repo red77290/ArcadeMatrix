@@ -82,13 +82,13 @@ The Web UI (System Settings → Hardware) directly controls these parameters:
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `ssid` | `String` | The name of your Wi-Fi network. |
+| `ssid` | `String` | The name of your Wi-Fi network (2.4 GHz). |
 | `password` | `String` | The WPA2 key. |
-| `hostname` | `String` | Device hostname advertised on the network. |
-| `configured` | `bool` | Set to `false` to force a (re)connection attempt on next boot. Set back to `true` automatically on success. |
-| `disable_internal` | `bool` | If using an external USB dongle, disable the Pi's internal Wi-Fi (changing this triggers a restart). |
+| `hostname` | `String` | Device hostname advertised via mDNS / DHCP (`arcadematrix` by default). |
 
-You can also push credentials at runtime with `POST /api/wifi { "ssid": "...", "password": "..." }`, which sets `configured=false` and restarts the network provisioning.
+If `ssid` is empty or credentials fail to connect, ArcadeMatrix automatically spawns an onboard Captive Portal SoftAP named `ArcadeMatrix-Setup` (IP: `192.168.4.1`) allowing immediate provisioning from a phone or laptop.
+
+You can also push new Wi-Fi credentials at runtime via `POST /api/wifi { "ssid": "...", "password": "..." }`, which saves them to persistent storage and reconnects.
 
 ---
 
@@ -408,7 +408,7 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
    - You can enter multiple GNews API keys separated by commas (`api_key: "key1,key2,key3"`).
    - If an active key is invalid (`HTTP 401/403`) or exhausts its 100 requests/day quota (`HTTP 429/403`), the engine automatically fails over to the next key in the pool and immediately retries.
    - 2 accounts = 200 requests/day; 3 accounts = 300 requests/day.
-2. **Persistent File Caching (`/gnews_cache.json` on ESP32 SD, `gnews_cache.json` on RPi):**
+2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS):**
    - Articles and request telemetry are persisted to storage. On reboot, headlines display immediately without burning API quota or stalling for network.
    - If offline or when the daily quota is reached, cached articles are preserved indefinitely and continue scrolling 24/7.
 3. **Daily Quota Budgeting (Default: 10 reqs/day) & Shared-Key Protection:**

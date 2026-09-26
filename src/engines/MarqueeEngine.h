@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
 #include <atomic>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include "GifEngine.h"
 

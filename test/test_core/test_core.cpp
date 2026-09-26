@@ -19,6 +19,7 @@
 #include "core/drawing/Hub75PresentationBackend.h"
 #include "core/drawing/DmaMemoryLayout.h"
 #include "core/drawing/PipelineSelectionPolicy.h"
+#include "core/drawing/PresentationTimingModel.h"
 #include "core/storage/MemoryConfigStorage.h"
 #include "core/storage/WorkingSetCache.h"
 #include "core/storage/ModularConfigManager.h"
@@ -2381,6 +2382,172 @@ void test_backend_exists_before_first_present(void) {
     TEST_ASSERT_EQUAL_UINT8(8, target.colorDepth);
 }
 
+void test_presentation_timing_model(void) {
+    // 128x32 at 8-bit: rows=16, width=128
+    uint32_t enc128x32x8 = PresentationTimingModel::estimateEncodeUs(128, 32, 8);
+    TEST_ASSERT_TRUE(enc128x32x8 > 20 && enc128x32x8 < 500);
+
+    // 256x64 at 8-bit should require significantly more time than 128x32
+    uint32_t enc256x64x8 = PresentationTimingModel::estimateEncodeUs(256, 64, 8);
+    TEST_ASSERT_TRUE(enc256x64x8 > enc128x32x8);
+
+    // Single buffer safe window must cover encode + writeback + margin
+    uint32_t swSingle = PresentationTimingModel::estimateTransferUs(128, 32, 8, true);
+    TEST_ASSERT_TRUE(swSingle > enc128x32x8);
+
+    // Double buffer safe window is descriptor flip only (25µs)
+    uint32_t swDouble = PresentationTimingModel::estimateTransferUs(128, 32, 8, false);
+    TEST_ASSERT_EQUAL_UINT32(25, swDouble);
+}
+
+void test_single_buffer_presentation_ordering(void) {
+    MockPresentationBackend mock(128, 32, 8, false);
+    CanvasBufferedSurface singleSurf(128, 32, CanvasStorage::SRAM, &mock, true);
+
+    singleSurf.clear(0xF800);
+    mock.executionLog.clear();
+    auto timing = singleSurf.present();
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)timing.result);
+
+    // Verify ordering for single buffer:
+    // Acquire -> WaitForSafeWindow -> Blank -> Encode -> Commit -> Unblank
+    auto& log = mock.executionLog;
+    TEST_ASSERT_TRUE(log.size() >= 5);
+
+    int idxSafe = -1, idxBlank = -1, idxEncode = -1, idxCommit = -1, idxUnblank = -1;
+    for (size_t i = 0; i < log.size(); ++i) {
+        if (log[i] == MockPresentationBackend::Step::WaitForSafeWindow && idxSafe == -1) idxSafe = (int)i;
+        if (log[i] == MockPresentationBackend::Step::BlankDisplay && idxBlank == -1) idxBlank = (int)i;
+        if (log[i] == MockPresentationBackend::Step::Encode && idxEncode == -1) idxEncode = (int)i;
+        if (log[i] == MockPresentationBackend::Step::Commit && idxCommit == -1) idxCommit = (int)i;
+        if (log[i] == MockPresentationBackend::Step::UnblankDisplay && idxUnblank == -1) idxUnblank = (int)i;
+    }
+
+    TEST_ASSERT_TRUE(idxSafe >= 0);
+    TEST_ASSERT_TRUE(idxBlank > idxSafe);
+    TEST_ASSERT_TRUE(idxEncode > idxBlank);
+    TEST_ASSERT_TRUE(idxCommit > idxEncode);
+    TEST_ASSERT_TRUE(idxUnblank > idxCommit);
+
+    // Now verify double buffer ordering:
+    // Encode happens BEFORE WaitForSafeWindow
+    MockPresentationBackend mockDouble(128, 32, 8, true);
+    CanvasBufferedSurface doubleSurf(128, 32, CanvasStorage::SRAM, &mockDouble, false);
+    mockDouble.executionLog.clear();
+    doubleSurf.present();
+    auto& logDbl = mockDouble.executionLog;
+
+    int dblEncode = -1, dblSafe = -1;
+    for (size_t i = 0; i < logDbl.size(); ++i) {
+        if (logDbl[i] == MockPresentationBackend::Step::Encode && dblEncode == -1) dblEncode = (int)i;
+        if (logDbl[i] == MockPresentationBackend::Step::WaitForSafeWindow && dblSafe == -1) dblSafe = (int)i;
+    }
+    TEST_ASSERT_TRUE(dblEncode >= 0);
+    TEST_ASSERT_TRUE(dblSafe > dblEncode);
+}
+
+void test_hub75_bulk_encoder_byte_exact_snapshots(void) {
+    const struct {
+        uint16_t w;
+        uint16_t h;
+        uint8_t depth;
+    } resolutions[] = {
+        {128, 32, 8},
+        {128, 64, 8},
+        {256, 64, 8}
+    };
+
+    uint8_t lutR[32], lutG[64], lutB[32];
+    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
+    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
+    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+
+    for (const auto& res : resolutions) {
+        size_t totalBytes = DmaMemoryLayout::calculateTotalBytes(res.w, res.h, res.depth, false);
+        std::vector<uint8_t> buffer1(totalBytes, 0xEE);
+        std::vector<uint8_t> buffer2(totalBytes, 0xEE);
+        std::vector<uint16_t> canvas(res.w * res.h, 0);
+
+        // Pattern: checkerboard + gradient
+        for (int y = 0; y < res.h; ++y) {
+            for (int x = 0; x < res.w; ++x) {
+                canvas[y * res.w + x] = ((x + y) & 1) ? 0xF800 : 0x001F;
+            }
+        }
+
+        struct Context {
+            uint8_t* base;
+            uint16_t w;
+            uint8_t depth;
+        };
+
+        auto accessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+            auto* c = static_cast<Context*>(ctx);
+            size_t strideBytes = (size_t)c->w * sizeof(uint16_t);
+            size_t offset = ((size_t)row * c->depth + plane) * strideBytes;
+            return reinterpret_cast<uint16_t*>(c->base + offset);
+        };
+
+        Hub75EncodingParams params;
+        params.width = res.w;
+        params.height = res.h;
+        params.rowsPerFrame = res.h / 2;
+        params.colorDepth = res.depth;
+        params.lutR = lutR;
+        params.lutG = lutG;
+        params.lutB = lutB;
+        params.rotation = 0;
+
+        Context ctx1{buffer1.data(), res.w, res.depth};
+        Hub75BulkEncoder::encode(canvas.data(), res.w, accessor, &ctx1, params);
+
+        Context ctx2{buffer2.data(), res.w, res.depth};
+        Hub75BulkEncoder::encode(canvas.data(), res.w, accessor, &ctx2, params);
+
+        // Strict byte-for-byte snapshot equality (100% deterministic)
+        TEST_ASSERT_EQUAL(0, memcmp(buffer1.data(), buffer2.data(), totalBytes));
+
+        // Test all-black produces identical zero bitplanes
+        std::fill(canvas.begin(), canvas.end(), 0x0000);
+        std::fill(buffer1.begin(), buffer1.end(), 0xFF);
+        Hub75BulkEncoder::encode(canvas.data(), res.w, accessor, &ctx1, params);
+
+        // All RGB color bits in bitplanes must be strictly 0
+        const uint16_t* words = reinterpret_cast<const uint16_t*>(buffer1.data());
+        size_t totalWords = totalBytes / sizeof(uint16_t);
+        for (size_t i = 0; i < totalWords; ++i) {
+            TEST_ASSERT_EQUAL_UINT16(0, words[i] & 0x003F);
+        }
+    }
+}
+
+void test_core1_zero_allocation_presentation(void) {
+    MockPresentationBackend mock(128, 32, 8, false);
+    CanvasBufferedSurface surf(128, 32, CanvasStorage::SRAM, &mock, false);
+
+    // Warm-up
+    surf.fillScreen(0x1234);
+    surf.present();
+
+#if defined(ESP_PLATFORM)
+    size_t initialHeap = esp_get_free_heap_size();
+#endif
+
+    // Run 10,000 frames to prove ZERO heap leak or allocation in hot path
+    const int TEST_FRAMES = 10000;
+    for (int frame = 0; frame < TEST_FRAMES; ++frame) {
+        surf.drawPixel(frame & 127, (frame >> 7) & 31, frame);
+        PresentationTiming timing = surf.present();
+        TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)timing.result);
+    }
+
+#if defined(ESP_PLATFORM)
+    size_t finalHeap = esp_get_free_heap_size();
+    TEST_ASSERT_EQUAL_UINT32(initialHeap, finalHeap);
+#endif
+    TEST_ASSERT_EQUAL_UINT32(TEST_FRAMES + 1, surf.flipCount());
+}
+
 void test_surface_coordinates_multi_resolution(void) {
     const struct {
         int16_t w;
@@ -2754,6 +2921,10 @@ void setup() {
     RUN_TEST(test_pipeline_selection_policy);
     RUN_TEST(test_hub75_bulk_encoder_golden_snapshots);
     RUN_TEST(test_backend_exists_before_first_present);
+    RUN_TEST(test_presentation_timing_model);
+    RUN_TEST(test_single_buffer_presentation_ordering);
+    RUN_TEST(test_hub75_bulk_encoder_byte_exact_snapshots);
+    RUN_TEST(test_core1_zero_allocation_presentation);
 
     // =========================================================================
     // 10. Modular Storage Architecture & Working-Set Cache

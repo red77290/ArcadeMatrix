@@ -1,7 +1,6 @@
 #include "ClockWidget.h"
 #include "../../core/drawing/IDrawingSurface.h"
 #include "DashboardCommon.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <math.h>
 
 void PixelClockWidget::renderAnalog(IDrawingSurface* matrix, const Rect& rect, const DashboardTimeData& time, float subSecond, const DashboardTheme& theme, bool showSeconds, bool showDate) {

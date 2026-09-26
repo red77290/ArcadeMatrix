@@ -82,13 +82,13 @@ L'interface Web (Paramètres Système → Matériel) pilote directement ces opti
 
 | Clé | Type | Description |
 | :--- | :--- | :--- |
-| `ssid` | `String` | Le nom de votre réseau Wi-Fi. |
+| `ssid` | `String` | Le nom de votre réseau Wi-Fi (2.4 GHz). |
 | `password` | `String` | La clé WPA2. |
-| `hostname` | `String` | Nom d'hôte de l'appareil annoncé sur le réseau. |
-| `configured` | `bool` | Mettre à `false` pour forcer une tentative de (re)connexion au prochain démarrage. Repasse automatiquement à `true` en cas de succès. |
-| `disable_internal` | `bool` | Si vous utilisez un dongle USB externe, désactive le Wi-Fi interne du Pi (modifier ceci déclenche un redémarrage). |
+| `hostname` | `String` | Nom d'hôte de l'appareil annoncé via mDNS / DHCP (`arcadematrix` par défaut). |
 
-Vous pouvez aussi pousser des identifiants à l'exécution avec `POST /api/wifi { "ssid": "...", "password": "..." }`, ce qui définit `configured=false` et relance le provisionnement réseau.
+Si `ssid` est vide ou si les identifiants échouent à se connecter, ArcadeMatrix démarre automatiquement un SoftAP Captive Portal nommé `ArcadeMatrix-Setup` (IP : `192.168.4.1`) permettant une configuration immédiate depuis un smartphone ou un ordinateur.
+
+Vous pouvez aussi pousser de nouveaux identifiants Wi-Fi à l'exécution avec `POST /api/wifi { "ssid": "...", "password": "..." }`, ce qui les enregistre dans le stockage persistant et reconnecte le système.
 
 ---
 
@@ -406,7 +406,7 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
    - Vous pouvez renseigner plusieurs clés API GNews séparées par des virgules (`api_key: "cle1,cle2,cle3"`).
    - Dès qu'une clé est invalide (`HTTP 401/403`) ou épuise son quota de 100 requêtes/jour (`HTTP 429/403`), le moteur bascule instantanément sur la clé suivante et retente la requête.
    - 2 comptes = 200 requêtes/jour ; 3 comptes = 300 requêtes/jour.
-2. **Persistance sur Fichier (`/gnews_cache.json` sur SD ESP32, `gnews_cache.json` sur RPi) :**
+2. **Persistance sur Fichier (`/gnews_cache.json` sur SD/SPIFFS) :**
    - Les articles et compteurs de télémétrie sont persistés sur stockage physique. Au redémarrage, les titres s'affichent immédiatement sans consommer de quota API ni bloquer l'écran.
    - En cas de coupure réseau ou de quota épuisé, les articles en cache sont conservés et continuent de défiler 24h/24.
 3. **Budget de Requêtes Journalier (Défaut : 10 reqs/jour) & Préservation des Clés Partagées :**

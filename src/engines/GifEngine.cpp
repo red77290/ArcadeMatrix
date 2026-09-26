@@ -2,10 +2,8 @@
 #include "../core/drawing/IDrawingSurface.h"
 #include "../hal/BoardProfile.h"
 #include "../core/SpiRamJsonDocument.h"
-#include "../core/MatrixEngine.h"
 #include "../core/RenderStats.h"
 
-extern MatrixEngine matrixEngine;
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
@@ -439,12 +437,12 @@ bool GifEngine::blitCanvas() {
     const int h = matrix->height();
     const size_t n = (size_t)w * h;
 
-    uint32_t gen = matrixEngine.externalDrawGeneration();
+    uint32_t gen = matrix->externalDrawGeneration();
     if (gen != m_shadowGeneration) {
         m_shadowGeneration = gen;
         invalidateShadows();
     }
-    int idx = matrixEngine.isDoubleBuffered() ? (int)(matrixEngine.flipCount() & 1u) : 0;
+    int idx = matrix->isDoubleBuffered() ? (int)(matrix->flipCount() & 1u) : 0;
     uint16_t* shadow = m_shadow[idx];
     bool full = (shadow == nullptr) || !m_shadowValid[idx];
 
@@ -457,11 +455,7 @@ bool GifEngine::blitCanvas() {
     uint32_t t0 = micros();
     size_t written = 0;
     if (full) {
-        if (m_context && m_context->getSurface()) {
-            m_context->getSurface()->blit565(canvasBuffer, 0, 0, w, h);
-        } else {
-            matrixEngine.blitCanvas565(canvasBuffer, w, h);
-        }
+        matrix->blit565(canvasBuffer, 0, 0, w, h);
         if (shadow) {
             memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
             m_shadowValid[idx] = true;
@@ -484,11 +478,7 @@ bool GifEngine::blitCanvas() {
 
         if (dirtyWords >= dirtyThresholdWords) {
             // High motion frame: FastBlit sequential row writes are faster than hundreds of drawPixel calls
-            if (m_context && m_context->getSurface()) {
-                m_context->getSurface()->blit565(canvasBuffer, 0, 0, w, h);
-            } else {
-                matrixEngine.blitCanvas565(canvasBuffer, w, h);
-            }
+            matrix->blit565(canvasBuffer, 0, 0, w, h);
             memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
             written = n;
         } else {

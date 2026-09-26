@@ -64,6 +64,26 @@ public:
     virtual PresentationTiming commit(const PresentationPolicy& policy) = 0;
 
     /**
+     * @brief High-level presentation entry point orchestrating encoding and commit.
+     * Enforces pipeline-specific ordering:
+     * - Double Buffer: Encode -> Cache Writeback -> Safe Window -> (Optional Blank) -> Swap -> Unblank
+     * - Single Buffer: Safe Window -> (Optional Blank) -> Encode -> Cache Writeback -> Commit -> Unblank
+     * @param canvas Pointer to linear 16-bit RGB565 intermediate canvas
+     * @param canvasWidth Physical width of canvas
+     * @param canvasHeight Physical height of canvas
+     * @param strategy Active presentation strategy (CANVAS_BURST_SINGLE vs CANVAS_BURST_DOUBLE)
+     * @param policy Timing constraints and blanking budget
+     * @return PresentationTiming Live performance telemetry
+     */
+    virtual PresentationTiming presentCanvas(
+        const uint16_t* canvas,
+        uint16_t canvasWidth,
+        uint16_t canvasHeight,
+        PresentationStrategy strategy,
+        const PresentationPolicy& policy
+    ) = 0;
+
+    /**
      * @brief Calculates exact DMA RAM bytes required for the active configuration.
      */
     virtual size_t calculateDmaBytes() const = 0;

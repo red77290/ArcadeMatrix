@@ -15,6 +15,8 @@ public:
 
     Hub75DmaTarget acquireDmaTarget() override;
     PresentationTiming commit(const PresentationPolicy& policy) override;
+    PresentationTiming presentCanvas(const uint16_t* canvas, uint16_t canvasWidth, uint16_t canvasHeight,
+                                     PresentationStrategy strategy, const PresentationPolicy& policy) override;
     size_t calculateDmaBytes() const override;
     void markExternalDraw() override;
 

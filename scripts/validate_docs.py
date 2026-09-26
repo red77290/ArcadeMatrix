@@ -134,6 +134,7 @@ def check_modular_sd_config():
     return True
 
 def check_build_info():
+    import subprocess
     build_info_path = os.path.join(ROOT_DIR, "src", "core", "BuildInfo.h")
     if not os.path.exists(build_info_path):
         print("❌ src/core/BuildInfo.h missing")
@@ -143,7 +144,43 @@ def check_build_info():
     if "BUILD_GIT_COMMIT" not in content or "FIRMWARE_VERSION" not in content or "BUILD_TIMESTAMP" not in content:
         print("❌ src/core/BuildInfo.h missing required macros")
         return False
-    print("  ✓ src/core/BuildInfo.h structure and macros valid.")
+
+    # Extract commit hash macro
+    m = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', content)
+    if not m:
+        print("❌ src/core/BuildInfo.h has invalid BUILD_GIT_COMMIT format")
+        return False
+    header_commit = m.group(1).strip()
+
+    # Check against git HEAD
+    try:
+        git_head = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT_DIR,
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+
+        is_ci = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
+        if git_head and header_commit != git_head:
+            if is_ci:
+                print(f"❌ CI BuildInfo mismatch: '{header_commit}' != git HEAD '{git_head}'.")
+                return False
+            else:
+                # Local developer workspace: synchronize via build_webui
+                print(f"  ℹ Synchronizing local BuildInfo.h ({header_commit} -> {git_head})...")
+                import runpy
+                runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
+                with open(build_info_path, "r", encoding="utf-8") as f:
+                    updated = f.read()
+                m2 = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', updated)
+                if not m2 or m2.group(1).strip() != git_head:
+                    print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_head})")
+                    return False
+                header_commit = git_head
+    except Exception:
+        pass
+
+    print(f"  ✓ src/core/BuildInfo.h valid and synchronized with HEAD ({header_commit}).")
     return True
 
 def main():
@@ -161,6 +198,14 @@ def main():
 
     if not check_build_info():
         all_ok = False
+
+    # Also run CI Architecture Guard
+    import subprocess
+    guard_script = os.path.join(ROOT_DIR, "scripts", "ci_architecture_guard.py")
+    if os.path.exists(guard_script):
+        ret = subprocess.call([sys.executable, guard_script], cwd=ROOT_DIR)
+        if ret != 0:
+            all_ok = False
 
     if all_ok:
         print("🎉 Documentation & SD Config validation PASSED.")

@@ -124,6 +124,13 @@ public:
     virtual size_t memoryUsageBytes() const = 0;
     virtual size_t estimatedMemoryUsageBytes() const { return memoryUsageBytes(); }
 
+    virtual uint32_t externalDrawGeneration() const { return 0; }
+    virtual uint32_t flipCount() const { return 0; }
+    virtual bool isDoubleBuffered() const {
+        return presentationStrategy() == PresentationStrategy::CANVAS_BURST_DOUBLE ||
+               presentationStrategy() == PresentationStrategy::DIRECT_DMA_DOUBLE;
+    }
+
     // Invariant physical dimensions (independent of orientation)
     inline int16_t physicalWidth() const { return m_physW; }
     inline int16_t physicalHeight() const { return m_physH; }

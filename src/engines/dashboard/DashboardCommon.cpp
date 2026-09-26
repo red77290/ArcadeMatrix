@@ -1,6 +1,5 @@
 #include "DashboardCommon.h"
 #include "../../core/drawing/IDrawingSurface.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../icons/CryptoStockIcons.h"
 #include <glcdfont.c>
 

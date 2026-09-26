@@ -1,6 +1,5 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "core/EngineContract.h"
 
 // ClockType is removed since we use PublisherTheme from DateEngine.h for everything

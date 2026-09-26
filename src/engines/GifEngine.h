@@ -16,7 +16,6 @@
 #undef INTELLONG
 #endif
 #include <PNGdec.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 class IDrawingSurface;
 #ifdef FILE_READ
 #undef FILE_READ
@@ -206,7 +205,7 @@ private:
      * what was last drawn into each DMA buffer and write only the pixels that differ; a typical
      * animation changes a small fraction of the panel per frame. The shadows are invalidated whenever
      * something else may have drawn into the buffers (activation, resume, overlays, notices,
-     * transitions: see MatrixEngine::markExternalDraw), which falls back to a full repaint.
+     * transitions: see IDrawingSurface::markExternalDraw), which falls back to a full repaint.
      */
     uint16_t* m_shadow[2] = { nullptr, nullptr };
     bool m_shadowValid[2] = { false, false };

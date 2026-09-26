@@ -3,7 +3,6 @@
 #include <freertos/task.h>
 #include <Arduino.h>
 #include <atomic>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <vector>
 #include "../api/IWeatherProvider.h"
 

@@ -88,3 +88,16 @@ void DirectDmaSurface::markExternalDraw() {
         _matrixEngine->markExternalDraw();
     }
 }
+
+uint32_t DirectDmaSurface::externalDrawGeneration() const {
+    return _matrixEngine ? _matrixEngine->externalDrawGeneration() : 0;
+}
+
+bool DirectDmaSurface::isDoubleBuffered() const {
+    return _strategy == PresentationStrategy::DIRECT_DMA_DOUBLE;
+}
+
+uint32_t DirectDmaSurface::flipCount() const {
+    return _matrixEngine ? _matrixEngine->flipCount() : 0;
+}
+

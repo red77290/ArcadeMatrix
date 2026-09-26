@@ -83,32 +83,59 @@ A single authority (`PipelineSelectionPolicy` via `DisplaySurfaceFactory`) deter
 
 ---
 
-## 4. Presentation Policy Execution Sequence
+## 4. Presentation Policy Execution Sequence & Ordering Contracts
 
-`IPresentationBackend::commit(const PresentationPolicy& policy)` and `CanvasBufferedSurface::present()` enforce deterministic timing budgets:
+To eliminate screen tearing while respecting hardware constraints, ArcadeMatrix strictly distinguishes between single-buffered and double-buffered presentation flows:
+
+### A. Single-Buffer Flow (`CANVAS_BURST_SINGLE`)
+In single-buffer mode, bitplane encoding writes directly into the framebuffer actively scanned by I2S DMA. To prevent tearing artifacts and visual corruption during encoding, the critical section must encompass the encode phase:
 
 ```
-START present()
-  │
-  ├─► 1. Validate Canvas & Backend availability (or return BackendUnavailable / EncodingError)
-  ├─► 2. Acquire Hub75DmaTarget (or return DmaTargetUnavailable / InvalidTarget)
-  ├─► 3. Encode RGB565 Canvas to DMA Target via Hub75BulkEncoder
-  ├─► 4. Wait for Safe Window (if synchronizer attached)
-  │      └─► If safe window not acquired within timeoutUs -> return SafeWindowTimeout
-  ├─► 5. Cache Write-Back (flush external SPIRAM DMA buffer lines to cache)
-  ├─► 6. Optional Transient Blanking (if policy.allowBlanking == true)
-  │      └─► Record blankStart timestamp and set display brightness to 0
-  ├─► 7. Hardware Commit / Buffer Flip (present())
-  ├─► 8. Optional Unblank (restore brightness)
-  │      └─► Measure blankUs = micros() - blankStart
-  │      └─► If blankUs > policy.maxBlankUs -> mark BlankBudgetExceeded
-  ├─► 9. Measure Total Presentation Duration (totalPresentUs)
-  │      └─► If totalPresentUs > policy.maxFrameUs -> mark FrameBudgetExceeded
-  ▼
-END -> Return PresentationTiming telemetry with discrete PresentationResult
+CANVAS_BURST_SINGLE:
+  1. Compute dynamic transfer estimate via PresentationTimingModel::estimateTransferUs()
+  2. Wait for Safe Window: synchronizer->waitForSafeWindow(estimateUs, maxBlankUs)
+  3. Blank Display (Output Enable off / brightness = 0)
+  4. Encode RGB565 Canvas to actively scanned DMA buffer via Hub75BulkEncoder
+  5. Cache write-back (if PSRAM)
+  6. Commit hardware refresh
+  7. Unblank Display (restore brightness)
+  8. Budget validation: blankUs <= maxBlankUs, totalPresentUs <= maxFrameUs
 ```
 
-### Presentation Outcome Codes
+### B. Double-Buffer Flow (`CANVAS_BURST_DOUBLE`)
+In double-buffer mode, encoding occurs off-screen into the non-scanned back buffer. The critical safe window section is acquired at the very last moment solely for the instantaneous descriptor pointer swap:
+
+```
+CANVAS_BURST_DOUBLE:
+  1. Encode RGB565 Canvas into inactive back buffer via Hub75BulkEncoder
+  2. Cache write-back (if PSRAM)
+  3. Compute swap transfer estimate (25 µs fixed descriptor flip)
+  4. Wait for Safe Window: synchronizer->waitForSafeWindow(25, maxBlankUs)
+  5. Optional transient blanking (if policy.allowBlanking == true)
+  6. Hardware DMA descriptor swap (flipDMABuffer())
+  7. Optional unblanking
+  8. Budget validation: totalPresentUs <= maxFrameUs
+```
+
+---
+
+## 5. Timing Models & Canonical DMA Layout
+
+### Physics-Based PresentationTimingModel
+The presentation pipeline derives realistic safe-window timeouts and transfer deadlines dynamically via `PresentationTimingModel`:
+- **Bitplane Encoding Rate**: Evaluated on 240 MHz Xtensa CPU cores (~20 ns per pixel-plane operation).
+- **Cache Writeback Overhead**: Evaluated at ~40 MB/s for external SPI/OPI PSRAM flushes.
+- **Hardware Swap Latency**: Fixed at $25\,\mu\text{s}$ for DMA descriptor address flips.
+
+### DmaMemoryLayout Scan Topology
+`DmaMemoryLayout` defines the canonical memory layout for the HUB75 scan topology currently supported by ArcadeMatrix:
+- Standard 1/16 and 1/32 dual-row parallel scan panels ($rows = \frac{height}{2}$).
+- $bytesPerBuffer = \text{rows} \times \text{colorDepth} \times (\text{width} \times \text{sizeof(uint16\_t)})$.
+- Total DMA allocation is calculated as $\text{bufferCount} \times bytesPerBuffer$.
+
+---
+
+## 6. Presentation Outcome Codes
 - `PresentationResult::Ok` (0): Frame presented successfully within all budgets.
 - `PresentationResult::BackendUnavailable` (1): Surface has no attached presentation backend.
 - `PresentationResult::DmaTargetUnavailable` (2): Target DMA memory descriptor was null or unallocated.
@@ -117,3 +144,4 @@ END -> Return PresentationTiming telemetry with discrete PresentationResult
 - `PresentationResult::FrameBudgetExceeded` (5): Total presentation latency exceeded `maxFrameUs` budget.
 - `PresentationResult::InvalidTarget` (6): Target dimensions or rows per frame invalid.
 - `PresentationResult::EncodingError` (7): Canvas buffer was null or corrupted.
+

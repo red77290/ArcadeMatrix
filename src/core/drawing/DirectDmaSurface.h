@@ -36,6 +36,9 @@ public:
     PresentationStrategy presentationStrategy() const override { return _strategy; }
     CanvasStorage canvasStorage() const override { return CanvasStorage::NONE; }
     size_t memoryUsageBytes() const override { return _dmaBytes; }
+    uint32_t externalDrawGeneration() const override;
+    bool isDoubleBuffered() const override;
+    uint32_t flipCount() const override;
 
     MatrixPanel_I2S_DMA* getUnderlyingMatrix() const { return _matrix; }
 

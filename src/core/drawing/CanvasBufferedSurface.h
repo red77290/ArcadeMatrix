@@ -36,6 +36,10 @@ public:
     CanvasStorage canvasStorage() const override { return _storage; }
     size_t memoryUsageBytes() const override { return _canvasBytes + _dmaBytes; }
 
+    uint32_t externalDrawGeneration() const override { return _externalDrawGeneration; }
+    uint32_t flipCount() const override { return _flipCount; }
+    bool isDoubleBuffered() const override { return _strategy == PresentationStrategy::CANVAS_BURST_DOUBLE; }
+
     uint16_t* getRawCanvasBuffer() const { return _canvas; }
 
     void setPresentationBackend(IPresentationBackend* backend) { _backend = backend; }
@@ -51,5 +55,7 @@ private:
     PresentationPolicy _policy;
     size_t _canvasBytes = 0;
     size_t _dmaBytes = 0;
+    uint32_t _flipCount = 0;
+    uint32_t _externalDrawGeneration = 0;
     bool _canvasBorrowed = false;
 };

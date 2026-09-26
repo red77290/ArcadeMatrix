@@ -1,6 +1,6 @@
 /**
  * @file DisplaySurfaceFactory.cpp
- * @brief Implementation of DisplaySurfaceFactory.
+ * @brief Implementation of DisplaySurfaceFactory with live resource awareness.
  */
 #include "DisplaySurfaceFactory.h"
 #include "../../hal/HardwareHAL.h"
@@ -8,6 +8,10 @@
 #include "PipelineSelectionPolicy.h"
 #include "../MatrixEngine.h"
 #include "../Logger.h"
+
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
 
 SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     MatrixEngine* matrixEngine,
@@ -20,8 +24,19 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
     uint8_t depth = 8;
 
+    MemoryBudgetConstraints mem;
+#if defined(ESP32)
+    mem.freeInternalHeap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    mem.largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    mem.freeDmaHeap = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    if (hasPsram) {
+        mem.freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        mem.largestPsramBlock = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    }
+#endif
+
     auto policyRes = PipelineSelectionPolicy::evaluate(
-        width, height, depth, requestedPipeline, legacyForceSingleBuffer, hasPsram
+        width, height, depth, requestedPipeline, legacyForceSingleBuffer, hasPsram, mem
     );
 
     result.reason = policyRes.reason;
@@ -40,8 +55,16 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     {
         bool singleDma = !desc.dmaDoubleBuffered;
         result.surface.reset(new CanvasBufferedSurface(width, height, desc.canvasStorage, backend, singleDma));
+
+        // Detect if CanvasBufferedSurface had to fall back internally (e.g. PSRAM -> SRAM)
+        if (result.surface && result.surface->canvasStorage() != desc.canvasStorage) {
+            LOGW("DisplaySurfaceFactory", "Requested canvas storage was downgraded to %s",
+                 result.surface->canvasStorage() == CanvasStorage::SRAM ? "SRAM" : "NONE");
+            result.reason = SurfaceSelectionReason::FallbackDirectDma;
+            result.reasonText = "Downgraded intermediate canvas storage due to allocation constraints";
+        }
     } else {
-        // Direct DMA surface
+        // Direct DMA surface (legacy fallback)
         MatrixPanel_I2S_DMA* disp = matrixEngine ? matrixEngine->getDisplay() : nullptr;
         bool singleDma = !desc.dmaDoubleBuffered;
         result.surface.reset(new DirectDmaSurface(disp, width, height, singleDma, matrixEngine));
