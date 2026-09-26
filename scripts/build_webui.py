@@ -157,3 +157,10 @@ with open("src/core/BuildInfo.h", "w") as f:
             f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
             f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
 print(f"Successfully generated src/core/BuildInfo.h (v{firmware_version}, commit {git_commit}).")
+
+try:
+    Import("env")
+    env.Append(CPPDEFINES=[("BUILD_GIT_COMMIT", f'\\"{git_commit}\\"')])
+except Exception:
+    pass
+

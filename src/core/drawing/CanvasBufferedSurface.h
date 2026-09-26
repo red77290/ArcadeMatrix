@@ -9,13 +9,10 @@
 #include "IPresentationBackend.h"
 #include <esp_heap_caps.h>
 
-class MatrixEngine;
-
 class CanvasBufferedSurface : public IDrawingSurface {
 public:
     CanvasBufferedSurface(int16_t width, int16_t height, CanvasStorage storage,
-                          MatrixEngine* matrixEngine, bool singleDma = false,
-                          IPresentationBackend* backend = nullptr);
+                          IPresentationBackend* backend, bool singleDma = false);
     virtual ~CanvasBufferedSurface();
 
     void clear(uint16_t color = 0) override;
@@ -50,7 +47,6 @@ private:
     uint16_t* _canvas = nullptr;
     CanvasStorage _storage = CanvasStorage::SRAM;
     PresentationStrategy _strategy = PresentationStrategy::CANVAS_BURST_SINGLE;
-    MatrixEngine* _matrixEngine = nullptr;
     IPresentationBackend* _backend = nullptr;
     PresentationPolicy _policy;
     size_t _canvasBytes = 0;

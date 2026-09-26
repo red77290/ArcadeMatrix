@@ -3,6 +3,7 @@
  * @brief Implementation of Hub75PresentationBackend.
  */
 #include "Hub75PresentationBackend.h"
+#include "DmaMemoryLayout.h"
 #include "../MatrixEngine.h"
 
 #if defined(SPIRAM_DMA_BUFFER)
@@ -22,7 +23,7 @@ Hub75DmaTarget Hub75PresentationBackend::acquireDmaTarget() {
     target.colorDepth = _colorDepth;
     target.activeBufferIndex = _engine ? (uint8_t)(_engine->flipCount() & 1u) : 0;
     target.bufferBytes = calculateDmaBytes();
-    target.strideBytes = _width * sizeof(uint16_t);
+    target.strideBytes = DmaMemoryLayout(_width, _height, _colorDepth, _doubleBuffer).stride();
 
     FastMatrixPanel* panel = _engine ? _engine->getFastPanel() : nullptr;
     if (panel) {
@@ -41,15 +42,24 @@ Hub75DmaTarget Hub75PresentationBackend::acquireDmaTarget() {
 
 PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& policy) {
     PresentationTiming timing;
-    if (!_engine) return timing;
+    if (!_engine) {
+        timing.result = PresentationResult::BackendUnavailable;
+        return timing;
+    }
 
     uint32_t t0 = micros();
 
     // 1. Wait for safe presentation window if synchronizer attached
     if (_synchronizer) {
         uint32_t t_sync = micros();
-        _synchronizer->waitForSafeWindow(policy.maxBlankUs);
+        uint32_t estimatedTransferUs = 100;
+        SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.maxBlankUs);
         timing.waitForSafeWindowUs = micros() - t_sync;
+        if (!sw.acquired || (sw.availableWindowUs > 0 && sw.availableWindowUs < estimatedTransferUs)) {
+            timing.result = PresentationResult::SafeWindowTimeout;
+            timing.totalPresentUs = micros() - t0;
+            return timing;
+        }
     }
 
     // 2. Perform cache write-back if PSRAM DMA buffer is active
@@ -68,16 +78,41 @@ PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& po
     }
 #endif
 
-    // 3. Hardware buffer flip
+    // 3. Transient blanking if permitted by policy
+    uint32_t blankStart = 0;
+    if (policy.allowBlanking) {
+        blankStart = micros();
+        _engine->setBlank(true);
+    }
+
+    // 4. Hardware buffer flip
     uint32_t t_trans = micros();
     _engine->present();
     timing.transferUs = micros() - t_trans;
 
+    // 5. Restore unblanked output and enforce blanking budget
+    if (policy.allowBlanking && blankStart > 0) {
+        _engine->setBlank(false);
+        timing.blankUs = micros() - blankStart;
+        if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
+            timing.result = PresentationResult::BlankBudgetExceeded;
+        }
+    }
+
     timing.totalPresentUs = (micros() - t0);
+    if (timing.result == PresentationResult::Ok && policy.maxFrameUs > 0 && timing.totalPresentUs > policy.maxFrameUs) {
+        timing.result = PresentationResult::FrameBudgetExceeded;
+    }
+
     return timing;
 }
 
 size_t Hub75PresentationBackend::calculateDmaBytes() const {
-    size_t singleFrame = (size_t)_width * _height * 4;
-    return _doubleBuffer ? (singleFrame * 2) : singleFrame;
+    return DmaMemoryLayout::calculateTotalBytes(_width, _height, _colorDepth, _doubleBuffer);
+}
+
+void Hub75PresentationBackend::markExternalDraw() {
+    if (_engine) {
+        _engine->markExternalDraw();
+    }
 }

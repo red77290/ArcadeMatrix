@@ -10,6 +10,8 @@ RenderStats g_renderStats;
 #include "Logger.h"
 #include "drawing/Hub75BulkEncoder.h"
 #include "drawing/Hub75PresentationBackend.h"
+#include "drawing/PipelineSelectionPolicy.h"
+#include "drawing/DmaMemoryLayout.h"
 #include "../../include/HardwareProfile.h"
 
 /**
@@ -108,35 +110,25 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
-    // Memory safeguard for classic ESP32 (no PSRAM):
-    // Internal DRAM is strictly bounded (~320KB shared with FreeRTOS, WiFi, AsyncTCP, WebServer, and engines).
-    // Double buffering 128x32 at 8-bit depth consumes >82KB of internal DMA RAM, leaving
-    // <15KB heap and causing AsyncTCP / WebUI starvation. Clamping to 5-bit depth reduces DMA consumption
-    // to ~41KB, preserving >45KB of stable headroom while keeping double buffering 100% active and flicker-free.
-    bool canDoubleBuffer = !config.forceSingleBuffer;
-    if (config.render_pipeline == "canvas_single" || config.render_pipeline == "direct_single") {
-        canDoubleBuffer = false;
-    } else if (config.render_pipeline == "canvas_double" || config.render_pipeline == "direct_double") {
-        canDoubleBuffer = true;
-    } else if (!hardwareHAL.capabilities().hasPsram) {
-        size_t totalPixels = (size_t)config.width * config.height * config.chainLength;
-        if (totalPixels >= 8192 && canDoubleBuffer) {
-            LOGW("MatrixEngine", "Classic ESP32 (no PSRAM) with %u px: enforcing single buffering to preserve internal DRAM.",
-                 (unsigned)totalPixels);
-            canDoubleBuffer = false;
-        }
+    // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    auto pipeRes = PipelineSelectionPolicy::evaluate(
+        config.width, config.height, depth, config.render_pipeline, config.forceSingleBuffer, hasPsram
+    );
+    mxconfig.double_buff = pipeRes.descriptor.dmaDoubleBuffered;
+
+    if (hasPsram) {
+        LOGI("MatrixEngine", "PSRAM found. DMA buffering will use PSRAM safely.");
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
+#endif
+    } else {
         uint8_t profileMaxDepth = BoardProfile::current().display().defaultColorDepth;
         if (depth > profileMaxDepth) {
             depth = profileMaxDepth;
             mxconfig.setPixelColorDepthBits(depth);
         }
-    } else {
-        LOGI("MatrixEngine", "PSRAM found. DMA buffering will use PSRAM safely.");
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-        LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
-#endif
     }
-    mxconfig.double_buff = canDoubleBuffer;
 
     // Initialize display object
     m_panel = new FastMatrixPanel(mxconfig);
@@ -152,14 +144,16 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     m_panel->setBuffering(m_doubleBuffered);
     display->setBrightness8(64); // Safe default brightness
     m_panel->rememberBrightness8(64);
-    display->clearScreen();
-    present();
-    display->clearScreen();
-    present();
 
+    // Initialize Presentation Backend FIRST, before any screen clears or presentations
     m_presentationBackend.reset(new Hub75PresentationBackend(
-        this, config.width, config.height, config.colorDepth, m_doubleBuffered
+        this, config.width, config.height, depth, m_doubleBuffered
     ));
+
+    display->clearScreen();
+    present();
+    display->clearScreen();
+    present();
 
     return true;
 }
@@ -200,6 +194,18 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
     }
 }
 
+void MatrixEngine::setBlank(bool blank) {
+    if (!display) return;
+    if (blank) {
+        display->setBrightness8(0);
+        m_blanked = true;
+    } else {
+        uint8_t b = m_panel ? m_panel->getBrightness8() : 64;
+        display->setBrightness8(b);
+        m_blanked = false;
+    }
+}
+
 MatrixPanel_I2S_DMA* MatrixEngine::getDisplay() {
     return display;
 }
@@ -209,6 +215,11 @@ void MatrixEngine::blitCanvas565(const uint16_t* src, int canvasWidth, int canva
         m_panel->blitCanvas565(src, canvasWidth, canvasHeight);
     }
 }
+
+size_t FastMatrixPanel::getDmaAllocatedBytes() const {
+    return DmaMemoryLayout::calculateTotalBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
+}
+
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
     if (color != 0) {

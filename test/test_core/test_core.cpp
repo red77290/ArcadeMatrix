@@ -16,6 +16,8 @@
 #include "core/drawing/DisplaySurfaceFactory.h"
 #include "core/drawing/MockPresentationBackend.h"
 #include "core/drawing/Hub75PresentationBackend.h"
+#include "core/drawing/DmaMemoryLayout.h"
+#include "core/drawing/PipelineSelectionPolicy.h"
 #include "core/storage/MemoryConfigStorage.h"
 #include "core/storage/WorkingSetCache.h"
 #include "core/storage/ModularConfigManager.h"
@@ -2061,7 +2063,7 @@ void test_canvas_buffered_surface_drawing_and_rotation(void) {
 
 void test_presentation_backends(void) {
     MockPresentationBackend mock(64, 32, 8);
-    TEST_ASSERT_EQUAL_UINT32(64 * 32 * 4, mock.calculateDmaBytes());
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(64, 32, 8, false), mock.calculateDmaBytes());
     
     auto target = mock.acquireDmaTarget();
     TEST_ASSERT_EQUAL_UINT16(64, target.width);
@@ -2076,25 +2078,291 @@ void test_presentation_backends(void) {
     PresentationPolicy policy;
     auto timing = mock.commit(policy);
     TEST_ASSERT_EQUAL_UINT32(1, mock.getCommitCount());
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)timing.result);
     TEST_ASSERT_EQUAL_UINT32(150, timing.totalPresentUs);
 
     Hub75PresentationBackend hub75(nullptr, 64, 32, 8, true);
-    TEST_ASSERT_EQUAL_UINT32(64 * 32 * 4 * 2, hub75.calculateDmaBytes());
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(64, 32, 8, true), hub75.calculateDmaBytes());
     auto hubTarget = hub75.acquireDmaTarget();
     TEST_ASSERT_EQUAL_UINT16(64, hubTarget.width);
     TEST_ASSERT_EQUAL_UINT16(32, hubTarget.height);
 
     // Test CanvasBufferedSurface driving presentation backend end-to-end
-    CanvasBufferedSurface canvasSurf(64, 32, CanvasStorage::SRAM, nullptr, false, &mock);
+    CanvasBufferedSurface canvasSurf(64, 32, CanvasStorage::SRAM, &mock, false);
     canvasSurf.fillScreen(0xF800);
     auto canvasTiming = canvasSurf.present();
     TEST_ASSERT_EQUAL_UINT32(2, mock.getCommitCount());
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)canvasTiming.result);
     TEST_ASSERT_EQUAL_UINT32(150, canvasTiming.totalPresentUs);
 
     // Test geometry validation in DisplaySurfaceFactory (unsupported geometry rejected)
     auto unsuppResult = DisplaySurfaceFactory::createSurface(nullptr, 512, 512, "canvas_single");
     TEST_ASSERT_NULL(unsuppResult.surface.get());
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)unsuppResult.reason);
+}
+
+void test_presentation_policy_budget_enforcement(void) {
+    MockPresentationBackend mock(64, 32, 8);
+
+    // 1. Nominal frame with default policy: Ok
+    PresentationPolicy policy;
+    policy.maxBlankUs = 400;
+    policy.maxFrameUs = 16667;
+    policy.allowBlanking = true;
+    mock.simulatedBlankUs = 50;
+    mock.simulatedTransferUs = 100;
+    mock.simulatedTotalUs = 150;
+
+    auto t1 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)t1.result);
+    TEST_ASSERT_EQUAL_UINT32(50, t1.blankUs);
+
+    // 2. Blank budget violation: blankUs > maxBlankUs
+    mock.simulatedBlankUs = 500; // Exceeds 400µs
+    mock.simulatedTotalUs = 600;
+    auto t2 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::BlankBudgetExceeded, (int)t2.result);
+
+    // 3. Frame budget violation: totalPresentUs > maxFrameUs
+    policy.maxBlankUs = 1000;
+    mock.simulatedBlankUs = 50;
+    policy.maxFrameUs = 500;
+    mock.simulatedTotalUs = 800; // Exceeds 500µs
+    auto t3 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::FrameBudgetExceeded, (int)t3.result);
+
+    // 4. Safe window timeout
+    class FailingSynchronizer : public IPresentationSynchronizer {
+    public:
+        SafeWindowResult waitForSafeWindow(uint32_t reqUs, uint32_t timeoutUs) override {
+            (void)reqUs; (void)timeoutUs;
+            return SafeWindowResult{false, timeoutUs, 0};
+        }
+    } failingSync;
+
+    mock.setSynchronizer(&failingSync);
+    auto t4 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::SafeWindowTimeout, (int)t4.result);
+    mock.setSynchronizer(nullptr);
+
+    // 5. allowBlanking = false suppresses blanking
+    policy.allowBlanking = false;
+    mock.simulatedBlankUs = 200;
+    mock.simulatedTotalUs = 300;
+    policy.maxFrameUs = 10000;
+    auto t5 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)t5.result);
+    TEST_ASSERT_EQUAL_UINT32(0, t5.blankUs); // Blanking suppressed
+
+    // 6. Surface presentation: BackendUnavailable
+    CanvasBufferedSurface orphanSurf(64, 32, CanvasStorage::SRAM, nullptr, false);
+    orphanSurf.fillScreen(0x1234);
+    auto t6 = orphanSurf.present();
+    TEST_ASSERT_EQUAL((int)PresentationResult::BackendUnavailable, (int)t6.result);
+
+    // 7. Surface presentation: DmaTargetUnavailable
+    mock.simulateInvalidTarget = true;
+    CanvasBufferedSurface surfWithBadTarget(64, 32, CanvasStorage::SRAM, &mock, false);
+    auto t7 = surfWithBadTarget.present();
+    TEST_ASSERT_EQUAL((int)PresentationResult::DmaTargetUnavailable, (int)t7.result);
+    mock.simulateInvalidTarget = false;
+}
+
+void test_dma_memory_layout_exact_bytes(void) {
+    const struct {
+        uint16_t w;
+        uint16_t h;
+        uint8_t depth;
+        bool dbl;
+        size_t expectedBytes;
+    } cases[] = {
+        // 128x32: 16 rows, width 128, stride 256 bytes per plane
+        {128, 32, 2, false, (size_t)16 * 2 * 256},       // 8,192
+        {128, 32, 4, false, (size_t)16 * 4 * 256},       // 16,384
+        {128, 32, 5, false, (size_t)16 * 5 * 256},       // 20,480
+        {128, 32, 6, false, (size_t)16 * 6 * 256},       // 24,576
+        {128, 32, 8, false, (size_t)16 * 8 * 256},       // 32,768
+        {128, 32, 8, true,  (size_t)16 * 8 * 256 * 2},   // 65,536
+
+        // 128x64: 32 rows, width 128, stride 256 bytes per plane
+        {128, 64, 8, false, (size_t)32 * 8 * 256},       // 65,536
+        {128, 64, 8, true,  (size_t)32 * 8 * 256 * 2},   // 131,072
+
+        // 256x64: 32 rows, width 256, stride 512 bytes per plane
+        {256, 64, 8, false, (size_t)32 * 8 * 512},       // 131,072
+        {256, 64, 8, true,  (size_t)32 * 8 * 512 * 2},   // 262,144
+    };
+
+    for (const auto& c : cases) {
+        DmaMemoryLayout layout(c.w, c.h, c.depth, c.dbl);
+        TEST_ASSERT_EQUAL_UINT32(c.h / 2, layout.rows());
+        TEST_ASSERT_EQUAL_UINT32(c.depth, layout.planes());
+        TEST_ASSERT_EQUAL_UINT32((size_t)c.w * 2, layout.stride());
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, layout.totalBytes());
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, DmaMemoryLayout::calculateTotalBytes(c.w, c.h, c.depth, c.dbl));
+
+        Hub75PresentationBackend backend(nullptr, c.w, c.h, c.depth, c.dbl);
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, backend.calculateDmaBytes());
+    }
+}
+
+void test_pipeline_selection_policy(void) {
+    // 1. Unsupported geometry
+    auto r1 = PipelineSelectionPolicy::evaluate(512, 512, 8, "auto", false, false);
+    TEST_ASSERT_FALSE(r1.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)r1.reason);
+
+    // 2. Auto with PSRAM -> Canvas PSRAM + Double DMA
+    auto r2 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, true);
+    TEST_ASSERT_TRUE(r2.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedPsramCanvas, (int)r2.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_DOUBLE, (int)r2.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::PSRAM, (int)r2.descriptor.canvasStorage);
+    TEST_ASSERT_TRUE(r2.descriptor.dmaDoubleBuffered);
+
+    // 3. Auto without PSRAM -> Canvas SRAM + Single DMA
+    auto r3 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, false);
+    TEST_ASSERT_TRUE(r3.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedSramCanvasLowDma, (int)r3.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r3.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::SRAM, (int)r3.descriptor.canvasStorage);
+    TEST_ASSERT_FALSE(r3.descriptor.dmaDoubleBuffered);
+
+    // 4. Explicit canvas_single
+    auto r4 = PipelineSelectionPolicy::evaluate(128, 32, 8, "canvas_single", false, true);
+    TEST_ASSERT_TRUE(r4.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r4.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r4.descriptor.strategy);
+    TEST_ASSERT_FALSE(r4.descriptor.dmaDoubleBuffered);
+
+    // 5. Explicit direct_double
+    auto r5 = PipelineSelectionPolicy::evaluate(128, 32, 8, "direct_double", false, true);
+    TEST_ASSERT_TRUE(r5.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r5.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::DIRECT_DMA_DOUBLE, (int)r5.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::NONE, (int)r5.descriptor.canvasStorage);
+    TEST_ASSERT_TRUE(r5.descriptor.dmaDoubleBuffered);
+}
+
+void test_hub75_bulk_encoder_golden_snapshots(void) {
+    const uint16_t W = 8;
+    const uint16_t H = 4;
+    const uint8_t RPF = H / 2; // 2 rows
+    std::vector<uint16_t> canvas(W * H, 0);
+
+    // Mock bitplane storage: [row][plane][col]
+    static uint16_t mockPlanes[2][8][8];
+    auto mockAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        (void)ctx;
+        if (row < 2 && plane < 8) return mockPlanes[row][plane];
+        return nullptr;
+    };
+
+    uint8_t lutR[32], lutG[64], lutB[32];
+    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
+    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
+    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+
+    Hub75EncodingParams params;
+    params.width = W;
+    params.height = H;
+    params.rowsPerFrame = RPF;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    // Test 1: Golden Snapshot for All-Black (0x0000)
+    memset(mockPlanes, 0xFF, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x0000);
+    params.colorDepth = 8;
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int r = 0; r < RPF; ++r) {
+        for (int p = 0; p < 8; ++p) {
+            for (int c = 0; c < W; ++c) {
+                uint16_t val = mockPlanes[r][p][c];
+                TEST_ASSERT_EQUAL_UINT16(0, val & 0x003F); // R1,G1,B1,R2,G2,B2 bits
+            }
+        }
+    }
+
+    // Test 2: Golden Snapshot for All-White (0xFFFF)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0xFFFF);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x07) == 0x07); // R1, G1, B1
+        TEST_ASSERT_TRUE((topHalf & 0x38) == 0x38); // R2, G2, B2
+    }
+
+    // Test 3: Golden Snapshot for All-Red (0xF800)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0xF800);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x01); // R1 set
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x00); // G1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x00); // B1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x08); // R2 set
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x00); // G2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x00); // B2 clear
+    }
+
+    // Test 4: Golden Snapshot for All-Green (0x07E0)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x07E0);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x00); // R1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x02); // G1 set
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x00); // B1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x00); // R2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x10); // G2 set
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x00); // B2 clear
+    }
+
+    // Test 5: Golden Snapshot for All-Blue (0x001F)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x001F);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x00); // R1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x00); // G1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x04); // B1 set
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x00); // R2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x00); // G2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x20); // B2 set
+    }
+
+    // Test 6: Deterministic Checkerboard (alternating white / black)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            canvas[y * W + x] = ((x + y) & 1) ? 0xFFFF : 0x0000;
+        }
+    }
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t word = mockPlanes[0][7][c];
+        bool topWhite = ((c + 0) & 1) != 0;
+        bool botWhite = ((c + 2) & 1) != 0;
+        TEST_ASSERT_EQUAL_UINT16(topWhite ? 0x07 : 0x00, word & 0x07);
+        TEST_ASSERT_EQUAL_UINT16(botWhite ? 0x38 : 0x00, word & 0x38);
+    }
+}
+
+void test_backend_exists_before_first_present(void) {
+    Hub75PresentationBackend backend(nullptr, 128, 32, 8, true);
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(128, 32, 8, true), backend.calculateDmaBytes());
+    auto target = backend.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(128, target.width);
+    TEST_ASSERT_EQUAL_UINT16(32, target.height);
+    TEST_ASSERT_EQUAL_UINT16(16, target.rowsPerFrame);
+    TEST_ASSERT_EQUAL_UINT8(8, target.colorDepth);
 }
 
 void test_surface_coordinates_multi_resolution(void) {
@@ -2464,6 +2732,11 @@ void setup() {
     RUN_TEST(test_display_surface_factory_selection);
     RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
     RUN_TEST(test_presentation_backends);
+    RUN_TEST(test_presentation_policy_budget_enforcement);
+    RUN_TEST(test_dma_memory_layout_exact_bytes);
+    RUN_TEST(test_pipeline_selection_policy);
+    RUN_TEST(test_hub75_bulk_encoder_golden_snapshots);
+    RUN_TEST(test_backend_exists_before_first_present);
 
     // =========================================================================
     // 10. Modular Storage Architecture & Working-Set Cache

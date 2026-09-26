@@ -133,6 +133,31 @@ def check_modular_sd_config():
     print("  ✓ release/sdCard/config/ modular domain structure valid.")
     return True
 
+def check_build_info():
+    build_info_path = os.path.join(ROOT_DIR, "src", "core", "BuildInfo.h")
+    if not os.path.exists(build_info_path):
+        print("❌ src/core/BuildInfo.h missing")
+        return False
+    try:
+        import subprocess
+        git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT_DIR).decode('ascii').strip()
+        with open(build_info_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if git_commit not in content:
+            print(f"⚠️ src/core/BuildInfo.h does not contain current HEAD commit ({git_commit}). Regenerating...")
+            import runpy
+            runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
+            with open(build_info_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if git_commit not in content:
+                print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_commit})")
+                return False
+        print(f"  ✓ src/core/BuildInfo.h synchronized with commit {git_commit}")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ Skipping BuildInfo git check: {e}")
+        return True
+
 def main():
     print("🔍 Validating Documentation files & SD config.json...")
     all_ok = True
@@ -144,6 +169,9 @@ def main():
         all_ok = False
 
     if not check_modular_sd_config():
+        all_ok = False
+
+    if not check_build_info():
         all_ok = False
 
     if all_ok:

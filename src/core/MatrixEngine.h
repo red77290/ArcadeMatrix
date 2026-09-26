@@ -59,6 +59,8 @@ public:
     void setBuffering(bool doubleBuffered);
     void noteFlip() { if (m_double) m_back ^= 1; }
     void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
+    uint8_t getBrightness8() const { return m_brightness8; }
+    size_t getDmaAllocatedBytes() const;
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();
@@ -155,6 +157,12 @@ public:
     uint32_t externalDrawGeneration() const { return m_externalDrawGeneration; }
 
     /**
+     * @brief Temporarily blanks or restores the display output (used for glitch-free buffer swaps).
+     */
+    void setBlank(bool blank);
+    bool isBlanked() const { return m_blanked; }
+
+    /**
      * @brief Get the active presentation backend driving the HUB75 DMA pipeline.
      */
     IPresentationBackend* getPresentationBackend();
@@ -166,5 +174,6 @@ private:
     uint32_t m_flipCount = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;
+    bool m_blanked = false;
 };
 

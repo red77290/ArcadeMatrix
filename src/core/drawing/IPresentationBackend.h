@@ -13,15 +13,38 @@ struct PresentationPolicy {
     bool allowBlanking = true;   ///< Whether transient blanking is permitted
 };
 
+struct SafeWindowResult {
+    bool acquired = true;
+    uint32_t waitUs = 0;
+    uint32_t availableWindowUs = 0;
+
+    SafeWindowResult() : acquired(true), waitUs(0), availableWindowUs(0) {}
+    SafeWindowResult(bool acq, uint32_t wait, uint32_t avail)
+        : acquired(acq), waitUs(wait), availableWindowUs(avail) {}
+};
+
 class IPresentationSynchronizer {
 public:
     virtual ~IPresentationSynchronizer() = default;
+
     /**
      * @brief Waits for a safe presentation window (e.g. V-Blank or scanline pause).
+     * @param requiredTransferUs Estimated duration of data transfer
      * @param timeoutUs Maximum time in microseconds to wait
-     * @return true if safe window acquired, false on timeout
+     * @return SafeWindowResult Result descriptor containing status, wait time, and available window
      */
-    virtual bool waitForSafeWindow(uint32_t timeoutUs) = 0;
+    virtual SafeWindowResult waitForSafeWindow(uint32_t requiredTransferUs, uint32_t timeoutUs) {
+        (void)requiredTransferUs;
+        (void)timeoutUs;
+        return SafeWindowResult{true, 0, 1000};
+    }
+
+    /**
+     * @brief Backward-compatible single-parameter overload.
+     */
+    virtual bool waitForSafeWindow(uint32_t timeoutUs) {
+        return waitForSafeWindow(0, timeoutUs).acquired;
+    }
 };
 
 class IPresentationBackend {
@@ -44,6 +67,11 @@ public:
      * @brief Calculates exact DMA RAM bytes required for the active configuration.
      */
     virtual size_t calculateDmaBytes() const = 0;
+
+    /**
+     * @brief Signals external draw notification to underlying engine.
+     */
+    virtual void markExternalDraw() {}
 
     /**
      * @brief Returns active synchronizer implementation (or nullptr if unavailable).
