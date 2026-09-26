@@ -750,13 +750,14 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
                     FsFile rootDir = sd.open(rootP.c_str(), FILE_OPEN_READ);
                     if (rootDir && isDirectory(rootDir)) {
                         FsFile entry;
+                        char nameBuf[128];
                         while (getNextFile(rootDir, entry)) {
                             if (!isDirectory(entry)) continue;
-                            String name = getFileName(entry);
-                            int lastSlash = name.lastIndexOf('/');
-                            if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                            if (name.length() == 0 || isMacJunk(name)) continue;
-                            outPaths.push_back(rootP + "/" + name);
+                            if (!getFileNameBuffer(entry, nameBuf, sizeof(nameBuf))) continue;
+                            char* baseName = strrchr(nameBuf, '/');
+                            baseName = baseName ? (baseName + 1) : nameBuf;
+                            if (baseName[0] == '\0' || isMacJunk(baseName)) continue;
+                            outPaths.push_back(rootP + "/" + baseName);
                         }
                         if (entry) entry.close();
                     }
@@ -1045,7 +1046,9 @@ void GifEngine::loadNextFileInPlaylist() {
         }
 
         // Single-folder directory scan fallback if index.txt is not found or empty (v3.1.0 compatibility)
-        std::vector<String> subDirs;
+        // Fixed-size structures: zero dynamic heap allocation in directory scan loop
+        char subDirs[16][128];
+        uint8_t subDirCount = 0;
         if (selectedFile[0] == '\0') {
             if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
                 sdAccessOk = true;
@@ -1053,25 +1056,29 @@ void GifEngine::loadNextFileInPlaylist() {
                 if (pDir && isDirectory(pDir)) {
                     FsFile fileEntry;
                     size_t scanCount = 0;
+                    char nameBuf[128];
                     while (getNextFile(pDir, fileEntry)) {
-                        String name = getFileName(fileEntry);
-                        int lastSlash = name.lastIndexOf('/');
-                        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                        if (name.length() == 0 || isMacJunk(name)) continue;
+                        if (!getFileNameBuffer(fileEntry, nameBuf, sizeof(nameBuf))) continue;
+                        char* baseName = strrchr(nameBuf, '/');
+                        baseName = baseName ? (baseName + 1) : nameBuf;
+                        if (baseName[0] == '\0' || isMacJunk(baseName)) continue;
 
                         if (isDirectory(fileEntry)) {
-                            if (subDirs.size() < 16) {
-                                subDirs.push_back(pPath + "/" + name);
+                            if (subDirCount < 16) {
+                                snprintf(subDirs[subDirCount], sizeof(subDirs[0]), "%s/%s", pPath.c_str(), baseName);
+                                subDirCount++;
                             }
-                        } else if (name.indexOf("._") == -1 && name.indexOf("System Volume") == -1) {
-                            String lower = name;
-                            lower.toLowerCase();
-                            if (lower.endsWith(".gif") || lower.endsWith(".png") || lower.endsWith(".raw")) {
-                                scanCount++;
-                                // Reservoir sampling (Algorithm R): pick uniform random in single pass without vectors
-                                if (random(scanCount) == 0) {
-                                    strncpy(selectedFile, name.c_str(), sizeof(selectedFile) - 1);
-                                    selectedFile[sizeof(selectedFile) - 1] = '\0';
+                        } else if (strstr(baseName, "._") == nullptr && strstr(baseName, "System Volume") == nullptr) {
+                            size_t nlen = strlen(baseName);
+                            if (nlen >= 4) {
+                                const char* ext = baseName + nlen - 4;
+                                if (strcasecmp(ext, ".gif") == 0 || strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".raw") == 0) {
+                                    scanCount++;
+                                    // Reservoir sampling (Algorithm R): pick uniform random in single pass without vectors
+                                    if (random(scanCount) == 0) {
+                                        strncpy(selectedFile, baseName, sizeof(selectedFile) - 1);
+                                        selectedFile[sizeof(selectedFile) - 1] = '\0';
+                                    }
                                 }
                             }
                         }
@@ -1084,10 +1091,10 @@ void GifEngine::loadNextFileInPlaylist() {
         }
 
         // If pPath had no flat files but contained subdirectories (e.g. /gifs/arcade), expand them now:
-        if (selectedFile[0] == '\0' && !subDirs.empty()) {
+        if (selectedFile[0] == '\0' && subDirCount > 0) {
             playlists.erase(playlists.begin() + pIndex);
-            for (const auto& sdPath : subDirs) {
-                playlists.push_back(sdPath);
+            for (uint8_t i = 0; i < subDirCount; ++i) {
+                playlists.push_back(String(subDirs[i]));
             }
             playlistWeights.clear();
             refreshPlaylistWeights();

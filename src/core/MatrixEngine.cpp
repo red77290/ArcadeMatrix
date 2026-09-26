@@ -8,6 +8,7 @@ RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
 #include "../hal/BoardProfile.h"
 #include "Logger.h"
+#include "drawing/Hub75BulkEncoder.h"
 #include "../../include/HardwareProfile.h"
 
 /**
@@ -111,7 +112,11 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     // <15KB heap and causing AsyncTCP / WebUI starvation. Clamping to 5-bit depth reduces DMA consumption
     // to ~41KB, preserving >45KB of stable headroom while keeping double buffering 100% active and flicker-free.
     bool canDoubleBuffer = !config.forceSingleBuffer;
-    if (!hardwareHAL.capabilities().hasPsram) {
+    if (config.render_pipeline == "canvas_single" || config.render_pipeline == "direct_single") {
+        canDoubleBuffer = false;
+    } else if (config.render_pipeline == "canvas_double" || config.render_pipeline == "direct_double") {
+        canDoubleBuffer = true;
+    } else if (!hardwareHAL.capabilities().hasPsram) {
         size_t totalPixels = (size_t)config.width * config.height * config.chainLength;
         if (totalPixels >= 8192 && canDoubleBuffer) {
             LOGW("MatrixEngine", "Classic ESP32 (no PSRAM) with %u px: enforcing single buffering to preserve internal DRAM.",
@@ -240,6 +245,15 @@ void FastMatrixPanel::setBuffering(bool doubleBuffered) {
     initLuts(m_cfg.getPixelColorDepthBits());
 }
 
+uint16_t* FastMatrixPanel::getBackbufferRowPlane(uint8_t row, uint8_t plane) {
+    if (!initialized) return nullptr;
+    auto& targetFb = frame_buffer[m_back];
+    if (row < targetFb.rowBits.size()) {
+        return targetFb.rowBits[row]->getDataPtr(plane);
+    }
+    return nullptr;
+}
+
 void FastMatrixPanel::initLuts(uint8_t depth) {
     if (depth < 2) depth = 8;
     if (depth > 8) depth = 8;
@@ -321,31 +335,33 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
     auto& targetFb = frame_buffer[m_back];
     if ((int)targetFb.rowBits.size() < rpf) return;
 
-    for (int y = 0; y < rpf; y++) {
-        const uint16_t* src1 = src + (size_t)y * w;
-        const uint16_t* src2 = src + (size_t)(y + rpf) * w;
+    Hub75EncodingParams params;
+    params.colorDepth = m_depth;
+    params.rowsPerFrame = rpf;
+    params.width = w;
+    params.height = m_cfg.mx_height;
+    params.lutR = m_lut_r;
+    params.lutG = m_lut_g;
+    params.lutB = m_lut_b;
+    params.rotation = 0;
 
+    auto rowAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        auto* fb = static_cast<decltype(&targetFb)>(ctx);
+        if (row < fb->rowBits.size()) {
+            return fb->rowBits[row]->getDataPtr(plane);
+        }
+        return nullptr;
+    };
+
+    Hub75BulkEncoder::encode(src, w, rowAccessor, &targetFb, params);
+
+#if defined(SPIRAM_DMA_BUFFER)
+    for (int y = 0; y < rpf; y++) {
         for (uint8_t p = 0; p < m_depth; p++) {
             uint16_t* dmaRow = targetFb.rowBits[y]->getDataPtr(p);
-            for (int x = 0; x < w; x++) {
-                uint16_t c1 = src1[x];
-                uint16_t c2 = src2[x];
-
-                uint8_t r1 = (m_lut_r[(c1 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g1 = (m_lut_g[(c1 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b1 = (m_lut_b[c1 & 0x1F] >> p) & 1;
-                uint8_t r2 = (m_lut_r[(c2 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g2 = (m_lut_g[(c2 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b2 = (m_lut_b[c2 & 0x1F] >> p) & 1;
-
-                uint16_t rgb = r1 | (g1 << 1) | (b1 << 2) | (r2 << 3) | (g2 << 4) | (b2 << 5);
-                int ax = MATRIX_TX_ADJUST(x);
-                dmaRow[ax] = (dmaRow[ax] & BITMASK_RGB12_CLEAR) | rgb;
-            }
-#if defined(SPIRAM_DMA_BUFFER)
             Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)w * sizeof(uint16_t));
-#endif
         }
     }
+#endif
     m_dirtyRows[m_back] = 0;
 }

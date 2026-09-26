@@ -113,3 +113,19 @@ uint32_t Hub75BulkEncoder::encode(
 
     return (micros() - tStart);
 }
+
+uint32_t Hub75BulkEncoder::encode(
+    const uint16_t* canvas,
+    size_t canvasStridePixels,
+    const Hub75DmaTarget& target,
+    const Hub75EncodingParams& params
+) {
+    if (target.rowAccessor) {
+        return encode(canvas, canvasStridePixels, target.rowAccessor, target.accessorCtx, params);
+    }
+    auto targetAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        const auto* t = static_cast<const Hub75DmaTarget*>(ctx);
+        return t->getRowPtr(row, plane);
+    };
+    return encode(canvas, canvasStridePixels, targetAccessor, const_cast<void*>(static_cast<const void*>(&target)), params);
+}

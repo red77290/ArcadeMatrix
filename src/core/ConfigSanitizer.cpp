@@ -1,5 +1,6 @@
 #include "ConfigSanitizer.h"
 #include "Logger.h"
+#include "../hal/BoardProfile.h"
 
 SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotationBootstrap) {
     SanitizeResult result;
@@ -62,7 +63,7 @@ void ConfigSanitizer::sanitizeMatrix(MatrixConfig& matrix, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
-    uint8_t maxColorDepth = 8;
+    uint8_t maxColorDepth = (BoardProfile::current().memory().tier == MemoryTier::CONSTRAINED) ? 6 : 8;
     if (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth) {
         matrix.colorDepth = constrain(matrix.colorDepth, (uint8_t)1, maxColorDepth);
         result.values_clamped++;

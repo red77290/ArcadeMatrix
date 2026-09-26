@@ -21,7 +21,7 @@
 #include "GNewsEngine.h"
 #include "MarqueeEngine.h"
 
-RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
+RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req, const char* activePipeline) {
     const auto& caps = hardwareHAL.capabilities();
     if (req.needsPsram && !caps.hasPsram) {
         return {false, "Requires PSRAM"};
@@ -41,17 +41,47 @@ RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequiremen
     if (req.needsSd && !caps.hasSd) {
         return {false, "Requires SD card"};
     }
-    if (req.needsTls && !caps.hasPsram) {
-        uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (req.minFreeInternalHeapBytes > 0 && freeDram < req.minFreeInternalHeapBytes) {
-            return {false, "Requires additional internal heap headroom (≥ 50KB). Canvas Single is one configuration that may provide sufficient headroom."};
+
+    if (req.minFreeDmaBytes > 0) {
+        uint32_t freeDma = heap_caps_get_free_size(MALLOC_CAP_DMA);
+        if (freeDma < req.minFreeDmaBytes) {
+            return {false, "Insufficient DMA memory available"};
         }
     }
+
+    if (req.needsTls && !caps.hasPsram) {
+        uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+        uint32_t requiredHeap = (req.minFreeInternalHeapBytes > 0) ? req.minFreeInternalHeapBytes : 50000;
+        uint32_t requiredBlock = (req.minLargestInternalBlockBytes > 0) ? req.minLargestInternalBlockBytes : 28000;
+
+        if (freeDram < requiredHeap || largestBlock < requiredBlock) {
+            if (activePipeline && strcmp(activePipeline, "canvas_single") == 0) {
+                return {false, "Insufficient contiguous internal DRAM block (≥ 28KB) for TLS handshake"};
+            }
+            return {false, "Requires additional internal heap headroom (≥ 50KB total, ≥ 28KB block). Switch to Canvas Single pipeline to unlock TLS."};
+        }
+    } else {
+        if (req.minFreeInternalHeapBytes > 0) {
+            uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (freeDram < req.minFreeInternalHeapBytes) {
+                return {false, "Insufficient internal DRAM"};
+            }
+        }
+        if (req.minLargestInternalBlockBytes > 0) {
+            uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (largestBlock < req.minLargestInternalBlockBytes) {
+                return {false, "Insufficient contiguous internal DRAM block"};
+            }
+        }
+    }
+
     return {true, ""};
 }
 
-bool EngineRegistrar::meetsRequirements(const EngineRequirements& req) {
-    return checkRequirements(req).satisfied;
+bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const char* activePipeline) {
+    return checkRequirements(req, activePipeline).satisfied;
 }
 
 bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {

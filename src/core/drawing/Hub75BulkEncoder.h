@@ -19,6 +19,8 @@
 #define BITMASK_RGB12_CLEAR 0b1111111111000000
 #endif
 
+#include "Hub75DmaTarget.h"
+
 struct Hub75EncodingParams {
     uint8_t colorDepth = 8;          ///< 1 to 8 BCM bitplanes
     uint8_t rowsPerFrame = 16;       ///< height / 2 (for 1/16 scan = 16, 1/32 scan = 32)
@@ -35,23 +37,26 @@ public:
     /**
      * @brief Row accessor callback to obtain a pointer to the DMA line buffer for row y and bitplane p.
      */
-    using DmaRowAccessor = uint16_t* (*)(void* userCtx, uint8_t row, uint8_t plane);
+    using DmaRowAccessor = ::DmaRowAccessor;
 
     /**
-     * @brief Encodes an RGB565 linear canvas into packed HUB75 BCM bitplanes.
-     *
-     * @param canvas Pointer to linear RGB565 pixel data
-     * @param canvasStridePixels Row stride in pixels (typically width)
-     * @param rowAccessor Callback to obtain target DMA row buffer pointer
-     * @param accessorCtx User context passed to rowAccessor
-     * @param params Hardware encoding parameters (LUTs, depth, geometry)
-     * @return uint32_t Duration of encoding in microseconds
+     * @brief Encodes an RGB565 linear canvas into packed HUB75 BCM bitplanes via row accessor.
      */
     static uint32_t encode(
         const uint16_t* canvas,
         size_t canvasStridePixels,
         DmaRowAccessor rowAccessor,
         void* accessorCtx,
+        const Hub75EncodingParams& params
+    );
+
+    /**
+     * @brief Encodes an RGB565 linear canvas directly into a Hub75DmaTarget.
+     */
+    static uint32_t encode(
+        const uint16_t* canvas,
+        size_t canvasStridePixels,
+        const Hub75DmaTarget& target,
         const Hub75EncodingParams& params
     );
 
