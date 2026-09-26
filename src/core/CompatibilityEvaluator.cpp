@@ -235,13 +235,13 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
 
     // =========================================================================
     // 4. Memory Tier & Contiguous Block Verification
+    //
+    // Note: The display infrastructure (HUB75 DMA buffer and shared Canvas) is
+    // allocated once at boot/runtime startup. Free internal heap reported in
+    // ctx.memory already reflects active display allocation. Engine admission
+    // checks the engine's persistent footprint, engine-specific shadow memory,
+    // runtime communication reserves (TLS, AsyncTCP, Audio), and system headroom.
     // =========================================================================
-    size_t dmaBytes = DmaMemoryLayout::calculateTotalBytes(
-        ctx.width, ctx.height, ctx.colorDepth, !isSingle
-    );
-    size_t canvasBytes = (verdict.storage == CanvasStorage::SRAM) ?
-        (static_cast<size_t>(ctx.width) * ctx.height * sizeof(uint16_t)) : 0;
-
     size_t networkReserve = 0;
     if (req.needsTls) {
         networkReserve += ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE;
@@ -256,21 +256,22 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
     }
 
     size_t persistentInternal = req.internalPersistentBytes;
-    size_t totalInternalReq = persistentInternal + networkReserve + audioReserve + canvasBytes +
-                              (isSpiram ? 0 : dmaBytes) + ResourceReserve::SYSTEM_MIN_HEADROOM_RESERVE;
+    size_t shadowBytes = req.shadowBytesPerFrame;
+    size_t totalInternalReq = persistentInternal + shadowBytes + networkReserve + audioReserve +
+                              ResourceReserve::SYSTEM_MIN_HEADROOM_RESERVE;
 
     verdict.internalRequiredBytes = totalInternalReq;
     verdict.internalAvailableBytes = ctx.memory.freeInternalHeap;
     verdict.internalHeadroomBytes = (ctx.memory.freeInternalHeap > totalInternalReq) ?
         (ctx.memory.freeInternalHeap - totalInternalReq) : 0;
 
-    size_t contiguousReq = (std::max)(canvasBytes, static_cast<size_t>(req.internalContiguousBytes));
+    // Largest contiguous block needed: engine contiguous buffer, engine shadow canvas, or TLS buffer chunk (~25KB)
+    size_t minTlsContiguous = req.needsTls ? 25000 : 0;
+    size_t contiguousReq = (std::max)(shadowBytes, (std::max)(static_cast<size_t>(req.internalContiguousBytes), minTlsContiguous));
     verdict.largestRequiredBlockBytes = contiguousReq;
     verdict.largestAvailableBlockBytes = ctx.memory.largestInternalBlock;
 
-    size_t psramReq = req.psramBytes +
-        ((verdict.storage == CanvasStorage::PSRAM) ? (static_cast<size_t>(ctx.width) * ctx.height * sizeof(uint16_t)) : 0) +
-        (isSpiram ? dmaBytes : 0);
+    size_t psramReq = req.psramBytes;
     verdict.psramRequiredBytes = psramReq;
     verdict.psramAvailableBytes = ctx.memory.freePsram;
 

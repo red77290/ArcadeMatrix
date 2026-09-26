@@ -13,17 +13,17 @@
 | **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Fully compatible) | ⚡ **60 FPS** (Fully compatible) | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
 | **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
 | **Audio Sound Level Meter** (`decibel`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🚫 **Incompatible**<br>_Insufficient internal DRAM headroom_ | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Stock Ticker & Indices** (`stock`) | `finance` | 🚫 **Incompatible**<br>_Insufficient internal DRAM headroom_ | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Retro Arcade Scene** (`arcade`) | `games` | ⚡ **60 FPS** (Fully compatible) | ⚡ **60 FPS** (Fully compatible) | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
-| **Plasma Dynamic FX** (`plasma`) | `effects` | 🚫 **Incompatible**<br>_Engine requires double buffering (tear-free)_ | 🚫 **Incompatible**<br>_Engine requires double buffering (tear-free)_ | 🚫 **Incompatible**<br>_Engine requires double buffering (tear-free)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
-| **METAR Aviation Weather** (`metar`) | `aviation` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
+| **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
+| **Stock Ticker & Indices** (`stock`) | `finance` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
+| **Date Display** (`date`) | `info` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
+| **GIF Player** (`gifs`) | `media` | ⚡ **30 FPS** (Fully compatible) | ⚡ **30 FPS** (Fully compatible) | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
+| **Environment Sensor** (`temp`) | `sensor` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
 | **Google Nest Cast Audio** (`google_cast`) | `media` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Spotify Player** (`spotify`) | `media` | 🚫 **Incompatible**<br>_Insufficient internal DRAM headroom_ | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
+| **Spotify Player** (`spotify`) | `media` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
 | **System Monitor** (`system_info`) | `system` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
 | **Universal Music Player** (`music_player`) | `media` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
 | **Dashboard Engine** (`dashboard`) | `info` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **GNews Live Feed** (`gnews`) | `news` | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
+| **GNews Live Feed** (`gnews`) | `news` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
 | **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Fully compatible) | ⚡ **60 FPS** (Fully compatible) | 🚫 **Incompatible**<br>_Single-buffer blanking budget exceeded (>400µs)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
 
 ## 2. Hardware Resource & Peripheral Requirements
@@ -37,15 +37,15 @@
 | `decibel` | 30 FPS | Single Buffer OK | 3 KB / 7 KB | 0 KB | I2S Mic |
 | `crypto` | 10 FPS | Single Buffer OK | 7 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `stock` | 10 FPS | Single Buffer OK | 7 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
-| `arcade` | 60 FPS | Prefers Double | 9 KB / 19 KB | 0 KB | None |
-| `plasma` | 60 FPS | Requires Double | 7 KB / 15 KB | 0 KB | None |
-| `metar` | 10 FPS | Single Buffer OK | 5 KB / 7 KB | 0 KB | Wi-Fi |
+| `date` | 30 FPS | Single Buffer OK | 2 KB / 0 KB | 0 KB | None |
+| `gifs` | 30 FPS | Prefers Double | 11 KB / 15 KB | 0 KB | SD Card |
+| `temp` | 30 FPS | Single Buffer OK | 3 KB / 0 KB | 0 KB | None |
 | `google_cast` | 30 FPS | Single Buffer OK | 15 KB / 23 KB | 0 KB | Wi-Fi |
 | `spotify` | 30 FPS | Single Buffer OK | 13 KB / 23 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `system_info` | 10 FPS | Single Buffer OK | 2 KB / 0 KB | 0 KB | None |
 | `music_player` | 30 FPS | Single Buffer OK | 4 KB / 0 KB | 0 KB | None |
 | `dashboard` | 10 FPS | Single Buffer OK | 5 KB / 0 KB | 0 KB | None |
-| `gnews` | 30 FPS | Single Buffer OK | 11 KB / 15 KB | 62 KB | PSRAM, Wi-Fi, TLS/HTTPS |
+| `gnews` | 30 FPS | Single Buffer OK | 11 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `marquee` | 60 FPS | Prefers Double | 7 KB / 15 KB | 0 KB | SD Card |
 
 ## 3. Admission Control Reserves
@@ -60,4 +60,4 @@ To prevent system crashes and heap starvation during heavy network or audio acti
 Any engine requiring TLS or Wi-Fi will be safely marked **Incompatible** if the free internal heap cannot cover its persistent requirements *plus* these admission reserves and panel canvas requirements.
 
 ---
-*Generated by ArcadeMatrix V4 Architecture Tools on 2026-09-26 19:01:40 UTC*
+*Generated by ArcadeMatrix V4 Architecture Tools on 2026-09-26 19:18:11 UTC*

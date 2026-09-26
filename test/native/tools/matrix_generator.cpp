@@ -171,37 +171,36 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.internalContiguousBytes = 16000;
         engines.push_back(d);
     }
-    // 8. Arcade
+    // 8. Date
     {
         EngineDescriptor d;
-        d.metadata = {"arcade", "Retro Arcade Scene", "games", FIRMWARE_VERSION};
-        d.requirements.targetFps = 60;
+        d.metadata = {"date", "Date Display", "info", FIRMWARE_VERSION};
+        d.requirements.targetFps = 30;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 3000;
+        engines.push_back(d);
+    }
+    // 9. GIF Player
+    {
+        EngineDescriptor d;
+        d.metadata = {"gifs", "GIF Player", "media", FIRMWARE_VERSION};
+        d.requirements.needsSd = true;
+        d.requirements.targetFps = 30;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 10000;
-        d.requirements.internalContiguousBytes = 20000;
-        engines.push_back(d);
-    }
-    // 9. Plasma
-    {
-        EngineDescriptor d;
-        d.metadata = {"plasma", "Plasma Dynamic FX", "effects", FIRMWARE_VERSION};
-        d.requirements.targetFps = 60;
-        d.requirements.requiresDoubleBuffer = true;
-        d.requirements.supportsSingleBuffer = false;
-        d.requirements.internalPersistentBytes = 8000;
+        d.requirements.internalPersistentBytes = 12000;
         d.requirements.internalContiguousBytes = 16000;
+        d.requirements.shadowBytesPerFrame = 8192;
         engines.push_back(d);
     }
-    // 10. Metar
+    // 10. Environment Sensor (Temperature & Humidity)
     {
         EngineDescriptor d;
-        d.metadata = {"metar", "METAR Aviation Weather", "aviation", FIRMWARE_VERSION};
-        d.requirements.needsNetwork = true;
-        d.requirements.targetFps = 10;
+        d.metadata = {"temp", "Environment Sensor", "sensor", FIRMWARE_VERSION};
+        d.requirements.needsTempSensor = false; // Graceful fallback if sensor absent
+        d.requirements.targetFps = 30;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 6000;
-        d.requirements.internalContiguousBytes = 8000;
+        d.requirements.internalPersistentBytes = 4000;
         engines.push_back(d);
     }
     // 11. GoogleCast
@@ -258,14 +257,14 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
     {
         EngineDescriptor d;
         d.metadata = {"gnews", "GNews Live Feed", "news", FIRMWARE_VERSION};
-        d.requirements.needsPsram = true;
+        d.requirements.needsPsram = false;
         d.requirements.needsNetwork = true;
         d.requirements.needsTls = true;
         d.requirements.targetFps = 30;
         d.requirements.supportsSingleBuffer = true;
         d.requirements.internalPersistentBytes = 12000;
         d.requirements.internalContiguousBytes = 16000;
-        d.requirements.psramBytes = 64000;
+        d.requirements.psramBytes = 0;
         engines.push_back(d);
     }
     // 17. Marquee

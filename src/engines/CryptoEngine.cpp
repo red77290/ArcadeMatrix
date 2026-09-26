@@ -954,14 +954,14 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_crypto;
     desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", FIRMWARE_VERSION};
     desc_crypto.capabilities.realtime = false;
-    desc_crypto.requirements.needsPsram = true;
+    desc_crypto.requirements.needsPsram = false;
     desc_crypto.requirements.needsNetwork = true;
     desc_crypto.requirements.needsTls = true;
     desc_crypto.requirements.targetFps = 30;
     desc_crypto.requirements.supportsSingleBuffer = true;
     desc_crypto.requirements.internalPersistentBytes = 12000;
     desc_crypto.requirements.internalContiguousBytes = 16000;
-    desc_crypto.requirements.psramBytes = 64000;
+    desc_crypto.requirements.psramBytes = 0;
     desc_crypto.schema.fields = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),

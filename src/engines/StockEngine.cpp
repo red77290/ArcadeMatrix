@@ -897,14 +897,14 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_stock;
     desc_stock.metadata = {"stock", "Stock Ticker", "finance", FIRMWARE_VERSION};
     desc_stock.capabilities.realtime = false;
-    desc_stock.requirements.needsPsram = true;
+    desc_stock.requirements.needsPsram = false;
     desc_stock.requirements.needsNetwork = true;
     desc_stock.requirements.needsTls = true;
     desc_stock.requirements.targetFps = 30;
     desc_stock.requirements.supportsSingleBuffer = true;
     desc_stock.requirements.internalPersistentBytes = 12000;
     desc_stock.requirements.internalContiguousBytes = 16000;
-    desc_stock.requirements.psramBytes = 64000;
+    desc_stock.requirements.psramBytes = 0;
     desc_stock.schema.fields = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated stock symbols", "AAPL,TSLA,NVDA", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
