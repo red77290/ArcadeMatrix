@@ -16,6 +16,7 @@ public:
     Hub75DmaTarget acquireDmaTarget() override;
     PresentationTiming commit(const PresentationPolicy& policy) override;
     size_t calculateDmaBytes() const override;
+    void markExternalDraw() override;
 
     MatrixEngine* getMatrixEngine() const { return _engine; }
 

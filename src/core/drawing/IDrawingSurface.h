@@ -52,15 +52,31 @@ struct CanvasView {
 };
 
 /**
+ * @enum PresentationResult
+ * @brief Discrete status result of a presentation frame.
+ */
+enum class PresentationResult : uint8_t {
+    Ok,
+    BackendUnavailable,
+    DmaTargetUnavailable,
+    SafeWindowTimeout,
+    BlankBudgetExceeded,
+    FrameBudgetExceeded,
+    InvalidTarget,
+    EncodingError
+};
+
+/**
  * @struct PresentationTiming
  * @brief Comprehensive telemetry capturing presentation and synchronization latency.
  */
 struct PresentationTiming {
-    uint32_t waitForSafeWindowUs = 0; ///< Duration spent waiting for safe DMA scan window
-    uint32_t encodeUs = 0;            ///< Duration spent in Hub75BulkEncoder bitplane packing
-    uint32_t transferUs = 0;          ///< Duration spent writing to DMA / CPU cache writeback
-    uint32_t blankUs = 0;             ///< Duration Output Enable (OE) was held blanked
-    uint32_t totalPresentUs = 0;      ///< Total presentation duration
+    PresentationResult result = PresentationResult::Ok; ///< Discrete presentation outcome
+    uint32_t waitForSafeWindowUs = 0;                   ///< Duration spent waiting for safe DMA scan window
+    uint32_t encodeUs = 0;                              ///< Duration spent in Hub75BulkEncoder bitplane packing
+    uint32_t transferUs = 0;                            ///< Duration spent writing to DMA / CPU cache writeback
+    uint32_t blankUs = 0;                               ///< Duration Output Enable (OE) was held blanked
+    uint32_t totalPresentUs = 0;                        ///< Total presentation duration
 };
 
 /**

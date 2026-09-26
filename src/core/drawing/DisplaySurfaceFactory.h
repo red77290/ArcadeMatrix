@@ -7,22 +7,14 @@
 #include "IDrawingSurface.h"
 #include "DirectDmaSurface.h"
 #include "CanvasBufferedSurface.h"
+#include "PipelineSelectionPolicy.h"
 #include <memory>
 
 class MatrixEngine;
 
-enum class SurfaceSelectionReason : uint8_t {
-    AutoResolvedPsramCanvas,
-    AutoResolvedSramCanvasLowDma,
-    ExplicitUserPolicy,
-    FallbackDirectDma,
-    FallbackAllocationFailed,
-    UnsupportedGeometry
-};
-
 struct SurfaceCreationResult {
     std::unique_ptr<IDrawingSurface> surface;
-    SurfaceSelectionReason reason;
+    SurfaceSelectionReason reason = SurfaceSelectionReason::ExplicitUserPolicy;
     const char* reasonText = "";
 };
 
