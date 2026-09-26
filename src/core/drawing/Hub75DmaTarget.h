@@ -23,6 +23,10 @@ struct Hub75DmaTarget {
     DmaRowAccessor rowAccessor = nullptr; ///< Unified row accessor function
     void* accessorCtx = nullptr;          ///< User context for row accessor
 
+    const uint8_t* lutR = nullptr;        ///< CIE/gamma red LUT (32 entries)
+    const uint8_t* lutG = nullptr;        ///< CIE/gamma green LUT (64 entries)
+    const uint8_t* lutB = nullptr;        ///< CIE/gamma blue LUT (32 entries)
+
     inline uint16_t* getRowPtr(uint8_t row, uint8_t plane) const {
         if (rowAccessor) {
             return rowAccessor(accessorCtx, row, plane);

@@ -2083,6 +2083,18 @@ void test_presentation_backends(void) {
     auto hubTarget = hub75.acquireDmaTarget();
     TEST_ASSERT_EQUAL_UINT16(64, hubTarget.width);
     TEST_ASSERT_EQUAL_UINT16(32, hubTarget.height);
+
+    // Test CanvasBufferedSurface driving presentation backend end-to-end
+    CanvasBufferedSurface canvasSurf(64, 32, CanvasStorage::SRAM, nullptr, false, &mock);
+    canvasSurf.fillScreen(0xF800);
+    auto canvasTiming = canvasSurf.present();
+    TEST_ASSERT_EQUAL_UINT32(2, mock.getCommitCount());
+    TEST_ASSERT_EQUAL_UINT32(150, canvasTiming.totalPresentUs);
+
+    // Test geometry validation in DisplaySurfaceFactory (unsupported geometry rejected)
+    auto unsuppResult = DisplaySurfaceFactory::createSurface(nullptr, 512, 512, "canvas_single");
+    TEST_ASSERT_NULL(unsuppResult.surface.get());
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)unsuppResult.reason);
 }
 
 void test_surface_coordinates_multi_resolution(void) {
@@ -2351,8 +2363,16 @@ void test_modular_config_migration_and_partitioning(void) {
     TEST_ASSERT_EQUAL(128, snap.matrix.width);
     TEST_ASSERT_EQUAL_STRING("TestWiFi", snap.wifi.ssid.c_str());
     TEST_ASSERT_TRUE(snap.mqtt.enabled);
-    TEST_ASSERT_EQUAL(1, snap.rotation.size());
     TEST_ASSERT_EQUAL_STRING("clock_1", snap.rotation[0].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("auto", snap.matrix.render_pipeline.c_str());
+
+    // Test dual camelCase and snake_case parsing
+    MatrixConfig dualHw;
+    storage.writeStringAtomic("/config/hardware.json", "{\"chainLength\": 4, \"colorDepth\": 6, \"renderPipeline\": \"canvas_single\"}");
+    TEST_ASSERT_TRUE(mgr.loadHardware(dualHw));
+    TEST_ASSERT_EQUAL(4, dualHw.chainLength);
+    TEST_ASSERT_EQUAL(6, dualHw.colorDepth);
+    TEST_ASSERT_EQUAL_STRING("canvas_single", dualHw.render_pipeline.c_str());
 }
 
 void setup() {

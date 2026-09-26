@@ -21,8 +21,12 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     // Validate requested dimensions against board profile limits
     const auto& dispCaps = BoardProfile::current().display();
     if (width > dispCaps.maxWidth || height > dispCaps.maxHeight) {
-        LOGW("DisplaySurfaceFactory", "Requested geometry (%ux%u) exceeds profile limits (%ux%u)",
+        LOGE("DisplaySurfaceFactory", "Requested geometry (%ux%u) exceeds profile limits (%ux%u)",
              width, height, dispCaps.maxWidth, dispCaps.maxHeight);
+        result.surface.reset();
+        result.reason = SurfaceSelectionReason::UnsupportedGeometry;
+        result.reasonText = "Requested geometry exceeds board profile limits";
+        return result;
     }
 
     String pipeline = requestedPipeline;
@@ -35,14 +39,16 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
         }
     }
 
+    IPresentationBackend* backend = matrixEngine ? matrixEngine->getPresentationBackend() : nullptr;
+
     if (pipeline == "canvas_single") {
         CanvasStorage storage = hasPsram ? CanvasStorage::PSRAM : CanvasStorage::SRAM;
-        result.surface.reset(new CanvasBufferedSurface(width, height, storage, matrixEngine, true));
+        result.surface.reset(new CanvasBufferedSurface(width, height, storage, matrixEngine, true, backend));
         result.reason = SurfaceSelectionReason::ExplicitUserPolicy;
         result.reasonText = "User requested Canvas Buffered + Single DMA";
     } else if (pipeline == "canvas_double") {
         CanvasStorage storage = hasPsram ? CanvasStorage::PSRAM : CanvasStorage::SRAM;
-        result.surface.reset(new CanvasBufferedSurface(width, height, storage, matrixEngine, false));
+        result.surface.reset(new CanvasBufferedSurface(width, height, storage, matrixEngine, false, backend));
         result.reason = SurfaceSelectionReason::ExplicitUserPolicy;
         result.reasonText = "User requested Canvas Buffered + Double DMA";
     } else if (pipeline == "direct_double") {
@@ -58,13 +64,13 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     } else if (hasPsram) {
         // Auto resolution based on Hardware Profile & Memory Tier
         // ESP32-S3 or boards with PSRAM: use PSRAM Canvas + Double DMA for maximum throughput
-        result.surface.reset(new CanvasBufferedSurface(width, height, CanvasStorage::PSRAM, matrixEngine, false));
+        result.surface.reset(new CanvasBufferedSurface(width, height, CanvasStorage::PSRAM, matrixEngine, false, backend));
         result.reason = SurfaceSelectionReason::AutoResolvedPsramCanvas;
         result.reasonText = "Auto-selected Canvas PSRAM + Double DMA (PSRAM available)";
     } else {
         // Classic ESP32 without PSRAM:
         // If screen size is 64x32 or 64x64, Canvas SRAM (4KB / 8KB) + Single DMA frees ~16-20KB of DMA RAM!
-        result.surface.reset(new CanvasBufferedSurface(width, height, CanvasStorage::SRAM, matrixEngine, true));
+        result.surface.reset(new CanvasBufferedSurface(width, height, CanvasStorage::SRAM, matrixEngine, true, backend));
         result.reason = SurfaceSelectionReason::AutoResolvedSramCanvasLowDma;
         result.reasonText = "Auto-selected Canvas SRAM + Single DMA (Halves DMA RAM on classic ESP32)";
     }

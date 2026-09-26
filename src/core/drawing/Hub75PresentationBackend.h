@@ -19,8 +19,12 @@ public:
 
     MatrixEngine* getMatrixEngine() const { return _engine; }
 
+    IPresentationSynchronizer* getSynchronizer() override { return _synchronizer; }
+    void setSynchronizer(IPresentationSynchronizer* synchronizer) override { _synchronizer = synchronizer; }
+
 private:
     MatrixEngine* _engine = nullptr;
+    IPresentationSynchronizer* _synchronizer = nullptr;
     uint16_t _width = 64;
     uint16_t _height = 32;
     uint8_t _colorDepth = 8;

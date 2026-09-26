@@ -6,6 +6,7 @@
 
 #include "IDrawingSurface.h"
 #include "SurfaceCoordinates.h"
+#include "IPresentationBackend.h"
 #include <esp_heap_caps.h>
 
 class MatrixEngine;
@@ -13,7 +14,8 @@ class MatrixEngine;
 class CanvasBufferedSurface : public IDrawingSurface {
 public:
     CanvasBufferedSurface(int16_t width, int16_t height, CanvasStorage storage,
-                          MatrixEngine* matrixEngine, bool singleDma = false);
+                          MatrixEngine* matrixEngine, bool singleDma = false,
+                          IPresentationBackend* backend = nullptr);
     virtual ~CanvasBufferedSurface();
 
     void clear(uint16_t color = 0) override;
@@ -39,11 +41,18 @@ public:
 
     uint16_t* getRawCanvasBuffer() const { return _canvas; }
 
+    void setPresentationBackend(IPresentationBackend* backend) { _backend = backend; }
+    IPresentationBackend* getPresentationBackend() const { return _backend; }
+    void setPresentationPolicy(const PresentationPolicy& policy) { _policy = policy; }
+    const PresentationPolicy& getPresentationPolicy() const { return _policy; }
+
 private:
     uint16_t* _canvas = nullptr;
     CanvasStorage _storage = CanvasStorage::SRAM;
     PresentationStrategy _strategy = PresentationStrategy::CANVAS_BURST_SINGLE;
     MatrixEngine* _matrixEngine = nullptr;
+    IPresentationBackend* _backend = nullptr;
+    PresentationPolicy _policy;
     size_t _canvasBytes = 0;
     size_t _dmaBytes = 0;
     bool _canvasBorrowed = false;

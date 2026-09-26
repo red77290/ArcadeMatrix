@@ -3,6 +3,7 @@
  * @brief Implementation of CanvasBufferedSurface.
  */
 #include "CanvasBufferedSurface.h"
+#include "Hub75BulkEncoder.h"
 #include "../MatrixEngine.h"
 #include "../Logger.h"
 #include <string.h>
@@ -10,10 +11,12 @@
 CanvasBufferedSurface::CanvasBufferedSurface(int16_t width, int16_t height,
                                              CanvasStorage storage,
                                              MatrixEngine* matrixEngine,
-                                             bool singleDma)
+                                             bool singleDma,
+                                             IPresentationBackend* backend)
     : IDrawingSurface(width, height, width, height)
     , _storage(storage)
     , _matrixEngine(matrixEngine)
+    , _backend(backend ? backend : (matrixEngine ? matrixEngine->getPresentationBackend() : nullptr))
 {
     _strategy = singleDma ? PresentationStrategy::CANVAS_BURST_SINGLE : PresentationStrategy::CANVAS_BURST_DOUBLE;
     size_t pixelCount = (size_t)width * height;
@@ -152,19 +155,49 @@ void CanvasBufferedSurface::releaseCanvas() {
 
 PresentationTiming CanvasBufferedSurface::present() {
     PresentationTiming timing;
-    if (!_canvas || !_matrixEngine) return timing;
+    if (!_canvas) return timing;
     uint32_t t0 = micros();
 
-    // 1. Bulk row-burst blit into HUB75 DMA back-buffer
-    _matrixEngine->blitCanvas565(_canvas, physicalWidth(), physicalHeight());
-    uint32_t t1 = micros();
+    if (_backend) {
+        // 1. Acquire physical DMA target descriptor
+        Hub75DmaTarget target = _backend->acquireDmaTarget();
 
-    // 2. Hardware presentation synchronization / buffer flip
-    _matrixEngine->present();
-    uint32_t t2 = micros();
+        // 2. Encode Canvas RGB565 directly into HUB75 DMA Target via Hub75BulkEncoder
+        if (target.rowAccessor || target.buffer) {
+            uint32_t t_enc = micros();
+            Hub75EncodingParams params;
+            params.colorDepth = target.colorDepth;
+            params.rowsPerFrame = target.rowsPerFrame;
+            params.width = physicalWidth();
+            params.height = physicalHeight();
+            params.lutR = target.lutR;
+            params.lutG = target.lutG;
+            params.lutB = target.lutB;
+            params.rotation = 0; // Canvas is already maintained in physical orientation
 
-    timing.encodeUs = (t1 - t0);
-    timing.totalPresentUs = (t2 - t0);
+            Hub75BulkEncoder::encode(_canvas, physicalWidth(), target, params);
+            timing.encodeUs = micros() - t_enc;
+        }
+
+        // 3. Commit through presentation backend adhering to PresentationPolicy
+        PresentationTiming commitTiming = _backend->commit(_policy);
+        timing.waitForSafeWindowUs = commitTiming.waitForSafeWindowUs;
+        timing.blankUs = commitTiming.blankUs;
+        timing.transferUs = commitTiming.transferUs;
+        timing.totalPresentUs = (micros() - t0);
+        return timing;
+    } else if (_matrixEngine) {
+        // Legacy fallback
+        uint32_t t_enc = micros();
+        _matrixEngine->blitCanvas565(_canvas, physicalWidth(), physicalHeight());
+        timing.encodeUs = micros() - t_enc;
+
+        uint32_t t_trans = micros();
+        _matrixEngine->present();
+        timing.transferUs = micros() - t_trans;
+        timing.totalPresentUs = (micros() - t0);
+        return timing;
+    }
     return timing;
 }
 
