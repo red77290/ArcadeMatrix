@@ -30,6 +30,8 @@
 #include <atomic>
 #include "../core/SdLockGuard.h"
 
+extern ConfigLoader config;
+
 // A config change is applied in memory first and then written to the card. When the write fails (the
 // card is busy with a rescan or upload, or the write itself fails) the change would silently vanish at
 // the next reboot, so every handler that saves reports that with a 503 instead of a plain success.
@@ -113,7 +115,9 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
     reqObj["needs_network"] = desc.requirements.needsNetwork;
     reqObj["needs_sd"] = desc.requirements.needsSd;
 
-    auto reqCheck = EngineRegistrar::checkRequirements(desc.requirements);
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
+    auto reqCheck = EngineRegistrar::checkRequirements(desc.requirements, activePipeline);
     obj["available"] = reqCheck.satisfied;
     if (!reqCheck.satisfied) {
         obj["reason"] = reqCheck.reason;
@@ -805,7 +809,9 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        auto reqCheck = EngineRegistrar::checkRequirements(desc->requirements);
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
+        auto reqCheck = EngineRegistrar::checkRequirements(desc->requirements, activePipeline);
         if (!reqCheck.satisfied) {
             SpiRamJsonDocument errDoc(256);
             errDoc["error"] = "engine_unavailable";
@@ -2634,7 +2640,7 @@ void WebServerAPI::setupRoutes() {
         };
         g_gifWriteFolderIndex = writeFolderIndex;
         g_gifBuildPlaylistsFromIndexes = buildPlaylistsFromIndexes;
-        g_gifIsMacJunk = isMacJunk;
+        g_gifIsMacJunk = [](const String& s) { return isMacJunk(s); };
         g_gifReadPlaylistsJson = readPlaylistsJson;
 
         // Live library scan (does NOT touch index files).

@@ -14,7 +14,7 @@
 // Abstract base class for all clock faces
 class ClockFace {
 public:
-    ClockFace(IDrawingSurface* display, const EngineConfig* config = nullptr) : matrix(display), engineConfig(config) {}
+    ClockFace(IDrawingSurface* disp, const EngineConfig* config = nullptr) : matrix(disp), display(disp), engineConfig(config) {}
     const EngineConfig* engineConfig;
     virtual ~ClockFace() = default;
 
@@ -26,6 +26,7 @@ public:
 
 protected:
     IDrawingSurface* matrix;
+    IDrawingSurface* display;
 };
 
 enum class ClockFormatMode : uint8_t {

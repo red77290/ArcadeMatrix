@@ -2085,6 +2085,147 @@ void test_presentation_backends(void) {
     TEST_ASSERT_EQUAL_UINT16(32, hubTarget.height);
 }
 
+void test_surface_coordinates_multi_resolution(void) {
+    const struct {
+        int16_t w;
+        int16_t h;
+    } geometries[] = {
+        {128, 32},
+        {128, 64},
+        {256, 64}
+    };
+
+    for (const auto& g : geometries) {
+        const int16_t w = g.w;
+        const int16_t h = g.h;
+
+        // 4 Corners: (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)
+        const Point corners[] = {
+            {0, 0},
+            {(int16_t)(w - 1), 0},
+            {0, (int16_t)(h - 1)},
+            {(int16_t)(w - 1), (int16_t)(h - 1)}
+        };
+
+        // Rotation 0: Identity
+        for (const auto& c : corners) {
+            Point p = SurfaceCoordinates::logicalToPhysical(c.x, c.y, w, h, 0);
+            TEST_ASSERT_EQUAL_INT16(c.x, p.x);
+            TEST_ASSERT_EQUAL_INT16(c.y, p.y);
+        }
+
+        // Rotation 1 (90 deg CW): logical is H x W
+        int16_t lw1, lh1;
+        SurfaceCoordinates::getLogicalDimensions(w, h, 1, lw1, lh1);
+        TEST_ASSERT_EQUAL_INT16(h, lw1);
+        TEST_ASSERT_EQUAL_INT16(w, lh1);
+
+        Point p1_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 1);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p1_tl.x);
+        TEST_ASSERT_EQUAL_INT16(0, p1_tl.y);
+
+        Point p1_br = SurfaceCoordinates::logicalToPhysical(lw1 - 1, lh1 - 1, w, h, 1);
+        TEST_ASSERT_EQUAL_INT16(0, p1_br.x);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p1_br.y);
+
+        // Rotation 2 (180 deg)
+        Point p2_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 2);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p2_tl.x);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p2_tl.y);
+
+        Point p2_br = SurfaceCoordinates::logicalToPhysical(w - 1, h - 1, w, h, 2);
+        TEST_ASSERT_EQUAL_INT16(0, p2_br.x);
+        TEST_ASSERT_EQUAL_INT16(0, p2_br.y);
+
+        // Rotation 3 (270 deg CW): logical is H x W
+        int16_t lw3, lh3;
+        SurfaceCoordinates::getLogicalDimensions(w, h, 3, lw3, lh3);
+        TEST_ASSERT_EQUAL_INT16(h, lw3);
+        TEST_ASSERT_EQUAL_INT16(w, lh3);
+
+        Point p3_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 3);
+        TEST_ASSERT_EQUAL_INT16(0, p3_tl.x);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p3_tl.y);
+
+        Point p3_br = SurfaceCoordinates::logicalToPhysical(lw3 - 1, lh3 - 1, w, h, 3);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p3_br.x);
+        TEST_ASSERT_EQUAL_INT16(0, p3_br.y);
+    }
+}
+
+void test_hub75_bulk_encoder_multi_depth_and_edge_colors(void) {
+    const uint8_t depths[] = {2, 4, 5, 6, 8};
+    for (uint8_t d : depths) {
+        uint8_t lutR[32];
+        uint8_t lutG[64];
+        uint8_t lutB[32];
+
+        Hub75BulkEncoder::generateLuts(d, lutR, lutG, lutB);
+
+        uint16_t maxAllowed = (1 << d) - 1;
+        TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
+
+        TEST_ASSERT_TRUE(lutR[31] <= maxAllowed);
+        TEST_ASSERT_TRUE(lutG[63] <= maxAllowed);
+        TEST_ASSERT_TRUE(lutB[31] <= maxAllowed);
+
+        // Monotonic check
+        for (int i = 1; i < 32; ++i) {
+            TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+            TEST_ASSERT_TRUE(lutB[i] >= lutB[i - 1]);
+        }
+        for (int i = 1; i < 64; ++i) {
+            TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+        }
+    }
+
+    // Edge color validation at 8-bit depth
+    uint8_t lutR[32], lutG[64], lutB[32];
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
+
+    Hub75EncodingParams params;
+    params.colorDepth = 8;
+    params.rowsPerFrame = 16;
+    params.width = 64;
+    params.height = 32;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    // 1. Black (0x0000): all bitplanes must be completely zero
+    std::vector<uint16_t> canvasBlack(64 * 32, 0x0000);
+    memset(s_mockBitplanes, 0xFF, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasBlack.data(), 64, mockRowAccessor, nullptr, params);
+    for (int p = 0; p < 8; ++p) {
+        uint16_t val = s_mockBitplanes[0][p][0] & 0x003F; // mask R1,G1,B1,R2,G2,B2
+        TEST_ASSERT_EQUAL_UINT16(0, val);
+    }
+
+    // 2. White (0xFFFF): MSB plane must have all R1,G1,B1 and R2,G2,B2 active
+    std::vector<uint16_t> canvasWhite(64 * 32, 0xFFFF);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasWhite.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbWhite = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16(0x003F, msbWhite); // all 6 color lines high
+
+    // 3. Green (0x07E0): MSB plane must only have G1 (1 << 1) and G2 (1 << 4) set
+    std::vector<uint16_t> canvasGreen(64 * 32, 0x07E0);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasGreen.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbGreen = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16((1 << 1) | (1 << 4), msbGreen);
+
+    // 4. Blue (0x001F): MSB plane must only have B1 (1 << 2) and B2 (1 << 5) set
+    std::vector<uint16_t> canvasBlue(64 * 32, 0x001F);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasBlue.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbBlue = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16((1 << 2) | (1 << 5), msbBlue);
+}
+
 // =========================================================================
 // 10. Modular Storage Architecture & Working-Set Cache
 // =========================================================================
@@ -2297,7 +2438,9 @@ void setup() {
     // 9. Drawing Surfaces, Hub75BulkEncoder & Coordinates
     // =========================================================================
     RUN_TEST(test_surface_coordinates_rotation);
+    RUN_TEST(test_surface_coordinates_multi_resolution);
     RUN_TEST(test_hub75_bulk_encoder_luts_and_encode);
+    RUN_TEST(test_hub75_bulk_encoder_multi_depth_and_edge_colors);
     RUN_TEST(test_display_surface_factory_selection);
     RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
     RUN_TEST(test_presentation_backends);

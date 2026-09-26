@@ -1,0 +1,16 @@
+{
+  "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",
+  "format24h": true,
+  "lang": "fr",
+  "unit": "c",
+  "temp_offset": 0.0,
+  "night_mode_enabled": false,
+  "turn_off_at": "23:00",
+  "wake_up_at": "07:00",
+  "night_brightness": 10,
+  "idle_fighter_enabled": false,
+  "idle_fighter_interval": 30,
+  "idle_fighter_speed": 100,
+  "api_auth_enabled": false,
+  "api_token": "9101d2ff5928c93107e537aa3c07a282"
+}

@@ -19,6 +19,16 @@ Hub75DmaTarget Hub75PresentationBackend::acquireDmaTarget() {
     target.activeBufferIndex = _engine ? (uint8_t)(_engine->flipCount() & 1u) : 0;
     target.bufferBytes = calculateDmaBytes();
     target.strideBytes = _width * sizeof(uint16_t);
+
+    FastMatrixPanel* panel = _engine ? _engine->getFastPanel() : nullptr;
+    if (panel) {
+        target.rowAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+            auto* p = static_cast<FastMatrixPanel*>(ctx);
+            return p ? p->getBackbufferRowPlane(row, plane) : nullptr;
+        };
+        target.accessorCtx = panel;
+        target.buffer = reinterpret_cast<uint8_t*>(panel->getBackbufferRowPlane(0, 0));
+    }
     return target;
 }
 

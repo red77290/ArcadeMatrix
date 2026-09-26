@@ -24,7 +24,7 @@ TetrisClock::TetrisClock(IDrawingSurface* display, bool gameboyMode, const Engin
     : ClockFace(display, config), isGameboy(gameboyMode), numBlocks(0), lastFrameTime(0), canvas(nullptr) {
     storedTime = {0, 0, 0};
     strcpy(lastTimeStr, "");
-    blockSize = max(1, (int)(matrix->height() / 16));
+    blockSize = max(1, (int)(display->height() / 16));
     faceFont.load(config);
     canvas = new (std::nothrow) GFXcanvas1(128, 64);
 }
@@ -91,8 +91,8 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
 }
 
 void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount) {
-    int w = matrix->width();
-    int h = matrix->height();
+    int w = display->width();
+    int h = display->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
     int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
@@ -176,7 +176,7 @@ void TetrisClock::update() {
             for (size_t i = 0; i < numBlocks; i++) {
                 TetrisBlock& b = blocks[i];
                 b.state = 2; // OUT
-                float base_dy = max(1.0f, matrix->height() / 40.0f);
+                float base_dy = max(1.0f, display->height() / 40.0f);
                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
             }
             int allIndices[10];
@@ -199,7 +199,7 @@ void TetrisClock::update() {
                         for (size_t c = 0; c < changedCount; c++) {
                             if (b.charIndex == changedIndices[c]) {
                                 b.state = 2; // OUT
-                                float base_dy = max(1.5f, matrix->height() / 15.0f);
+                                float base_dy = max(1.5f, display->height() / 15.0f);
                                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
                                 break;
                             }
@@ -234,7 +234,7 @@ void TetrisClock::update() {
         } else if (b.state == 2) { // OUT
             b.y += b.dy * timeScale;
             b.dy += 0.4f * timeScale; // Gravity matches v3.0.0
-            if (b.y <= matrix->height()) {
+            if (b.y <= display->height()) {
                 blocks[writeIdx++] = b;
             }
         } else {
@@ -244,11 +244,11 @@ void TetrisClock::update() {
     numBlocks = writeIdx;
 
     // Clear and draw
-    if (matrix) {
-        matrix->fillScreen(0);
+    if (display) {
+        display->fillScreen(0);
         for (size_t i = 0; i < numBlocks; i++) {
             const TetrisBlock& b = blocks[i];
-            matrix->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
+            display->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
         }
     }
 }
@@ -257,6 +257,6 @@ void TetrisClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     (void)geometry;
     numBlocks = 0;
     strcpy(lastTimeStr, "");
-    if (matrix) matrix->fillScreen(0);
+    if (display) display->fillScreen(0);
 }
 

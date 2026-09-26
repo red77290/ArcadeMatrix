@@ -1749,7 +1749,7 @@ select.input option {
               <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
               <select id="hw-render-pipeline" class="input">
                 <option value="auto" data-i18n="hw_pipeline_auto">✨ Auto (Recommended - Dynamic Allocation)</option>
-                <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM, synchronized presentation)</option>
+                <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM)</option>
                 <option value="canvas_double" data-i18n="hw_pipeline_canvas_double">🚀 Canvas Buffered + Double DMA (Maximum Throughput)</option>
                 <option value="direct_double" data-i18n="hw_pipeline_direct_double">🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)</option>
                 <option value="direct_single" data-i18n="hw_pipeline_direct_single">⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)</option>
@@ -2677,7 +2677,7 @@ const translations = {
     hw_pipeline_label: "Rendering & Buffering Pipeline",
     tt_hw_pipeline: "Display buffering architecture. Canvas Single Buffer halves DMA RAM on classic ESP32, unlocking TLS engines while keeping smooth presentation.",
     hw_pipeline_auto: "✨ Auto (Recommended - Dynamic Allocation)",
-    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM, synchronized presentation)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
@@ -3176,7 +3176,7 @@ const translations = {
     hw_pipeline_label: "Pipeline de Rendu & Buffering",
     tt_hw_pipeline: "Architecture de mémoire tampon. Canvas Simple Buffer divise par 2 la DMA RAM sur ESP32 classique, débloquant les moteurs TLS avec un affichage fluide.",
     hw_pipeline_auto: "✨ Auto (Recommandé - Allocation Dynamique)",
-    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA, présentation synchronisée)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
@@ -3675,7 +3675,7 @@ const translations = {
     hw_pipeline_label: "Canalización de Renderizado y Búfer",
     tt_hw_pipeline: "Arquitectura de búfer de pantalla. Canvas Simple divide a la mitad la RAM DMA en ESP32 clásico, desbloqueando motores TLS con visualización fluida.",
     hw_pipeline_auto: "✨ Auto (Recomendado - Asignación Dinámica)",
-    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA, presentación sincronizada)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",

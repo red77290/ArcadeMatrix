@@ -1,0 +1,16 @@
+{
+  "wifi": {
+    "ssid": "MyNetwork",
+    "password": "SecretPassword",
+    "hostname": "arcadematrix"
+  },
+  "mqtt": {
+    "enabled": false,
+    "broker": "127.0.0.1",
+    "port": 1883,
+    "user": "",
+    "pass": "",
+    "deviceName": "arcadematrix",
+    "allow_overlay": false
+  }
+}

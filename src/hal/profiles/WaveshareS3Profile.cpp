@@ -7,9 +7,10 @@
 #include "../../../include/HardwareProfile.h"
 
 WaveshareS3Profile::WaveshareS3Profile() {
-    m_memory.hasPsram = true;
+    m_memory.hasPsram = psramFound();
     m_memory.internalRamBytes = 512 * 1024;
-    m_memory.psramBytes = 8 * 1024 * 1024;
+    size_t detectedPsram = psramFound() ? ESP.getPsramSize() : 0;
+    m_memory.psramBytes = (detectedPsram > 0) ? detectedPsram : (8 * 1024 * 1024);
     m_memory.flashBytes = 16 * 1024 * 1024;
     m_memory.tier = MemoryTier::EXPANDED;
 

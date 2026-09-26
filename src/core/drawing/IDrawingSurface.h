@@ -106,6 +106,7 @@ public:
     virtual CanvasStorage canvasStorage() const = 0;
     virtual PresentationStrategy presentationStrategy() const = 0;
     virtual size_t memoryUsageBytes() const = 0;
+    virtual size_t estimatedMemoryUsageBytes() const { return memoryUsageBytes(); }
 
     // Invariant physical dimensions (independent of orientation)
     inline int16_t physicalWidth() const { return m_physW; }

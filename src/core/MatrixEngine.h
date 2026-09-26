@@ -59,6 +59,7 @@ public:
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();
+    uint16_t* getBackbufferRowPlane(uint8_t row, uint8_t plane);
 
 private:
     bool m_double = false;

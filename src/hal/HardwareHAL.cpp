@@ -232,17 +232,12 @@ void HardwareHAL::begin() {
     }
     _capabilities.audio.psram = _capabilities.hasPsram;
     // NOTE: mbedTLS intentionally uses the stock ESP-IDF/Arduino allocator (100% internal DRAM,
-    // as in v3.1.0). Live hardware testing proved that ANY mbedTLS allocation routed to PSRAM --
-    // even only the large ~16KB TLS record buffers via a size threshold -- causes the HUB75
-    // matrix display to go blank within seconds. Root cause: this board's framebuffer is also
-    // PSRAM-resident (build_flags: -D SPIRAM_DMA_BUFFER, required because moving it to internal
-    // DRAM costs ~64KB of internal DRAM this board does not have to spare). ESP32-S3's PSRAM
-    // (per ESP-IDF docs) shares its cache with large-chunk (>32KB) access causing slow/evicted
-    // cache lines; mbedTLS's ~32KB combined in/out record buffers are exactly this kind of large,
-    // bursty access, and contending with the HUB75 GDMA engine's continuous PSRAM reads for the
-    // framebuffer corrupts/stalls the display. Display integrity takes priority over TLS
-    // reliability: TLS fetches that fail due to internal DRAM pressure degrade gracefully
-    // (cached values are kept, see DashboardDataProvider/YahooFinanceProvider/BinanceProvider),
+    // as in v3.1.0). Validated on the Waveshare S3 N32R16 configuration: routing TLS large allocations
+    // to PSRAM caused display corruption/stalls due to cache line eviction contention between mbedTLS
+    // ~32KB record buffers and the HUB75 GDMA continuous PSRAM framebuffer reads (SPIRAM_DMA_BUFFER).
+    // Therefore ArcadeMatrix keeps TLS allocations in internal DRAM on this profile.
+    // Display integrity takes priority over TLS reliability: TLS fetches that fail due to internal
+    // DRAM pressure degrade gracefully (cached values are kept, see DashboardDataProvider/YahooFinanceProvider),
     // whereas a corrupted display cannot recover without a reboot. See NetworkBudget.h for the
     // admission-control gate and ScopedTlsHandshakeLock, which mitigate internal DRAM pressure by
     // serializing TLS handshakes system-wide instead of spilling to PSRAM.

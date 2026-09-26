@@ -34,13 +34,14 @@ Esp32DevProfile::Esp32DevProfile() {
 
 extern "C" void __wrap_esp_brownout_init(void) {
     // Intercept and bypass ESP-IDF early brownout detector initialization.
-    // On classic ESP32 USB development boards with HUB75 panels, transient voltage dips
-    // during boot trip the detector before the kernel or user application can configure power limits.
+    // Disable brownout reset on ESP32-DEV due to validated false-positive transient voltage dips
+    // during HUB75/Wi-Fi operation. This does not electrically stabilize supply rails,
+    // but prevents spurious watchdog resets during startup transients.
 }
 
 void Esp32DevProfile::applyPowerQuirks() {
-    // Disable brownout detector on classic ESP32 to prevent spurious resets caused by
-    // microsecond voltage drops when USB power is shared between HUB75 DMA panels and Wi-Fi bursts.
+    // Disable brownout detector on classic ESP32 due to validated false-positive transient
+    // voltage dips during HUB75 and Wi-Fi operation.
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 }
 
@@ -51,23 +52,34 @@ void Esp32DevProfile::configureWifiTxPower() {
 
 bool Esp32DevProfile::beginStorage() {
     m_storage.sdMounted = false;
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
-    if (sd.begin(spiConfig)) {
-        m_storage.sdMounted = true;
-        m_storage.defaultSckMhz = 25;
-        LOGI("SD", "SD Card mounted successfully at 25 MHz.");
-        return true;
-    }
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
 
-    // Fallback attempt at 16 MHz if 25 MHz had signal integrity issues
-    delay(10);
-    SdSpiConfig fallbackConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(16), &SPI);
-    if (sd.begin(fallbackConfig)) {
-        m_storage.sdMounted = true;
-        m_storage.defaultSckMhz = 16;
-        LOGW("SD", "SD Card mounted at fallback frequency: 16 MHz.");
-        return true;
+    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
+
+    // SD specification requires at least 74 clock cycles with CS=HIGH to transition
+    // the card from native SD bus mode into SPI mode. Transmit 20 dummy bytes (160 cycles).
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    for (int i = 0; i < 20; ++i) {
+        SPI.transfer(0xFF);
+    }
+    SPI.endTransaction();
+
+    // Auto-fallback frequency ladder: 25 -> 16 -> 10 -> 4 MHz
+    const uint8_t freqs[] = {25, 16, 10, 4};
+    for (uint8_t f : freqs) {
+        SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(f), &SPI);
+        if (sd.begin(spiConfig)) {
+            m_storage.sdMounted = true;
+            m_storage.defaultSckMhz = f;
+            if (f == 25) {
+                LOGI("SD", "SD Card mounted successfully at %u MHz.", (unsigned)f);
+            } else {
+                LOGW("SD", "SD Card mounted at fallback frequency: %u MHz.", (unsigned)f);
+            }
+            return true;
+        }
+        delay(10);
     }
 
     LOGE("SD", "SD Card mount failed. Starting in Safe Mode (Flash defaults, Wi-Fi & WebServer active).");
