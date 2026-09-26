@@ -17,10 +17,12 @@ struct SurfaceCreationResult {
     SurfaceSelectionReason reason = SurfaceSelectionReason::ExplicitUserPolicy;
     const char* reasonText = "";
     PresentationStrategy requestedStrategy = PresentationStrategy::CANVAS_BURST_DOUBLE;
-    PresentationStrategy actualStrategy = PresentationStrategy::CANVAS_BURST_DOUBLE;
+    PresentationStrategy actualStrategy = PresentationStrategy::NONE;
     CanvasStorage requestedCanvasStorage = CanvasStorage::NONE;
     CanvasStorage actualCanvasStorage = CanvasStorage::NONE;
     const char* fallbackReason = nullptr;
+
+    inline bool success() const { return surface != nullptr; }
 };
 
 class DisplaySurfaceFactory {

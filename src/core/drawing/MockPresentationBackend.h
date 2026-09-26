@@ -50,8 +50,12 @@ public:
         // 2. Blanking enforcement
         if (policy.allowBlanking && simulatedBlankUs > 0) {
             timing.blankUs = simulatedBlankUs;
-            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
-                timing.result = PresentationResult::BlankBudgetExceeded;
+            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
+                if (policy.degradedBlankingPermitted) {
+                    timing.degradedBlankingUsed = true;
+                } else {
+                    timing.result = PresentationResult::BlankBudgetExceeded;
+                }
             }
         } else {
             timing.blankUs = 0;
@@ -104,9 +108,13 @@ public:
 
         if (strategy == PresentationStrategy::CANVAS_BURST_SINGLE) {
             // Pre-flight check: in single-buffer mode, if transfer estimate exceeds maxBlankUs
-            if (policy.allowBlanking && policy.maxBlankUs > 0 && simulatedTransferUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
-                timing.result = PresentationResult::BlankBudgetExceeded;
-                return timing;
+            if (policy.allowBlanking && policy.maxBlankUs > 0 && simulatedTransferUs > policy.maxBlankUs) {
+                if (!policy.degradedBlankingPermitted) {
+                    timing.result = PresentationResult::BlankBudgetExceeded;
+                    return timing;
+                } else {
+                    timing.degradedBlankingUsed = true;
+                }
             }
 
             executionLog.push_back(Step::WaitForSafeWindow);
@@ -123,6 +131,9 @@ public:
         PresentationTiming cTiming = commit(policy);
         cTiming.encodeUs = simulatedEncodeUs;
         cTiming.totalPresentUs += cTiming.encodeUs;
+        if (timing.degradedBlankingUsed) {
+            cTiming.degradedBlankingUsed = true;
+        }
         if (cTiming.result == PresentationResult::Ok && policy.maxFrameUs > 0 && cTiming.totalPresentUs > policy.maxFrameUs) {
             cTiming.result = PresentationResult::FrameBudgetExceeded;
         }

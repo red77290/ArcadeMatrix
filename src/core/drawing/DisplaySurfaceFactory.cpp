@@ -91,7 +91,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
         result.reason = SurfaceSelectionReason::FallbackAllocationFailed;
         result.reasonText = "CRITICAL: Surface allocation failed completely";
         result.fallbackReason = "Surface allocation failed completely";
-        result.actualStrategy = PresentationStrategy::DIRECT_DMA_SINGLE;
+        result.actualStrategy = PresentationStrategy::NONE;
         result.actualCanvasStorage = CanvasStorage::NONE;
     } else {
         result.actualStrategy = result.surface->presentationStrategy();

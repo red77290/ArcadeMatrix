@@ -97,7 +97,11 @@ PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& po
         _engine->setBlank(false);
         timing.blankUs = micros() - blankStart;
         if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
-            timing.result = PresentationResult::BlankBudgetExceeded;
+            if (policy.degradedBlankingPermitted) {
+                timing.degradedBlankingUsed = true;
+            } else {
+                timing.result = PresentationResult::BlankBudgetExceeded;
+            }
         }
     }
 
@@ -202,8 +206,12 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         if (policy.allowBlanking && blankStart > 0) {
             _engine->setBlank(false);
             timing.blankUs = micros() - blankStart;
-            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
-                timing.result = PresentationResult::BlankBudgetExceeded;
+            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
+                if (policy.degradedBlankingPermitted) {
+                    timing.degradedBlankingUsed = true;
+                } else {
+                    timing.result = PresentationResult::BlankBudgetExceeded;
+                }
             }
         }
     } else {
@@ -229,10 +237,14 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
 
         // Pre-flight check: in single-buffer mode, if estimated transfer (encode + writeback)
         // exceeds maxBlankUs and degraded blanking is not explicitly permitted, reject preemptively!
-        if (policy.allowBlanking && policy.maxBlankUs > 0 && estimatedTransferUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
-            timing.result = PresentationResult::BlankBudgetExceeded;
-            timing.totalPresentUs = micros() - t0;
-            return timing;
+        if (policy.allowBlanking && policy.maxBlankUs > 0 && estimatedTransferUs > policy.maxBlankUs) {
+            if (!policy.degradedBlankingPermitted) {
+                timing.result = PresentationResult::BlankBudgetExceeded;
+                timing.totalPresentUs = micros() - t0;
+                return timing;
+            } else {
+                timing.degradedBlankingUsed = true;
+            }
         }
 
         if (_synchronizer) {
@@ -279,7 +291,11 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(false);
             timing.blankUs = micros() - blankStart;
             if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
-                timing.result = PresentationResult::BlankBudgetExceeded;
+                if (policy.degradedBlankingPermitted) {
+                    timing.degradedBlankingUsed = true;
+                } else {
+                    timing.result = PresentationResult::BlankBudgetExceeded;
+                }
             }
         }
     }

@@ -25,6 +25,7 @@ enum class CanvasStorage : uint8_t {
  * @brief Hardware display synchronization and presentation mechanism.
  */
 enum class PresentationStrategy : uint8_t {
+    NONE = 0,            ///< No active presentation pipeline (allocation or initialization failure)
     DIRECT_DMA_DOUBLE,   ///< Direct rendering to HUB75 DMA back-buffer + flipDMABuffer()
     DIRECT_DMA_SINGLE,   ///< Direct rendering to single DMA buffer (minimal memory, unmanaged tearing)
     CANVAS_BURST_SINGLE, ///< Canvas + Hub75BulkEncoder to single DMA buffer with presentation synchronization
@@ -77,6 +78,7 @@ struct PresentationTiming {
     uint32_t transferUs = 0;                            ///< Duration spent writing to DMA / CPU cache writeback
     uint32_t blankUs = 0;                               ///< Duration Output Enable (OE) was held blanked
     uint32_t totalPresentUs = 0;                        ///< Total presentation duration
+    bool degradedBlankingUsed = false;                  ///< Set when presentation completed but exceeded nominal blanking budget
 };
 
 /**
