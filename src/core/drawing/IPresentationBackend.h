@@ -49,4 +49,9 @@ public:
      * @brief Returns active synchronizer implementation (or nullptr if unavailable).
      */
     virtual IPresentationSynchronizer* getSynchronizer() { return nullptr; }
+
+    /**
+     * @brief Attaches a hardware presentation synchronizer (e.g. V-Blank or scanline pause).
+     */
+    virtual void setSynchronizer(IPresentationSynchronizer* synchronizer) { (void)synchronizer; }
 };

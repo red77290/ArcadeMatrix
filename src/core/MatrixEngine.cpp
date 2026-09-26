@@ -9,6 +9,7 @@ RenderStats g_renderStats;
 #include "../hal/BoardProfile.h"
 #include "Logger.h"
 #include "drawing/Hub75BulkEncoder.h"
+#include "drawing/Hub75PresentationBackend.h"
 #include "../../include/HardwareProfile.h"
 
 /**
@@ -22,6 +23,7 @@ MatrixEngine::MatrixEngine() : display(nullptr) {}
  * Safely deletes the display instance and frees DMA memory.
  */
 MatrixEngine::~MatrixEngine() {
+    m_presentationBackend.reset();
     if (display) {
         delete display;
     }
@@ -155,7 +157,15 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     display->clearScreen();
     present();
 
+    m_presentationBackend.reset(new Hub75PresentationBackend(
+        this, config.width, config.height, config.colorDepth, m_doubleBuffered
+    ));
+
     return true;
+}
+
+IPresentationBackend* MatrixEngine::getPresentationBackend() {
+    return m_presentationBackend.get();
 }
 
 void MatrixEngine::present() {

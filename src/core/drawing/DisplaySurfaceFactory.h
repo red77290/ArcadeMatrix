@@ -16,7 +16,8 @@ enum class SurfaceSelectionReason : uint8_t {
     AutoResolvedSramCanvasLowDma,
     ExplicitUserPolicy,
     FallbackDirectDma,
-    FallbackAllocationFailed
+    FallbackAllocationFailed,
+    UnsupportedGeometry
 };
 
 struct SurfaceCreationResult {

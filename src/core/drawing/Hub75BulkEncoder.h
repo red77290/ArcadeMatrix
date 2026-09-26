@@ -16,7 +16,7 @@
 #endif
 
 #ifndef BITMASK_RGB12_CLEAR
-#define BITMASK_RGB12_CLEAR 0b1111111111000000
+#define BITMASK_RGB12_CLEAR (0b1111111111000000)
 #endif
 
 #include "Hub75DmaTarget.h"

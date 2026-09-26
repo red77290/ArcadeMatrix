@@ -117,7 +117,10 @@ def check_modular_sd_config():
             return False
         try:
             with open(p, "r", encoding="utf-8") as f:
-                json.load(f)
+                d = json.load(f)
+            if req == "hardware.json" and "render_pipeline" not in d and "renderPipeline" not in d:
+                print(f"❌ {p} missing required 'render_pipeline' key")
+                return False
         except Exception as e:
             print(f"❌ {p} JSON error: {e}")
             return False

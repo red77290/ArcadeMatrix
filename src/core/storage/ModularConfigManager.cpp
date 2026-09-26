@@ -111,23 +111,55 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
     outMatrix.height = doc["height"] | outMatrix.height;
     if (doc.containsKey("panel_type")) outMatrix.panelType = doc["panel_type"].as<String>();
     else if (doc.containsKey("panelType")) outMatrix.panelType = doc["panelType"].as<String>();
-    outMatrix.chainLength = doc["chain_length"] | outMatrix.chainLength;
-    outMatrix.powerLimitPercent = doc["power_limit_percent"] | outMatrix.powerLimitPercent;
-    outMatrix.forceSingleBuffer = doc["force_single_buffer"] | outMatrix.forceSingleBuffer;
-    outMatrix.colorDepth = doc["color_depth"] | outMatrix.colorDepth;
+
+    if (doc.containsKey("chain_length")) outMatrix.chainLength = doc["chain_length"].as<int>();
+    else if (doc.containsKey("chainLength")) outMatrix.chainLength = doc["chainLength"].as<int>();
+
+    if (doc.containsKey("power_limit_percent")) outMatrix.powerLimitPercent = doc["power_limit_percent"].as<int>();
+    else if (doc.containsKey("powerLimitPercent")) outMatrix.powerLimitPercent = doc["powerLimitPercent"].as<int>();
+
+    if (doc.containsKey("force_single_buffer")) outMatrix.forceSingleBuffer = doc["force_single_buffer"].as<bool>();
+    else if (doc.containsKey("forceSingleBuffer")) outMatrix.forceSingleBuffer = doc["forceSingleBuffer"].as<bool>();
+
+    if (doc.containsKey("color_depth")) outMatrix.colorDepth = doc["color_depth"].as<int>();
+    else if (doc.containsKey("colorDepth")) outMatrix.colorDepth = doc["colorDepth"].as<int>();
+
     if (doc.containsKey("rgb_sequence")) outMatrix.rgbSequence = doc["rgb_sequence"].as<String>();
     else if (doc.containsKey("rgbSequence")) outMatrix.rgbSequence = doc["rgbSequence"].as<String>();
-    outMatrix.limitRefreshRateHz = doc["limit_refresh_rate_hz"] | outMatrix.limitRefreshRateHz;
+
+    if (doc.containsKey("limit_refresh_rate_hz")) outMatrix.limitRefreshRateHz = doc["limit_refresh_rate_hz"].as<int>();
+    else if (doc.containsKey("limitRefreshRateHz")) outMatrix.limitRefreshRateHz = doc["limitRefreshRateHz"].as<int>();
+
     if (doc.containsKey("driver_chip")) outMatrix.driverChip = doc["driver_chip"].as<String>();
     else if (doc.containsKey("driverChip")) outMatrix.driverChip = doc["driverChip"].as<String>();
-    outMatrix.clkPhase = doc["clk_phase"] | outMatrix.clkPhase;
-    outMatrix.latchBlanking = doc["latch_blanking"] | outMatrix.latchBlanking;
-    outMatrix.rowAddressMode = doc["row_address_mode"] | outMatrix.rowAddressMode;
-    outMatrix.rotation_offset = doc["rotation_offset"] | outMatrix.rotation_offset;
-    outMatrix.auto_rotate = doc["auto_rotate"] | outMatrix.auto_rotate;
+
+    if (doc.containsKey("clk_phase")) outMatrix.clkPhase = doc["clk_phase"].as<bool>();
+    else if (doc.containsKey("clkPhase")) outMatrix.clkPhase = doc["clkPhase"].as<bool>();
+
+    if (doc.containsKey("latch_blanking")) outMatrix.latchBlanking = doc["latch_blanking"].as<int>();
+    else if (doc.containsKey("latchBlanking")) outMatrix.latchBlanking = doc["latchBlanking"].as<int>();
+
+    if (doc.containsKey("row_address_mode")) outMatrix.rowAddressMode = doc["row_address_mode"].as<int>();
+    else if (doc.containsKey("rowAddressMode")) outMatrix.rowAddressMode = doc["rowAddressMode"].as<int>();
+
+    if (doc.containsKey("rotation_offset")) outMatrix.rotation_offset = doc["rotation_offset"].as<int>();
+    else if (doc.containsKey("rotationOffset")) outMatrix.rotation_offset = doc["rotationOffset"].as<int>();
+
+    if (doc.containsKey("auto_rotate")) outMatrix.auto_rotate = doc["auto_rotate"].as<bool>();
+    else if (doc.containsKey("autoRotate")) outMatrix.auto_rotate = doc["autoRotate"].as<bool>();
+
     if (doc.containsKey("rotation_transition")) outMatrix.rotation_transition = doc["rotation_transition"].as<String>();
-    outMatrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"] | outMatrix.rotation_transition_duration_ms;
-    outMatrix.matrix_power = doc["matrix_power"] | outMatrix.matrix_power;
+    else if (doc.containsKey("rotationTransition")) outMatrix.rotation_transition = doc["rotationTransition"].as<String>();
+
+    if (doc.containsKey("rotation_transition_duration_ms")) outMatrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
+    else if (doc.containsKey("rotationTransitionDurationMs")) outMatrix.rotation_transition_duration_ms = doc["rotationTransitionDurationMs"].as<int>();
+
+    if (doc.containsKey("matrix_power")) outMatrix.matrix_power = doc["matrix_power"].as<bool>();
+    else if (doc.containsKey("matrixPower")) outMatrix.matrix_power = doc["matrixPower"].as<bool>();
+
+    if (doc.containsKey("render_pipeline")) outMatrix.render_pipeline = doc["render_pipeline"].as<String>();
+    else if (doc.containsKey("renderPipeline")) outMatrix.render_pipeline = doc["renderPipeline"].as<String>();
+
     return true;
 }
 
@@ -151,6 +183,7 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["rotation_transition"] = matrix.rotation_transition;
     doc["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
     doc["matrix_power"] = matrix.matrix_power;
+    doc["render_pipeline"] = matrix.render_pipeline;
 
     String out;
     serializeJsonPretty(doc, out);
@@ -166,19 +199,43 @@ bool ModularConfigManager::loadSystem(SystemConfig& outSystem) {
     if (deserializeJson(doc, content)) return false;
 
     if (doc.containsKey("timezone")) outSystem.timezone = doc["timezone"].as<String>();
-    outSystem.format24h = doc["format24h"] | outSystem.format24h;
+
+    if (doc.containsKey("format_24h")) outSystem.format24h = doc["format_24h"].as<bool>();
+    else if (doc.containsKey("format24h")) outSystem.format24h = doc["format24h"].as<bool>();
+
     if (doc.containsKey("lang")) outSystem.lang = doc["lang"].as<String>();
     if (doc.containsKey("unit")) outSystem.unit = doc["unit"].as<String>();
-    outSystem.temp_offset = doc["temp_offset"] | outSystem.temp_offset;
-    outSystem.night_mode_enabled = doc["night_mode_enabled"] | outSystem.night_mode_enabled;
+
+    if (doc.containsKey("temp_offset")) outSystem.temp_offset = doc["temp_offset"].as<float>();
+    else if (doc.containsKey("tempOffset")) outSystem.temp_offset = doc["tempOffset"].as<float>();
+
+    if (doc.containsKey("night_mode_enabled")) outSystem.night_mode_enabled = doc["night_mode_enabled"].as<bool>();
+    else if (doc.containsKey("nightModeEnabled")) outSystem.night_mode_enabled = doc["nightModeEnabled"].as<bool>();
+
     if (doc.containsKey("turn_off_at")) outSystem.turn_off_at = doc["turn_off_at"].as<String>();
+    else if (doc.containsKey("turnOffAt")) outSystem.turn_off_at = doc["turnOffAt"].as<String>();
+
     if (doc.containsKey("wake_up_at")) outSystem.wake_up_at = doc["wake_up_at"].as<String>();
-    outSystem.night_brightness = doc["night_brightness"] | outSystem.night_brightness;
-    outSystem.idle_fighter_enabled = doc["idle_fighter_enabled"] | outSystem.idle_fighter_enabled;
-    outSystem.idle_fighter_interval = doc["idle_fighter_interval"] | outSystem.idle_fighter_interval;
-    outSystem.idle_fighter_speed = doc["idle_fighter_speed"] | outSystem.idle_fighter_speed;
-    outSystem.api_auth_enabled = doc["api_auth_enabled"] | outSystem.api_auth_enabled;
+    else if (doc.containsKey("wakeUpAt")) outSystem.wake_up_at = doc["wakeUpAt"].as<String>();
+
+    if (doc.containsKey("night_brightness")) outSystem.night_brightness = doc["night_brightness"].as<int>();
+    else if (doc.containsKey("nightBrightness")) outSystem.night_brightness = doc["nightBrightness"].as<int>();
+
+    if (doc.containsKey("idle_fighter_enabled")) outSystem.idle_fighter_enabled = doc["idle_fighter_enabled"].as<bool>();
+    else if (doc.containsKey("idleFighterEnabled")) outSystem.idle_fighter_enabled = doc["idleFighterEnabled"].as<bool>();
+
+    if (doc.containsKey("idle_fighter_interval")) outSystem.idle_fighter_interval = doc["idle_fighter_interval"].as<int>();
+    else if (doc.containsKey("idleFighterInterval")) outSystem.idle_fighter_interval = doc["idleFighterInterval"].as<int>();
+
+    if (doc.containsKey("idle_fighter_speed")) outSystem.idle_fighter_speed = doc["idle_fighter_speed"].as<int>();
+    else if (doc.containsKey("idleFighterSpeed")) outSystem.idle_fighter_speed = doc["idleFighterSpeed"].as<int>();
+
+    if (doc.containsKey("api_auth_enabled")) outSystem.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
+    else if (doc.containsKey("apiAuthEnabled")) outSystem.api_auth_enabled = doc["apiAuthEnabled"].as<bool>();
+
     if (doc.containsKey("api_token")) outSystem.api_token = doc["api_token"].as<String>();
+    else if (doc.containsKey("apiToken")) outSystem.api_token = doc["apiToken"].as<String>();
+
     return true;
 }
 
@@ -225,8 +282,10 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt)
         outMqtt.port = m["port"] | outMqtt.port;
         if (m.containsKey("user")) outMqtt.user = m["user"].as<String>();
         if (m.containsKey("pass")) outMqtt.pass = m["pass"].as<String>();
-        if (m.containsKey("deviceName")) outMqtt.deviceName = m["deviceName"].as<String>();
-        outMqtt.allow_overlay = m["allow_overlay"] | outMqtt.allow_overlay;
+        if (m.containsKey("device_name")) outMqtt.deviceName = m["device_name"].as<String>();
+        else if (m.containsKey("deviceName")) outMqtt.deviceName = m["deviceName"].as<String>();
+        if (m.containsKey("allow_overlay")) outMqtt.allow_overlay = m["allow_overlay"].as<bool>();
+        else if (m.containsKey("allowOverlay")) outMqtt.allow_overlay = m["allowOverlay"].as<bool>();
     }
     return true;
 }
@@ -264,12 +323,18 @@ bool ModularConfigManager::loadPlaylist(std::vector<RotationEntry>& outRotation)
     JsonArrayConst arr = doc.as<JsonArrayConst>();
     for (JsonObjectConst rObj : arr) {
         RotationEntry entry;
-        entry.instance_id = rObj["instance_id"] | "";
-        entry.duration_sec = rObj["duration_sec"] | 15;
+        if (rObj.containsKey("instance_id")) entry.instance_id = rObj["instance_id"].as<String>();
+        else if (rObj.containsKey("instanceId")) entry.instance_id = rObj["instanceId"].as<String>();
+
+        if (rObj.containsKey("duration_sec")) entry.duration_sec = rObj["duration_sec"].as<int>();
+        else if (rObj.containsKey("durationSec")) entry.duration_sec = rObj["durationSec"].as<int>();
+
         if (rObj.containsKey("overlays") && rObj["overlays"].is<JsonObjectConst>() && rObj["overlays"].containsKey("fighter")) {
             entry.overlays.fighter = rObj["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
         } else if (rObj.containsKey("fighter_overlay")) {
             entry.overlays.fighter = rObj["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
+        } else if (rObj.containsKey("fighterOverlay")) {
+            entry.overlays.fighter = rObj["fighterOverlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
         } else {
             entry.overlays.fighter = FighterOverride::Unspecified;
         }
