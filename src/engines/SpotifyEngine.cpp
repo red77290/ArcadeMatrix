@@ -508,7 +508,12 @@ EngineDescriptor SpotifyDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
 
     desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = true;
     desc.requirements.needsPsram = false;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 14000;
+    desc.requirements.internalContiguousBytes = 24000;
 
     desc.schema.fields = {
         ConfigField("client_id", ConfigType::STRING, "Client ID", "Spotify Developer Client ID.", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),

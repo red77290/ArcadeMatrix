@@ -2329,7 +2329,12 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ I2S Microphone",
     tag_temp: "🌡️ Temp Sensor",
+    tag_gyro: "🧭 Gyroscope",
     tag_realtime: "⚡ Real-Time",
+    degraded_perf: "Degraded",
+    hide_incompatible: "Hide Incompatible",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Missing required hardware or memory",
     confirm_remove_screen: "Are you sure you want to remove this screen?",
     confirm_remove_instance: "Are you sure you want to remove this instance?",
     
@@ -2837,7 +2842,12 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ Micro I2S",
     tag_temp: "🌡️ Capteur Temp",
+    tag_gyro: "🧭 Gyroscope",
     tag_realtime: "⚡ Temps Réel",
+    degraded_perf: "Dégradé",
+    hide_incompatible: "Masquer incompatibles",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Matériel ou mémoire requis manquant",
     confirm_remove_screen: "Êtes-vous sûr de vouloir supprimer cet écran ?",
     confirm_remove_instance: "Êtes-vous sûr de vouloir supprimer cette instance ?",
     
@@ -3345,7 +3355,12 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ Micrófono I2S",
     tag_temp: "🌡️ Sensor Temp",
+    tag_gyro: "🧭 Giroscopio",
     tag_realtime: "⚡ Tiempo Real",
+    degraded_perf: "Degradado",
+    hide_incompatible: "Ocultar incompatibles",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Falta hardware o memoria requerida",
     confirm_remove_screen: "¿Estás seguro de que deseas eliminar esta pantalla?",
     confirm_remove_instance: "¿Estás seguro de que deseas eliminar esta instancia?",
     
@@ -4510,7 +4525,10 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
               ${descriptors.map(d => {
                 const dMeta = getEngineMeta(d);
                 const isSel = d.metadata.id === currentEngineId ? 'selected' : '';
-                return `<option value="${d.metadata.id}" ${isSel}>${dMeta.icon} ${dMeta.name}</option>`;
+                const comp = d.compatibility || {};
+                const isCompat = comp.status !== 'incompatible' && comp.compatible !== false && d.available !== false;
+                const badge = !isCompat ? ` 🚫 [${comp.reason_text || d.reason || 'Incompatible'}]` : (comp.status === 'degraded' ? ' ⚡ [Degraded]' : '');
+                return `<option value="${d.metadata.id}" ${isSel} ${!isCompat ? 'disabled style="color:#94a3b8;"' : ''}>${dMeta.icon} ${dMeta.name}${badge}</option>`;
               }).join('')}
             </select>
           </div>
@@ -5106,14 +5124,23 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
   const catalogWrapper = document.createElement('div');
   catalogWrapper.id = 'engine-catalog-section';
 
+  let hideIncompatible = localStorage.getItem('am_hide_incompatible') === 'true';
+  const compatibleCount = descriptors.filter(d => (d.compatibility ? d.compatibility.compatible : d.available !== false)).length;
+
   const catalogHeader = document.createElement('div');
-  catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;";
+  catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;";
   catalogHeader.innerHTML = `
     <div>
       <h3 style="margin: 0; font-size: 1.25rem;" data-i18n="engine_catalog_title">📚 ${t('engine_catalog_title', 'Plugin & Engine Library')}</h3>
       <p class="text-muted" style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="engine_catalog_desc">${t('engine_catalog_desc', 'All display engines available on your device. Click Add to Loop to launch a new screen on your matrix.')}</p>
     </div>
-    <span class="badge badge-accent">${descriptors.length} ${t('engines_available', 'Engines Available')}</span>
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+      <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; user-select: none; background: rgba(255,255,255,0.05); padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+        <input type="checkbox" id="check-hide-incompatible" ${hideIncompatible ? 'checked' : ''}>
+        <span data-i18n="hide_incompatible">${t('hide_incompatible', 'Hide Incompatible')}</span>
+      </label>
+      <span class="badge badge-accent" id="catalog-count-badge">${compatibleCount} / ${descriptors.length} ${t('engines_available', 'Compatible')}</span>
+    </div>
   `;
   catalogWrapper.appendChild(catalogHeader);
 
@@ -5124,22 +5151,69 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
     const eng = desc.metadata || {};
     const req = desc.requirements || {};
     const cap = desc.capabilities || {};
+    const comp = desc.compatibility || {};
     const meta = getEngineMeta(desc);
     const icon = meta.icon;
     const name = meta.name;
     const descText = meta.desc;
 
+    const isIncompatible = comp.status === 'incompatible' || (comp.compatible === false) || (desc.available === false);
+    const isDegraded = comp.status === 'degraded' || comp.degraded === true;
+
     const card = document.createElement('div');
     card.className = 'engine-catalog-card';
+    card.dataset.incompatible = isIncompatible ? 'true' : 'false';
+    if (isIncompatible) {
+      card.style.opacity = '0.65';
+      card.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+      card.style.background = 'rgba(15, 23, 42, 0.45)';
+      if (hideIncompatible) {
+        card.style.display = 'none';
+      }
+    } else if (isDegraded) {
+      card.style.border = '1px solid rgba(245, 158, 11, 0.4)';
+    }
 
     let tagsHtml = '';
+    if (isIncompatible) {
+      tagsHtml += `<span class="engine-tag" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🚫 ${comp.reason_text || desc.reason || t('incompatible', 'Incompatible')}</span>`;
+    } else if (isDegraded) {
+      tagsHtml += `<span class="engine-tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">⚡ ${t('degraded_perf', 'Degraded')}</span>`;
+    } else {
+      const fpsText = comp.empirically_validated ? `⚡ ${comp.validated_fps || 60} FPS (HW Validated)` : `🟢 ${comp.target_fps || 60} FPS`;
+      tagsHtml += `<span class="engine-tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">${fpsText}</span>`;
+    }
+
     if (req.needsPsram) tagsHtml += `<span class="engine-tag psram">${t('tag_psram', '💾 PSRAM')}</span>`;
-    if (req.needsAudio) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
+    if (req.needsAudio || req.needsAudioInput) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
     if (req.needsTempSensor) tagsHtml += `<span class="engine-tag sensor">${t('tag_temp', '🌡️ Capteur Temp')}</span>`;
-    if (cap.realtime) tagsHtml += `<span class="engine-tag realtime">${t('tag_realtime', '⚡ Temps Réel')}</span>`;
+    if (req.needsGyroscope) tagsHtml += `<span class="engine-tag sensor">${t('tag_gyro', '🧭 Gyro')}</span>`;
+    if (req.needsTls) tagsHtml += `<span class="engine-tag" style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd;">🔒 TLS</span>`;
 
     const existingCount = instancesList.filter(i => i.engine_id === eng.id).length;
     const existingBadge = existingCount > 0 ? `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-size: 0.75rem;">${existingCount} ${t('screens_active', 'active screen(s)')}</span>` : '';
+
+    let diagnosticHtml = '';
+    if (isIncompatible) {
+      const reasonMsg = comp.reason_text || desc.reason || t('incompatible_hardware', 'Missing required hardware or memory');
+      diagnosticHtml = `
+        <div style="margin-top: 0.6rem; padding: 0.45rem 0.6rem; background: rgba(0,0,0,0.35); border-radius: 6px; font-size: 0.73rem; color: #cbd5e1; line-height: 1.4; border-left: 3px solid #ef4444;">
+          <div style="font-weight: 600; color: #fca5a5; margin-bottom: 2px;">⚠️ ${reasonMsg}</div>
+          ${comp.memory ? `<div style="color: #94a3b8;">DRAM: ${Math.round(comp.memory.internal_required/1024)} KB req. (free: ${Math.round(comp.memory.internal_available/1024)} KB)</div>` : ''}
+          ${comp.memory && comp.memory.largest_required_block > 0 ? `<div style="color: #94a3b8;">Contiguous: ${Math.round(comp.memory.largest_required_block/1024)} KB req. (max block: ${Math.round(comp.memory.largest_available_block/1024)} KB)</div>` : ''}
+        </div>
+      `;
+    } else if (isDegraded && comp.reason_text) {
+      diagnosticHtml = `
+        <div style="margin-top: 0.5rem; padding: 0.35rem 0.5rem; background: rgba(245, 158, 11, 0.1); border-radius: 4px; font-size: 0.73rem; color: #fcd34d; border-left: 2px solid #f59e0b;">
+          ⚠️ ${comp.reason_text}
+        </div>
+      `;
+    }
+
+    const actionBtnHtml = isIncompatible
+      ? `<button class="btn btn-secondary btn-add-loop" disabled style="opacity: 0.45; width: 100%; cursor: not-allowed;" title="${comp.reason_text || desc.reason || ''}">🚫 ${t('incompatible', 'Incompatible')}</button>`
+      : `<button class="btn btn-primary btn-add-loop" style="font-weight:600; width: 100%;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>`;
 
     card.innerHTML = `
       <div>
@@ -5155,21 +5229,35 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
           ${tagsHtml}
           ${existingBadge}
         </div>
+        ${diagnosticHtml}
       </div>
       <div class="engine-card-actions">
-        <button class="btn btn-primary btn-add-loop" style="font-weight:600; width: 100%;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>
+        ${actionBtnHtml}
       </div>
     `;
 
-    card.querySelector('.btn-add-loop').onclick = () => {
-      showAddScreenModal(eng.id, descriptors, instancesList, true);
-    };
+    if (!isIncompatible) {
+      card.querySelector('.btn-add-loop').onclick = () => {
+        showAddScreenModal(eng.id, descriptors, instancesList, true);
+      };
+    }
 
     grid.appendChild(card);
   });
 
   catalogWrapper.appendChild(grid);
   dashboardContainer.appendChild(catalogWrapper);
+
+  const hideCheck = catalogWrapper.querySelector('#check-hide-incompatible');
+  if (hideCheck) {
+    hideCheck.onchange = (e) => {
+      const hide = e.target.checked;
+      localStorage.setItem('am_hide_incompatible', hide ? 'true' : 'false');
+      grid.querySelectorAll('.engine-catalog-card[data-incompatible="true"]').forEach(c => {
+        c.style.display = hide ? 'none' : '';
+      });
+    };
+  }
 }
 
 // Helper: Build Rich Multi-Select Group with YOKO / TATE Tabs for Folder / GIF fields
@@ -7843,6 +7931,8 @@ async function initSettings() {
 
       try {
         await API.post('/api/system', { matrix, reboot: true });
+        endpointCache.delete('/api/engines');
+        try { sessionStorage.removeItem('am_cache_/api/engines'); } catch (_) {}
         if (window.__sysConfig) window.__sysConfig.matrix = matrix;
         window.showToast('Hardware settings saved! Restarting panel driver...', 'success');
       } catch (e) {

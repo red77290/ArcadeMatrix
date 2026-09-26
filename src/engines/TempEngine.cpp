@@ -170,6 +170,9 @@ EngineDescriptor TempEngineDescriptorHandler::getDescriptor() const {
     desc_temp.metadata = {"temp", "Environment Sensor", "sensor", FIRMWARE_VERSION};
     desc_temp.capabilities.realtime = false;
     desc_temp.requirements.needsTempSensor = false;
+    desc_temp.requirements.targetFps = 30;
+    desc_temp.requirements.supportsSingleBuffer = true;
+    desc_temp.requirements.internalPersistentBytes = 4000;
     desc_temp.schema.fields = {
         ConfigField("units", ConfigType::ENUM, "Units", "Temperature measurement units", "system", false, "", "", "", "system:System (General),C:Celsius (°C),F:Fahrenheit (°F)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("temp_offset", ConfigType::FLOAT, "Calibration Offset", "Calibration offset in selected temperature unit added to raw sensor reading", "0.0", false, "-30.0", "30.0", "0.5", "", "", false, "", ValidationPolicy::Clamp),

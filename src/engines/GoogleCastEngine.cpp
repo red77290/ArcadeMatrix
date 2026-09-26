@@ -881,7 +881,11 @@ EngineDescriptor GoogleCastDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
 
     desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = false;
     desc.requirements.needsPsram = false; // Adaptive: works on both ESP32 classic and S3!
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 16000;
 
     desc.schema.fields = {
         ConfigField("device_ip", ConfigType::STRING, "Device IP (Optional)", "Static IP of your Google Home / Nest Audio. Leave empty for automatic discovery.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

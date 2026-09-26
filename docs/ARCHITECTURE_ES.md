@@ -169,8 +169,26 @@ classDiagram
 ## 4. Autodescubrimiento: Registry, Registrar, Handlers y Gating
 
 1. Cada motor encapsula sus metadatos, su esquema `ConfigSchema`, sus requisitos de hardware `EngineRequirements` y su fábrica en un `IEngineDescriptorHandler`.
-2. Al iniciar, `EngineRegistrar::registerAll()` compara los requisitos con `hardwareHAL.capabilities()`.
+2. Al iniciar, `EngineRegistrar::registerAll()` delega la verificación de viabilidad a `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), que evalúa `hardwareHAL.capabilities()` y la geometría activa.
 3. Solo los motores soportados se registran como activos en `EngineRegistry`. Los no compatibles se marcan con `available: false` y un motivo descriptivo para la WebUI.
+
+### Modelo Canónico de Compatibilidad (Única Fuente de Verdad)
+
+ArcadeMatrix V4 prohíbe terminantemente la duplicación de algoritmos de compatibilidad entre lenguajes. El componente C++ `CompatibilityEvaluator` es la **única autoridad fuente de verdad**:
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Autoridad Canónica Única)"]
+    EVAL -->|"Evaluación Dinámica Core 0"| ESP["WebServerAPI ESP32 (/api/engines)"]
+    EVAL -->|"Ejecución Nativa Anfitrión (macOS / Linux)"| CLI["Binario matrix_generator"]
+    ESP -->|"Doble Filtro (UI + Gating)"| UI["Catálogo WebUI (data/index.html)"]
+    CLI -->|"Artefacto JSON"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Generación y Validación CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Filtro Nivel 1 (WebUI):** Los motores incompatibles se muestran deshabilitados con una insignia `🚫 Incompatible: <motivo>` y una ventana emergente detallada con diagnósticos de memoria DRAM, bloque contiguo y SPIRAM. Una casilla de verificación `[✓] Ocultar incompatibles` filtra su visibilidad.
+- **Filtro Nivel 2 (Seguridad Runtime):** El endpoint `POST /api/rotation` evalúa la viabilidad de cada motor antes de admitirlo y devuelve HTTP 400 con un payload de error si se solicita un motor incompatible, blindando el sistema contra caídas por falta de memoria.
+- **Validación CI Continua:** Toda adición o modificación de un motor exige actualizar `test/native/tools/matrix_generator.cpp` y ejecutar `scripts/generate_engine_matrix.py`. La conformidad de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) se comprueba en CI mediante `scripts/validate_docs.py`.
 
 ---
 

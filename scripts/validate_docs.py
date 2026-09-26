@@ -32,6 +32,7 @@ REQUIRED_DOC_FILES = [
     "docs/ASSET_PIPELINE.md",
     "docs/ASSET_PIPELINE_FR.md",
     "docs/ASSET_PIPELINE_ES.md",
+    "docs/ENGINE_COMPATIBILITY_MATRIX.md",
 ]
 
 # Obsolete pattern checks
@@ -198,6 +199,13 @@ def main():
     guard_script = os.path.join(ROOT_DIR, "scripts", "ci_architecture_guard.py")
     if os.path.exists(guard_script):
         ret = subprocess.call([sys.executable, guard_script], cwd=ROOT_DIR)
+        if ret != 0:
+            all_ok = False
+
+    # Validate Engine Compatibility Matrix
+    matrix_script = os.path.join(ROOT_DIR, "scripts", "generate_engine_matrix.py")
+    if os.path.exists(matrix_script):
+        ret = subprocess.call([sys.executable, matrix_script, "--check"], cwd=ROOT_DIR)
         if ret != 0:
             all_ok = False
 

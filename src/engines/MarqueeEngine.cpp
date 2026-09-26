@@ -320,6 +320,12 @@ EngineDescriptor MarqueeEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.selfPaced = false;
     desc.requirements.needsAudio = false;
     desc.requirements.needsNetwork = false;
+    desc.requirements.needsSd = true;
+    desc.requirements.targetFps = 60;
+    desc.requirements.prefersDoubleBuffer = true;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalContiguousBytes = 16000;
     desc.schema.fields = {
         ConfigField("file_path", ConfigType::FILE_ASSET, "Marquee File", "Path to marquee GIF or image on SD", "/marquees/marquee.gif", false, "", "", "", ".gif,.png,.jpg,.jpeg", "/api/upload?target=marquee", false, "", ValidationPolicy::Accept),
         ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Animation playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),

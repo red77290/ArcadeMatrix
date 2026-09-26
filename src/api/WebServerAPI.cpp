@@ -84,13 +84,15 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
     // field_type, label, description, default_value, options, options_endpoint, multiple,
     // visible_when, min_val, max_val, step) - under-counting here silently truncates the schema
     // of the largest engines, which is exactly what the WebUI reported as an empty response.
-    const size_t capacity = JSON_OBJECT_SIZE(8)            // root
+    const size_t capacity = JSON_OBJECT_SIZE(10)           // root
                           + JSON_OBJECT_SIZE(4)            // metadata
                           + JSON_OBJECT_SIZE(5)            // capabilities
-                          + JSON_OBJECT_SIZE(6)            // requirements
+                          + JSON_OBJECT_SIZE(8)            // requirements
+                          + JSON_OBJECT_SIZE(14)           // compatibility
+                          + JSON_OBJECT_SIZE(8)            // compatibility.memory
                           + JSON_ARRAY_SIZE(fieldCount)    // schema array
                           + fieldCount * JSON_OBJECT_SIZE(12)
-                          + 512;                           // headroom
+                          + 768;                           // headroom
 
     SpiRamJsonDocument doc(capacity);
     JsonObject obj = doc.to<JsonObject>();
@@ -115,14 +117,41 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
     reqObj["needs_gyroscope"] = desc.requirements.needsGyroscope;
     reqObj["needs_network"] = desc.requirements.needsNetwork;
     reqObj["needs_sd"] = desc.requirements.needsSd;
+    reqObj["needs_tls"] = desc.requirements.needsTls;
+    reqObj["target_fps"] = desc.requirements.targetFps;
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
-    auto reqCheck = EngineRegistrar::checkRequirements(desc.requirements, activePipeline);
-    obj["available"] = reqCheck.satisfied;
-    if (!reqCheck.satisfied) {
-        obj["reason"] = reqCheck.reason;
+    auto verdict = EngineRegistrar::evaluateCompatibility(desc, activePipeline);
+
+    obj["available"] = verdict.compatible();
+    if (!verdict.compatible()) {
+        obj["reason"] = verdict.reasonText;
     }
+    obj["capability_generation"] = CompatibilityEvaluator::getHardwareCapabilityGeneration();
+
+    JsonObject compObj = obj.createNestedObject("compatibility");
+    compObj["status"] = CompatibilityEvaluator::statusToString(verdict.status);
+    compObj["compatible"] = verdict.compatible();
+    compObj["degraded"] = verdict.degraded();
+    compObj["primary_reason"] = static_cast<int>(verdict.primaryReason);
+    compObj["reason_text"] = verdict.reasonText;
+    compObj["issue_flags"] = verdict.issueFlags;
+    compObj["strategy"] = CompatibilityEvaluator::strategyToString(verdict.strategy);
+    compObj["storage"] = CompatibilityEvaluator::storageToString(verdict.storage);
+    compObj["target_fps"] = verdict.targetFps;
+    compObj["estimated_fps"] = verdict.estimatedPresentationFps;
+    compObj["validated_fps"] = verdict.validatedFps;
+    compObj["empirically_validated"] = verdict.empiricallyValidated;
+
+    JsonObject memObj = compObj.createNestedObject("memory");
+    memObj["internal_required"] = verdict.internalRequiredBytes;
+    memObj["internal_available"] = verdict.internalAvailableBytes;
+    memObj["internal_headroom"] = verdict.internalHeadroomBytes;
+    memObj["largest_required_block"] = verdict.largestRequiredBlockBytes;
+    memObj["largest_available_block"] = verdict.largestAvailableBlockBytes;
+    memObj["psram_required"] = verdict.psramRequiredBytes;
+    memObj["psram_available"] = verdict.psramAvailableBytes;
 
     JsonArray schema = obj.createNestedArray("schema");
     for (const auto& field : desc.schema.fields) {
@@ -625,6 +654,7 @@ void WebServerAPI::setupRoutes() {
                 return filled;
             });
 
+        response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
     });
 
@@ -816,11 +846,11 @@ void WebServerAPI::setupRoutes() {
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
-        auto reqCheck = EngineRegistrar::checkRequirements(desc->requirements, activePipeline);
-        if (!reqCheck.satisfied) {
+        auto verdict = EngineRegistrar::evaluateCompatibility(*desc, activePipeline);
+        if (!verdict.compatible()) {
             SpiRamJsonDocument errDoc(256);
             errDoc["error"] = "engine_unavailable";
-            errDoc["reason"] = reqCheck.reason;
+            errDoc["reason"] = verdict.reasonText;
             String errResp;
             serializeJson(errDoc, errResp);
             request->send(400, "application/json", errResp);
@@ -1013,6 +1043,40 @@ void WebServerAPI::setupRoutes() {
         JsonArray arr = json.as<JsonArray>();
         extern ConfigLoader config;
         extern RotationManager* rotationManager;
+
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
+
+        // Level 2 Runtime Safety Gating: Reject any entry that references an incompatible engine
+        for (JsonObject entry : arr) {
+            String instId = entry["instance_id"].as<String>();
+            if (instId.isEmpty()) continue;
+            String engineId = "";
+            for (const auto& inst : guard.get().instances) {
+                if (inst.instance_id == instId) {
+                    engineId = inst.engine_id;
+                    break;
+                }
+            }
+            if (engineId.isEmpty()) {
+                engineId = instId;
+            }
+            const EngineDescriptor* desc = EngineRegistry::getDescriptor(engineId.c_str());
+            if (desc) {
+                auto verdict = EngineRegistrar::evaluateCompatibility(*desc, activePipeline);
+                if (!verdict.compatible()) {
+                    SpiRamJsonDocument errDoc(256);
+                    errDoc["error"] = "incompatible_engine";
+                    errDoc["instance_id"] = instId;
+                    errDoc["engine_id"] = engineId;
+                    errDoc["reason"] = verdict.reasonText;
+                    String errResp;
+                    serializeJson(errDoc, errResp);
+                    request->send(400, "application/json", errResp);
+                    return;
+                }
+            }
+        }
         
         config.rotation.clear();
         for (JsonObject entry : arr) {
@@ -2207,6 +2271,7 @@ void WebServerAPI::setupRoutes() {
 
         bool saved = true;
         if (changed) {
+            CompatibilityEvaluator::notifyHardwareCapabilityChanged();
             ConfigSanitizer::sanitize(config);
             saved = config.saveToSD("/config.json");
             if (!saved) willReboot = false;   // a reboot now would discard the change

@@ -618,6 +618,9 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     desc_date.capabilities.realtime = false;
     desc_date.requirements.needsAudio = false;
     desc_date.requirements.needsNetwork = false;
+    desc_date.requirements.targetFps = 30;
+    desc_date.requirements.supportsSingleBuffer = true;
+    desc_date.requirements.internalPersistentBytes = 3000;
     desc_date.schema.fields = {
         ConfigField("date_theme", ConfigType::ENUM, "Date Theme", "Visual theme for date", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:System (General),%d/%m/%Y:Day/Month/Year (%d/%m/%Y),%m/%d/%Y:Month/Day/Year (%m/%d/%Y),%Y-%m-%d:Year-Month-Day (%Y-%m-%d),%a %d %b:Short with day (%a %d %b),%A %d %B:Full (%A %d %B)", "", false, "", ValidationPolicy::Accept),

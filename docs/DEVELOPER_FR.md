@@ -185,18 +185,57 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // ex: Historique Crypto/Bourse, Lecteur Spotify
-    bool needsAudio = false;      // ex: Visualiseur micro I2S
-    bool needsTempSensor = false; // ex: Capteur température SHTC3
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
+    // --- Dépendances Périphériques Matérielles ---
+    bool needsPsram = false;            // SPIRAM externe strictement requise
+    bool needsPsramDma = false;         // SPIRAM compatible DMA requise (ESP32-S3)
+    bool needsAudio = false;            // Matériel audio requis
+    bool needsAudioInput = false;       // Microphone I2S requis (ex: Décibel, Visualiseur)
+    bool needsAudioOutput = false;      // DAC/Haut-parleur I2S requis
+    bool needsI2s = false;              // Bus I2S général requis
+    bool needsTempSensor = false;       // Capteur de température SHTC3 requis
+    bool needsGyroscope = false;        // IMU QMI8658 requis
+    bool needsNetwork = false;          // Connexion Wi-Fi active requise
+    bool needsTls = false;              // Handshake TLS/HTTPS requis
+    bool needsSd = false;               // Stockage SD requis
+
+    // --- Stratégie de Buffer & Présentation ---
+    bool requiresDoubleBuffer = false;  // Ne tolère pas le déchirement d'écran
+    bool prefersDoubleBuffer = false;   // Préfère le double buffer, tourne dégradé en simple buffer
+    bool supportsSingleBuffer = true;   // Autorise le mode simple buffer
+
+    // --- Cadence & Performance ---
+    uint16_t targetFps = 60;            // Fréquence cible d'affichage
+
+    // --- Modélisation Granulaire de l'Empreinte Mémoire ---
+    uint32_t internalPersistentBytes = 0;   // DRAM interne persistante entre frames
+    uint32_t internalContiguousBytes = 0;   // Plus grand bloc contigu requis en DRAM
+    uint32_t psramBytes = 0;                // Tampon de travail dédié en SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Allocations transitoires par frame
+    uint32_t minFreeHeapBytes = 0;          // Seuil plancher de mémoire dynamique
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Limites Géométriques ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = illimité
+    uint16_t maxHeight = 0;             // 0 = illimité
 };
 ```
 
-> [!TIP]
-> **Modèle Adaptatif Dual-Mode (PSRAM vs Non-PSRAM)** :
-> Si votre moteur dispose d'une fonctionnalité avancée gourmande en mémoire (ex: décodage de pochettes d'albums dans `GoogleCastEngine`) mais peut fonctionner avec un rendu alternatif plus léger sur les ESP32 classiques sans PSRAM (ex: égaliseur de barres audio animé + texte défilant), définissez `needsPsram = false` dans `EngineRequirements` et interrogez dynamiquement `context->hasPsram()` dans `initialize()` / `render()`. Si le moteur nécessite obligatoirement de la PSRAM pour fonctionner sans risquer de Heap OOM (ex: `SpotifyEngine`, `CryptoEngine`), définissez impérativement `needsPsram = true`.
+### CompatibilityEvaluator : Autorité Canonique Unique
+
+ArcadeMatrix V4 s'appuie sur `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) comme **unique autorité centralisée** pour déterminer si un moteur est exécutable sur le matériel actif :
+- Évalue les périphériques (`HardwareHAL`), la géométrie du panneau (`width`, `height`, `colorDepth`), le pipeline de rendu et le budget de blanking.
+- Modélise la fragmentation du tas en vérifiant `max(canvasBytes, internalContiguousBytes) <= largestInternalBlock`.
+- Applique des réserves d'admission conservatives : `TLS_SOCKET_ADMISSION_RESERVE` (45 Ko), `ASYNC_TCP_ADMISSION_RESERVE` (16 Ko), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 Ko) et `SYSTEM_MIN_HEADROOM_RESERVE` (35 Ko).
+- Deux niveaux de protection : Niveau 1 (l'interface WebUI grise les moteurs incompatibles et affiche des infobulles diagnostiques) et Niveau 2 (Sécurité runtime : `POST /api/rotation` rejette les moteurs incompatibles avec code HTTP 400).
+
+> [!IMPORTANT]
+> **Procédure Obligatoire Lors de l'Ajout d'un Moteur :**
+> 1. Déclarer fidèlement toutes les exigences dans `EngineRequirements` du descripteur.
+> 2. Ajouter le descripteur du moteur dans `getCanonicalEngineDescriptors()` dans `test/native/tools/matrix_generator.cpp`.
+> 3. Exécuter `rtk python3 scripts/generate_engine_matrix.py` pour régénérer [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Valider l'intégrité CI avec `rtk python3 scripts/validate_docs.py` (qui lance `generate_engine_matrix.py --check`).
 
 ---
 

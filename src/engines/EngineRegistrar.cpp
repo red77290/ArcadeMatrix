@@ -21,63 +21,19 @@
 #include "GNewsEngine.h"
 #include "MarqueeEngine.h"
 
+CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* activePipeline) {
+    auto ctx = CompatibilityEvaluator::buildCurrentContext();
+    if (activePipeline && strlen(activePipeline) > 0) {
+        ctx.requestedPipeline = activePipeline;
+    }
+    return CompatibilityEvaluator::evaluate(desc, ctx);
+}
+
 RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req, const char* activePipeline) {
-    const auto& caps = hardwareHAL.capabilities();
-    if (req.needsPsram && !caps.hasPsram) {
-        return {false, "Requires PSRAM"};
-    }
-    if (req.needsAudio && !caps.hasMicrophone) {
-        return {false, "Requires microphone"};
-    }
-    if (req.needsTempSensor && !caps.hasTempSensor) {
-        return {false, "Requires temperature sensor"};
-    }
-    if (req.needsGyroscope && !caps.hasGyroscope) {
-        return {false, "Requires gyroscope"};
-    }
-    if (req.needsNetwork && !caps.hasNetwork) {
-        return {false, "Requires network/WiFi connection"};
-    }
-    if (req.needsSd && !caps.hasSd) {
-        return {false, "Requires SD card"};
-    }
-
-    if (req.minFreeDmaBytes > 0) {
-        uint32_t freeDma = heap_caps_get_free_size(MALLOC_CAP_DMA);
-        if (freeDma < req.minFreeDmaBytes) {
-            return {false, "Insufficient DMA memory available"};
-        }
-    }
-
-    if (req.needsTls && !caps.hasPsram) {
-        uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-
-        uint32_t requiredHeap = (req.minFreeInternalHeapBytes > 0) ? req.minFreeInternalHeapBytes : 50000;
-        uint32_t requiredBlock = (req.minLargestInternalBlockBytes > 0) ? req.minLargestInternalBlockBytes : 28000;
-
-        if (freeDram < requiredHeap || largestBlock < requiredBlock) {
-            if (activePipeline && strcmp(activePipeline, "canvas_single") == 0) {
-                return {false, "Insufficient contiguous internal DRAM block (≥ 28KB) for TLS handshake"};
-            }
-            return {false, "Requires additional internal heap headroom (≥ 50KB total, ≥ 28KB block). Switch to Canvas Single pipeline to unlock TLS."};
-        }
-    } else {
-        if (req.minFreeInternalHeapBytes > 0) {
-            uint32_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-            if (freeDram < req.minFreeInternalHeapBytes) {
-                return {false, "Insufficient internal DRAM"};
-            }
-        }
-        if (req.minLargestInternalBlockBytes > 0) {
-            uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-            if (largestBlock < req.minLargestInternalBlockBytes) {
-                return {false, "Insufficient contiguous internal DRAM block"};
-            }
-        }
-    }
-
-    return {true, ""};
+    EngineDescriptor dummyDesc;
+    dummyDesc.requirements = req;
+    auto verdict = evaluateCompatibility(dummyDesc, activePipeline);
+    return { verdict.compatible(), String(verdict.reasonText) };
 }
 
 bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const char* activePipeline) {
@@ -86,10 +42,10 @@ bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const cha
 
 bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {
     EngineDescriptor desc = handler.getDescriptor();
-    auto res = checkRequirements(desc.requirements);
-    desc.available = res.satisfied;
-    desc.unavailableReason = res.reason.c_str();
-    if (!res.satisfied) {
+    auto verdict = evaluateCompatibility(desc);
+    desc.available = verdict.compatible();
+    desc.unavailableReason = verdict.reasonText;
+    if (!verdict.compatible()) {
         LOGW("Registrar", "Engine %s registered as unavailable: %s", desc.metadata.id ? desc.metadata.id : "", desc.unavailableReason);
     }
     return EngineRegistry::registerEngine(desc);

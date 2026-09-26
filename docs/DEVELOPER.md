@@ -218,16 +218,57 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // e.g. Crypto/Stock quote history caches
-    bool needsAudio = false;      // e.g. Visualizer requiring ES7210/I2S mic
-    bool needsTempSensor = false; // e.g. Indoor environment sensor
-    bool needsGyroscope = false;  // Reserved for orientation
-    bool needsNetwork = false;    // Weather, NTP, MQTT
-    bool needsSd = false;         // GIF playback, MUGEN sprites
+    // --- Hardware Peripheral Dependencies (Hard Constraints) ---
+    bool needsPsram = false;            // External SPIRAM strictly required
+    bool needsPsramDma = false;         // DMA-capable SPIRAM required (ESP32-S3)
+    bool needsAudio = false;            // Audio hardware required
+    bool needsAudioInput = false;       // I2S Microphone required (e.g. Decibel, Visualizer)
+    bool needsAudioOutput = false;      // I2S DAC/Speaker required
+    bool needsI2s = false;              // General I2S bus required
+    bool needsTempSensor = false;       // SHTC3 temperature sensor required
+    bool needsGyroscope = false;        // QMI8658 IMU required
+    bool needsNetwork = false;          // Active Wi-Fi network connection required
+    bool needsTls = false;              // TLS/HTTPS handshake required
+    bool needsSd = false;               // SD storage required
+
+    // --- Presentation & Buffer Strategy ---
+    bool requiresDoubleBuffer = false;  // Engine cannot tolerate tearing
+    bool prefersDoubleBuffer = false;   // Prefers tear-free double buffer, runs degraded in single buffer
+    bool supportsSingleBuffer = true;   // Allows running in single buffer
+
+    // --- Performance & Frame Timing ---
+    uint16_t targetFps = 60;            // Target presentation framerate
+
+    // --- Granular Memory Footprint Modeling ---
+    uint32_t internalPersistentBytes = 0;   // Persistent DRAM retained across frames
+    uint32_t internalContiguousBytes = 0;   // Largest single contiguous allocation needed
+    uint32_t psramBytes = 0;                // Dedicated working buffer in SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Transient allocations per frame
+    uint32_t minFreeHeapBytes = 0;          // Dynamic heap headroom floor
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Geometry Limits ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = unlimited
+    uint16_t maxHeight = 0;             // 0 = unlimited
 };
 ```
 
-`EngineRegistrar::registerAll()` evaluates `HardwareHAL::capabilities()` at boot. If a requirement is not met, the engine is cleanly skipped with an explanatory reason (`reason = "Requires PSRAM"`), preventing Out-Of-Memory panics.
+### CompatibilityEvaluator: Canonical Source of Truth
+
+ArcadeMatrix V4 relies on `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) as the **sole, centralized authority** for determining whether an engine is feasible on the active device:
+- Evaluates peripherals (`HardwareHAL`), panel geometry (`width`, `height`, `colorDepth`), presentation pipeline, and blanking budget.
+- Models heap fragmentation by comparing `max(canvasBytes, internalContiguousBytes)` against `largestInternalBlock`.
+- Enforces conservative admission reserves: `ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE` (45 KB), `ASYNC_TCP_ADMISSION_RESERVE` (16 KB), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 KB), and `SYSTEM_MIN_HEADROOM_RESERVE` (35 KB).
+- Two-level gating: Level 1 (WebUI catalog grays out incompatible engines and tooltips display memory diagnostics) and Level 2 (Runtime safety: `POST /api/rotation` rejects incompatible engines with HTTP 400).
+
+> [!IMPORTANT]
+> **Mandatory Workflow When Adding a New Engine:**
+> 1. Declare all resource constraints accurately in `EngineRequirements` in your engine descriptor.
+> 2. Add your engine's descriptor to `getCanonicalEngineDescriptors()` in `test/native/tools/matrix_generator.cpp`.
+> 3. Run `rtk python3 scripts/generate_engine_matrix.py` to regenerate [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Verify CI pass with `rtk python3 scripts/validate_docs.py` (which runs `generate_engine_matrix.py --check`).
 
 ---
 

@@ -193,28 +193,48 @@ classDiagram
 Instead of hardcoding engine instantiations in `main.cpp`:
 
 1. Each engine provides a descriptor handler (`IEngineDescriptorHandler`) returning its `EngineDescriptor`.
-2. At boot, `EngineRegistrar::registerAll()` inspects `hardwareHAL.capabilities()` against each descriptor's `EngineRequirements` (e.g. `needsPsram`, `needsAudio`, `needsMicrophone`).
-3. Only engines meeting hardware requirements are registered as active in `EngineRegistry`. Unsupported engines are flagged with `available: false` and a human-readable `unavailable_reason`.
+2. At boot, `EngineRegistrar::registerAll()` delegates capability gating to `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), which inspects `hardwareHAL.capabilities()` against each descriptor's `EngineRequirements` (e.g. `needsPsram`, `needsAudioInput`, `needsTempSensor`, `needsNetwork`).
+3. Only engines meeting hardware and panel geometry requirements are registered as active in `EngineRegistry`. Unsupported engines are flagged with `available: false` and an explanatory `unavailable_reason`.
 
 ```mermaid
 sequenceDiagram
     participant Boot as Setup (Core 1)
     participant Registrar as EngineRegistrar
     participant Handler as IEngineDescriptorHandler
+    participant Evaluator as CompatibilityEvaluator
     participant HAL as HardwareHAL
     participant Registry as EngineRegistry
 
     Boot->>Registrar: registerAll()
     loop For each handler
         Registrar->>Handler: getDescriptor()
-        Registrar->>HAL: capabilities()
+        Registrar->>Evaluator: evaluate(descriptor, context)
+        Evaluator->>HAL: capabilities()
         alt Requirements met (e.g. PSRAM, Audio)
             Registrar->>Registry: registerEngine(descriptor, available=true)
-        else Missing Hardware
+        else Missing Hardware / Incompatible
             Registrar->>Registry: registerEngine(descriptor, available=false, reason)
         end
     end
 ```
+
+### Canonical Engine Compatibility Model (Single Source of Truth)
+
+ArcadeMatrix V4 strictly forbids divergent compatibility logic across languages. The C++ `CompatibilityEvaluator` is the **sole source of truth**:
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Sole Canonical Authority)"]
+    EVAL -->|"Dynamic Runtime Evaluation (Core 0)"| ESP["ESP32 WebServerAPI (/api/engines)"]
+    EVAL -->|"Native Host Execution (macOS / Linux)"| CLI["Native matrix_generator Binary"]
+    ESP -->|"Two-Level Gating"| UI["WebUI Engine Catalog (data/index.html)"]
+    CLI -->|"JSON Artifact"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Generate & CI Validate (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Level 1 Gating (WebUI):** Engines marked `incompatible` are grayed out with a disabled button `🚫 Incompatible: <reason>` and rich tooltip displaying DRAM, contiguous block, and PSRAM diagnostics. A filter checkbox `[✓] Hide Incompatible` toggles their visibility.
+- **Level 2 Gating (Runtime Safety):** `POST /api/rotation` evaluates any submitted engine before admission and returns HTTP 400 with a detailed error payload if an incompatible engine is requested, protecting the system from crashes.
+- **Continuous Documentation Validation:** Any addition or modification of an engine requires updating `test/native/tools/matrix_generator.cpp` and executing `scripts/generate_engine_matrix.py`. CI validates this via `scripts/validate_docs.py` using `--check`.
 
 ---
 

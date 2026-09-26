@@ -156,14 +156,57 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // ej: Historial Cripto/Bolsa
-    bool needsAudio = false;      // ej: Visualizador micro I2S
-    bool needsTempSensor = false; // ej: Sensor temperatura SHTC3
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
+    // --- Dependencias de Periféricos de Hardware ---
+    bool needsPsram = false;            // SPIRAM externa estrictamente requerida
+    bool needsPsramDma = false;         // SPIRAM compatible con DMA requerida (ESP32-S3)
+    bool needsAudio = false;            // Hardware de audio requerido
+    bool needsAudioInput = false;       // Micrófono I2S requerido (ej: Decibel, Visualizer)
+    bool needsAudioOutput = false;      // DAC/Altavoz I2S requerido
+    bool needsI2s = false;              // Bus I2S general requerido
+    bool needsTempSensor = false;       // Sensor de temperatura SHTC3 requerido
+    bool needsGyroscope = false;        // IMU QMI8658 requerido
+    bool needsNetwork = false;          // Conexión Wi-Fi activa requerida
+    bool needsTls = false;              // Handshake TLS/HTTPS requerido
+    bool needsSd = false;               // Almacenamiento SD requerido
+
+    // --- Estrategia de Búfer y Presentación ---
+    bool requiresDoubleBuffer = false;  // No tolera desgarro de pantalla
+    bool prefersDoubleBuffer = false;   // Prefiere doble búfer, funciona degradado en simple búfer
+    bool supportsSingleBuffer = true;   // Permite modo simple búfer
+
+    // --- Rendimiento y Temporización de Cuadros ---
+    uint16_t targetFps = 60;            // Frecuencia objetivo de visualización
+
+    // --- Modelado Granular de Huella de Memoria ---
+    uint32_t internalPersistentBytes = 0;   // DRAM interna persistente entre cuadros
+    uint32_t internalContiguousBytes = 0;   // Bloque contiguo más grande requerido en DRAM
+    uint32_t psramBytes = 0;                // Búfer de trabajo dedicado en SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Asignaciones transitorias por cuadro
+    uint32_t minFreeHeapBytes = 0;          // Margen dinámico mínimo del montón
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Límites Geométricos ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = ilimitado
+    uint16_t maxHeight = 0;             // 0 = ilimitado
 };
 ```
+
+### CompatibilityEvaluator: Fuente Canónica Única
+
+ArcadeMatrix V4 utiliza `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) como la **única autoridad centralizada** para determinar la viabilidad de un motor en el hardware activo:
+- Evalúa periféricos (`HardwareHAL`), geometría (`width`, `height`, `colorDepth`), pipeline de presentación y presupuesto de blanking.
+- Modela la fragmentación de memoria comparando `max(canvasBytes, internalContiguousBytes) <= largestInternalBlock`.
+- Aplica reservas de admisión conservadoras: `TLS_SOCKET_ADMISSION_RESERVE` (45 KB), `ASYNC_TCP_ADMISSION_RESERVE` (16 KB), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 KB) y `SYSTEM_MIN_HEADROOM_RESERVE` (35 KB).
+- Protección de dos niveles: Nivel 1 (la interfaz WebUI desactiva motores incompatibles y muestra diagnósticos) y Nivel 2 (Seguridad runtime: `POST /api/rotation` rechaza motores incompatibles con código HTTP 400).
+
+> [!IMPORTANT]
+> **Procedimiento Obligatorio al Agregar un Motor:**
+> 1. Declarar con precisión todas las restricciones en `EngineRequirements` del descriptor.
+> 2. Agregar el descriptor del motor en `getCanonicalEngineDescriptors()` en `test/native/tools/matrix_generator.cpp`.
+> 3. Ejecutar `rtk python3 scripts/generate_engine_matrix.py` para regenerar [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Validar la integridad en CI con `rtk python3 scripts/validate_docs.py` (que ejecuta `generate_engine_matrix.py --check`).
 
 ---
 

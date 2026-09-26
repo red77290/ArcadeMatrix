@@ -413,6 +413,174 @@ void test_preemption_stack_bounded_depth(void) {
 }
 
 // =========================================================================
+// 10. CompatibilityEvaluator Unit Tests
+// =========================================================================
+
+#include "core/CompatibilityEvaluator.h"
+
+void test_compatibility_evaluator_hardware_gating(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "test_engine";
+    desc.requirements.needsPsram = true;
+    desc.requirements.needsAudioInput = true;
+    desc.requirements.needsTempSensor = true;
+    desc.requirements.needsNetwork = true;
+    desc.requirements.minWidth = 128;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.hasMicrophone = false;
+    ctx.hardware.hasTempSensor = false;
+    ctx.isConnectedWifi = false;
+
+    // 1. Missing all hardware
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresPsram, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingPsram));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingAudioInput));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingTempSensor));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingNetwork));
+
+    // 2. Grant PSRAM, Mic, Temp, Wi-Fi -> Compatible!
+    ctx.hardware.hasPsram = true;
+    ctx.hardware.hasMicrophone = true;
+    ctx.hardware.hasTempSensor = true;
+    ctx.isConnectedWifi = true;
+    auto v2 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)v2.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::None, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(v2.compatible());
+
+    // 3. Geometry underflow (width 64 < minWidth 128)
+    ctx.width = 64;
+    auto v3 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::UnsupportedGeometry, (int)v3.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v3.issueFlags), CompatibilityIssue::GeometryOutOfRange));
+}
+
+void test_compatibility_evaluator_memory_and_fragmentation(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "net_engine";
+    desc.requirements.needsTls = true;
+    desc.requirements.internalContiguousBytes = 60000; // Requires 60KB contiguous block
+
+    CompatibilityContext ctx;
+    ctx.width = 64;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.isConnectedWifi = true;
+
+    // 1. Total RAM plenty (250KB), but largest contiguous block is only 40KB (fragmented)
+    ctx.memory.freeInternalHeap = 250000;
+    ctx.memory.largestInternalBlock = 40000;
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientLargestBlock, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::FragmentedInternalHeap));
+    TEST_ASSERT_EQUAL_UINT32(60000, v1.largestRequiredBlockBytes);
+    TEST_ASSERT_EQUAL_UINT32(40000, v1.largestAvailableBlockBytes);
+
+    // 2. Unfragmented: largest block 80KB >= 60KB -> Compatible!
+    ctx.memory.largestInternalBlock = 80000;
+    auto v2 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)v2.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::None, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(v2.internalHeadroomBytes > 0);
+
+    // 3. Exhausted total internal DRAM (e.g. 50KB total, when TLS alone needs 45KB + 35KB headroom = 80KB+)
+    ctx.memory.freeInternalHeap = 50000;
+    ctx.memory.largestInternalBlock = 45000;
+    auto v3 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientInternalHeap, (int)v3.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v3.issueFlags), CompatibilityIssue::LowInternalHeap));
+}
+
+void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "rt_engine";
+    desc.requirements.requiresDoubleBuffer = true;
+    desc.requirements.supportsSingleBuffer = false;
+
+    CompatibilityContext ctx;
+    ctx.width = 64;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.requestedPipeline = "canvas_single"; // Forces single buffer
+
+    // 1. Engine requires double-buffering but single-buffer was selected -> Incompatible!
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
+
+    // 2. Engine prefers double buffer but supports single buffer -> CompatibleDegraded!
+    EngineDescriptor prefDesc;
+    prefDesc.metadata.id = "pref_engine";
+    prefDesc.requirements.prefersDoubleBuffer = true;
+    prefDesc.requirements.supportsSingleBuffer = true;
+    auto v2 = CompatibilityEvaluator::evaluate(prefDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)v2.status);
+    TEST_ASSERT_TRUE(v2.degraded());
+
+    // 3. Single-buffer blanking budget exceeded:
+    EngineDescriptor normalDesc;
+    normalDesc.metadata.id = "normal_engine";
+    normalDesc.requirements.supportsSingleBuffer = true;
+    ctx.presentationPolicy.allowBlanking = true;
+    ctx.presentationPolicy.maxBlankUs = 100;
+    ctx.presentationPolicy.degradedBlankingPermitted = false;
+
+    auto v3 = CompatibilityEvaluator::evaluate(normalDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::BlankBudgetExceeded, (int)v3.primaryReason);
+
+    // Now permit degraded blanking -> CompatibleDegraded!
+    ctx.presentationPolicy.degradedBlankingPermitted = true;
+    auto v4 = CompatibilityEvaluator::evaluate(normalDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)v4.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::BlankBudgetExceeded, (int)v4.primaryReason);
+}
+
+void test_compatibility_evaluator_multi_issue_bitmask(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "complex_engine";
+    desc.requirements.needsPsram = true;
+    desc.requirements.needsAudioInput = true;
+    desc.requirements.needsGyroscope = true;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.hasMicrophone = false;
+    ctx.hardware.hasGyroscope = false;
+
+    auto verdict = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)verdict.status);
+
+    // Primary reason is the first hard failure (RequiresPsram)
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresPsram, (int)verdict.primaryReason);
+
+    // Multi-issue bitmask captures ALL three missing peripherals!
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingPsram));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingAudioInput));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingGyroscope));
+
+    // String translations
+    TEST_ASSERT_EQUAL_STRING("Requires external PSRAM memory", CompatibilityEvaluator::reasonToString(verdict.primaryReason));
+    TEST_ASSERT_EQUAL_STRING("incompatible", CompatibilityEvaluator::statusToString(verdict.status));
+}
+
+// =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
 
@@ -447,6 +615,12 @@ int main(int argc, char** argv) {
 
     // Preemption Logic Tests
     RUN_TEST(test_preemption_stack_bounded_depth);
+
+    // CompatibilityEvaluator Tests
+    RUN_TEST(test_compatibility_evaluator_hardware_gating);
+    RUN_TEST(test_compatibility_evaluator_memory_and_fragmentation);
+    RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
+    RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
 
     return UNITY_END();
 }

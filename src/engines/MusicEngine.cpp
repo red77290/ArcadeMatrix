@@ -372,6 +372,9 @@ EngineDescriptor MusicEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
     desc.requirements.needsPsram = false;
     desc.requirements.needsAudio = false;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 5000;
     desc.schema.fields = {
         ConfigField("show_source", ConfigType::BOOLEAN, "Show Source Badge", "Display source logo (Bluetooth, Spotify, AirPlay, Radio)", "true"),
         ConfigField("show_title", ConfigType::BOOLEAN, "Show Title", "Display scrolling track title", "true"),

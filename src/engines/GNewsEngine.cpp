@@ -971,6 +971,12 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.allowRotation = true;
     desc.requirements.needsPsram = true;
     desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = true;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 12000;
+    desc.requirements.internalContiguousBytes = 16000;
+    desc.requirements.psramBytes = 64000;
 
     desc.schema.fields = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "GNews.io API key (comma-separated for multi-key pool)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

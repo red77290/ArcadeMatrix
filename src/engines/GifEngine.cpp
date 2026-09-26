@@ -1483,6 +1483,13 @@ EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
     desc_gifs.capabilities.selfPaced = true;
     desc_gifs.requirements.needsAudio = false;
     desc_gifs.requirements.needsNetwork = false;
+    desc_gifs.requirements.needsSd = true;
+    desc_gifs.requirements.targetFps = 30;
+    desc_gifs.requirements.prefersDoubleBuffer = true;
+    desc_gifs.requirements.supportsSingleBuffer = true;
+    desc_gifs.requirements.internalPersistentBytes = 12000;
+    desc_gifs.requirements.internalContiguousBytes = 16000;
+    desc_gifs.requirements.shadowBytesPerFrame = 8192;
     desc_gifs.schema.fields = {
         ConfigField("folder", ConfigType::LIST, "Playlists", "Active GIF playlists", "all", false, "", "", "", "", "/api/playlists", true, "", ValidationPolicy::Accept),
         ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),

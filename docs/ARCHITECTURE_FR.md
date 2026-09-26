@@ -170,8 +170,26 @@ classDiagram
 ## 4. Auto-Découverte : Registry, Registrar, Handlers & Gating
 
 1. Chaque moteur encapsule ses métadonnées, son schéma `ConfigSchema`, ses prérequis matériels `EngineRequirements` et sa factory dans un `IEngineDescriptorHandler`.
-2. Au démarrage, `EngineRegistrar::registerAll()` compare les exigences avec `hardwareHAL.capabilities()`.
-3. Seuls les moteurs supportés sont activés dans `EngineRegistry`. Les moteurs non compatibles sont enregistrés avec `available: false` et un message explicatif pour la WebUI.
+2. Au démarrage, `EngineRegistrar::registerAll()` délègue le filtrage de faisabilité à `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), qui évalue `hardwareHAL.capabilities()` et la géométrie active.
+3. Seuls les moteurs supportés sont activés dans `EngineRegistry`. Les moteurs non compatibles sont enregistrés avec `available: false` et un motif explicatif pour l'interface WebUI.
+
+### Modèle Canonique de Compatibilité (Source Unique de Vérité)
+
+ArcadeMatrix V4 interdit formellement la duplication d'algorithmes de compatibilité entre langages. Le module C++ `CompatibilityEvaluator` constitue l'**unique autorité source de vérité** :
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Autorité Canonique Unique)"]
+    EVAL -->|"Évaluation Dynamique Core 0"| ESP["WebServerAPI ESP32 (/api/engines)"]
+    EVAL -->|"Exécution Native Hôte (macOS / Linux)"| CLI["Binaire matrix_generator"]
+    ESP -->|"Double Filtrage (UI + Gating)"| UI["Catalogue WebUI (data/index.html)"]
+    CLI -->|"Artefact JSON"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Génération & Validation CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Filtrage Niveau 1 (WebUI) :** Les moteurs incompatibles apparaissent grisés avec un badge inactif `🚫 Incompatible : <motif>` et une infobulle détaillée (mémoire DRAM, bloc contigu, SPIRAM). Une case `[✓] Masquer incompatibles` permet de filtrer l'affichage.
+- **Filtrage Niveau 2 (Sécurité Runtime) :** L'endpoint `POST /api/rotation` évalue la compatibilité de chaque moteur soumis et renvoie une erreur HTTP 400 détaillée en cas de tentative d'injection d'un moteur incompatible, immunisant le système contre les panics mémoire.
+- **Validation CI Continue :** Tout ajout ou modification de moteur impose la mise à jour de `test/native/tools/matrix_generator.cpp` et l'exécution de `scripts/generate_engine_matrix.py`. La conformité de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) est vérifiée en CI par `scripts/validate_docs.py`.
 
 ---
 

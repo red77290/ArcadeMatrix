@@ -243,6 +243,12 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     desc_visualizer.capabilities.realtime = true;
     desc_visualizer.capabilities.allowRotation = false; // Priority override engine
     desc_visualizer.requirements.needsAudio = true;
+    desc_visualizer.requirements.needsAudioInput = true;
+    desc_visualizer.requirements.targetFps = 60;
+    desc_visualizer.requirements.requiresDoubleBuffer = true;
+    desc_visualizer.requirements.supportsSingleBuffer = false;
+    desc_visualizer.requirements.internalPersistentBytes = 10000;
+    desc_visualizer.requirements.internalContiguousBytes = 8000;
     desc_visualizer.schema.fields = {
         ConfigField("priority_mode", ConfigType::BOOLEAN, "Priority Mode (Continuous)", "Display Audio Visualizer continuously (overrides rotation loop)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),

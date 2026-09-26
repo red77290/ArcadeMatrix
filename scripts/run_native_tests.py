@@ -39,6 +39,8 @@ def main():
         os.path.join(PROJECT_ROOT, "test", "native", "mock", "Serial.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "DisplayArbiter.cpp"),
         os.path.join(PROJECT_ROOT, "src", "core", "EngineRegistry.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "CompatibilityEvaluator.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "drawing", "PipelineSelectionPolicy.cpp"),
         os.path.join(PROJECT_ROOT, "test", "native", "test_native_core.cpp"),
     ]
 

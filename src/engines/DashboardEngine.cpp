@@ -182,6 +182,9 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsAudio = false;
     desc.requirements.needsTempSensor = false;
     desc.requirements.needsGyroscope = false;
+    desc.requirements.targetFps = 10;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 6000;
 
     desc.schema.fields = {
         ConfigField("clock_mode", ConfigType::ENUM, "Clock Style", "Display as Digital or Analog Hands", "1", false, "", "", "", "0:Digital Modern,1:Pixel-Art Watch Dial,2:Minimal", "", false, "", ValidationPolicy::FallbackDefault),

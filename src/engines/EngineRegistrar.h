@@ -1,5 +1,6 @@
 #pragma once
 #include "core/EngineContract.h"
+#include "core/CompatibilityEvaluator.h"
 
 // Forward declarations for engine classes
 class ClockEngine;
@@ -28,5 +29,6 @@ public:
     static bool registerHandler(const IEngineDescriptorHandler& handler);
     static RequirementCheckResult checkRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
     static bool meetsRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
+    static CompatibilityVerdict evaluateCompatibility(const EngineDescriptor& desc, const char* activePipeline = nullptr);
 };
 

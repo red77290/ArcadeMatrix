@@ -78,7 +78,8 @@ struct PresentationTiming {
     uint32_t transferUs = 0;                            ///< Duration spent writing to DMA / CPU cache writeback
     uint32_t blankUs = 0;                               ///< Duration Output Enable (OE) was held blanked
     uint32_t totalPresentUs = 0;                        ///< Total presentation duration
-    bool degradedBlankingUsed = false;                  ///< Set when presentation completed but exceeded nominal blanking budget
+    bool estimatedDegraded = false;                     ///< Pre-flight transfer estimation exceeded nominal blanking budget
+    bool degradedBlankingUsed = false;                  ///< Measured blanking duration actually exceeded nominal blanking budget
 };
 
 /**

@@ -605,6 +605,9 @@ EngineDescriptor SysInfoEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsAudio = false;
     desc.requirements.needsTempSensor = false;
     desc.requirements.needsGyroscope = false;
+    desc.requirements.targetFps = 10;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 3000;
 
     desc.schema.fields = {
         ConfigField("theme", ConfigType::ENUM, "Layout Style", "Visual style layout (HUD Bars, Cyberpunk Neon, Compact Grid)", "0", false, "", "", "", "0:HUD Bars,1:Cyberpunk Neon,2:Compact Grid", "", false, "", ValidationPolicy::FallbackDefault),

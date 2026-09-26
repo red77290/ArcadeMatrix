@@ -18,9 +18,11 @@ struct PresentationTimingModel {
      * @return Estimated encoding duration in microseconds
      */
     static inline uint32_t estimateEncodeUs(uint16_t width, uint16_t height, uint8_t depth) {
-        // Xtensa LX6/LX7 at 240MHz packs ~50 million bitplane pixel ops per second (~20ns / pixel-plane)
-        uint32_t totalBitplanePixels = (uint32_t)width * height * depth;
-        uint32_t est = (totalBitplanePixels * 20) / 1000;
+        // HUB75 multiplexes two rows simultaneously per scanline cycle (height / 2 rowsPerFrame).
+        // Xtensa LX6/LX7 at 240MHz packs ~50 million dual-row bitplane pixel ops per second (~20ns / op).
+        uint16_t rowsPerFrame = (height >= 2) ? (height / 2) : 1;
+        uint32_t totalBitplaneOps = (uint32_t)width * rowsPerFrame * depth;
+        uint32_t est = (totalBitplaneOps * 20) / 1000;
         return est < 15 ? 15 : est;
     }
 

@@ -320,6 +320,11 @@ EngineDescriptor DecibelEngineDescriptorHandler::getDescriptor() const {
     desc_decibel.metadata = {"decibelMeter", "Noise Level", "audio", FIRMWARE_VERSION};
     desc_decibel.capabilities.realtime = true;
     desc_decibel.requirements.needsAudio = true;
+    desc_decibel.requirements.needsAudioInput = true;
+    desc_decibel.requirements.targetFps = 30;
+    desc_decibel.requirements.supportsSingleBuffer = true;
+    desc_decibel.requirements.internalPersistentBytes = 6000;
+    desc_decibel.requirements.internalContiguousBytes = 4000;
     desc_decibel.schema.fields = {
         ConfigField("gain", ConfigType::FLOAT, "Sensitivity (Gain)", "Microphone sensitivity / distance multiplier (lower = closer to speakers)", "1.0", false, "0.1", "5.0", "0.1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("db_calibration", ConfigType::FLOAT, "Calibration Offset (dB)", "Calibration offset in dB (+/- dB)", "0.0", false, "-30.0", "30.0", "1.0", "", "", false, "", ValidationPolicy::Clamp),

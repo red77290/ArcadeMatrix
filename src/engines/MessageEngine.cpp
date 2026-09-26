@@ -195,6 +195,10 @@ EngineDescriptor MessageEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_msg;
     desc_msg.metadata = {"message", "Message", "display", FIRMWARE_VERSION};
     desc_msg.capabilities.realtime = true;
+    desc_msg.requirements.targetFps = 60;
+    desc_msg.requirements.prefersDoubleBuffer = true;
+    desc_msg.requirements.supportsSingleBuffer = true;
+    desc_msg.requirements.internalPersistentBytes = 5000;
     desc_msg.schema.fields = {
         ConfigField("text", ConfigType::STRING, "Message Text", "Text banner or message to display", "ArcadeMatrix", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("color", ConfigType::COLOR, "Text Color", "Hex color code (#RRGGBB)", "#ffffff", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

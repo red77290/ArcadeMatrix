@@ -148,13 +148,30 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;
-    bool needsAudio = false;
-    bool needsTempSensor = false;
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
-    bool needsTls = false;
+    // --- Hardware Peripheral Dependencies (Hard Constraints) ---
+    bool needsPsram = false;            ///< External SPIRAM strictly required
+    bool needsPsramDma = false;         ///< DMA-capable SPIRAM required (ESP32-S3)
+    bool needsAudio = false;            ///< Audio hardware required (backward-compatibility alias)
+    bool needsAudioInput = false;       ///< I2S Microphone required (e.g. Decibel, Visualizer)
+    bool needsAudioOutput = false;      ///< I2S DAC/Speaker required
+    bool needsI2s = false;              ///< General I2S bus required
+    bool needsTempSensor = false;       ///< SHTC3 temperature sensor required
+    bool needsGyroscope = false;        ///< QMI8658 IMU required
+    bool needsNetwork = false;          ///< Active Wi-Fi network connection required
+    bool needsSd = false;               ///< MicroSD card storage required
+    bool needsTls = false;              ///< HTTPS / TLS cryptographic socket required
+
+    // --- Presentation & Pipeline Constraints ---
+    bool requiresDoubleBuffer = false;  ///< Engine cannot tolerate transient blanking or tearing (implies supportsSingleBuffer=false)
+    bool prefersDoubleBuffer = false;   ///< Engine operates best in double-buffering but tolerates single-buffer blanking
+    bool supportsSingleBuffer = true;   ///< Engine operates cleanly under CANVAS_BURST_SINGLE / DIRECT_DMA_SINGLE
+    uint16_t targetFps = 60;            ///< Nominal design framerate (60, 30, 10, or 1 FPS)
+
+    // --- Dynamic Memory & Footprint Modeling ---
+    uint32_t internalPersistentBytes = 0;   ///< Static heap allocated by engine context
+    uint32_t internalContiguousBytes = 0;   ///< Largest single contiguous allocation needed by engine
+    uint32_t psramBytes = 0;                ///< Persistent external PSRAM required
+    uint32_t shadowBytesPerFrame = 0;       ///< Dynamic canvas/shadow memory (e.g. GifEngine delta canvas)
 
     // Conservative runtime admission thresholds (ArcadeMatrix policy margins)
     uint32_t minFreeInternalHeapBytes = 0;
@@ -162,8 +179,16 @@ struct EngineRequirements {
     uint32_t minFreeDmaBytes = 0;
     uint32_t minFreePsramBytes = 0;
 
+    // --- Geometry Limits ---
     uint16_t minWidth = 0;
     uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              ///< 0 = unlimited
+    uint16_t maxHeight = 0;             ///< 0 = unlimited
+
+    inline bool isValid() const {
+        if (requiresDoubleBuffer && supportsSingleBuffer) return false;
+        return true;
+    }
 };
 
 enum class EngineAdmissionStatus : uint8_t {

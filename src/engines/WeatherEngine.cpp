@@ -602,6 +602,11 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     desc_weather.capabilities.realtime = false;
     desc_weather.requirements.needsAudio = false;
     desc_weather.requirements.needsNetwork = true;
+    desc_weather.requirements.needsTls = true;
+    desc_weather.requirements.targetFps = 30;
+    desc_weather.requirements.supportsSingleBuffer = true;
+    desc_weather.requirements.internalPersistentBytes = 8000;
+    desc_weather.requirements.internalContiguousBytes = 20000;
     desc_weather.schema.fields = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
