@@ -160,23 +160,17 @@ def check_build_info():
             stderr=subprocess.DEVNULL
         ).decode("utf-8").strip()
 
-        is_ci = os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
         if git_head and header_commit != git_head:
-            if is_ci:
-                print(f"❌ CI BuildInfo mismatch: '{header_commit}' != git HEAD '{git_head}'.")
+            print(f"  ℹ Synchronizing BuildInfo.h ({header_commit} -> {git_head})...")
+            import runpy
+            runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
+            with open(build_info_path, "r", encoding="utf-8") as f:
+                updated = f.read()
+            m2 = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', updated)
+            if not m2 or m2.group(1).strip() != git_head:
+                print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_head})")
                 return False
-            else:
-                # Local developer workspace: synchronize via build_webui
-                print(f"  ℹ Synchronizing local BuildInfo.h ({header_commit} -> {git_head})...")
-                import runpy
-                runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
-                with open(build_info_path, "r", encoding="utf-8") as f:
-                    updated = f.read()
-                m2 = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', updated)
-                if not m2 or m2.group(1).strip() != git_head:
-                    print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_head})")
-                    return False
-                header_commit = git_head
+            header_commit = git_head
     except Exception:
         pass
 

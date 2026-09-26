@@ -38,7 +38,7 @@ public:
 
         // 1. Safe window synchronization
         if (_synchronizer) {
-            SafeWindowResult sw = _synchronizer->waitForSafeWindow(simulatedTransferUs, policy.maxBlankUs);
+            SafeWindowResult sw = _synchronizer->waitForSafeWindow(simulatedTransferUs, policy.safeWindowTimeoutUs);
             timing.waitForSafeWindowUs = sw.waitUs;
             if (!sw.acquired || (sw.availableWindowUs > 0 && sw.availableWindowUs < simulatedTransferUs)) {
                 timing.result = PresentationResult::SafeWindowTimeout;
@@ -50,7 +50,7 @@ public:
         // 2. Blanking enforcement
         if (policy.allowBlanking && simulatedBlankUs > 0) {
             timing.blankUs = simulatedBlankUs;
-            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
+            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
                 timing.result = PresentationResult::BlankBudgetExceeded;
             }
         } else {
@@ -103,6 +103,12 @@ public:
         }
 
         if (strategy == PresentationStrategy::CANVAS_BURST_SINGLE) {
+            // Pre-flight check: in single-buffer mode, if transfer estimate exceeds maxBlankUs
+            if (policy.allowBlanking && policy.maxBlankUs > 0 && simulatedTransferUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
+                timing.result = PresentationResult::BlankBudgetExceeded;
+                return timing;
+            }
+
             executionLog.push_back(Step::WaitForSafeWindow);
             if (policy.allowBlanking) executionLog.push_back(Step::BlankDisplay);
             executionLog.push_back(Step::Encode);

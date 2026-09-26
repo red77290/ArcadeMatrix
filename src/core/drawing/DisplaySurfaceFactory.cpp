@@ -50,6 +50,9 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     IPresentationBackend* backend = matrixEngine ? matrixEngine->getPresentationBackend() : nullptr;
     const auto& desc = policyRes.descriptor;
 
+    result.requestedStrategy = desc.strategy;
+    result.requestedCanvasStorage = desc.canvasStorage;
+
     if (desc.strategy == PresentationStrategy::CANVAS_BURST_SINGLE ||
         desc.strategy == PresentationStrategy::CANVAS_BURST_DOUBLE)
     {
@@ -62,6 +65,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
                  result.surface->canvasStorage() == CanvasStorage::SRAM ? "SRAM" : "NONE");
             result.reason = SurfaceSelectionReason::FallbackDirectDma;
             result.reasonText = "Downgraded intermediate canvas storage due to allocation constraints";
+            result.fallbackReason = "Intermediate canvas storage downgraded";
         }
     } else {
         // Direct DMA surface (legacy fallback)
@@ -80,11 +84,18 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
         result.surface.reset(new DirectDmaSurface(disp, width, height, true, matrixEngine));
         result.reason = SurfaceSelectionReason::FallbackDirectDma;
         result.reasonText = "Fallback to Direct DMA due to canvas allocation failure";
+        result.fallbackReason = "Canvas buffer allocation failed, fell back to Direct DMA single";
     }
 
     if (!result.surface) {
         result.reason = SurfaceSelectionReason::FallbackAllocationFailed;
         result.reasonText = "CRITICAL: Surface allocation failed completely";
+        result.fallbackReason = "Surface allocation failed completely";
+        result.actualStrategy = PresentationStrategy::DIRECT_DMA_SINGLE;
+        result.actualCanvasStorage = CanvasStorage::NONE;
+    } else {
+        result.actualStrategy = result.surface->presentationStrategy();
+        result.actualCanvasStorage = result.surface->canvasStorage();
     }
 
     return result;

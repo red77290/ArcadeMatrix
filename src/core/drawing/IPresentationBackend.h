@@ -8,9 +8,11 @@
 #include "IDrawingSurface.h"
 
 struct PresentationPolicy {
-    uint32_t maxBlankUs = 400;   ///< Maximum allowable transient OE blanking duration (default 400µs)
-    uint32_t maxFrameUs = 16667; ///< Maximum frame period budget (16.6ms for 60 FPS)
-    bool allowBlanking = true;   ///< Whether transient blanking is permitted
+    uint32_t maxBlankUs = 400;              ///< Maximum allowable transient OE blanking duration (default 400µs)
+    uint32_t maxFrameUs = 16667;            ///< Maximum frame period budget (16.6ms for 60 FPS)
+    uint32_t safeWindowTimeoutUs = 1000;    ///< Maximum deadline to wait for safe scanline window
+    bool allowBlanking = true;              ///< Whether transient blanking is permitted
+    bool degradedBlankingPermitted = false; ///< Set when hardware constraints require exceeding 400µs blanking
 };
 
 struct SafeWindowResult {

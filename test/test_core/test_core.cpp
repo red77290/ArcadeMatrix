@@ -2183,6 +2183,47 @@ void test_presentation_policy_budget_enforcement(void) {
     auto t7 = surfWithBadTarget.present();
     TEST_ASSERT_EQUAL((int)PresentationResult::DmaTargetUnavailable, (int)t7.result);
     mock.simulateInvalidTarget = false;
+
+    // 8. Pre-flight budget rejection in single-buffer mode
+    std::vector<uint16_t> canvasBuf(64 * 32, 0xFFFF);
+    PresentationPolicy strictPolicy;
+    strictPolicy.maxBlankUs = 400;
+    strictPolicy.degradedBlankingPermitted = false;
+    mock.simulatedTransferUs = 500; // Exceeds 400µs
+    auto t8 = mock.presentCanvas(canvasBuf.data(), 64, 32, PresentationStrategy::CANVAS_BURST_SINGLE, strictPolicy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::BlankBudgetExceeded, (int)t8.result);
+
+    // 9. Pre-flight budget acceptance when degradedBlankingPermitted == true
+    strictPolicy.degradedBlankingPermitted = true;
+    auto t9 = mock.presentCanvas(canvasBuf.data(), 64, 32, PresentationStrategy::CANVAS_BURST_SINGLE, strictPolicy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)t9.result);
+
+    // 10. safeWindowTimeoutUs distinct from maxBlankUs
+    class TimeoutTrackingSynchronizer : public IPresentationSynchronizer {
+    public:
+        uint32_t lastTimeoutUs = 0;
+        SafeWindowResult waitForSafeWindow(uint32_t reqUs, uint32_t timeoutUs) override {
+            (void)reqUs;
+            lastTimeoutUs = timeoutUs;
+            return SafeWindowResult{true, 10, 1000};
+        }
+    } timeoutSync;
+
+    mock.setSynchronizer(&timeoutSync);
+    PresentationPolicy customTimeoutPolicy;
+    customTimeoutPolicy.safeWindowTimeoutUs = 2500;
+    customTimeoutPolicy.maxBlankUs = 300;
+    mock.commit(customTimeoutPolicy);
+    TEST_ASSERT_EQUAL_UINT32(2500, timeoutSync.lastTimeoutUs);
+    mock.setSynchronizer(nullptr);
+
+    // 11. DisplaySurfaceFactory telemetry validation
+    auto factoryRes = DisplaySurfaceFactory::createSurface(nullptr, 128, 32, "direct_double");
+    TEST_ASSERT_NOT_NULL(factoryRes.surface.get());
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::DIRECT_DMA_DOUBLE, (int)factoryRes.requestedStrategy);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::DIRECT_DMA_DOUBLE, (int)factoryRes.actualStrategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::NONE, (int)factoryRes.requestedCanvasStorage);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::NONE, (int)factoryRes.actualCanvasStorage);
 }
 
 void test_dma_memory_layout_exact_bytes(void) {
@@ -2521,7 +2562,57 @@ void test_hub75_bulk_encoder_byte_exact_snapshots(void) {
     }
 }
 
-void test_core1_zero_allocation_presentation(void) {
+void test_hub75_bulk_encoder_immutable_golden_fixture(void) {
+    const uint16_t W = 8;
+    const uint16_t H = 4;
+    const uint8_t depth = 8;
+    const size_t totalWords = (H / 2) * depth * W; // 2 * 8 * 8 = 128 words
+
+    // 1. Immutable Golden Reference Blob for All-White (0xFFFF)
+    // In canonical HUB75 parallel dual-row scan, all 8 bitplanes for all-white must have R1,G1,B1,R2,G2,B2 bits (0x3F) set
+    static uint16_t expectedWhiteWords[128];
+    static bool initGolden = false;
+    if (!initGolden) {
+        for (size_t i = 0; i < totalWords; ++i) expectedWhiteWords[i] = 0x003F;
+        initGolden = true;
+    }
+
+    uint8_t lutR[32], lutG[64], lutB[32];
+    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
+    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
+    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+
+    std::vector<uint16_t> canvas(W * H, 0xFFFF);
+    std::vector<uint16_t> bitplaneBuf(totalWords, 0);
+
+    struct Ctx {
+        uint16_t* base;
+        uint8_t d;
+        uint16_t w;
+    } ctx{bitplaneBuf.data(), depth, W};
+
+    auto accessor = [](void* c, uint8_t r, uint8_t p) -> uint16_t* {
+        auto* cx = static_cast<Ctx*>(c);
+        return cx->base + ((size_t)r * cx->d + p) * cx->w;
+    };
+
+    Hub75EncodingParams params;
+    params.width = W;
+    params.height = H;
+    params.rowsPerFrame = H / 2;
+    params.colorDepth = depth;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    Hub75BulkEncoder::encode(canvas.data(), W, accessor, &ctx, params);
+
+    // Byte-exact verification against immutable golden reference
+    TEST_ASSERT_EQUAL(0, memcmp(bitplaneBuf.data(), expectedWhiteWords, sizeof(expectedWhiteWords)));
+}
+
+void test_core1_heap_stability_10000_frames(void) {
     MockPresentationBackend mock(128, 32, 8, false);
     CanvasBufferedSurface surf(128, 32, CanvasStorage::SRAM, &mock, false);
 
@@ -2533,7 +2624,7 @@ void test_core1_zero_allocation_presentation(void) {
     size_t initialHeap = esp_get_free_heap_size();
 #endif
 
-    // Run 10,000 frames to prove ZERO heap leak or allocation in hot path
+    // Run 10,000 frames to prove ZERO heap leak across long continuous session
     const int TEST_FRAMES = 10000;
     for (int frame = 0; frame < TEST_FRAMES; ++frame) {
         surf.drawPixel(frame & 127, (frame >> 7) & 31, frame);
@@ -2924,7 +3015,8 @@ void setup() {
     RUN_TEST(test_presentation_timing_model);
     RUN_TEST(test_single_buffer_presentation_ordering);
     RUN_TEST(test_hub75_bulk_encoder_byte_exact_snapshots);
-    RUN_TEST(test_core1_zero_allocation_presentation);
+    RUN_TEST(test_hub75_bulk_encoder_immutable_golden_fixture);
+    RUN_TEST(test_core1_heap_stability_10000_frames);
 
     // =========================================================================
     // 10. Modular Storage Architecture & Working-Set Cache

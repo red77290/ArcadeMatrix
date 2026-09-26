@@ -71,7 +71,7 @@ PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& po
     uint32_t estimatedTransferUs = PresentationTimingModel::estimateTransferUs(_width, _height, _colorDepth, !_doubleBuffer);
     if (_synchronizer) {
         uint32_t t_sync = micros();
-        SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.maxBlankUs);
+        SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.safeWindowTimeoutUs);
         timing.waitForSafeWindowUs = micros() - t_sync;
         if (!sw.acquired || (sw.availableWindowUs > 0 && sw.availableWindowUs < estimatedTransferUs)) {
             timing.result = PresentationResult::SafeWindowTimeout;
@@ -180,7 +180,7 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         uint32_t estimatedTransferUs = PresentationTimingModel::estimateTransferUs(_width, _height, _colorDepth, false);
         if (_synchronizer) {
             uint32_t t_sync = micros();
-            SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.maxBlankUs);
+            SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.safeWindowTimeoutUs);
             timing.waitForSafeWindowUs = micros() - t_sync;
             if (!sw.acquired || (sw.availableWindowUs > 0 && sw.availableWindowUs < estimatedTransferUs)) {
                 timing.result = PresentationResult::SafeWindowTimeout;
@@ -202,7 +202,7 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         if (policy.allowBlanking && blankStart > 0) {
             _engine->setBlank(false);
             timing.blankUs = micros() - blankStart;
-            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
+            if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
                 timing.result = PresentationResult::BlankBudgetExceeded;
             }
         }
@@ -211,12 +211,13 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
         // SINGLE BUFFER PIPELINE:
         // Writing directly to the active scanning buffer IS the critical section.
         // 1. Compute dynamic transfer estimate (encode + writeback)
-        // 2. Wait for safe window (V-Blank / scan pause)
-        // 3. Transient blanking BEFORE writing begins (guarantees 0 tearing)
-        // 4. Encode directly into DMA buffer
-        // 5. Cache writeback (SPIRAM)
-        // 6. Refresh / commit
-        // 7. Unblank display
+        // 2. Pre-flight budget validation: reject BEFORE blacking out screen if budget exceeded
+        // 3. Wait for safe window (V-Blank / scan pause)
+        // 4. Transient blanking BEFORE writing begins (guarantees 0 tearing)
+        // 5. Encode directly into DMA buffer
+        // 6. Cache writeback (SPIRAM)
+        // 7. Refresh / commit
+        // 8. Unblank display
         // =========================================================================
         bool isSpiram = false;
 #if defined(SPIRAM_DMA_BUFFER)
@@ -226,9 +227,17 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _width, _height, _colorDepth, true, isSpiram
         );
 
+        // Pre-flight check: in single-buffer mode, if estimated transfer (encode + writeback)
+        // exceeds maxBlankUs and degraded blanking is not explicitly permitted, reject preemptively!
+        if (policy.allowBlanking && policy.maxBlankUs > 0 && estimatedTransferUs > policy.maxBlankUs && !policy.degradedBlankingPermitted) {
+            timing.result = PresentationResult::BlankBudgetExceeded;
+            timing.totalPresentUs = micros() - t0;
+            return timing;
+        }
+
         if (_synchronizer) {
             uint32_t t_sync = micros();
-            SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.maxBlankUs);
+            SafeWindowResult sw = _synchronizer->waitForSafeWindow(estimatedTransferUs, policy.safeWindowTimeoutUs);
             timing.waitForSafeWindowUs = micros() - t_sync;
             if (!sw.acquired || (sw.availableWindowUs > 0 && sw.availableWindowUs < estimatedTransferUs)) {
                 timing.result = PresentationResult::SafeWindowTimeout;

@@ -16,6 +16,11 @@ struct SurfaceCreationResult {
     std::unique_ptr<IDrawingSurface> surface;
     SurfaceSelectionReason reason = SurfaceSelectionReason::ExplicitUserPolicy;
     const char* reasonText = "";
+    PresentationStrategy requestedStrategy = PresentationStrategy::CANVAS_BURST_DOUBLE;
+    PresentationStrategy actualStrategy = PresentationStrategy::CANVAS_BURST_DOUBLE;
+    CanvasStorage requestedCanvasStorage = CanvasStorage::NONE;
+    CanvasStorage actualCanvasStorage = CanvasStorage::NONE;
+    const char* fallbackReason = nullptr;
 };
 
 class DisplaySurfaceFactory {
