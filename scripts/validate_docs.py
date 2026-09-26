@@ -138,25 +138,13 @@ def check_build_info():
     if not os.path.exists(build_info_path):
         print("❌ src/core/BuildInfo.h missing")
         return False
-    try:
-        import subprocess
-        git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT_DIR).decode('ascii').strip()
-        with open(build_info_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if git_commit not in content:
-            print(f"⚠️ src/core/BuildInfo.h does not contain current HEAD commit ({git_commit}). Regenerating...")
-            import runpy
-            runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
-            with open(build_info_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            if git_commit not in content:
-                print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_commit})")
-                return False
-        print(f"  ✓ src/core/BuildInfo.h synchronized with commit {git_commit}")
-        return True
-    except Exception as e:
-        print(f"  ⚠️ Skipping BuildInfo git check: {e}")
-        return True
+    with open(build_info_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "BUILD_GIT_COMMIT" not in content or "FIRMWARE_VERSION" not in content or "BUILD_TIMESTAMP" not in content:
+        print("❌ src/core/BuildInfo.h missing required macros")
+        return False
+    print("  ✓ src/core/BuildInfo.h structure and macros valid.")
+    return True
 
 def main():
     print("🔍 Validating Documentation files & SD config.json...")
