@@ -139,7 +139,7 @@ void ConfigLoader::setDefaults() {
 #else
     matrix.width = 64;
     matrix.height = 32;
-    matrix.chainLength = 1;
+    matrix.chainLength = 2;
 #endif
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;

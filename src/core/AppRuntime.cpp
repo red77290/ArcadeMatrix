@@ -150,8 +150,10 @@ void AppRuntime::initialize() {
          runningPartition ? runningPartition->label : "app0",
          runningPartition ? (unsigned)runningPartition->address : 0);
 
+    // Hardware watchdog: 30s timeout initialized early to prevent TG1WDT reset during boot
     constexpr uint32_t WDT_TIMEOUT_S = 30;
     esp_task_wdt_init(WDT_TIMEOUT_S, true);
+    esp_task_wdt_add(NULL);
 
 #if defined(USE_RTC) && USE_RTC
     // The I2C bus is already up: hardwareHAL.begin() owns Wire.begin() plus the tuned clock and
@@ -179,31 +181,7 @@ void AppRuntime::initialize() {
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
 #endif
 
-    esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
-
-    // Ensure NVS is properly initialized (mandated by ESP-IDF Wi-Fi stack)
-    esp_err_t nvsErr = nvs_flash_init();
-    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
-        LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
-        const esp_partition_t* nvsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
-        if (nvsPart != nullptr) {
-            esp_partition_erase_range(nvsPart, 0, nvsPart->size);
-        } else {
-            nvs_flash_erase();
-        }
-        nvsErr = nvs_flash_init();
-    }
-    if (nvsErr != ESP_OK) {
-        LOGE("System", "Failed to initialize NVS: %d (Wi-Fi may fail)", (int)nvsErr);
-    } else {
-        LOGI("System", "NVS flash partition ready.");
-    }
-
-    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 matrix DMA buffers allocate memory
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(true, true);
 
     if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
@@ -212,7 +190,9 @@ void AppRuntime::initialize() {
         LOGI("System", "No PSRAM detected on hardware.");
     }
 
-    // Initialize Storage via active BoardProfile (Safe Mode non-blocking)
+    // =========================================================================
+    // STEP 1: MOUNT MICRO SD STORAGE
+    // =========================================================================
     if (!BoardProfile::current().beginStorage()) {
         LOGW("SD", "Storage unavailable at boot. Starting in Safe Mode (Flash defaults).");
     } else {
@@ -220,11 +200,15 @@ void AppRuntime::initialize() {
     }
     CpuLoad::start();
 
+    // =========================================================================
+    // STEP 2: LOAD & SANITIZE CONFIGURATION
+    // =========================================================================
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
+        ConfigSanitizer::sanitize(config, true);
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
@@ -237,7 +221,49 @@ void AppRuntime::initialize() {
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
 
-    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength);
+    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d, Power: %s, Brightness: %d%%",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.matrix_power ? "ON" : "OFF", snapshot.matrix.powerLimitPercent);
+    if (!snapshot.matrix.matrix_power) {
+        LOGW("Matrix", "Matrix display is configured OFF (matrix_power=false). Panel will remain dark until turned ON via WebUI/API.");
+    }
+    if (snapshot.matrix.powerLimitPercent == 0) {
+        LOGW("Matrix", "Matrix brightness is 0%%. Display will appear dark.");
+    }
+
+    // =========================================================================
+    // STEP 3: HEAL NVS PARTITION & PRE-INITIALIZE WI-FI
+    // =========================================================================
+    esp_err_t nvsErr = nvs_flash_init();
+    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
+        LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
+        const esp_partition_t* nvsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        if (nvsPart != nullptr) {
+            for (size_t offset = 0; offset < nvsPart->size; offset += 4096) {
+                esp_task_wdt_reset();
+                esp_partition_erase_range(nvsPart, offset, 4096);
+                delay(5);
+            }
+        } else {
+            nvs_flash_erase();
+        }
+        nvsErr = nvs_flash_init();
+    }
+    if (nvsErr != ESP_OK) {
+        LOGE("System", "Failed to initialize NVS: %d (Wi-Fi may fail)", (int)nvsErr);
+    } else {
+        LOGI("System", "NVS flash partition ready.");
+    }
+
+    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 DMA allocations
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+
+    // =========================================================================
+    // STEP 4: INITIALIZE MATRIX DISPLAY
+    // =========================================================================
+    LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s)...",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength, snapshot.matrix.panelType.c_str());
     if (!matrixEngine.begin(snapshot.matrix)) {
         LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
@@ -270,10 +296,12 @@ void AppRuntime::initialize() {
     Core0LifecycleDispatcher::instance().begin();
     
     // Initialize v4 Display Surface SPI via Abstract Factory
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    uint16_t totalHeight = snapshot.matrix.height;
     auto surfaceResult = DisplaySurfaceFactory::createSurface(
         &matrixEngine,
-        snapshot.matrix.width,
-        snapshot.matrix.height,
+        totalWidth,
+        totalHeight,
         snapshot.matrix.render_pipeline,
         snapshot.matrix.forceSingleBuffer
     );
@@ -511,7 +539,6 @@ void AppRuntime::initialize() {
     audioSessionManager.update(snapshot);
 
     m_lastReconciledVersion = snapshot.version;
-    evaluateDisplayRequests(snapshot);
 
     LOGI("System", "Setup complete. Entering loop().");
 }
@@ -732,6 +759,10 @@ void AppRuntime::update() {
 
     if (!displayActive) {
         if (m_wasPoweredOn) {
+            LOGW("Display", "Matrix output deactivated (matrix_power=%s, night_mode=%s, night_brightness=%d). Blanking panel.",
+                 snapshot.matrix.matrix_power ? "true" : "false",
+                 snapshot.system.night_mode_enabled ? "true" : "false",
+                 snapshot.system.night_brightness);
             matrixEngine.setBrightness(0);
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.present();
