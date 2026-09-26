@@ -1745,6 +1745,17 @@ select.input option {
               </div>
             </div>
 
+            <div class="form-group" style="margin-top: 1rem;">
+              <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
+              <select id="hw-render-pipeline" class="input">
+                <option value="auto" data-i18n="hw_pipeline_auto">✨ Auto (Recommended - Dynamic Allocation)</option>
+                <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM)</option>
+                <option value="canvas_double" data-i18n="hw_pipeline_canvas_double">🚀 Canvas Buffered + Double DMA (Maximum Throughput)</option>
+                <option value="direct_double" data-i18n="hw_pipeline_direct_double">🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)</option>
+                <option value="direct_single" data-i18n="hw_pipeline_direct_single">⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)</option>
+              </select>
+            </div>
+
             <div class="form-grid col-2" style="margin-top: 1rem;">
               <div class="form-group">
                 <label><span data-i18n="hw_clk_phase_label">Invert CLK Phase (ESP32)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_clk_phase">?</span></label>
@@ -2624,6 +2635,8 @@ const translations = {
     uploading_file: "Uploading asset...",
     saving_btn: "Saving...",
     btn_retry: "Retry Loading",
+    loading_display: "Loading display settings...",
+    loading_display_desc: "Retrieving engine configurations from matrix...",
     error_loading_engines: "Unable to load display engines",
     error_loading_engines_desc: "Communication with the matrix timed out or returned empty.",
 
@@ -2661,6 +2674,13 @@ const translations = {
     hw_refresh_rate_label: "Target Refresh Rate (Hz)",
     hw_clk_phase_label: "Invert CLK Phase (ESP32)",
     hw_single_buffer_label: "Force Single Buffer (Low SRAM)",
+    hw_pipeline_label: "Rendering & Buffering Pipeline",
+    tt_hw_pipeline: "Display buffering architecture. Canvas Single Buffer halves DMA RAM on classic ESP32, unlocking TLS engines while keeping smooth presentation.",
+    hw_pipeline_auto: "✨ Auto (Recommended - Dynamic Allocation)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
     hw_btn_save: "💾 Save Hardware Settings",
     tt_hw_color_depth: "Bits per color channel driven by the DMA engine. Lower values raise the refresh rate but reduce color gradation. 8 is the default.",
     tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
@@ -3114,6 +3134,8 @@ const translations = {
     uploading_file: "Téléversement de la ressource...",
     saving_btn: "Enregistrement...",
     btn_retry: "Réessayer le chargement",
+    loading_display: "Chargement des paramètres d'affichage...",
+    loading_display_desc: "Récupération de la configuration des moteurs...",
     error_loading_engines: "Impossible de charger les moteurs d'affichage",
     error_loading_engines_desc: "La communication avec la matrice a expiré ou n'a rien renvoyé.",
 
@@ -3151,6 +3173,13 @@ const translations = {
     hw_refresh_rate_label: "Fréquence de Rafraîchissement Cible (Hz)",
     hw_clk_phase_label: "Inverser la Phase d'Horloge (ESP32)",
     hw_single_buffer_label: "Forcer le Simple Buffer (SRAM faible)",
+    hw_pipeline_label: "Pipeline de Rendu & Buffering",
+    tt_hw_pipeline: "Architecture de mémoire tampon. Canvas Simple Buffer divise par 2 la DMA RAM sur ESP32 classique, débloquant les moteurs TLS avec un affichage fluide.",
+    hw_pipeline_auto: "✨ Auto (Recommandé - Allocation Dynamique)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
     hw_btn_save: "💾 Enregistrer les paramètres matériels",
     tt_hw_color_depth: "Bits par canal de couleur pilotés par le moteur DMA. Une valeur plus faible augmente le rafraîchissement mais réduit les nuances. 8 par défaut.",
     tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
@@ -3604,6 +3633,8 @@ const translations = {
     uploading_file: "Subiendo recurso...",
     saving_btn: "Guardando...",
     btn_retry: "Reintentar carga",
+    loading_display: "Cargando configuración de pantalla...",
+    loading_display_desc: "Recuperando la configuración de los motores...",
     error_loading_engines: "No se pueden cargar los motores de visualización",
     error_loading_engines_desc: "La comunicación con la matriz ha expirado o no ha devuelto nada.",
 
@@ -3641,6 +3672,13 @@ const translations = {
     hw_refresh_rate_label: "Frecuencia de Refresco Objetivo (Hz)",
     hw_clk_phase_label: "Invertir Fase de Reloj (ESP32)",
     hw_single_buffer_label: "Forzar Búfer Simple (SRAM baja)",
+    hw_pipeline_label: "Canalización de Renderizado y Búfer",
+    tt_hw_pipeline: "Arquitectura de búfer de pantalla. Canvas Simple divide a la mitad la RAM DMA en ESP32 clásico, desbloqueando motores TLS con visualización fluida.",
+    hw_pipeline_auto: "✨ Auto (Recomendado - Asignación Dinámica)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",
     hw_btn_save: "💾 Guardar la configuración de hardware",
     tt_hw_color_depth: "Bits por canal de color gestionados por el motor DMA. Un valor menor aumenta el refresco pero reduce los matices. 8 por defecto.",
     tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
@@ -3881,22 +3919,42 @@ function getEngineMeta(descOrMeta) {
 const endpointCache = new Map();
 const inFlightRequests = new Map();
 
-async function fetchCachedEndpoint(url) {
+async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   if (!url) return [];
   if (endpointCache.has(url)) {
     return endpointCache.get(url);
   }
+  // Check sessionStorage for static endpoints (catalog/themes) across tab navigation
+  const isStaticEndpoint = url === '/api/engines' || url === '/api/themes';
+  if (isStaticEndpoint) {
+    try {
+      const stored = sessionStorage.getItem('am_cache_' + url);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && (Array.isArray(parsed) ? parsed.length > 0 : Object.keys(parsed).length > 0)) {
+          endpointCache.set(url, parsed);
+          return parsed;
+        }
+      }
+    } catch (_) {}
+  }
+
   if (inFlightRequests.has(url)) {
     return inFlightRequests.get(url);
   }
 
   const promise = (async () => {
     try {
-      const data = await API.get(url);
+      const data = await API.get(url, timeoutMs);
       const isValid = (Array.isArray(data) && data.length > 0) ||
                       (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
       if (isValid) {
         endpointCache.set(url, data);
+        if (isStaticEndpoint) {
+          try {
+            sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
+          } catch (_) {}
+        }
       }
       return data || [];
     } catch (err) {
@@ -5546,33 +5604,45 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    const [descriptors, instancesList, rotationList] = await Promise.all([
-      fetchCachedEndpoint('/api/engines'),
-      API.get('/api/instances').catch(() => []),
-      API.get('/api/rotation').catch(() => [])
-    ]);
+    if (!wrapper.children.length || wrapper.querySelector('#btn-retry-engines')) {
+      wrapper.innerHTML =
+        '<div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">' +
+          '<div class="spinner-border text-primary" role="status" style="width: 2.5rem; height: 2.5rem; margin-bottom: 1rem;"></div>' +
+          '<h4 data-i18n="loading_display">' + t('loading_display', 'Loading display settings...') + '</h4>' +
+          '<p class="text-muted" style="font-size: 0.9rem; margin-bottom: 0;" data-i18n="loading_display_desc">' +
+            t('loading_display_desc', 'Retrieving engine configurations from matrix...') +
+          '</p>' +
+        '</div>';
+    }
+
+    const descriptors = await fetchCachedEndpoint('/api/engines', 15000);
 
     if (!Array.isArray(descriptors) || descriptors.length === 0) {
       console.warn('[Display] No engine descriptors received from backend, showing retry view.');
-      wrapper.innerHTML = `
-        <div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">
-          <div style="font-size: 3rem; margin-bottom: 0.75rem;">⚠️</div>
-          <h4 data-i18n="error_loading_engines">${t('error_loading_engines', 'Unable to load display engines')}</h4>
-          <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="error_loading_engines_desc">
-            ${t('error_loading_engines_desc', 'Communication with the matrix timed out or returned empty.')}
-          </p>
-          <button class="btn btn-primary" id="btn-retry-engines">🔄 ${t('btn_retry', 'Retry Loading')}</button>
-        </div>
-      `;
+      wrapper.innerHTML =
+        '<div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">' +
+          '<div style="font-size: 3rem; margin-bottom: 0.75rem;">⚠️</div>' +
+          '<h4 data-i18n="error_loading_engines">' + t('error_loading_engines', 'Unable to load display engines') + '</h4>' +
+          '<p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="error_loading_engines_desc">' +
+            t('error_loading_engines_desc', 'Communication with the matrix timed out or returned empty.') +
+          '</p>' +
+          '<button class="btn btn-primary" id="btn-retry-engines">🔄 ' + t('btn_retry', 'Retry Loading') + '</button>' +
+        '</div>';
       const retryBtn = wrapper.querySelector('#btn-retry-engines');
       if (retryBtn) {
         retryBtn.onclick = () => {
           endpointCache.delete('/api/engines');
+          try { sessionStorage.removeItem('am_cache_/api/engines'); } catch (_) {}
           renderDynamicDisplay(targetActiveInstanceId);
         };
       }
       return;
     }
+
+    const [instancesList, rotationList] = await Promise.all([
+      API.get('/api/instances', 15000).catch(() => []),
+      API.get('/api/rotation', 10000).catch(() => [])
+    ]);
 
     const enginesMap = {};
     descriptors.forEach(desc => {
@@ -5581,17 +5651,13 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       }
     });
 
-    // Warm every distinct options endpoint before rendering. The per-field builder awaits
-    // fetchCachedEndpoint() inside nested loops, so without this pre-pass each distinct endpoint
-    // costs a serialized round-trip. Concurrency is capped because the ESP32 AsyncWebServer has a
-    // small socket pool and saturating it is what made the first connection crawl.
-    //
-    // File-asset fields must be skipped: for them options_endpoint carries the multipart UPLOAD
-    // target (e.g. /api/upload?target=marquee), not a list of options. The renderer already
-    // short-circuits them via isFileAssetField(), and warming them issued a GET on a POST-only
-    // route, which the server answered with 404 "Not found".
+    // Warm options endpoints ONLY for actively configured engine instances to prevent lwIP socket pool
+    // exhaustion on ESP32. Unconfigured engines in the catalog are loaded on-demand when created.
+    // Sequential warming ensures only 1 TCP connection is open at a time.
+    const activeEngineTypes = new Set(instancesList.map(inst => inst.engine_type || inst.engine_id || (inst.id ? inst.id.split('_')[0] : '')));
     const optionsEndpoints = new Set();
     descriptors.forEach(desc => {
+      if (!desc || !desc.metadata || !activeEngineTypes.has(desc.metadata.id)) return;
       const fields = (desc && desc.schema) || [];
       fields.forEach(field => {
         if (!field || !field.options_endpoint) return;
@@ -5600,15 +5666,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
         optionsEndpoints.add(field.options_endpoint);
       });
     });
-    if (optionsEndpoints.size > 0) {
-      const queue = [...optionsEndpoints];
-      const MAX_PARALLEL_WARMUPS = 3;
-      const workers = Array.from({ length: Math.min(MAX_PARALLEL_WARMUPS, queue.length) }, async () => {
-        while (queue.length > 0) {
-          await fetchCachedEndpoint(queue.shift());
-        }
-      });
-      await Promise.all(workers);
+    for (const ep of optionsEndpoints) {
+      await fetchCachedEndpoint(ep).catch(() => null);
     }
 
     // 1. Render Visual Engine Catalog directly onto the Dashboard (Home Hub)
@@ -7531,6 +7590,7 @@ async function initSettings() {
     setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
+    setVal('hw-render-pipeline', matrix.render_pipeline || (matrix.force_single_buffer ? 'canvas_single' : 'auto'));
     setChk('hw-force-single-buffer', matrix.force_single_buffer ?? false);
 
     // Screen Orientation & Gyroscope
@@ -7717,7 +7777,8 @@ async function initSettings() {
         latch_blanking: numOr('hw-latch-blanking', 4),
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,
-        force_single_buffer: document.getElementById('hw-force-single-buffer')?.checked ?? false,
+        render_pipeline: document.getElementById('hw-render-pipeline')?.value || 'auto',
+        force_single_buffer: (document.getElementById('hw-render-pipeline')?.value === 'canvas_single' || document.getElementById('hw-render-pipeline')?.value === 'direct_single' || document.getElementById('hw-force-single-buffer')?.checked) ? true : false,
         rotation_offset: numOr('hw-screen-rotation', 0),
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
         rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',

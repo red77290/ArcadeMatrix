@@ -1,6 +1,7 @@
 #include "../../include/core/EngineRegistry.h"
 #include "RotationManager.h"
 #include "DisplayRuntime.h"
+#include "drawing/IDrawingSurface.h"
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
@@ -218,6 +219,10 @@ IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     for (const auto& inst : guard->instances) {
         if (inst.instance_id == instanceId) {
             auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+            if (desc && !desc->available) {
+                LOGW("RotationManager", "Engine '%s' is unavailable on this hardware profile, skipping instance '%s'", inst.engine_id.c_str(), instanceId);
+                return nullptr;
+            }
             if (desc && desc->factory) {
                 auto engine = desc->factory();
                 if (engine) {
@@ -292,6 +297,9 @@ void RotationManager::switchToModule(int index) {
       IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
           oldEngine->deactivate();
+      }
+      if (m_ctx && m_ctx->getSurface()) {
+          m_ctx->getSurface()->clear(0);
       }
       if (m_ctx && m_ctx->getMatrix()) {
           // Both DMA buffers have to go black. Clearing once only blanks the back buffer, so the
@@ -410,8 +418,13 @@ bool RotationManager::loop() {
     
     bool shouldFlip = true;
     if (activeEngine) {
-        if (activeEngine->needsClear() && m_ctx && m_ctx->getMatrix()) {
-            m_ctx->getMatrix()->fillScreen(0);
+        if (activeEngine->needsClear()) {
+            if (m_ctx && m_ctx->getSurface()) {
+                m_ctx->getSurface()->clear(0);
+            }
+            if (m_ctx && m_ctx->getMatrix()) {
+                m_ctx->getMatrix()->fillScreen(0);
+            }
             matrixEngine.markExternalDraw();
         }
         activeEngine->update(m_ctx);
@@ -444,6 +457,7 @@ bool RotationManager::loop() {
                  (int)currentIndex, (inst_id ? inst_id : "(null)"), isSoloMode ? "showing a blank panel" : "skipping it");
         }
         if (m_missingClears < 2) {
+            if (m_ctx && m_ctx->getSurface()) m_ctx->getSurface()->clear(0);
             if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
             m_missingClears++;
             shouldFlip = true;

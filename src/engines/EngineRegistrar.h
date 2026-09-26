@@ -26,7 +26,7 @@ class EngineRegistrar {
 public:
     static void registerAll();
     static bool registerHandler(const IEngineDescriptorHandler& handler);
-    static RequirementCheckResult checkRequirements(const EngineRequirements& req);
-    static bool meetsRequirements(const EngineRequirements& req);
+    static RequirementCheckResult checkRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
+    static bool meetsRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
 };
 

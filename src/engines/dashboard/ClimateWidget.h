@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "DashboardData.h"
 
 /**
@@ -9,5 +9,5 @@ class MatrixPanel_I2S_DMA;
  */
 class ClimateWidget {
 public:
-    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang = "en");
+    static void render(IDrawingSurface* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang = "en");
 };

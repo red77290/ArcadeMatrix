@@ -25,7 +25,8 @@ WeatherEngine::~WeatherEngine() {
 }
 
 EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrix = context->getMatrix();
+    matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return EngineError::InitializationFailed;
     textColor = matrix->color565(255, 255, 255);
     shadowColor = matrix->color565(0, 0, 0);
     

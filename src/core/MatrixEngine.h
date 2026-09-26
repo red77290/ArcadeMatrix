@@ -16,6 +16,9 @@
 
 #include "ConfigLoader.h"
 
+class Hub75PresentationBackend;
+class IPresentationBackend;
+
 #if defined(ESP32_THE_ORIG)
 #define MATRIX_TX_ADJUST(x_coord) (((x_coord) & 1U) ? ((x_coord) - 1) : ((x_coord) + 1))
 #else
@@ -56,9 +59,15 @@ public:
     void setBuffering(bool doubleBuffered);
     void noteFlip() { if (m_double) m_back ^= 1; }
     void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
+    uint8_t getBrightness8() const { return m_brightness8; }
+    size_t getDmaAllocatedBytes() const;
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();
+    uint16_t* getBackbufferRowPlane(uint8_t row, uint8_t plane);
+    const uint8_t* getLutR() const { return m_lut_r; }
+    const uint8_t* getLutG() const { return m_lut_g; }
+    const uint8_t* getLutB() const { return m_lut_b; }
 
 private:
     bool m_double = false;
@@ -147,11 +156,24 @@ public:
     void markExternalDraw() { m_externalDrawGeneration++; }
     uint32_t externalDrawGeneration() const { return m_externalDrawGeneration; }
 
+    /**
+     * @brief Temporarily blanks or restores the display output (used for glitch-free buffer swaps).
+     */
+    void setBlank(bool blank);
+    bool isBlanked() const { return m_blanked; }
+
+    /**
+     * @brief Get the active presentation backend driving the HUB75 DMA pipeline.
+     */
+    IPresentationBackend* getPresentationBackend();
+
 private:
     MatrixPanel_I2S_DMA* display; ///< Pointer to the underlying DMA library instance
     FastMatrixPanel* m_panel = nullptr; ///< same object as `display`, typed for the fast clear hooks
+    std::unique_ptr<Hub75PresentationBackend> m_presentationBackend;
     uint32_t m_flipCount = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;
+    bool m_blanked = false;
 };
 

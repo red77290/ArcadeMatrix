@@ -99,58 +99,71 @@ static void es7210RecoveryTaskFunc(void* param) {
 void HardwareHAL::begin() {
     LOGI("HardwareHAL", "Initializing Hardware Abstraction Layer...");
 
-    // 0. I2C Bus Recovery: if an external peripheral (QMI8658, ES7210, SHTC3) was interrupted
-    // mid-transfer during a software reset (e.g. OTA reboot), SDA may remain held LOW by the slave.
-    // Pulse SCL up to 9 clock cycles to let the slave finish its byte and release SDA.
-    pinMode(I2C_SDA_PIN, INPUT_PULLUP);
-    pinMode(I2C_SCL_PIN, OUTPUT_OPEN_DRAIN);
-    digitalWrite(I2C_SCL_PIN, HIGH);
-    delayMicroseconds(10);
+#if !defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    constexpr bool i2cConflictsWithMatrix = (I2C_SDA_PIN == MATRIX_E_PIN || I2C_SDA_PIN == MATRIX_C_PIN ||
+                                             I2C_SCL_PIN == MATRIX_E_PIN || I2C_SCL_PIN == MATRIX_C_PIN);
+#else
+    constexpr bool i2cConflictsWithMatrix = false;
+#endif
 
-    if (digitalRead(I2C_SDA_PIN) == LOW) {
-        LOGW("HardwareHAL", "I2C SDA line held low on boot, pulsing SCL to recover bus...");
-        for (int i = 0; i < 9 && digitalRead(I2C_SDA_PIN) == LOW; i++) {
-            digitalWrite(I2C_SCL_PIN, LOW);
+    if (!i2cConflictsWithMatrix) {
+        // 0. I2C Bus Recovery: if an external peripheral (QMI8658, ES7210, SHTC3) was interrupted
+        // mid-transfer during a software reset (e.g. OTA reboot), SDA may remain held LOW by the slave.
+        // Pulse SCL up to 9 clock cycles to let the slave finish its byte and release SDA.
+        pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+        pinMode(I2C_SCL_PIN, OUTPUT_OPEN_DRAIN);
+        digitalWrite(I2C_SCL_PIN, HIGH);
+        delayMicroseconds(10);
+
+        if (digitalRead(I2C_SDA_PIN) == LOW) {
+            LOGW("HardwareHAL", "I2C SDA line held low on boot, pulsing SCL to recover bus...");
+            for (int i = 0; i < 9 && digitalRead(I2C_SDA_PIN) == LOW; i++) {
+                digitalWrite(I2C_SCL_PIN, LOW);
+                delayMicroseconds(5);
+                digitalWrite(I2C_SCL_PIN, HIGH);
+                delayMicroseconds(5);
+            }
+            // Generate an explicit I2C STOP condition (SDA low -> high while SCL is high)
+            pinMode(I2C_SDA_PIN, OUTPUT_OPEN_DRAIN);
+            digitalWrite(I2C_SDA_PIN, LOW);
             delayMicroseconds(5);
             digitalWrite(I2C_SCL_PIN, HIGH);
             delayMicroseconds(5);
+            digitalWrite(I2C_SDA_PIN, HIGH);
+            delayMicroseconds(5);
+            if (digitalRead(I2C_SDA_PIN) == HIGH) {
+                LOGI("HardwareHAL", "I2C bus recovered successfully.");
+            } else {
+                LOGE("HardwareHAL", "I2C bus recovery failed: SDA still held LOW.");
+            }
         }
-        // Generate an explicit I2C STOP condition (SDA low -> high while SCL is high)
-        pinMode(I2C_SDA_PIN, OUTPUT_OPEN_DRAIN);
-        digitalWrite(I2C_SDA_PIN, LOW);
-        delayMicroseconds(5);
-        digitalWrite(I2C_SCL_PIN, HIGH);
-        delayMicroseconds(5);
-        digitalWrite(I2C_SDA_PIN, HIGH);
-        delayMicroseconds(5);
-        if (digitalRead(I2C_SDA_PIN) == HIGH) {
-            LOGI("HardwareHAL", "I2C bus recovered successfully.");
+
+        // 1. Initialize I2C Bus & Scan Devices
+        Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+        Wire.setClock(100000); // 100kHz standard I2C speed
+        Wire.setTimeOut(25);   // 25ms timeout to prevent peripheral lockups
+
+        String i2cLog = "I2C Bus Scan: ";
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                i2cLog += "0x" + String(addr, HEX) + " ";
+            }
+        }
+        LOGI("HardwareHAL", "%s", i2cLog.c_str());
+
+        // 2. Probe Temperature & Humidity Sensor (SHTC3)
+        _capabilities.hasTempSensor = probeSHTC3();
+        if (_capabilities.hasTempSensor) {
+            LOGI("HardwareHAL", "SHTC3 Temp/Humidity Sensor DETECTED on I2C address 0x70.");
+            readEnvironment(); // Initial reading
         } else {
-            LOGE("HardwareHAL", "I2C bus recovery failed: SDA still held LOW.");
+            LOGW("HardwareHAL", "SHTC3 Temp/Humidity Sensor NOT detected.");
         }
-    }
-
-    // 1. Initialize I2C Bus & Scan Devices
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(100000); // 100kHz standard I2C speed
-    Wire.setTimeOut(25);   // 25ms timeout to prevent peripheral lockups
-
-    String i2cLog = "I2C Bus Scan: ";
-    for (uint8_t addr = 1; addr < 127; addr++) {
-        Wire.beginTransmission(addr);
-        if (Wire.endTransmission() == 0) {
-            i2cLog += "0x" + String(addr, HEX) + " ";
-        }
-    }
-    LOGI("HardwareHAL", "%s", i2cLog.c_str());
-
-    // 2. Probe Temperature & Humidity Sensor (SHTC3)
-    _capabilities.hasTempSensor = probeSHTC3();
-    if (_capabilities.hasTempSensor) {
-        LOGI("HardwareHAL", "SHTC3 Temp/Humidity Sensor DETECTED on I2C address 0x70.");
-        readEnvironment(); // Initial reading
     } else {
-        LOGW("HardwareHAL", "SHTC3 Temp/Humidity Sensor NOT detected.");
+        LOGI("HardwareHAL", "I2C bus skipped: GPIO %d/%d assigned to HUB75 Matrix C/E lines.",
+             I2C_SDA_PIN, I2C_SCL_PIN);
+        _capabilities.hasTempSensor = false;
     }
 
     // 3. Probe Audio Codec / I2S Hardware
@@ -199,8 +212,12 @@ void HardwareHAL::begin() {
          _capabilities.audio.fullDuplex ? "YES" : "NO");
 
     // 4. Probe Gyroscope / Accelerometer (QMI8658 / MPU6050)
-    gyroHAL.begin();
-    _capabilities.hasGyroscope = gyroHAL.isAvailable();
+    if (!i2cConflictsWithMatrix) {
+        gyroHAL.begin();
+        _capabilities.hasGyroscope = gyroHAL.isAvailable();
+    } else {
+        _capabilities.hasGyroscope = false;
+    }
 
     // Populate Capabilities Snapshot
     _capabilities.hasNetwork = true;
@@ -215,17 +232,12 @@ void HardwareHAL::begin() {
     }
     _capabilities.audio.psram = _capabilities.hasPsram;
     // NOTE: mbedTLS intentionally uses the stock ESP-IDF/Arduino allocator (100% internal DRAM,
-    // as in v3.1.0). Live hardware testing proved that ANY mbedTLS allocation routed to PSRAM --
-    // even only the large ~16KB TLS record buffers via a size threshold -- causes the HUB75
-    // matrix display to go blank within seconds. Root cause: this board's framebuffer is also
-    // PSRAM-resident (build_flags: -D SPIRAM_DMA_BUFFER, required because moving it to internal
-    // DRAM costs ~64KB of internal DRAM this board does not have to spare). ESP32-S3's PSRAM
-    // (per ESP-IDF docs) shares its cache with large-chunk (>32KB) access causing slow/evicted
-    // cache lines; mbedTLS's ~32KB combined in/out record buffers are exactly this kind of large,
-    // bursty access, and contending with the HUB75 GDMA engine's continuous PSRAM reads for the
-    // framebuffer corrupts/stalls the display. Display integrity takes priority over TLS
-    // reliability: TLS fetches that fail due to internal DRAM pressure degrade gracefully
-    // (cached values are kept, see DashboardDataProvider/YahooFinanceProvider/BinanceProvider),
+    // as in v3.1.0). Validated on the Waveshare S3 N32R16 configuration: routing TLS large allocations
+    // to PSRAM caused display corruption/stalls due to cache line eviction contention between mbedTLS
+    // ~32KB record buffers and the HUB75 GDMA continuous PSRAM framebuffer reads (SPIRAM_DMA_BUFFER).
+    // Therefore ArcadeMatrix keeps TLS allocations in internal DRAM on this profile.
+    // Display integrity takes priority over TLS reliability: TLS fetches that fail due to internal
+    // DRAM pressure degrade gracefully (cached values are kept, see DashboardDataProvider/YahooFinanceProvider),
     // whereas a corrupted display cannot recover without a reboot. See NetworkBudget.h for the
     // admission-control gate and ScopedTlsHandshakeLock, which mitigate internal DRAM pressure by
     // serializing TLS handshakes system-wide instead of spilling to PSRAM.

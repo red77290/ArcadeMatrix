@@ -17,6 +17,9 @@
 #include "../engines/GifEngine.h"
 #include "../services/AudioSessionManager.h"
 
+#include "drawing/IDrawingSurface.h"
+#include <memory>
+
 class AppRuntime {
 public:
     AppRuntime();
@@ -27,10 +30,12 @@ public:
 
     inline ConfigLoader& getConfig();
     inline DisplayRuntime& getDisplayRuntime() { return m_displayRuntime; }
+    inline IDrawingSurface* getDrawingSurface() { return m_drawingSurface.get(); }
 
 private:
     DisplayArbiter m_displayArbiter;
     DisplayRuntime m_displayRuntime;
+    std::unique_ptr<IDrawingSurface> m_drawingSurface;
     AppEngineContext* m_appCtx = nullptr;
     BitmapFontLoader m_customFontLoader;
 

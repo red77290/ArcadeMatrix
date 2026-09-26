@@ -8,7 +8,7 @@ void MessageEngine::setCustomFont(GFXfont* font) {
 }
 
 EngineError MessageEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
-    if (context) matrixDisplay = context->getMatrix();
+    if (context) matrixDisplay = context->getSurface();
     if (engineConfig) onConfigChanged(engineConfig);
     return EngineError::OK;
 }
@@ -134,7 +134,7 @@ void MessageEngine::update(EngineContext* context) {
     }
     if (!active) return;
     
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
     matrixDisplay = matrix;
 
@@ -180,7 +180,7 @@ void MessageEngine::update(EngineContext* context) {
 
 void MessageEngine::render(EngineContext* context) {
     if (!active) return;
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
 
     matrix->fillScreen(0);

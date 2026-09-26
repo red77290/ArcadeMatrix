@@ -58,6 +58,9 @@ public:
     void begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
                OverlayManager* ov, DisplayOrientationManager* orient, DisplayArbiter* arb);
 
+    void setSurface(IDrawingSurface* surface) { m_surface = surface; }
+    IDrawingSurface* getSurface() const { return m_surface; }
+
     void registerSourceEngine(DisplaySourceId sourceId, IEngine* engine, const EngineHandle& handle = {});
     IEngine* resolveEngine(const EngineHandle& handle, DisplaySourceId sourceId) const;
     inline IEngine* getEngineForSource(DisplaySourceId sourceId, const EngineHandle& handle) const {
@@ -122,6 +125,7 @@ private:
     };
 
     AppEngineContext* m_ctx = nullptr;
+    IDrawingSurface* m_surface = nullptr;
     MatrixEngine* m_matrixEngine = nullptr;
     RotationManager* m_rotationManager = nullptr;
     OverlayManager* m_overlayManager = nullptr;

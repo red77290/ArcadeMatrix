@@ -255,7 +255,7 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
 
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    auto* matrix = context ? context->getSurface() : nullptr;
     int mH = matrix ? matrix->height() : 32;
     
     uint32_t now = millis();
@@ -292,7 +292,8 @@ bool CryptoEngine::isFinished() const {
 
 void CryptoEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -377,7 +378,8 @@ void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
 }
 
 void CryptoEngine::renderUnifiedVertical(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -525,7 +527,8 @@ void CryptoEngine::renderUnifiedVertical(EngineContext* context) {
 }
 
 void CryptoEngine::renderUnifiedWide(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -620,7 +623,8 @@ void CryptoEngine::renderUnifiedWide(EngineContext* context) {
 }
 
 void CryptoEngine::renderChart(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -672,7 +676,8 @@ void CryptoEngine::renderChart(EngineContext* context) {
 }
 
 void CryptoEngine::renderQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -758,7 +763,8 @@ void CryptoEngine::renderQuote(EngineContext* context) {
 }
 
 void CryptoEngine::renderFullScreenQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();

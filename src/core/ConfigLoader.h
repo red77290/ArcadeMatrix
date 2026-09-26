@@ -57,6 +57,7 @@ struct MatrixConfig {
     bool auto_rotate = true;
     String rotation_transition = "vortex";
     int rotation_transition_duration_ms = 400;
+    String render_pipeline = "auto";
 };
 
 struct WifiConfig {
@@ -295,7 +296,11 @@ private:
     // saveToSD() (serialize) and loadFromSD() (deserialize) are only ever called from a single
     // context at a time (save is always under sdMutex, load only runs once at boot before any
     // other task touches config), so sharing one scratch buffer is safe.
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     mutable SpiRamJsonDocument _jsonScratch{32768};
+#else
+    mutable SpiRamJsonDocument _jsonScratch{8192};
+#endif
 
     void publishSnapshot_locked();
 };

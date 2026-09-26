@@ -6,7 +6,7 @@
 
 class PongClock : public ClockFace {
 public:
-    PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    PongClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;

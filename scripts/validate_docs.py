@@ -103,6 +103,49 @@ def check_sd_config_json():
         return True
     return False
 
+def check_modular_sd_config():
+    conf_dir = os.path.join(ROOT_DIR, "release", "sdCard", "config")
+    if not os.path.isdir(conf_dir):
+        print(f"❌ Modular SD Card config directory missing: {conf_dir}")
+        return False
+
+    required_files = ["hardware.json", "system.json", "network.json", "playlist.json"]
+    for req in required_files:
+        p = os.path.join(conf_dir, req)
+        if not os.path.exists(p):
+            print(f"❌ Modular SD config missing: {p}")
+            return False
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if req == "hardware.json" and "render_pipeline" not in d and "renderPipeline" not in d:
+                print(f"❌ {p} missing required 'render_pipeline' key")
+                return False
+        except Exception as e:
+            print(f"❌ {p} JSON error: {e}")
+            return False
+
+    inst_dir = os.path.join(conf_dir, "instances")
+    if not os.path.isdir(inst_dir):
+        print(f"❌ Modular SD config instances directory missing: {inst_dir}")
+        return False
+
+    print("  ✓ release/sdCard/config/ modular domain structure valid.")
+    return True
+
+def check_build_info():
+    build_info_path = os.path.join(ROOT_DIR, "src", "core", "BuildInfo.h")
+    if not os.path.exists(build_info_path):
+        print("❌ src/core/BuildInfo.h missing")
+        return False
+    with open(build_info_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "BUILD_GIT_COMMIT" not in content or "FIRMWARE_VERSION" not in content or "BUILD_TIMESTAMP" not in content:
+        print("❌ src/core/BuildInfo.h missing required macros")
+        return False
+    print("  ✓ src/core/BuildInfo.h structure and macros valid.")
+    return True
+
 def main():
     print("🔍 Validating Documentation files & SD config.json...")
     all_ok = True
@@ -111,6 +154,12 @@ def main():
             all_ok = False
 
     if not check_sd_config_json():
+        all_ok = False
+
+    if not check_modular_sd_config():
+        all_ok = False
+
+    if not check_build_info():
         all_ok = False
 
     if all_ok:

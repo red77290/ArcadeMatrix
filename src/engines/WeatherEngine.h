@@ -5,6 +5,7 @@
 #include "../api/IWeatherProvider.h"
 
 #include "../../include/core/EngineContract.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/AppEngineContext.h"
 
 class WeatherEngine : public IEngine {
@@ -46,7 +47,7 @@ public:
     bool hasValidData() const { return validData; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     std::vector<IWeatherProvider*> providers;
     WeatherData forecasts[MAX_FORECAST_DAYS];
     int numForecasts;

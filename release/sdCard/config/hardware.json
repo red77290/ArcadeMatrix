@@ -1,0 +1,21 @@
+{
+  "width": 64,
+  "height": 32,
+  "panelType": "P3",
+  "chainLength": 2,
+  "powerLimitPercent": 50,
+  "forceSingleBuffer": false,
+  "colorDepth": 8,
+  "rgbSequence": "RGB",
+  "limitRefreshRateHz": 90,
+  "driverChip": "SHIFTREG",
+  "clkPhase": false,
+  "latchBlanking": 4,
+  "rowAddressMode": 0,
+  "rotation_offset": 0,
+  "auto_rotate": false,
+  "rotation_transition": "none",
+  "rotation_transition_duration_ms": 0,
+  "matrix_power": true,
+  "render_pipeline": "auto"
+}

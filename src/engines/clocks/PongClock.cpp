@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) { faceFont.load(config);
+PongClock::PongClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) { faceFont.load(config);
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));

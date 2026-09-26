@@ -1,0 +1,8 @@
+{
+  "instance_id": "clock_main",
+  "engine_id": "clock",
+  "config": {
+    "theme": "0",
+    "format": "%H:%M:%S"
+  }
+}

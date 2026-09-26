@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "DashboardData.h"
 
 /**
@@ -9,5 +9,5 @@ class MatrixPanel_I2S_DMA;
  */
 class SysInfoWidget {
 public:
-    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const SystemData& sys, const DashboardTheme& theme);
+    static void render(IDrawingSurface* matrix, const Rect& rect, const SystemData& sys, const DashboardTheme& theme);
 };

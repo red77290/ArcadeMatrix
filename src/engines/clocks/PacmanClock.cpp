@@ -3,7 +3,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+PacmanClock::PacmanClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
     faceFont.load(config);
     storedTime = {0, 0, 0};
     strcpy(oldTimeStr, "");

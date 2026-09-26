@@ -1,5 +1,6 @@
 #include "ConfigSanitizer.h"
 #include "Logger.h"
+#include "../hal/BoardProfile.h"
 
 SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotationBootstrap) {
     SanitizeResult result;
@@ -7,6 +8,29 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotatio
     sanitizeMatrix(config.matrix, result);
     sanitizeSystem(config.system, result);
     sanitizeMqtt(config.mqtt, result);
+
+    // Ensure every rotation entry has a corresponding instance in config.instances
+    for (const auto& rot : config.rotation) {
+        bool found = false;
+        for (const auto& inst : config.instances) {
+            if (inst.instance_id == rot.instance_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found && !rot.instance_id.isEmpty()) {
+            EngineInstance newInst;
+            newInst.instance_id = rot.instance_id;
+            int under = rot.instance_id.indexOf('_');
+            newInst.engine_id = (under > 0) ? rot.instance_id.substring(0, under) : rot.instance_id;
+            config.instances.push_back(newInst);
+            result.defaults_injected++;
+            result.modified = true;
+            LOGI("ConfigSanitizer", "Recreated missing instance '%s' (engine '%s') referenced by rotation",
+                 newInst.instance_id.c_str(), newInst.engine_id.c_str());
+        }
+    }
+
     sanitizeInstances(config.instances, result);
     sanitizeRotation(config, allowRotationBootstrap, result);
 
@@ -39,8 +63,9 @@ void ConfigSanitizer::sanitizeMatrix(MatrixConfig& matrix, SanitizeResult& resul
         result.values_clamped++;
         result.modified = true;
     }
-    if (matrix.colorDepth < 1 || matrix.colorDepth > 11) {
-        matrix.colorDepth = constrain(matrix.colorDepth, 1, 11);
+    uint8_t maxColorDepth = (BoardProfile::current().memory().tier == MemoryTier::CONSTRAINED) ? 6 : 8;
+    if (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth) {
+        matrix.colorDepth = constrain(matrix.colorDepth, (uint8_t)1, maxColorDepth);
         result.values_clamped++;
         result.modified = true;
     }
@@ -292,6 +317,28 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
 }
 
 void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap, SanitizeResult& result) {
+    // 1. Prune rotation entries pointing to engines unavailable on this hardware profile
+    for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
+        const EngineInstance* inst = nullptr;
+        for (const auto& i : config.instances) {
+            if (i.instance_id == it->instance_id) {
+                inst = &i;
+                break;
+            }
+        }
+        if (inst) {
+            const auto* desc = EngineRegistry::getDescriptor(inst->engine_id.c_str());
+            if (desc && !desc->available) {
+                LOGW("ConfigSanitizer", "Removing rotation entry '%s' (engine '%s' unavailable on this hardware)",
+                     it->instance_id.c_str(), inst->engine_id.c_str());
+                it = config.rotation.erase(it);
+                result.modified = true;
+                continue;
+            }
+        }
+        ++it;
+    }
+
     // Seeding the rotation from the instance list is a first-boot convenience, never a
     // repair. Running it on every mutation meant that creating a single screen while the
     // rotation happened to be empty silently enrolled every other configured screen too.
@@ -300,7 +347,7 @@ void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap
     if (config.rotation.empty() && !config.instances.empty()) {
         for (const auto& inst : config.instances) {
             const auto* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
-            if (desc && desc->capabilities.allowRotation) {
+            if (desc && desc->available && desc->capabilities.allowRotation) {
                 config.rotation.emplace_back(inst.instance_id, 15, OverlayConfig{true});
                 result.defaults_injected++;
                 result.modified = true;

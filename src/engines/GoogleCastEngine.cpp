@@ -1,4 +1,5 @@
 #include "GoogleCastEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include "../core/SpiRamJsonDocument.h"
@@ -713,7 +714,7 @@ static void renderMarquee(Adafruit_GFX* display, const char* text, int y, int cl
 
 void GoogleCastEngine::render(EngineContext* context) {
     if (!context) return;
-    auto* display = context->getMatrix();
+    auto* display = context->getSurface();
     if (!display) return;
 
     int w = display->width();

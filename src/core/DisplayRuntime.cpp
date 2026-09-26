@@ -1,4 +1,5 @@
 #include "DisplayRuntime.h"
+#include "drawing/IDrawingSurface.h"
 #include "Logger.h"
 #include "MatrixEngine.h"
 
@@ -92,11 +93,17 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
  * on each engine to defend itself.
  */
 void DisplayRuntime::resetSharedTextState() {
-    if (!m_matrixEngine || !m_matrixEngine->getDisplay()) return;
-    auto* display = m_matrixEngine->getDisplay();
-    display->setFont(nullptr);
-    display->setTextSize(1);
-    display->setTextWrap(false);
+    if (m_surface) {
+        m_surface->setFont(nullptr);
+        m_surface->setTextSize(1);
+        m_surface->setTextWrap(false);
+    }
+    if (m_matrixEngine && m_matrixEngine->getDisplay()) {
+        auto* display = m_matrixEngine->getDisplay();
+        display->setFont(nullptr);
+        display->setTextSize(1);
+        display->setTextWrap(false);
+    }
 }
 
 void DisplayRuntime::purgeEngineReferences(IEngine* engine, const char* instanceId) {
@@ -311,7 +318,12 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
 
     if (decision.sourceId != DisplaySourceId::ROTATION && activeEngine != nullptr) {
         if (activeEngine->needsClear()) {
-            m_matrixEngine->getDisplay()->fillScreen(0);
+            if (m_surface) {
+                m_surface->clear(0);
+            }
+            if (m_matrixEngine && m_matrixEngine->getDisplay()) {
+                m_matrixEngine->getDisplay()->fillScreen(0);
+            }
             matrixEngine.markExternalDraw();
         }
         activeEngine->update(appCtx);

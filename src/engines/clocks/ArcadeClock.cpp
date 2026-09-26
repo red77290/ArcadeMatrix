@@ -2,7 +2,7 @@
 #include "../../core/ConfigLoader.h"
 #include "../fonts/ArcadeFonts.h"
 
-ArcadeClock::ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+ArcadeClock::ArcadeClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
     lastMinute = 255;
     isAnimating = false;
     animationFrame = 0;

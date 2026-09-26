@@ -10,6 +10,17 @@
 #include "core/NetworkBudget.h"
 #include "engines/EngineRegistrar.h"
 #include "hal/HardwareHAL.h"
+#include "core/drawing/IDrawingSurface.h"
+#include "core/drawing/SurfaceCoordinates.h"
+#include "core/drawing/Hub75BulkEncoder.h"
+#include "core/drawing/DisplaySurfaceFactory.h"
+#include "core/drawing/MockPresentationBackend.h"
+#include "core/drawing/Hub75PresentationBackend.h"
+#include "core/drawing/DmaMemoryLayout.h"
+#include "core/drawing/PipelineSelectionPolicy.h"
+#include "core/storage/MemoryConfigStorage.h"
+#include "core/storage/WorkingSetCache.h"
+#include "core/storage/ModularConfigManager.h"
 
 // Mock Engine implementation for testing
 class MockTestEngine : public IEngine {
@@ -362,6 +373,26 @@ void test_sanitizer_night_brightness_allows_zero(void) {
     res = ConfigSanitizer::sanitize(cfg);
     TEST_ASSERT_EQUAL(100, cfg.system.night_brightness);
     TEST_ASSERT_TRUE(res.values_clamped >= 1);
+}
+
+/**
+ * @brief Tests that ConfigSanitizer ensures any instance referenced by the rotation list
+ * exists in instances, recreating it if it was omitted or truncated.
+ */
+void test_sanitizer_rotation_recreates_missing_instances(void) {
+    ConfigLoader cfg;
+    cfg.mutate([](ConfigLoader& c) {
+        c.instances.clear();
+        c.rotation.clear();
+        c.rotation.emplace_back("clock_main", 15, OverlayConfig{false});
+        c.rotation.emplace_back("gifs_main", 20, OverlayConfig{false});
+    });
+    SanitizeResult res = ConfigSanitizer::sanitize(cfg, false);
+    TEST_ASSERT_EQUAL(2, cfg.instances.size());
+    TEST_ASSERT_EQUAL_STRING("clock_main", cfg.instances[0].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("clock", cfg.instances[0].engine_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("gifs_main", cfg.instances[1].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("gifs", cfg.instances[1].engine_id.c_str());
 }
 
 // =========================================================================
@@ -1872,6 +1903,746 @@ void test_engine_retirement_queue_stress_and_saturation(void) {
     TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
 }
 
+// =========================================================================
+// 9. Drawing Surfaces, Hub75BulkEncoder & Coordinates
+// =========================================================================
+void test_surface_coordinates_rotation(void) {
+    const int16_t w = 64;
+    const int16_t h = 32;
+
+    Point p0 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 0);
+    TEST_ASSERT_EQUAL_INT16(10, p0.x);
+    TEST_ASSERT_EQUAL_INT16(5, p0.y);
+
+    Point p1 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 1);
+    TEST_ASSERT_EQUAL_INT16(w - 1 - 5, p1.x); // 58
+    TEST_ASSERT_EQUAL_INT16(10, p1.y);
+
+    Point p2 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 2);
+    TEST_ASSERT_EQUAL_INT16(w - 1 - 10, p2.x); // 53
+    TEST_ASSERT_EQUAL_INT16(h - 1 - 5, p2.y);  // 26
+
+    Point p3 = SurfaceCoordinates::logicalToPhysical(10, 5, w, h, 3);
+    TEST_ASSERT_EQUAL_INT16(5, p3.x);
+    TEST_ASSERT_EQUAL_INT16(h - 1 - 10, p3.y); // 21
+
+    int16_t lw = 0, lh = 0;
+    SurfaceCoordinates::getLogicalDimensions(w, h, 0, lw, lh);
+    TEST_ASSERT_EQUAL_INT16(64, lw);
+    TEST_ASSERT_EQUAL_INT16(32, lh);
+
+    SurfaceCoordinates::getLogicalDimensions(w, h, 1, lw, lh);
+    TEST_ASSERT_EQUAL_INT16(32, lw);
+    TEST_ASSERT_EQUAL_INT16(64, lh);
+}
+
+static uint16_t s_mockBitplanes[16][8][64];
+
+static uint16_t* mockRowAccessor(void* userCtx, uint8_t row, uint8_t plane) {
+    (void)userCtx;
+    if (row < 16 && plane < 8) {
+        return s_mockBitplanes[row][plane];
+    }
+    return nullptr;
+}
+
+void test_hub75_bulk_encoder_luts_and_encode(void) {
+    uint8_t lutR[32];
+    uint8_t lutG[64];
+    uint8_t lutB[32];
+
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
+    TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
+    TEST_ASSERT_TRUE(lutR[31] >= 250);
+    TEST_ASSERT_TRUE(lutG[63] >= 250);
+    TEST_ASSERT_TRUE(lutB[31] >= 250);
+
+    for (int i = 1; i < 32; ++i) {
+        TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+        TEST_ASSERT_TRUE(lutB[i] >= lutB[i - 1]);
+    }
+    for (int i = 1; i < 64; ++i) {
+        TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+    }
+
+    std::vector<uint16_t> canvas(64 * 32, 0xF800); // Pure red
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+
+    Hub75EncodingParams params;
+    params.colorDepth = 8;
+    params.rowsPerFrame = 16;
+    params.width = 64;
+    params.height = 32;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    Hub75BulkEncoder::encode(
+        canvas.data(),
+        64,
+        mockRowAccessor,
+        nullptr,
+        params
+    );
+
+    // Plane 7 (MSB) for pure red must have R1 bit set (1 << 0)
+    uint16_t sample = s_mockBitplanes[0][7][0];
+    TEST_ASSERT_TRUE((sample & (1 << 0)) != 0);
+    TEST_ASSERT_TRUE((sample & (1 << 1)) == 0);
+    TEST_ASSERT_TRUE((sample & (1 << 2)) == 0);
+}
+
+void test_display_surface_factory_selection(void) {
+    auto resSingle = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    TEST_ASSERT_NOT_NULL(resSingle.surface.get());
+    TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resSingle.reason);
+    TEST_ASSERT_TRUE(resSingle.surface->hasCanvas());
+    TEST_ASSERT_EQUAL(PresentationStrategy::CANVAS_BURST_SINGLE, resSingle.surface->presentationStrategy());
+
+    auto resDirect = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "direct_double", false);
+    TEST_ASSERT_NOT_NULL(resDirect.surface.get());
+    TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resDirect.reason);
+    TEST_ASSERT_FALSE(resDirect.surface->hasCanvas());
+    TEST_ASSERT_EQUAL(PresentationStrategy::DIRECT_DMA_DOUBLE, resDirect.surface->presentationStrategy());
+
+    auto resAuto = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "unknown_pipeline", false);
+    TEST_ASSERT_NOT_NULL(resAuto.surface.get());
+}
+
+void test_canvas_buffered_surface_drawing_and_rotation(void) {
+    auto res = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    auto* surface = res.surface.get();
+    TEST_ASSERT_NOT_NULL(surface);
+    
+    // Clear to black
+    surface->clear(0);
+    auto view = surface->acquireCanvas();
+    TEST_ASSERT_TRUE(view.isValid());
+    TEST_ASSERT_EQUAL_UINT16(64, view.width);
+    TEST_ASSERT_EQUAL_UINT16(32, view.height);
+    for (size_t i = 0; i < 64 * 32; ++i) {
+        TEST_ASSERT_EQUAL_UINT16(0, view.data[i]);
+    }
+    surface->releaseCanvas();
+
+    // Draw pixel at (10, 5) with color 0x1234 in rotation 0
+    surface->setRotation(0);
+    surface->drawPixel(10, 5, 0x1234);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0x1234, view.data[5 * 64 + 10]);
+    surface->releaseCanvas();
+
+    // Now set rotation to 1 (90 deg clockwise)
+    // Physical dimensions are 64x32.
+    // In rot 1, logical dimensions are width=32, height=64.
+    // logicalToPhysical(10, 5, 64, 32, 1) -> x = 64 - 1 - 5 = 58, y = 10
+    surface->clear(0);
+    surface->setRotation(1);
+    TEST_ASSERT_EQUAL_INT16(32, surface->width());
+    TEST_ASSERT_EQUAL_INT16(64, surface->height());
+    surface->drawPixel(10, 5, 0x5678);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0x5678, view.data[10 * 64 + 58]);
+    surface->releaseCanvas();
+
+    // Now test blit565 with rotation 0
+    surface->clear(0);
+    surface->setRotation(0);
+    uint16_t sprite[4] = { 0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD }; // 2x2 sprite
+    surface->blit565(sprite, 2, 2, 2, 2, 2);
+    view = surface->acquireCanvas();
+    TEST_ASSERT_EQUAL_UINT16(0xAAAA, view.data[2 * 64 + 2]);
+    TEST_ASSERT_EQUAL_UINT16(0xBBBB, view.data[2 * 64 + 3]);
+    TEST_ASSERT_EQUAL_UINT16(0xCCCC, view.data[3 * 64 + 2]);
+    TEST_ASSERT_EQUAL_UINT16(0xDDDD, view.data[3 * 64 + 3]);
+    surface->releaseCanvas();
+}
+
+void test_presentation_backends(void) {
+    MockPresentationBackend mock(64, 32, 8);
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(64, 32, 8, false), mock.calculateDmaBytes());
+    
+    auto target = mock.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(64, target.width);
+    TEST_ASSERT_EQUAL_UINT16(32, target.height);
+    TEST_ASSERT_EQUAL_UINT16(16, target.rowsPerFrame);
+    TEST_ASSERT_EQUAL_UINT8(8, target.colorDepth);
+    TEST_ASSERT_NOT_NULL(target.buffer);
+    TEST_ASSERT_NOT_NULL(target.plane(0));
+    TEST_ASSERT_NOT_NULL(target.plane(7));
+    TEST_ASSERT_NULL(target.plane(8));
+
+    PresentationPolicy policy;
+    auto timing = mock.commit(policy);
+    TEST_ASSERT_EQUAL_UINT32(1, mock.getCommitCount());
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)timing.result);
+    TEST_ASSERT_EQUAL_UINT32(150, timing.totalPresentUs);
+
+    Hub75PresentationBackend hub75(nullptr, 64, 32, 8, true);
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(64, 32, 8, true), hub75.calculateDmaBytes());
+    auto hubTarget = hub75.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(64, hubTarget.width);
+    TEST_ASSERT_EQUAL_UINT16(32, hubTarget.height);
+
+    // Test CanvasBufferedSurface driving presentation backend end-to-end
+    CanvasBufferedSurface canvasSurf(64, 32, CanvasStorage::SRAM, &mock, false);
+    canvasSurf.fillScreen(0xF800);
+    auto canvasTiming = canvasSurf.present();
+    TEST_ASSERT_EQUAL_UINT32(2, mock.getCommitCount());
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)canvasTiming.result);
+    TEST_ASSERT_EQUAL_UINT32(150, canvasTiming.totalPresentUs);
+
+    // Test geometry validation in DisplaySurfaceFactory (unsupported geometry rejected)
+    auto unsuppResult = DisplaySurfaceFactory::createSurface(nullptr, 512, 512, "canvas_single");
+    TEST_ASSERT_NULL(unsuppResult.surface.get());
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)unsuppResult.reason);
+}
+
+void test_presentation_policy_budget_enforcement(void) {
+    MockPresentationBackend mock(64, 32, 8);
+
+    // 1. Nominal frame with default policy: Ok
+    PresentationPolicy policy;
+    policy.maxBlankUs = 400;
+    policy.maxFrameUs = 16667;
+    policy.allowBlanking = true;
+    mock.simulatedBlankUs = 50;
+    mock.simulatedTransferUs = 100;
+    mock.simulatedTotalUs = 150;
+
+    auto t1 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)t1.result);
+    TEST_ASSERT_EQUAL_UINT32(50, t1.blankUs);
+
+    // 2. Blank budget violation: blankUs > maxBlankUs
+    mock.simulatedBlankUs = 500; // Exceeds 400µs
+    mock.simulatedTotalUs = 600;
+    auto t2 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::BlankBudgetExceeded, (int)t2.result);
+
+    // 3. Frame budget violation: totalPresentUs > maxFrameUs
+    policy.maxBlankUs = 1000;
+    mock.simulatedBlankUs = 50;
+    policy.maxFrameUs = 500;
+    mock.simulatedTotalUs = 800; // Exceeds 500µs
+    auto t3 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::FrameBudgetExceeded, (int)t3.result);
+
+    // 4. Safe window timeout
+    class FailingSynchronizer : public IPresentationSynchronizer {
+    public:
+        SafeWindowResult waitForSafeWindow(uint32_t reqUs, uint32_t timeoutUs) override {
+            (void)reqUs; (void)timeoutUs;
+            return SafeWindowResult{false, timeoutUs, 0};
+        }
+    } failingSync;
+
+    mock.setSynchronizer(&failingSync);
+    auto t4 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::SafeWindowTimeout, (int)t4.result);
+    mock.setSynchronizer(nullptr);
+
+    // 5. allowBlanking = false suppresses blanking
+    policy.allowBlanking = false;
+    mock.simulatedBlankUs = 200;
+    mock.simulatedTotalUs = 300;
+    policy.maxFrameUs = 10000;
+    auto t5 = mock.commit(policy);
+    TEST_ASSERT_EQUAL((int)PresentationResult::Ok, (int)t5.result);
+    TEST_ASSERT_EQUAL_UINT32(0, t5.blankUs); // Blanking suppressed
+
+    // 6. Surface presentation: BackendUnavailable
+    CanvasBufferedSurface orphanSurf(64, 32, CanvasStorage::SRAM, nullptr, false);
+    orphanSurf.fillScreen(0x1234);
+    auto t6 = orphanSurf.present();
+    TEST_ASSERT_EQUAL((int)PresentationResult::BackendUnavailable, (int)t6.result);
+
+    // 7. Surface presentation: DmaTargetUnavailable
+    mock.simulateInvalidTarget = true;
+    CanvasBufferedSurface surfWithBadTarget(64, 32, CanvasStorage::SRAM, &mock, false);
+    auto t7 = surfWithBadTarget.present();
+    TEST_ASSERT_EQUAL((int)PresentationResult::DmaTargetUnavailable, (int)t7.result);
+    mock.simulateInvalidTarget = false;
+}
+
+void test_dma_memory_layout_exact_bytes(void) {
+    const struct {
+        uint16_t w;
+        uint16_t h;
+        uint8_t depth;
+        bool dbl;
+        size_t expectedBytes;
+    } cases[] = {
+        // 128x32: 16 rows, width 128, stride 256 bytes per plane
+        {128, 32, 2, false, (size_t)16 * 2 * 256},       // 8,192
+        {128, 32, 4, false, (size_t)16 * 4 * 256},       // 16,384
+        {128, 32, 5, false, (size_t)16 * 5 * 256},       // 20,480
+        {128, 32, 6, false, (size_t)16 * 6 * 256},       // 24,576
+        {128, 32, 8, false, (size_t)16 * 8 * 256},       // 32,768
+        {128, 32, 8, true,  (size_t)16 * 8 * 256 * 2},   // 65,536
+
+        // 128x64: 32 rows, width 128, stride 256 bytes per plane
+        {128, 64, 8, false, (size_t)32 * 8 * 256},       // 65,536
+        {128, 64, 8, true,  (size_t)32 * 8 * 256 * 2},   // 131,072
+
+        // 256x64: 32 rows, width 256, stride 512 bytes per plane
+        {256, 64, 8, false, (size_t)32 * 8 * 512},       // 131,072
+        {256, 64, 8, true,  (size_t)32 * 8 * 512 * 2},   // 262,144
+    };
+
+    for (const auto& c : cases) {
+        DmaMemoryLayout layout(c.w, c.h, c.depth, c.dbl);
+        TEST_ASSERT_EQUAL_UINT32(c.h / 2, layout.rows());
+        TEST_ASSERT_EQUAL_UINT32(c.depth, layout.planes());
+        TEST_ASSERT_EQUAL_UINT32((size_t)c.w * 2, layout.stride());
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, layout.totalBytes());
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, DmaMemoryLayout::calculateTotalBytes(c.w, c.h, c.depth, c.dbl));
+
+        Hub75PresentationBackend backend(nullptr, c.w, c.h, c.depth, c.dbl);
+        TEST_ASSERT_EQUAL_UINT32(c.expectedBytes, backend.calculateDmaBytes());
+    }
+}
+
+void test_pipeline_selection_policy(void) {
+    // 1. Unsupported geometry
+    auto r1 = PipelineSelectionPolicy::evaluate(512, 512, 8, "auto", false, false);
+    TEST_ASSERT_FALSE(r1.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)r1.reason);
+
+    // 2. Auto with PSRAM -> Canvas PSRAM + Double DMA
+    auto r2 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, true);
+    TEST_ASSERT_TRUE(r2.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedPsramCanvas, (int)r2.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_DOUBLE, (int)r2.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::PSRAM, (int)r2.descriptor.canvasStorage);
+    TEST_ASSERT_TRUE(r2.descriptor.dmaDoubleBuffered);
+
+    // 3. Auto without PSRAM -> Canvas SRAM + Single DMA
+    auto r3 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, false);
+    TEST_ASSERT_TRUE(r3.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedSramCanvasLowDma, (int)r3.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r3.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::SRAM, (int)r3.descriptor.canvasStorage);
+    TEST_ASSERT_FALSE(r3.descriptor.dmaDoubleBuffered);
+
+    // 4. Explicit canvas_single
+    auto r4 = PipelineSelectionPolicy::evaluate(128, 32, 8, "canvas_single", false, true);
+    TEST_ASSERT_TRUE(r4.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r4.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r4.descriptor.strategy);
+    TEST_ASSERT_FALSE(r4.descriptor.dmaDoubleBuffered);
+
+    // 5. Explicit direct_double
+    auto r5 = PipelineSelectionPolicy::evaluate(128, 32, 8, "direct_double", false, true);
+    TEST_ASSERT_TRUE(r5.valid);
+    TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r5.reason);
+    TEST_ASSERT_EQUAL((int)PresentationStrategy::DIRECT_DMA_DOUBLE, (int)r5.descriptor.strategy);
+    TEST_ASSERT_EQUAL((int)CanvasStorage::NONE, (int)r5.descriptor.canvasStorage);
+    TEST_ASSERT_TRUE(r5.descriptor.dmaDoubleBuffered);
+}
+
+void test_hub75_bulk_encoder_golden_snapshots(void) {
+    const uint16_t W = 8;
+    const uint16_t H = 4;
+    const uint8_t RPF = H / 2; // 2 rows
+    std::vector<uint16_t> canvas(W * H, 0);
+
+    // Mock bitplane storage: [row][plane][col]
+    static uint16_t mockPlanes[2][8][8];
+    auto mockAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        (void)ctx;
+        if (row < 2 && plane < 8) return mockPlanes[row][plane];
+        return nullptr;
+    };
+
+    uint8_t lutR[32], lutG[64], lutB[32];
+    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
+    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
+    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+
+    Hub75EncodingParams params;
+    params.width = W;
+    params.height = H;
+    params.rowsPerFrame = RPF;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    // Test 1: Golden Snapshot for All-Black (0x0000)
+    memset(mockPlanes, 0xFF, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x0000);
+    params.colorDepth = 8;
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int r = 0; r < RPF; ++r) {
+        for (int p = 0; p < 8; ++p) {
+            for (int c = 0; c < W; ++c) {
+                uint16_t val = mockPlanes[r][p][c];
+                TEST_ASSERT_EQUAL_UINT16(0, val & 0x003F); // R1,G1,B1,R2,G2,B2 bits
+            }
+        }
+    }
+
+    // Test 2: Golden Snapshot for All-White (0xFFFF)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0xFFFF);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x07) == 0x07); // R1, G1, B1
+        TEST_ASSERT_TRUE((topHalf & 0x38) == 0x38); // R2, G2, B2
+    }
+
+    // Test 3: Golden Snapshot for All-Red (0xF800)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0xF800);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x01); // R1 set
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x00); // G1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x00); // B1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x08); // R2 set
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x00); // G2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x00); // B2 clear
+    }
+
+    // Test 4: Golden Snapshot for All-Green (0x07E0)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x07E0);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x00); // R1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x02); // G1 set
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x00); // B1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x00); // R2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x10); // G2 set
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x00); // B2 clear
+    }
+
+    // Test 5: Golden Snapshot for All-Blue (0x001F)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    std::fill(canvas.begin(), canvas.end(), 0x001F);
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t topHalf = mockPlanes[0][7][c];
+        TEST_ASSERT_TRUE((topHalf & 0x01) == 0x00); // R1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x02) == 0x00); // G1 clear
+        TEST_ASSERT_TRUE((topHalf & 0x04) == 0x04); // B1 set
+        TEST_ASSERT_TRUE((topHalf & 0x08) == 0x00); // R2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x10) == 0x00); // G2 clear
+        TEST_ASSERT_TRUE((topHalf & 0x20) == 0x20); // B2 set
+    }
+
+    // Test 6: Deterministic Checkerboard (alternating white / black)
+    memset(mockPlanes, 0, sizeof(mockPlanes));
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            canvas[y * W + x] = ((x + y) & 1) ? 0xFFFF : 0x0000;
+        }
+    }
+    Hub75BulkEncoder::encode(canvas.data(), W, mockAccessor, nullptr, params);
+    for (int c = 0; c < W; ++c) {
+        uint16_t word = mockPlanes[0][7][c];
+        bool topWhite = ((c + 0) & 1) != 0;
+        bool botWhite = ((c + 2) & 1) != 0;
+        TEST_ASSERT_EQUAL_UINT16(topWhite ? 0x07 : 0x00, word & 0x07);
+        TEST_ASSERT_EQUAL_UINT16(botWhite ? 0x38 : 0x00, word & 0x38);
+    }
+}
+
+void test_backend_exists_before_first_present(void) {
+    Hub75PresentationBackend backend(nullptr, 128, 32, 8, true);
+    TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(128, 32, 8, true), backend.calculateDmaBytes());
+    auto target = backend.acquireDmaTarget();
+    TEST_ASSERT_EQUAL_UINT16(128, target.width);
+    TEST_ASSERT_EQUAL_UINT16(32, target.height);
+    TEST_ASSERT_EQUAL_UINT16(16, target.rowsPerFrame);
+    TEST_ASSERT_EQUAL_UINT8(8, target.colorDepth);
+}
+
+void test_surface_coordinates_multi_resolution(void) {
+    const struct {
+        int16_t w;
+        int16_t h;
+    } geometries[] = {
+        {128, 32},
+        {128, 64},
+        {256, 64}
+    };
+
+    for (const auto& g : geometries) {
+        const int16_t w = g.w;
+        const int16_t h = g.h;
+
+        // 4 Corners: (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)
+        const Point corners[] = {
+            {0, 0},
+            {(int16_t)(w - 1), 0},
+            {0, (int16_t)(h - 1)},
+            {(int16_t)(w - 1), (int16_t)(h - 1)}
+        };
+
+        // Rotation 0: Identity
+        for (const auto& c : corners) {
+            Point p = SurfaceCoordinates::logicalToPhysical(c.x, c.y, w, h, 0);
+            TEST_ASSERT_EQUAL_INT16(c.x, p.x);
+            TEST_ASSERT_EQUAL_INT16(c.y, p.y);
+        }
+
+        // Rotation 1 (90 deg CW): logical is H x W
+        int16_t lw1, lh1;
+        SurfaceCoordinates::getLogicalDimensions(w, h, 1, lw1, lh1);
+        TEST_ASSERT_EQUAL_INT16(h, lw1);
+        TEST_ASSERT_EQUAL_INT16(w, lh1);
+
+        Point p1_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 1);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p1_tl.x);
+        TEST_ASSERT_EQUAL_INT16(0, p1_tl.y);
+
+        Point p1_br = SurfaceCoordinates::logicalToPhysical(lw1 - 1, lh1 - 1, w, h, 1);
+        TEST_ASSERT_EQUAL_INT16(0, p1_br.x);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p1_br.y);
+
+        // Rotation 2 (180 deg)
+        Point p2_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 2);
+        TEST_ASSERT_EQUAL_INT16(w - 1, p2_tl.x);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p2_tl.y);
+
+        Point p2_br = SurfaceCoordinates::logicalToPhysical(w - 1, h - 1, w, h, 2);
+        TEST_ASSERT_EQUAL_INT16(0, p2_br.x);
+        TEST_ASSERT_EQUAL_INT16(0, p2_br.y);
+
+        // Rotation 3 (270 deg CW): logical is H x W
+        int16_t lw3, lh3;
+        SurfaceCoordinates::getLogicalDimensions(w, h, 3, lw3, lh3);
+        TEST_ASSERT_EQUAL_INT16(h, lw3);
+        TEST_ASSERT_EQUAL_INT16(w, lh3);
+
+        Point p3_tl = SurfaceCoordinates::logicalToPhysical(0, 0, w, h, 3);
+        TEST_ASSERT_EQUAL_INT16(0, p3_tl.x);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p3_tl.y);
+
+        Point p3_br = SurfaceCoordinates::logicalToPhysical(lw3 - 1, lh3 - 1, w, h, 3);
+        TEST_ASSERT_EQUAL_INT16(h - 1, p3_br.x);
+        TEST_ASSERT_EQUAL_INT16(0, p3_br.y);
+    }
+}
+
+void test_hub75_bulk_encoder_multi_depth_and_edge_colors(void) {
+    const uint8_t depths[] = {2, 4, 5, 6, 8};
+    for (uint8_t d : depths) {
+        uint8_t lutR[32];
+        uint8_t lutG[64];
+        uint8_t lutB[32];
+
+        Hub75BulkEncoder::generateLuts(d, lutR, lutG, lutB);
+
+        uint16_t maxAllowed = (1 << d) - 1;
+        TEST_ASSERT_EQUAL_UINT8(0, lutR[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutG[0]);
+        TEST_ASSERT_EQUAL_UINT8(0, lutB[0]);
+
+        TEST_ASSERT_TRUE(lutR[31] <= maxAllowed);
+        TEST_ASSERT_TRUE(lutG[63] <= maxAllowed);
+        TEST_ASSERT_TRUE(lutB[31] <= maxAllowed);
+
+        // Monotonic check
+        for (int i = 1; i < 32; ++i) {
+            TEST_ASSERT_TRUE(lutR[i] >= lutR[i - 1]);
+            TEST_ASSERT_TRUE(lutB[i] >= lutB[i - 1]);
+        }
+        for (int i = 1; i < 64; ++i) {
+            TEST_ASSERT_TRUE(lutG[i] >= lutG[i - 1]);
+        }
+    }
+
+    // Edge color validation at 8-bit depth
+    uint8_t lutR[32], lutG[64], lutB[32];
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
+
+    Hub75EncodingParams params;
+    params.colorDepth = 8;
+    params.rowsPerFrame = 16;
+    params.width = 64;
+    params.height = 32;
+    params.lutR = lutR;
+    params.lutG = lutG;
+    params.lutB = lutB;
+    params.rotation = 0;
+
+    // 1. Black (0x0000): all bitplanes must be completely zero
+    std::vector<uint16_t> canvasBlack(64 * 32, 0x0000);
+    memset(s_mockBitplanes, 0xFF, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasBlack.data(), 64, mockRowAccessor, nullptr, params);
+    for (int p = 0; p < 8; ++p) {
+        uint16_t val = s_mockBitplanes[0][p][0] & 0x003F; // mask R1,G1,B1,R2,G2,B2
+        TEST_ASSERT_EQUAL_UINT16(0, val);
+    }
+
+    // 2. White (0xFFFF): MSB plane must have all R1,G1,B1 and R2,G2,B2 active
+    std::vector<uint16_t> canvasWhite(64 * 32, 0xFFFF);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasWhite.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbWhite = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16(0x003F, msbWhite); // all 6 color lines high
+
+    // 3. Green (0x07E0): MSB plane must only have G1 (1 << 1) and G2 (1 << 4) set
+    std::vector<uint16_t> canvasGreen(64 * 32, 0x07E0);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasGreen.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbGreen = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16((1 << 1) | (1 << 4), msbGreen);
+
+    // 4. Blue (0x001F): MSB plane must only have B1 (1 << 2) and B2 (1 << 5) set
+    std::vector<uint16_t> canvasBlue(64 * 32, 0x001F);
+    memset(s_mockBitplanes, 0, sizeof(s_mockBitplanes));
+    Hub75BulkEncoder::encode(canvasBlue.data(), 64, mockRowAccessor, nullptr, params);
+    uint16_t msbBlue = s_mockBitplanes[0][7][0] & 0x003F;
+    TEST_ASSERT_EQUAL_UINT16((1 << 2) | (1 << 5), msbBlue);
+}
+
+// =========================================================================
+// 10. Modular Storage Architecture & Working-Set Cache
+// =========================================================================
+void test_memory_config_storage_crud(void) {
+    MemoryConfigStorage storage;
+
+    TEST_ASSERT_FALSE(storage.exists("/test.json"));
+    bool ok = storage.writeStringAtomic("/test.json", "{\"key\":\"val\"}");
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(storage.exists("/test.json"));
+
+    String readBack;
+    ok = storage.readString("/test.json", readBack);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_STRING("{\"key\":\"val\"}", readBack.c_str());
+
+    std::vector<String> files;
+    storage.listFiles("/", files);
+    TEST_ASSERT_EQUAL(1, files.size());
+    TEST_ASSERT_EQUAL_STRING("test.json", files[0].c_str());
+
+    ok = storage.remove("/test.json");
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_FALSE(storage.exists("/test.json"));
+}
+
+void test_working_set_cache_synchronization_and_eviction(void) {
+    MemoryConfigStorage storage;
+
+    storage.writeStringAtomic("/config/instances/clock.json", "{\"id\":\"clock\",\"engine\":\"ClockEngine\",\"settings\":{}}");
+    storage.writeStringAtomic("/config/instances/sysinfo.json", "{\"id\":\"sysinfo\",\"engine\":\"SysInfoEngine\",\"settings\":{}}");
+    storage.writeStringAtomic("/config/instances/weather.json", "{\"id\":\"weather\",\"engine\":\"WeatherEngine\",\"settings\":{}}");
+
+    WorkingSetCache cache(storage, 2);
+
+    std::vector<RotationEntry> playlist;
+    playlist.push_back(RotationEntry{"clock", 10});
+    playlist.push_back(RotationEntry{"weather", 15});
+
+    bool synced = cache.syncWithPlaylist(playlist);
+    TEST_ASSERT_TRUE(synced);
+    TEST_ASSERT_EQUAL(2, cache.getCachedInstances().size());
+    TEST_ASSERT_NOT_NULL(cache.getInstance("clock"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("weather"));
+    TEST_ASSERT_NULL(cache.getInstance("sysinfo"));
+
+    // Rotate playlist: evict clock, bring in sysinfo
+    playlist.clear();
+    playlist.push_back(RotationEntry{"sysinfo", 10});
+    playlist.push_back(RotationEntry{"weather", 15});
+
+    synced = cache.syncWithPlaylist(playlist);
+    TEST_ASSERT_TRUE(synced);
+    TEST_ASSERT_EQUAL(2, cache.getCachedInstances().size());
+    TEST_ASSERT_NULL(cache.getInstance("clock"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("sysinfo"));
+    TEST_ASSERT_NOT_NULL(cache.getInstance("weather"));
+
+    EngineInstance newInst;
+    newInst.instance_id = "alert";
+    newInst.engine_id = "AlertEngine";
+    bool saved = cache.saveAndCacheInstance(newInst);
+    TEST_ASSERT_TRUE(saved);
+    TEST_ASSERT_NOT_NULL(cache.getInstance("alert"));
+    TEST_ASSERT_TRUE(storage.exists("/config/instances/alert.json"));
+
+    bool deleted = cache.deleteInstance("alert");
+    TEST_ASSERT_TRUE(deleted);
+    TEST_ASSERT_NULL(cache.getInstance("alert"));
+    TEST_ASSERT_FALSE(storage.exists("/config/instances/alert.json"));
+}
+
+void test_modular_config_migration_and_partitioning(void) {
+    MemoryConfigStorage storage;
+
+    const char* legacyJson = "{"
+        "\"matrix_rows\":64,"
+        "\"matrix_cols\":128,"
+        "\"wifi_ssid\":\"TestWiFi\","
+        "\"mqtt_enabled\":true,"
+        "\"playlist_items\":[\"clock_1\"],"
+        "\"instances\":["
+            "{\"id\":\"clock_1\",\"engine\":\"ClockEngine\",\"settings\":{\"style\":\"digital\"}}"
+        "]"
+    "}";
+    storage.writeStringAtomic("/config.json", legacyJson);
+
+    ConfigLoader config;
+    ModularConfigManager mgr(storage);
+
+    bool migrated = mgr.checkAndMigrateLegacy(config, "/config.json");
+    TEST_ASSERT_TRUE(migrated);
+
+    TEST_ASSERT_TRUE(storage.exists("/config/hardware.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/network.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/playlist.json"));
+    TEST_ASSERT_TRUE(storage.exists("/config/instances/clock_1.json"));
+
+    TEST_ASSERT_TRUE(storage.exists("/config.json.bak"));
+    TEST_ASSERT_FALSE(storage.exists("/config.json"));
+
+    String hwStr;
+    storage.readString("/config/hardware.json", hwStr);
+    TEST_ASSERT_TRUE(hwStr.indexOf("\"matrix_rows\":64") >= 0);
+    TEST_ASSERT_TRUE(hwStr.indexOf("\"matrix_cols\":128") >= 0);
+
+    String netStr;
+    storage.readString("/config/network.json", netStr);
+    TEST_ASSERT_TRUE(netStr.indexOf("\"wifi_ssid\":\"TestWiFi\"") >= 0);
+
+    String instStr;
+    storage.readString("/config/instances/clock_1.json", instStr);
+    TEST_ASSERT_TRUE(instStr.indexOf("\"id\":\"clock_1\"") >= 0);
+    TEST_ASSERT_TRUE(instStr.indexOf("\"engine\":\"ClockEngine\"") >= 0);
+
+    ConfigLoader freshConfig;
+    bool loaded = mgr.loadAll(freshConfig);
+    TEST_ASSERT_TRUE(loaded);
+
+    ConfigSnapshotGuard guard = freshConfig.acquireSnapshot();
+    const auto& snap = guard.get();
+    TEST_ASSERT_EQUAL(64, snap.matrix.height);
+    TEST_ASSERT_EQUAL(128, snap.matrix.width);
+    TEST_ASSERT_EQUAL_STRING("TestWiFi", snap.wifi.ssid.c_str());
+    TEST_ASSERT_TRUE(snap.mqtt.enabled);
+    TEST_ASSERT_EQUAL_STRING("clock_1", snap.rotation[0].instance_id.c_str());
+    TEST_ASSERT_EQUAL_STRING("auto", snap.matrix.render_pipeline.c_str());
+
+    // Test dual camelCase and snake_case parsing
+    MatrixConfig dualHw;
+    storage.writeStringAtomic("/config/hardware.json", "{\"chainLength\": 4, \"colorDepth\": 6, \"renderPipeline\": \"canvas_single\"}");
+    TEST_ASSERT_TRUE(mgr.loadHardware(dualHw));
+    TEST_ASSERT_EQUAL(4, dualHw.chainLength);
+    TEST_ASSERT_EQUAL(6, dualHw.colorDepth);
+    TEST_ASSERT_EQUAL_STRING("canvas_single", dualHw.render_pipeline.c_str());
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1897,6 +2668,7 @@ void setup() {
     RUN_TEST(test_sanitizer_flags_unknown_engines);
     RUN_TEST(test_sanitizer_validation_policy_coverage);
     RUN_TEST(test_sanitizer_night_brightness_allows_zero);
+    RUN_TEST(test_sanitizer_rotation_recreates_missing_instances);
 
     // =========================================================================
     // 3. Display Arbiter & SPSC Queue Lock-Free Invariants
@@ -1950,10 +2722,34 @@ void setup() {
     RUN_TEST(test_display_runtime_purge_engine_references);
     RUN_TEST(test_engine_retirement_queue_stress_and_saturation);
 
+    // =========================================================================
+    // 9. Drawing Surfaces, Hub75BulkEncoder & Coordinates
+    // =========================================================================
+    RUN_TEST(test_surface_coordinates_rotation);
+    RUN_TEST(test_surface_coordinates_multi_resolution);
+    RUN_TEST(test_hub75_bulk_encoder_luts_and_encode);
+    RUN_TEST(test_hub75_bulk_encoder_multi_depth_and_edge_colors);
+    RUN_TEST(test_display_surface_factory_selection);
+    RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
+    RUN_TEST(test_presentation_backends);
+    RUN_TEST(test_presentation_policy_budget_enforcement);
+    RUN_TEST(test_dma_memory_layout_exact_bytes);
+    RUN_TEST(test_pipeline_selection_policy);
+    RUN_TEST(test_hub75_bulk_encoder_golden_snapshots);
+    RUN_TEST(test_backend_exists_before_first_present);
+
+    // =========================================================================
+    // 10. Modular Storage Architecture & Working-Set Cache
+    // =========================================================================
+    RUN_TEST(test_memory_config_storage_crud);
+    RUN_TEST(test_working_set_cache_synchronization_and_eviction);
+    RUN_TEST(test_modular_config_migration_and_partitioning);
+
     UNITY_END();
 }
 
 void loop() {
     delay(100);
 }
+
 

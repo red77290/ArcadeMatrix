@@ -8,12 +8,13 @@
 
 #include "TimeData.h"
 
+#include "core/drawing/IDrawingSurface.h"
 #include "DateEngine.h" // For PublisherTheme
 
 // Abstract base class for all clock faces
 class ClockFace {
 public:
-    ClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr) : matrix(display), engineConfig(config) {}
+    ClockFace(IDrawingSurface* disp, const EngineConfig* config = nullptr) : matrix(disp), display(disp), engineConfig(config) {}
     const EngineConfig* engineConfig;
     virtual ~ClockFace() = default;
 
@@ -24,7 +25,8 @@ public:
     virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) {}
 
 protected:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
+    IDrawingSurface* display;
 };
 
 enum class ClockFormatMode : uint8_t {
@@ -36,7 +38,7 @@ enum class ClockFormatMode : uint8_t {
 class ClockEngine : public IEngine {
 public:
     ClockEngine();
-    ClockEngine(MatrixPanel_I2S_DMA* display);
+    ClockEngine(IDrawingSurface* display);
     ~ClockEngine() override;
 
     void setTheme(PublisherTheme theme, bool forceReload = false, const EngineConfig* config = nullptr);
@@ -58,7 +60,7 @@ private:
     TimeData currentTime;
     const EngineConfig* currentConfig = nullptr;
     volatile bool configDirty = false;
-    MatrixPanel_I2S_DMA* matrixDisplay;
+    IDrawingSurface* matrixDisplay;
     ClockFormatMode _formatMode = ClockFormatMode::SYSTEM;
 
     void updateFormatMode(const EngineConfig* config);

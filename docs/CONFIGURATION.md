@@ -43,11 +43,34 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `row_address_mode` | `int` | Row addressing mode (`0`: Direct Binary, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
 | `clk_phase` | `bool` | Invert CLK clock phase (`false` default; set `true` if panel requires inverted clock latching). |
 | `latch_blanking` | `int` | Latch blanking cycles (`0`–`8`) for ghosting/phantom line reduction. |
-| `force_single_buffer` | `bool` | Force single DMA buffer to save internal SRAM (`false` default). |
+| `render_pipeline` | `String` | Drawing and presentation pipeline (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Default `auto`. Controls intermediate canvas allocation and DMA synchronization. |
+| `force_single_buffer` | `bool` | Force single DMA buffer to save internal SRAM (`false` default; legacy shim mapping to `canvas_single`). |
 | `rotation_offset` | `int` | Mounting orientation offset (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Enable automatic display orientation via onboard Gyroscope/IMU (`true` default). |
 | `rotation_transition` | `String` | Visual transition effect (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Transition effect duration in milliseconds (default `400`). |
+
+### 2.1 Rendering & Buffering Pipeline Options
+
+ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`), decoupling engine pixel rasterization from physical DMA controllers. You can configure the pipeline directly in `config.json` or interactively from the **System Settings → Hardware** tab in the Web UI:
+
+- **`auto`** *(Recommended)*: Automatically resolves the optimal pipeline based on your hardware profile and memory tier:
+  - **ESP32-S3 / PSRAM Boards**: Allocates an intermediate 16-bit RGB565 canvas in external PSRAM with Double DMA buffering (`canvas_double`) for maximal throughput and tear-free 60 FPS animation.
+  - **Classic ESP32 (No PSRAM)**: Allocates an intermediate canvas in internal SRAM with Single DMA buffering (`canvas_single`). This frees ~16–20 KB of scarce DMA memory, preventing Wi-Fi init failures (`esp_wifi_init 4353`) while eliminating screen tearing via synchronized bulk burst encoding.
+- **`canvas_single`**: 16-bit RGB565 canvas buffer + single DMA back-buffer. Halves DMA RAM requirements while using `Hub75BulkEncoder` sequential burst packing to prevent scanline tearing.
+- **`canvas_double`**: 16-bit RGB565 canvas buffer + double DMA buffers. Best for multi-panel displays (e.g. 128×64, 256×64) with PSRAM.
+- **`direct_double`**: Legacy direct rendering into HUB75 DMA double-buffers without an intermediate canvas.
+- **`direct_single`**: Legacy direct rendering into a single DMA buffer (minimal memory footprint; may cause visible scanline tearing during redraws).
+
+> [!NOTE]
+> For backward compatibility, setting `force_single_buffer: true` automatically maps to `canvas_single` when `render_pipeline` is `auto` or unspecified.
+
+### 2.2 Web UI Hardware Tab Integration
+
+The Web UI (System Settings → Hardware) directly controls these parameters:
+1. **Rendering & Buffering Pipeline Dropdown (`hw-render-pipeline`)**: Select between `auto`, `canvas_single`, `canvas_double`, `direct_double`, or `direct_single`.
+2. **Force Single Buffer Switch (`hw-force-single-buffer`)**: Backward-compatible toggle for low-SRAM operation.
+3. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system` and `POST /api/settings`, then cleanly restarts the display panel with the new pipeline.
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 
@@ -481,6 +504,32 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | *(auto)* | `None` | — | Internal Pixelcade/Recalbox/Batocera marquee sync engine. Displays scraped game box-art and marquees received via MQTT / Webhook. |
+
+---
+
+## 10. Modular Storage Architecture & Working-Set Cache
+
+ArcadeMatrix v4 decouples configuration persistence from physical SD card hardware through the `IConfigStorage` abstraction layer:
+
+```text
+ ┌─────────────────────────────────────────────────────────────┐
+ │                      ConfigLoader                           │
+ └──────────────┬───────────────────────────────┬──────────────┘
+                │                               │
+                ▼                               ▼
+ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+ │      WorkingSetCache        │ │       IConfigStorage        │
+ │                             │ │                             │
+ │ • Dirty bit tracking        │ │ • SdConfigStorage (Hardware)│
+ │ • In-RAM atomic mutations   │ │ • MemoryConfigStorage (Mock)│
+ │ • Zero Core 1 FS blocking   │ │ • Atomic rename semantics   │
+ └─────────────────────────────┘ └─────────────────────────────┘
+```
+
+1. **`IConfigStorage` Interface**: Abstract filesystem backend supporting atomic string write (`writeStringAtomic`), streaming read, file existence checks, and recursive directory listing.
+2. **`SdConfigStorage`**: Production hardware backend managing SdFat with hardware SPI locking (`SdLockGuard`), writing to temporary files (`.tmp`) followed by atomic rename to eliminate file corruption during abrupt power cuts.
+3. **`MemoryConfigStorage`**: In-memory heap/RAM backend used for hermetic off-target unit testing (`test_core`), simulation, and diskless operation.
+4. **`WorkingSetCache`**: Core 0 memory-backed dirty state tracker. Mutations (such as Web UI saves or MQTT updates) immediately update the working-set cache in RAM and publish atomic snapshots to Core 1 without waiting on slow SD card I/O. Asynchronous sync flushes dirty files to permanent storage in the background.
 
 ---
 

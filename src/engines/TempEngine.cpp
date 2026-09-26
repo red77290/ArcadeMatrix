@@ -14,7 +14,7 @@ EngineError TempEngine::initialize(EngineContext* context, const EngineConfig* e
     return EngineError::OK;
 }
 
-uint16_t TempEngine::getTemperatureColor(MatrixPanel_I2S_DMA* matrix, float tempC) {
+uint16_t TempEngine::getTemperatureColor(IDrawingSurface* matrix, float tempC) {
     if (tempC < 18.0f) {
         return matrix->color565(0, 180, 255); // Blue / Cyan (Cold)
     } else if (tempC <= 24.0f) {
@@ -26,7 +26,7 @@ uint16_t TempEngine::getTemperatureColor(MatrixPanel_I2S_DMA* matrix, float temp
     }
 }
 
-void TempEngine::drawThermometerIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color) {
+void TempEngine::drawThermometerIcon(IDrawingSurface* matrix, int x, int y, uint16_t color) {
     uint16_t bg = matrix->color565(200, 200, 200);
     // Outer tube
     matrix->drawRect(x + 5, y + 2, 4, 10, bg);
@@ -36,7 +36,7 @@ void TempEngine::drawThermometerIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, 
     matrix->fillRect(x + 6, y + 5, 2, 7, color);
 }
 
-void TempEngine::drawWaterDropIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, uint16_t color) {
+void TempEngine::drawWaterDropIcon(IDrawingSurface* matrix, int x, int y, uint16_t color) {
     // Water drop shape
     matrix->drawPixel(x + 6, y + 2, color);
     matrix->drawLine(x + 5, y + 3, x + 7, y + 3, color);
@@ -72,7 +72,7 @@ void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
 }
 
 void TempEngine::render(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
 
     matrix->fillScreen(0);

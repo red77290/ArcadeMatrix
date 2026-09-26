@@ -1,4 +1,5 @@
 #include "DashboardCommon.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../icons/CryptoStockIcons.h"
 #include <glcdfont.c>
@@ -7,13 +8,13 @@ int measureText(int len) {
     return (len > 0) ? (len * 6 - 1) : 0;
 }
 
-void drawClippedPixel(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
+void drawClippedPixel(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
     if (x >= minX && x < maxX && y >= minY && y < maxY) {
         matrix->drawPixel(x, y, color);
     }
 }
 
-void drawClippedChar(MatrixPanel_I2S_DMA* matrix, int x, int y, unsigned char c, int minX, int maxX, int minY, int maxY, uint16_t color) {
+void drawClippedChar(IDrawingSurface* matrix, int x, int y, unsigned char c, int minX, int maxX, int minY, int maxY, uint16_t color) {
     if (!matrix) return;
     if (x + 5 < minX || x >= maxX || y + 7 < minY || y >= maxY) return;
     if (c == '`' || c == 0xF7 || c == 0xF8 || (uint8_t)c == 0xB0) c = 248;
@@ -34,7 +35,7 @@ void drawClippedChar(MatrixPanel_I2S_DMA* matrix, int x, int y, unsigned char c,
     }
 }
 
-void drawClippedString(MatrixPanel_I2S_DMA* matrix, const char* text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
+void drawClippedString(IDrawingSurface* matrix, const char* text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
     if (!matrix || !text || text[0] == '\0') return;
     int curX = x;
     while (*text) {
@@ -44,11 +45,11 @@ void drawClippedString(MatrixPanel_I2S_DMA* matrix, const char* text, int x, int
     }
 }
 
-void drawClippedString(MatrixPanel_I2S_DMA* matrix, const String& text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
+void drawClippedString(IDrawingSurface* matrix, const String& text, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
     drawClippedString(matrix, text.c_str(), x, y, minX, maxX, minY, maxY, color);
 }
 
-void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& iconCode) {
+void drawMiniWeatherIcon(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& iconCode) {
     if (!matrix) return;
     uint16_t sunCol = matrix->color565(255, 200, 0);
     uint16_t moonCol = matrix->color565(240, 240, 180);
@@ -158,7 +159,7 @@ void drawMiniWeatherIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, in
     }
 }
 
-void drawMiniIndoorIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
+void drawMiniIndoorIcon(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, uint16_t color) {
     if (!matrix) return;
     // Roof
     drawClippedPixel(matrix, x + 3, y, minX, maxX, minY, maxY, color);
@@ -177,7 +178,7 @@ void drawMiniIndoorIcon(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int
     }
 }
 
-void drawClippedMarketIcon8x8(MatrixPanel_I2S_DMA* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& symbol) {
+void drawClippedMarketIcon8x8(IDrawingSurface* matrix, int x, int y, int minX, int maxX, int minY, int maxY, const String& symbol) {
     if (!matrix) return;
     const uint16_t* iconData = nullptr;
 
@@ -223,7 +224,7 @@ void drawClippedMarketIcon8x8(MatrixPanel_I2S_DMA* matrix, int x, int y, int min
     }
 }
 
-DashboardTheme getDashboardTheme(MatrixPanel_I2S_DMA* matrix, int themeId) {
+DashboardTheme getDashboardTheme(IDrawingSurface* matrix, int themeId) {
     DashboardTheme th;
     if (!matrix) return th;
 
