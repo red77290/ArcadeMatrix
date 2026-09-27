@@ -44,7 +44,6 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `clk_phase` | `bool` | Invert CLK clock phase (`false` default; set `true` if panel requires inverted clock latching). |
 | `latch_blanking` | `int` | Latch blanking cycles (`0`–`8`) for ghosting/phantom line reduction. |
 | `render_pipeline` | `String` | Drawing and presentation pipeline (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Default `auto`. Controls intermediate canvas allocation and DMA synchronization. |
-| `force_single_buffer` | `bool` | Force single DMA buffer to save internal SRAM (`false` default; legacy shim mapping to `canvas_single`). |
 | `rotation_offset` | `int` | Mounting orientation offset (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Enable automatic display orientation via onboard Gyroscope/IMU (`true` default). |
 | `rotation_transition` | `String` | Visual transition effect (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
@@ -65,14 +64,13 @@ ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`)
 - **`direct_single`**: Legacy direct rendering into a single DMA buffer (minimal memory footprint; may cause visible scanline tearing during redraws).
 
 > [!NOTE]
-> For backward compatibility, setting `force_single_buffer: true` automatically maps to `canvas_single` when `render_pipeline` is `auto` or unspecified.
+> For backward compatibility with older configurations, any legacy `force_single_buffer: true` is automatically migrated to `render_pipeline: canvas_single`.
 
 ### 2.2 Web UI Hardware Tab Integration
 
 The Web UI (System Settings → Hardware) directly controls these parameters:
 1. **Rendering & Buffering Pipeline Dropdown (`hw-render-pipeline`)**: Select between `auto`, `canvas_single`, `canvas_double`, `direct_double`, or `direct_single`.
-2. **Force Single Buffer Switch (`hw-force-single-buffer`)**: Backward-compatible toggle for low-SRAM operation.
-3. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system` and `POST /api/settings`, then cleanly restarts the display panel with the new pipeline.
+2. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system` and `POST /api/settings`, then cleanly restarts the display panel with the new pipeline.
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 

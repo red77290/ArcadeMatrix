@@ -17,8 +17,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
     MatrixEngine* matrixEngine,
     uint16_t width,
     uint16_t height,
-    const String& requestedPipeline,
-    bool legacyForceSingleBuffer)
+    const String& requestedPipeline)
 {
     SurfaceCreationResult result;
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
@@ -36,7 +35,7 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
 #endif
 
     auto policyRes = PipelineSelectionPolicy::evaluate(
-        width, height, depth, requestedPipeline, legacyForceSingleBuffer, hasPsram, mem
+        width, height, depth, requestedPipeline, hasPsram, mem
     );
 
     result.reason = policyRes.reason;

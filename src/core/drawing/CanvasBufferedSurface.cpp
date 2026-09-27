@@ -16,6 +16,10 @@ CanvasBufferedSurface::CanvasBufferedSurface(int16_t width, int16_t height,
     , _backend(backend)
 {
     _strategy = singleDma ? PresentationStrategy::CANVAS_BURST_SINGLE : PresentationStrategy::CANVAS_BURST_DOUBLE;
+    _policy.allowBlanking = false;
+    if (singleDma) {
+        _policy.degradedBlankingPermitted = true;
+    }
     size_t pixelCount = (size_t)width * height;
     _canvasBytes = pixelCount * sizeof(uint16_t);
 

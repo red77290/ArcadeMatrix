@@ -31,7 +31,6 @@ public:
         MatrixEngine* matrixEngine,
         uint16_t width,
         uint16_t height,
-        const String& requestedPipeline = "auto",
-        bool legacyForceSingleBuffer = false
+        const String& requestedPipeline = "auto"
     );
 };

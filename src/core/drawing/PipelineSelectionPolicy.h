@@ -46,7 +46,6 @@ public:
      * @param height Physical display height
      * @param colorDepth HUB75 color depth (bits per channel)
      * @param requestedPipeline User-selected pipeline mode ("auto", "canvas_single", etc.)
-     * @param legacyForceSingleBuffer Legacy fallback flag
      * @param hasPsram Whether PSRAM is physically present and enabled
      * @param memory Live memory constraints (or default unconstrained)
      * @return PipelineSelectionResult Fully resolved pipeline specification and reasoning
@@ -56,7 +55,6 @@ public:
         uint16_t height,
         uint8_t colorDepth,
         const String& requestedPipeline = "auto",
-        bool legacyForceSingleBuffer = false,
         bool hasPsram = false,
         const MemoryBudgetConstraints& memory = MemoryBudgetConstraints()
     );

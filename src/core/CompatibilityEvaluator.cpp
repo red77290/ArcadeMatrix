@@ -43,9 +43,8 @@ CompatibilityContext CompatibilityEvaluator::buildCurrentContext() {
     ctx.height = snap.matrix.height > 0 ? snap.matrix.height : 32;
     ctx.colorDepth = snap.matrix.colorDepth > 0 ? snap.matrix.colorDepth : 8;
     ctx.requestedPipeline = snap.matrix.render_pipeline.isEmpty() ? "auto" : snap.matrix.render_pipeline;
-    ctx.legacyForceSingleBuffer = snap.matrix.forceSingleBuffer;
-    ctx.presentationPolicy.allowBlanking = snap.matrix.forceSingleBuffer;
-    ctx.presentationPolicy.degradedBlankingPermitted = snap.matrix.forceSingleBuffer;
+    ctx.presentationPolicy.allowBlanking = false;
+    ctx.presentationPolicy.degradedBlankingPermitted = false;
 
     return ctx;
 }
@@ -160,7 +159,6 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
         ctx.height,
         ctx.colorDepth,
         ctx.requestedPipeline,
-        ctx.legacyForceSingleBuffer,
         ctx.hardware.hasPsram,
         ctx.memory
     );

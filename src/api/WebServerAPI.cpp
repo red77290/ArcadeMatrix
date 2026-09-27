@@ -84,15 +84,15 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
     // field_type, label, description, default_value, options, options_endpoint, multiple,
     // visible_when, min_val, max_val, step) - under-counting here silently truncates the schema
     // of the largest engines, which is exactly what the WebUI reported as an empty response.
-    const size_t capacity = JSON_OBJECT_SIZE(10)           // root
-                          + JSON_OBJECT_SIZE(4)            // metadata
-                          + JSON_OBJECT_SIZE(5)            // capabilities
-                          + JSON_OBJECT_SIZE(8)            // requirements
-                          + JSON_OBJECT_SIZE(14)           // compatibility
-                          + JSON_OBJECT_SIZE(8)            // compatibility.memory
-                          + JSON_ARRAY_SIZE(fieldCount)    // schema array
-                          + fieldCount * JSON_OBJECT_SIZE(12)
-                          + 768;                           // headroom
+    const size_t capacity = JSON_OBJECT_SIZE(12)           // root
+                          + JSON_OBJECT_SIZE(6)            // metadata
+                          + JSON_OBJECT_SIZE(6)            // capabilities
+                          + JSON_OBJECT_SIZE(10)           // requirements
+                          + JSON_OBJECT_SIZE(16)           // compatibility
+                          + JSON_OBJECT_SIZE(10)           // compatibility.memory
+                          + JSON_ARRAY_SIZE(fieldCount + 1) // schema array
+                          + fieldCount * (JSON_OBJECT_SIZE(14) + 128)
+                          + 4096;                          // generous headroom for strings and dynamic fields
 
     SpiRamJsonDocument doc(capacity);
     JsonObject obj = doc.to<JsonObject>();
@@ -1531,7 +1531,8 @@ void WebServerAPI::setupRoutes() {
         doc["matrix_rows"] = snap.matrix.height;
         doc["matrix_cols"] = snap.matrix.width;
         doc["matrix_rgb_sequence"] = snap.matrix.rgbSequence;
-        doc["matrix_force_single_buffer"] = snap.matrix.forceSingleBuffer;
+        doc["matrix_render_pipeline"] = snap.matrix.render_pipeline;
+        doc["render_pipeline"] = snap.matrix.render_pipeline;
         doc["matrix_driver_chip"] = snap.matrix.driverChip;
         doc["matrix_clk_phase"] = snap.matrix.clkPhase;
         doc["matrix_latch_blanking"] = snap.matrix.latchBlanking;
@@ -1702,7 +1703,9 @@ void WebServerAPI::setupRoutes() {
             if (!doc["matrix_rows"].isNull()) cfg.matrix.height = doc["matrix_rows"].as<int>();
             if (!doc["matrix_cols"].isNull()) cfg.matrix.width = doc["matrix_cols"].as<int>();
             if (!doc["matrix_rgb_sequence"].isNull()) cfg.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
-            if (!doc["matrix_force_single_buffer"].isNull()) cfg.matrix.forceSingleBuffer = doc["matrix_force_single_buffer"].as<bool>();
+            if (!doc["matrix_render_pipeline"].isNull()) cfg.matrix.render_pipeline = doc["matrix_render_pipeline"].as<String>();
+            else if (!doc["render_pipeline"].isNull()) cfg.matrix.render_pipeline = doc["render_pipeline"].as<String>();
+            else if (!doc["matrix_force_single_buffer"].isNull() && doc["matrix_force_single_buffer"].as<bool>()) cfg.matrix.render_pipeline = "canvas_single";
             if (!doc["matrix_limit_refresh_rate_hz"].isNull()) cfg.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
             if (!doc["matrix_driver_chip"].isNull()) cfg.matrix.driverChip = doc["matrix_driver_chip"].as<String>();
             if (!doc["matrix_clk_phase"].isNull()) cfg.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();
@@ -2084,7 +2087,7 @@ void WebServerAPI::setupRoutes() {
         mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
         mat["clk_phase"] = snap.matrix.clkPhase;
         mat["latch_blanking"] = snap.matrix.latchBlanking;
-        mat["force_single_buffer"] = snap.matrix.forceSingleBuffer;
+        mat["render_pipeline"] = snap.matrix.render_pipeline;
         mat["rotation_offset"] = snap.matrix.rotation_offset;
         mat["auto_rotate"] = snap.matrix.auto_rotate;
         mat["rotation_transition"] = snap.matrix.rotation_transition;
@@ -2231,8 +2234,12 @@ void WebServerAPI::setupRoutes() {
                 else if (!mat["clkPhase"].isNull()) cfg.matrix.clkPhase = mat["clkPhase"].as<bool>();
                 if (!mat["latch_blanking"].isNull()) cfg.matrix.latchBlanking = mat["latch_blanking"].as<int>();
                 else if (!mat["latchBlanking"].isNull()) cfg.matrix.latchBlanking = mat["latchBlanking"].as<int>();
-                if (!mat["force_single_buffer"].isNull()) cfg.matrix.forceSingleBuffer = mat["force_single_buffer"].as<bool>();
-                else if (!mat["forceSingleBuffer"].isNull()) cfg.matrix.forceSingleBuffer = mat["forceSingleBuffer"].as<bool>();
+                if (!mat["render_pipeline"].isNull()) cfg.matrix.render_pipeline = mat["render_pipeline"].as<String>();
+                else if (!mat["renderPipeline"].isNull()) cfg.matrix.render_pipeline = mat["renderPipeline"].as<String>();
+                else if ((!mat["force_single_buffer"].isNull() && mat["force_single_buffer"].as<bool>()) ||
+                         (!mat["forceSingleBuffer"].isNull() && mat["forceSingleBuffer"].as<bool>())) {
+                    cfg.matrix.render_pipeline = "canvas_single";
+                }
                 if (!mat["rotation_offset"].isNull()) {
                     cfg.matrix.rotation_offset = mat["rotation_offset"].as<int>();
                     displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);

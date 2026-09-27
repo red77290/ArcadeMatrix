@@ -4,7 +4,6 @@
   "panelType": "P3",
   "chainLength": 2,
   "powerLimitPercent": 50,
-  "forceSingleBuffer": false,
   "colorDepth": 8,
   "rgbSequence": "RGB",
   "limitRefreshRateHz": 90,

@@ -334,7 +334,6 @@ int main() {
             ctx.height = p.height;
             ctx.colorDepth = p.colorDepth;
             ctx.requestedPipeline = "auto";
-            ctx.legacyForceSingleBuffer = false;
             ctx.isConnectedWifi = p.hasNetwork;
 
             ctx.hardware.hasPsram = p.hasPsram;

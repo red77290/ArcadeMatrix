@@ -203,10 +203,6 @@ paths:
                   type: integer
                   description: "Row addressing mode (0=Default/Direct, 1=ShiftRegister, 2=Direct 16 lines)"
                   example: 0
-                matrix_force_single_buffer:
-                  type: boolean
-                  description: "Forces single DMA buffer to reduce RAM usage"
-                  example: false
                 matrix_render_pipeline:
                   type: string
                   enum: [auto, canvas_single, canvas_double, direct_double, direct_single]

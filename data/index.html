@@ -593,10 +593,19 @@ body {
 [data-tooltip]:hover::after,
 [data-tooltip]:hover::before,
 [data-tooltip]:focus::after,
-[data-tooltip]:focus::before {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) scale(1);
+}
+.tooltip-lg[data-tooltip]::after {
+  max-width: 440px;
+  text-align: left;
+  line-height: 1.45;
+  white-space: pre-line;
+  font-size: 0.8rem;
+  left: 0;
+  transform: translateX(-30%) scale(0.95);
+}
+.tooltip-lg[data-tooltip]:hover::after,
+.tooltip-lg[data-tooltip]:focus::after {
+  transform: translateX(-30%) scale(1);
 }
 .tooltip-icon {
   display: inline-flex;
@@ -1767,7 +1776,7 @@ select.input option {
             </div>
 
             <div class="form-group" style="margin-top: 1rem;">
-              <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
+              <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
               <select id="hw-render-pipeline" class="input">
                 <option value="auto" data-i18n="hw_pipeline_auto">✨ Auto (Recommended - Dynamic Allocation)</option>
                 <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM)</option>
@@ -1787,15 +1796,7 @@ select.input option {
                   </label>
                 </div>
               </div>
-              <div class="form-group">
-                <label><span data-i18n="hw_single_buffer_label">Force Single Buffer (Low SRAM)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_single_buffer">?</span></label>
-                <div style="display: flex; align-items: center; height: 100%;">
-                  <label class="switch">
-                    <input type="checkbox" id="hw-force-single-buffer">
-                    <span class="slider"></span>
-                  </label>
-                </div>
-              </div>
+
             </div>
 
             <button id="btn-save-hw" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;" data-i18n="hw_btn_save">💾 Save Hardware Settings</button>
@@ -2710,7 +2711,7 @@ const translations = {
     hw_clk_phase_label: "Invert CLK Phase (ESP32)",
     hw_single_buffer_label: "Force Single Buffer (Low SRAM)",
     hw_pipeline_label: "Rendering & Buffering Pipeline",
-    tt_hw_pipeline: "Display buffering architecture. Canvas Single Buffer halves DMA RAM on classic ESP32, unlocking TLS engines while keeping smooth presentation.",
+    tt_hw_pipeline: "Selects display buffering & surface architecture:\n• Auto (Recommended): Automatically picks the optimal mode based on PSRAM & internal RAM. On classic ESP32, allocates Canvas SRAM + Single DMA to eliminate all flicker while preserving memory.\n• Canvas Buffered + Single DMA: Virtual offscreen canvas in SRAM. All drawing is tear-free and flicker-free; halves DMA RAM usage.\n• Canvas Buffered + Double DMA: Virtual offscreen canvas with hardware DMA double-buffering. Recommended if PSRAM is available.\n• Direct DMA Double Buffer: Direct drawing into back-buffer. Requires two full DMA buffers.\n• Direct DMA Single Buffer: Ultra-low RAM mode. Direct drawing into active DMA buffer; may flicker.",
     hw_pipeline_auto: "✨ Auto (Recommended - Dynamic Allocation)",
     hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
@@ -3223,7 +3224,7 @@ const translations = {
     hw_clk_phase_label: "Inverser la Phase d'Horloge (ESP32)",
     hw_single_buffer_label: "Forcer le Simple Buffer (SRAM faible)",
     hw_pipeline_label: "Pipeline de Rendu & Buffering",
-    tt_hw_pipeline: "Architecture de mémoire tampon. Canvas Simple Buffer divise par 2 la DMA RAM sur ESP32 classique, débloquant les moteurs TLS avec un affichage fluide.",
+    tt_hw_pipeline: "Architecture de mémoire tampon et de surface :\n• Auto (Recommandé) : Sélectionne automatiquement le mode optimal selon la PSRAM et la RAM interne. Sur ESP32 classique, alloue Canvas SRAM + Simple DMA pour éliminer 100% du scintillement tout en préservant la mémoire.\n• Canvas Buffered + Simple DMA : Canvas virtuel hors-écran en SRAM. Rendu sans aucun scintillement ; divise par 2 la RAM DMA requise.\n• Canvas Buffered + Double DMA : Canvas hors-écran avec double buffer DMA matériel. Idéal avec de la PSRAM.\n• Direct DMA Double Buffer : Dessin direct dans le back-buffer DMA. Nécessite deux buffers DMA complets.\n• Direct DMA Single Buffer : Mode ultra-économe en RAM. Dessin direct dans le buffer DMA actif (peut scintiller).",
     hw_pipeline_auto: "✨ Auto (Recommandé - Allocation Dynamique)",
     hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
@@ -3736,7 +3737,7 @@ const translations = {
     hw_clk_phase_label: "Invertir Fase de Reloj (ESP32)",
     hw_single_buffer_label: "Forzar Búfer Simple (SRAM baja)",
     hw_pipeline_label: "Canalización de Renderizado y Búfer",
-    tt_hw_pipeline: "Arquitectura de búfer de pantalla. Canvas Simple divide a la mitad la RAM DMA en ESP32 clásico, desbloqueando motores TLS con visualización fluida.",
+    tt_hw_pipeline: "Arquitectura de búfer de pantalla y superficie:\n• Auto (Recomendado): Selecciona automáticamente el modo óptimo según PSRAM y RAM interna. En ESP32 clásico, asigna Canvas SRAM + DMA Simple para eliminar parpadeos preservando memoria.\n• Canvas Buffered + DMA Simple: Lienzo virtual fuera de pantalla en SRAM. Renderizado sin parpadeos; reduce a la mitad la RAM DMA.\n• Canvas Buffered + Doble DMA: Lienzo fuera de pantalla con doble búfer DMA por hardware. Ideal con PSRAM.\n• Direct DMA Doble Búfer: Dibujo directo en el back-buffer DMA. Requiere dos búferes DMA completos.\n• Direct DMA Búfer Simple: Modo de memoria ultra baja. Dibujo directo en el búfer DMA activo (puede parpadear).",
     hw_pipeline_auto: "✨ Auto (Recomendado - Asignación Dinámica)",
     hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA)",
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
@@ -7730,8 +7731,7 @@ async function initSettings() {
     setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
-    setVal('hw-render-pipeline', matrix.render_pipeline || (matrix.force_single_buffer ? 'canvas_single' : 'auto'));
-    setChk('hw-force-single-buffer', matrix.force_single_buffer ?? false);
+    setVal('hw-render-pipeline', matrix.render_pipeline || 'auto');
 
     // Screen Orientation & Gyroscope
     setVal('hw-screen-rotation', matrix.rotation_offset ?? matrix.rotation ?? 0);
@@ -7920,7 +7920,6 @@ async function initSettings() {
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,
         render_pipeline: document.getElementById('hw-render-pipeline')?.value || 'auto',
-        force_single_buffer: (document.getElementById('hw-render-pipeline')?.value === 'canvas_single' || document.getElementById('hw-render-pipeline')?.value === 'direct_single' || document.getElementById('hw-force-single-buffer')?.checked) ? true : false,
         rotation_offset: numOr('hw-screen-rotation', 0),
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
         rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',

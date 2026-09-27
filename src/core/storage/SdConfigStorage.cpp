@@ -10,12 +10,14 @@ SdConfigStorage::SdConfigStorage()
 }
 
 bool SdConfigStorage::exists(const char* path) {
+    if (!path || path[0] == '\0') return false;
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) return false;
     return sd.exists(path);
 }
 
 bool SdConfigStorage::readString(const char* path, String& outStr) {
+    if (!path || path[0] == '\0') return false;
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) {
         LOGE("SdConfigStorage", "Cannot read %s: SD lock timeout", path);
@@ -51,6 +53,10 @@ bool SdConfigStorage::readString(const char* path, String& outStr) {
 }
 
 bool SdConfigStorage::writeStringAtomic(const char* path, const String& content) {
+    if (!path || path[0] == '\0') {
+        LOGE("SdConfigStorage", "Invalid null/empty path in writeStringAtomic");
+        return false;
+    }
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) {
         LOGE("SdConfigStorage", "Cannot write %s: SD lock timeout", path);
@@ -117,6 +123,7 @@ bool SdConfigStorage::writeStringAtomic(const char* path, const String& content)
 }
 
 bool SdConfigStorage::remove(const char* path) {
+    if (!path || path[0] == '\0') return true;
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) return false;
     if (!sd.exists(path)) return true;
@@ -124,6 +131,7 @@ bool SdConfigStorage::remove(const char* path) {
 }
 
 bool SdConfigStorage::mkdir(const char* path) {
+    if (!path || path[0] == '\0') return false;
     SdLockGuard guard(pdMS_TO_TICKS(1500));
     if (!guard) return false;
     if (sd.exists(path)) return true;

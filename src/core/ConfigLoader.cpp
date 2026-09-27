@@ -90,6 +90,7 @@ void ConfigLoader::publishSnapshot_locked() {
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
     snap.magic_start = ConfigSnapshot::MAGIC_START;
     snap.version = newVer;
+    snap.schema_version = schema_version;
     snap.matrix = matrix;
     snap.wifi = wifi;
     snap.mqtt = mqtt;
@@ -143,7 +144,6 @@ void ConfigLoader::setDefaults() {
 #endif
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
-    matrix.forceSingleBuffer = false;
     matrix.colorDepth = 8;
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
@@ -201,6 +201,12 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
 }
 
 bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
+    if (doc.containsKey("schema_version")) {
+        schema_version = doc["schema_version"].as<uint32_t>();
+    } else {
+        schema_version = 1;
+    }
+
     if (doc.containsKey("system")) {
         JsonObjectConst sys = doc["system"];
         system.timezone = sys["timezone"] | system.timezone;
@@ -240,8 +246,9 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"].as<int>();
         else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"].as<int>();
         
-        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
-        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
+        bool legacySingle = false;
+        if (disp.containsKey("force_single_buffer")) legacySingle = disp["force_single_buffer"].as<bool>();
+        else if (disp.containsKey("forceSingleBuffer")) legacySingle = disp["forceSingleBuffer"].as<bool>();
         
         if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"].as<int>();
         else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"].as<int>();
@@ -284,6 +291,7 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
 
         if (disp.containsKey("render_pipeline")) matrix.render_pipeline = disp["render_pipeline"].as<String>();
         else if (disp.containsKey("renderPipeline")) matrix.render_pipeline = disp["renderPipeline"].as<String>();
+        else if (legacySingle) matrix.render_pipeline = "canvas_single";
     }
 
     if (doc.containsKey("wifi")) {
@@ -399,6 +407,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     _jsonScratch.clear();
     auto& doc = _jsonScratch;
 
+    doc["schema_version"] = schema_version;
+
     JsonObject sysObj = doc.createNestedObject("system");
     sysObj["timezone"] = system.timezone;
     sysObj["format24h"] = system.format24h;
@@ -421,7 +431,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["panelType"] = matrix.panelType;
     dispObj["chainLength"] = matrix.chainLength;
     dispObj["powerLimitPercent"] = matrix.powerLimitPercent;
-    dispObj["forceSingleBuffer"] = matrix.forceSingleBuffer;
+    dispObj["render_pipeline"] = matrix.render_pipeline;
     dispObj["colorDepth"] = matrix.colorDepth;
     dispObj["rgbSequence"] = matrix.rgbSequence;
     dispObj["limitRefreshRateHz"] = matrix.limitRefreshRateHz;

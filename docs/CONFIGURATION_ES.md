@@ -44,7 +44,6 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto; poner en `true` si el panel lo requiere). |
 | `latch_blanking` | `int` | Ciclos de ocultación de latch (`0`–`8`) para reducir el ghosting (líneas fantasma). |
 | `render_pipeline` | `String` | Canalización de renderizado y búfer (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Por defecto `auto`. Controla la asignación del canvas intermedio y la sincronización DMA. |
-| `force_single_buffer` | `bool` | Forzar buffer simple DMA para ahorrar SRAM interna (`false` por defecto; pasarela de compatibilidad asignada a `canvas_single`). |
 | `rotation_offset` | `int` | Desfase de orientación física (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Habilitar rotación automática mediante giroscopio/IMU integrado (`true` por defecto). |
 | `rotation_transition` | `String` | Efecto visual de transición (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
@@ -65,14 +64,13 @@ ArcadeMatrix v4 introduce el SPI gráfico agnóstico al hardware (`IDrawingSurfa
 - **`direct_single`**: Renderizado directo heredado en un búfer simple DMA (huella de memoria mínima absoluta; riesgo de parpadeo o desgarro durante el dibujado).
 
 > [!NOTE]
-> Por compatibilidad hacia atrás, `force_single_buffer: true` se asigna automáticamente a `canvas_single` cuando `render_pipeline` está en `auto` o no se especifica.
+> Por compatibilidad hacia atrás con configuraciones heredadas, cualquier parámetro `force_single_buffer: true` se migra automáticamente a `render_pipeline: canvas_single`.
 
 ### 2.2 Integración en la Pestaña de Hardware de la Web UI
 
 La interfaz Web (Configuración del Sistema → Hardware) controla directamente estas opciones:
 1. **Desplegable Canalización de Renderizado y Búfer (`hw-render-pipeline`)**: Selección entre `auto`, `canvas_single`, `canvas_double`, `direct_double` o `direct_single`.
-2. **Interruptor Forzar Búfer Simple (`hw-force-single-buffer`)**: Conmutador de compatibilidad para entornos con limitaciones de SRAM.
-3. **Guardar**: Al pulsar **Guardar Configuración de Hardware** (`btn-save-hw`), los parámetros se envían a `POST /api/system` y `POST /api/settings`, reiniciando limpiamente el panel con la nueva canalización.
+2. **Guardar**: Al pulsar **Guardar Configuración de Hardware** (`btn-save-hw`), los parámetros se envían a `POST /api/system` y `POST /api/settings`, reiniciando limpiamente el panel con la nueva canalización.
 
 > El brillo diurno en vivo **no** se almacena en este bloque; se controla en tiempo de ejecución desde la interfaz Web (deslizador del Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). El brillo nocturno vive en el bloque `system` (§4).
 

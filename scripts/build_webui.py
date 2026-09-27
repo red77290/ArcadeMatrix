@@ -46,7 +46,7 @@ try:
         "hw-row-addr-type",
         "hw-latch-blanking",
         "hw-clk-phase",
-        "hw-force-single-buffer",
+        "hw-render-pipeline",
     ]
     for term in REQUIRED_ESP32_TERMS:
         if term not in html_text:

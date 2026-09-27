@@ -121,7 +121,6 @@ struct CompatibilityContext {
     uint16_t height = 32;
     uint8_t colorDepth = 8;
     String requestedPipeline = "auto";
-    bool legacyForceSingleBuffer = false;
     PresentationPolicy presentationPolicy;
     bool isConnectedWifi = true;
 };

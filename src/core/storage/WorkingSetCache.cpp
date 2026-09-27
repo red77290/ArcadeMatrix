@@ -169,6 +169,10 @@ bool WorkingSetCache::loadInstanceFromStorage(const String& instanceId, EngineIn
 }
 
 bool WorkingSetCache::writeInstanceToStorage(const EngineInstance& instance) {
+    if (instance.instance_id.isEmpty()) {
+        LOGW("WorkingSetCache", "Skipping write of instance with empty ID");
+        return false;
+    }
     _storage.mkdir("/config");
     _storage.mkdir("/config/instances");
 

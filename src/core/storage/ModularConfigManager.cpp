@@ -91,6 +91,7 @@ bool ModularConfigManager::saveAll(const ConfigLoader& config) {
     // Persist all instances
     bool instOk = true;
     for (const auto& inst : config.instances) {
+        if (inst.instance_id.isEmpty()) continue;
         if (!_workingSet.saveAndCacheInstance(inst)) {
             instOk = false;
         }
@@ -118,8 +119,9 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
     if (doc.containsKey("power_limit_percent")) outMatrix.powerLimitPercent = doc["power_limit_percent"].as<int>();
     else if (doc.containsKey("powerLimitPercent")) outMatrix.powerLimitPercent = doc["powerLimitPercent"].as<int>();
 
-    if (doc.containsKey("force_single_buffer")) outMatrix.forceSingleBuffer = doc["force_single_buffer"].as<bool>();
-    else if (doc.containsKey("forceSingleBuffer")) outMatrix.forceSingleBuffer = doc["forceSingleBuffer"].as<bool>();
+    bool legacySingle = false;
+    if (doc.containsKey("force_single_buffer")) legacySingle = doc["force_single_buffer"].as<bool>();
+    else if (doc.containsKey("forceSingleBuffer")) legacySingle = doc["forceSingleBuffer"].as<bool>();
 
     if (doc.containsKey("color_depth")) outMatrix.colorDepth = doc["color_depth"].as<int>();
     else if (doc.containsKey("colorDepth")) outMatrix.colorDepth = doc["colorDepth"].as<int>();
@@ -159,6 +161,7 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
 
     if (doc.containsKey("render_pipeline")) outMatrix.render_pipeline = doc["render_pipeline"].as<String>();
     else if (doc.containsKey("renderPipeline")) outMatrix.render_pipeline = doc["renderPipeline"].as<String>();
+    else if (legacySingle) outMatrix.render_pipeline = "canvas_single";
 
     return true;
 }
@@ -170,7 +173,7 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["panelType"] = matrix.panelType;
     doc["chainLength"] = matrix.chainLength;
     doc["powerLimitPercent"] = matrix.powerLimitPercent;
-    doc["forceSingleBuffer"] = matrix.forceSingleBuffer;
+    doc["render_pipeline"] = matrix.render_pipeline;
     doc["colorDepth"] = matrix.colorDepth;
     doc["rgbSequence"] = matrix.rgbSequence;
     doc["limitRefreshRateHz"] = matrix.limitRefreshRateHz;

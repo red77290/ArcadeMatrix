@@ -44,7 +44,6 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 | `clk_phase` | `bool` | Inverse le front d'horloge CLK (`false` par défaut ; mettre à `true` si la dalle requiert un front inversé). |
 | `latch_blanking` | `int` | Nombre de cycles de masquage de latch (`0`–`8`) pour supprimer le ghosting (lignes fantômes). |
 | `render_pipeline` | `String` | Pipeline de rendu et de buffering (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Défaut `auto`. Contrôle l'allocation du canvas intermédiaire et la synchronisation DMA. |
-| `force_single_buffer` | `bool` | Force un simple buffer DMA pour économiser la SRAM interne (`false` par défaut ; passerelle de compatibilité mappée sur `canvas_single`). |
 | `rotation_offset` | `int` | Décalage physique de montage (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Active l'orientation automatique via le gyroscope/IMU embarqué (`true` par défaut). |
 | `rotation_transition` | `String` | Effet visuel de transition (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
@@ -65,14 +64,13 @@ ArcadeMatrix v4 introduit le SPI graphique matériellement agnostique (`IDrawing
 - **`direct_single`** : Rendu direct hérité dans un simple buffer DMA (empreinte mémoire minimale absolue ; risque de déchirement visible pendant le tracé).
 
 > [!NOTE]
-> Pour des raisons de rétrocompatibilité, `force_single_buffer: true` est automatiquement mappé vers `canvas_single` lorsque `render_pipeline` est sur `auto` ou non renseigné.
+> Pour des raisons de rétrocompatibilité avec les anciennes configurations, tout paramètre hérité `force_single_buffer: true` est automatiquement migré vers `render_pipeline: canvas_single`.
 
 ### 2.2 Intégration dans l'Onglet Matériel de la Web UI
 
 L'interface Web (Paramètres Système → Matériel) pilote directement ces options :
 1. **Menu déroulant Pipeline de Rendu & Buffering (`hw-render-pipeline`)** : Sélection entre `auto`, `canvas_single`, `canvas_double`, `direct_double` ou `direct_single`.
-2. **Interrupteur Forcer Simple Buffer (`hw-force-single-buffer`)** : Bascule de compatibilité pour configurations contraintes en SRAM.
-3. **Enregistrement** : Cliquer sur **Sauvegarder la configuration matérielle** (`btn-save-hw`) transmet les paramètres à `POST /api/system` et `POST /api/settings`, puis redémarre proprement le panneau avec le nouveau pipeline.
+2. **Enregistrement** : Cliquer sur **Sauvegarder la configuration matérielle** (`btn-save-hw`) transmet les paramètres à `POST /api/system` et `POST /api/settings`, puis redémarre proprement le panneau avec le nouveau pipeline.
 
 > La luminosité de jour en direct **n'est pas** stockée dans ce bloc ; elle est contrôlée à l'exécution depuis la Web UI (curseur du Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). La luminosité de nuit se trouve dans le bloc `system` (§4).
 

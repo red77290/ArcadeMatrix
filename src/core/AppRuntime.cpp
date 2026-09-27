@@ -234,6 +234,8 @@ void AppRuntime::initialize() {
     // =========================================================================
     // STEP 3: HEAL NVS PARTITION & PRE-INITIALIZE WI-FI
     // =========================================================================
+    LOGI("System", "Step 3: Initializing NVS...");
+    esp_task_wdt_reset();
     esp_err_t nvsErr = nvs_flash_init();
     if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
         LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
@@ -245,8 +247,10 @@ void AppRuntime::initialize() {
                 delay(5);
             }
         } else {
+            esp_task_wdt_reset();
             nvs_flash_erase();
         }
+        esp_task_wdt_reset();
         nvsErr = nvs_flash_init();
     }
     if (nvsErr != ESP_OK) {
@@ -256,8 +260,12 @@ void AppRuntime::initialize() {
     }
 
     // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 DMA allocations
+    LOGI("System", "Step 3b: Pre-initializing WiFi driver...");
+    esp_task_wdt_reset();
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    esp_task_wdt_reset();
+    LOGI("System", "Step 3b: WiFi driver pre-initialized.");
 
     // =========================================================================
     // STEP 4: INITIALIZE MATRIX DISPLAY
@@ -302,8 +310,7 @@ void AppRuntime::initialize() {
         &matrixEngine,
         totalWidth,
         totalHeight,
-        snapshot.matrix.render_pipeline,
-        snapshot.matrix.forceSingleBuffer
+        snapshot.matrix.render_pipeline
     );
     m_drawingSurface = std::move(surfaceResult.surface);
     LOGI("AppRuntime", "Display surface initialized: %s (%s)",
@@ -409,10 +416,17 @@ void AppRuntime::initialize() {
         while (WiFi.status() != WL_CONNECTED && attempts < 50) {
             delay(500);
             Serial.print(".");
-            matrixEngine.getDisplay()->fillScreen(0);
-            m_messageEngine->update(m_appCtx);
-            m_messageEngine->render(m_appCtx);
-            matrixEngine.present();
+            if (m_drawingSurface) {
+                m_drawingSurface->clear(0);
+                m_messageEngine->update(m_appCtx);
+                m_messageEngine->render(m_appCtx);
+                m_drawingSurface->present();
+            } else {
+                matrixEngine.getDisplay()->fillScreen(0);
+                m_messageEngine->update(m_appCtx);
+                m_messageEngine->render(m_appCtx);
+                matrixEngine.present();
+            }
             attempts++;
             if (WiFi.status() != WL_CONNECTED && (attempts % 10 == 0)) {
                 LOGW("WiFi", "Wi-Fi connecting... retrying association with AP");
@@ -428,7 +442,7 @@ void AppRuntime::initialize() {
         if (WiFi.status() == WL_CONNECTED) {
             LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
             String ipMsg = "IP: " + WiFi.localIP().toString();
-            MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 50, 5};
+            MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 35, 1};
             m_messageEngine->displayMessage(ipConfig);
             
             startMdns();
@@ -518,16 +532,27 @@ void AppRuntime::initialize() {
     LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
     while (m_messageEngine->isActive()) {
-        matrixEngine.getDisplay()->fillScreen(0);
-        m_messageEngine->update(m_appCtx);
-        m_messageEngine->render(m_appCtx);
-        matrixEngine.present();
-        delay(5);
-        if (millis() - startWait > 5000) {
+        if (m_drawingSurface) {
+            m_drawingSurface->clear(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.getDisplay()->fillScreen(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            matrixEngine.present();
+        }
+        delay(10);
+        if (millis() - startWait > 15000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
             m_messageEngine->deactivate();
             break;
         }
+    }
+    if (m_drawingSurface) {
+        m_drawingSurface->clear(0);
+        m_drawingSurface->present();
     }
     LOGD("System", "MessageEngine finished.");
     

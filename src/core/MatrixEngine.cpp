@@ -3,6 +3,7 @@
 #if defined(SPIRAM_DMA_BUFFER)
 #include "rom/cache.h"   // the DMA engine reads PSRAM directly: every write below must be written back
 #endif
+#include <esp_task_wdt.h>
 
 RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
@@ -110,10 +111,12 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
+    uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
+
     // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
     bool hasPsram = hardwareHAL.capabilities().hasPsram;
     auto pipeRes = PipelineSelectionPolicy::evaluate(
-        config.width, config.height, depth, config.render_pipeline, config.forceSingleBuffer, hasPsram
+        totalWidth, config.height, depth, config.render_pipeline, hasPsram
     );
     mxconfig.double_buff = pipeRes.descriptor.dmaDoubleBuffered;
 
@@ -131,14 +134,19 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     }
 
     // Initialize display object
+    LOGI("MatrixEngine", "Allocating FastMatrixPanel...");
     m_panel = new FastMatrixPanel(mxconfig);
     display = m_panel;
     
     // Allocate memory and start DMA
+    LOGI("MatrixEngine", "Calling display->begin()...");
+    esp_task_wdt_reset();
     if (!display->begin()) {
         LOGE("MatrixEngine", "Failed to allocate memory for Matrix DMA!");
         return false;
     }
+    esp_task_wdt_reset();
+    LOGI("MatrixEngine", "display->begin() succeeded.");
 
     m_doubleBuffered = mxconfig.double_buff;
     m_panel->setBuffering(m_doubleBuffered);
@@ -146,14 +154,18 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
     m_panel->rememberBrightness8(64);
 
     // Initialize Presentation Backend FIRST, before any screen clears or presentations
+    LOGI("MatrixEngine", "Initializing Hub75PresentationBackend...");
     m_presentationBackend.reset(new Hub75PresentationBackend(
-        this, config.width, config.height, depth, m_doubleBuffered
+        this, totalWidth, config.height, depth, m_doubleBuffered
     ));
 
+    LOGI("MatrixEngine", "Clearing screen...");
     display->clearScreen();
     present();
     display->clearScreen();
     present();
+    esp_task_wdt_reset();
+    LOGI("MatrixEngine", "MatrixEngine::begin complete.");
 
     return true;
 }

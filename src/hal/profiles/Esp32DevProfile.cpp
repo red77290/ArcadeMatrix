@@ -52,23 +52,31 @@ void Esp32DevProfile::configureWifiTxPower() {
 
 bool Esp32DevProfile::beginStorage() {
     m_storage.sdMounted = false;
+
+    // 1. Release SD CS pin from any hardware peripheral mapping and ensure it is driven HIGH (deselected)
+    pinMatrixOutDetach(SD_CS_PIN, false, false);
     pinMode(SD_CS_PIN, OUTPUT);
     digitalWrite(SD_CS_PIN, HIGH);
 
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
+    // 2. Enable internal pull-up on MISO line to prevent floating state on passive microSD boards
+    pinMode(VSPI_MISO, INPUT_PULLUP);
 
-    // SD specification requires at least 74 clock cycles with CS=HIGH to transition
-    // the card from native SD bus mode into SPI mode. Transmit 20 dummy bytes (160 cycles).
+    // 3. Initialize VSPI bus without assigning a hardware SS pin so CS remains pure software GPIO for SdFat
+    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, -1);
+
+    // 4. Send at least 74 clock cycles with CS=HIGH (SD spec requires >=74 cycles to switch from SD bus to SPI mode)
     SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
     for (int i = 0; i < 20; ++i) {
         SPI.transfer(0xFF);
     }
     SPI.endTransaction();
+    digitalWrite(SD_CS_PIN, HIGH);
+    delay(10);
 
-    // Auto-fallback frequency ladder: 25 -> 16 -> 10 -> 4 MHz
+    // 5. Auto-fallback frequency ladder: 25 -> 16 -> 10 -> 4 MHz with USER_SPI_BEGIN flag
     const uint8_t freqs[] = {25, 16, 10, 4};
     for (uint8_t f : freqs) {
-        SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(f), &SPI);
+        SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI | USER_SPI_BEGIN, SD_SCK_MHZ(f), &SPI);
         if (sd.begin(spiConfig)) {
             m_storage.sdMounted = true;
             m_storage.defaultSckMhz = f;
@@ -82,11 +90,13 @@ bool Esp32DevProfile::beginStorage() {
         delay(10);
     }
 
-    LOGE("SD", "SD Card mount failed. Starting in Safe Mode (Flash defaults, Wi-Fi & WebServer active).");
+    LOGE("SD", "SD Card mount failed (code=0x%X, data=0x%X). Starting in Safe Mode (Flash defaults, Wi-Fi & WebServer active).",
+         sd.sdErrorCode(), sd.sdErrorData());
     return false;
 }
 
 void Esp32DevProfile::endStorage() {
+    sd.end();
     m_storage.sdMounted = false;
 }
 

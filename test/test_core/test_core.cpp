@@ -2014,24 +2014,24 @@ void test_hub75_bulk_encoder_luts_and_encode(void) {
 }
 
 void test_display_surface_factory_selection(void) {
-    auto resSingle = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    auto resSingle = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single");
     TEST_ASSERT_NOT_NULL(resSingle.surface.get());
     TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resSingle.reason);
     TEST_ASSERT_TRUE(resSingle.surface->hasCanvas());
     TEST_ASSERT_EQUAL(PresentationStrategy::CANVAS_BURST_SINGLE, resSingle.surface->presentationStrategy());
 
-    auto resDirect = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "direct_double", false);
+    auto resDirect = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "direct_double");
     TEST_ASSERT_NOT_NULL(resDirect.surface.get());
     TEST_ASSERT_EQUAL(SurfaceSelectionReason::ExplicitUserPolicy, resDirect.reason);
     TEST_ASSERT_FALSE(resDirect.surface->hasCanvas());
     TEST_ASSERT_EQUAL(PresentationStrategy::DIRECT_DMA_DOUBLE, resDirect.surface->presentationStrategy());
 
-    auto resAuto = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "unknown_pipeline", false);
+    auto resAuto = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "unknown_pipeline");
     TEST_ASSERT_NOT_NULL(resAuto.surface.get());
 }
 
 void test_canvas_buffered_surface_drawing_and_rotation(void) {
-    auto res = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single", false);
+    auto res = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single");
     auto* surface = res.surface.get();
     TEST_ASSERT_NOT_NULL(surface);
     
@@ -2188,6 +2188,7 @@ void test_presentation_policy_budget_enforcement(void) {
     // 8. Pre-flight budget rejection in single-buffer mode
     std::vector<uint16_t> canvasBuf(64 * 32, 0xFFFF);
     PresentationPolicy strictPolicy;
+    strictPolicy.allowBlanking = true;
     strictPolicy.maxBlankUs = 400;
     strictPolicy.degradedBlankingPermitted = false;
     mock.simulatedTransferUs = 500; // Exceeds 400µs
@@ -2276,12 +2277,12 @@ void test_dma_memory_layout_exact_bytes(void) {
 
 void test_pipeline_selection_policy(void) {
     // 1. Unsupported geometry
-    auto r1 = PipelineSelectionPolicy::evaluate(512, 512, 8, "auto", false, false);
+    auto r1 = PipelineSelectionPolicy::evaluate(512, 512, 8, "auto", false);
     TEST_ASSERT_FALSE(r1.valid);
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::UnsupportedGeometry, (int)r1.reason);
 
     // 2. Auto with PSRAM -> Canvas PSRAM + Double DMA
-    auto r2 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, true);
+    auto r2 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", true);
     TEST_ASSERT_TRUE(r2.valid);
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedPsramCanvas, (int)r2.reason);
     TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_DOUBLE, (int)r2.descriptor.strategy);
@@ -2289,7 +2290,7 @@ void test_pipeline_selection_policy(void) {
     TEST_ASSERT_TRUE(r2.descriptor.dmaDoubleBuffered);
 
     // 3. Auto without PSRAM -> Canvas SRAM + Single DMA
-    auto r3 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false, false);
+    auto r3 = PipelineSelectionPolicy::evaluate(128, 32, 8, "auto", false);
     TEST_ASSERT_TRUE(r3.valid);
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::AutoResolvedSramCanvasLowDma, (int)r3.reason);
     TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r3.descriptor.strategy);
@@ -2297,14 +2298,14 @@ void test_pipeline_selection_policy(void) {
     TEST_ASSERT_FALSE(r3.descriptor.dmaDoubleBuffered);
 
     // 4. Explicit canvas_single
-    auto r4 = PipelineSelectionPolicy::evaluate(128, 32, 8, "canvas_single", false, true);
+    auto r4 = PipelineSelectionPolicy::evaluate(128, 32, 8, "canvas_single", true);
     TEST_ASSERT_TRUE(r4.valid);
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r4.reason);
     TEST_ASSERT_EQUAL((int)PresentationStrategy::CANVAS_BURST_SINGLE, (int)r4.descriptor.strategy);
     TEST_ASSERT_FALSE(r4.descriptor.dmaDoubleBuffered);
 
     // 5. Explicit direct_double
-    auto r5 = PipelineSelectionPolicy::evaluate(128, 32, 8, "direct_double", false, true);
+    auto r5 = PipelineSelectionPolicy::evaluate(128, 32, 8, "direct_double", true);
     TEST_ASSERT_TRUE(r5.valid);
     TEST_ASSERT_EQUAL((int)SurfaceSelectionReason::ExplicitUserPolicy, (int)r5.reason);
     TEST_ASSERT_EQUAL((int)PresentationStrategy::DIRECT_DMA_DOUBLE, (int)r5.descriptor.strategy);

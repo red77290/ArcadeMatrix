@@ -11,7 +11,6 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     uint16_t height,
     uint8_t colorDepth,
     const String& requestedPipeline,
-    bool legacyForceSingleBuffer,
     bool hasPsram,
     const MemoryBudgetConstraints& memory)
 {
@@ -30,13 +29,6 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
 
     String pipeline = requestedPipeline;
     pipeline.toLowerCase();
-
-    // Map legacy forceSingleBuffer if auto or empty
-    if (pipeline == "auto" || pipeline.isEmpty()) {
-        if (legacyForceSingleBuffer) {
-            pipeline = "canvas_single";
-        }
-    }
 
     size_t canvasBytes = (size_t)width * height * sizeof(uint16_t);
     size_t dmaBytesSingle = DmaMemoryLayout::calculateTotalBytes(width, height, colorDepth, false);
