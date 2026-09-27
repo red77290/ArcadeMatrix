@@ -4052,6 +4052,34 @@ const THEME_ID_MAP = {
   "pong": "Pong", "binary": "Binary", "slot_machine": "Slot Machine"
 };
 
+const KNOWN_ENGINES = [
+  { id: 'clock', name: 'Clock', category: 'clock', icon: '⏰' },
+  { id: 'date', name: 'Date', category: 'clock', icon: '📅' },
+  { id: 'weather', name: 'Weather', category: 'weather', icon: '🌤️' },
+  { id: 'gifs', name: 'GIF Player', category: 'media_anim', icon: '🎞️' },
+  { id: 'crypto', name: 'Crypto Ticker', category: 'crypto', icon: '🪙' },
+  { id: 'stock', name: 'Stock Ticker', category: 'stock', icon: '📈' },
+  { id: 'visualizer', name: 'Audio Visualizer', category: 'media_audio', icon: '🎵' },
+  { id: 'decibel', name: 'Decibel Meter', category: 'sensor', icon: '🔊' },
+  { id: 'temp', name: 'Temperature', category: 'sensor', icon: '🌡️' },
+  { id: 'message', name: 'Message', category: 'text', icon: '💬' },
+  { id: 'googlecast', name: 'Google Cast', category: 'media_audio', icon: '📺' },
+  { id: 'spotify', name: 'Spotify', category: 'media_audio', icon: '🟢' },
+  { id: 'sysinfo', name: 'System Info', category: 'system', icon: '🖥️' },
+  { id: 'music', name: 'Web Radio', category: 'media_audio', icon: '📻' },
+  { id: 'dashboard', name: 'Dashboard Hub', category: 'dashboard', icon: '📊' },
+  { id: 'gnews', name: 'Google News', category: 'news', icon: '📰' },
+  { id: 'marquee', name: 'Marquee Banner', category: 'text', icon: '📜' }
+].map(e => ({
+  metadata: { id: e.id, name: e.name, category: e.category, icon: e.icon, version: '1.0.0' },
+  capabilities: { supports_128x32: true, supports_256x64: true, realtime: true },
+  requirements: {},
+  compatibility: { status: 'compatible', compatible: true },
+  available: true,
+  schema: []
+}));
+window.KNOWN_ENGINES = KNOWN_ENGINES;
+
 function getEngineMeta(descOrMeta) {
   const meta = (descOrMeta && descOrMeta.metadata) ? descOrMeta.metadata : (descOrMeta || {});
   const id = String(meta.id || '').toLowerCase();
@@ -5898,48 +5926,26 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    if (!wrapper.children.length || wrapper.querySelector('#btn-retry-engines')) {
-      wrapper.innerHTML =
-        '<div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">' +
-          '<div class="spinner-border text-primary" role="status" style="width: 2.5rem; height: 2.5rem; margin-bottom: 1rem;"></div>' +
-          '<h4 data-i18n="loading_display">' + t('loading_display', 'Loading display settings...') + '</h4>' +
-          '<p class="text-muted" style="font-size: 0.9rem; margin-bottom: 0;" data-i18n="loading_display_desc">' +
-            t('loading_display_desc', 'Retrieving engine configurations from matrix...') +
-          '</p>' +
-        '</div>';
-    }
-
-    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 15000);
-    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors.filter(d => d && d.metadata && d.metadata.id) : [];
-
-    if (descriptors.length === 0) {
-      console.warn('[Display] No engine descriptors received from backend, showing retry view.');
-      wrapper.innerHTML =
-        '<div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">' +
-          '<div style="font-size: 3rem; margin-bottom: 0.75rem;">⚠️</div>' +
-          '<h4 data-i18n="error_loading_engines">' + t('error_loading_engines', 'Unable to load display engines') + '</h4>' +
-          '<p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="error_loading_engines_desc">' +
-            t('error_loading_engines_desc', 'Communication with the matrix timed out or returned empty.') +
-          '</p>' +
-          '<button class="btn btn-primary" id="btn-retry-engines">🔄 ' + t('btn_retry', 'Retry Loading') + '</button>' +
-        '</div>';
-      const retryBtn = wrapper.querySelector('#btn-retry-engines');
-      if (retryBtn) {
-        retryBtn.onclick = () => {
-          endpointCache.delete('/api/engines');
-          try {
-            sessionStorage.removeItem('am_cache_/api/engines');
-            localStorage.removeItem('am_cache_/api/engines');
-          } catch (_) {}
-          renderDynamicDisplay(targetActiveInstanceId);
-        };
-      }
-      return;
-    }
-
     // Sequential fetching to maintain strictly 1 TCP connection on ESP32 (GEMINI.md Rule 3 / socket pool preservation)
-    const instancesList = await API.get('/api/instances', 10000).catch(() => []);
-    const rotationList = await API.get('/api/rotation', 10000).catch(() => []);
+    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
+    const rotationList = await API.get('/api/rotation', 5000).catch(() => []);
+
+    let descriptors = [...KNOWN_ENGINES];
+    try {
+      const rawDescriptors = await fetchCachedEndpoint('/api/engines', 4000);
+      if (Array.isArray(rawDescriptors) && rawDescriptors.length > 0) {
+        const serverMap = new Map();
+        rawDescriptors.forEach(d => {
+          if (d && d.metadata && d.metadata.id) serverMap.set(d.metadata.id, d);
+        });
+        descriptors = descriptors.map(d => serverMap.get(d.metadata.id) || d);
+        rawDescriptors.forEach(d => {
+          if (d && d.metadata && d.metadata.id && !descriptors.some(k => k.metadata.id === d.metadata.id)) {
+            descriptors.push(d);
+          }
+        });
+      }
+    } catch (_) {}
 
     const enginesMap = {};
     descriptors.forEach(desc => {
@@ -6792,32 +6798,29 @@ async function loadDashboardCatalog() {
   if (!container) return;
   if (container.children.length > 0 && !container.querySelector('.spinner-border')) return;
 
-  container.innerHTML = `
-    <div class="card glass shadow" style="text-align: center; padding: 2rem; margin-top: 1.5rem;">
-      <div class="spinner-border text-primary" role="status" style="width: 2rem; height: 2rem; margin-bottom: 0.75rem;"></div>
-      <p class="text-muted" style="margin: 0; font-size: 0.9rem;" data-i18n="loading_display_desc">
-        ${t('loading_display_desc', 'Retrieving engine configurations from matrix...')}
-      </p>
-    </div>
-  `;
+  let descriptors = [...KNOWN_ENGINES];
+  const enginesMap = {};
+  descriptors.forEach(d => {
+    if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
+  });
 
   try {
-    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 10000);
-    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors.filter(d => d && d.metadata && d.metadata.id) : [];
-    if (descriptors.length === 0) {
-      container.innerHTML = '';
-      return;
-    }
     const instancesList = await API.get('/api/instances', 5000).catch(() => []);
-    const enginesMap = {};
-    descriptors.forEach(d => {
-      if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
-    });
     renderEngineCatalog(descriptors, instancesList, enginesMap);
     applyTooltips(container);
+
+    // Refresh dynamically from matrix in background
+    fetchCachedEndpoint('/api/engines', 4000).then(raw => {
+      if (Array.isArray(raw) && raw.length > 0) {
+        raw.forEach(d => {
+          if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
+        });
+        renderEngineCatalog(raw, instancesList, enginesMap);
+        applyTooltips(container);
+      }
+    }).catch(() => {});
   } catch (err) {
     console.warn('[Dashboard] Failed to load engine catalog:', err);
-    container.innerHTML = '';
   }
 }
 window.loadDashboardCatalog = loadDashboardCatalog;

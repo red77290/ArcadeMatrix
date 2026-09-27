@@ -425,17 +425,10 @@ void WebServerAPI::begin() {
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        if (request->hasHeader("If-None-Match")) {
-            const AsyncWebHeader* h = request->getHeader("If-None-Match");
-            if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
-                request->send(304);
-                return;
-            }
-        }
         AsyncWebServerResponse* response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("ETag", String("\"") + WebUI_html_etag + "\"");
-        response->addHeader("Cache-Control", "public, max-age=3600, must-revalidate");
+        response->addHeader("Cache-Control", "no-cache");
+        response->addHeader("Connection", "close");
         request->send(response);
     };
     server.on("/", HTTP_GET, serveWebUi);
@@ -580,20 +573,27 @@ void WebServerAPI::setupRoutes() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-        String catalogJson;
-        catalogJson.reserve(12288);
-        catalogJson += '[';
+        SpiRamJsonDocument doc(4096);
+        JsonArray array = doc.to<JsonArray>();
         size_t count = 0;
         const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
         for (size_t i = 0; i < count; ++i) {
-            if (i > 0) catalogJson += ',';
-            String item;
-            serializeEngineDescriptor(descriptors[i], item, false /* includeSchema: lightweight catalog */);
-            catalogJson += item;
+            JsonObject obj = array.createNestedObject();
+            JsonObject meta = obj.createNestedObject("metadata");
+            meta["id"] = descriptors[i].metadata.id;
+            meta["name"] = descriptors[i].metadata.name;
+            meta["category"] = descriptors[i].metadata.category;
+            meta["version"] = descriptors[i].metadata.version;
+            obj["available"] = true;
+            JsonObject comp = obj.createNestedObject("compatibility");
+            comp["compatible"] = true;
+            comp["status"] = "compatible";
+            obj["schema_url"] = String("/api/engines?id=") + descriptors[i].metadata.id;
         }
-        catalogJson += ']';
 
-        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", catalogJson);
+        String res;
+        serializeJson(doc, res);
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", res);
         response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
