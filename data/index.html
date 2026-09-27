@@ -4141,7 +4141,16 @@ async function fetchEngineSchema(engineId) {
     return _engineSchemaCache.get(key);
   }
   try {
-    const data = await API.get(`/api/engines/${encodeURIComponent(key)}`, 10000);
+    let data = await API.get(`/api/engines?id=${encodeURIComponent(key)}`, 10000);
+    if (Array.isArray(data)) {
+      data = data.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+    }
+    if (!data || !data.metadata) {
+      data = await API.get(`/api/engines/${encodeURIComponent(key)}`, 10000);
+      if (Array.isArray(data)) {
+        data = data.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+      }
+    }
     if (data && data.metadata && data.metadata.id) {
       _engineSchemaCache.set(key, data);
       return data;
@@ -5932,7 +5941,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
     const optionsEndpoints = new Set();
     descriptors.forEach(desc => {
       if (!desc || !desc.metadata || !activeEngineTypes.has(desc.metadata.id)) return;
-      const fields = (desc && desc.schema) || [];
+      const targetDesc = enginesMap[desc.metadata.id] || desc;
+      const fields = getSchemaFields(targetDesc);
       fields.forEach(field => {
         if (!field || !field.options_endpoint) return;
         if (field.options_endpoint === '/api/timezones') return;

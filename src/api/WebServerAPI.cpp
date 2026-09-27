@@ -547,14 +547,22 @@ void WebServerAPI::begin() {
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         if (request->hasHeader("If-None-Match")) {
             const AsyncWebHeader* h = request->getHeader("If-None-Match");
-            if (h && h->value().equals(WebUI_html_etag)) {
+            if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
                 request->send(304);
                 return;
             }
         }
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
+        AsyncWebServerResponse* response = request->beginChunkedResponse("text/html",
+            [](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+                if (index >= WebUI_html_len) {
+                    return 0; // End of stream
+                }
+                size_t toCopy = std::min(maxLen, WebUI_html_len - index);
+                memcpy_P(buffer, WebUI_html + index, toCopy);
+                return toCopy;
+            });
         response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("ETag", WebUI_html_etag);
+        response->addHeader("ETag", String("\"") + WebUI_html_etag + "\"");
         response->addHeader("Cache-Control", "public, max-age=3600, must-revalidate");
         request->send(response);
     };
@@ -659,9 +667,20 @@ void WebServerAPI::setupRoutes() {
     //     emits a structurally incomplete descriptor, which the WebUI reports as "returned empty".
     //     The capacity is now derived from the actual field count.
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
+        String engineId = "";
         if (request->hasParam("id")) {
-            String engineId = request->getParam("id")->value();
+            engineId = request->getParam("id")->value();
             engineId.trim();
+        }
+        if (engineId.isEmpty()) {
+            String url = request->url();
+            if (url.startsWith("/api/engines/")) {
+                engineId = url.substring(strlen("/api/engines/"));
+                engineId.trim();
+            }
+        }
+
+        if (!engineId.isEmpty()) {
             size_t count = 0;
             const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
             const EngineDescriptor* found = nullptr;
@@ -711,38 +730,6 @@ void WebServerAPI::setupRoutes() {
                 return filled;
             });
 
-        response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
-        request->send(response);
-    });
-
-    server.on("/api/engines/*", HTTP_GET, [](AsyncWebServerRequest *request){
-        String url = request->url();
-        String engineId = "";
-        if (url.startsWith("/api/engines/")) {
-            engineId = url.substring(strlen("/api/engines/"));
-            engineId.trim();
-        }
-        if (engineId.isEmpty()) {
-            request->send(400, "application/json", "{\"error\":\"engine_id is required\"}");
-            return;
-        }
-        size_t count = 0;
-        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-        const EngineDescriptor* found = nullptr;
-        for (size_t i = 0; i < count; ++i) {
-            if (strcmp(descriptors[i].metadata.id, engineId.c_str()) == 0) {
-                found = &descriptors[i];
-                break;
-            }
-        }
-        if (!found) {
-            request->send(404, "application/json", "{\"error\":\"Engine not found\"}");
-            return;
-        }
-        String body;
-        serializeEngineDescriptor(*found, body, true /* includeSchema */);
-        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", body);
-        response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
     });
