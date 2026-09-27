@@ -4095,6 +4095,17 @@ function getEngineMeta(descOrMeta) {
 const endpointCache = new Map();
 const inFlightRequests = new Map();
 
+function invalidateCachedEndpoint(url) {
+  if (!url) return;
+  endpointCache.delete(url);
+  inFlightRequests.delete(url);
+  try {
+    sessionStorage.removeItem('am_cache_' + url);
+    localStorage.removeItem('am_cache_' + url);
+  } catch (_) {}
+}
+window.invalidateCachedEndpoint = invalidateCachedEndpoint;
+
 async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   if (!url) return [];
   if (endpointCache.has(url)) {
@@ -5935,7 +5946,10 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
         </div>
       `;
       const retryBtn = wrapper.querySelector('#btn-retry-engines');
-      if (retryBtn) retryBtn.onclick = () => renderDynamicDisplay(targetActiveInstanceId);
+      if (retryBtn) retryBtn.onclick = () => {
+        invalidateCachedEndpoint('/api/engines');
+        renderDynamicDisplay(targetActiveInstanceId);
+      };
       return;
     }
 
@@ -6797,7 +6811,7 @@ async function loadDashboardCatalog() {
       container.innerHTML = `
         <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
           <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
-          <button class="btn btn-sm btn-secondary" onclick="loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+          <button class="btn btn-sm btn-secondary" onclick="invalidateCachedEndpoint('/api/engines'); loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
         </div>
       `;
     }
@@ -6806,7 +6820,7 @@ async function loadDashboardCatalog() {
     container.innerHTML = `
       <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
         <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
-        <button class="btn btn-sm btn-secondary" onclick="loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+        <button class="btn btn-sm btn-secondary" onclick="invalidateCachedEndpoint('/api/engines'); loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
       </div>
     `;
   }

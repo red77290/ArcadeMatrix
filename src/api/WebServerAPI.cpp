@@ -410,11 +410,10 @@ void WebServerAPI::begin() {
     g_gifMsg = msg;
     setupRoutes();
     
-    // Default headers for CORS and socket recycling (GEMINI.md Rule 3 / socket pool preservation)
+    // Default headers for CORS
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Token, Authorization");
-    DefaultHeaders::Instance().addHeader("Connection", "close");
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
     // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion.
@@ -425,10 +424,21 @@ void WebServerAPI::begin() {
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        AsyncWebServerResponse* response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
+
+        // If client sends conditional refresh, respond with 304 Not Modified instantly (0 bytes payload)
+        if (request->hasHeader("If-None-Match")) {
+            const AsyncWebHeader* h = request->getHeader("If-None-Match");
+            if (h && (h->value().equals(WebUI_html_etag) || h->value().indexOf(WebUI_html_etag) >= 0)) {
+                request->send(304);
+                return;
+            }
+        }
+
+        AsyncWebServerResponse* response = request->beginResponse(200, "text/html; charset=utf-8", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
+        response->addHeader("Content-Disposition", "inline");
+        response->addHeader("ETag", String("\"") + WebUI_html_etag + "\"");
         response->addHeader("Cache-Control", "no-cache");
-        response->addHeader("Connection", "close");
         request->send(response);
     };
     server.on("/", HTTP_GET, serveWebUi);
@@ -573,32 +583,62 @@ void WebServerAPI::setupRoutes() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-        SpiRamJsonDocument doc(4096);
-        JsonArray array = doc.to<JsonArray>();
-        size_t count = 0;
-        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-        for (size_t i = 0; i < count; ++i) {
-            JsonObject obj = array.createNestedObject();
-            JsonObject meta = obj.createNestedObject("metadata");
-            meta["id"] = descriptors[i].metadata.id;
-            meta["name"] = descriptors[i].metadata.name;
-            meta["category"] = descriptors[i].metadata.category;
-            meta["version"] = descriptors[i].metadata.version;
-            obj["id"] = descriptors[i].metadata.id;
-            obj["name"] = descriptors[i].metadata.name;
-            obj["category"] = descriptors[i].metadata.category;
-            obj["version"] = descriptors[i].metadata.version;
-            obj["available"] = true;
-            JsonObject caps = obj.createNestedObject("capabilities");
-            caps["realtime"] = descriptors[i].capabilities.realtime;
-            caps["allows_overlay"] = descriptors[i].capabilities.allowsOverlay;
-            caps["allow_rotation"] = descriptors[i].capabilities.allowRotation;
-            obj["schema_url"] = String("/api/engines?id=") + descriptors[i].metadata.id;
-        }
+        // Stream compact catalog chunk-by-chunk using a shared state struct to prevent DRAM exhaustion
+        struct StreamState {
+            size_t engineIndex = 0;
+            size_t count = 0;
+            const EngineDescriptor* descriptors = nullptr;
+            String currentItem;
+            size_t itemOffset = 0;
+            bool started = false;
+            bool ended = false;
+        };
 
-        String res;
-        serializeJson(doc, res);
-        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", res);
+        auto state = std::make_shared<StreamState>();
+        state->descriptors = EngineRegistry::getAllDescriptors(state->count);
+
+        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
+            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+                if (state->ended) {
+                    return 0;
+                }
+                size_t written = 0;
+                if (!state->started) {
+                    buffer[written++] = '[';
+                    state->started = true;
+                }
+
+                while (written < maxLen && state->engineIndex < state->count) {
+                    if (state->currentItem.isEmpty()) {
+                        String item;
+                        if (state->engineIndex > 0) item += ',';
+                        serializeEngineDescriptor(state->descriptors[state->engineIndex], item, false /* compact catalog */);
+                        state->currentItem = item;
+                        state->itemOffset = 0;
+                    }
+
+                    size_t remainingInItem = state->currentItem.length() - state->itemOffset;
+                    size_t availableSpace = maxLen - written;
+                    size_t toCopy = std::min(remainingInItem, availableSpace);
+
+                    memcpy(buffer + written, state->currentItem.c_str() + state->itemOffset, toCopy);
+                    written += toCopy;
+                    state->itemOffset += toCopy;
+
+                    if (state->itemOffset >= state->currentItem.length()) {
+                        state->currentItem = "";
+                        state->engineIndex++;
+                    }
+                }
+
+                if (state->engineIndex >= state->count && written < maxLen && !state->ended) {
+                    buffer[written++] = ']';
+                    state->ended = true;
+                }
+
+                return written;
+            });
+
         response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
