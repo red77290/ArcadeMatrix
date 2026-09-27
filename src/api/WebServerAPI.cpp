@@ -248,6 +248,123 @@ public:
     }
 };
 
+// Static WebUI response: streams compressed WebUI directly from Flash ROM (PROGMEM)
+// in bounded 1436-byte (1 TCP MSS) chunks with ZERO dynamic heap allocation.
+// Prevents heap exhaustion, socket starvation, and transmission freezes on ESP32 DRAM.
+class AsyncStaticWebUIResponse : public AsyncWebServerResponse {
+private:
+    const uint8_t* _content;
+    String _head;
+
+public:
+    AsyncStaticWebUIResponse(const uint8_t* content, size_t len, const String& etag)
+        : _content(content) {
+        _code = 200;
+        _contentLength = len;
+        _contentType = "text/html; charset=utf-8";
+        _sendContentLength = true;
+        _chunked = false;
+        _sentLength = 0;
+        _ackedLength = 0;
+        _writtenLength = 0;
+        _state = RESPONSE_SETUP;
+
+        addHeader("Content-Type", "text/html; charset=utf-8", true);
+        addHeader("Content-Encoding", "gzip", true);
+        addHeader("Content-Disposition", "inline", true);
+        addHeader("ETag", String("\"") + etag + "\"", true);
+        addHeader("Cache-Control", "no-cache", true);
+        addHeader("Connection", "close", true);
+    }
+
+    ~AsyncStaticWebUIResponse() override {}
+
+    bool _started() const override { return _state > RESPONSE_SETUP; }
+    bool _finished() const override { return _state > RESPONSE_WAIT_ACK; }
+    bool _failed() const override { return _state == RESPONSE_FAILED; }
+    bool _sourceValid() const override { return (_state < RESPONSE_END); }
+
+    void _respond(AsyncWebServerRequest* request) override {
+        _state = RESPONSE_HEADERS;
+        _assembleHead(_head, request->version());
+        _ack(request, 0, 0);
+    }
+
+    size_t _ack(AsyncWebServerRequest* request, size_t len, uint32_t time) override {
+        (void)time;
+        if (!_sourceValid()) {
+            _state = RESPONSE_FAILED;
+            if (request && request->client()) request->client()->close();
+            return 0;
+        }
+
+        _ackedLength += len;
+
+        if (_state == RESPONSE_WAIT_ACK) {
+            if (_ackedLength >= _writtenLength) {
+                _state = RESPONSE_END;
+                if (request && request->client()) request->client()->close(true);
+            }
+            return 0;
+        }
+
+        if (!request || !request->client() || !request->client()->canSend()) {
+            return 0;
+        }
+
+        size_t space = request->client()->space();
+        if (space == 0) {
+            return 0;
+        }
+
+        // 1. Send HTTP headers
+        if (_state == RESPONSE_HEADERS) {
+            if (!_head.isEmpty()) {
+                size_t headToSend = std::min(space, _head.length());
+                size_t written = request->client()->write(_head.c_str(), headToSend);
+                if (written > 0) {
+                    _writtenLength += written;
+                    _head = _head.substring(written);
+                    space -= written;
+                }
+            }
+            if (!_head.isEmpty()) {
+                return 0;
+            }
+            _state = RESPONSE_CONTENT;
+        }
+
+        // 2. Stream content directly from Flash in bounded chunks (<=1436 bytes / 1 TCP MSS)
+        if (_state == RESPONSE_CONTENT) {
+            size_t totalWritten = 0;
+            while (space > 0 && _sentLength < _contentLength) {
+                size_t remaining = _contentLength - _sentLength;
+                size_t toSend = std::min((size_t)1436, std::min(space, remaining));
+                size_t written = request->client()->write((const char*)(_content + _sentLength), toSend);
+                if (written == 0) {
+                    break;
+                }
+                _sentLength += written;
+                _writtenLength += written;
+                totalWritten += written;
+                if (space >= written) space -= written; else space = 0;
+            }
+
+            if (_sentLength >= _contentLength) {
+                _state = RESPONSE_WAIT_ACK;
+                if (_ackedLength >= _writtenLength) {
+                    _state = RESPONSE_END;
+                    if (request && request->client()) request->client()->close(true);
+                }
+            }
+            return totalWritten;
+        }
+
+        return 0;
+    }
+};
+
+
 
 WebServerAPI::WebServerAPI(uint16_t port, MessageEngine* msgEngine) : server(port), msg(msgEngine) {}
 
@@ -410,10 +527,21 @@ void WebServerAPI::begin() {
     g_gifMsg = msg;
     setupRoutes();
     
-    // Default headers for CORS
+    // Default headers for CORS and socket recycling (GEMINI.md Rule 3 / socket pool preservation)
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Token, Authorization");
+    DefaultHeaders::Instance().addHeader("Connection", "close");
+
+    // Static favicon handling (204 / lightweight SVG) to eliminate 404 handler overhead on browser requests
+    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(204);
+    });
+    server.on("/favicon.svg", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncWebServerResponse* r = request->beginResponse(200, "image/svg+xml", "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#00e5ff'/></svg>");
+        r->addHeader("Cache-Control", "public, max-age=86400");
+        request->send(r);
+    });
 
     // Serve the Web UI directly from Firmware Flash (PROGMEM)
     // Compressed with gzip to save ~190KB flash and prevent LwIP TCP buffer exhaustion.
@@ -434,12 +562,7 @@ void WebServerAPI::begin() {
             }
         }
 
-        AsyncWebServerResponse* response = request->beginResponse(200, "text/html; charset=utf-8", WebUI_html, WebUI_html_len);
-        response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Content-Disposition", "inline");
-        response->addHeader("ETag", String("\"") + WebUI_html_etag + "\"");
-        response->addHeader("Cache-Control", "no-cache");
-        request->send(response);
+        request->send(new AsyncStaticWebUIResponse(WebUI_html, WebUI_html_len, WebUI_html_etag));
     };
     server.on("/", HTTP_GET, serveWebUi);
     server.on("/index.html", HTTP_GET, serveWebUi);
@@ -583,63 +706,20 @@ void WebServerAPI::setupRoutes() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-        // Stream compact catalog chunk-by-chunk using a shared state struct to prevent DRAM exhaustion
-        struct StreamState {
-            size_t engineIndex = 0;
-            size_t count = 0;
-            const EngineDescriptor* descriptors = nullptr;
-            String currentItem;
-            size_t itemOffset = 0;
-            bool started = false;
-            bool ended = false;
-        };
+        size_t count = 0;
+        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+        String catalogJson;
+        catalogJson.reserve(count * 240 + 2);
+        catalogJson += '[';
+        for (size_t i = 0; i < count; ++i) {
+            if (i > 0) catalogJson += ',';
+            serializeEngineDescriptor(descriptors[i], catalogJson, false /* compact catalog */);
+        }
+        catalogJson += ']';
 
-        auto state = std::make_shared<StreamState>();
-        state->descriptors = EngineRegistry::getAllDescriptors(state->count);
-
-        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
-            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
-                if (state->ended) {
-                    return 0;
-                }
-                size_t written = 0;
-                if (!state->started) {
-                    buffer[written++] = '[';
-                    state->started = true;
-                }
-
-                while (written < maxLen && state->engineIndex < state->count) {
-                    if (state->currentItem.isEmpty()) {
-                        String item;
-                        if (state->engineIndex > 0) item += ',';
-                        serializeEngineDescriptor(state->descriptors[state->engineIndex], item, false /* compact catalog */);
-                        state->currentItem = item;
-                        state->itemOffset = 0;
-                    }
-
-                    size_t remainingInItem = state->currentItem.length() - state->itemOffset;
-                    size_t availableSpace = maxLen - written;
-                    size_t toCopy = std::min(remainingInItem, availableSpace);
-
-                    memcpy(buffer + written, state->currentItem.c_str() + state->itemOffset, toCopy);
-                    written += toCopy;
-                    state->itemOffset += toCopy;
-
-                    if (state->itemOffset >= state->currentItem.length()) {
-                        state->currentItem = "";
-                        state->engineIndex++;
-                    }
-                }
-
-                if (state->engineIndex >= state->count && written < maxLen && !state->ended) {
-                    buffer[written++] = ']';
-                    state->ended = true;
-                }
-
-                return written;
-            });
-
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", catalogJson);
         response->addHeader("Cache-Control", "no-cache");
+        response->addHeader("Connection", "close");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
     };
