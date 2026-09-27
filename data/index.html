@@ -589,10 +589,17 @@ body {
   transition: all 0.2s ease;
   z-index: 1000;
   pointer-events: none;
-}
 [data-tooltip]:hover::after,
 [data-tooltip]:hover::before,
 [data-tooltip]:focus::after,
+[data-tooltip]:focus::before {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+[data-tooltip]:hover::after,
+[data-tooltip]:focus::after {
+  transform: translateX(-50%) scale(1);
 }
 .tooltip-lg[data-tooltip]::after {
   max-width: 440px;
@@ -3865,6 +3872,20 @@ function t(key, fallback) {
   return dict[key] !== undefined ? dict[key] : (fallback || key);
 }
 
+function applyTooltips(root = document) {
+  const currentLang = localStorage.getItem('lang') || 'fr';
+  const dict = translations[currentLang] || translations.en;
+  if (!dict) return;
+  root.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
+    const key = el.getAttribute('data-i18n-tooltip');
+    if (dict[key] !== undefined) {
+      el.setAttribute('data-tooltip', dict[key]);
+      el.setAttribute('tabindex', '0'); // For mobile focus
+    }
+  });
+}
+window.applyTooltips = applyTooltips;
+
 function setLanguage(lang) {
   localStorage.setItem('lang', lang);
   const dict = translations[lang] || translations.en;
@@ -3878,13 +3899,7 @@ function setLanguage(lang) {
   });
 
   // Tooltip translation
-  document.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
-    const key = el.getAttribute('data-i18n-tooltip');
-    if (dict[key] !== undefined) {
-      el.setAttribute('data-tooltip', dict[key]);
-      el.setAttribute('tabindex', '0'); // For mobile focus
-    }
-  });
+  applyTooltips(document);
 
   // Placeholder translation
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
@@ -4885,6 +4900,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 
         overlay.remove();
         window.showToast(t('preview_success', 'Screen created successfully!'), 'success');
+        switchPage('display');
         await renderDynamicDisplay(instId);
       } catch (e) {
         console.error('Failed to create screen:', e);
@@ -6536,7 +6552,10 @@ window.switchSystemTab = function(tabId) {
     pane.classList.remove('active');
   });
   const pane = document.getElementById('sys-tab-' + tabId);
-  if (pane) pane.classList.add('active');
+  if (pane) {
+    pane.classList.add('active');
+    applyTooltips(pane);
+  }
   if (tabId === 'hardware') {
     initHardwareCapabilities();
   }
@@ -6557,7 +6576,10 @@ function switchPage(pageName) {
   const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
   const pageEl = document.getElementById(`page-${pageName}`);
   if (navItem) navItem.classList.add('active');
-  if (pageEl) pageEl.classList.add('active');
+  if (pageEl) {
+    pageEl.classList.add('active');
+    applyTooltips(pageEl);
+  }
   localStorage.setItem('activePage', pageName);
 
   if (pageName === 'dashboard') {
@@ -6762,7 +6784,43 @@ function initDashboard() {
 
   pollMetrics();
   setInterval(pollMetrics, 10000);
+  loadDashboardCatalog();
 }
+
+async function loadDashboardCatalog() {
+  const container = document.getElementById('dashboard-catalog-container');
+  if (!container) return;
+  if (container.children.length > 0 && !container.querySelector('.spinner-border')) return;
+
+  container.innerHTML = `
+    <div class="card glass shadow" style="text-align: center; padding: 2rem; margin-top: 1.5rem;">
+      <div class="spinner-border text-primary" role="status" style="width: 2rem; height: 2rem; margin-bottom: 0.75rem;"></div>
+      <p class="text-muted" style="margin: 0; font-size: 0.9rem;" data-i18n="loading_display_desc">
+        ${t('loading_display_desc', 'Retrieving engine configurations from matrix...')}
+      </p>
+    </div>
+  `;
+
+  try {
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 10000);
+    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors.filter(d => d && d.metadata && d.metadata.id) : [];
+    if (descriptors.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
+    const enginesMap = {};
+    descriptors.forEach(d => {
+      if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
+    });
+    renderEngineCatalog(descriptors, instancesList, enginesMap);
+    applyTooltips(container);
+  } catch (err) {
+    console.warn('[Dashboard] Failed to load engine catalog:', err);
+    container.innerHTML = '';
+  }
+}
+window.loadDashboardCatalog = loadDashboardCatalog;
 
 function initOta() {
   const dropZone = document.getElementById('ota-drop-zone');

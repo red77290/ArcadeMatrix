@@ -62,20 +62,6 @@ static void invalidatePlaylistCache() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// /api/engines incremental serializer
-//
-// Emits the descriptor array one element at a time so that peak heap usage stays proportional to
-// the largest single descriptor instead of the whole payload. See the route handler for the two
-// regressions this replaces.
-// ---------------------------------------------------------------------------
-struct EngineStreamState {
-    size_t descriptorIndex = 0;
-    String pending;
-    size_t offset = 0;
-    bool arrayOpened = false;
-    bool arrayClosed = false;
-};
 
 static void appendJsonString(String& out, const char* str) {
     out += '\"';
@@ -205,112 +191,6 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out,
     out += "]}";
 }
 
-/**
- * @brief Produce the next JSON fragment of the /api/engines array.
- * @return false once the closing bracket has already been emitted.
- */
-static bool refillEngineStream(EngineStreamState& state) {
-    size_t count = 0;
-    const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-
-    state.offset = 0;
-
-    if (!state.arrayOpened) {
-        state.arrayOpened = true;
-        state.pending = "[";
-        return true;
-    }
-
-    if (descriptors && state.descriptorIndex < count) {
-        String body;
-        serializeEngineDescriptor(descriptors[state.descriptorIndex], body, false /* includeSchema: lightweight catalog */);
-        state.pending = (state.descriptorIndex > 0) ? "," : "";
-        state.pending += body;
-        state.descriptorIndex++;
-        return true;
-    }
-
-    if (!state.arrayClosed) {
-        state.arrayClosed = true;
-        state.pending = "]";
-        return true;
-    }
-
-    return false;
-}
-
-// ---------------------------------------------------------------------------
-// /api/instances incremental serializer (same rationale as /api/engines)
-// ---------------------------------------------------------------------------
-struct InstanceStreamState {
-    size_t instanceIndex = 0;
-    String pending;
-    size_t offset = 0;
-    bool arrayOpened = false;
-    bool arrayClosed = false;
-};
-
-static bool refillInstanceStream(InstanceStreamState& state) {
-    extern ConfigLoader config;
-
-    // Safe to read config.instances directly across successive filler calls because every mutation
-    // of that vector happens either at boot (AppRuntime) or inside a request handler, i.e. on the
-    // very same AsyncTCP task that drives this filler. Moving config mutation to another task would
-    // require snapshotting the instance ids here first.
-    state.offset = 0;
-
-    if (!state.arrayOpened) {
-        state.arrayOpened = true;
-        state.pending = "[";
-        return true;
-    }
-
-    if (state.instanceIndex < config.instances.size()) {
-        const auto& inst = config.instances[state.instanceIndex];
-        const auto& dict = inst.config.getDictionary();
-
-        // Instance config keys and values are Strings, which ArduinoJson duplicates into the
-        // document, so their byte length must be accounted for on top of the structural slots.
-        size_t stringBytes = inst.instance_id.length() + inst.engine_id.length() + 2;
-        for (const auto& kv : dict) {
-            stringBytes += kv.first.length() + kv.second.length() + 2;
-        }
-        const size_t capacity = JSON_OBJECT_SIZE(3)
-                              + JSON_OBJECT_SIZE(dict.size())
-                              + stringBytes
-                              + 256;
-
-        SpiRamJsonDocument doc(capacity);
-        JsonObject obj = doc.to<JsonObject>();
-        obj["instance_id"] = inst.instance_id;
-        obj["engine_id"] = inst.engine_id;
-        JsonObject cfgObj = obj.createNestedObject("config");
-        for (const auto& kv : dict) {
-            cfgObj[kv.first] = kv.second;
-        }
-
-        if (doc.overflowed()) {
-            LOGE("WebServer", "Instance %s overflowed its %u byte document; config truncated.",
-                 inst.instance_id.c_str(), (unsigned)capacity);
-        }
-
-        String body;
-        serializeJson(doc, body);
-        state.pending = (state.instanceIndex > 0) ? "," : "";
-        state.pending += body;
-        state.instanceIndex++;
-        return true;
-    }
-
-    if (!state.arrayClosed) {
-        state.arrayClosed = true;
-        state.pending = "]";
-        return true;
-    }
-
-    state.pending = String();
-    return false;
-}
 
 // Helper class to stream large files from SdFat to ESPAsyncWebServer
 class AsyncSdFatResponse : public AsyncAbstractResponse {
@@ -552,15 +432,7 @@ void WebServerAPI::begin() {
                 return;
             }
         }
-        AsyncWebServerResponse* response = request->beginChunkedResponse("text/html",
-            [](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
-                if (index >= WebUI_html_len) {
-                    return 0; // End of stream
-                }
-                size_t toCopy = std::min(maxLen, WebUI_html_len - index);
-                memcpy_P(buffer, WebUI_html + index, toCopy);
-                return toCopy;
-            });
+        AsyncWebServerResponse* response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
         response->addHeader("ETag", String("\"") + WebUI_html_etag + "\"");
         response->addHeader("Cache-Control", "public, max-age=3600, must-revalidate");
@@ -703,33 +575,25 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        LOGI("WebServer", "Streaming /api/engines (catalog) to %s (Free DRAM: %u, MaxAlloc: %u)",
+        LOGI("WebServer", "Serving /api/engines (catalog) to %s (Free DRAM: %u, MaxAlloc: %u)",
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        auto state = std::make_shared<EngineStreamState>();
 
-        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
-            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
-                (void)index;
-                if (maxLen == 0) return RESPONSE_TRY_AGAIN;
-                size_t filled = 0;
-                while (filled < maxLen) {
-                    if (state->offset >= state->pending.length()) {
-                        if (!refillEngineStream(*state)) {
-                            break; // Whole array emitted
-                        }
-                    }
-                    size_t remaining = state->pending.length() - state->offset;
-                    size_t space = maxLen - filled;
-                    size_t toCopy = (remaining < space) ? remaining : space;
-                    memcpy(buffer + filled, state->pending.c_str() + state->offset, toCopy);
-                    state->offset += toCopy;
-                    filled += toCopy;
-                }
-                return filled;
-            });
+        String catalogJson;
+        catalogJson.reserve(12288);
+        catalogJson += '[';
+        size_t count = 0;
+        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+        for (size_t i = 0; i < count; ++i) {
+            if (i > 0) catalogJson += ',';
+            String item;
+            serializeEngineDescriptor(descriptors[i], item, false /* includeSchema: lightweight catalog */);
+            catalogJson += item;
+        }
+        catalogJson += ']';
 
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", catalogJson);
         response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
@@ -854,36 +718,31 @@ void WebServerAPI::setupRoutes() {
     });
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
-    // API: GET /api/instances (streamed one instance at a time)
-    // Same two fixes as /api/engines: chunked streaming instead of a full in-RAM StreamString, and
-    // a capacity derived from the actual dictionary instead of a fixed 1024 bytes (instance configs
-    // store String keys AND String values, which ArduinoJson copies, so large engine configs such
-    // as DashboardEngine silently lost settings on serialization).
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
-        auto state = std::make_shared<InstanceStreamState>();
-
-        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
-            [state](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
-                (void)index;
-                if (maxLen == 0) return RESPONSE_TRY_AGAIN;
-                size_t filled = 0;
-                while (filled < maxLen) {
-                    if (state->offset >= state->pending.length()) {
-                        if (!refillInstanceStream(*state)) {
-                            break;
-                        }
-                    }
-                    size_t remaining = state->pending.length() - state->offset;
-                    size_t space = maxLen - filled;
-                    size_t toCopy = (remaining < space) ? remaining : space;
-                    memcpy(buffer + filled, state->pending.c_str() + state->offset, toCopy);
-                    state->offset += toCopy;
-                    filled += toCopy;
-                }
-                return filled;
-            });
-
-        request->send(response);
+        extern ConfigLoader config;
+        size_t stringBytes = 0;
+        for (const auto& inst : config.instances) {
+            stringBytes += inst.instance_id.length() + inst.engine_id.length() + 2;
+            for (const auto& kv : inst.config.getDictionary()) {
+                stringBytes += kv.first.length() + kv.second.length() + 2;
+            }
+        }
+        const size_t capacity = JSON_ARRAY_SIZE(config.instances.size())
+                              + config.instances.size() * (JSON_OBJECT_SIZE(3) + 256)
+                              + stringBytes
+                              + 512;
+        SpiRamJsonDocument doc(capacity);
+        JsonArray arr = doc.to<JsonArray>();
+        for (const auto& inst : config.instances) {
+            JsonObject obj = arr.createNestedObject();
+            obj["instance_id"] = inst.instance_id;
+            obj["engine_id"] = inst.engine_id;
+            JsonObject cfgObj = obj.createNestedObject("config");
+            for (const auto& kv : inst.config.getDictionary()) {
+                cfgObj[kv.first] = kv.second;
+            }
+        }
+        sendJsonResponse(request, doc);
     });
 
     AsyncCallbackJsonWebHandler* instancesHandler = new AsyncCallbackJsonWebHandler("/api/instances", [this](AsyncWebServerRequest *request, JsonVariant &json) {
