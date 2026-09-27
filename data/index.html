@@ -5024,14 +5024,17 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
   // Group 2: Engine Library
   const grpLibrary = document.createElement('optgroup');
   grpLibrary.label = t('optgroup_library', '🌟 Engine Library (Auto-Create & Add)');
-  descriptors.forEach(d => {
-    const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
-    const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
-    const opt = document.createElement('option');
-    opt.value = `new:${d.metadata.id}`;
-    opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
-    grpLibrary.appendChild(opt);
-  });
+  if (Array.isArray(descriptors)) {
+    descriptors.forEach(d => {
+      if (!d || !d.metadata || !d.metadata.id) return;
+      const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
+      const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+      const opt = document.createElement('option');
+      opt.value = `new:${d.metadata.id}`;
+      opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
+      grpLibrary.appendChild(opt);
+    });
+  }
   sel.appendChild(grpLibrary);
 
   const addBtn = document.createElement('button');
@@ -5752,9 +5755,10 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
         '</div>';
     }
 
-    const descriptors = await fetchCachedEndpoint('/api/engines', 15000);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 15000);
+    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors.filter(d => d && d.metadata && d.metadata.id) : [];
 
-    if (!Array.isArray(descriptors) || descriptors.length === 0) {
+    if (descriptors.length === 0) {
       console.warn('[Display] No engine descriptors received from backend, showing retry view.');
       wrapper.innerHTML =
         '<div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">' +
@@ -6375,20 +6379,11 @@ window.switchSystemTab = function(tabId) {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Deliberately ordered: initNavigation() restores the last page and lazily renders it.
-  // The Display tree (initDynamicEngines) and the hardware probe (initHardwareCapabilities) are
-  // NOT called eagerly here — each costs several round-trips on a socket-starved AsyncWebServer,
-  // and both panes are hidden on boot unless the user actually navigates to them.
+  // Ordered startup: initNavigation() restores the active page and lazily renders only that page.
+  // Global version badge is fetched once. All other subsystems (media, settings, hardware, ota)
+  // are loaded on-demand when the user navigates to their respective page/tab.
   initNavigation();
-  initDashboard();
-  initOta();
   loadVersion();
-  initCustomMarquee();
-  initFighterOverlay();
-  initGifLibrary();
-  initAudioStreaming();
-  initNetworkSettings();
-  initSettings();
 });
 
 function switchPage(pageName) {
@@ -6401,17 +6396,26 @@ function switchPage(pageName) {
   if (pageEl) pageEl.classList.add('active');
   localStorage.setItem('activePage', pageName);
 
-  if (pageName === 'display') {
+  if (pageName === 'dashboard') {
+    initDashboard();
+  } else if (pageName === 'display') {
     const wrapper = document.getElementById('dynamic-display-wrapper');
     if (!wrapper || wrapper.children.length === 0 || wrapper.querySelector('#btn-retry-engines')) {
       renderDynamicDisplay();
     }
   } else if (pageName === 'system') {
+    initSettings();
+    initFighterOverlay();
+    initNetworkSettings();
+    initOta();
     const hwPane = document.getElementById('sys-tab-hardware');
     if (hwPane && hwPane.classList.contains('active')) {
       initHardwareCapabilities();
     }
   } else if (pageName === 'media') {
+    initCustomMarquee();
+    initGifLibrary();
+    initAudioStreaming();
     refreshAudioStatus();
     if (!_audioStatusPollInterval) {
       _audioStatusPollInterval = setInterval(fetchAudioStatus, 3000);
@@ -6937,8 +6941,9 @@ function initCustomMarquee() {
 }
 
 
-// GIF Library card: network upload / whole-folder upload / reindex (parity with ArcadeMatrix_RPI)
+let _gifLibInitialized = false;
 function initGifLibrary() {
+  if (_gifLibInitialized) return;
   const $ = (id) => document.getElementById(id);
   const folderList = $('gif-fm-folder-list'), newFolder = $('gif-fm-newfolder'), mkdirBtn = $('gif-fm-mkdir');
   const title = $('gif-fm-title'), countEl = $('gif-fm-count'), folderActions = $('gif-fm-folder-actions'), renameFolderBtn = $('gif-fm-rename-folder'), deleteFolderBtn = $('gif-fm-delete-folder');
@@ -6946,6 +6951,7 @@ function initGifLibrary() {
   const list = $('gif-fm-list'), moreBtn = $('gif-fm-more'), rescanBtn = $('gif-fm-rescan'), progress = $('gif-lib-progress'), uploadBtn = $('gif-lib-upload-btn');
   const orientTabs = $('gif-fm-orientation');
   if (!folderList || !dropZone || !uploadBtn) return;
+  _gifLibInitialized = true;
   const toast = (m, kind) => (window.showToast ? window.showToast(m, kind) : console.log(kind, m));
   const tr = (k, f, v) => { let s = (typeof t === 'function') ? t(k, f) : f; if (v) Object.keys(v).forEach(x => { s = s.split('{' + x + '}').join(v[x]); }); return s; };
   const headers = () => { const h = {}; const tok = localStorage.getItem('api_token'); if (tok) h['X-API-Token'] = tok; return h; };

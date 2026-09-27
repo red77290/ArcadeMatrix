@@ -77,106 +77,122 @@ struct EngineStreamState {
     bool arrayClosed = false;
 };
 
+static void appendJsonString(String& out, const char* str) {
+    out += '\"';
+    if (str) {
+        for (const char* p = str; *p; ++p) {
+            switch (*p) {
+                case '\"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b"; break;
+                case '\f': out += "\\f"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (static_cast<uint8_t>(*p) < 0x20) {
+                        char buf[8];
+                        snprintf(buf, sizeof(buf), "\\u%04x", (uint8_t)*p);
+                        out += buf;
+                    } else {
+                        out += *p;
+                    }
+                    break;
+            }
+        }
+    }
+    out += '\"';
+}
+
 static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out) {
-    const size_t fieldCount = desc.schema.fields.size();
-    // ConfigField members are all `const char*`, so ArduinoJson links them instead of copying:
-    // only structural slots consume capacity. A field object emits at most 12 members (id,
-    // field_type, label, description, default_value, options, options_endpoint, multiple,
-    // visible_when, min_val, max_val, step) - under-counting here silently truncates the schema
-    // of the largest engines, which is exactly what the WebUI reported as an empty response.
-    const size_t capacity = JSON_OBJECT_SIZE(12)           // root
-                          + JSON_OBJECT_SIZE(6)            // metadata
-                          + JSON_OBJECT_SIZE(6)            // capabilities
-                          + JSON_OBJECT_SIZE(10)           // requirements
-                          + JSON_OBJECT_SIZE(16)           // compatibility
-                          + JSON_OBJECT_SIZE(10)           // compatibility.memory
-                          + JSON_ARRAY_SIZE(fieldCount + 1) // schema array
-                          + fieldCount * (JSON_OBJECT_SIZE(14) + 128)
-                          + 4096;                          // generous headroom for strings and dynamic fields
-
-    SpiRamJsonDocument doc(capacity);
-    JsonObject obj = doc.to<JsonObject>();
-
-    JsonObject metaObj = obj.createNestedObject("metadata");
-    metaObj["id"] = desc.metadata.id;
-    metaObj["name"] = desc.metadata.name;
-    metaObj["category"] = desc.metadata.category;
-    metaObj["version"] = desc.metadata.version;
-
-    JsonObject capObj = obj.createNestedObject("capabilities");
-    capObj["supports_128x32"] = desc.capabilities.supports_128x32;
-    capObj["supports_256x64"] = desc.capabilities.supports_256x64;
-    capObj["realtime"] = desc.capabilities.realtime;
-    capObj["interruptible"] = desc.capabilities.interruptible;
-    capObj["selfPaced"] = desc.capabilities.selfPaced;
-
-    JsonObject reqObj = obj.createNestedObject("requirements");
-    reqObj["needs_psram"] = desc.requirements.needsPsram;
-    reqObj["needs_audio"] = desc.requirements.needsAudio;
-    reqObj["needs_temp_sensor"] = desc.requirements.needsTempSensor;
-    reqObj["needs_gyroscope"] = desc.requirements.needsGyroscope;
-    reqObj["needs_network"] = desc.requirements.needsNetwork;
-    reqObj["needs_sd"] = desc.requirements.needsSd;
-    reqObj["needs_tls"] = desc.requirements.needsTls;
-    reqObj["target_fps"] = desc.requirements.targetFps;
+    out = String();
+    out.reserve(2048);
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
     auto verdict = EngineRegistrar::evaluateCompatibility(desc, activePipeline);
 
-    obj["available"] = verdict.compatible();
+    out += "{\"metadata\":{";
+    out += "\"id\":"; appendJsonString(out, desc.metadata.id);
+    out += ",\"name\":"; appendJsonString(out, desc.metadata.name);
+    out += ",\"category\":"; appendJsonString(out, desc.metadata.category);
+    out += ",\"version\":"; appendJsonString(out, desc.metadata.version);
+    out += "},\"capabilities\":{";
+    out += "\"supports_128x32\":"; out += (desc.capabilities.supports_128x32 ? "true" : "false");
+    out += ",\"supports_256x64\":"; out += (desc.capabilities.supports_256x64 ? "true" : "false");
+    out += ",\"realtime\":"; out += (desc.capabilities.realtime ? "true" : "false");
+    out += ",\"interruptible\":"; out += (desc.capabilities.interruptible ? "true" : "false");
+    out += ",\"selfPaced\":"; out += (desc.capabilities.selfPaced ? "true" : "false");
+    out += "},\"requirements\":{";
+    out += "\"needs_psram\":"; out += (desc.requirements.needsPsram ? "true" : "false");
+    out += ",\"needs_audio\":"; out += (desc.requirements.needsAudio ? "true" : "false");
+    out += ",\"needs_temp_sensor\":"; out += (desc.requirements.needsTempSensor ? "true" : "false");
+    out += ",\"needs_gyroscope\":"; out += (desc.requirements.needsGyroscope ? "true" : "false");
+    out += ",\"needs_network\":"; out += (desc.requirements.needsNetwork ? "true" : "false");
+    out += ",\"needs_sd\":"; out += (desc.requirements.needsSd ? "true" : "false");
+    out += ",\"needs_tls\":"; out += (desc.requirements.needsTls ? "true" : "false");
+    out += ",\"target_fps\":"; out += String(desc.requirements.targetFps);
+    out += "},\"available\":"; out += (verdict.compatible() ? "true" : "false");
     if (!verdict.compatible()) {
-        obj["reason"] = verdict.reasonText;
+        out += ",\"reason\":"; appendJsonString(out, verdict.reasonText);
     }
-    obj["capability_generation"] = CompatibilityEvaluator::getHardwareCapabilityGeneration();
+    out += ",\"capability_generation\":"; out += String(CompatibilityEvaluator::getHardwareCapabilityGeneration());
+    out += ",\"compatibility\":{";
+    out += "\"status\":"; appendJsonString(out, CompatibilityEvaluator::statusToString(verdict.status));
+    out += ",\"compatible\":"; out += (verdict.compatible() ? "true" : "false");
+    out += ",\"degraded\":"; out += (verdict.degraded() ? "true" : "false");
+    out += ",\"primary_reason\":"; out += String(static_cast<int>(verdict.primaryReason));
+    out += ",\"reason_text\":"; appendJsonString(out, verdict.reasonText);
+    out += ",\"issue_flags\":"; out += String(verdict.issueFlags);
+    out += ",\"strategy\":"; appendJsonString(out, CompatibilityEvaluator::strategyToString(verdict.strategy));
+    out += ",\"storage\":"; appendJsonString(out, CompatibilityEvaluator::storageToString(verdict.storage));
+    out += ",\"target_fps\":"; out += String(verdict.targetFps);
+    out += ",\"estimated_fps\":"; out += String(verdict.estimatedPresentationFps);
+    out += ",\"validated_fps\":"; out += String(verdict.validatedFps);
+    out += ",\"empirically_validated\":"; out += (verdict.empiricallyValidated ? "true" : "false");
+    out += ",\"memory\":{";
+    out += "\"internal_required\":"; out += String(verdict.internalRequiredBytes);
+    out += ",\"internal_available\":"; out += String(verdict.internalAvailableBytes);
+    out += ",\"internal_headroom\":"; out += String(verdict.internalHeadroomBytes);
+    out += ",\"largest_required_block\":"; out += String(verdict.largestRequiredBlockBytes);
+    out += ",\"largest_available_block\":"; out += String(verdict.largestAvailableBlockBytes);
+    out += ",\"psram_required\":"; out += String(verdict.psramRequiredBytes);
+    out += ",\"psram_available\":"; out += String(verdict.psramAvailableBytes);
+    out += "}},\"schema\":[";
 
-    JsonObject compObj = obj.createNestedObject("compatibility");
-    compObj["status"] = CompatibilityEvaluator::statusToString(verdict.status);
-    compObj["compatible"] = verdict.compatible();
-    compObj["degraded"] = verdict.degraded();
-    compObj["primary_reason"] = static_cast<int>(verdict.primaryReason);
-    compObj["reason_text"] = verdict.reasonText;
-    compObj["issue_flags"] = verdict.issueFlags;
-    compObj["strategy"] = CompatibilityEvaluator::strategyToString(verdict.strategy);
-    compObj["storage"] = CompatibilityEvaluator::storageToString(verdict.storage);
-    compObj["target_fps"] = verdict.targetFps;
-    compObj["estimated_fps"] = verdict.estimatedPresentationFps;
-    compObj["validated_fps"] = verdict.validatedFps;
-    compObj["empirically_validated"] = verdict.empiricallyValidated;
-
-    JsonObject memObj = compObj.createNestedObject("memory");
-    memObj["internal_required"] = verdict.internalRequiredBytes;
-    memObj["internal_available"] = verdict.internalAvailableBytes;
-    memObj["internal_headroom"] = verdict.internalHeadroomBytes;
-    memObj["largest_required_block"] = verdict.largestRequiredBlockBytes;
-    memObj["largest_available_block"] = verdict.largestAvailableBlockBytes;
-    memObj["psram_required"] = verdict.psramRequiredBytes;
-    memObj["psram_available"] = verdict.psramAvailableBytes;
-
-    JsonArray schema = obj.createNestedArray("schema");
+    bool firstField = true;
     for (const auto& field : desc.schema.fields) {
-        JsonObject fieldObj = schema.createNestedObject();
-        fieldObj["id"] = field.id;
-        fieldObj["field_type"] = (int)field.type;
-        fieldObj["label"] = field.label;
-        fieldObj["description"] = field.description;
-        fieldObj["default_value"] = field.default_value;
-        if (strlen(field.options) > 0) fieldObj["options"] = field.options;
-        if (strlen(field.options_endpoint) > 0) fieldObj["options_endpoint"] = field.options_endpoint;
-        if (field.multiple) fieldObj["multiple"] = true;
-        if (strlen(field.visible_when) > 0) fieldObj["visible_when"] = field.visible_when;
-        if (strlen(field.min_val) > 0) fieldObj["min_val"] = field.min_val;
-        if (strlen(field.max_val) > 0) fieldObj["max_val"] = field.max_val;
-        if (strlen(field.step) > 0) fieldObj["step"] = field.step;
+        if (!firstField) out += ',';
+        firstField = false;
+        out += "{\"id\":"; appendJsonString(out, field.id);
+        out += ",\"field_type\":"; out += String(static_cast<int>(field.type));
+        out += ",\"label\":"; appendJsonString(out, field.label);
+        out += ",\"description\":"; appendJsonString(out, field.description);
+        out += ",\"default_value\":"; appendJsonString(out, field.default_value);
+        if (strlen(field.options) > 0) {
+            out += ",\"options\":"; appendJsonString(out, field.options);
+        }
+        if (strlen(field.options_endpoint) > 0) {
+            out += ",\"options_endpoint\":"; appendJsonString(out, field.options_endpoint);
+        }
+        if (field.multiple) {
+            out += ",\"multiple\":true";
+        }
+        if (strlen(field.visible_when) > 0) {
+            out += ",\"visible_when\":"; appendJsonString(out, field.visible_when);
+        }
+        if (strlen(field.min_val) > 0) {
+            out += ",\"min_val\":"; appendJsonString(out, field.min_val);
+        }
+        if (strlen(field.max_val) > 0) {
+            out += ",\"max_val\":"; appendJsonString(out, field.max_val);
+        }
+        if (strlen(field.step) > 0) {
+            out += ",\"step\":"; appendJsonString(out, field.step);
+        }
+        out += '}';
     }
-
-    if (doc.overflowed()) {
-        LOGE("WebServer", "Engine descriptor %s overflowed its %u byte document; schema truncated.",
-             desc.metadata.id ? desc.metadata.id : "?", (unsigned)capacity);
-    }
-
-    out = String();
-    serializeJson(doc, out);
+    out += "]}";
 }
 
 /**
@@ -516,6 +532,10 @@ void WebServerAPI::begin() {
     // The ETag is content-derived (see scripts/build_webui.py): a commit-derived tag would not
     // change when data/index.html is edited without committing, leaving stale UI in the browser.
     auto serveWebUi = [](AsyncWebServerRequest *request) {
+        LOGI("WebServer", "Serving WebUI to %s (Free DRAM: %u, MaxAlloc: %u)",
+             request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
+             (unsigned)ESP.getFreeHeap(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         if (request->hasHeader("If-None-Match")) {
             const AsyncWebHeader* h = request->getHeader("If-None-Match");
             if (h && h->value().equals(WebUI_html_etag)) {
@@ -631,6 +651,10 @@ void WebServerAPI::setupRoutes() {
     //     emits a structurally incomplete descriptor, which the WebUI reports as "returned empty".
     //     The capacity is now derived from the actual field count.
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
+        LOGI("WebServer", "Streaming /api/engines to %s (Free DRAM: %u, MaxAlloc: %u)",
+             request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
+             (unsigned)ESP.getFreeHeap(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         auto state = std::make_shared<EngineStreamState>();
 
         AsyncWebServerResponse* response = request->beginChunkedResponse("application/json",
