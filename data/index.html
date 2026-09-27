@@ -2405,6 +2405,8 @@ const translations = {
     configured_screens_desc: "Click on a screen tab below to customize its visual layout, data feeds, colors, and options.",
     no_screens_title: "No display screens configured yet",
     no_screens_desc: "Choose an engine plugin above and click 'Create Screen' to set up your first display screen.",
+    catalog_load_failed: "Unable to load engine catalog from matrix.",
+    catalog_load_failed_desc: "Please check your connection to the matrix and try again.",
     rotation_loop_title: "Screen Rotation Loop (Matrix Playlist)",
     rotation_loop_badge: "Auto-Cycling",
     rotation_loop_desc: "This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.",
@@ -2948,6 +2950,8 @@ const translations = {
     configured_screens_desc: "Cliquez sur un onglet ci-dessous pour personnaliser sa disposition, ses sources de données et ses options.",
     no_screens_title: "Aucun écran configuré pour le moment",
     no_screens_desc: "Choisissez un plugin ci-dessus et cliquez sur 'Créer l'écran' pour configurer votre premier écran.",
+    catalog_load_failed: "Impossible de charger le catalogue des moteurs depuis la matrice.",
+    catalog_load_failed_desc: "Veuillez vérifier votre connexion à la matrice et réessayer.",
     rotation_loop_title: "Boucle de Rotation (Playlist Matrice)",
     rotation_loop_badge: "Défilement Auto",
     rotation_loop_desc: "Cette séquence contrôle quels écrans défilent sur la matrice LED, la durée d'affichage (secondes / nombre de GIFs), leur ordre et l'activation de l'overlay de combat Street Fighter.",
@@ -3491,6 +3495,8 @@ const translations = {
     configured_screens_desc: "Haz clic en una pestaña para personalizar su diseño, fuentes de datos y opciones.",
     no_screens_title: "Aún no hay pantallas configuradas",
     no_screens_desc: "Elige un plugin arriba y haz clic en 'Crear pantalla' para configurar tu primera pantalla.",
+    catalog_load_failed: "No se pudo cargar el catálogo de motores desde la matriz.",
+    catalog_load_failed_desc: "Por favor, compruebe la conexión con la matriz e inténtelo de nuevo.",
     rotation_loop_title: "Bucle de Rotación (Lista de reproducción)",
     rotation_loop_badge: "Ciclo Automático",
     rotation_loop_desc: "Esta secuencia controla qué pantallas rotan en tu matriz LED, el tiempo de visualización (segundos / cantidad de GIFs), su orden y la superposición de Street Fighter.",
@@ -4052,33 +4058,6 @@ const THEME_ID_MAP = {
   "pong": "Pong", "binary": "Binary", "slot_machine": "Slot Machine"
 };
 
-const KNOWN_ENGINES = [
-  { id: 'clock', name: 'Clock', category: 'clock', icon: '⏰' },
-  { id: 'date', name: 'Date', category: 'clock', icon: '📅' },
-  { id: 'weather', name: 'Weather', category: 'weather', icon: '🌤️' },
-  { id: 'gifs', name: 'GIF Player', category: 'media_anim', icon: '🎞️' },
-  { id: 'crypto', name: 'Crypto Ticker', category: 'crypto', icon: '🪙' },
-  { id: 'stock', name: 'Stock Ticker', category: 'stock', icon: '📈' },
-  { id: 'visualizer', name: 'Audio Visualizer', category: 'media_audio', icon: '🎵' },
-  { id: 'decibel', name: 'Decibel Meter', category: 'sensor', icon: '🔊' },
-  { id: 'temp', name: 'Temperature', category: 'sensor', icon: '🌡️' },
-  { id: 'message', name: 'Message', category: 'text', icon: '💬' },
-  { id: 'googlecast', name: 'Google Cast', category: 'media_audio', icon: '📺' },
-  { id: 'spotify', name: 'Spotify', category: 'media_audio', icon: '🟢' },
-  { id: 'sysinfo', name: 'System Info', category: 'system', icon: '🖥️' },
-  { id: 'music', name: 'Web Radio', category: 'media_audio', icon: '📻' },
-  { id: 'dashboard', name: 'Dashboard Hub', category: 'dashboard', icon: '📊' },
-  { id: 'gnews', name: 'Google News', category: 'news', icon: '📰' },
-  { id: 'marquee', name: 'Marquee Banner', category: 'text', icon: '📜' }
-].map(e => ({
-  metadata: { id: e.id, name: e.name, category: e.category, icon: e.icon, version: '1.0.0' },
-  capabilities: { supports_128x32: true, supports_256x64: true, realtime: true },
-  requirements: {},
-  compatibility: { status: 'compatible', compatible: true },
-  available: true,
-  schema: []
-}));
-window.KNOWN_ENGINES = KNOWN_ENGINES;
 
 function getEngineMeta(descOrMeta) {
   const meta = (descOrMeta && descOrMeta.metadata) ? descOrMeta.metadata : (descOrMeta || {});
@@ -5926,65 +5905,38 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    // Sequential fetching to maintain strictly 1 TCP connection on ESP32 (GEMINI.md Rule 3 / socket pool preservation)
+    // Fetch instances, rotation, and dynamic engine catalog from backend (EngineRegistry)
     const instancesList = await API.get('/api/instances', 5000).catch(() => []);
     const rotationList = await API.get('/api/rotation', 5000).catch(() => []);
-
-    let descriptors = [...KNOWN_ENGINES];
-    try {
-      const rawDescriptors = await fetchCachedEndpoint('/api/engines', 4000);
-      if (Array.isArray(rawDescriptors) && rawDescriptors.length > 0) {
-        const serverMap = new Map();
-        rawDescriptors.forEach(d => {
-          if (d && d.metadata && d.metadata.id) serverMap.set(d.metadata.id, d);
-        });
-        descriptors = descriptors.map(d => serverMap.get(d.metadata.id) || d);
-        rawDescriptors.forEach(d => {
-          if (d && d.metadata && d.metadata.id && !descriptors.some(k => k.metadata.id === d.metadata.id)) {
-            descriptors.push(d);
-          }
-        });
-      }
-    } catch (_) {}
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors : [];
 
     const enginesMap = {};
     descriptors.forEach(desc => {
-      if (desc && desc.metadata && desc.metadata.id) {
-        enginesMap[desc.metadata.id] = desc;
-      }
-    });
-
-    // Warm options endpoints ONLY for actively configured engine instances to prevent lwIP socket pool
-    // exhaustion on ESP32. Unconfigured engines in the catalog are loaded on-demand when created.
-    // Sequential warming ensures only 1 TCP connection is open at a time.
-    const activeEngineTypes = new Set(instancesList.map(inst => inst.engine_type || inst.engine_id || (inst.id ? inst.id.split('_')[0] : '')));
-
-    // Fetch detailed schemas on-demand ONLY for actively configured engine instances to keep memory footprint minimal
-    for (const engId of activeEngineTypes) {
-      if (!engId) continue;
-      const key = String(engId).toLowerCase().trim();
-      if (enginesMap[key] && getSchemaFields(enginesMap[key]).length === 0) {
-        const fullDesc = await fetchEngineSchema(key);
-        if (fullDesc && fullDesc.schema) {
-          enginesMap[key].schema = fullDesc.schema;
+      const id = desc?.metadata?.id || desc?.id;
+      if (id) {
+        if (_engineSchemaCache.has(id)) {
+          const cached = _engineSchemaCache.get(id);
+          if (cached && cached.schema) {
+            desc.schema = cached.schema;
+          }
         }
+        enginesMap[id] = desc;
       }
-    }
-
-    const optionsEndpoints = new Set();
-    descriptors.forEach(desc => {
-      if (!desc || !desc.metadata || !activeEngineTypes.has(desc.metadata.id)) return;
-      const targetDesc = enginesMap[desc.metadata.id] || desc;
-      const fields = getSchemaFields(targetDesc);
-      fields.forEach(field => {
-        if (!field || !field.options_endpoint) return;
-        if (field.options_endpoint === '/api/timezones') return;
-        if (isFileAssetField(field)) return;
-        optionsEndpoints.add(field.options_endpoint);
-      });
     });
-    for (const ep of optionsEndpoints) {
-      await fetchCachedEndpoint(ep).catch(() => null);
+
+    if (descriptors.length === 0) {
+      wrapper.innerHTML = `
+        <div class="card glass text-center" style="padding: 3rem 1.5rem; margin-top: 1rem;">
+          <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">⚠️</div>
+          <h4 data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</h4>
+          <p class="text-muted" style="margin-bottom: 1.5rem;" data-i18n="catalog_load_failed_desc">${t('catalog_load_failed_desc', 'Please check your connection to the matrix and try again.')}</p>
+          <button class="btn btn-primary" id="btn-retry-engines">🔄 ${t('btn_retry', 'Retry')}</button>
+        </div>
+      `;
+      const retryBtn = wrapper.querySelector('#btn-retry-engines');
+      if (retryBtn) retryBtn.onclick = () => renderDynamicDisplay(targetActiveInstanceId);
+      return;
     }
 
     // 1. Render Visual Engine Catalog directly onto the Dashboard (Home Hub)
@@ -6068,147 +6020,24 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       activeCleanId = instancesList[0].instance_id.replace(/[^a-zA-Z0-9]/g, '-');
     }
 
-    // 6. Generate Dynamic Screen Tabs & Panes
-    for (let index = 0; index < instancesList.length; index++) {
-      const instance = instancesList[index];
-      const engineDesc = enginesMap[instance.engine_id];
-      if (!engineDesc) continue;
-      
-      const info = resolveScreenInfo(instance, engineDesc);
-      const cleanId = instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-');
-      const tabId = `tab-dyn-${cleanId}`;
-      const isTabActive = cleanId === activeCleanId;
-      const rotEntry = Array.isArray(rotationList) ? rotationList.find(r => r.instance_id === instance.instance_id) : null;
-      
-      // Tab Button
-      const tabBtn = document.createElement('button');
-      tabBtn.id = `btn-tab-${cleanId}`;
-      tabBtn.className = 'tab-btn' + (isTabActive ? ' active' : '');
-      tabBtn.setAttribute('data-tab-target', tabId);
-      tabBtn.innerHTML = `${info.icon} <span class="tab-label-text">${info.title}</span>`;
-      tabBtn.onclick = (e) => {
-        document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        
-        document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
-        const pane = document.getElementById(tabId);
-        if (pane) pane.classList.add('active');
-      };
-      
-      tabsContainer.appendChild(tabBtn);
-      
-      // Tab Pane
-      const tabPane = document.createElement('div');
-      tabPane.id = tabId;
-      tabPane.className = 'tab-pane' + (isTabActive ? ' active' : '');
-      
-      const card = document.createElement('div');
-      card.className = 'card glass shadow';
-      card.style.marginTop = '1.5rem';
-      
-      // Header with Title + In-Rotation Badge + Action Buttons
-      const cardHeader = document.createElement('div');
-      cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
-      
-      const statusBadgeHtml = rotEntry ? 
-        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
-        `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
+    async function renderInstanceForm(card, cleanId, instance, engineDesc, info) {
+      if (card.querySelector('.form-grid')) return;
 
-      cardHeader.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <span style="font-size: 1.6rem;" id="header-icon-${cleanId}">${info.icon}</span>
-          <div>
-            <h3 style="margin: 0; font-size: 1.2rem;" id="header-title-${cleanId}">${info.title}</h3>
-            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace;">${instance.instance_id} (${instance.engine_id})</span>
-          </div>
-          ${statusBadgeHtml}
-        </div>
-        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-          ${rotEntry ? 
-            `<button class="btn btn-rot-toggle" style="background: rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); font-size:0.82rem; padding:0.4rem 0.75rem;">${t('remove_from_rotation_btn', '➖ Remove from Loop')}</button>` : 
-            `<button class="btn btn-rot-toggle btn-primary" style="font-size:0.82rem; padding:0.4rem 0.75rem;">${t('add_to_rotation_btn', '➕ Add to Loop')}</button>`}
-          <button class="btn btn-duplicate" style="background: rgba(255,255,255,0.08); color:#fff; font-size:0.82rem; padding:0.4rem 0.75rem;">📋 ${t('duplicate_btn', 'Duplicate')}</button>
-          <button class="btn btn-danger btn-delete" style="font-size:0.82rem; padding:0.4rem 0.75rem;">🗑️</button>
-        </div>
-      `;
-
-      // Wire rotation toggle
-      const rotToggleBtn = cardHeader.querySelector('.btn-rot-toggle');
-      if (rotToggleBtn) {
-        rotToggleBtn.onclick = async () => {
-          rotToggleBtn.disabled = true;
-          const curRot = await API.get('/api/rotation').catch(() => []);
-          let newRot = Array.isArray(curRot) ? curRot.slice() : [];
-          if (rotEntry) {
-            newRot = newRot.filter(r => r.instance_id !== instance.instance_id);
-            window.showToast(`Removed '${info.title}' from rotation`, 'info');
-          } else {
-            const allowOverlay = !engineDesc.capabilities || engineDesc.capabilities.allows_overlay !== false;
-            newRot.push({
-              instance_id: instance.instance_id,
-              duration_sec: 30,
-              overlays: { fighter: false },
-              fighter_overlay: false
-            });
-            window.showToast(`Added '${info.title}' to rotation`, 'success');
+      if (getSchemaFields(engineDesc).length === 0) {
+        const loader = document.createElement('div');
+        loader.className = 'text-center p-3 text-muted';
+        loader.innerHTML = '<div class="spinner-border text-primary" style="width:1.5rem;height:1.5rem;"></div><span style="margin-left:0.5rem;font-size:0.85rem;">Loading settings...</span>';
+        card.appendChild(loader);
+        const fullDesc = await fetchEngineSchema(instance.engine_id);
+        if (fullDesc && fullDesc.schema) {
+          engineDesc.schema = fullDesc.schema;
+          if (enginesMap[instance.engine_id]) {
+            enginesMap[instance.engine_id].schema = fullDesc.schema;
           }
-          await API.post('/api/rotation', newRot);
-          await renderDynamicDisplay(instance.instance_id);
-        };
+        }
+        loader.remove();
       }
 
-      // Wire duplicate button
-      const dupBtn = cardHeader.querySelector('.btn-duplicate');
-      if (dupBtn) {
-        dupBtn.onclick = async () => {
-          dupBtn.disabled = true;
-          let counter = 2;
-          let newId = `${instance.instance_id}_copy`;
-          while (instancesList.some(i => i.instance_id === newId)) {
-            newId = `${instance.instance_id}_copy${counter++}`;
-          }
-          const clonedCfg = JSON.parse(JSON.stringify(instance.config || {}));
-          clonedCfg.screen_title = `${info.title} (${t('copy_suffix', 'Copy')})`;
-          try {
-            await API.post('/api/instances', {
-              instance_id: newId,
-              engine_id: instance.engine_id,
-              config: clonedCfg
-            });
-            window.showToast(`Duplicated screen to '${newId}'!`, 'success');
-            await renderDynamicDisplay(newId);
-          } catch (e) {
-            window.showToast('Failed to duplicate screen', 'error');
-            dupBtn.disabled = false;
-          }
-        };
-      }
-
-      // Wire delete button
-      const delBtn = cardHeader.querySelector('.btn-delete');
-      if (delBtn) {
-        delBtn.onclick = async () => {
-          if (confirm(`${t('confirm_remove_screen', 'Are you sure you want to remove this screen?')}\n${info.title} (${instance.instance_id})`)) {
-            delBtn.disabled = true;
-            try {
-              await API.delete(`/api/instances/${instance.instance_id}`);
-              const curRot = await API.get('/api/rotation').catch(() => []);
-              if (Array.isArray(curRot) && curRot.some(r => r.instance_id === instance.instance_id)) {
-                const cleanedRot = curRot.filter(r => r.instance_id !== instance.instance_id);
-                await API.post('/api/rotation', cleanedRot);
-              }
-              window.showToast('Screen removed', 'success');
-              await renderDynamicDisplay();
-            } catch (e) {
-              window.showToast('Failed to remove screen', 'error');
-              delBtn.disabled = false;
-            }
-          }
-        };
-      }
-
-      card.appendChild(cardHeader);
-      
       const formGrid = document.createElement('div');
       formGrid.className = 'form-grid';
 
@@ -6493,9 +6322,162 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
 
       actionBar.appendChild(saveBtn);
       card.appendChild(actionBar);
+    }
+
+    // 6. Generate Dynamic Screen Tabs & Panes
+    for (let index = 0; index < instancesList.length; index++) {
+      const instance = instancesList[index];
+      const engineDesc = enginesMap[instance.engine_id];
+      if (!engineDesc) continue;
       
+      const info = resolveScreenInfo(instance, engineDesc);
+      const cleanId = instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-');
+      const tabId = `tab-dyn-${cleanId}`;
+      const isTabActive = cleanId === activeCleanId;
+      const rotEntry = Array.isArray(rotationList) ? rotationList.find(r => r.instance_id === instance.instance_id) : null;
+      
+      // Tab Button
+      const tabBtn = document.createElement('button');
+      tabBtn.id = `btn-tab-${cleanId}`;
+      tabBtn.className = 'tab-btn' + (isTabActive ? ' active' : '');
+      tabBtn.setAttribute('data-tab-target', tabId);
+      tabBtn.innerHTML = `${info.icon} <span class="tab-label-text">${info.title}</span>`;
+      
+      tabsContainer.appendChild(tabBtn);
+      
+      // Tab Pane
+      const tabPane = document.createElement('div');
+      tabPane.id = tabId;
+      tabPane.className = 'tab-pane' + (isTabActive ? ' active' : '');
+      
+      const card = document.createElement('div');
+      card.className = 'card glass shadow';
+      card.style.marginTop = '1.5rem';
+      
+      // Header with Title + In-Rotation Badge + Action Buttons
+      const cardHeader = document.createElement('div');
+      cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
+      
+      const statusBadgeHtml = rotEntry ? 
+        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
+        `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
+
+      cardHeader.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <span style="font-size: 1.6rem;" id="header-icon-${cleanId}">${info.icon}</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.2rem;" id="header-title-${cleanId}">${info.title}</h3>
+            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace;">${instance.instance_id} (${instance.engine_id})</span>
+          </div>
+          ${statusBadgeHtml}
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          ${rotEntry ? 
+            `<button class="btn btn-rot-toggle" style="background: rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); font-size:0.82rem; padding:0.4rem 0.75rem;">${t('remove_from_rotation_btn', '➖ Remove from Loop')}</button>` : 
+            `<button class="btn btn-rot-toggle btn-primary" style="font-size:0.82rem; padding:0.4rem 0.75rem;">${t('add_to_rotation_btn', '➕ Add to Loop')}</button>`}
+          <button class="btn btn-duplicate" style="background: rgba(255,255,255,0.08); color:#fff; font-size:0.82rem; padding:0.4rem 0.75rem;">📋 ${t('duplicate_btn', 'Duplicate')}</button>
+          <button class="btn btn-danger btn-delete" style="font-size:0.82rem; padding:0.4rem 0.75rem;">🗑️</button>
+        </div>
+      `;
+
+      // Wire rotation toggle
+      const rotToggleBtn = cardHeader.querySelector('.btn-rot-toggle');
+      if (rotToggleBtn) {
+        rotToggleBtn.onclick = async () => {
+          rotToggleBtn.disabled = true;
+          const curRot = await API.get('/api/rotation').catch(() => []);
+          let newRot = Array.isArray(curRot) ? curRot.slice() : [];
+          if (rotEntry) {
+            newRot = newRot.filter(r => r.instance_id !== instance.instance_id);
+            window.showToast(`Removed '${info.title}' from rotation`, 'info');
+          } else {
+            newRot.push({
+              instance_id: instance.instance_id,
+              duration_sec: 30,
+              overlays: { fighter: false },
+              fighter_overlay: false
+            });
+            window.showToast(`Added '${info.title}' to rotation`, 'success');
+          }
+          await API.post('/api/rotation', newRot);
+          await renderDynamicDisplay(instance.instance_id);
+        };
+      }
+
+      // Wire duplicate button
+      const dupBtn = cardHeader.querySelector('.btn-duplicate');
+      if (dupBtn) {
+        dupBtn.onclick = async () => {
+          dupBtn.disabled = true;
+          let counter = 2;
+          let newId = `${instance.instance_id}_copy`;
+          while (instancesList.some(i => i.instance_id === newId)) {
+            newId = `${instance.instance_id}_copy${counter++}`;
+          }
+          const clonedCfg = JSON.parse(JSON.stringify(instance.config || {}));
+          clonedCfg.screen_title = `${info.title} (${t('copy_suffix', 'Copy')})`;
+          try {
+            await API.post('/api/instances', {
+              instance_id: newId,
+              engine_id: instance.engine_id,
+              config: clonedCfg
+            });
+            window.showToast(`Duplicated screen to '${newId}'!`, 'success');
+            await renderDynamicDisplay(newId);
+          } catch (e) {
+            window.showToast('Failed to duplicate screen', 'error');
+            dupBtn.disabled = false;
+          }
+        };
+      }
+
+      // Wire delete button
+      const delBtn = cardHeader.querySelector('.btn-delete');
+      if (delBtn) {
+        delBtn.onclick = async () => {
+          if (confirm(`${t('confirm_remove_screen', 'Are you sure you want to remove this screen?')}\n${info.title} (${instance.instance_id})`)) {
+            delBtn.disabled = true;
+            try {
+              await API.delete(`/api/instances/${instance.instance_id}`);
+              const curRot = await API.get('/api/rotation').catch(() => []);
+              if (Array.isArray(curRot) && curRot.some(r => r.instance_id === instance.instance_id)) {
+                const cleanedRot = curRot.filter(r => r.instance_id !== instance.instance_id);
+                await API.post('/api/rotation', cleanedRot);
+              }
+              window.showToast('Screen removed', 'success');
+              await renderDynamicDisplay();
+            } catch (e) {
+              window.showToast('Failed to remove screen', 'error');
+              delBtn.disabled = false;
+            }
+          }
+        };
+      }
+
+      card.appendChild(cardHeader);
       tabPane.appendChild(card);
       fragment.appendChild(tabPane);
+
+      // Lazy wire tab button: on-demand schema and form rendering when activated
+      tabBtn.onclick = async (e) => {
+        document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
+        const pane = document.getElementById(tabId);
+        if (pane) {
+          pane.classList.add('active');
+          if (pane.dataset.formRendered !== 'true') {
+            pane.dataset.formRendered = 'true';
+            await renderInstanceForm(card, cleanId, instance, engineDesc, info);
+          }
+        }
+      };
+
+      if (isTabActive) {
+        tabPane.dataset.formRendered = 'true';
+        await renderInstanceForm(card, cleanId, instance, engineDesc, info);
+      }
     }
     
     // Atomically replace existing content with the fully built fragment
@@ -6798,29 +6780,35 @@ async function loadDashboardCatalog() {
   if (!container) return;
   if (container.children.length > 0 && !container.querySelector('.spinner-border')) return;
 
-  let descriptors = [...KNOWN_ENGINES];
-  const enginesMap = {};
-  descriptors.forEach(d => {
-    if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
-  });
-
   try {
     const instancesList = await API.get('/api/instances', 5000).catch(() => []);
-    renderEngineCatalog(descriptors, instancesList, enginesMap);
-    applyTooltips(container);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors : [];
+    const enginesMap = {};
+    descriptors.forEach(d => {
+      const id = d?.metadata?.id || d?.id;
+      if (id) enginesMap[id] = d;
+    });
 
-    // Refresh dynamically from matrix in background
-    fetchCachedEndpoint('/api/engines', 4000).then(raw => {
-      if (Array.isArray(raw) && raw.length > 0) {
-        raw.forEach(d => {
-          if (d && d.metadata && d.metadata.id) enginesMap[d.metadata.id] = d;
-        });
-        renderEngineCatalog(raw, instancesList, enginesMap);
-        applyTooltips(container);
-      }
-    }).catch(() => {});
+    if (descriptors.length > 0) {
+      renderEngineCatalog(descriptors, instancesList, enginesMap);
+      applyTooltips(container);
+    } else {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+          <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
+          <button class="btn btn-sm btn-secondary" onclick="loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+        </div>
+      `;
+    }
   } catch (err) {
     console.warn('[Dashboard] Failed to load engine catalog:', err);
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+        <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
+        <button class="btn btn-sm btn-secondary" onclick="loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+      </div>
+    `;
   }
 }
 window.loadDashboardCatalog = loadDashboardCatalog;

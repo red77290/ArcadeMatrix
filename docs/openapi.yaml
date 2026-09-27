@@ -1237,8 +1237,8 @@ paths:
     get:
       tags:
         - Engines
-      summary: List registered engines with schema, capabilities, and availability
-      description: Schema-driven engine discovery endpoint. By default returns a lightweight catalog with schema_url hypermedia links to reduce lwIP TCP buffer pressure. Pass '?id={id}' to receive the full schema for a single engine.
+      summary: List registered engines (compact discovery catalog)
+      description: Schema-driven engine discovery endpoint. By default returns a lightweight catalog with schema_url hypermedia links to eliminate lwIP socket pressure. Pass '?id={id}' or query '/api/engines/{id}' to receive the full schema for a single engine.
       parameters:
         - name: id
           in: query
@@ -1248,7 +1248,7 @@ paths:
             type: string
       responses:
         '200':
-          description: List of engine descriptors (or single engine descriptor if 'id' parameter is provided)
+          description: List of engine descriptors in compact format (or single engine descriptor if 'id' parameter is provided)
           content:
             application/json:
               schema:
@@ -1307,7 +1307,7 @@ paths:
                       type: string
                     schema_url:
                       type: string
-                      example: "/api/engines/clock"
+                      example: "/api/engines?id=clock"
                       description: Hypermedia link to retrieve the full ConfigField schema on demand.
                     schema:
                       type: array

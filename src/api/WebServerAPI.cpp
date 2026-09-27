@@ -146,7 +146,7 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out,
     out += ",\"psram_available\":"; out += String(verdict.psramAvailableBytes);
     out += "}}";
 
-    out += ",\"schema_url\":\"/api/engines/";
+    out += ",\"schema_url\":\"/api/engines?id=";
     out += desc.metadata.id;
     out += "\"";
 
@@ -531,7 +531,7 @@ void WebServerAPI::setupRoutes() {
     //     (DashboardEngine has 22 fields, GNewsEngine 20) - ArduinoJson then drops members and
     //     emits a structurally incomplete descriptor, which the WebUI reports as "returned empty".
     //     The capacity is now derived from the actual field count.
-    server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
+    auto handleEnginesRequest = [](AsyncWebServerRequest *request){
         String engineId = "";
         if (request->hasParam("id")) {
             engineId = request->getParam("id")->value();
@@ -584,10 +584,15 @@ void WebServerAPI::setupRoutes() {
             meta["name"] = descriptors[i].metadata.name;
             meta["category"] = descriptors[i].metadata.category;
             meta["version"] = descriptors[i].metadata.version;
+            obj["id"] = descriptors[i].metadata.id;
+            obj["name"] = descriptors[i].metadata.name;
+            obj["category"] = descriptors[i].metadata.category;
+            obj["version"] = descriptors[i].metadata.version;
             obj["available"] = true;
-            JsonObject comp = obj.createNestedObject("compatibility");
-            comp["compatible"] = true;
-            comp["status"] = "compatible";
+            JsonObject caps = obj.createNestedObject("capabilities");
+            caps["realtime"] = descriptors[i].capabilities.realtime;
+            caps["allows_overlay"] = descriptors[i].capabilities.allowsOverlay;
+            caps["allow_rotation"] = descriptors[i].capabilities.allowRotation;
             obj["schema_url"] = String("/api/engines?id=") + descriptors[i].metadata.id;
         }
 
@@ -597,7 +602,10 @@ void WebServerAPI::setupRoutes() {
         response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
-    });
+    };
+
+    server.on("/api/engines", HTTP_GET, handleEnginesRequest);
+    server.on("/api/engines/*", HTTP_GET, handleEnginesRequest);
 
     // API: GET /api/themes (Dynamic options endpoint for themes)
     server.on("/api/themes", HTTP_GET, [](AsyncWebServerRequest *request){

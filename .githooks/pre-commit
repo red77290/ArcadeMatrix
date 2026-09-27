@@ -24,5 +24,9 @@ echo "5/5 Validating Unit Test Compilation (PlatformIO)..."
 pio test -e esp32dev --without-uploading --without-testing
 
 echo "--------------------------------------------------"
+echo "6/6 Synchronizing & Staging Build Artifacts into Current Commit..."
+python3 scripts/sync_build_info.py
+
+echo "--------------------------------------------------"
 echo "🎉 All ArcadeMatrix pre-commit validations PASSED!"
 
