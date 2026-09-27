@@ -546,4 +546,4 @@ ArcadeMatrix v4 decouples configuration persistence from physical SD card hardwa
 
 ---
 
-*Note: All schemas can also be queried dynamically in JSON format from the running system at `GET /api/engines`.*
+*Note: All schemas can also be queried dynamically in JSON format from the running system at `GET /api/engines` (lightweight discovery catalog) or granularly per engine with full schema fields at `GET /api/engines/{id}`.*

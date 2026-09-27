@@ -1502,7 +1502,7 @@ select.input option {
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <label><span data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_screen_rotation">?</span></label>
                 <select id="sys-screen-rotation" class="input">
                   <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape / YOKO)</option>
                   <option value="90" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
@@ -1511,7 +1511,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
+                <label><span data-i18n="hw_rotation_transition_label">Rotation Transition Effect</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rotation_transition">?</span></label>
                 <select id="sys-rotation-transition" class="input">
                   <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
                   <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
@@ -1523,7 +1523,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
+                <label><span data-i18n="hw_transition_duration_label">Transition Duration (ms)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_transition_duration">?</span></label>
                 <input type="number" id="sys-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
               <div class="form-group">
@@ -1556,13 +1556,13 @@ select.input option {
             
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="gen_timezone_label">Timezone / Region</label>
+                <label><span data-i18n="gen_timezone_label">Timezone / Region</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_timezone">?</span></label>
                 <select id="sys-timezone" class="input">
                   <!-- Populated dynamically from GLOBAL_TIMEZONES -->
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_language_label">Language</label>
+                <label><span data-i18n="gen_language_label">Language</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_language">?</span></label>
                 <select id="sys-lang" class="input">
                   <option value="en">English</option>
                   <option value="fr">Français</option>
@@ -1570,14 +1570,14 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_timeformat_label">Time Format</label>
+                <label><span data-i18n="gen_timeformat_label">Time Format</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_timeformat">?</span></label>
                 <select id="sys-format-24h" class="input">
                   <option value="true" data-i18n="gen_opt_24h">24 Hours (23:00)</option>
                   <option value="false" data-i18n="gen_opt_12h">12 Hours (11:00 PM)</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_unit_label">Temperature Unit</label>
+                <label><span data-i18n="gen_unit_label">Temperature Unit</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_unit">?</span></label>
                 <select id="sys-unit" class="input">
                   <option value="C" data-i18n="gen_unit_c">Celsius (°C)</option>
                   <option value="F" data-i18n="gen_unit_f">Fahrenheit (°F)</option>
@@ -1587,7 +1587,7 @@ select.input option {
 
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span></label>
+                <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="sys-idle-fighter-enabled" checked>
@@ -1596,11 +1596,11 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</label>
+                <label><span data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter_interval">?</span></label>
                 <input type="number" id="sys-idle-fighter-interval" class="input" value="10" min="5" max="3600">
               </div>
               <div class="form-group">
-                <label><span data-i18n="gen_idle_fighter_speed">Fighter Speed</span> (<span id="val-sys-fighter-speed">100</span>%)</label>
+                <label><span data-i18n="gen_idle_fighter_speed">Fighter Speed</span> (<span id="val-sys-fighter-speed">100</span>%) <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter_speed">?</span></label>
                 <input type="range" id="sys-idle-fighter-speed" min="25" max="200" value="100" step="5" class="input" style="height: 38px; padding: 0.2rem;">
               </div>
             </div>
@@ -1650,7 +1650,7 @@ select.input option {
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <label><span data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_screen_rotation">?</span></label>
                 <select id="hw-screen-rotation" class="input">
                   <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape / YOKO)</option>
                   <option value="1" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
@@ -1659,7 +1659,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</label>
+                <label><span data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_gyro_autorotate">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-gyro-autorotate" checked>
@@ -1675,7 +1675,7 @@ select.input option {
             <!-- Transition Effects Row -->
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
+                <label><span data-i18n="hw_rotation_transition_label">Rotation Transition Effect</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rotation_transition">?</span></label>
                 <select id="hw-rotation-transition" class="input">
                   <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
                   <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
@@ -1687,7 +1687,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
+                <label><span data-i18n="hw_transition_duration_label">Transition Duration (ms)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_transition_duration">?</span></label>
                 <input type="number" id="hw-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
               <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
@@ -1709,11 +1709,11 @@ select.input option {
             
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_rows_label">Rows (Height)</label>
+                <label><span data-i18n="hw_rows_label">Rows (Height)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rows">?</span></label>
                 <input type="number" id="hw-rows" class="input" value="64">
               </div>
               <div class="form-group">
-                <label data-i18n="hw_cols_label">Cols (Width)</label>
+                <label><span data-i18n="hw_cols_label">Cols (Width)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_cols">?</span></label>
                 <input type="number" id="hw-cols" class="input" value="256">
               </div>
               <div class="form-group">
@@ -1811,7 +1811,7 @@ select.input option {
             
             <div class="form-grid col-3" style="margin-top: 1.5rem;">
               <div class="form-group">
-                <label data-i18n="night_enable">Enable Night Mode</label>
+                <label><span data-i18n="night_enable">Enable Night Mode</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_enable">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="cfg-night-mode-enabled">
@@ -1820,18 +1820,18 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label data-i18n="night_turn_off">Turn Off Time (Bedtime)</label>
+                <label><span data-i18n="night_turn_off">Turn Off Time (Bedtime)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_turn_off">?</span></label>
                 <input type="time" id="cfg-turn-off-at" class="input" value="23:00">
               </div>
               <div class="form-group">
-                <label data-i18n="night_wake_up">Wake Up Time (Morning)</label>
+                <label><span data-i18n="night_wake_up">Wake Up Time (Morning)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_wake_up">?</span></label>
                 <input type="time" id="cfg-wake-up-at" class="input" value="07:00">
               </div>
             </div>
 
             <div class="form-group" style="margin-top: 1.5rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                <label style="margin: 0;" data-i18n="night_brightness">Night Brightness</label>
+                <label style="margin: 0;"><span data-i18n="night_brightness">Night Brightness</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_brightness">?</span></label>
                 <span id="night-brightness-val" class="badge" style="font-size: 1rem; font-weight: 700;">10%</span>
               </div>
               <input type="range" id="cfg-night-brightness" min="0" max="100" value="10" step="1" style="width: 100%; accent-color: var(--accent-primary);">
@@ -1848,11 +1848,11 @@ select.input option {
             <h3 data-i18n="wifi_title">Wi-Fi Configuration</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="wifi_ssid">SSID (Network Name)</label>
+                <label><span data-i18n="wifi_ssid">SSID (Network Name)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_wifi_ssid">?</span></label>
                 <input type="text" id="hw-wifi-ssid" class="input" placeholder="Your Network">
               </div>
               <div class="form-group">
-                <label data-i18n="wifi_pass">Password</label>
+                <label><span data-i18n="wifi_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_wifi_pass">?</span></label>
                 <input type="password" id="hw-wifi-pass" class="input" placeholder="••••••••">
               </div>
             </div>
@@ -1866,14 +1866,14 @@ select.input option {
             <h3 data-i18n="mqtt_title">MQTT Integration</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="mqtt_enable">Enable MQTT</label>
+                <label><span data-i18n="mqtt_enable">Enable MQTT</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_enable">?</span></label>
                 <select id="hw-mqtt-enable" class="input">
                   <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_overlay">Fighter Overlay</label>
+                <label><span data-i18n="mqtt_overlay">Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_overlay">?</span></label>
                 <select id="hw-mqtt-overlay" class="input">
                   <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
@@ -1882,21 +1882,21 @@ select.input option {
             </div>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="mqtt_broker">Broker IP</label>
+                <label><span data-i18n="mqtt_broker">Broker IP</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_broker">?</span></label>
                 <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_port">Port</label>
+                <label><span data-i18n="mqtt_port">Port</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_port">?</span></label>
                 <input type="number" id="hw-mqtt-port" class="input" value="1883">
               </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="mqtt_user">Username</label>
+                <label><span data-i18n="mqtt_user">Username</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_user">?</span></label>
                 <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_pass">Password</label>
+                <label><span data-i18n="mqtt_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_pass">?</span></label>
                 <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
               </div>
             </div>
@@ -1907,7 +1907,7 @@ select.input option {
             <h4 style="margin-top: 1.5rem;" data-i18n="recalbox_title">Recalbox / Batocera / RetroPie Sync</h4>
             <p class="text-muted" style="font-size: 0.9em;" data-i18n="recalbox_desc">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
             <div class="form-group" style="margin-top: 1rem;">
-              <label style="display:block; margin-bottom:0.35rem;">Target Gaming OS</label>
+              <label style="display:block; margin-bottom:0.35rem;"><span data-i18n="recalbox_target_os">Target Gaming OS</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_target_os">?</span></label>
               <select id="hw-mqtt-target-os" class="input" style="font-weight: 600;">
                 <option value="auto">Auto-Detect (Remote Scan)</option>
                 <option value="recalbox">Recalbox (/recalbox/share)</option>
@@ -1933,7 +1933,7 @@ select.input option {
             </div>
             <div class="form-grid" style="align-items: end;">
               <div class="form-group">
-                <label data-i18n="recalbox_console_ip">Console IP Address</label>
+                <label><span data-i18n="recalbox_console_ip">Console IP Address</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_ip">?</span></label>
                 <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
               </div>
               <div class="form-group" style="display: flex; gap: 0.5rem;">
@@ -1948,14 +1948,14 @@ select.input option {
             <h3 data-i18n="api_auth_title">API Authentication</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="api_auth_enable">Require Auth for API</label>
+                <label><span data-i18n="api_auth_enable">Require Auth for API</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_auth">?</span></label>
                 <select id="hw-api-auth" class="input">
                   <option value="false" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="true" data-i18n="mqtt_opt_enabled">Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="api_token">API Token</label>
+                <label><span data-i18n="api_token">API Token</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_token">?</span></label>
                 <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
               </div>
             </div>
@@ -2474,6 +2474,36 @@ const translations = {
     tt_hw_limit_refresh: "Caps the DMA refresh rate in Hz. Set to 0 to leave it uncapped and let the driver pick the maximum stable rate.",
     tt_hw_driver_chip: "Selects the matrix driver IC (SHIFTREG standard, FM6124/FM6126A for P2 HD panels, ICN2038S, SM16208).",
     tt_hw_row_addr: "Row addressing mode. 0 = direct binary (default), 1 = shift register, 2 = direct 16 lines (AB), 3 = direct 32 lines (ABC), 4 = direct 64 lines (ABCD).",
+    tt_hw_rows: "Physical height of the matrix in pixels (LED rows), e.g. 64 for a 64x64 or 256x64 display.",
+    tt_hw_cols: "Physical width of a single panel in pixels, e.g. 64 or 128. Total width equals Cols multiplied by Chain Length.",
+    tt_hw_screen_rotation: "Physical mounting orientation offset. 0° = Landscape (YOKO), 90°/270° = Vertical Portrait (TATE).",
+    tt_hw_gyro_autorotate: "Automatically rotates the display orientation based on the onboard IMU accelerometer gravity vector.",
+    tt_hw_rotation_transition: "Visual shader animation applied when the screen rotates or changes orientation (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Duration of the rotation transition animation in milliseconds (150ms to 1500ms).",
+    tt_gen_timezone: "Local timezone for accurate clock synchronization and sunrise/sunset calculations via NTP.",
+    tt_gen_language: "User interface language (English, Français, Español).",
+    tt_gen_timeformat: "Choose between 24-hour military time (23:00) and 12-hour AM/PM format (11:00 PM).",
+    tt_gen_unit: "Temperature unit used across weather, climate widgets and onboard sensors.",
+    tt_gen_fighter: "Spawns retro fighting arcade sprites (Street Fighter, etc.) in the background when the display is idle.",
+    tt_gen_fighter_interval: "Cooldown in seconds between retro fighter battle events.",
+    tt_gen_fighter_speed: "Playback animation speed multiplier for arcade fighter sprites.",
+    tt_night_enable: "Enables automatic sleep schedule to dim or turn off the LED panel during nighttime hours.",
+    tt_night_turn_off: "Time when the matrix automatically dims down or shuts off for the night.",
+    tt_night_wake_up: "Time when the matrix automatically restores normal daytime brightness.",
+    tt_night_brightness: "Target brightness percentage during night hours. Set to 0% to power off LEDs completely.",
+    tt_wifi_ssid: "Name of the 2.4 GHz Wi-Fi network to connect the ArcadeMatrix to.",
+    tt_wifi_pass: "WPA2/WPA3 password for your Wi-Fi network.",
+    tt_mqtt_enable: "Enables MQTT client for remote control, Home Assistant integration and console game sync.",
+    tt_mqtt_overlay: "Allows fighting sprites and external alerts to overlay on top of active screens via MQTT.",
+    tt_mqtt_broker: "Hostname or IPv4 address of your local or remote MQTT broker.",
+    tt_mqtt_port: "TCP network port for the MQTT broker (standard unencrypted default is 1883).",
+    tt_mqtt_user: "Optional MQTT username if your broker requires authentication.",
+    tt_mqtt_pass: "Optional MQTT password if your broker requires authentication.",
+    tt_mqtt_target_os: "Retro-gaming operating system running on your console to install automated game sync hooks.",
+    tt_mqtt_ip: "IP address of your Batocera, Recalbox, or RetroPie console on the local network.",
+    tt_api_auth: "Enables Bearer token authentication on all REST API endpoints for security.",
+    tt_api_token: "Secret alphanumeric token required in the 'Authorization: Bearer <token>' HTTP header.",
+    recalbox_target_os: "Target Gaming OS",
     
     // Time Formats
     opt_time_24s: "24h with Seconds (HH:MM:SS)",
@@ -2987,6 +3017,36 @@ const translations = {
     tt_hw_limit_refresh: "Plafonne la frequence de rafraichissement DMA en Hz. Mettez 0 pour laisser le pilote choisir la frequence stable maximale.",
     tt_hw_driver_chip: "Sélectionne le contrôleur matériel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 HD, ICN2038S, SM16208).",
     tt_hw_row_addr: "Mode d'adressage des lignes. 0 = binaire direct (defaut), 1 = registre a decalage, 2 = 16 lignes directes (AB), 3 = 32 lignes directes (ABC), 4 = 64 lignes directes (ABCD).",
+    tt_hw_rows: "Hauteur physique de la matrice en pixels (lignes de LED), ex. 64 pour un affichage 64x64 ou 256x64.",
+    tt_hw_cols: "Largeur physique d'une seule dalle en pixels (ex. 64 ou 128). La largeur totale correspond aux colonnes multipliées par la longueur de chaîne.",
+    tt_hw_screen_rotation: "Décalage d'orientation physique du montage. 0° = Paysage (YOKO), 90°/270° = Portrait vertical (TATE).",
+    tt_hw_gyro_autorotate: "Bascule automatiquement l'orientation de l'écran selon le vecteur gravité du capteur accéléromètre/gyroscope embarqué.",
+    tt_hw_rotation_transition: "Effet d'animation visuelle appliqué lors de la rotation de l'écran ou du changement d'orientation (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Durée de l'effet de transition de rotation en millisecondes (150ms à 1500ms).",
+    tt_gen_timezone: "Fuseau horaire local pour la synchronisation de l'horloge et le calcul des heures de lever/coucher du soleil via NTP.",
+    tt_gen_language: "Langue de l'interface utilisateur (English, Français, Español).",
+    tt_gen_timeformat: "Bascule entre le format 24 heures (23:00) et le format 12 heures AM/PM (11:00 PM).",
+    tt_gen_unit: "Unité de température utilisée dans la météo, les widgets climat et les capteurs embarqués.",
+    tt_gen_fighter: "Anime des combats de sprites arcade rétro (Street Fighter, etc.) en superposition lorsque l'affichage est actif.",
+    tt_gen_fighter_interval: "Délai en secondes entre deux apparitions de combat de fighters arcade.",
+    tt_gen_fighter_speed: "Multiplicateur de vitesse d'animation des sprites de combat arcade.",
+    tt_night_enable: "Active la mise en veille automatique pour réduire la luminosité ou éteindre la matrice la nuit.",
+    tt_night_turn_off: "Heure à laquelle la matrice réduit sa luminosité ou s'éteint pour la nuit.",
+    tt_night_wake_up: "Heure à laquelle la matrice reprend sa luminosité normale de jour.",
+    tt_night_brightness: "Pourcentage de luminosité pendant la nuit. Définissez 0% pour éteindre complètement les LEDs.",
+    tt_wifi_ssid: "Nom du réseau Wi-Fi 2,4 GHz auquel connecter l'ArcadeMatrix.",
+    tt_wifi_pass: "Mot de passe WPA2/WPA3 du réseau Wi-Fi.",
+    tt_mqtt_enable: "Active le client MQTT pour le contrôle à distance, Home Assistant et la synchronisation de jeux.",
+    tt_mqtt_overlay: "Permet aux animations de combat et alertes externes de s'afficher en surimpression via MQTT.",
+    tt_mqtt_broker: "Nom d'hôte ou adresse IPv4 du courtier (broker) MQTT local ou distant.",
+    tt_mqtt_port: "Port réseau TCP du courtier MQTT (1883 par défaut sans chiffrement).",
+    tt_mqtt_user: "Nom d'utilisateur optionnel si votre courtier MQTT exige une authentification.",
+    tt_mqtt_pass: "Mot de passe optionnel si votre courtier MQTT exige une authentification.",
+    tt_mqtt_target_os: "Système de rétrogaming de votre console pour installer les scripts de synchronisation automatique.",
+    tt_mqtt_ip: "Adresse IP de votre console Batocera, Recalbox ou RetroPie sur le réseau local.",
+    tt_api_auth: "Exige un jeton d'authentification (Bearer token) sur tous les points d'accès API REST.",
+    tt_api_token: "Jeton secret requis dans l'en-tête HTTP 'Authorization: Bearer <token>'.",
+    recalbox_target_os: "Système de jeu cible",
     
     // Time Formats
     opt_time_24s: "24h avec secondes (HH:MM:SS)",
@@ -3500,6 +3560,36 @@ const translations = {
     tt_hw_limit_refresh: "Limita la frecuencia de refresco DMA en Hz. Ponlo a 0 para que el controlador elija la frecuencia estable maxima.",
     tt_hw_driver_chip: "Selecciona el chip controlador de matriz (SHIFTREG estándar, FM6124/FM6126A para dalles P2 HD, ICN2038S, SM16208).",
     tt_hw_row_addr: "Modo de direccionamiento de filas. 0 = binario directo (predeterminado), 1 = registro de desplazamiento, 2 = 16 lineas directas (AB), 3 = 32 lineas directas (ABC), 4 = 64 lineas directas (ABCD).",
+    tt_hw_rows: "Altura física de la matriz en píxeles (filas LED), ej. 64 para pantallas de 64x64 o 256x64.",
+    tt_hw_cols: "Ancho físico de un panel en píxeles (ej. 64 o 128). El ancho total es Columnas multiplicado por la Longitud de cadena.",
+    tt_hw_screen_rotation: "Desfase de orientación física de montaje. 0° = Horizontal (YOKO), 90°/270° = Vertical (TATE).",
+    tt_hw_gyro_autorotate: "Gira automáticamente la pantalla según el vector de gravedad del acelerómetro/giroscopio integrado.",
+    tt_hw_rotation_transition: "Efecto de animación visual aplicado al rotar la pantalla o cambiar de orientación (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Duración de la animación de transición de rotación en milisegundos (150ms a 1500ms).",
+    tt_gen_timezone: "Zona horaria local para sincronización horaria precisa y cálculo de amanecer/atardecer por NTP.",
+    tt_gen_language: "Idioma de la interfaz de usuario (English, Français, Español).",
+    tt_gen_timeformat: "Elige entre formato militar de 24 horas (23:00) y formato 12 horas AM/PM (11:00 PM).",
+    tt_gen_unit: "Unidad de temperatura utilizada en el clima, widgets y sensores integrados.",
+    tt_gen_fighter: "Muestra combates de sprites retro arcade en segundo plano mientras la pantalla está activa.",
+    tt_gen_fighter_interval: "Tiempo en segundos entre combates de luchadores arcade.",
+    tt_gen_fighter_speed: "Multiplicador de velocidad de animación para los sprites de lucha arcade.",
+    tt_night_enable: "Activa el modo nocturno programado para atenuar o apagar el panel LED durante la noche.",
+    tt_night_turn_off: "Hora a la que la matriz reduce el brillo o se apaga durante la noche.",
+    tt_night_wake_up: "Hora a la que la matriz reanuda el brillo diurno normal por la mañana.",
+    tt_night_brightness: "Porcentaje de brillo durante la noche. Ponlo a 0% para apagar completamente los LEDs.",
+    tt_wifi_ssid: "Nombre de la red Wi-Fi de 2.4 GHz a la que conectar el ArcadeMatrix.",
+    tt_wifi_pass: "Contraseña WPA2/WPA3 de tu red Wi-Fi.",
+    tt_mqtt_enable: "Activa el cliente MQTT para control remoto, Home Assistant y sincronización de juegos.",
+    tt_mqtt_overlay: "Permite superponer luchadores arcade y alertas externas sobre la pantalla activa vía MQTT.",
+    tt_mqtt_broker: "Nombre de host o dirección IPv4 de tu broker MQTT local o remoto.",
+    tt_mqtt_port: "Puerto de red TCP del broker MQTT (1883 predeterminado sin cifrar).",
+    tt_mqtt_user: "Usuario MQTT opcional si tu broker requiere autenticación.",
+    tt_mqtt_pass: "Contraseña MQTT opcional si tu broker requiere autenticación.",
+    tt_mqtt_target_os: "Sistema operativo de videojuegos retro para instalar los scripts de sincronización automática.",
+    tt_mqtt_ip: "Dirección IP de tu consola Batocera, Recalbox o RetroPie en la red local.",
+    tt_api_auth: "Exige autenticación por token Bearer en todos los endpoints de la API REST.",
+    tt_api_token: "Token secreto requerido en el encabezado HTTP 'Authorization: Bearer <token>'.",
+    recalbox_target_os: "Sistema operativo de juego",
     
     // Time Formats
     opt_time_24s: "24h con segundos (HH:MM:SS)",
@@ -4041,6 +4131,27 @@ function getSchemaFields(engineDesc) {
   return [];
 }
 
+// Engine detailed schema cache and on-demand fetcher
+const _engineSchemaCache = new Map();
+
+async function fetchEngineSchema(engineId) {
+  if (!engineId) return null;
+  const key = String(engineId).toLowerCase().trim();
+  if (_engineSchemaCache.has(key)) {
+    return _engineSchemaCache.get(key);
+  }
+  try {
+    const data = await API.get(`/api/engines/${encodeURIComponent(key)}`, 10000);
+    if (data && data.metadata && data.metadata.id) {
+      _engineSchemaCache.set(key, data);
+      return data;
+    }
+  } catch (err) {
+    console.warn(`[Display] Failed to fetch schema for engine '${key}':`, err);
+  }
+  return null;
+}
+
 function parseOptionItem(item) {
   if (item === undefined || item === null) return null;
   if (typeof item === 'object') {
@@ -4367,6 +4478,15 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 
   async function renderModalContent() {
     currentDesc = enginesMap[currentEngineId] || descriptors[0];
+    if (!currentDesc || getSchemaFields(currentDesc).length === 0) {
+      const fullDesc = await fetchEngineSchema(currentEngineId);
+      if (fullDesc && fullDesc.schema) {
+        currentDesc = Object.assign({}, currentDesc, { schema: fullDesc.schema });
+        if (enginesMap[currentEngineId]) {
+          enginesMap[currentEngineId].schema = fullDesc.schema;
+        }
+      }
+    }
     const engId = currentEngineId.toLowerCase();
     const meta = getEngineMeta(currentDesc);
     const icon = meta.icon;
@@ -5796,6 +5916,19 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
     // exhaustion on ESP32. Unconfigured engines in the catalog are loaded on-demand when created.
     // Sequential warming ensures only 1 TCP connection is open at a time.
     const activeEngineTypes = new Set(instancesList.map(inst => inst.engine_type || inst.engine_id || (inst.id ? inst.id.split('_')[0] : '')));
+
+    // Fetch detailed schemas on-demand ONLY for actively configured engine instances to keep memory footprint minimal
+    for (const engId of activeEngineTypes) {
+      if (!engId) continue;
+      const key = String(engId).toLowerCase().trim();
+      if (enginesMap[key] && getSchemaFields(enginesMap[key]).length === 0) {
+        const fullDesc = await fetchEngineSchema(key);
+        if (fullDesc && fullDesc.schema) {
+          enginesMap[key].schema = fullDesc.schema;
+        }
+      }
+    }
+
     const optionsEndpoints = new Set();
     descriptors.forEach(desc => {
       if (!desc || !desc.metadata || !activeEngineTypes.has(desc.metadata.id)) return;
@@ -6061,11 +6194,21 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           const dict = (typeof translations !== 'undefined' && translations && translations[lang]) ? translations[lang] : ((typeof translations !== 'undefined' && translations) ? translations.en : {});
           const fieldLabelKey = `field_${field.id}`;
           const fieldDescKey = `field_desc_${field.id}`;
-          label.innerText = (dict && dict[fieldLabelKey]) ? dict[fieldLabelKey] : (field.label || field.id);
-          if (field.description) {
-            label.title = (dict && dict[fieldDescKey]) ? dict[fieldDescKey] : field.description;
-            label.style.cursor = 'help';
-            label.innerHTML += ' ℹ️';
+          const labelText = (dict && dict[fieldLabelKey]) ? dict[fieldLabelKey] : (field.label || field.id);
+          const descText = (dict && dict[fieldDescKey]) ? dict[fieldDescKey] : field.description;
+
+          const labelSpan = document.createElement('span');
+          labelSpan.innerText = labelText;
+          label.appendChild(labelSpan);
+
+          if (descText) {
+            const tip = document.createElement('span');
+            tip.className = 'tooltip-icon tooltip-lg';
+            tip.setAttribute('data-tooltip', descText);
+            tip.setAttribute('tabindex', '0');
+            tip.innerText = '?';
+            label.appendChild(document.createTextNode(' '));
+            label.appendChild(tip);
           }
           formGroup.appendChild(label);
           

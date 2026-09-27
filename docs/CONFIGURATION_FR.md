@@ -544,4 +544,4 @@ ArcadeMatrix v4 découple la persistance de configuration du matériel de carte 
 
 ---
 
-*Note : L'ensemble des schémas de configuration peut également être interrogé en direct au format JSON via `GET /api/engines`.*
+*Note : L'ensemble des schémas de configuration peut également être interrogé en direct au format JSON via `GET /api/engines` (catalogue léger) ou de manière granulaire par moteur avec ses champs complets via `GET /api/engines/{id}`.*

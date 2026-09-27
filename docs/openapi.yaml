@@ -1238,10 +1238,17 @@ paths:
       tags:
         - Engines
       summary: List registered engines with schema, capabilities, and availability
-      description: Schema-driven engine discovery endpoint. UI consumes this to render configuration forms, dynamic options dropdowns, and hardware availability banners.
+      description: Schema-driven engine discovery endpoint. By default returns a lightweight catalog with schema_url hypermedia links to reduce lwIP TCP buffer pressure. Pass '?id={id}' to receive the full schema for a single engine.
+      parameters:
+        - name: id
+          in: query
+          required: false
+          description: Optional engine identifier (e.g. 'clock'). When provided, returns full descriptor with complete schema fields for that specific engine.
+          schema:
+            type: string
       responses:
         '200':
-          description: List of engine descriptors
+          description: List of engine descriptors (or single engine descriptor if 'id' parameter is provided)
           content:
             application/json:
               schema:
@@ -1298,6 +1305,10 @@ paths:
                       type: boolean
                     reason:
                       type: string
+                    schema_url:
+                      type: string
+                      example: "/api/engines/clock"
+                      description: Hypermedia link to retrieve the full ConfigField schema on demand.
                     schema:
                       type: array
                       items:
@@ -1321,6 +1332,81 @@ paths:
                             type: boolean
                           visible_when:
                             type: string
+
+  /api/engines/{id}:
+    get:
+      tags:
+        - Engines
+      summary: Get granular engine descriptor with full schema fields
+      description: Returns full schema fields, capabilities, and availability for a specific engine on demand.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Engine identifier (e.g. 'clock', 'weather', 'gifs')
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full engine descriptor including detailed schema fields
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  metadata:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                      category:
+                        type: string
+                      version:
+                        type: string
+                  capabilities:
+                    type: object
+                  requirements:
+                    type: object
+                  available:
+                    type: boolean
+                  reason:
+                    type: string
+                  schema_url:
+                    type: string
+                  schema:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        field_type:
+                          type: integer
+                        label:
+                          type: string
+                        description:
+                          type: string
+                        default_value:
+                          type: string
+                        options:
+                          type: string
+                        options_endpoint:
+                          type: string
+                        multiple:
+                          type: boolean
+                        visible_when:
+                          type: string
+        '404':
+          description: Engine not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
 
   /api/version:
     get:

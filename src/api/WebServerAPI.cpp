@@ -104,9 +104,9 @@ static void appendJsonString(String& out, const char* str) {
     out += '\"';
 }
 
-static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out) {
+static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out, bool includeSchema = true) {
     out = String();
-    out.reserve(2048);
+    out.reserve(includeSchema ? 2048 : 512);
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
@@ -158,8 +158,18 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out)
     out += ",\"largest_available_block\":"; out += String(verdict.largestAvailableBlockBytes);
     out += ",\"psram_required\":"; out += String(verdict.psramRequiredBytes);
     out += ",\"psram_available\":"; out += String(verdict.psramAvailableBytes);
-    out += "}},\"schema\":[";
+    out += "}}";
 
+    out += ",\"schema_url\":\"/api/engines/";
+    out += desc.metadata.id;
+    out += "\"";
+
+    if (!includeSchema) {
+        out += ",\"schema\":[]}";
+        return;
+    }
+
+    out += ",\"schema\":[";
     bool firstField = true;
     for (const auto& field : desc.schema.fields) {
         if (!firstField) out += ',';
@@ -213,7 +223,7 @@ static bool refillEngineStream(EngineStreamState& state) {
 
     if (descriptors && state.descriptorIndex < count) {
         String body;
-        serializeEngineDescriptor(descriptors[state.descriptorIndex], body);
+        serializeEngineDescriptor(descriptors[state.descriptorIndex], body, false /* includeSchema: lightweight catalog */);
         state.pending = (state.descriptorIndex > 0) ? "," : "";
         state.pending += body;
         state.descriptorIndex++;
@@ -226,7 +236,6 @@ static bool refillEngineStream(EngineStreamState& state) {
         return true;
     }
 
-    state.pending = String();
     return false;
 }
 
@@ -546,8 +555,7 @@ void WebServerAPI::begin() {
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
         response->addHeader("ETag", WebUI_html_etag);
-        response->addHeader("Cache-Control", "no-cache");
-        response->addHeader("Connection", "close");
+        response->addHeader("Cache-Control", "public, max-age=3600, must-revalidate");
         request->send(response);
     };
     server.on("/", HTTP_GET, serveWebUi);
@@ -651,7 +659,32 @@ void WebServerAPI::setupRoutes() {
     //     emits a structurally incomplete descriptor, which the WebUI reports as "returned empty".
     //     The capacity is now derived from the actual field count.
     server.on("/api/engines", HTTP_GET, [](AsyncWebServerRequest *request){
-        LOGI("WebServer", "Streaming /api/engines to %s (Free DRAM: %u, MaxAlloc: %u)",
+        if (request->hasParam("id")) {
+            String engineId = request->getParam("id")->value();
+            engineId.trim();
+            size_t count = 0;
+            const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+            const EngineDescriptor* found = nullptr;
+            for (size_t i = 0; i < count; ++i) {
+                if (strcmp(descriptors[i].metadata.id, engineId.c_str()) == 0) {
+                    found = &descriptors[i];
+                    break;
+                }
+            }
+            if (!found) {
+                request->send(404, "application/json", "{\"error\":\"Engine not found\"}");
+                return;
+            }
+            String body;
+            serializeEngineDescriptor(*found, body, true /* includeSchema */);
+            AsyncWebServerResponse* response = request->beginResponse(200, "application/json", body);
+            response->addHeader("Cache-Control", "no-cache");
+            response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
+            request->send(response);
+            return;
+        }
+
+        LOGI("WebServer", "Streaming /api/engines (catalog) to %s (Free DRAM: %u, MaxAlloc: %u)",
              request->client() ? request->client()->remoteIP().toString().c_str() : "unknown",
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
@@ -678,6 +711,38 @@ void WebServerAPI::setupRoutes() {
                 return filled;
             });
 
+        response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
+        request->send(response);
+    });
+
+    server.on("/api/engines/*", HTTP_GET, [](AsyncWebServerRequest *request){
+        String url = request->url();
+        String engineId = "";
+        if (url.startsWith("/api/engines/")) {
+            engineId = url.substring(strlen("/api/engines/"));
+            engineId.trim();
+        }
+        if (engineId.isEmpty()) {
+            request->send(400, "application/json", "{\"error\":\"engine_id is required\"}");
+            return;
+        }
+        size_t count = 0;
+        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+        const EngineDescriptor* found = nullptr;
+        for (size_t i = 0; i < count; ++i) {
+            if (strcmp(descriptors[i].metadata.id, engineId.c_str()) == 0) {
+                found = &descriptors[i];
+                break;
+            }
+        }
+        if (!found) {
+            request->send(404, "application/json", "{\"error\":\"Engine not found\"}");
+            return;
+        }
+        String body;
+        serializeEngineDescriptor(*found, body, true /* includeSchema */);
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", body);
+        response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
     });

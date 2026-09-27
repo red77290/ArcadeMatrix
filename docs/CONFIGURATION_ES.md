@@ -546,4 +546,4 @@ ArcadeMatrix v4 desacopla la persistencia de configuración del hardware de tarj
 
 ---
 
-*Nota: Todos los esquemas se pueden consultar en vivo en formato JSON mediante `GET /api/engines`.*
+*Nota: Todos los esquemas se pueden consultar en vivo en formato JSON mediante `GET /api/engines` (catálogo ligero) o de forma granular por motor con sus campos completos mediante `GET /api/engines/{id}`.*
