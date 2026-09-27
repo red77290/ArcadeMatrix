@@ -4078,11 +4078,11 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   if (endpointCache.has(url)) {
     return endpointCache.get(url);
   }
-  // Check sessionStorage for static endpoints (catalog/themes) across tab navigation
+  // Check sessionStorage / localStorage for static endpoints (catalog/themes) across tab navigation
   const isStaticEndpoint = url === '/api/engines' || url === '/api/themes';
   if (isStaticEndpoint) {
     try {
-      const stored = sessionStorage.getItem('am_cache_' + url);
+      const stored = sessionStorage.getItem('am_cache_' + url) || localStorage.getItem('am_cache_' + url);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && (Array.isArray(parsed) ? parsed.length > 0 : Object.keys(parsed).length > 0)) {
@@ -4098,24 +4098,33 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   }
 
   const promise = (async () => {
-    try {
-      const data = await API.get(url, timeoutMs);
-      const isValid = (Array.isArray(data) && data.length > 0) ||
-                      (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
-      if (isValid) {
-        endpointCache.set(url, data);
-        if (isStaticEndpoint) {
-          try {
-            sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
-          } catch (_) {}
+    let retries = 1;
+    while (true) {
+      try {
+        const data = await API.get(url, timeoutMs);
+        const isValid = (Array.isArray(data) && data.length > 0) ||
+                        (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
+        if (isValid) {
+          endpointCache.set(url, data);
+          if (isStaticEndpoint) {
+            try {
+              sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
+              localStorage.setItem('am_cache_' + url, JSON.stringify(data));
+            } catch (_) {}
+          }
         }
+        return data || [];
+      } catch (err) {
+        if (retries > 0) {
+          retries--;
+          await new Promise(r => setTimeout(r, 600));
+          continue;
+        }
+        console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
+        return [];
+      } finally {
+        inFlightRequests.delete(url);
       }
-      return data || [];
-    } catch (err) {
-      console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
-      return [];
-    } finally {
-      inFlightRequests.delete(url);
     }
   })();
 
@@ -5902,17 +5911,19 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       if (retryBtn) {
         retryBtn.onclick = () => {
           endpointCache.delete('/api/engines');
-          try { sessionStorage.removeItem('am_cache_/api/engines'); } catch (_) {}
+          try {
+            sessionStorage.removeItem('am_cache_/api/engines');
+            localStorage.removeItem('am_cache_/api/engines');
+          } catch (_) {}
           renderDynamicDisplay(targetActiveInstanceId);
         };
       }
       return;
     }
 
-    const [instancesList, rotationList] = await Promise.all([
-      API.get('/api/instances', 15000).catch(() => []),
-      API.get('/api/rotation', 10000).catch(() => [])
-    ]);
+    // Sequential fetching to maintain strictly 1 TCP connection on ESP32 (GEMINI.md Rule 3 / socket pool preservation)
+    const instancesList = await API.get('/api/instances', 10000).catch(() => []);
+    const rotationList = await API.get('/api/rotation', 10000).catch(() => []);
 
     const enginesMap = {};
     descriptors.forEach(desc => {

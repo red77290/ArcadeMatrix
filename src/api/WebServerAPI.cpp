@@ -106,7 +106,7 @@ static void appendJsonString(String& out, const char* str) {
 
 static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out, bool includeSchema = true) {
     out = String();
-    out.reserve(includeSchema ? 2048 : 512);
+    out.reserve(includeSchema ? 2048 : 1024);
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
@@ -730,6 +730,7 @@ void WebServerAPI::setupRoutes() {
                 return filled;
             });
 
+        response->addHeader("Cache-Control", "no-cache");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
         request->send(response);
     });
