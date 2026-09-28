@@ -2104,7 +2104,12 @@ const API = {
     const text = await res.text();
     try {
       return JSON.parse(text);
-    } catch {
+    } catch (e) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        console.warn(`[API] JSON parse error for ${url}:`, e);
+        throw new Error(`Invalid JSON received from ${url}`);
+      }
       return { status: 'success', message: text };
     }
   },
@@ -4042,7 +4047,9 @@ const GLOBAL_TIMEZONES = [
   { value: "UTC", label: "UTC (Coordinated Universal Time)" }
 ];
 
-const THEME_ID_MAP = {
+/* [[COMPILED_ENGINE_CATALOG]] */
+
+const THEME_ID_MAP = (typeof COMPILED_THEMES !== 'undefined') ? COMPILED_THEMES : {
   "0": "Nintendo", "1": "Capcom", "2": "Taito", "3": "Sega",
   "4": "Cave", "5": "Konami", "6": "SNK", "7": "Technos",
   "8": "IGS", "9": "Hudson", "10": "Banpresto", "11": "Namco",
@@ -4051,22 +4058,18 @@ const THEME_ID_MAP = {
   "18": "Cyberpunk", "19": "Flip Clock", "20": "Custom Gradient",
   "21": "Matrix Rain", "22": "Pong Clock", "23": "Tetris Clock",
   "24": "Word Clock", "25": "Binary Clock", "26": "Pac-Man Clock",
-  "27": "Versus Clock", "28": "Slot Machine Clock", "29": "Tetris Game Boy",
-  "tetris": "Tetris Clock", "matrix": "Matrix Rain", "matrix_rain": "Matrix Rain",
-  "versus": "Capcom Versus", "arcade": "Arcade", "pacman": "Pac-Man",
-  "flip": "Flip Clock", "word": "Word Clock", "cyberpunk": "Cyberpunk",
-  "pong": "Pong", "binary": "Binary", "slot_machine": "Slot Machine"
+  "27": "Versus Clock", "28": "Slot Machine Clock", "29": "Tetris Game Boy"
 };
-
 
 function getEngineMeta(descOrMeta) {
   const meta = (descOrMeta && descOrMeta.metadata) ? descOrMeta.metadata : (descOrMeta || {});
   const id = String(meta.id || '').toLowerCase();
+  const compiled = (typeof ENGINE_META_MAP !== 'undefined' && ENGINE_META_MAP && ENGINE_META_MAP[id]) ? ENGINE_META_MAP[id] : null;
   const lang = localStorage.getItem('lang') || 'en';
   const dict = (typeof translations !== 'undefined' && translations && translations[lang]) ? translations[lang] : ((typeof translations !== 'undefined' && translations) ? translations.en : {});
-  const rawName = meta.name || (id ? (id.charAt(0).toUpperCase() + id.slice(1)) : 'Display Engine');
+  const rawName = meta.name || (compiled && compiled.name) || (id ? (id.charAt(0).toUpperCase() + id.slice(1)) : 'Display Engine');
   const name = (dict && dict[`engine_${id}`]) ? dict[`engine_${id}`] : rawName;
-  const cat = String(meta.category || '').toLowerCase();
+  const cat = String(meta.category || (compiled && compiled.category) || '').toLowerCase();
   
   let icon = meta.icon || '';
   if (!icon) {
@@ -4111,6 +4114,20 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   if (endpointCache.has(url)) {
     return endpointCache.get(url);
   }
+  if (url === '/api/themes') {
+    const th = window.COMPILED_THEMES || THEME_ID_MAP;
+    if (th) {
+      const arr = Object.entries(th)
+        .filter(([k]) => !isNaN(parseInt(k)))
+        .map(([k, v]) => ({ id: parseInt(k), name: v, value: String(k), label: v }));
+      endpointCache.set(url, arr);
+      return arr;
+    }
+  }
+  if (url === '/api/timezones') {
+    endpointCache.set(url, GLOBAL_TIMEZONES);
+    return GLOBAL_TIMEZONES;
+  }
   // Check sessionStorage / localStorage for static endpoints (catalog/themes) across tab navigation
   const isStaticEndpoint = url === '/api/engines' || url === '/api/themes';
   if (isStaticEndpoint) {
@@ -4118,9 +4135,15 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
       const stored = sessionStorage.getItem('am_cache_' + url) || localStorage.getItem('am_cache_' + url);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed && (Array.isArray(parsed) ? parsed.length > 0 : Object.keys(parsed).length > 0)) {
+        const isStoredValid = (url === '/api/engines')
+          ? (Array.isArray(parsed) && parsed.length > 0)
+          : (parsed && (Array.isArray(parsed) ? parsed.length > 0 : (typeof parsed === 'object' && Object.keys(parsed).length > 0)));
+        if (isStoredValid) {
           endpointCache.set(url, parsed);
           return parsed;
+        } else {
+          sessionStorage.removeItem('am_cache_' + url);
+          localStorage.removeItem('am_cache_' + url);
         }
       }
     } catch (_) {}
@@ -4135,8 +4158,10 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
     while (true) {
       try {
         const data = await API.get(url, timeoutMs);
-        const isValid = (Array.isArray(data) && data.length > 0) ||
-                        (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
+        const isValid = (url === '/api/engines')
+          ? (Array.isArray(data) && data.length > 0)
+          : ((Array.isArray(data) && data.length > 0) ||
+             (typeof data === 'object' && data !== null && !data.error && data.status !== 'success' && Object.keys(data).length > 0));
         if (isValid) {
           endpointCache.set(url, data);
           if (isStaticEndpoint) {
@@ -4181,6 +4206,13 @@ async function fetchEngineSchema(engineId) {
   const key = String(engineId).toLowerCase().trim();
   if (_engineSchemaCache.has(key)) {
     return _engineSchemaCache.get(key);
+  }
+  if (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG)) {
+    const found = COMPILED_ENGINE_CATALOG.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+    if (found && Array.isArray(found.schema) && found.schema.length > 0) {
+      _engineSchemaCache.set(key, found);
+      return found;
+    }
   }
   try {
     let data = await API.get(`/api/engines?id=${encodeURIComponent(key)}`, 10000);
@@ -5920,7 +5952,9 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
     const instancesList = await API.get('/api/instances', 5000).catch(() => []);
     const rotationList = await API.get('/api/rotation', 5000).catch(() => []);
     const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
-    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors : [];
+    const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
+      ? rawDescriptors
+      : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);
 
     const enginesMap = {};
     descriptors.forEach(desc => {
@@ -6792,12 +6826,14 @@ function initDashboard() {
 async function loadDashboardCatalog() {
   const container = document.getElementById('dashboard-catalog-container');
   if (!container) return;
-  if (container.children.length > 0 && !container.querySelector('.spinner-border')) return;
+  if (container.children.length > 0 && !container.querySelector('.spinner-border') && container.querySelector('.engine-catalog-card, [data-engine-id], #engine-catalog-section')) return;
 
   try {
     const instancesList = await API.get('/api/instances', 5000).catch(() => []);
     const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
-    const descriptors = Array.isArray(rawDescriptors) ? rawDescriptors : [];
+    const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
+      ? rawDescriptors
+      : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);
     const enginesMap = {};
     descriptors.forEach(d => {
       const id = d?.metadata?.id || d?.id;

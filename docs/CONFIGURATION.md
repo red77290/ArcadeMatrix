@@ -70,7 +70,7 @@ ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`)
 
 The Web UI (System Settings → Hardware) directly controls these parameters:
 1. **Rendering & Buffering Pipeline Dropdown (`hw-render-pipeline`)**: Select between `auto`, `canvas_single`, `canvas_double`, `direct_double`, or `direct_single`.
-2. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system` and `POST /api/settings`, then cleanly restarts the display panel with the new pipeline.
+2. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system`, then cleanly restarts the display panel with the new pipeline.
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 
@@ -196,7 +196,7 @@ When API security is enabled (`api_auth_enabled: true`), a new user or a fresh b
      `http://arcadematrix.local/?token=my_super_secret_token_123`
      Upon loading, the Web UI automatically extracts the `token` parameter and saves it to `localStorage`. The user is immediately authenticated with zero popup dialogs.
 
-* **Write-Only Security**: The ESP32 never transmits the secret token back over `GET /api/system` or `GET /api/settings` (it returns `"api_token_configured": true`), completely protecting the secret from local network inspection.
+* **Write-Only Security**: The ESP32 never transmits the secret token back over `GET /api/system` (it returns `"api_token_configured": true`), completely protecting the secret from local network inspection.
 * **Updating or Clearing the Token**: Entering a new valid token in the prompt or Settings tab overrides the old value. Clearing the token and saving turns off authentication.
 
 ### 6.4 Calling the REST API from External Scripts & Home Assistant

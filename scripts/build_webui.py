@@ -6,6 +6,7 @@ import re
 
 import gzip
 import hashlib
+import json
 
 input_file = "data/index.html"
 output_file = "src/api/WebUI.h"
@@ -79,6 +80,29 @@ def minify_webui(content):
         return f'<style{attrs}>{css.strip()}</style>'
     content = re.sub(r'<style([^>]*)>([\s\S]*?)</style>', replace_style, content)
     return content
+
+# Compile-Time Dynamic Engine Catalog & Theme Extraction
+script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath("scripts")
+sys.path.insert(0, script_dir)
+from extract_engine_catalog import extract_engine_catalog, extract_themes, extract_engine_meta_map
+
+engine_catalog = extract_engine_catalog("src/engines")
+themes = extract_themes("src/api/WebServerAPI.cpp")
+engine_meta_map = extract_engine_meta_map(engine_catalog)
+
+catalog_json = json.dumps(engine_catalog, separators=(',', ':'))
+themes_json = json.dumps(themes, separators=(',', ':'))
+meta_map_json = json.dumps(engine_meta_map, separators=(',', ':'))
+
+injections = (
+    f"window.COMPILED_ENGINE_CATALOG = {catalog_json};\n"
+    f"window.COMPILED_THEMES = {themes_json};\n"
+    f"window.ENGINE_META_MAP = {meta_map_json};"
+)
+
+if "/* [[COMPILED_ENGINE_CATALOG]] */" in html_text:
+    html_text = html_text.replace("/* [[COMPILED_ENGINE_CATALOG]] */", injections)
+    print(f"✅ Injected compile-time engine catalog ({len(engine_catalog)} engines), {len(themes)} themes, and metadata into WebUI.")
 
 minified_html = minify_webui(html_text)
 raw_data = minified_html.encode('utf-8')

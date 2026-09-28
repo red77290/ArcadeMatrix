@@ -113,7 +113,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 The firmware needs an external SD card (wired per `docs/WIRING.md`, chip-select on GPIO 5 by
 default - see `SD_CS_PIN` in `src/main.cpp`) for:
 - `/config.json` — your Wi-Fi/matrix/theme settings (auto-generated with defaults on first boot if
-  missing; edit it directly on the card, or via the web UI's `/api/settings` once Wi-Fi is up).
+  missing; edit it directly on the card, or via the web UI once Wi-Fi is up).
 - `/gifs/`, playlists of `.gif`/`.raw`/`.png` assets (see `docs/ARCHITECTURE.md` §4 for the format
   differences between the three).
 - `/fighters_32/` or `/fighters_64/` — MUGEN-derived `.fgt` sprite sheets (see

@@ -576,18 +576,18 @@ case THEME_SPACE_INVADERS:
     break;
 ```
 
-### Step 4: Expose in `/api/themes` in `src/api/WebServerAPI.cpp`
+### Step 4: Expose Theme in `scripts/extract_engine_catalog.py`
 
-Add your theme to the `themes` table so it automatically populates the WebUI dropdown:
+Add your theme to `CANONICAL_THEMES` in `scripts/extract_engine_catalog.py` so it is automatically pre-compiled into the WebUI at build time:
 
-```cpp
-static const ThemeItem themes[] = {
-    // ...
-    { 25, "Space Invaders Clock" }
-};
+```python
+CANONICAL_THEMES = [
+    # ...
+    {"id": 25, "name": "Space Invaders Clock"},
+]
 ```
 
-The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, persist it in `config.json`, and apply it live via hot reload.
+The WebUI will automatically embed "Space Invaders Clock" in the theme dropdown at compile time (with zero RAM overhead on the ESP32), persist it in `config.json`, and apply it live via hot reload.
 
 ---
 

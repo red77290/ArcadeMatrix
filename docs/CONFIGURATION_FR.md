@@ -70,7 +70,7 @@ ArcadeMatrix v4 introduit le SPI graphique matériellement agnostique (`IDrawing
 
 L'interface Web (Paramètres Système → Matériel) pilote directement ces options :
 1. **Menu déroulant Pipeline de Rendu & Buffering (`hw-render-pipeline`)** : Sélection entre `auto`, `canvas_single`, `canvas_double`, `direct_double` ou `direct_single`.
-2. **Enregistrement** : Cliquer sur **Sauvegarder la configuration matérielle** (`btn-save-hw`) transmet les paramètres à `POST /api/system` et `POST /api/settings`, puis redémarre proprement le panneau avec le nouveau pipeline.
+2. **Enregistrement** : Cliquer sur **Sauvegarder la configuration matérielle** (`btn-save-hw`) transmet les paramètres à `POST /api/system`, puis redémarre proprement le panneau avec le nouveau pipeline.
 
 > La luminosité de jour en direct **n'est pas** stockée dans ce bloc ; elle est contrôlée à l'exécution depuis la Web UI (curseur du Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). La luminosité de nuit se trouve dans le bloc `system` (§4).
 
@@ -196,7 +196,7 @@ Lorsque la sécurité API est activée (`api_auth_enabled: true`), un nouvel uti
      `http://arcadematrix.local/?token=mon_super_token_secret_123`
      Dès l'ouverture de la page, la WebUI extrait automatiquement le paramètre `token` et le stocke dans le `localStorage` du navigateur. L'utilisateur est instantanément authentifié pour toute sa navigation future, sans aucune boîte de dialogue requise.
 
-* **Sécurité Écriture Seule (*Write-Only*)** : L'ESP32 ne renvoie jamais le jeton secret lors des requêtes `GET /api/system` ou `GET /api/settings` (il indique seulement `"api_token_configured": true`), éliminant tout risque d'espionnage réseau.
+* **Sécurité Écriture Seule (*Write-Only*)** : L'ESP32 ne renvoie jamais le jeton secret lors des requêtes `GET /api/system` (il indique seulement `"api_token_configured": true`), éliminant tout risque d'espionnage réseau.
 * **Modification ou Suppression du Jeton** : Si un jeton erroné a été saisi, soumettre le jeton valide dans l'invite ou dans les Paramètres écrase l'ancienne valeur. Vider le champ et enregistrer désactive l'authentification.
 
 ### 6.4 Appel de l'API REST depuis des Scripts Externes ou Home Assistant

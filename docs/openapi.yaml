@@ -136,138 +136,20 @@ paths:
                     type: string
                     description: Last warning or error the engine logged
 
-  /api/settings:
-    get:
-      tags:
-        - Configuration
-      summary: Get all settings
-      description: Returns the entire device configuration (Matrix, Clock, Weather, WiFi, MQTT, Standby, etc).
-      responses:
-        '200':
-          description: Configuration object
-          content:
-            application/json:
-              schema:
-                type: object
-    post:
-      tags:
-        - Configuration
-      summary: Update settings
-      description: Partially update settings. Any omitted keys will remain unchanged. Will automatically save to SD card.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                matrix_rows:
-                  type: integer
-                  description: "Matrix height in pixels (16, 32, 64)"
-                  example: 32
-                matrix_cols:
-                  type: integer
-                  description: "Matrix width in pixels (32, 64, 128)"
-                  example: 64
-                matrix_chain:
-                  type: integer
-                  description: "Number of chained panels"
-                  example: 2
-                brightness_limit:
-                  type: integer
-                  description: "Global brightness power limit percent (10-100)"
-                  example: 50
-                color_depth:
-                  type: integer
-                  description: "Color depth per channel (3-8 bits, default 8)"
-                  example: 8
-                matrix_rgb_sequence:
-                  type: string
-                  enum: [RGB, RBG, GRB, GBR, BRG, BGR]
-                  description: "RGB color sequence order"
-                  example: "RGB"
-                matrix_driver_chip:
-                  type: string
-                  enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, MBI5124, SM16208]
-                  description: "LED Panel Hardware Driver Chip"
-                  example: "SHIFTREG"
-                matrix_clk_phase:
-                  type: boolean
-                  description: "Clock Phase toggle for pixel alignment"
-                  example: false
-                matrix_latch_blanking:
-                  type: integer
-                  description: "Latch blanking timing (0-4 cycles)"
-                  example: 0
-                matrix_row_address_mode:
-                  type: integer
-                  description: "Row addressing mode (0=Default/Direct, 1=ShiftRegister, 2=Direct 16 lines)"
-                  example: 0
-                matrix_render_pipeline:
-                  type: string
-                  enum: [auto, canvas_single, canvas_double, direct_double, direct_single]
-                  description: "Render pipeline architecture (auto selects optimal drawing surface for target hardware)"
-                  example: "auto"
-                matrix_limit_refresh_rate_hz:
-                  type: integer
-                  description: "Refresh rate cap in Hz (default 90)"
-                  example: 90
-                crypto_symbols:
-                  type: string
-                  description: "Comma-separated crypto token symbols (e.g. BTC,ETH,SOL,DOGE)"
-                crypto_cache_ttl_min:
-                  type: integer
-                  description: "Crypto quote cache TTL in minutes (refresh rate, default 1)"
-                stock_symbols:
-                  type: string
-                  description: "Comma-separated stock ticker symbols (e.g. AAPL,NVDA,TSLA,MSFT)"
-                stock_cache_ttl_min:
-                  type: integer
-                  description: "Stock quote cache TTL in minutes (refresh rate, default 1)"
-                sprite_count:
-                  type: integer
-                  description: "Sprite/Fighter overlay toggle (0 = disabled/OFF, 2 = enabled/ON)"
-                fighter_interval_sec:
-                  type: integer
-                  description: "Interval in seconds between MUGEN fights"
-      responses:
-        '200':
-          description: Settings successfully updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  sd_saved:
-                    type: boolean
-                  warning:
-                    type: string
-        '503':
-          description: >-
-            The change was applied in memory but could not be written to the SD card (card busy with a
-            rescan or upload, or the write failed); it will be lost at reboot. Retry in a moment.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  sd_saved:
-                    type: boolean
-                    example: false
-                  error:
-                    type: string
-
   /api/system:
     get:
       tags:
         - Configuration
       summary: Get system, matrix, mqtt, and wifi configuration
-      description: Returns the unified system configuration object with complete nested blocks.
+      description: Returns the unified system configuration object with complete nested blocks, or a single section when ?section= is specified.
+      parameters:
+        - name: section
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [system, matrix, mqtt, wifi, hardware]
+          description: Optional filter to retrieve only a specific configuration block
       responses:
         '200':
           description: Grouped configuration blocks
@@ -547,46 +429,6 @@ paths:
         '404':
           description: Index not generated yet.
 
-  /api/playlists/selected:
-    get:
-      tags:
-        - Media
-      summary: Get active GIF playlists
-      description: Returns the user's currently selected playlists.
-      responses:
-        '200':
-          description: Selected playlists
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  playlists:
-                    type: array
-                    items:
-                      type: string
-
-  /api/playlists/save:
-    post:
-      tags:
-        - Media
-      summary: Save active GIF playlists
-      description: Updates the default selected playlists and saves them to SD card.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                playlists:
-                  type: array
-                  items:
-                    type: string
-      responses:
-        '200':
-          description: Success
-
   /api/playlists/play:
     post:
       tags:
@@ -604,26 +446,6 @@ paths:
                   type: array
                   items:
                     type: string
-      responses:
-        '200':
-          description: Success
-
-  /api/clock:
-    post:
-      tags:
-        - Engines
-      summary: Change Clock Theme
-      description: Dynamically change the current clock theme.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                clock_theme:
-                  type: integer
-                  description: The PublisherTheme Enum ID (0=NINTENDO, 1=CAPCOM, etc).
       responses:
         '200':
           description: Success
@@ -1023,29 +845,6 @@ paths:
                   status:
                     type: string
 
-  /api/visualizer:
-    post:
-      tags:
-        - Engines
-      summary: Control Priority Rhythmic Music Visualizer
-      description: Toggle the audio-reactive visualizer display override and select active visualizer mode or mic gain.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-                mode:
-                  type: string
-                gain:
-                  type: number
-      responses:
-        '200':
-          description: Success
-
   /api/hardware:
     get:
       tags:
@@ -1076,27 +875,6 @@ paths:
                     type: boolean
                   gyroscope:
                     type: boolean
-
-  /api/themes:
-    get:
-      tags:
-        - Configuration
-      summary: List available clock and date themes
-      description: Dynamic options endpoint returning all 30 built-in publisher pixel-art and animated themes.
-      responses:
-        '200':
-          description: List of themes
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id:
-                      type: integer
-                    name:
-                      type: string
 
   /api/instances:
     get:

@@ -70,7 +70,7 @@ ArcadeMatrix v4 introduce el SPI gráfico agnóstico al hardware (`IDrawingSurfa
 
 La interfaz Web (Configuración del Sistema → Hardware) controla directamente estas opciones:
 1. **Desplegable Canalización de Renderizado y Búfer (`hw-render-pipeline`)**: Selección entre `auto`, `canvas_single`, `canvas_double`, `direct_double` o `direct_single`.
-2. **Guardar**: Al pulsar **Guardar Configuración de Hardware** (`btn-save-hw`), los parámetros se envían a `POST /api/system` y `POST /api/settings`, reiniciando limpiamente el panel con la nueva canalización.
+2. **Guardar**: Al pulsar **Guardar Configuración de Hardware** (`btn-save-hw`), los parámetros se envían a `POST /api/system`, reiniciando limpiamente el panel con la nueva canalización.
 
 > El brillo diurno en vivo **no** se almacena en este bloque; se controla en tiempo de ejecución desde la interfaz Web (deslizador del Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). El brillo nocturno vive en el bloque `system` (§4).
 
@@ -196,7 +196,7 @@ Cuando la seguridad API está habilitada (`api_auth_enabled: true`), un nuevo us
      `http://arcadematrix.local/?token=mi_token_secreto_super_seguro_123`
      Al cargar la página, la WebUI detecta automáticamente el parámetro `token` y lo guarda en el `localStorage`. El usuario queda autenticado de inmediato sin que aparezca ninguna ventana emergente.
 
-* **Seguridad de Solo Escritura (*Write-Only*)**: El ESP32 nunca devuelve el token secreto en `GET /api/system` o `GET /api/settings` (indica únicamente `"api_token_configured": true`), protegiendo totalmente la clave secreta de miradas indiscretas en la red local.
+* **Seguridad de Solo Escritura (*Write-Only*)**: El ESP32 nunca devuelve el token secreto en `GET /api/system` (indica únicamente `"api_token_configured": true`), protegiendo totalmente la clave secreta de miradas indiscretas en la red local.
 * **Modificación o Eliminación del Token**: Introducir un token válido nuevo en el aviso o en Ajustes sobrescribe el valor previo. Dejar el campo vacío y guardar desactiva la autenticación.
 
 ### 6.4 Llamar a la API REST desde Scripts Externos o Home Assistant

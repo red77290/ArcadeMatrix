@@ -91,8 +91,7 @@ static void appendJsonString(String& out, const char* str) {
 }
 
 static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out, bool includeSchema = true) {
-    out = String();
-    out.reserve(includeSchema ? 2048 : 1024);
+    out.reserve(out.length() + (includeSchema ? 2048 : 1024));
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
@@ -706,18 +705,65 @@ void WebServerAPI::setupRoutes() {
              (unsigned)ESP.getFreeHeap(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-        size_t count = 0;
-        const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
-        String catalogJson;
-        catalogJson.reserve(count * 240 + 2);
-        catalogJson += '[';
-        for (size_t i = 0; i < count; ++i) {
-            if (i > 0) catalogJson += ',';
-            serializeEngineDescriptor(descriptors[i], catalogJson, false /* compact catalog */);
-        }
-        catalogJson += ']';
+        struct EnginesCatalogStreamContext {
+            size_t currentIndex = 0;
+            String carry;
+            bool sentOpening = false;
+            bool done = false;
+        };
 
-        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", catalogJson);
+        auto ctx = std::make_shared<EnginesCatalogStreamContext>();
+
+        AsyncWebServerResponse* response = request->beginChunkedResponse("application/json", [ctx](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+            size_t out = 0;
+            auto emit = [&](const String& piece) -> bool {
+                if (out + piece.length() > maxLen) {
+                    ctx->carry = piece;
+                    return false;
+                }
+                memcpy(buf + out, piece.c_str(), piece.length());
+                out += piece.length();
+                return true;
+            };
+
+            if (ctx->carry.length()) {
+                String c = ctx->carry;
+                ctx->carry = "";
+                if (!emit(c)) return out;
+            }
+
+            if (ctx->done) {
+                return 0;
+            }
+
+            if (!ctx->sentOpening) {
+                if (!emit("[")) return out;
+                ctx->sentOpening = true;
+            }
+
+            size_t count = 0;
+            const EngineDescriptor* descriptors = EngineRegistry::getAllDescriptors(count);
+
+            while (ctx->currentIndex < count) {
+                String piece;
+                if (ctx->currentIndex > 0) piece += ',';
+                serializeEngineDescriptor(descriptors[ctx->currentIndex], piece, false /* compact catalog */);
+                ctx->currentIndex++;
+                if (!emit(piece)) {
+                    return out;
+                }
+                if (out > maxLen - 128) break;
+            }
+
+            if (ctx->currentIndex >= count) {
+                if (emit("]")) {
+                    ctx->done = true;
+                }
+            }
+
+            return out;
+        });
+
         response->addHeader("Cache-Control", "no-cache");
         response->addHeader("Connection", "close");
         response->addHeader("X-Capability-Generation", String(CompatibilityEvaluator::getHardwareCapabilityGeneration()));
@@ -755,95 +801,6 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: GET /api/timezones (Dynamic options endpoint for timezones)
-    server.on("/api/timezones", HTTP_GET, [](AsyncWebServerRequest *request){
-        SpiRamJsonDocument doc(4096);
-        JsonArray arr = doc.to<JsonArray>();
-        struct TzItem { const char* value; const char* label; };
-        static const TzItem timezones[] = {
-            {"Europe/Paris", "Europe/Paris (UTC+1/+2)"},
-            {"Europe/London", "Europe/London (UTC+0/+1)"},
-            {"Europe/Dublin", "Europe/Dublin (UTC+0/+1)"},
-            {"Europe/Lisbon", "Europe/Lisbon (UTC+0/+1)"},
-            {"Europe/Berlin", "Europe/Berlin (UTC+1/+2)"},
-            {"Europe/Madrid", "Europe/Madrid (UTC+1/+2)"},
-            {"Europe/Rome", "Europe/Rome (UTC+1/+2)"},
-            {"Europe/Brussels", "Europe/Brussels (UTC+1/+2)"},
-            {"Europe/Amsterdam", "Europe/Amsterdam (UTC+1/+2)"},
-            {"Europe/Zurich", "Europe/Zurich (UTC+1/+2)"},
-            {"Europe/Vienna", "Europe/Vienna (UTC+1/+2)"},
-            {"Europe/Warsaw", "Europe/Warsaw (UTC+1/+2)"},
-            {"Europe/Prague", "Europe/Prague (UTC+1/+2)"},
-            {"Europe/Stockholm", "Europe/Stockholm (UTC+1/+2)"},
-            {"Europe/Oslo", "Europe/Oslo (UTC+1/+2)"},
-            {"Europe/Copenhagen", "Europe/Copenhagen (UTC+1/+2)"},
-            {"Europe/Athens", "Europe/Athens (UTC+2/+3)"},
-            {"Europe/Helsinki", "Europe/Helsinki (UTC+2/+3)"},
-            {"Europe/Bucharest", "Europe/Bucharest (UTC+2/+3)"},
-            {"Europe/Kyiv", "Europe/Kyiv (UTC+2/+3)"},
-            {"Europe/Moscow", "Europe/Moscow (UTC+3)"},
-            {"Europe/Istanbul", "Europe/Istanbul (UTC+3)"},
-            {"Atlantic/Reykjavik", "Atlantic/Reykjavik (UTC+0)"},
-            {"Atlantic/Azores", "Atlantic/Azores (UTC-1/+0)"},
-            {"America/New_York", "America/New_York (EST/EDT, UTC-5/-4)"},
-            {"America/Detroit", "America/Detroit (EST/EDT, UTC-5/-4)"},
-            {"America/Indiana/Indianapolis", "America/Indiana/Indianapolis (EST/EDT, UTC-5/-4)"},
-            {"America/Montreal", "America/Montreal (EST/EDT, UTC-5/-4)"},
-            {"America/Toronto", "America/Toronto (EST/EDT, UTC-5/-4)"},
-            {"America/Chicago", "America/Chicago (CST/CDT, UTC-6/-5)"},
-            {"America/Mexico_City", "America/Mexico_City (CST, UTC-6)"},
-            {"America/Denver", "America/Denver (MST/MDT, UTC-7/-6)"},
-            {"America/Boise", "America/Boise (MST/MDT, UTC-7/-6)"},
-            {"America/Phoenix", "America/Phoenix (MST, UTC-7, no DST)"},
-            {"America/Los_Angeles", "America/Los_Angeles (PST/PDT, UTC-8/-7)"},
-            {"America/Vancouver", "America/Vancouver (PST/PDT, UTC-8/-7)"},
-            {"America/Anchorage", "America/Anchorage (AKST/AKDT, UTC-9/-8)"},
-            {"America/Halifax", "America/Halifax (AST/ADT, UTC-4/-3)"},
-            {"America/St_Johns", "America/St_Johns (NST/NDT, UTC-3:30/-2:30)"},
-            {"Pacific/Honolulu", "Pacific/Honolulu (HST, UTC-10)"},
-            {"America/Sao_Paulo", "America/Sao_Paulo (BRT, UTC-3)"},
-            {"America/Buenos_Aires", "America/Buenos_Aires (ART, UTC-3)"},
-            {"America/Santiago", "America/Santiago (CLT/CLST, UTC-4/-3)"},
-            {"America/Bogota", "America/Bogota (COT, UTC-5)"},
-            {"America/Lima", "America/Lima (PET, UTC-5)"},
-            {"Africa/Casablanca", "Africa/Casablanca (WEST, UTC+1)"},
-            {"Africa/Cairo", "Africa/Cairo (EET/EEST, UTC+2/+3)"},
-            {"Africa/Johannesburg", "Africa/Johannesburg (SAST, UTC+2)"},
-            {"Africa/Nairobi", "Africa/Nairobi (EAT, UTC+3)"},
-            {"Africa/Lagos", "Africa/Lagos (WAT, UTC+1)"},
-            {"Asia/Jerusalem", "Asia/Jerusalem (IST/IDT, UTC+2/+3)"},
-            {"Asia/Riyadh", "Asia/Riyadh (AST, UTC+3)"},
-            {"Asia/Dubai", "Asia/Dubai (GST, UTC+4)"},
-            {"Asia/Tehran", "Asia/Tehran (IRST, UTC+3:30)"},
-            {"Asia/Karachi", "Asia/Karachi (PKT, UTC+5)"},
-            {"Asia/Kolkata", "Asia/Kolkata (IST, UTC+5:30)"},
-            {"Asia/Dhaka", "Asia/Dhaka (BST, UTC+6)"},
-            {"Asia/Bangkok", "Asia/Bangkok (ICT, UTC+7)"},
-            {"Asia/Jakarta", "Asia/Jakarta (WIB, UTC+7)"},
-            {"Asia/Singapore", "Asia/Singapore (SGT, UTC+8)"},
-            {"Asia/Hong_Kong", "Asia/Hong_Kong (HKT, UTC+8)"},
-            {"Asia/Shanghai", "Asia/Shanghai (CST, UTC+8)"},
-            {"Asia/Taipei", "Asia/Taipei (CST, UTC+8)"},
-            {"Asia/Manila", "Asia/Manila (PST, UTC+8)"},
-            {"Asia/Tokyo", "Asia/Tokyo (JST, UTC+9)"},
-            {"Asia/Seoul", "Asia/Seoul (KST, UTC+9)"},
-            {"Australia/Sydney", "Australia/Sydney (AEST/AEDT, UTC+10/+11)"},
-            {"Australia/Melbourne", "Australia/Melbourne (AEST/AEDT, UTC+10/+11)"},
-            {"Australia/Brisbane", "Australia/Brisbane (AEST, UTC+10)"},
-            {"Australia/Adelaide", "Australia/Adelaide (ACST/ACDT, UTC+9:30/+10:30)"},
-            {"Australia/Perth", "Australia/Perth (AWST, UTC+8)"},
-            {"Pacific/Guam", "Pacific/Guam (ChST, UTC+10)"},
-            {"Pacific/Auckland", "Pacific/Auckland (NZST/NZDT, UTC+12/+13)"},
-            {"Pacific/Fiji", "Pacific/Fiji (FJT, UTC+12)"},
-            {"UTC", "UTC (Coordinated Universal Time)"}
-        };
-        for (const auto& tz : timezones) {
-            JsonObject obj = arr.createNestedObject();
-            obj["value"] = tz.value;
-            obj["label"] = tz.label;
-        }
-        sendJsonResponse(request, doc);
-    });
 
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1359,52 +1316,6 @@ void WebServerAPI::setupRoutes() {
         sendJsonResponse(request, doc);
     });
 
-    // API: Music Visualizer Control (Priority Display Override)
-    AsyncCallbackJsonWebHandler* visHandler = new AsyncCallbackJsonWebHandler("/api/visualizer", [this](AsyncWebServerRequest *request, JsonVariant &json) {
-        if (!checkAuth(request)) return;
-        if (!json.is<JsonObject>()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-            return;
-        }
-        JsonObject doc = json.as<JsonObject>();
-        extern ConfigLoader config;
-        config.mutate([&](ConfigLoader& cfg) {
-            for (auto& inst : cfg.instances) {
-                if (inst.instance_id == "visualizer_main") {
-                    if (!doc["enabled"].isNull()) {
-                        inst.config.setBool("enabled", (bool)doc["enabled"]);
-                        if (visualizer) {
-                            if (inst.config.getBool("enabled")) visualizer->activate();
-                            else visualizer->deactivate();
-                        }
-                    }
-                    if (!doc["style"].isNull()) {
-                        inst.config.setString("style", (const char*)doc["style"]);
-                    }
-                    if (!doc["mode"].isNull()) {
-                        inst.config.setString("style", (const char*)doc["mode"]);
-                    }
-                    if (visualizer) {
-                        visualizer->onConfigChanged(&inst.config);
-                    }
-                    if (!doc["gain"].isNull()) {
-                        float g = (float)doc["gain"];
-                        inst.config.setString("gain", String(g));
-                        hardwareHAL.setMicGain(g);
-                    }
-                    if (!doc["sensitivity"].isNull()) {
-                        int s = (int)doc["sensitivity"];
-                        inst.config.setString("sensitivity", String(s));
-                    }
-                    break;
-                }
-            }
-        });
-        bool saved = config.saveToSD("/config.json");
-        if (!saved) { sendConfigSaveFailed(request); return; }
-        request->send(200, "application/json", "{\"success\":true}");
-    });
-    server.addHandler(visHandler);
 
     // API: List GIF Playlists (Direct SD streaming with zero heap allocation, falls back to dynamic directory scan)
     server.on("/api/playlists", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1574,451 +1485,6 @@ void WebServerAPI::setupRoutes() {
     }, 4096);
     server.addHandler(playHandler);
     
-        server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
-        extern ConfigLoader config;
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 4096);
-        JsonObject doc = response->getRoot().as<JsonObject>();
-        
-        if (doc.isNull()) {
-            request->send(500, "text/plain", "OOM JSON");
-            delete response;
-            return;
-        }
-
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const ConfigSnapshot& snap = guard.get();
-
-        // Matrix
-        doc["brightness_limit"] = snap.matrix.powerLimitPercent;
-        doc["color_depth"] = snap.matrix.colorDepth;
-        doc["matrix_chain"] = snap.matrix.chainLength;
-        doc["matrix_rows"] = snap.matrix.height;
-        doc["matrix_cols"] = snap.matrix.width;
-        doc["matrix_rgb_sequence"] = snap.matrix.rgbSequence;
-        doc["matrix_render_pipeline"] = snap.matrix.render_pipeline;
-        doc["render_pipeline"] = snap.matrix.render_pipeline;
-        doc["matrix_driver_chip"] = snap.matrix.driverChip;
-        doc["matrix_clk_phase"] = snap.matrix.clkPhase;
-        doc["matrix_latch_blanking"] = snap.matrix.latchBlanking;
-        doc["matrix_row_address_mode"] = snap.matrix.rowAddressMode;
-        doc["matrix_limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
-        doc["rotation_offset"] = snap.matrix.rotation_offset;
-        doc["auto_rotate"] = snap.matrix.auto_rotate;
-        doc["rotation_transition"] = snap.matrix.rotation_transition;
-        doc["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
-        doc["slot_transition"] = snap.matrix.slot_transition;
-        doc["slot_transition_duration_ms"] = snap.matrix.slot_transition_duration_ms;
-
-        auto getInst = [&](const String& id) { return snap.getInstance(id); };
-        
-        // Crypto
-        auto cryptoInst = getInst("crypto_main");
-        if (cryptoInst) {
-            doc["crypto_enabled"] = cryptoInst->config.getBool("enabled");
-            doc["crypto_symbols"] = cryptoInst->config.getString("symbols");
-            doc["crypto_duration_sec"] = cryptoInst->config.getInt("duration_sec");
-            doc["crypto_cache_ttl_min"] = cryptoInst->config.getInt("cache_ttl_min");
-            doc["crypto_currency"] = cryptoInst->config.getString("currency");
-        }
-
-        // Stock
-        auto stockInst = getInst("stock_main");
-        if (stockInst) {
-            doc["stock_enabled"] = stockInst->config.getBool("enabled");
-            doc["stock_symbols"] = stockInst->config.getString("symbols");
-            doc["stock_duration_sec"] = stockInst->config.getInt("duration_sec");
-            doc["stock_cache_ttl_min"] = stockInst->config.getInt("cache_ttl_min");
-        }
-
-        // Idle rotation
-        String rotStr = "";
-        for (const auto& r : snap.rotation) rotStr += r.instance_id + ",";
-        if (rotStr.endsWith(",")) rotStr.remove(rotStr.length()-1);
-        doc["rotation"] = rotStr;
-        
-        auto getRot = [&](const String& id) {
-            for (const auto& r : snap.rotation) if (r.instance_id == id) return r.duration_sec;
-            return 15;
-        };
-        doc["clock_duration_sec"] = getRot("clock_main");
-        doc["date_duration_sec"] = getRot("date_main");
-        doc["weather_duration_sec"] = getRot("weather_main");
-        doc["temp_duration_sec"] = getRot("temp_main");
-        doc["decibel_duration_sec"] = getRot("decibel_main");
-        
-        auto fighterInst = getInst("fighter_main");
-        if (fighterInst) {
-            doc["fighter_enabled"] = true;
-            doc["fighter_interval_sec"] = fighterInst->config.getInt("fighter_interval_sec");
-        }
-
-        // Environment & Audio
-        doc["temp_unit"] = snap.system.unit;
-        doc["temp_offset"] = snap.system.temp_offset;
-        
-        auto visInst = getInst("visualizer_main");
-        if (visInst) {
-            doc["visualizer_enabled"] = visInst->config.getBool("enabled");
-            doc["visualizer_mode"] = visInst->config.getString("mode");
-            doc["mic_gain"] = visInst->config.getFloat("gain");
-            doc["db_calibration"] = visInst->config.getFloat("db_calibration");
-        }
-
-        doc["sensor_available"] = hardwareHAL.isTempSensorAvailable();
-        doc["audio_available"] = hardwareHAL.isAudioAvailable();
-        doc["psram_available"] = hardwareHAL.capabilities().hasPsram;
-
-        // Clock
-        auto clockInst = getInst("clock_main");
-        if (clockInst) {
-            doc["clock_font"] = clockInst->config.getInt("clock_font");
-            doc["clock_size"] = clockInst->config.getInt("clock_size");
-            doc["clock_theme"] = clockInst->config.getInt("clock_theme");
-            doc["clock_offset_x"] = clockInst->config.getInt("clock_offset_x");
-            doc["clock_offset_y"] = clockInst->config.getInt("clock_offset_y");
-            doc["clock_color_1"] = clockInst->config.getString("clock_color_1");
-            doc["clock_color_2"] = clockInst->config.getString("clock_color_2");
-            doc["clock_font_path"] = clockInst->config.getString("clock_font_path");
-        }
-
-        // Date
-        auto dateInst = getInst("date_main");
-        if (dateInst) {
-            doc["date_font"] = dateInst->config.getInt("date_font");
-            doc["date_size"] = dateInst->config.getInt("date_size");
-            doc["date_theme"] = dateInst->config.getInt("theme");
-            doc["date_offset_x"] = dateInst->config.getInt("date_offset_x");
-            doc["date_offset_y"] = dateInst->config.getInt("date_offset_y");
-            doc["date_format"] = dateInst->config.getString("format");
-            doc["date_sprite"] = dateInst->config.getString("background_sprite");
-            doc["date_color_1"] = dateInst->config.getString("date_color_1");
-            doc["date_color_2"] = dateInst->config.getString("date_color_2");
-            doc["date_font_path"] = dateInst->config.getString("date_font_path");
-        }
-
-        // Weather
-        auto weatherInst = getInst("weather_main");
-        if (weatherInst) {
-            doc["weather_api_key"] = weatherInst->config.getString("api_key");
-            doc["weather_city"] = weatherInst->config.getString("city");
-            doc["weather_lang"] = weatherInst->config.getString("lang");
-            doc["weather_offset_x"] = weatherInst->config.getInt("weather_offset_x");
-            doc["weather_offset_y"] = weatherInst->config.getInt("weather_offset_y");
-        }
-
-        // System / Time
-        doc["lang"] = snap.system.lang;
-        doc["timezone"] = snap.system.timezone;
-        doc["format_24h"] = snap.system.format24h;
-
-        // Standby
-        doc["night_mode_enabled"] = snap.system.night_mode_enabled;
-        doc["turn_off_at"] = snap.system.turn_off_at;
-        doc["wake_up_at"] = snap.system.wake_up_at;
-        doc["night_brightness"] = snap.system.night_brightness;
-        doc["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
-        doc["idle_fighter_interval"] = snap.system.idle_fighter_interval;
-        doc["idle_fighter_speed"] = snap.system.idle_fighter_speed;
-        doc["matrix_power"] = snap.matrix.matrix_power;
-
-        // WiFi
-        doc["wifi_ssid"] = snap.wifi.ssid;
-        doc["wifi_hostname"] = snap.wifi.hostname;
-        doc["api_auth_enabled"] = snap.system.api_auth_enabled;
-        doc["api_token_configured"] = snap.system.api_token.length() > 0;
-
-        // MQTT
-        doc["mqtt_enabled"] = snap.mqtt.enabled;
-        doc["mqtt_broker"] = snap.mqtt.broker;
-        doc["mqtt_port"] = snap.mqtt.port;
-        doc["mqtt_user"] = snap.mqtt.user;
-        doc["mqtt_pass"] = snap.mqtt.pass;
-        doc["mqtt_device"] = snap.mqtt.deviceName;
-        doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
-
-        response->setLength();
-        request->send(response);
-    });
-
-    // API: Settings (POST) — saves immediately to SD
-    AsyncCallbackJsonWebHandler* settingsHandler = new AsyncCallbackJsonWebHandler("/api/settings", [this](AsyncWebServerRequest *request, JsonVariant &json) {
-        if (!checkAuth(request)) return;
-        if (!json.is<JsonObject>()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-            return;
-        }
-        
-        JsonObject doc = json.as<JsonObject>();
-        extern ConfigLoader config;
-        bool willReboot = (!doc["reboot"].isNull() && doc["reboot"].as<bool>());
-        bool cryptoChanged = false;
-        bool stockChanged = false;
-        bool fighterChanged = false;
-
-        config.mutate([&](ConfigLoader& cfg) {
-            // Matrix
-            if (!doc["brightness_limit"].isNull()) {
-                cfg.matrix.powerLimitPercent = doc["brightness_limit"].as<int>();
-                extern MatrixEngine matrixEngine;
-                matrixEngine.setBrightness(cfg.matrix.powerLimitPercent);
-            }
-            if (!doc["color_depth"].isNull()) cfg.matrix.colorDepth = doc["color_depth"].as<int>();
-            if (!doc["matrix_chain"].isNull()) cfg.matrix.chainLength = doc["matrix_chain"].as<int>();
-            if (!doc["matrix_rows"].isNull()) cfg.matrix.height = doc["matrix_rows"].as<int>();
-            if (!doc["matrix_cols"].isNull()) cfg.matrix.width = doc["matrix_cols"].as<int>();
-            if (!doc["matrix_rgb_sequence"].isNull()) cfg.matrix.rgbSequence = doc["matrix_rgb_sequence"].as<String>();
-            if (!doc["matrix_render_pipeline"].isNull()) cfg.matrix.render_pipeline = doc["matrix_render_pipeline"].as<String>();
-            else if (!doc["render_pipeline"].isNull()) cfg.matrix.render_pipeline = doc["render_pipeline"].as<String>();
-            else if (!doc["matrix_force_single_buffer"].isNull() && doc["matrix_force_single_buffer"].as<bool>()) cfg.matrix.render_pipeline = "canvas_single";
-            if (!doc["matrix_limit_refresh_rate_hz"].isNull()) cfg.matrix.limitRefreshRateHz = doc["matrix_limit_refresh_rate_hz"].as<int>();
-            if (!doc["matrix_driver_chip"].isNull()) cfg.matrix.driverChip = doc["matrix_driver_chip"].as<String>();
-            if (!doc["matrix_clk_phase"].isNull()) cfg.matrix.clkPhase = doc["matrix_clk_phase"].as<bool>();
-            if (!doc["matrix_latch_blanking"].isNull()) cfg.matrix.latchBlanking = doc["matrix_latch_blanking"].as<int>();
-            if (!doc["matrix_row_address_mode"].isNull()) cfg.matrix.rowAddressMode = doc["matrix_row_address_mode"].as<int>();
-            if (!doc["rotation_offset"].isNull()) {
-                cfg.matrix.rotation_offset = doc["rotation_offset"].as<int>();
-                displayOrientationManager.setRotationOffset(cfg.matrix.rotation_offset);
-            }
-            if (!doc["auto_rotate"].isNull()) {
-                cfg.matrix.auto_rotate = doc["auto_rotate"].as<bool>();
-            }
-            if (!doc["slot_transition"].isNull()) {
-                cfg.matrix.slot_transition = doc["slot_transition"].as<String>();
-                rotationManager->setSlotTransition(cfg.matrix.slot_transition, cfg.matrix.slot_transition_duration_ms);
-            }
-            if (!doc["slot_transition_duration_ms"].isNull()) {
-                cfg.matrix.slot_transition_duration_ms = doc["slot_transition_duration_ms"].as<int>();
-                rotationManager->setSlotTransition(cfg.matrix.slot_transition, cfg.matrix.slot_transition_duration_ms);
-            }
-            if (!doc["rotation_transition"].isNull()) {
-                cfg.matrix.rotation_transition = doc["rotation_transition"].as<String>();
-                displayOrientationManager.setTransitionEffect(cfg.matrix.rotation_transition);
-            }
-            if (!doc["rotation_transition_duration_ms"].isNull()) {
-                cfg.matrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
-                displayOrientationManager.setTransitionDuration(cfg.matrix.rotation_transition_duration_ms);
-            }
-
-            auto getInst = [&](const String& id) -> EngineInstance* {
-                for (auto& inst : cfg.instances) {
-                    if (inst.instance_id == id) return &inst;
-                }
-                return nullptr;
-            };
-
-            auto cryptoInst = getInst("crypto_main");
-            if (cryptoInst) {
-                if (!doc["crypto_enabled"].isNull()) cryptoInst->config.setBool("enabled", doc["crypto_enabled"].as<bool>());
-                if (!doc["crypto_symbols"].isNull()) cryptoInst->config.setString("symbols", doc["crypto_symbols"].as<String>());
-                if (!doc["crypto_duration_sec"].isNull()) cryptoInst->config.setInt("duration_sec", doc["crypto_duration_sec"].as<int>());
-                if (!doc["crypto_cache_ttl_min"].isNull()) cryptoInst->config.setInt("cache_ttl_min", doc["crypto_cache_ttl_min"].as<int>());
-                if (!doc["crypto_currency"].isNull()) cryptoInst->config.setString("currency", doc["crypto_currency"].as<String>());
-                cryptoChanged = true;
-            }
-
-            auto stockInst = getInst("stock_main");
-            if (stockInst) {
-                if (!doc["stock_enabled"].isNull()) stockInst->config.setBool("enabled", doc["stock_enabled"].as<bool>());
-                if (!doc["stock_symbols"].isNull()) stockInst->config.setString("symbols", doc["stock_symbols"].as<String>());
-                if (!doc["stock_duration_sec"].isNull()) stockInst->config.setInt("duration_sec", doc["stock_duration_sec"].as<int>());
-                if (!doc["stock_cache_ttl_min"].isNull()) stockInst->config.setInt("cache_ttl_min", doc["stock_cache_ttl_min"].as<int>());
-                stockChanged = true;
-            }
-
-            auto setRot = [&](const String& id, int dur) {
-                for (auto& r : cfg.rotation) if (r.instance_id == id) { r.duration_sec = dur; return; }
-            };
-            if (!doc["clock_duration_sec"].isNull()) setRot("clock_main", doc["clock_duration_sec"].as<int>());
-            if (!doc["date_duration_sec"].isNull()) setRot("date_main", doc["date_duration_sec"].as<int>());
-            if (!doc["weather_duration_sec"].isNull()) setRot("weather_main", doc["weather_duration_sec"].as<int>());
-            if (!doc["temp_duration_sec"].isNull()) setRot("temp_main", doc["temp_duration_sec"].as<int>());
-            if (!doc["decibel_duration_sec"].isNull()) setRot("decibel_main", doc["decibel_duration_sec"].as<int>());
-            
-            auto fighterInst = getInst("fighter_main");
-            if (fighterInst) {
-                if (!doc["fighter_interval_sec"].isNull()) fighterInst->config.setInt("fighter_interval_sec", doc["fighter_interval_sec"].as<int>());
-                fighterChanged = true;
-            }
-
-            if (!doc["temp_unit"].isNull()) cfg.system.unit = doc["temp_unit"].as<String>();
-            if (!doc["unit"].isNull()) cfg.system.unit = doc["unit"].as<String>();
-            if (!doc["temp_offset"].isNull()) cfg.system.temp_offset = doc["temp_offset"].as<float>();
-
-            auto visInst = getInst("visualizer_main");
-            if (visInst) {
-                if (!doc["visualizer_enabled"].isNull()) {
-                    visInst->config.setBool("enabled", doc["visualizer_enabled"].as<bool>());
-                    extern VisualizerEngine* visualizerEngine;
-                    if (visualizerEngine) {
-                        if (visInst->config.getBool("enabled")) visualizerEngine->activate();
-                        else visualizerEngine->deactivate();
-                    }
-                }
-                if (!doc["visualizer_mode"].isNull()) {
-                    visInst->config.setString("mode", doc["visualizer_mode"].as<String>());
-                    extern VisualizerEngine* visualizerEngine;
-                    if (visualizerEngine) visualizerEngine->onConfigChanged(&visInst->config);
-                }
-                if (!doc["mic_gain"].isNull()) {
-                    visInst->config.setString("gain", String(doc["mic_gain"].as<float>()));
-                    hardwareHAL.setMicGain(doc["mic_gain"].as<float>());
-                }
-                if (!doc["db_calibration"].isNull()) visInst->config.setString("db_calibration", String(doc["db_calibration"].as<float>()));
-            }
-
-            auto clockInst = getInst("clock_main");
-            if (clockInst) {
-                bool cChange = false;
-                if (!doc["clock_font"].isNull()) { clockInst->config.setInt("clock_font", doc["clock_font"].as<int>()); cChange = true; }
-                if (!doc["clock_size"].isNull()) { clockInst->config.setInt("clock_size", doc["clock_size"].as<int>()); cChange = true; }
-                if (!doc["clock_offset_x"].isNull()) { clockInst->config.setInt("clock_offset_x", doc["clock_offset_x"].as<int>()); cChange = true; }
-                if (!doc["clock_offset_y"].isNull()) { clockInst->config.setInt("clock_offset_y", doc["clock_offset_y"].as<int>()); cChange = true; }
-                if (!doc["clock_color_1"].isNull()) { clockInst->config.setString("clock_color_1", doc["clock_color_1"].as<String>()); cChange = true; }
-                if (!doc["clock_color_2"].isNull()) { clockInst->config.setString("clock_color_2", doc["clock_color_2"].as<String>()); cChange = true; }
-                if (!doc["clock_font_path"].isNull()) { clockInst->config.setString("clock_font_path", doc["clock_font_path"].as<String>()); cChange = true; }
-                if (!doc["clock_theme"].isNull()) { clockInst->config.setInt("clock_theme", doc["clock_theme"].as<int>()); cChange = true; }
-                
-                if (cChange && !willReboot && rotationManager) {
-                    rotationManager->notifyConfigChanged("clock_main");
-                }
-            }
-
-            auto dateInst = getInst("date_main");
-            if (dateInst) {
-                bool dChange = false;
-                if (!doc["date_font"].isNull()) { dateInst->config.setInt("date_font", doc["date_font"].as<int>()); dChange = true; }
-                if (!doc["date_size"].isNull()) { dateInst->config.setInt("date_size", doc["date_size"].as<int>()); dChange = true; }
-                if (!doc["date_offset_x"].isNull()) { dateInst->config.setInt("date_offset_x", doc["date_offset_x"].as<int>()); dChange = true; }
-                if (!doc["date_offset_y"].isNull()) { dateInst->config.setInt("date_offset_y", doc["date_offset_y"].as<int>()); dChange = true; }
-                if (!doc["date_format"].isNull()) { dateInst->config.setString("format", doc["date_format"].as<String>()); dChange = true; }
-                if (!doc["date_sprite"].isNull()) { dateInst->config.setString("background_sprite", doc["date_sprite"].as<String>()); dChange = true; }
-                if (!doc["date_color_1"].isNull()) { dateInst->config.setString("date_color_1", doc["date_color_1"].as<String>()); dChange = true; }
-                if (!doc["date_color_2"].isNull()) { dateInst->config.setString("date_color_2", doc["date_color_2"].as<String>()); dChange = true; }
-                if (!doc["date_font_path"].isNull()) { dateInst->config.setString("date_font_path", doc["date_font_path"].as<String>()); dChange = true; }
-                if (!doc["date_theme"].isNull()) { dateInst->config.setInt("theme", doc["date_theme"].as<int>()); dChange = true; }
-                
-                if (dChange && !willReboot && rotationManager) {
-                    rotationManager->notifyConfigChanged("date_main");
-                }
-            }
-
-            auto weatherInst = getInst("weather_main");
-            if (weatherInst) {
-                bool wChange = false;
-                if (!doc["weather_api_key"].isNull()) { weatherInst->config.setString("api_key", doc["weather_api_key"].as<String>()); wChange = true; }
-                if (!doc["weather_city"].isNull()) { weatherInst->config.setString("city", doc["weather_city"].as<String>()); wChange = true; }
-                if (!doc["weather_lang"].isNull()) { weatherInst->config.setString("lang", doc["weather_lang"].as<String>()); wChange = true; }
-                if (!doc["weather_offset_x"].isNull()) { weatherInst->config.setInt("weather_offset_x", doc["weather_offset_x"].as<int>()); wChange = true; }
-                if (!doc["weather_offset_y"].isNull()) { weatherInst->config.setInt("weather_offset_y", doc["weather_offset_y"].as<int>()); wChange = true; }
-                
-                if (wChange && !willReboot && rotationManager) {
-                    rotationManager->notifyConfigChanged("weather_main");
-                }
-            }
-
-            if (!doc["lang"].isNull()) {
-                String newLang = doc["lang"].as<String>();
-                if (newLang != cfg.system.lang) {
-                    cfg.system.lang = newLang;
-                    if (rotationManager) {
-                        for (const auto& inst : cfg.instances) {
-                            rotationManager->notifyConfigChanged(inst.instance_id);
-                        }
-                    }
-                }
-            }
-            if (!doc["night_mode_enabled"].isNull()) cfg.system.night_mode_enabled = doc["night_mode_enabled"].as<bool>();
-            if (!doc["turn_off_at"].isNull()) cfg.system.turn_off_at = doc["turn_off_at"].as<String>();
-            if (!doc["wake_up_at"].isNull()) cfg.system.wake_up_at = doc["wake_up_at"].as<String>();
-            if (!doc["night_brightness"].isNull()) cfg.system.night_brightness = doc["night_brightness"].as<int>();
-            if (!doc["idle_fighter_enabled"].isNull()) cfg.system.idle_fighter_enabled = doc["idle_fighter_enabled"].as<bool>();
-            if (!doc["idle_fighter_interval"].isNull()) cfg.system.idle_fighter_interval = doc["idle_fighter_interval"].as<int>();
-            if (!doc["idle_fighter_speed"].isNull()) cfg.system.idle_fighter_speed = doc["idle_fighter_speed"].as<int>();
-
-            if (!doc["timezone"].isNull()) {
-                cfg.system.timezone = doc["timezone"].as<String>();
-                configTzTime(getPosixTimezone(cfg.system.timezone).c_str(), "pool.ntp.org");
-            }
-            if (!doc["format_24h"].isNull()) cfg.system.format24h = doc["format_24h"].as<bool>();
-
-            if (!doc["wifi_ssid"].isNull()) cfg.wifi.ssid = (const char*)doc["wifi_ssid"];
-            if (!doc["wifi_password"].isNull() && String((const char*)doc["wifi_password"]) != "") cfg.wifi.password = (const char*)doc["wifi_password"];
-            if (!doc["wifi_hostname"].isNull()) cfg.wifi.hostname = (const char*)doc["wifi_hostname"];
-
-            if (!doc["mqtt_enabled"].isNull()) {
-                bool newMqtt = (bool)doc["mqtt_enabled"];
-                if (newMqtt != cfg.mqtt.enabled) willReboot = true;
-                cfg.mqtt.enabled = newMqtt;
-            }
-            if (!doc["mqtt_broker"].isNull()) {
-                String newBroker = (const char*)doc["mqtt_broker"];
-                if (newBroker != cfg.mqtt.broker) willReboot = true;
-                cfg.mqtt.broker = newBroker;
-            }
-            if (!doc["mqtt_port"].isNull()) {
-                int newPort = (int)doc["mqtt_port"];
-                if (newPort != cfg.mqtt.port) willReboot = true;
-                cfg.mqtt.port = newPort;
-            }
-            if (!doc["mqtt_user"].isNull()) cfg.mqtt.user = (const char*)doc["mqtt_user"];
-            if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
-            if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
-            if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
-            if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
-            if (!doc["api_token"].isNull()) {
-                String newTok = doc["api_token"].as<String>();
-                if (newTok.length() > 0) {
-                    cfg.system.api_token = newTok;
-                } else if (!cfg.system.api_auth_enabled) {
-                    cfg.system.api_token = "";
-                }
-            }
-        });
-
-        // Sanitize all instances before persisting
-        ConfigSanitizer::sanitizeInstances(config);
-        bool saved = config.saveToSD("/config.json");
-        if (!saved) willReboot = false;   // a reboot now would discard the change
-
-        if (rotationManager && !willReboot) {
-            ConfigSnapshotGuard guard = config.acquireSnapshot();
-            for (const auto& inst : guard->instances) {
-                rotationManager->notifyConfigChanged(inst.instance_id);
-            }
-        }
-
-        if (!saved) { sendConfigSaveFailed(request); return; }
-        if (willReboot) {
-            request->send(200, "application/json", "{\"status\":\"rebooting\"}");
-            delay(500);
-            ESP.restart();
-        } else {
-            request->send(200, "application/json", "{\"status\":\"success\"}");
-        }
-    });
-  server.addHandler(settingsHandler);
-    
-    // API: Get Selected GIF Playlist
-    server.on("/api/playlists/selected", HTTP_GET, [](AsyncWebServerRequest *request){
-        bool exists = false;
-        String content = "";
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            FsFile f = sd.open("/playlists_selected.json", FILE_OPEN_READ);
-            if (f) {
-                exists = true;
-                content = f.readString();
-                f.close();
-            }
-            xSemaphoreGive(sdMutex);
-        }
-        if (exists && content.length() > 0) {
-            request->send(200, "application/json", content);
-        } else {
-            request->send(200, "application/json", "{\"playlists\":[]}");
-        }
-    });
-    
-    // API: Save Selected GIF Playlists — write directly to SD
 
 
     // API: Send Marquee Message
@@ -2059,37 +1525,6 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"success\":true}");
     });
     server.addHandler(msgHandler);
-    
-    // API: Change Clock Theme (also updates config + saves to SD)
-    AsyncCallbackJsonWebHandler* clockHandler = new AsyncCallbackJsonWebHandler("/api/clock", [this](AsyncWebServerRequest *request, JsonVariant &json) {
-        if (!checkAuth(request)) return;
-        if (!json.is<JsonObject>()) {
-            request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-            return;
-        }
-        JsonObject doc = json.as<JsonObject>();
-        
-        int themeId = doc["clock_theme"] | doc["characterId"] | 0;
-        extern ConfigLoader config;
-        config.mutate([&](ConfigLoader& cfg) {
-            for (auto& inst : cfg.instances) {
-                if (inst.instance_id == "clock_main") {
-                    inst.config.setInt("clock_theme", themeId);
-                    break;
-                }
-            }
-        });
-        if (rotationManager) {
-            rotationManager->notifyConfigChanged("clock_main");
-        }
-        bool saved = config.saveToSD("/config.json");
-            if (!saved) {
-                request->send(200, "application/json", "{\"success\":true,\"sd_saved\":false,\"warning\":\"Theme applied but could not be saved to the SD card - it will revert on reboot.\"}");
-                return;
-            }
-        request->send(200, "application/json", "{\"success\":true}");
-    });
-    server.addHandler(clockHandler);
 
     // API: Toggle Panel Power
     AsyncCallbackJsonWebHandler* powerHandler = new AsyncCallbackJsonWebHandler("/api/system/power", [this](AsyncWebServerRequest *request, JsonVariant &json) {
@@ -2113,75 +1548,96 @@ void WebServerAPI::setupRoutes() {
     });
     server.addHandler(powerHandler);
 
-    // API: System settings (GET /api/system)
+    // API: System settings (GET /api/system?section=system|matrix|mqtt|wifi|hardware)
     server.on("/api/system", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
-        SpiRamJsonDocument doc(4096);
-        JsonObject sys = doc.createNestedObject("system");
-        sys["lang"] = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
-        sys["timezone"] = snap.system.timezone;
-        sys["format_24h"] = snap.system.format24h;
-        sys["unit"] = snap.system.unit;
-        sys["temp_unit"] = snap.system.unit;
-        sys["temp_offset"] = snap.system.temp_offset;
-        sys["night_mode_enabled"] = snap.system.night_mode_enabled;
-        sys["turn_off_at"] = snap.system.turn_off_at;
-        sys["wake_up_at"] = snap.system.wake_up_at;
-        sys["night_brightness"] = snap.system.night_brightness;
-        sys["day_brightness"] = snap.matrix.powerLimitPercent;
-        sys["brightness_limit"] = snap.matrix.powerLimitPercent;
-        sys["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
-        sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
-        sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
-        sys["api_auth_enabled"] = snap.system.api_auth_enabled;
-        sys["api_token_configured"] = snap.system.api_token.length() > 0;
 
-        JsonObject mat = doc.createNestedObject("matrix");
-        mat["height"] = snap.matrix.height;
-        mat["width"] = snap.matrix.width;
-        mat["chain_length"] = snap.matrix.chainLength;
-        mat["parallel"] = 1;
-        mat["driver_chip"] = snap.matrix.driverChip;
-        mat["row_address_mode"] = snap.matrix.rowAddressMode;
-        mat["rgb_sequence"] = snap.matrix.rgbSequence;
-        mat["color_depth"] = snap.matrix.colorDepth;
-        mat["pwm_bits"] = snap.matrix.colorDepth;
-        mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
-        mat["clk_phase"] = snap.matrix.clkPhase;
-        mat["latch_blanking"] = snap.matrix.latchBlanking;
-        mat["render_pipeline"] = snap.matrix.render_pipeline;
-        mat["rotation_offset"] = snap.matrix.rotation_offset;
-        mat["auto_rotate"] = snap.matrix.auto_rotate;
-        mat["rotation_transition"] = snap.matrix.rotation_transition;
-        mat["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
+        String section = "";
+        if (request->hasParam("section")) {
+            section = request->getParam("section")->value();
+            section.toLowerCase();
+        }
 
-        JsonObject mqtt = doc.createNestedObject("mqtt");
-        mqtt["enabled"] = snap.mqtt.enabled;
-        mqtt["broker"] = snap.mqtt.broker;
-        mqtt["port"] = snap.mqtt.port;
-        mqtt["user"] = snap.mqtt.user;
-        mqtt["pass"] = snap.mqtt.pass;
-        mqtt["device_name"] = snap.mqtt.deviceName;
-        mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
+        size_t docCap = section.isEmpty() ? 4096 : 1024;
+        SpiRamJsonDocument doc(docCap);
 
-        JsonObject wifi = doc.createNestedObject("wifi");
-        wifi["ssid"] = snap.wifi.ssid;
-        wifi["hostname"] = snap.wifi.hostname;
+        if (section.isEmpty() || section == "system") {
+            JsonObject sys = section.isEmpty() ? doc.createNestedObject("system") : doc.to<JsonObject>();
+            sys["lang"] = snap.system.lang.length() > 0 ? snap.system.lang : "fr";
+            sys["timezone"] = snap.system.timezone;
+            sys["format_24h"] = snap.system.format24h;
+            sys["unit"] = snap.system.unit;
+            sys["temp_unit"] = snap.system.unit;
+            sys["temp_offset"] = snap.system.temp_offset;
+            sys["night_mode_enabled"] = snap.system.night_mode_enabled;
+            sys["turn_off_at"] = snap.system.turn_off_at;
+            sys["wake_up_at"] = snap.system.wake_up_at;
+            sys["night_brightness"] = snap.system.night_brightness;
+            sys["day_brightness"] = snap.matrix.powerLimitPercent;
+            sys["brightness_limit"] = snap.matrix.powerLimitPercent;
+            sys["idle_fighter_enabled"] = snap.system.idle_fighter_enabled;
+            sys["idle_fighter_interval"] = snap.system.idle_fighter_interval;
+            sys["idle_fighter_speed"] = snap.system.idle_fighter_speed;
+            sys["api_auth_enabled"] = snap.system.api_auth_enabled;
+            sys["api_token_configured"] = snap.system.api_token.length() > 0;
+        }
 
-        JsonObject hw = doc.createNestedObject("hardware");
-        const auto& caps = hardwareHAL.capabilities();
-        hw["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
-        JsonObject psramObj = hw.createNestedObject("psram");
-        psramObj["available"] = caps.hasPsram;
-        psramObj["bytes"] = caps.psramBytes;
-        hw["microphone"] = caps.hasMicrophone;
-        hw["temperature_sensor"] = caps.hasTempSensor;
-        hw["gyroscope"] = gyroHAL.isAvailable();
+        if (section.isEmpty() || section == "matrix") {
+            JsonObject mat = section.isEmpty() ? doc.createNestedObject("matrix") : doc.to<JsonObject>();
+            mat["height"] = snap.matrix.height;
+            mat["width"] = snap.matrix.width;
+            mat["chain_length"] = snap.matrix.chainLength;
+            mat["parallel"] = 1;
+            mat["driver_chip"] = snap.matrix.driverChip;
+            mat["row_address_mode"] = snap.matrix.rowAddressMode;
+            mat["rgb_sequence"] = snap.matrix.rgbSequence;
+            mat["color_depth"] = snap.matrix.colorDepth;
+            mat["pwm_bits"] = snap.matrix.colorDepth;
+            mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
+            mat["clk_phase"] = snap.matrix.clkPhase;
+            mat["latch_blanking"] = snap.matrix.latchBlanking;
+            mat["render_pipeline"] = snap.matrix.render_pipeline;
+            mat["rotation_offset"] = snap.matrix.rotation_offset;
+            mat["auto_rotate"] = snap.matrix.auto_rotate;
+            mat["rotation_transition"] = snap.matrix.rotation_transition;
+            mat["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
+        }
 
-        doc["api_auth_enabled"] = snap.system.api_auth_enabled;
-        doc["api_token_configured"] = snap.system.api_token.length() > 0;
+        if (section.isEmpty() || section == "mqtt") {
+            JsonObject mqtt = section.isEmpty() ? doc.createNestedObject("mqtt") : doc.to<JsonObject>();
+            mqtt["enabled"] = snap.mqtt.enabled;
+            mqtt["broker"] = snap.mqtt.broker;
+            mqtt["port"] = snap.mqtt.port;
+            mqtt["user"] = snap.mqtt.user;
+            mqtt["pass"] = snap.mqtt.pass;
+            mqtt["device_name"] = snap.mqtt.deviceName;
+            mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
+        }
+
+        if (section.isEmpty() || section == "wifi") {
+            JsonObject wifi = section.isEmpty() ? doc.createNestedObject("wifi") : doc.to<JsonObject>();
+            wifi["ssid"] = snap.wifi.ssid;
+            wifi["hostname"] = snap.wifi.hostname;
+        }
+
+        if (section.isEmpty() || section == "hardware") {
+            JsonObject hw = section.isEmpty() ? doc.createNestedObject("hardware") : doc.to<JsonObject>();
+            const auto& caps = hardwareHAL.capabilities();
+            hw["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
+            JsonObject psramObj = hw.createNestedObject("psram");
+            psramObj["available"] = caps.hasPsram;
+            psramObj["bytes"] = caps.psramBytes;
+            hw["microphone"] = caps.hasMicrophone;
+            hw["temperature_sensor"] = caps.hasTempSensor;
+            hw["gyroscope"] = gyroHAL.isAvailable();
+        }
+
+        if (section.isEmpty()) {
+            doc["api_auth_enabled"] = snap.system.api_auth_enabled;
+            doc["api_token_configured"] = snap.system.api_token.length() > 0;
+        }
 
         sendJsonResponse(request, doc);
     });
@@ -3234,7 +2690,7 @@ void WebServerAPI::setupRoutes() {
     }
 
     // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's
-    // /api/wifi). Unlike the generic /api/settings handler, this persists the new credentials to
+    // /api/wifi). Unlike the generic /api/system handler, this persists the new credentials to
     // SD *and* tries to associate right away, reporting success/failure synchronously instead of
     // requiring a full reboot to find out if the new SSID/password actually work.
     AsyncCallbackJsonWebHandler* wifiHandler = new AsyncCallbackJsonWebHandler("/api/wifi", [](AsyncWebServerRequest *request, JsonVariant &json) {

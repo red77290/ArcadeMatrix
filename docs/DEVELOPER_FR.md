@@ -516,18 +516,18 @@ case THEME_SPACE_INVADERS:
     break;
 ```
 
-### Étape 4 : Exposer dans `/api/themes` (`src/api/WebServerAPI.cpp`)
+### Étape 4 : Exposer le thème dans `scripts/extract_engine_catalog.py`
 
-Ajoutez le thème dans le tableau `themes` pour peupler automatiquement la liste déroulante de l'interface Web :
+Ajoutez votre thème dans `CANONICAL_THEMES` dans `scripts/extract_engine_catalog.py` pour qu'il soit automatiquement pré-compilé dans l'interface Web à la compilation :
 
-```cpp
-static const ThemeItem themes[] = {
-    // ...
-    { 25, "Space Invaders Clock" }
-};
+```python
+CANONICAL_THEMES = [
+    # ...
+    {"id": 25, "name": "Space Invaders Clock"},
+]
 ```
 
-L'interface Web affichera automatiquement la nouvelle option, l'enregistrera dans `config.json` et la rechargera à chaud sans redémarrage.
+L'interface Web affichera automatiquement la nouvelle option (avec zéro allocation RAM sur l'ESP32), l'enregistrera dans `config.json` et la rechargera à chaud sans redémarrage.
 
 ---
 
