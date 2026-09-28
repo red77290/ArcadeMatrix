@@ -111,8 +111,43 @@ namespace ResourceReserve {
 }
 
 /**
+ * @enum EvaluationMode
+ * @brief Evaluation policy separating reference/catalog qualification from dynamic runtime admission.
+ */
+enum class EvaluationMode : uint8_t {
+    ReferenceCapability = 0, ///< Static/Catalogue qualification: "Does this hardware profile support this engine under reference budget?"
+    RuntimeAdmission    = 1  ///< Dynamic pre-allocation validation: "Does current runtime resource state satisfy declared admission constraints?"
+};
+
+/**
+ * @struct ReferenceMemoryProfile
+ * @brief Measured baseline budget representing qualified memory available at idle reference baseline.
+ */
+struct ReferenceMemoryProfile {
+    uint32_t freeInternalHeap;       ///< Measured free heap: BEFORE engine allocation, AFTER permanent firmware infrastructure, BEFORE transient engine resources, EXCLUDING safety reserve.
+    uint32_t largestInternalBlock;   ///< Measured largest contiguous internal block at the reference idle baseline.
+    uint32_t freePsram;              ///< Available external SPIRAM
+    uint8_t  accountingVersion;      ///< Schema version tracking profile measurements
+};
+
+// Qualification baselines validated with tests/tools/matrix_generator.cpp
+constexpr ReferenceMemoryProfile ESP32_STD_REFERENCE {
+    .freeInternalHeap = 140000,
+    .largestInternalBlock = 70000,
+    .freePsram = 0,
+    .accountingVersion = 1
+};
+
+constexpr ReferenceMemoryProfile WAVESHARE_S3_REFERENCE {
+    .freeInternalHeap = 220000,
+    .largestInternalBlock = 110000,
+    .freePsram = 7500000,
+    .accountingVersion = 1
+};
+
+/**
  * @struct CompatibilityContext
- * @brief Complete snapshot of hardware, memory, panel geometry, and presentation policy.
+ * @brief Complete snapshot of hardware, memory, panel geometry, presentation policy, and evaluation mode.
  */
 struct CompatibilityContext {
     HardwareCapabilities hardware;
@@ -123,6 +158,7 @@ struct CompatibilityContext {
     String requestedPipeline = "auto";
     PresentationPolicy presentationPolicy;
     bool isConnectedWifi = true;
+    EvaluationMode mode = EvaluationMode::ReferenceCapability;
 };
 
 /**
@@ -191,9 +227,15 @@ public:
     static void notifyHardwareCapabilityChanged();
 
     /**
-     * @brief Captures the current live compatibility context from system hardware and configuration.
+     * @brief Gets the static reference memory profile for a given hardware profile.
      */
-    static CompatibilityContext buildCurrentContext();
+    static ReferenceMemoryProfile getReferenceMemoryProfile(HwProfile profile);
+
+    /**
+     * @brief Captures compatibility context from system hardware and configuration.
+     * @param mode Evaluation mode (ReferenceCapability by default)
+     */
+    static CompatibilityContext buildCurrentContext(EvaluationMode mode = EvaluationMode::ReferenceCapability);
 
     /**
      * @brief Evaluates an engine descriptor against a concrete compatibility context.

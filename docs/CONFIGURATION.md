@@ -65,6 +65,8 @@ ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`)
 
 > [!NOTE]
 > For backward compatibility with older configurations, any legacy `force_single_buffer: true` is automatically migrated to `render_pipeline: canvas_single`.
+>
+> **Engine Admission & Target Pipeline Gating:** When modifying rotations (`POST /api/rotation`) or instances (`POST /api/instances`), engine compatibility is evaluated against the *target pipeline* (`targetPipeline`), preventing false rejection during engine transitions. Furthermore, the firmware declares `capabilities.http.recommendedConcurrency` (1 on `ESP32_STD`, 3 on `WAVESHARE_S3`) to ensure client browsers never overwhelm LwIP network sockets during rendering.
 
 ### 2.2 Web UI Hardware Tab Integration
 

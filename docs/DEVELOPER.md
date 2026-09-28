@@ -261,7 +261,11 @@ ArcadeMatrix V4 relies on `CompatibilityEvaluator` (`src/core/CompatibilityEvalu
 - Evaluates peripherals (`HardwareHAL`), panel geometry (`width`, `height`, `colorDepth`), presentation pipeline, and blanking budget.
 - Models heap fragmentation by comparing `max(canvasBytes, internalContiguousBytes)` against `largestInternalBlock`.
 - Enforces conservative admission reserves: `ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE` (45 KB), `ASYNC_TCP_ADMISSION_RESERVE` (16 KB), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 KB), and `SYSTEM_MIN_HEADROOM_RESERVE` (35 KB).
-- Two-level gating: Level 1 (WebUI catalog grays out incompatible engines and tooltips display memory diagnostics) and Level 2 (Runtime safety: `POST /api/rotation` rejects incompatible engines with HTTP 400).
+- **Two Distinct Evaluation Modes:**
+  * `EvaluationMode::ReferenceCapability`: Static qualification against the hardware profile under reference budget baseline (`ReferenceMemoryProfile`). Powers the WebUI Catalog (`/api/engines`) and safety gating in `POST /api/rotation` and `POST /api/instances`, completely decoupled from transient Core 1 memory pressure (such as GIF playback). Evaluates against the *requested pipeline* (`targetPipeline`).
+  * `EvaluationMode::RuntimeAdmission`: Dynamic pre-allocation validation checking live volatile heap state before allocating heavy resources.
+- **Declarative HTTP Concurrency:** The firmware advertises `capabilities.http.recommendedConcurrency` (1 on `ESP32_STD`, 3 on `WAVESHARE_S3`). The frontend `HttpRequestQueue` bounds transport `fetch()` calls to this limit, preventing LwIP socket starvation while GIF or canvas operations run.
+- **Statically Qualified Safe Fallback:** If dynamic memory allocation fails during transition `initialize(new)`, the runtime falls back to a statically qualified Safe Fallback engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
 
 > [!IMPORTANT]
 > **Mandatory Workflow When Adding a New Engine:**

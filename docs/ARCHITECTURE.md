@@ -232,9 +232,25 @@ flowchart TD
     PY -->|"Generate & CI Validate (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
 ```
 
-- **Level 1 Gating (WebUI):** Engines marked `incompatible` are grayed out with a disabled button `🚫 Incompatible: <reason>` and rich tooltip displaying DRAM, contiguous block, and PSRAM diagnostics. A filter checkbox `[✓] Hide Incompatible` toggles their visibility.
-- **Level 2 Gating (Runtime Safety):** `POST /api/rotation` evaluates any submitted engine before admission and returns HTTP 400 with a detailed error payload if an incompatible engine is requested, protecting the system from crashes.
+- **Level 1 Gating (WebUI Catalog & ReferenceCapability):** The catalog (`/api/engines`) evaluates descriptors in `EvaluationMode::ReferenceCapability` against the static `ReferenceMemoryProfile` (idle baseline qualification). This ensures the catalog remains 100% invariant and immune to transient Core 1 memory pressure (such as GIF decoding). Incompatible engines are grayed out with a disabled button `🚫 Incompatible: <reason>` and rich tooltip diagnostics.
+- **Level 2 Gating (Runtime Safety on Target Pipeline):** `POST /api/rotation` and `POST /api/instances` evaluate submitted engines against the *target pipeline* requested (`targetPipeline`), not the currently active pipeline. Admission uses `ReferenceCapability` to prevent deadlock when transitioning from heavy engines to baseline engines.
 - **Continuous Documentation Validation:** Any addition or modification of an engine requires updating `test/native/tools/matrix_generator.cpp` and executing `scripts/generate_engine_matrix.py`. CI validates this via `scripts/validate_docs.py` using `--check`.
+
+### Declarative HTTP Concurrency & Socket Starvation Prevention
+
+The ESP32 network stack (LwIP on Core 0) shares internal DRAM with hardware peripherals. To prevent socket buffer starvation during intensive render cycles (e.g. GIF playback):
+1. **Firmware Advertisement (`/api/hardware`):** The firmware exposes `capabilities.http.recommendedConcurrency` (1 for `ESP32_STD`, 3 for `WAVESHARE_S3`).
+2. **Frontend `HttpRequestQueue` (`data/index.html`):** The WebUI boots with concurrency 1 and updates dynamically to the advertised limit. The queue encapsulates strictly the network transport call (`fetch()`), while JSON parsing, UI callbacks, and DOM rendering execute asynchronously outside the transport queue.
+
+### Transition Lifecycle & Statically Qualified Safe Fallback
+
+Transitions follow an atomic lifecycle:
+`deactivate(old) -> reclaim transient RAM -> initialize(new) -> activate(new)`
+
+If dynamic memory allocation fails during `initialize(new)`:
+- The system activates a **statically qualified Safe Fallback** engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
+- The system never attempts an uncertain re-allocation of the discarded heavy engine, ensuring unbroken display operation.
+- Persistent configuration (`config.json`) is committed only after activation success.
 
 ---
 

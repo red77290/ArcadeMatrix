@@ -21,23 +21,23 @@
 #include "GNewsEngine.h"
 #include "MarqueeEngine.h"
 
-CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* activePipeline) {
-    auto ctx = CompatibilityEvaluator::buildCurrentContext();
-    if (activePipeline && strlen(activePipeline) > 0) {
-        ctx.requestedPipeline = activePipeline;
+CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* targetPipeline, EvaluationMode mode) {
+    auto ctx = CompatibilityEvaluator::buildCurrentContext(mode);
+    if (targetPipeline && strlen(targetPipeline) > 0) {
+        ctx.requestedPipeline = targetPipeline;
     }
     return CompatibilityEvaluator::evaluate(desc, ctx);
 }
 
-RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req, const char* activePipeline) {
+RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req, const char* targetPipeline, EvaluationMode mode) {
     EngineDescriptor dummyDesc;
     dummyDesc.requirements = req;
-    auto verdict = evaluateCompatibility(dummyDesc, activePipeline);
+    auto verdict = evaluateCompatibility(dummyDesc, targetPipeline, mode);
     return { verdict.compatible(), String(verdict.reasonText) };
 }
 
-bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const char* activePipeline) {
-    return checkRequirements(req, activePipeline).satisfied;
+bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const char* targetPipeline, EvaluationMode mode) {
+    return checkRequirements(req, targetPipeline, mode).satisfied;
 }
 
 bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {

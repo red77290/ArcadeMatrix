@@ -228,7 +228,11 @@ ArcadeMatrix V4 s'appuie sur `CompatibilityEvaluator` (`src/core/CompatibilityEv
 - Évalue les périphériques (`HardwareHAL`), la géométrie du panneau (`width`, `height`, `colorDepth`), le pipeline de rendu et le budget de blanking.
 - Modélise la fragmentation du tas en vérifiant `max(canvasBytes, internalContiguousBytes) <= largestInternalBlock`.
 - Applique des réserves d'admission conservatives : `TLS_SOCKET_ADMISSION_RESERVE` (45 Ko), `ASYNC_TCP_ADMISSION_RESERVE` (16 Ko), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 Ko) et `SYSTEM_MIN_HEADROOM_RESERVE` (35 Ko).
-- Deux niveaux de protection : Niveau 1 (l'interface WebUI grise les moteurs incompatibles et affiche des infobulles diagnostiques) et Niveau 2 (Sécurité runtime : `POST /api/rotation` rejette les moteurs incompatibles avec code HTTP 400).
+- **Deux Modes d'Évaluation Distincts :**
+  * `EvaluationMode::ReferenceCapability` : Qualification statique contre le profil matériel sous budget de référence (`ReferenceMemoryProfile`). Utilisé par le catalogue WebUI (`/api/engines`) et les gardes de mutation (`POST /api/rotation`, `POST /api/instances`), totalement immunisé contre la pression mémoire transitoire du Core 1 (ex. lecture de GIFs). Évalue le *pipeline demandé* (`targetPipeline`).
+  * `EvaluationMode::RuntimeAdmission` : Validation d'admission dynamique vérifiant les contraintes instantanées du tas volatile avant d'allouer des ressources lourdes.
+- **Concurrence HTTP Déclarative :** Le firmware déclare `capabilities.http.recommendedConcurrency` (1 sur `ESP32_STD`, 3 sur `WAVESHARE_S3`). La file frontend `HttpRequestQueue` borne les appels `fetch()` à cette valeur, éliminant la saturation des sockets LwIP.
+- **Safe Fallback Statique Garanti :** En cas d'échec d'allocation dynamique lors de la transition (`initialize(new)`), le système bascule sur un moteur de repli garanti sans PSRAM, sans audio, sans réseau et borné à $\le 2$ Ko.
 
 > [!IMPORTANT]
 > **Procédure Obligatoire Lors de l'Ajout d'un Moteur :**

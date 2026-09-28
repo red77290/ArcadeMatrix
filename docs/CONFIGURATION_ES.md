@@ -65,6 +65,8 @@ ArcadeMatrix v4 introduce el SPI gráfico agnóstico al hardware (`IDrawingSurfa
 
 > [!NOTE]
 > Por compatibilidad hacia atrás con configuraciones heredadas, cualquier parámetro `force_single_buffer: true` se migra automáticamente a `render_pipeline: canvas_single`.
+>
+> **Admisión de Motores y Gating sobre Pipeline Solicitado:** Al modificar rotaciones (`POST /api/rotation`) o instancias (`POST /api/instances`), la compatibilidad se evalúa frente al *pipeline de destino* (`targetPipeline`), evitando rechazos erróneos durante transiciones de motores. Asimismo, el firmware anuncia `capabilities.http.recommendedConcurrency` (1 en `ESP32_STD`, 3 en `WAVESHARE_S3`) para coordinar el tráfico HTTP del navegador y erradicar la inanición de sockets LwIP.
 
 ### 2.2 Integración en la Pestaña de Hardware de la Web UI
 

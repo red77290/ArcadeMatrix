@@ -2093,9 +2093,55 @@ function withTimeout(ms = API_TIMEOUT_MS) {
   return ctrl.signal;
 }
 
+// HTTP transport concurrency limiter ensuring the browser never exhausts LwIP sockets on Core 0.
+// Bound strictly to fetch() transport; parsing, callbacks and UI execution happen outside the queue.
+class HttpRequestQueue {
+  constructor(initialConcurrency = 1) {
+    this.maxConcurrency = initialConcurrency;
+    this.activeRequests = 0;
+    this.queue = [];
+  }
+
+  setConcurrency(limit) {
+    const val = parseInt(limit, 10);
+    if (!isNaN(val) && val >= 1) {
+      this.maxConcurrency = val;
+      this._drain();
+    }
+  }
+
+  enqueue(fetchFn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fetchFn, resolve, reject });
+      this._drain();
+    });
+  }
+
+  _drain() {
+    while (this.activeRequests < this.maxConcurrency && this.queue.length > 0) {
+      const item = this.queue.shift();
+      this.activeRequests++;
+      item.fetchFn()
+        .then(res => {
+          this.activeRequests--;
+          item.resolve(res);
+          this._drain();
+        })
+        .catch(err => {
+          this.activeRequests--;
+          item.reject(err);
+          this._drain();
+        });
+    }
+  }
+}
+
+const httpQueue = new HttpRequestQueue(1);
+window.httpQueue = httpQueue;
+
 const API = {
   async get(url, timeoutMs = API_TIMEOUT_MS) {
-    const res = await fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) });
+    const res = await httpQueue.enqueue(() => fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2115,12 +2161,12 @@ const API = {
   },
 
   async post(url, data, timeoutMs = API_TIMEOUT_MS) {
-    const res = await fetch(url, {
+    const res = await httpQueue.enqueue(() => fetch(url, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: data ? JSON.stringify(data) : undefined,
       signal: withTimeout(timeoutMs),
-    });
+    }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2139,7 +2185,7 @@ const API = {
   },
 
   async delete(url) {
-    const res = await fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() });
+    const res = await httpQueue.enqueue(() => fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2151,11 +2197,11 @@ const API = {
   async uploadMarquee(file) {
     const formData = new FormData();
     formData.append('image', file);
-    const res = await fetch('/api/marquee', {
+    const res = await httpQueue.enqueue(() => fetch('/api/marquee', {
       method: 'POST',
       headers: authHeaders(),
       body: formData
-    });
+    }));
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -6598,9 +6644,8 @@ window.switchSystemTab = function(tabId) {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Ordered startup: initNavigation() restores the active page and lazily renders only that page.
-  // Global version badge is fetched once. All other subsystems (media, settings, hardware, ota)
-  // are loaded on-demand when the user navigates to their respective page/tab.
+  // Ordered startup: initHardwareCapabilities sets transport concurrency, initNavigation restores active page.
+  initHardwareCapabilities();
   initNavigation();
   loadVersion();
 });
@@ -7219,7 +7264,7 @@ function initGifLibrary() {
   const tr = (k, f, v) => { let s = (typeof t === 'function') ? t(k, f) : f; if (v) Object.keys(v).forEach(x => { s = s.split('{' + x + '}').join(v[x]); }); return s; };
   const headers = () => { const h = {}; const tok = localStorage.getItem('api_token'); if (tok) h['X-API-Token'] = tok; return h; };
   const api = async (url, opts) => {
-    const r = await fetch(url, Object.assign({ headers: headers() }, opts || {}));
+    const r = await httpQueue.enqueue(() => fetch(url, Object.assign({ headers: headers() }, opts || {})));
     if (r.status === 401 && typeof handleUnauthorized === 'function') handleUnauthorized();
     let b = {}; try { b = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status));
@@ -7839,6 +7884,9 @@ async function initHardwareCapabilities() {
       API.get('/api/status').catch(() => null),
     ]);
     if (hw) {
+      if (hw.capabilities && hw.capabilities.http && hw.capabilities.http.recommendedConcurrency) {
+        httpQueue.setConcurrency(hw.capabilities.http.recommendedConcurrency);
+      }
       const elProf = document.getElementById('hw-cap-profile');
       if (elProf) {
         elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';

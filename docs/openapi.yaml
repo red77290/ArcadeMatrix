@@ -875,6 +875,19 @@ paths:
                     type: boolean
                   gyroscope:
                     type: boolean
+                  max_color_depth:
+                    type: integer
+                    example: 8
+                  capabilities:
+                    type: object
+                    properties:
+                      http:
+                        type: object
+                        properties:
+                          recommendedConcurrency:
+                            type: integer
+                            example: 3
+                            description: "Recommended maximum concurrent HTTP connections for client transport (1 on ESP32_STD, 3 on WAVESHARE_S3)"
 
   /api/instances:
     get:

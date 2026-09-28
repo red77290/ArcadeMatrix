@@ -18,23 +18,44 @@ void CompatibilityEvaluator::notifyHardwareCapabilityChanged() {
     s_hardwareCapabilityGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 
-CompatibilityContext CompatibilityEvaluator::buildCurrentContext() {
+ReferenceMemoryProfile CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile profile) {
+    if (profile == HwProfile::WAVESHARE_S3) {
+        return WAVESHARE_S3_REFERENCE;
+    }
+    return ESP32_STD_REFERENCE;
+}
+
+CompatibilityContext CompatibilityEvaluator::buildCurrentContext(EvaluationMode mode) {
     CompatibilityContext ctx;
+    ctx.mode = mode;
+    ctx.hardware = hardwareHAL.capabilities();
+
+    if (mode == EvaluationMode::ReferenceCapability) {
+        ReferenceMemoryProfile ref = getReferenceMemoryProfile(ctx.hardware.profile);
+        ctx.memory.freeInternalHeap = ref.freeInternalHeap;
+        ctx.memory.largestInternalBlock = ref.largestInternalBlock;
+        ctx.memory.freePsram = ref.freePsram;
+        ctx.memory.freeDmaHeap = (ctx.hardware.profile == HwProfile::WAVESHARE_S3) ? 80000 : 40000;
 #if defined(ESP32)
-    ctx.hardware = hardwareHAL.capabilities();
-    ctx.memory.freeInternalHeap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    ctx.memory.largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    ctx.memory.freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ctx.memory.freeDmaHeap = heap_caps_get_free_size(MALLOC_CAP_DMA);
-    ctx.isConnectedWifi = (WiFi.status() == WL_CONNECTED) || (WiFi.getMode() == WIFI_MODE_AP) || ctx.hardware.hasNetwork;
+        ctx.isConnectedWifi = (WiFi.status() == WL_CONNECTED) || (WiFi.getMode() == WIFI_MODE_AP) || ctx.hardware.hasNetwork;
 #else
-    ctx.hardware = hardwareHAL.capabilities();
-    ctx.memory.freeInternalHeap = 200000;
-    ctx.memory.largestInternalBlock = 90000;
-    ctx.memory.freePsram = 0;
-    ctx.memory.freeDmaHeap = 40000;
-    ctx.isConnectedWifi = true;
+        ctx.isConnectedWifi = true;
 #endif
+    } else {
+#if defined(ESP32)
+        ctx.memory.freeInternalHeap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ctx.memory.largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ctx.memory.freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        ctx.memory.freeDmaHeap = heap_caps_get_free_size(MALLOC_CAP_DMA);
+        ctx.isConnectedWifi = (WiFi.status() == WL_CONNECTED) || (WiFi.getMode() == WIFI_MODE_AP) || ctx.hardware.hasNetwork;
+#else
+        ctx.memory.freeInternalHeap = 200000;
+        ctx.memory.largestInternalBlock = 90000;
+        ctx.memory.freePsram = 0;
+        ctx.memory.freeDmaHeap = 40000;
+        ctx.isConnectedWifi = true;
+#endif
+    }
 
     extern ConfigLoader config;
     ConfigSnapshotGuard guard = config.acquireSnapshot();

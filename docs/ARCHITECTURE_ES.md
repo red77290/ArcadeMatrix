@@ -186,9 +186,25 @@ flowchart TD
     PY -->|"Generación y Validación CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
 ```
 
-- **Filtro Nivel 1 (WebUI):** Los motores incompatibles se muestran deshabilitados con una insignia `🚫 Incompatible: <motivo>` y una ventana emergente detallada con diagnósticos de memoria DRAM, bloque contiguo y SPIRAM. Una casilla de verificación `[✓] Ocultar incompatibles` filtra su visibilidad.
-- **Filtro Nivel 2 (Seguridad Runtime):** El endpoint `POST /api/rotation` evalúa la viabilidad de cada motor antes de admitirlo y devuelve HTTP 400 con un payload de error si se solicita un motor incompatible, blindando el sistema contra caídas por falta de memoria.
+- **Filtro Nivel 1 (Catálogo WebUI y ReferenceCapability):** El catálogo (`/api/engines`) evalúa los motores en `EvaluationMode::ReferenceCapability` contra el perfil estático de referencia `ReferenceMemoryProfile` (calificación en reposo). Esto garantiza la invariancia total del catálogo ante la presión de memoria volátil del Core 1 (como la decodificación de GIFs). Los motores incompatibles se muestran deshabilitados con una insignia `🚫 Incompatible: <motivo>` y diagnósticos detallados.
+- **Filtro Nivel 2 (Seguridad Runtime sobre Pipeline Solicitado):** Los endpoints `POST /api/rotation` y `POST /api/instances` evalúan los motores contra el *pipeline destino solicitado* (`targetPipeline`) y no contra el pipeline activo, en modo `ReferenceCapability` para eliminar bloqueos mutuos durante las transiciones desde motores pesados hacia motores base.
 - **Validación CI Continua:** Toda adición o modificación de un motor exige actualizar `test/native/tools/matrix_generator.cpp` y ejecutar `scripts/generate_engine_matrix.py`. La conformidad de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) se comprueba en CI mediante `scripts/validate_docs.py`.
+
+### Concurrencia HTTP Declarativa y Prevención de Inanición de Sockets LwIP
+
+La pila de red (LwIP en Core 0) comparte la DRAM interna con los periféricos de hardware. Para prevenir la inanición de sockets durante ciclos gráficos intensivos (p. ej. reproducción de GIFs):
+1. **Declaración del Firmware (`/api/hardware`):** El firmware anuncia `capabilities.http.recommendedConcurrency` (1 en `ESP32_STD`, 3 en `WAVESHARE_S3`).
+2. **Cola Frontend `HttpRequestQueue` (`data/index.html`):** La WebUI inicia con concurrencia 1 y se modula dinámicamente. La cola engloba **estrictamente la operación de red `fetch()`**; el análisis JSON, los callbacks y el renderizado DOM se ejecutan asíncronamente fuera de la cola.
+
+### Ciclo de Transición y Safe Fallback Estático
+
+Las transiciones siguen un ciclo atómico:
+`deactivate(old) -> liberación de RAM transitoria -> initialize(new) -> activate(new)`
+
+Si la asignación de memoria falla durante `initialize(new)`:
+- El sistema activa un **Safe Fallback calificado estáticamente** (0 PSRAM, 0 audio, 0 red, $\le 2$ KB acotados).
+- Nunca se intenta reasignar el motor pesado descartado, garantizando la permanencia ininterrumpida de la pantalla.
+- La configuración persistente (`config.json`) se guarda únicamente tras la activación exitosa.
 
 ---
 

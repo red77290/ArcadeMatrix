@@ -94,8 +94,8 @@ static void serializeEngineDescriptor(const EngineDescriptor& desc, String& out,
     out.reserve(out.length() + (includeSchema ? 2048 : 1024));
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
-    const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
-    auto verdict = EngineRegistrar::evaluateCompatibility(desc, activePipeline);
+    const char* targetPipeline = guard.get().matrix.render_pipeline.c_str();
+    auto verdict = EngineRegistrar::evaluateCompatibility(desc, targetPipeline, EvaluationMode::ReferenceCapability);
 
     out += "{\"metadata\":{";
     out += "\"id\":"; appendJsonString(out, desc.metadata.id);
@@ -649,6 +649,10 @@ void WebServerAPI::setupRoutes() {
         doc["gyroscope"] = gyroHAL.isAvailable();
         doc["max_color_depth"] = (caps.profile == HwProfile::WAVESHARE_S3) ? 8 : 6;
         
+        JsonObject capabilitiesObj = doc.createNestedObject("capabilities");
+        JsonObject httpObj = capabilitiesObj.createNestedObject("http");
+        httpObj["recommendedConcurrency"] = (caps.profile == HwProfile::WAVESHARE_S3) ? 3 : 1;
+        
         sendJsonResponse(request, doc);
     });
 
@@ -866,8 +870,10 @@ void WebServerAPI::setupRoutes() {
         }
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
-        auto verdict = EngineRegistrar::evaluateCompatibility(*desc, activePipeline);
+        const char* targetPipeline = doc.containsKey("pipeline")
+            ? doc["pipeline"].as<const char*>()
+            : guard.get().matrix.render_pipeline.c_str();
+        auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
         if (!verdict.compatible()) {
             SpiRamJsonDocument errDoc(256);
             errDoc["error"] = "engine_unavailable";
@@ -1066,7 +1072,6 @@ void WebServerAPI::setupRoutes() {
         extern RotationManager* rotationManager;
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const char* activePipeline = guard.get().matrix.render_pipeline.c_str();
 
         // Level 2 Runtime Safety Gating: Reject any entry that references an incompatible engine
         for (JsonObject entry : arr) {
@@ -1084,7 +1089,10 @@ void WebServerAPI::setupRoutes() {
             }
             const EngineDescriptor* desc = EngineRegistry::getDescriptor(engineId.c_str());
             if (desc) {
-                auto verdict = EngineRegistrar::evaluateCompatibility(*desc, activePipeline);
+                const char* targetPipeline = entry.containsKey("pipeline")
+                    ? entry["pipeline"].as<const char*>()
+                    : guard.get().matrix.render_pipeline.c_str();
+                auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
                 if (!verdict.compatible()) {
                     SpiRamJsonDocument errDoc(256);
                     errDoc["error"] = "incompatible_engine";
@@ -1632,6 +1640,9 @@ void WebServerAPI::setupRoutes() {
             hw["microphone"] = caps.hasMicrophone;
             hw["temperature_sensor"] = caps.hasTempSensor;
             hw["gyroscope"] = gyroHAL.isAvailable();
+            JsonObject capabilitiesObj = hw.createNestedObject("capabilities");
+            JsonObject httpObj = capabilitiesObj.createNestedObject("http");
+            httpObj["recommendedConcurrency"] = (caps.profile == HwProfile::WAVESHARE_S3) ? 3 : 1;
         }
 
         if (section.isEmpty()) {

@@ -187,9 +187,25 @@ flowchart TD
     PY -->|"Génération & Validation CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
 ```
 
-- **Filtrage Niveau 1 (WebUI) :** Les moteurs incompatibles apparaissent grisés avec un badge inactif `🚫 Incompatible : <motif>` et une infobulle détaillée (mémoire DRAM, bloc contigu, SPIRAM). Une case `[✓] Masquer incompatibles` permet de filtrer l'affichage.
-- **Filtrage Niveau 2 (Sécurité Runtime) :** L'endpoint `POST /api/rotation` évalue la compatibilité de chaque moteur soumis et renvoie une erreur HTTP 400 détaillée en cas de tentative d'injection d'un moteur incompatible, immunisant le système contre les panics mémoire.
+- **Filtrage Niveau 1 (Catalogue WebUI & ReferenceCapability) :** Le catalogue (`/api/engines`) évalue les moteurs en `EvaluationMode::ReferenceCapability` contre le profil de référence statique `ReferenceMemoryProfile` (qualification au repos). Cela garantit l'invariance totale du catalogue, immunisé contre la pression mémoire volatile du Core 1 (ex. décodage de GIFs). Les moteurs incompatibles apparaissent grisés avec un badge inactif `🚫 Incompatible : <motif>` et des infobulles détaillées.
+- **Filtrage Niveau 2 (Sécurité Runtime sur Pipeline Demandé) :** Les endpoints `POST /api/rotation` et `POST /api/instances` évaluent les moteurs contre le *pipeline cible demandé* (`targetPipeline`) et non le pipeline actif, en mode `ReferenceCapability` pour éliminer tout verrou mortel lors des transitions depuis des moteurs lourds vers les moteurs de base.
 - **Validation CI Continue :** Tout ajout ou modification de moteur impose la mise à jour de `test/native/tools/matrix_generator.cpp` et l'exécution de `scripts/generate_engine_matrix.py`. La conformité de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) est vérifiée en CI par `scripts/validate_docs.py`.
+
+### Concurrence HTTP Déclarative & Protection contre la Famine de Sockets LwIP
+
+La pile réseau (LwIP sur Core 0) partage la DRAM interne avec les périphériques matériels. Afin d'éviter toute famine réseau lors de cycles graphiques intensifs (ex: lecture de GIFs) :
+1. **Déclaration Firmware (`/api/hardware`) :** Le firmware annonce `capabilities.http.recommendedConcurrency` (1 sur `ESP32_STD`, 3 sur `WAVESHARE_S3`).
+2. **File d'Attente Frontend `HttpRequestQueue` (`data/index.html`) :** La WebUI démarre avec une concurrence de 1 et s'ajuste dynamiquement. La file d'attente n'englobe **strictement que l'opération réseau `fetch()`** ; le parsing JSON, les callbacks et le rendu s'exécutent de façon asynchrone hors de la file.
+
+### Cycle de Transition & Safe Fallback Statique
+
+Les transitions obéissent à un cycle de vie transactionnel :
+`deactivate(old) -> libération RAM transitoire -> initialize(new) -> activate(new)`
+
+En cas d'échec d'allocation dynamique lors de `initialize(new)` :
+- Le système bascule automatiquement sur un **Safe Fallback statiquement qualifié** (0 PSRAM, 0 audio, 0 réseau, mémoire bornée $\le 2$ Ko).
+- Le système ne tente jamais une réallocation aléatoire de l'ancien moteur lourd déchargé, garantissant la permanence de l'affichage.
+- La configuration persistée (`config.json`) n'est enregistrée qu'après confirmation du succès d'activation.
 
 ---
 

@@ -580,6 +580,92 @@ void test_compatibility_evaluator_multi_issue_bitmask(void) {
     TEST_ASSERT_EQUAL_STRING("incompatible", CompatibilityEvaluator::statusToString(verdict.status));
 }
 
+void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
+    // 1. Setup Classic ESP32 profile context (128x32, no PSRAM)
+    EngineDescriptor clockDesc;
+    clockDesc.metadata.id = "clock";
+    clockDesc.metadata.name = "Clock Engine";
+    clockDesc.requirements.targetFps = 60;
+    clockDesc.requirements.prefersDoubleBuffer = true;
+    clockDesc.requirements.supportsSingleBuffer = true;
+    clockDesc.requirements.internalPersistentBytes = 8000;
+    clockDesc.requirements.internalContiguousBytes = 16000;
+
+    EngineDescriptor gifDesc;
+    gifDesc.metadata.id = "gifs";
+    gifDesc.metadata.name = "GIF Player";
+    gifDesc.requirements.targetFps = 30;
+    gifDesc.requirements.supportsSingleBuffer = true;
+    gifDesc.requirements.internalPersistentBytes = 25000;
+    gifDesc.requirements.internalContiguousBytes = 25000;
+
+    // 2. Initial static reference capability qualification:
+    CompatibilityContext refCtx;
+    refCtx.mode = EvaluationMode::ReferenceCapability;
+    refCtx.hardware.profile = HwProfile::ESP32_STD;
+    refCtx.hardware.hasPsram = false;
+    refCtx.hardware.hasMicrophone = false;
+    refCtx.hardware.hasTempSensor = true;
+    refCtx.isConnectedWifi = true;
+    ReferenceMemoryProfile refMem = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    refCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    refCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+    refCtx.memory.freePsram = refMem.freePsram;
+    refCtx.width = 128;
+    refCtx.height = 32;
+    refCtx.colorDepth = 8;
+    refCtx.requestedPipeline = "canvas_burst_single";
+
+    auto vClockRef1 = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRef1.status);
+    TEST_ASSERT_TRUE(vClockRef1.compatible());
+
+    auto vGifRef1 = CompatibilityEvaluator::evaluate(gifDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vGifRef1.status);
+    TEST_ASSERT_TRUE(vGifRef1.compatible());
+
+    // 3. Negative Assertion: Simulate GIF engine actively decoding on Core 1
+    // Volatile free internal heap drops to 11 KB, largest block drops to 4 KB
+    CompatibilityContext activePressureCtx = refCtx;
+    activePressureCtx.mode = EvaluationMode::RuntimeAdmission;
+    activePressureCtx.memory.freeInternalHeap = 11000;
+    activePressureCtx.memory.largestInternalBlock = 4000;
+
+    // Runtime admission detects the transient memory pressure and rejects Clock:
+    auto vClockRuntime = CompatibilityEvaluator::evaluate(clockDesc, activePressureCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)vClockRuntime.status);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(vClockRuntime.issueFlags), CompatibilityIssue::LowInternalHeap));
+
+    // Positive Assertion: ReferenceCapability remains STRICTLY INVARIANT despite transient volatile heap pressure!
+    // (This guarantees WebUI catalog and API transition safety gating never deadlock)
+    auto vClockRefDuringGif = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefDuringGif.status);
+    TEST_ASSERT_TRUE(vClockRefDuringGif.compatible());
+
+    // 4. Requested pipeline gating: evaluating against requested target pipeline succeeds
+    CompatibilityContext targetPipeCtx = refCtx;
+    targetPipeCtx.requestedPipeline = "canvas_burst_single";
+    auto vTargetPipeline = CompatibilityEvaluator::evaluate(clockDesc, targetPipeCtx);
+    TEST_ASSERT_TRUE(vTargetPipeline.compatible());
+
+    // 5. Transition simulation:
+    // gif.deactivate() -> memory reclaimed -> clock.initialize() -> clock.activate()
+    // Simulated heap recovery after deactivation
+    CompatibilityContext recoveredCtx = refCtx;
+    recoveredCtx.mode = EvaluationMode::RuntimeAdmission;
+    recoveredCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    recoveredCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+
+    auto vClockPostReclaim = CompatibilityEvaluator::evaluate(clockDesc, recoveredCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockPostReclaim.status);
+    TEST_ASSERT_TRUE(vClockPostReclaim.compatible());
+
+    // 6. Post-transition: Reference capability catalog remains 100% invariant
+    auto vClockRefPost = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefPost.status);
+    TEST_ASSERT_EQUAL((int)vClockRef1.status, (int)vClockRefPost.status);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -621,6 +707,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_compatibility_evaluator_memory_and_fragmentation);
     RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
     RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
+    RUN_TEST(test_e2e_gif_to_clock_transition_and_catalog_invariance);
 
     return UNITY_END();
 }

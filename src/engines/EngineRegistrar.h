@@ -27,8 +27,8 @@ class EngineRegistrar {
 public:
     static void registerAll();
     static bool registerHandler(const IEngineDescriptorHandler& handler);
-    static RequirementCheckResult checkRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
-    static bool meetsRequirements(const EngineRequirements& req, const char* activePipeline = nullptr);
-    static CompatibilityVerdict evaluateCompatibility(const EngineDescriptor& desc, const char* activePipeline = nullptr);
+    static RequirementCheckResult checkRequirements(const EngineRequirements& req, const char* targetPipeline = nullptr, EvaluationMode mode = EvaluationMode::ReferenceCapability);
+    static bool meetsRequirements(const EngineRequirements& req, const char* targetPipeline = nullptr, EvaluationMode mode = EvaluationMode::ReferenceCapability);
+    static CompatibilityVerdict evaluateCompatibility(const EngineDescriptor& desc, const char* targetPipeline = nullptr, EvaluationMode mode = EvaluationMode::ReferenceCapability);
 };
 
