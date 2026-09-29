@@ -321,6 +321,8 @@ void RotationManager::switchToModule(int index) {
               m_slotFxStartedMs = millis();
           }
       }
+      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s' -> Baseline Heap: Free=%u, LargestBlock=%u",
+           currentActiveInstanceId, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   // Activate new engine
@@ -337,8 +339,8 @@ void RotationManager::switchToModule(int index) {
   strncpy(currentActiveInstanceId, newInstanceId.c_str(), sizeof(currentActiveInstanceId) - 1);
   currentActiveInstanceId[sizeof(currentActiveInstanceId) - 1] = '\0';
   
-  LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
-      mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+  LOGI("RotationManager", "[Rotation Transition] Activated '%s' (%s) | Heap: Free=%u, MinFree=%u, LargestBlock=%u", 
+      newInstanceId.c_str(), mod.c_str(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   switchDepth = 0;
 }
 
@@ -429,11 +431,10 @@ bool RotationManager::loop() {
         if (activeEngine->needsClear()) {
             if (m_ctx && m_ctx->getSurface()) {
                 m_ctx->getSurface()->clear(0);
-            }
-            if (m_ctx && m_ctx->getMatrix()) {
+            } else if (m_ctx && m_ctx->getMatrix()) {
                 m_ctx->getMatrix()->fillScreen(0);
+                matrixEngine.markExternalDraw();
             }
-            matrixEngine.markExternalDraw();
         }
         activeEngine->update(m_ctx);
         activeEngine->render(m_ctx);

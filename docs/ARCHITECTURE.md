@@ -797,3 +797,72 @@ In ArcadeMatrix, `ValidationPolicy` defines the deterministic recovery action ex
 - `FallbackDefault`: Restores the field value to `field.default_value` upon constraint violation.
 - `Accept`: Accepts custom/unconstrained user values as-is (used for freeform text or unconstrained URLs).
 - `Reject`: Discards the invalid configuration and restores the documented default.
+
+---
+
+## 23. Drawing Surface Architecture, Dirty-State Tracking & Memory Invariants
+
+To achieve flicker-free rendering on single-buffer DMA panels (e.g. classic ESP32 with Canvas SRAM + Single DMA) while maintaining deterministic real-time memory behavior, ArcadeMatrix strictly isolates display engines from physical hardware buffering via `IDrawingSurface`.
+
+```text
+                         IEngine (Pure Algorithm)
+                                    │
+                            update() / render()
+                                    │
+                                    ▼
+                             IDrawingSurface
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                    SRAM Canvas           Dirty State
+                         │             unpresented changes
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                                 present()
+                                    │
+                           PresentationOutcome
+                                    │
+                        ┌───────────┴───────────┐
+                        │                       │
+                     success                 failure
+                        │                       │
+                  dirty = false             dirty = true
+                        │                       │
+                        └───────────┬───────────┘
+                                    ▼
+                         Hub75PresentationBackend
+                                    │
+                               Safe Window
+                                    │
+                                DMA commit
+```
+
+### 23.1 Dirty-State Semantics & Presentation Lifecycle
+
+1. **Automatic Dirty-Tracking via `markModified()`**: All mutating drawing operations on `CanvasBufferedSurface` (`drawPixel`, `drawFastHLine`, `drawFastVLine`, `fillRect`, `fillScreen`, `blit565`, `acquireCanvas`) converge on an inline `markModified()` method setting `_dirty = true`. Because `Adafruit_GFX` implements all higher-level drawing primitives on top of these virtuals, 100% of canvas modifications are captured with zero engine overhead.
+2. **Presentation Gating**: When `present()` is evaluated, if `!_dirty`, no DMA transfer or bitplane burst encoding takes place. The hardware DMA continues scanning the active buffer without CPU intervention, eliminating frame-to-frame jitter.
+3. **Commit Atomicity**: `_dirty` is reset to `false` **only if** `backend->presentCanvas()` returns `PresentationResult::Ok`. If presentation fails (e.g. `SafeWindowTimeout` or DMA bus contention), `_dirty` remains `true` (Invariant 20), ensuring that the uncommitted frame is retried on the next tick without dropping visual state.
+
+### 23.2 Formal Architectural Invariants 15 through 20
+
+- **🔴 Invariant 15 — Allocation-Free Deactivation:**
+  Once deactivation begins, the outgoing engine MUST NOT perform any new dynamic allocation. Deactivation may only release, close, stop, or detach resources owned by the engine. All internal container deallocations use `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
+- **🔴 Invariant 16 — Quiescent Deactivation:**
+  `deactivate()` MUST return only after all engine-owned tasks (`FgtLoader`, `DashFetch`, `CastPoll`), timers, callbacks, asynchronous I/O operations and open file descriptors have fully stopped or been detached from engine-owned resources.
+- **🔴 Invariant 17 — Dirty State Represents Unpresented Changes:**
+  `IDrawingSurface::isDirty()` MUST remain true until the corresponding canvas state has been successfully committed to the display hardware (`PresentationResult::Ok`).
+- **🔴 Invariant 18 — Canvas-Only Clear:**
+  A surface clear operation (`clear()` / `fillScreen(0)`) MUST modify exclusively the surface-owned drawing storage (canvas RAM). It MUST NOT write directly into an actively scanned HUB75 DMA buffer.
+- **🔴 Invariant 19 — DMA Isolation:**
+  Display engines and rotation managers MUST NOT directly access, clear, or modify hardware presentation/DMA storage (`FastMatrixPanel`). All rendering must pass exclusively through `IDrawingSurface`.
+- **🔴 Invariant 20 — Failed Presentation Preservation:**
+  A failed presentation attempt MUST NOT clear the dirty state, preserving the unpresented changes for retry on the subsequent frame.
+
+### 23.3 Quiescent Baseline Envelope
+
+Rather than an unrealistic promise of exact byte-for-byte heap equality across dynamic network operations, ArcadeMatrix defines a formal **Quiescent Baseline Envelope**:
+- Upon `deactivate(old)`, the system returns to the reference idle baseline within a bounded envelope: $|\text{baseline}_{\text{final}} - \text{baseline}_{\text{initial}}| \le 2\text{ KB}$.
+- Zero cumulative memory drift across 100 consecutive rotation cycles (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
+- Zero active engine-owned background tasks, zero leaked file descriptors, and zero dangling network sockets post-deactivation.
+

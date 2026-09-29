@@ -629,6 +629,14 @@ static bool checkAuth(AsyncWebServerRequest* request) {
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
+    if (ESP.getMaxAllocHeap() < 8192 || ESP.getFreeHeap() < 16384) {
+        LOGW("WebServer", "Dropping API response: DRAM pressure (free=%u, largest=%u)",
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        if (request && request->client()) {
+            request->client()->close();
+        }
+        return;
+    }
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);

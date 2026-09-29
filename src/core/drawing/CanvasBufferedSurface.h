@@ -40,6 +40,10 @@ public:
     uint32_t flipCount() const override { return _flipCount; }
     bool isDoubleBuffered() const override { return _strategy == PresentationStrategy::CANVAS_BURST_DOUBLE; }
 
+    bool isDirty() const override { return _dirty; }
+    void markDirty() override { _dirty = true; }
+    void clearDirty() { _dirty = false; }
+
     uint16_t* getRawCanvasBuffer() const { return _canvas; }
 
     void setPresentationBackend(IPresentationBackend* backend) { _backend = backend; }
@@ -48,6 +52,8 @@ public:
     const PresentationPolicy& getPresentationPolicy() const { return _policy; }
 
 private:
+    inline void markModified() noexcept { _dirty = true; }
+
     uint16_t* _canvas = nullptr;
     CanvasStorage _storage = CanvasStorage::SRAM;
     PresentationStrategy _strategy = PresentationStrategy::CANVAS_BURST_SINGLE;
@@ -58,4 +64,5 @@ private:
     uint32_t _flipCount = 0;
     uint32_t _externalDrawGeneration = 0;
     bool _canvasBorrowed = false;
+    bool _dirty = false;
 };

@@ -77,10 +77,55 @@ void WeatherEngine::activate() {
 }
 
 void WeatherEngine::update(EngineContext* context) {
-    m_presented = loop();
+    (void)context;
+    startFetchTask();
+    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
+    const int days = (int)m_forecastCount[buf];
+    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
+
+    if (m_newData.exchange(false, std::memory_order_acq_rel)) {
+        activeSlide = 0;                 // a fresh forecast starts again at today
+        lastSlideChange = millis();
+        requestRedraw();
+    }
+    if (!haveData) requestRedraw();   // keep the notice alive until the first forecast lands
+
+    if (haveData && days > 1 && millis() - lastSlideChange >= slideDurationMs) {
+        activeSlide = (activeSlide + 1) % days;
+        lastSlideChange = millis();
+        requestRedraw();
+    }
 }
 
-void WeatherEngine::render(EngineContext* context) {}
+void WeatherEngine::render(EngineContext* context) {
+    if (context && context->getSurface()) {
+        matrix = context->getSurface();
+    }
+    if (!matrix || m_redrawFrames == 0) {
+        m_presented = false;
+        return;
+    }
+    m_redrawFrames--;
+
+    matrix->fillScreen(0);
+    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
+    const int days = (int)m_forecastCount[buf];
+    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
+
+    if (haveData) {
+        drawForecast(m_forecastBuf[buf][activeSlide % days]);
+    } else {
+        matrix->setFont(nullptr);
+        matrix->setTextSize((matrix->width() >= 128) ? 2 : 1);
+        matrix->setTextColor(matrix->color565(120, 170, 255));
+        int16_t bx, by; uint16_t bw, bh;
+        const char* msg = "WEATHER...";
+        matrix->getTextBounds(msg, 0, 0, &bx, &by, &bw, &bh);
+        matrix->setCursor((matrix->width() - (int)bw) / 2 - bx, (matrix->height() - (int)bh) / 2 - by);
+        matrix->print(msg);
+    }
+    m_presented = true;
+}
 
 void WeatherEngine::deactivate() {}
 
@@ -305,49 +350,9 @@ void WeatherEngine::drawIcon(const String& icon, int x, int y, int scale) {
 }
 
 bool WeatherEngine::loop() {
-    // Nothing here touches the network: the fetch task owns that, and a redraw is requested when
-    // fresh data lands. Weather therefore draws from cache the moment the rotation arrives.
-    startFetchTask();
-    // One acquire load pairs with the fetch task's release store: everything written into the
-    // buffer before it was published is visible here, and the buffer cannot change under us.
-    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
-    const int days = (int)m_forecastCount[buf];
-    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
-
-    if (m_newData.exchange(false, std::memory_order_acq_rel)) {
-        activeSlide = 0;                 // a fresh forecast starts again at today
-        lastSlideChange = millis();
-        requestRedraw();
-    }
-    if (!haveData) requestRedraw();   // keep the notice alive until the first forecast lands
-
-    // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
-    // horizontal-scroll transition (see WeatherEngine.h for rationale).
-    if (haveData && days > 1 && millis() - lastSlideChange >= slideDurationMs) {
-        activeSlide = (activeSlide + 1) % days;
-        lastSlideChange = millis();
-        requestRedraw();
-    }
-
-    if (m_redrawFrames == 0) return false;   // both DMA buffers already show this screen
-    m_redrawFrames--;
-
-    matrix->fillScreen(0);
-    if (haveData) {
-        drawForecast(m_forecastBuf[buf][activeSlide % days]);
-    } else {
-        // No forecast yet: say so rather than leaving the slot black for its whole duration, which
-        // is what it looked like after every restart until the first fetch landed.
-        matrix->setFont(nullptr);
-        matrix->setTextSize((matrix->width() >= 128) ? 2 : 1);
-        matrix->setTextColor(matrix->color565(120, 170, 255));
-        int16_t bx, by; uint16_t bw, bh;
-        const char* msg = "WEATHER...";
-        matrix->getTextBounds(msg, 0, 0, &bx, &by, &bw, &bh);
-        matrix->setCursor((matrix->width() - (int)bw) / 2 - bx, (matrix->height() - (int)bh) / 2 - by);
-        matrix->print(msg);
-    }
-    return true;
+    update(nullptr);
+    render(nullptr);
+    return m_presented;
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {

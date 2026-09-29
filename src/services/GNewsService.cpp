@@ -9,6 +9,7 @@
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
 #include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
 
 GNewsService gnewsService;
 
@@ -472,10 +473,12 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         return;
     }
 
+    esp_task_wdt_reset();
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
     HTTPClient http;
-    http.setTimeout(8000);
+    http.setTimeout(4500);
 
     size_t startKeyIdx = _activeKeyIdx % _apiKeys.size();
     bool querySucceeded = false;
@@ -533,6 +536,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
             _snapshot.status = 4; // NETWORK_ERROR
         }
     }
+    esp_task_wdt_reset();
 
     if (!querySucceeded) {
         saveToSd(); // Persist error state without erasing existing cached articles

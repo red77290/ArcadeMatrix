@@ -1,4 +1,5 @@
 #include "ClockEngine.h"
+#include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "clocks/ArcadeClock.h"
 #include "clocks/CyberpunkClock.h"
@@ -42,43 +43,54 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
     currentTheme = theme;
     
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) CyberpunkClock(matrixDisplay, config);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) FlipClock(matrixDisplay, config);
     } else if (theme == 22) {
-        activeFace = new PongClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PongClock(matrixDisplay, config);
     } else if (theme == 23) {
-        activeFace = new TetrisClock(matrixDisplay, false, config); // Normal Tetris
+        activeFace = new (std::nothrow) TetrisClock(matrixDisplay, false, config); // Normal Tetris
     } else if (theme == 29) {
-        activeFace = new TetrisClock(matrixDisplay, true, config); // Gameboy Tetris
+        activeFace = new (std::nothrow) TetrisClock(matrixDisplay, true, config); // Gameboy Tetris
     } else if (theme == 24) {
-        activeFace = new WordClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) WordClock(matrixDisplay, config);
     } else if (theme == 25) {
-        activeFace = new BinaryClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) BinaryClock(matrixDisplay, config);
     } else if (theme == 26) {
-        activeFace = new PacmanClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PacmanClock(matrixDisplay, config);
     } else if (theme == 27) {
-        activeFace = new VersusClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) VersusClock(matrixDisplay, config);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) MatrixRainClock(matrixDisplay, config);
     } else if (theme == 28) {
-        activeFace = new SlotMachineClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) SlotMachineClock(matrixDisplay, config);
     } else if (theme == 30) {
-        activeFace = new MarioClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) MarioClock(matrixDisplay, config);
     } else if (theme == 31) {
-        activeFace = new CastleClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) CastleClock(matrixDisplay, config);
     } else if (theme == 32) {
-        activeFace = new PokedexClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PokedexClock(matrixDisplay, config);
     } else if (theme == 33) {
-        activeFace = new WorldMapClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) WorldMapClock(matrixDisplay, config);
     } else if (theme == 37) {
-        activeFace = new WordsClockFace(matrixDisplay, config);
+        activeFace = new (std::nothrow) WordsClockFace(matrixDisplay, config);
     } else if (theme == 34) {
-        activeFace = new PacmanClock(matrixDisplay, config, true);   // Ms Pac-Man
+        activeFace = new (std::nothrow) PacmanClock(matrixDisplay, config, true);   // Ms Pac-Man
     } else {
-        ArcadeClock* arcade = new ArcadeClock(matrixDisplay, config);
-        arcade->setTheme(theme);
-        activeFace = arcade;
+        ArcadeClock* arcade = new (std::nothrow) ArcadeClock(matrixDisplay, config);
+        if (arcade) {
+            arcade->setTheme(theme);
+            activeFace = arcade;
+        }
+    }
+
+    if (!activeFace) {
+        LOGW("ClockEngine", "Failed to allocate clock theme %d, falling back to basic ArcadeClock", (int)theme);
+        ArcadeClock* fallback = new (std::nothrow) ArcadeClock(matrixDisplay, config);
+        if (fallback) {
+            fallback->setTheme(THEME_NONE);
+            activeFace = fallback;
+        }
     }
     
     if (activeFace) {
@@ -127,7 +139,7 @@ EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* 
     currentConfig = config;
     updateFormatMode(config);
     int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;
-    setTheme(static_cast<PublisherTheme>(theme), true, config);
+    currentTheme = static_cast<PublisherTheme>(theme);
     return EngineError::OK;
 }
 
@@ -140,6 +152,9 @@ bool ClockEngine::hasNewFrame() const {
 }
 
 void ClockEngine::activate() {
+    if (!activeFace) {
+        setTheme(currentTheme, true, currentConfig);
+    }
     if (activeFace) activeFace->onActivated();
     // Clock is active, maybe reset time fetcher
 }
@@ -177,27 +192,34 @@ void ClockEngine::update(EngineContext* context) {
     }
     if (activeFace) {
         activeFace->draw(currentTime);
-        activeFace->update();
     }
 }
 
 void ClockEngine::render(EngineContext* context) {
     if (activeFace) {
-        activeFace->draw(currentTime);
+        activeFace->update();
     }
 }
 
 void ClockEngine::deactivate() {
-    // Cleanup if needed
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+        LOGI("ClockEngine", "Deallocated active clock face on deactivate.");
+    }
 }
 
 void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentConfig = config;
-        configDirty = true;
         updateFormatMode(config);
         int theme = config->getInt("clock_theme", config->getInt("theme", 0));
-        setTheme(static_cast<PublisherTheme>(theme), true, config);
+        currentTheme = static_cast<PublisherTheme>(theme);
+        if (activeFace) {
+            setTheme(currentTheme, true, config);
+        } else {
+            configDirty = true;
+        }
     }
 }
 

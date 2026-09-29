@@ -12,6 +12,8 @@
 #include <PNGdec.h>
 #include "../core/SDUtils.h"
 
+class BinanceProvider;
+
 #ifndef ASSET_QUOTE_CACHE_H
 #define ASSET_QUOTE_CACHE_H
 struct AssetQuoteCache {
@@ -22,6 +24,7 @@ struct AssetQuoteCache {
     String imageUrl = "";
     uint16_t iconPixels[256]; // 16x16 RGB565 buffer
     bool hasIcon = false;
+    bool iconAttempted = false;
 };
 #endif
 
@@ -58,15 +61,21 @@ public:
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
 
+    bool needsClear() const override { return false; }
+    bool hasNewFrame() const override { return m_redrawFrames > 0; }
+    void requestRedraw() { m_redrawFrames = 2; }
+
     void addProvider(ICryptoProvider* provider);
 
 private:
+    uint8_t m_redrawFrames = 2;
+    bool m_renderedFirstFrame = false;
     int config_duration_sec = 5;
     bool config_enabled = true;
     int config_cache_ttl_min = 15;
     bool config_show_chart = true;
     String config_currency = "USD";
-    String config_provider = "coingecko";
+    String config_provider = "binance";
     Timeframe config_chart_timeframe = Timeframe::Daily;
     
     std::vector<String> symbolList;
@@ -77,6 +86,8 @@ private:
     DisplayPage currentPage = DisplayPage::Info;
     
     std::vector<ICryptoProvider*> providers;
+    BinanceProvider* m_binance = nullptr;
+    bool fetchCombined(const String& symbol);
     
     // Per-symbol quote cache map
     std::map<String, AssetQuoteCache> quoteCache;
@@ -95,6 +106,7 @@ private:
     static int pngDraw(PNGDRAW *pDraw);
     static CryptoEngine* instance;
     
+    void loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache);
     void parseSymbols(const String& syms);
     void fetchQuote(const String& symbol);
     void fetchHistory(const String& symbol, Timeframe tf);

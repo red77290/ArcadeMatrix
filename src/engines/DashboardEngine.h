@@ -31,6 +31,7 @@ public:
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     bool isRealtime() const override { return true; }
+    bool needsClear() const override { return false; }
 
 private:
     IDrawingSurface* matrix;

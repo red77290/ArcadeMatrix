@@ -320,11 +320,10 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         if (activeEngine->needsClear()) {
             if (m_surface) {
                 m_surface->clear(0);
-            }
-            if (m_matrixEngine && m_matrixEngine->getDisplay()) {
+            } else if (m_matrixEngine && m_matrixEngine->getDisplay()) {
                 m_matrixEngine->getDisplay()->fillScreen(0);
+                matrixEngine.markExternalDraw();
             }
-            matrixEngine.markExternalDraw();
         }
         activeEngine->update(appCtx);
         activeEngine->render(appCtx);
@@ -332,7 +331,7 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         result.framebufferChanged = activeEngine->hasNewFrame();
     } else if (m_rotationManager) {
         result.rendered = m_rotationManager->loop();
-        result.framebufferChanged = true;
+        result.framebufferChanged = result.rendered;
         activeEngine = m_rotationManager->getCurrentActiveEngine();
     }
     if (activeEngine) {

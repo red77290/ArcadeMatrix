@@ -2,6 +2,7 @@
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include <WiFiClientSecure.h>
+#include <esp_task_wdt.h>
 
 bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     // See BinanceProvider::fetchQuote: attempting a handshake without the required
@@ -31,15 +32,16 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
     
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(3000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     int code = -1;
     if (http.begin(client, url)) {
         code = http.GET();
-        if (code != 200) {
+        if (code != 200 && code > 0) {
             http.end();
             String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
             if (http.begin(client, fallbackUrl)) {
@@ -146,15 +148,16 @@ bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, floa
 
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(3000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
     int code = -1;
     if (http.begin(client, url)) {
         code = http.GET();
-        if (code != 200) {
+        if (code != 200 && code > 0) {
             http.end();
             String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
             if (http.begin(client, fallbackUrl)) {
@@ -209,4 +212,93 @@ bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, s
         return (outCount > 0 && outMin <= outMax);
     }
     return false;
+}
+
+bool YahooFinanceProvider::fetchQuoteAndHistory(const String& symbol,
+    float& outPrice, float& outChange, String& outImageUrl,
+    Timeframe tf, float* outPoints, size_t maxPoints,
+    size_t& outCount, float& outMin, float& outMax)
+{
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Yahoo", "Skipping combined fetch for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        return false;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Yahoo", "Skipping combined fetch for %s: another TLS handshake is in progress.", symbol.c_str());
+        return false;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setHandshakeTimeout(4);
+
+    HTTPClient http;
+    http.setTimeout(4500);
+    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    http.setReuse(true);  // HTTP/1.1 keepalive: reuse TLS session across requests
+
+    bool quoteOk = false;
+    String baseHost = "query1.finance.yahoo.com";
+
+    // ── Request 1: Quote ──
+    String quoteUrl = "https://" + baseHost + "/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
+    if (http.begin(client, quoteUrl)) {
+        int code = http.GET();
+        if (code != 200 && code > 0) {
+            http.end();
+            baseHost = "query2.finance.yahoo.com";
+            String fallbackUrl = "https://" + baseHost + "/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
+            if (http.begin(client, fallbackUrl)) {
+                code = http.GET();
+            }
+        }
+
+        if (code == 200) {
+            WiFiClient* stream = http.getStreamPtr();
+            if (stream && parsePayload(*stream, outPrice, outChange)) {
+                String lowerSymbol = symbol;
+                lowerSymbol.toLowerCase();
+                outImageUrl = "https://eodhd.com/img/logos/US/" + lowerSymbol + ".png";
+                quoteOk = true;
+                LOGI("Yahoo", "[Combined] Quote for %s: %.2f (%.2f%%)", symbol.c_str(), outPrice, outChange);
+            }
+        }
+        http.end();  // Closes HTTP transaction, keeps TLS socket open
+    }
+
+    esp_task_wdt_reset();
+
+    // ── Request 2: History (chart) on SAME TLS session ──
+    if (quoteOk && outPoints && maxPoints > 0 && client.connected()) {
+        const char* range = "1d";
+        const char* interval = "5m";
+        switch (tf) {
+            case Timeframe::Hourly:
+                range = "1d"; interval = "2m"; break;
+            case Timeframe::Daily:
+                range = "1d"; interval = "5m"; break;
+            case Timeframe::Weekly:
+                range = "5d"; interval = "15m"; break;
+            case Timeframe::Monthly:
+                range = "1mo"; interval = "1d"; break;
+        }
+
+        String histUrl = "https://" + baseHost + "/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
+        if (http.begin(client, histUrl)) {
+            int code = http.GET();
+            if (code == 200) {
+                String payload = http.getString();
+                if (parseChart(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
+                    LOGI("Yahoo", "[Combined] History for %s: %d points (%s/%s)", symbol.c_str(), (int)outCount, range, interval);
+                }
+            }
+            http.end();
+        }
+    }
+
+    client.stop();  // Now close TLS session
+    return quoteOk;
 }

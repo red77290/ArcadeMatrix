@@ -13,12 +13,31 @@ SpotifyEngine::SpotifyEngine() {
 }
 
 SpotifyEngine::~SpotifyEngine() {
-    m_taskRunning = false;
-    m_isActive = false;
-    if (m_pollTaskHandle) {
-        vTaskDelete(m_pollTaskHandle);
-        m_pollTaskHandle = nullptr;
+    if (m_pollTaskHandle && !m_taskStopped.load(std::memory_order_acquire)) {
+        m_taskRunning = false;
+        m_isActive = false;
+        xTaskNotifyGive(m_pollTaskHandle);
+        for (int i = 0; i < 30 && !m_taskStopped.load(std::memory_order_acquire); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
+}
+
+bool SpotifyEngine::shutdownForDestruction() {
+    if (m_pollTaskHandle && !m_taskStopped.load(std::memory_order_acquire)) {
+        m_taskRunning = false;
+        m_isActive = false;
+        xTaskNotifyGive(m_pollTaskHandle);
+        uint32_t start = millis();
+        while (!m_taskStopped.load(std::memory_order_acquire) && (millis() - start < 300)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (!m_taskStopped.load(std::memory_order_acquire)) {
+            LOGE("Spotify", "CRITICAL: SpotPoll task failed to stop within 300ms!");
+            return false;
+        }
+    }
+    return true;
 }
 
 void SpotifyEngine::applyConfig(const EngineConfig* config) {
@@ -47,8 +66,11 @@ void SpotifyEngine::pollTaskLoop() {
         if (m_isActive && WiFi.status() == WL_CONNECTED) {
             pollSpotifyStatus();
         }
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1500));
     }
+    m_pollTaskHandle = nullptr;
+    m_taskStopped.store(true, std::memory_order_release);
+    vTaskDelete(NULL);
 }
 
 EngineError SpotifyEngine::initialize(EngineContext* context, const EngineConfig* config) {
@@ -57,6 +79,7 @@ EngineError SpotifyEngine::initialize(EngineContext* context, const EngineConfig
 
     if (!m_pollTaskHandle) {
         m_taskRunning = true;
+        m_taskStopped.store(false, std::memory_order_release);
         BaseType_t ret = xTaskCreatePinnedToCore(
             pollTaskStatic,
             "SpotPoll",
@@ -81,10 +104,16 @@ void SpotifyEngine::activate() {
     m_lastMarqueeTick = millis();
     m_lastAnimTick = millis();
     m_isActive = true;
+    if (m_pollTaskHandle) {
+        xTaskNotifyGive(m_pollTaskHandle);
+    }
 }
 
 void SpotifyEngine::deactivate() {
     m_isActive = false;
+    if (m_pollTaskHandle) {
+        xTaskNotifyGive(m_pollTaskHandle);
+    }
 }
 
 void SpotifyEngine::onConfigChanged(const EngineConfig* config) {
@@ -120,7 +149,9 @@ bool SpotifyEngine::refreshAccessToken() {
 
     WiFiClientSecure client;
     client.setInsecure();
+    client.setTimeout(4000);
     HTTPClient http;
+    http.setTimeout(4500);
 
     if (!http.begin(client, "https://accounts.spotify.com/api/token")) return false;
 
@@ -179,7 +210,9 @@ void SpotifyEngine::pollSpotifyStatus() {
 
     WiFiClientSecure client;
     client.setInsecure();
+    client.setTimeout(4000);
     HTTPClient http;
+    http.setTimeout(4500);
 
     if (!http.begin(client, "https://api.spotify.com/v1/me/player")) return;
     http.addHeader("Authorization", "Bearer " + m_accessToken);

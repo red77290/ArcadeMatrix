@@ -74,11 +74,13 @@ void CanvasBufferedSurface::drawPixel(int16_t x, int16_t y, uint16_t color) {
     Point p = SurfaceCoordinates::logicalToPhysical(x, y, physicalWidth(), physicalHeight(), getRotation());
     if (p.x < 0 || p.x >= physicalWidth() || p.y < 0 || p.y >= physicalHeight()) return;
 
+    markModified();
     _canvas[(size_t)p.y * physicalWidth() + p.x] = color;
 }
 
 void CanvasBufferedSurface::fillScreen(uint16_t color) {
     if (!_canvas) return;
+    markModified();
     if (color == 0) {
         memset(_canvas, 0, _canvasBytes);
     } else {
@@ -117,6 +119,7 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
     if (!_canvas || !src || w <= 0 || h <= 0) return;
     if (stridePixels <= 0) stridePixels = w;
 
+    markModified();
     int16_t pw = physicalWidth();
     int16_t ph = physicalHeight();
 
@@ -150,6 +153,7 @@ void CanvasBufferedSurface::blit565(const uint16_t* src, int16_t x, int16_t y,
 
 CanvasView CanvasBufferedSurface::acquireCanvas() {
     _canvasBorrowed = true;
+    markModified();
     return CanvasView{
         _canvas,
         (uint16_t)physicalWidth(),
@@ -168,16 +172,32 @@ PresentationTiming CanvasBufferedSurface::present() {
         timing.result = PresentationResult::EncodingError;
         return timing;
     }
+    if (!_dirty) {
+        // Invariant 17: No unpresented changes on canvas, skip DMA burst and safe-window delay
+        PresentationTiming timing;
+        timing.result = PresentationResult::Ok;
+        return timing;
+    }
     if (!_backend) {
         PresentationTiming timing;
         timing.result = PresentationResult::BackendUnavailable;
         return timing;
     }
 
-    return _backend->presentCanvas(_canvas, physicalWidth(), physicalHeight(), _strategy, _policy);
+    PresentationTiming timing = _backend->presentCanvas(_canvas, physicalWidth(), physicalHeight(), _strategy, _policy);
+
+    // Invariant 17 & 20: Only clear dirty state upon successful hardware commit.
+    // If presentation failed (SafeWindowTimeout / DMA busy), keep dirty=true to retry on next tick.
+    if (timing.result == PresentationResult::Ok) {
+        _dirty = false;
+        _flipCount++;
+    }
+
+    return timing;
 }
 
 void CanvasBufferedSurface::markExternalDraw() {
+    markModified();
     if (_backend) {
         _backend->markExternalDraw();
     }

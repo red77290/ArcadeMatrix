@@ -23,9 +23,10 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
     
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(5000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     String vsCur = m_currency;
@@ -33,9 +34,10 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
     if (vsCur.isEmpty()) vsCur = "usd";
 
     // Primary API
+    int code = -1;
     String cgUrl = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=" + vsCur + "&symbols=" + lowerSymbol;
     if (http.begin(client, cgUrl)) {
-        int code = http.GET();
+        code = http.GET();
         if (code == 200) {
             String payload = http.getString();
             if (parsePrimary(payload, outPrice, outChange, outImageUrl)) {
@@ -48,23 +50,25 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
         client.stop();
     }
     
-    // Simple API fallback
-    String coinId = lowerSymbol;
-    if (lowerSymbol == "erg") coinId = "ergo";
-    
-    String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=" + vsCur + "&include_24hr_change=true";
-    if (http.begin(client, cgSimpleUrl)) {
-        int code = http.GET();
-        if (code == 200) {
-            String payload = http.getString();
-            if (parseSimple(payload, coinId, outPrice, outChange)) {
-                http.end();
-                client.stop();
-                return true;
+    // Simple API fallback (only if primary endpoint was not found or failed softly, never on 429 rate limit)
+    if (code > 0 && code != 429 && code != 403) {
+        String coinId = lowerSymbol;
+        if (lowerSymbol == "erg") coinId = "ergo";
+        
+        String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=" + vsCur + "&include_24hr_change=true";
+        if (http.begin(client, cgSimpleUrl)) {
+            int codeSimple = http.GET();
+            if (codeSimple == 200) {
+                String payload = http.getString();
+                if (parseSimple(payload, coinId, outPrice, outChange)) {
+                    http.end();
+                    client.stop();
+                    return true;
+                }
             }
+            http.end();
+            client.stop();
         }
-        http.end();
-        client.stop();
     }
     
     return false;
@@ -100,6 +104,16 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     if (!NetworkBudget::canStartTlsSession()) {
         LOGW("CoinGecko", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
+        return false;
+    }
+
+    // Safety guard: CoinGecko market_chart payload (~30KB JSON) requires concurrent TLS (32KB)
+    // + response body (30KB) in internal DRAM. Use freeInternal() (DRAM-only, excludes PSRAM).
+    const uint32_t freeDram = NetworkBudget::freeInternal();
+    const uint32_t largestDram = NetworkBudget::largestInternalBlock();
+    if (freeDram < 75000 || largestDram < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
+        LOGW("CoinGecko", "Skipping market_chart for %s: payload (~30KB) exceeds safe DRAM headroom (free=%u, largest=%u)",
+             symbol.c_str(), (unsigned)freeDram, (unsigned)largestDram);
         return false;
     }
 
@@ -147,9 +161,10 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(3000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
     if (http.begin(client, url)) {

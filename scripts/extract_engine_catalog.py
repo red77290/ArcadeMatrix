@@ -49,11 +49,40 @@ def extract_engine_catalog(engines_dir="src/engines"):
             "selfPaced": bool(re.search(r'\.selfPaced\s*=\s*true', desc_body))
         }
         
-        # Fields
+        # Fields: parse ConfigField(...) respecting quotes and balanced parentheses
         fields = []
-        cf_matches = re.finditer(r'ConfigField\s*\((.*?)\)(?=\s*[,}\n])', desc_body, re.DOTALL)
-        for cf in cf_matches:
-            raw_args = cf.group(1).strip()
+        pos = 0
+        while True:
+            cf_idx = desc_body.find("ConfigField", pos)
+            if cf_idx == -1:
+                break
+            open_paren = desc_body.find("(", cf_idx)
+            if open_paren == -1:
+                break
+            in_str = False
+            esc = False
+            paren_depth = 1
+            i = open_paren + 1
+            while i < len(desc_body) and paren_depth > 0:
+                c = desc_body[i]
+                if c == "\\" and in_str:
+                    esc = not esc
+                elif c == '"' and not esc:
+                    in_str = not in_str
+                elif not in_str:
+                    if c == "(":
+                        paren_depth += 1
+                    elif c == ")":
+                        paren_depth -= 1
+                else:
+                    esc = False
+                i += 1
+
+            if paren_depth != 0:
+                break
+
+            raw_args = desc_body[open_paren + 1 : i - 1].strip()
+            pos = i
             args = []
             cur = []
             in_str = False

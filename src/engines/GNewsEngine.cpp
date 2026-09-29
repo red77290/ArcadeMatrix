@@ -375,9 +375,6 @@ void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, in
 }
 
 void GNewsEngine::activate() {
-    gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                           config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                           config_requests_per_day, false);
     currentArticleIndex = 0;
     currentPageIndex = 0;
     totalPages = 1;
@@ -411,7 +408,10 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     }
 }
 
-void GNewsEngine::deactivate() {}
+void GNewsEngine::deactivate() {
+    // Invariant 15 & 16: release article storage buffer from DRAM when deactivated
+    gnewsService.releaseArticleStorage();
+}
 
 bool GNewsEngine::isFinished() const {
     return false;

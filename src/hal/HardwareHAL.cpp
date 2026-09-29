@@ -196,8 +196,8 @@ void HardwareHAL::begin() {
     }
 #endif
 #else
-    _capabilities.hasMicrophone = true; // Default ESP32 generic I2S mic profile
-    _capabilities.audio.input = true;
+    _capabilities.hasMicrophone = false; // Standard ESP32 dev boards have no onboard microphone
+    _capabilities.audio.input = false;
     _capabilities.audio.output = true; // External I2S DAC (MAX98357A / PCM5102A)
     _capabilities.audio.fullDuplex = false;
     _capabilities.audio.maxSampleRate = 44100;

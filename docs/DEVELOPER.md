@@ -201,6 +201,13 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
     - Large non-DMA graphical framebuffers (such as `GifEngine`'s 32 KB canvas) MUST prioritize PSRAM allocation (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) when PSRAM is available, reserving internal DRAM for mbedTLS and LwIP networking.
     - AsyncTCP background worker stack is sized to 8192 bytes and strictly pinned to Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) to protect the Core 1 display rendering hot-path (Invariant 1).
     - Persistent network services (Google Cast) MUST implement exponential backoff (5s, 10s, 20s, 60s) initialized upon session drop, preventing reconnection storms during bursty HTTP/LwIP activity.
+15. **Golden Rule #15 — Pure Drawing via `IDrawingSurface` & DMA Isolation (Invariants 18 & 19):**
+    - An engine is a pure algorithm: it MUST NEVER call `context->getMatrix()->fillScreen(0)` or manipulate the physical DMA framebuffer directly.
+    - All drawing operations MUST target `context->getSurface()`. Mutating primitives (`drawPixel`, `blit565`, `fillRect`, `clear`) automatically mark the surface as dirty via `markModified()`.
+    - If an engine has no new frame or is static between updates, `present()` is a zero-cost no-op without DMA transfer, completely eliminating single-buffer DMA screen flickering.
+16. **Golden Rule #16 — Allocation-Free & Quiescent Deactivation (Invariants 15 & 16):**
+    - `deactivate()` MUST NOT perform any new dynamic memory allocation (`malloc`, `new`, container resize). Reclaim memory using `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
+    - `deactivate()` MUST return only after all engine-owned tasks, timers, callbacks, and open file descriptors have fully stopped. The system returns to the reference idle baseline within the Quiescent Baseline Envelope ($|\Delta \text{heap}| \le 2\text{ KB}$).
 
 ---
 

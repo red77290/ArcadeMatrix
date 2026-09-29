@@ -2,6 +2,7 @@
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include <WiFiClientSecure.h>
+#include <esp_task_wdt.h>
 
 bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     // Refuse the handshake rather than let mbedTLS fail with -32512 and fragment the
@@ -33,9 +34,10 @@ bool BinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& o
     
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(5000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     if (http.begin(client, binanceUrl)) {
@@ -116,9 +118,10 @@ bool BinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* ou
 
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(4);
 
     HTTPClient http;
-    http.setTimeout(3000);
+    http.setTimeout(4500);
     http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
     if (http.begin(client, url)) {
@@ -166,3 +169,88 @@ bool BinanceProvider::parseKlines(const String& payload, float* outPoints, size_
     }
     return false;
 }
+
+bool BinanceProvider::fetchQuoteAndHistory(const String& symbol,
+    float& outPrice, float& outChange, String& outImageUrl,
+    Timeframe tf, float* outPoints, size_t maxPoints,
+    size_t& outCount, float& outMin, float& outMax)
+{
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Binance", "Skipping combined fetch for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
+        return false;
+    }
+
+    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+    if (!tlsLock) {
+        LOGW("Binance", "Skipping combined fetch for %s: another TLS handshake is in progress.", symbol.c_str());
+        return false;
+    }
+
+    // Build API symbol (e.g. BTC -> BTCUSDT)
+    String apiSymbol = symbol;
+    String quotePair = m_currency;
+    quotePair.toUpperCase();
+    if (quotePair.isEmpty() || quotePair == "USD") {
+        quotePair = "USDT";
+    }
+    if (!apiSymbol.endsWith(quotePair)) {
+        apiSymbol += quotePair;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setHandshakeTimeout(4);
+
+    HTTPClient http;
+    http.setTimeout(4500);
+    http.setUserAgent("Mozilla/5.0 ArcadeMatrix/4.0");
+    http.setReuse(true);  // HTTP/1.1 keepalive: reuse TLS session across requests
+
+    bool quoteOk = false;
+
+    // ── Request 1: Quote (ticker/24hr) ──
+    String quoteUrl = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + apiSymbol;
+    if (http.begin(client, quoteUrl)) {
+        int code = http.GET();
+        if (code == 200) {
+            String payload = http.getString();
+            quoteOk = parsePayload(payload, outPrice, outChange);
+            if (quoteOk) {
+                LOGI("Binance", "[Combined] Quote for %s: %.4f (%.2f%%)", symbol.c_str(), outPrice, outChange);
+            }
+        }
+        http.end();  // Closes HTTP request, NOT the TLS socket (reuse=true)
+    }
+
+    esp_task_wdt_reset();
+
+    // ── Request 2: History (klines) on the SAME TLS session ──
+    if (quoteOk && outPoints && maxPoints > 0 && client.connected()) {
+        const char* interval = "1h";
+        int limit = 24;
+        switch (tf) {
+            case Timeframe::Hourly:  interval = "1m"; limit = 60; break;
+            case Timeframe::Daily:   interval = "1h"; limit = 24; break;
+            case Timeframe::Weekly:  interval = "4h"; limit = 42; break;
+            case Timeframe::Monthly: interval = "1d"; limit = 30; break;
+        }
+        String histUrl = "https://api.binance.com/api/v3/klines?symbol=" + apiSymbol
+                       + "&interval=" + String(interval) + "&limit=" + String(limit);
+
+        if (http.begin(client, histUrl)) {
+            int code = http.GET();
+            if (code == 200) {
+                String payload = http.getString();
+                if (parseKlines(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
+                    LOGI("Binance", "[Combined] History for %s: %d points (%s)", symbol.c_str(), (int)outCount, interval);
+                }
+            }
+            http.end();
+        }
+    }
+
+    client.stop();  // Now close the TLS session
+    return quoteOk;
+}
+

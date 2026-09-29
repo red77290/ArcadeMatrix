@@ -724,6 +724,17 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
+    if (strcmp(filepath, "/config.json") == 0) {
+        SdConfigStorage sdStorage;
+        ModularConfigManager mgr(sdStorage);
+        for (const auto& inst : instances) {
+            if (!inst.instance_id.isEmpty()) {
+                mgr.workingSet().saveAndCacheInstance(inst);
+            }
+        }
+        mgr.workingSet().syncWithPlaylist(rotation);
+        instances = mgr.workingSet().getCachedInstances();
+    }
     publishSnapshot();
     SdLockGuard lock(pdMS_TO_TICKS(3000));
     if (!lock) {

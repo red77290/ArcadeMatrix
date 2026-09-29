@@ -59,10 +59,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
         m_config.date_font_path = m_config.date_font;
     }
     
-    reloadCustomFont();
-    
     m_dateDirty = true;
-    setTheme(static_cast<PublisherTheme>(m_config.theme));
+    currentTheme = static_cast<PublisherTheme>(m_config.theme);
     return EngineError::OK;
 }
 
@@ -82,13 +80,21 @@ void DateEngine::onConfigChanged(const EngineConfig* config) {
         m_config.date_color_1 = config->getString("date_color_1", "");
         m_config.date_color_2 = config->getString("date_color_2", "");
         
-        reloadCustomFont();
         m_dateDirty = true;
-        setTheme(static_cast<PublisherTheme>(m_config.theme));
+        currentTheme = static_cast<PublisherTheme>(m_config.theme);
+        if (activeFace) {
+            reloadCustomFont();
+            setTheme(currentTheme);
+        }
     }
 }
 
-void DateEngine::activate() {}
+void DateEngine::activate() {
+    reloadCustomFont();
+    if (!activeFace) {
+        setTheme(currentTheme);
+    }
+}
 
 static void formatLocalizedDate(char* dest, size_t maxLen, const String& format, const struct tm* timeinfo, const String& lang) {
     char buf[128];
@@ -177,7 +183,7 @@ void DateEngine::update(EngineContext* context) {
     }
     
     if (activeFace) {
-        activeFace->update();
+        activeFace->draw(currentDateData);
     }
 }
 
@@ -185,10 +191,21 @@ void DateEngine::render(EngineContext* context) {
     loop(); // reuse the old loop code which does the actual drawing
 }
 
-void DateEngine::deactivate() {};
+void DateEngine::deactivate() {
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+        LOGI("DateEngine", "Deallocated active date face on deactivate.");
+    }
+    customFont.unload();
+}
 
 DateEngine::~DateEngine() {
-    if (activeFace) delete activeFace;
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+    }
+    customFont.unload();
 }
 
 void DateEngine::setDateData(const TimeData& d) {
@@ -243,27 +260,30 @@ void DateEngine::setTheme(PublisherTheme theme) {
     currentTheme = theme;
 
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(matrix);
+        activeFace = new (std::nothrow) CyberpunkClock(matrix);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(matrix);
+        activeFace = new (std::nothrow) FlipClock(matrix);
     } else if ((int)theme == 22) {
-        activeFace = new PongClock(matrix);
+        activeFace = new (std::nothrow) PongClock(matrix);
     } else if ((int)theme == 23) {
-        activeFace = new TetrisClock(matrix, false);
+        activeFace = new (std::nothrow) TetrisClock(matrix, false);
     } else if ((int)theme == 29) {
-        activeFace = new TetrisClock(matrix, true);
+        activeFace = new (std::nothrow) TetrisClock(matrix, true);
     } else if ((int)theme == 24) {
-        activeFace = new WordClock(matrix);
+        activeFace = new (std::nothrow) WordClock(matrix);
     } else if ((int)theme == 25) {
-        activeFace = new BinaryClock(matrix);
+        activeFace = new (std::nothrow) BinaryClock(matrix);
     } else if ((int)theme == 26) {
-        activeFace = new PacmanClock(matrix);
+        activeFace = new (std::nothrow) PacmanClock(matrix);
     } else if ((int)theme == 27) {
-        activeFace = new VersusClock(matrix);
+        activeFace = new (std::nothrow) VersusClock(matrix);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(matrix);
+        activeFace = new (std::nothrow) MatrixRainClock(matrix);
     } else if ((int)theme == 28) {
-        activeFace = new SlotMachineClock(matrix);
+        activeFace = new (std::nothrow) SlotMachineClock(matrix);
+    }
+    if (!activeFace) {
+        LOGW("DateEngine", "Theme %d allocation failed due to heap pressure; operating with no custom face", (int)theme);
     }
 }
 
@@ -496,7 +516,6 @@ bool DateEngine::loop() {
     }
     
     if (activeFace) {
-        activeFace->draw(currentDateData);
         activeFace->update();
         return true;
     }

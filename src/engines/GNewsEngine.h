@@ -26,6 +26,7 @@ public:
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
     bool isRealtime() const override { return true; }
+    bool needsClear() const override { return false; }
 
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
         _geometry = geometry;

@@ -141,6 +141,13 @@ public:
     - Los búferes gráficos grandes fuera de DMA directo (como el canvas de 32 KB de `GifEngine`) DEBEN priorizar la asignación en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) cuando hay PSRAM disponible, reservando la DRAM interna para mbedTLS y la red LwIP.
     - La pila de la tarea en segundo plano AsyncTCP se dimensiona en 8192 bytes y se fija estrictamente al Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) para proteger el hot-path de renderizado del Core 1 (Invariante 1).
     - Los servicios de red persistentes (Google Cast) DEBEN implementar backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP/LwIP.
+15. **Regla de Oro #15 — Renderizado Puro vía `IDrawingSurface` y Aislamiento DMA (Invariantes 18 y 19):**
+    - Un motor es un algoritmo puro: NUNCA debe llamar a `context->getMatrix()->fillScreen(0)` ni manipular el framebuffer físico DMA directamente.
+    - Todas las operaciones de dibujo DEBEN dirigirse a `context->getSurface()`. Las primitivas de mutación (`drawPixel`, `blit565`, `fillRect`, `clear`) marcan automáticamente la superficie como sucia vía `markModified()`.
+    - Si un motor no tiene un nuevo cuadro o es estático entre actualizaciones, `present()` es una operación nula sin costo ni transferencia DMA, eliminando por completo el parpadeo de pantalla DMA en búfer simple.
+16. **Regla de Oro #16 — Desactivación Sin Asignaciones Dinámicas y Silente (Invariantes 15 y 16):**
+    - `deactivate()` NO DEBE realizar ninguna nueva asignación dinámica de memoria (`malloc`, `new`, redimensionamiento de contenedores). Libere la memoria usando `std::vector<T>().swap(vec)` o `{}` en lugar del no vinculante `shrink_to_fit()`.
+    - `deactivate()` DEBE retornar solo después de que todas las tareas, temporizadores, callbacks y descriptores de archivo abiertos propiedad del motor se hayan detenido por completo. El sistema regresa a la línea base inactiva de referencia dentro del límite de línea base silente ($|\Delta \text{heap}| \le 2\text{ KB}$).
 
 ---
 

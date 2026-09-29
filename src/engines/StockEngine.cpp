@@ -6,6 +6,7 @@
 #include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
+#include <esp_task_wdt.h>
 
 StockEngine* StockEngine::instance = nullptr;
 
@@ -13,7 +14,8 @@ StockEngine::StockEngine()
     : currentSymbolIndex(0), lastItemSwitchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
     instance = this;
-    addProvider(new YahooFinanceProvider());
+    m_yahoo = new YahooFinanceProvider();
+    addProvider(m_yahoo);
 }
 
 EngineError StockEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
@@ -75,16 +77,30 @@ void StockEngine::parseSymbols(const String& syms) {
 void StockEngine::activate() {
     lastItemSwitchTime = millis();
     symbolsShownThisCycle = 0;
+    m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
-        String sym = symbolList[currentSymbolIndex % symbolList.size()];
-        fetchQuote(sym);
-        if (config_show_chart) {
-            fetchHistory(sym, config_chart_timeframe);
+        activeSymbol = symbolList[currentSymbolIndex % symbolList.size()];
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasData) {
+            currentPrice = cache.price;
+            changePercent24h = cache.changePercent24h;
+            fetchSuccess = true;
+        } else {
+            currentPrice = 0.0f;
+            changePercent24h = 0.0f;
+            fetchSuccess = false;
         }
     }
+    requestRedraw();
 }
 
 void StockEngine::deactivate() {
+    // Invariant 15 (Allocation-Free Deactivation): reclaim maps with zero dynamic allocations
+    std::map<String, AssetQuoteCache>().swap(quoteCache);
+    std::map<String, AssetHistoryCache>().swap(historyCache);
+    currentPrice = 0.0f;
+    changePercent24h = 0.0f;
+    fetchSuccess = false;
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
@@ -101,10 +117,12 @@ void StockEngine::fetchQuote(const String& symbol) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        requestRedraw();
         LOGI("StockEngine", "[Cache Hit] Using cached stock quote for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
         return;
     }
     
+    esp_task_wdt_reset();
     float newPrice = 0.0f;
     float newChange = 0.0f;
     String newImgUrl = "";
@@ -117,75 +135,107 @@ void StockEngine::fetchQuote(const String& symbol) {
             break;
         }
     }
+    esp_task_wdt_reset();
     
-    // Download and Cache Icon
-    if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
+    // Download and Cache Icon via HTTP weserv proxy if not already in RAM
+    String imgUrl = newImgUrl;
+    if (imgUrl.isEmpty()) {
+        String safeName = symbol;
+        safeName.toLowerCase();
+        imgUrl = "assets.parqet.com/logos/symbol/" + safeName + "?format=png";
+    }
+
+    if (imgUrl.length() > 0 && !cache.hasIcon && !cache.iconAttempted) {
         String safeName = symbol;
         safeName.toLowerCase();
         String sdPath = "/stock_icons/" + safeName + ".png";
         
+        bool iconExists = false;
         {
             SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && !sd.exists(sdPath)) {
-                guard.unlock();
-                HTTPClient httpImg;
-                WiFiClient imgClient;
-                String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
-                httpImg.setTimeout(5000);
-                if (httpImg.begin(imgClient, proxyUrl)) {
-                    int code = httpImg.GET();
-                    if (code == 200) {
-                        SdLockGuard writeGuard(pdMS_TO_TICKS(1500));
-                        if (writeGuard) {
-                            if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
-                            FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
-                            if (f) {
-                                httpImg.writeToStream(&f);
-                                f.close();
-                            }
-                        }
-                    }
-                    httpImg.end();
-                }
+            if (guard) {
+                iconExists = sd.exists(sdPath.c_str());
             }
         }
         
-        // Load into RAM
-        size_t size = 0;
-        uint8_t* buf = nullptr;
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && sd.exists(sdPath)) {
-                FsFile f = sd.open(sdPath, FILE_OPEN_READ);
-                if (f) {
-                    size = f.size();
-                    if (size > 0 && size <= 16384) {
-                        buf = (uint8_t*)malloc(size);
-                        if (buf) {
-                            f.read(buf, size);
+        if (!iconExists && WiFi.isConnected()) {
+            HTTPClient httpImg;
+            WiFiClient imgClient;
+            String proxyUrl = "http://images.weserv.nl/?url=" + imgUrl + "&w=16&h=16&output=png";
+            httpImg.setTimeout(3000);
+            httpImg.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.4");
+            if (httpImg.begin(imgClient, proxyUrl)) {
+                int code = httpImg.GET();
+                if (code == 200) {
+                    SdLockGuard writeGuard(pdMS_TO_TICKS(1500));
+                    if (writeGuard) {
+                        if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
+                        FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_WRITE);
+                        if (f) {
+                            httpImg.writeToStream(&f);
+                            f.close();
+                            iconExists = true;
                         }
                     }
-                    f.close();
                 }
+                httpImg.end();
+                imgClient.stop();
             }
         }
+        
+        cache.iconAttempted = true;
 
-        if (buf && size > 0) {
-            memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
-            currentDecodeBuffer = cache.iconPixels;
-            
-            PNG* png = new PNG();
-            pngPtr = png;
-            int rc = png->openRAM(buf, size, pngDraw);
-            if (rc == PNG_SUCCESS) {
-                png->decode((void*)this, 0);
-                cache.hasIcon = true;
+        // Load into RAM from SD
+        if (iconExists) {
+            size_t size = 0;
+            uint8_t* buf = nullptr;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(1500));
+                if (guard && sd.exists(sdPath.c_str())) {
+                    FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_READ);
+                    if (f) {
+                        size = f.size();
+                        if (size > 0 && size <= 16384) {
+                            buf = (uint8_t*)malloc(size);
+                            if (buf) {
+                                f.read(buf, size);
+                            }
+                        }
+                        f.close();
+                    }
+                }
             }
-            png->close();
-            delete png;
-            pngPtr = nullptr;
-            free(buf);
-            currentDecodeBuffer = nullptr;
+
+            if (buf && size > 0) {
+                // Invariant: PNGdec allocates ~38KB internally; never allocate on stack, check contiguous DRAM
+                const size_t reqPngHeap = sizeof(PNG) + 512;
+                if (ESP.getMaxAllocHeap() < reqPngHeap) {
+                    LOGW("StockEngine", "Skipping icon decode for %s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
+                         symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)reqPngHeap);
+                } else {
+                    memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
+                    currentDecodeBuffer = cache.iconPixels;
+                    
+                    PNG* png = new (std::nothrow) PNG();
+                    if (png) {
+                        pngPtr = png;
+                        int rc = png->openRAM(buf, size, pngDraw);
+                        if (rc == PNG_SUCCESS) {
+                            png->decode((void*)this, 0);
+                            cache.hasIcon = true;
+                            LOGI("StockEngine", "Successfully loaded 16x16 icon for %s", symbol.c_str());
+                        } else {
+                            LOGW("StockEngine", "Failed to decode PNG for %s (rc=%d)", symbol.c_str(), rc);
+                        }
+                        png->close();
+                        delete png;
+                        pngPtr = nullptr;
+                    } else {
+                        LOGW("StockEngine", "Failed to allocate PNG decoder object");
+                    }
+                }
+                free(buf);
+            }
         }
     }
     
@@ -200,17 +250,21 @@ void StockEngine::fetchQuote(const String& symbol) {
         currentPrice = newPrice;
         changePercent24h = newChange;
         fetchSuccess = true;
+        requestRedraw();
         LOGI("StockEngine", "[Fetch Success] Updated cache for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
     } else if (cache.hasData) {
         // Fallback to last known cached price for THIS symbol if HTTP failed (e.g. Rate Limit 429)
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        requestRedraw();
         LOGW("StockEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.2f", symbol.c_str(), currentPrice);
     } else {
         currentPrice = 0.0f;
         changePercent24h = 0.0f;
         fetchSuccess = false;
+        cache.lastFetchTime = now; // Guard against instant re-fetch loop
+        requestRedraw();
         LOGW("StockEngine", "No quote available for %s", symbol.c_str());
     }
 }
@@ -259,6 +313,7 @@ void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
     float minP = 0.0f;
     float maxP = 0.0f;
 
+    esp_task_wdt_reset();
     for (IStockProvider* provider : providers) {
         if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
             memcpy(cache.points, points, count * sizeof(float));
@@ -268,17 +323,142 @@ void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
             cache.lastFetchTime = now;
             cache.hasData = true;
             LOGI("StockEngine", "[History Success] Fetched %d points for %s (%s)", (int)count, symbol.c_str(), timeframeLabel(tf));
-            return;
+            break;
         }
     }
+    esp_task_wdt_reset();
+}
+
+bool StockEngine::fetchCombined(const String& symbol) {
+    if (!m_yahoo) return false;
+    uint32_t now = millis();
+    AssetQuoteCache& qCache = quoteCache[symbol];
+    String histKey = symbol + "_" + timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hCache = historyCache[histKey];
+
+    float newPrice = 0.0f;
+    float newChange = 0.0f;
+    String newImgUrl = "";
+    float points[64];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+
+    bool ok = m_yahoo->fetchQuoteAndHistory(symbol, newPrice, newChange, newImgUrl,
+                                            config_chart_timeframe, points, 64, count, minP, maxP);
+    if (ok && newPrice > 0.0f) {
+        qCache.price = newPrice;
+        qCache.changePercent24h = newChange;
+        qCache.imageUrl = newImgUrl;
+        qCache.lastFetchTime = now;
+        qCache.hasData = true;
+
+        currentPrice = newPrice;
+        changePercent24h = newChange;
+        fetchSuccess = true;
+
+        if (count > 0) {
+            memcpy(hCache.points, points, count * sizeof(float));
+            hCache.count = count;
+            hCache.minPrice = minP;
+            hCache.maxPrice = maxP;
+            hCache.lastFetchTime = now;
+            hCache.hasData = true;
+            LOGI("StockEngine", "[Combined Success] Fetched quote + %d history points for %s", (int)count, symbol.c_str());
+        } else {
+            hCache.lastFetchTime = now;
+        }
+        requestRedraw();
+        return true;
+    }
+    return false;
 }
 
 void StockEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    
+    // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
+    if (!m_renderedFirstFrame) return;
+
     auto* matrix = context ? context->getSurface() : nullptr;
     int mH = matrix ? matrix->height() : 32;
     
     uint32_t now = millis();
+
+    // Check if initial quote for active symbol is missing or expired
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    if (!cache.hasIcon && !cache.iconAttempted) {
+        cache.iconAttempted = true;
+        // Load icon if available before TLS fragments heap
+        String safeName = activeSymbol;
+        safeName.toLowerCase();
+        String sdPath = "/stock_icons/" + safeName + ".png";
+        bool iconExists = false;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard) iconExists = sd.exists(sdPath.c_str());
+        }
+        const size_t reqPngHeap = sizeof(PNG) + 512;
+        if (iconExists && ESP.getMaxAllocHeap() >= reqPngHeap) {
+            size_t size = 0;
+            uint8_t* buf = nullptr;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(1500));
+                if (guard) {
+                    FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_READ);
+                    if (f) {
+                        size = f.size();
+                        if (size > 0 && size <= 16384) {
+                            buf = (uint8_t*)malloc(size);
+                            if (buf) f.read(buf, size);
+                        }
+                        f.close();
+                    }
+                }
+            }
+            if (buf && size > 0) {
+                memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
+                currentDecodeBuffer = cache.iconPixels;
+                PNG* png = new (std::nothrow) PNG();
+                if (png) {
+                    pngPtr = png;
+                    int rc = png->openRAM(buf, size, pngDraw);
+                    if (rc == PNG_SUCCESS) {
+                        png->decode((void*)this, 0);
+                        cache.hasIcon = true;
+                    }
+                    png->close();
+                    delete png;
+                    pngPtr = nullptr;
+                }
+                free(buf);
+            }
+        }
+    }
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+    bool needsFetch = false;
+    if (!cache.hasData) {
+        if (cache.lastFetchTime == 0 || (now - cache.lastFetchTime >= 30000UL)) {
+            needsFetch = true;
+        }
+    } else if (now - cache.lastFetchTime >= ttlMs) {
+        needsFetch = true;
+    }
+
+    if (needsFetch) {
+        bool combined = false;
+        if (config_show_chart) {
+            combined = fetchCombined(activeSymbol);
+        }
+        if (!combined) {
+            fetchQuote(activeSymbol);
+            if (fetchSuccess && config_show_chart) {
+                fetchHistory(activeSymbol, config_chart_timeframe);
+            }
+        }
+        requestRedraw();
+    }
+
     uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
@@ -288,23 +468,38 @@ void StockEngine::update(EngineContext* context) {
             symbolsShownThisCycle++;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             activeSymbol = symbolList[currentSymbolIndex];
-            fetchQuote(activeSymbol);
+            bool combined = false;
             if (config_show_chart) {
-                fetchHistory(activeSymbol, config_chart_timeframe);
+                combined = fetchCombined(activeSymbol);
+            }
+            if (!combined) {
+                fetchQuote(activeSymbol);
+                if (fetchSuccess && config_show_chart) {
+                    fetchHistory(activeSymbol, config_chart_timeframe);
+                }
             }
         } else {
             // Compact 32px split mode: Alternate between Info and Chart
             if (currentPage == DisplayPage::Info) {
                 currentPage = DisplayPage::Chart;
-                fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
+                if (fetchSuccess) {
+                    fetchHistory(activeSymbol, config_chart_timeframe);
+                }
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 activeSymbol = symbolList[currentSymbolIndex];
-                fetchQuote(activeSymbol);
+                bool combined = false;
+                if (config_show_chart) {
+                    combined = fetchCombined(activeSymbol);
+                }
+                if (!combined) {
+                    fetchQuote(activeSymbol);
+                }
             }
         }
+        requestRedraw();
     }
 }
 
@@ -315,6 +510,11 @@ bool StockEngine::isFinished() const {
 
 void StockEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    if (m_redrawFrames == 0) return;
+    m_redrawFrames--;
+
+    m_renderedFirstFrame = true;
+
     auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
     int mW = matrix->width();

@@ -53,6 +53,7 @@ public:
     String getQuotaStatusString() const;
 
     static uint16_t getCategoryColor(const char* category);
+    void releaseArticleStorage();
 
 private:
     GNewsSnapshot _snapshot;
@@ -77,9 +78,6 @@ private:
      * @return true when snapshot.articles is usable, false when allocation failed.
      */
     bool ensureArticleStorage();
-
-    /** @brief Release the article storage and reset the snapshot counters. */
-    void releaseArticleStorage();
 };
 
 extern GNewsService gnewsService;

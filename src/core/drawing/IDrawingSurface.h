@@ -96,6 +96,8 @@ public:
     virtual void clear(uint16_t color = 0) = 0;
     virtual PresentationTiming present() = 0;
     virtual void markExternalDraw() {}
+    virtual bool isDirty() const { return true; }
+    virtual void markDirty() {}
 
     // --- Fast-Path Memory Primitives ---
     /**

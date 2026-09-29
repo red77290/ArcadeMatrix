@@ -59,45 +59,19 @@ bool GifEngine::ensureCanvasBuffer() {
 }
 
 void GifEngine::freeCanvasBuffer() {
+    if (s_sharedCanvasBuffer) {
+        heap_caps_free(s_sharedCanvasBuffer);
+        s_sharedCanvasBuffer = nullptr;
+        s_sharedCanvasPixels = 0;
+        LOGI("GifEngine", "Deallocated shared canvas buffer on demand.");
+    }
     canvasBuffer = nullptr;
 }
 
 
 void GifEngine::preallocateSharedBuffers(size_t matrixPixels) {
-    if (!s_sharedGifDecoder) {
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-        void* mem = heap_caps_malloc(sizeof(AnimatedGIF), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (mem) {
-            s_sharedGifDecoder = new (mem) AnimatedGIF();
-            s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
-        }
-#endif
-        if (!s_sharedGifDecoder) {
-            s_sharedGifDecoder = new (std::nothrow) AnimatedGIF();
-            if (s_sharedGifDecoder) {
-                s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
-            }
-        }
-        if (s_sharedGifDecoder) {
-            LOGI("GifEngine", "Pre-allocated shared AnimatedGIF decoder (%u bytes) at boot.", (unsigned)sizeof(AnimatedGIF));
-        } else {
-            LOGE("GifEngine", "Failed to pre-allocate AnimatedGIF decoder (%u bytes) at boot!", (unsigned)sizeof(AnimatedGIF));
-        }
-    }
-
-    if (matrixPixels > 0 && (!s_sharedCanvasBuffer || s_sharedCanvasPixels < matrixPixels)) {
-        if (s_sharedCanvasBuffer) {
-            heap_caps_free(s_sharedCanvasBuffer);
-            s_sharedCanvasBuffer = nullptr;
-            s_sharedCanvasPixels = 0;
-        }
-        s_sharedCanvasBuffer = allocateCanvasBuffer(matrixPixels);
-        if (s_sharedCanvasBuffer) {
-            s_sharedCanvasPixels = matrixPixels;
-            memset(s_sharedCanvasBuffer, 0, matrixPixels * 2);
-            LOGI("GifEngine", "Pre-allocated shared canvas buffer (%u bytes) at boot.", (unsigned)(matrixPixels * 2));
-        }
-    }
+    // Deprecated: buffers are now allocated strictly on-demand when GifEngine is activated
+    (void)matrixPixels;
 }
 
 bool GifEngine::ensureGifDecoder() {
@@ -106,9 +80,22 @@ bool GifEngine::ensureGifDecoder() {
         gif = s_sharedGifDecoder;
         return true;
     }
-    preallocateSharedBuffers(0);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    void* mem = heap_caps_malloc(sizeof(AnimatedGIF), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (mem) {
+        s_sharedGifDecoder = new (mem) AnimatedGIF();
+        s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
+    }
+#endif
+    if (!s_sharedGifDecoder) {
+        s_sharedGifDecoder = new (std::nothrow) AnimatedGIF();
+        if (s_sharedGifDecoder) {
+            s_sharedGifDecoder->begin(LITTLE_ENDIAN_PIXELS);
+        }
+    }
     if (s_sharedGifDecoder) {
         gif = s_sharedGifDecoder;
+        LOGI("GifEngine", "Allocated shared AnimatedGIF decoder (%u bytes) on demand.", (unsigned)sizeof(AnimatedGIF));
         return true;
     }
     LOGE("GifEngine", "Failed to allocate memory for AnimatedGIF decoder (%u bytes)!", (unsigned)sizeof(AnimatedGIF));
@@ -116,6 +103,12 @@ bool GifEngine::ensureGifDecoder() {
 }
 
 void GifEngine::freeGifDecoder() {
+    if (s_sharedGifDecoder) {
+        s_sharedGifDecoder->close();
+        delete s_sharedGifDecoder;
+        s_sharedGifDecoder = nullptr;
+        LOGI("GifEngine", "Deallocated AnimatedGIF decoder on demand.");
+    }
     gif = nullptr;
 }
 
@@ -261,6 +254,11 @@ EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* co
 
 void GifEngine::activate() {
     instance = this;
+    ensureGifDecoder();
+    ensureCanvasBuffer();
+    if (matrix) {
+        allocateShadows(matrix->width() * matrix->height());
+    }
     invalidateShadows();
     int count = 1;
     if (m_rotationBudget > 0) {
@@ -292,6 +290,22 @@ void GifEngine::render(EngineContext* context) {
 void GifEngine::deactivate() {
     instance = this;
     stop();
+    freeShadows();
+    freeCanvasBuffer();
+    freeGifDecoder();
+    if (png) {
+        delete png;
+        png = nullptr;
+        LOGI("GifEngine", "Deallocated PNG decoder on demand.");
+    }
+    std::vector<String>().swap(playlists);
+    std::vector<uint32_t>().swap(playlistWeights);
+    std::vector<String>().swap(activeFiles);
+    std::vector<String>().swap(defaultPlaylists);
+    std::vector<String>().swap(pendingPlaylists);
+    if (currentFile) currentFile.close();
+    if (pngFile) pngFile.close();
+    LOGI("GifEngine", "Deactivated GifEngine: all decoders, canvas buffers, and playlist caches freed.");
 }
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
@@ -375,9 +389,6 @@ bool GifEngine::isFinished() const {
 bool GifEngine::begin(IDrawingSurface* display) {
     if (!display) return false;
     matrix = display;
-    ensureGifDecoder();
-    ensureCanvasBuffer();
-    allocateShadows(matrix->width() * matrix->height());
     return true;
 }
 
@@ -656,9 +667,11 @@ void GifEngine::freePsramBuffer() {
 bool GifEngine::decodePng(const char* filepath) {
     instance = this;
     ensureCanvasBuffer();
-    // Lazily allocate the ~38KB PNGdec decoder only on first actual use - see the `png` member
-    // comment in GifEngine.h for why this isn't a permanent value member.
-    if (!png) png = new PNG();
+    if (!png) png = new (std::nothrow) PNG();
+    if (!png) {
+        LOGE("GifEngine", "Failed to allocate memory for PNG decoder!");
+        return false;
+    }
 
     if (canvasBuffer && matrix) {
         memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));

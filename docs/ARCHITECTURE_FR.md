@@ -29,6 +29,9 @@ Ce document est la référence **exhaustive et approfondie** de l'architecture A
 17. [Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)](#17-orientation-gyroscopique-gyrohal--displayorientationmanager)
 18. [Surface API REST HTTP](#18-surface-api-rest-http)
 19. [Métadonnées de Build & Télémétrie](#19-métadonnées-de-build--télémétrie)
+20. [Contrat de Propriété & Frontières du Plan de Contrôle](#20-contrat-de-propriété--frontières-du-plan-de-contrôle)
+21. [Architecture de Validation & Framework de Test](#21-architecture-de-validation--framework-de-test)
+22. [Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire](#22-surface-de-rendu-suivi-détat-dirty--invariants-mémoire)
 
 ---
 
@@ -551,4 +554,154 @@ reconstruites ; le créneau de rescan est réservé de façon atomique et une se
 
 ## 19. Métadonnées de Build & Télémétrie
 
-L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_commit`, `build_timestamp`, `firmware_version`).
+L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_commit`, `build_timestamp`, `firmware_version`), garantissant la traçabilité entre le code source et le firmware actif.
+
+---
+
+## 20. Contrat de Propriété & Frontières du Plan de Contrôle
+
+ArcadeMatrix applique une séparation multi-cœur stricte entre les plans de contrôle asynchrones et le hot-path de rendu temps réel :
+
+```text
+DisplayArbiter
+    └── calcule l'intention dominante uniquement (moteur de décision pur sans état)
+
+DisplayRuntime
+    ├── possède l'état de session active
+    ├── possède les transitions de cycle de vie (activate, pause, resume, deactivate)
+    ├── possède la pile de préemption (PreemptionStack<PreemptionEntry, 4>)
+    └── classifie REFRESH interne vs PREEMPT / RESUME / REPLACE externe
+
+RotationManager
+    ├── possède les instances de moteurs sélectionnables (MAX_ACTIVE_ENGINES = 32)
+    ├── crée les instances sur le chemin froid (API REST / configuration)
+    └── expose une recherche sans allocation sur le chemin chaud (findActiveEngine())
+
+AppRuntime
+    └── possède les instances de moteurs événementiels (Pixelcade, Audio, handlers MQTT)
+```
+
+### 20.1 Matrice de Transition FSM d'Affichage
+
+| Séquence de Transition | Classification | Effets de Cycle de Vie | État de Pile & Profondeur |
+| :--- | :--- | :--- | :--- |
+| **A $\to$ A (même requête/source)** | `REFRESH` interne | `0` (ni pause, ni activate, mise à jour in-place des métadonnées) | Profondeur inchangée |
+| **A $\to$ B (rotation normale)** | `REPLACE` | `deactivate(A) → activate(B)` | Profondeur = 0 |
+| **A $\to$ B (alerte préemptive)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Profondeur incrémentée |
+| **A $\to$ B $\to$ B rafraîchissement** | `REFRESH` interne | `0` (mise à jour de `requestId` in-place) | Profondeur inchangée |
+| **A $\to$ B $\to$ C (alerte empilée)**| `PREEMPT` | `pause(B) → push(B) → activate(C)` | Profondeur = 2 |
+| **A $\to$ B $\to$ C $\to$ C rafraîchissement**| `REFRESH` interne | `0` (mise à jour de `requestId` in-place) | Profondeur = 2 |
+| **A $\to$ B $\to$ C $\to$ C expiration**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Profondeur = 1 |
+| **A $\to$ B $\to$ annulation B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Profondeur = 0 |
+| **A $\to$ B $\to$ annulation A** | Aucun | `0` (A submergé retiré de la pile si expiré) | B reste actif |
+| **A $\to$ cible non résoluble** | Rejet transactionnel | `0` (transition rejetée silencieusement, A intact) | Profondeur inchangée |
+| **Cible ROTATION non liée** | Liaison différée | `0` (session liée à ROTATION, moteur rattaché lors d'un `update()` ultérieur) | Profondeur inchangée |
+| **Pile saturée (depth=4) $\to$ alerte** | Rejet transactionnel | `0` (préemption rejetée proprement, session de sommet intacte)| Profondeur = 4 |
+| **Parent non résoluble $\to$ RESUME** | Rejet transactionnel | `0` (RESUME rejeté sans corrompre l'enfant actif)| L'enfant reste actif |
+| **REPLACE indépendant sur pile active** | `REPLACE` | `deactivate(All) → activate(New)` | Profondeur remise à 0 |
+| **Priorité A(10) vs B(5)** | A domine | `0` (A reste actif) | Profondeur inchangée |
+| **Priorité A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Profondeur incrémentée |
+
+---
+
+## 21. Architecture de Validation & Framework de Test
+
+ArcadeMatrix intègre un pipeline de validation à 3 niveaux garantissant une couverture de test complète et zéro régression :
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Pipeline de Validation à 3 Niveaux                     │
+├──────────────────────┬───────────────────────────────┬──────────────────────┤
+│ Niveau 1: PIO Local  │ Niveau 2: Émulation QEMU CI   │ Niveau 3: Dual-Target│
+│ Suites de Tests Uni. │ Exécution Matérielle Émulée   │ Compilation          │
+├──────────────────────┼───────────────────────────────┼──────────────────────┤
+│ • test_api           │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_core          │ • Bootloader double cœur ESP32│ • esp32s3_waveshare  │
+│ • test_engines       │ • Runner de tests UART Unity  │ • Check statique     │
+│ • test_hardware      │ • Zéro dépendance carte réelle│ • Check taille binaire│
+│ • test_providers     │ • CI GitHub Actions auto      │                      │
+│ • test_retrofrontend │                               │                      │
+│ • test_utils         │                               │                      │
+└──────────────────────┴───────────────────────────────┴──────────────────────┘
+```
+
+1. **Niveau 1 — Compilation PlatformIO Locale (`pio test`) :** 7 suites de tests compilant des firmwares avec assertions `Unity` pour valider les types et contrats sans nécessiter de matériel physique connecté.
+2. **Niveau 2 — Exécution Émulée Matérielle QEMU (`scripts/run_qemu_tests.py`) :** Démarrage automatisé de chaque firmware de test dans un CPU ESP32 émulé (QEMU Espressif), capturant et évaluant la sortie série UART pour les codes de succès `UNITY_END()`.
+3. **Niveau 3 — Compilation Dual-Target :** Garantit la compatibilité du build sur ESP32 classique Dual-Core (I2S DMA) et ESP32-S3 (LCD DMA).
+
+### 21.1 Contrat ValidationPolicy comme Gestionnaire de Violation
+
+`ValidationPolicy` définit l'action déterministe de récupération lorsqu'un champ de configuration enfreint ses contraintes :
+- `Clamp` : Restreint les valeurs numériques hors limites à `[min_val, max_val]`.
+- `FallbackDefault` : Restaure la valeur du champ à `field.default_value`.
+- `Accept` : Accepte les valeurs utilisateur libres (texte libre, URLs).
+- `Reject` : Rejette la configuration invalide et restaure la valeur par défaut documentée.
+
+---
+
+## 22. Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire
+
+Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux DMA à simple buffer (ex. ESP32 classique avec Canvas SRAM + DMA unique) tout en garantissant un comportement mémoire temps réel déterministe, ArcadeMatrix isole strictement les moteurs de rendu du buffer physique via `IDrawingSurface`.
+
+```text
+                         IEngine (Algorithme Pur)
+                                    │
+                            update() / render()
+                                    │
+                                    ▼
+                             IDrawingSurface
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                    SRAM Canvas            État Dirty
+                         │             modifications non
+                         │                 présentées
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                                 present()
+                                    │
+                            Résultat Présentation
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                       Succès                Échec
+                         │                     │
+                   dirty = false         dirty = true
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                         Hub75PresentationBackend
+                                    │
+                               Fenêtre Sûre
+                                    │
+                               Commit DMA
+```
+
+### 22.1 Sémantique de l'État Dirty & Cycle de Vie de Présentation
+
+1. **Suivi Dirty Automatique via `markModified()`** : Toutes les opérations mutantes sur `CanvasBufferedSurface` (`drawPixel`, `drawFastHLine`, `drawFastVLine`, `fillRect`, `fillScreen`, `blit565`, `acquireCanvas`) convergent vers `markModified()` qui positionne `_dirty = true`. `Adafruit_GFX` implémentant ses primitives de haut niveau sur ces virtuelles, 100 % des modifications du canvas sont capturées sans charge additionnelle pour les moteurs.
+2. **Gating de Présentation** : Lors de l'évaluation de `present()`, si `!_dirty`, aucun transfert DMA ni encodage en salve de bitplanes n'a lieu. Le DMA matériel continue de balayer le buffer actif sans intervention CPU, éliminant les sauts de trame.
+3. **Atomicité du Commit** : `_dirty` est réinitialisé à `false` **uniquement si** `backend->presentCanvas()` retourne `PresentationResult::Ok`. En cas d'échec (ex. timeout de fenêtre de sécurité `SafeWindowTimeout` ou contention de bus DMA), `_dirty` reste `true` (Invariant 20), garantissant que l'image non validée est re-tentée à la trame suivante sans perte visuelle.
+
+### 22.2 Invariants Architecturaux Formels 15 à 20
+
+- **🔴 Invariant 15 — Désactivation Sans Allocation :**
+  Dès que la désactivation débute, le moteur sortant NE DOIT effectuer aucune nouvelle allocation dynamique. La désactivation peut uniquement libérer, fermer, stopper ou détacher les ressources détenues par le moteur. Toutes les désallocations internes de conteneurs utilisent `std::vector<T>().swap(vec)` ou `{}` plutôt qu'un appel non contraignant à `shrink_to_fit()`.
+- **🔴 Invariant 16 — Désactivation Quiescente :**
+  `deactivate()` DOIT retourner uniquement après que toutes les tâches d'arrière-plan du moteur (`FgtLoader`, `DashFetch`, `CastPoll`), timers, rappels, I/O asynchrones et descripteurs de fichiers ouverts ont été intégralement arrêtés ou détachés des ressources du moteur.
+- **🔴 Invariant 17 — L'État Dirty Représente les Changements Non Présentés :**
+  `IDrawingSurface::isDirty()` DOIT rester vrai jusqu'à ce que l'état du canvas correspondant ait été validé avec succès sur le matériel d'affichage (`PresentationResult::Ok`).
+- **🔴 Invariant 18 — Effacement Limité au Canvas :**
+  Une opération d'effacement de surface (`clear()` / `fillScreen(0)`) DOIT modifier exclusivement la mémoire de dessin appartenant à la surface (SRAM canvas). Elle NE DOIT PAS écrire directement dans un buffer DMA HUB75 en cours de balayage actif.
+- **🔴 Invariant 19 — Isolation DMA :**
+  Les moteurs d'affichage et les gestionnaires de rotation NE DOIVENT PAS accéder directement, effacer ou modifier la mémoire de présentation/DMA matérielle (`FastMatrixPanel`). Tout rendu passe obligatoirement et exclusivement par `IDrawingSurface`.
+- **🔴 Invariant 20 — Préservation lors d'Échec de Présentation :**
+  Une tentative de présentation échouée NE DOIT PAS réinitialiser l'état dirty, préservant ainsi les modifications non présentées pour une nouvelle tentative à la trame suivante.
+
+### 22.3 Enveloppe de Référence Quiescente (Quiescent Baseline Envelope)
+
+Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas face aux opérations réseau dynamiques, ArcadeMatrix définit formellement une **Enveloppe de Référence Quiescente** :
+- Lors de `deactivate(old)`, le système retourne à l'empreinte de repos de référence dans une enveloppe bornée : $|\text{baseline}_{\text{finale}} - \text{baseline}_{\text{initiale}}| \le 2\text{ Ko}$.
+- Dérive mémoire cumulée nulle sur 100 cycles consécutifs de rotation (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
+- Zéro tâche d'arrière-plan résiduelle, zéro descripteur de fichier orphelin, zéro socket réseau en suspens post-désactivation.

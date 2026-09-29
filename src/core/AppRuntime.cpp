@@ -12,6 +12,7 @@
 #include "SdSpace.h"
 #include "CpuLoad.h"
 #include <time.h>
+#include <lwip/dns.h>
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
 #include "esp_sntp.h"
@@ -280,9 +281,6 @@ void AppRuntime::initialize() {
     m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
 
-    // Pre-allocate GIF decoder and canvas buffer before networking / heap fragmentation:
-    GifEngine::preallocateSharedBuffers((size_t)snapshot.matrix.width * snapshot.matrix.height * snapshot.matrix.chainLength);
-
     // NOTE: begin() does NOT re-probe the gyroscope (that's HardwareHAL's job); it only
     // captures the Adafruit_GFX display pointer and reads its real width()/height() to seed
     // _geometry. Without this call, _display stays nullptr forever, applyGeometryAndNotify()
@@ -397,6 +395,12 @@ void AppRuntime::initialize() {
                 LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
             } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
                 LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+                // Configure fallback DNS servers (Cloudflare 1.1.1.1 and Google 8.8.8.8) to prevent resolution failures
+                ip_addr_t dns1, dns2;
+                IP_ADDR4(&dns1, 1, 1, 1, 1);
+                IP_ADDR4(&dns2, 8, 8, 8, 8);
+                dns_setserver(1, &dns1);
+                dns_setserver(2, &dns2);
                 if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
                     s_mdnsStarted = true;
                     LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());

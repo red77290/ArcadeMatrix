@@ -170,6 +170,13 @@ Le `DisplayArbiter` résout les sources d'affichage de manière déterministe vi
     - Les gros framebuffers graphiques hors DMA direct (comme le canvas de 32 Ko de `GifEngine`) DOIVENT prioriser l'allocation en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) lorsque la PSRAM est disponible, réservant la DRAM interne pour mbedTLS et la pile réseau LwIP.
     - La pile de la tâche de fond AsyncTCP est dimensionnée à 8192 octets et strictement épinglée au Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) pour protéger le hot-path de rendu d'affichage du Core 1 (Invariant 1).
     - Les services réseau persistants (Google Cast) DOIVENT appliquer un backoff exponentiel (5s, 10s, 20s, 60s) initialisé dès la rupture de session, évitant les tempêtes de reconnexion pendant les salves de trafic HTTP/LwIP.
+15. **Règle d'Or #15 — Rendu Pur via `IDrawingSurface` & Isolation DMA (Invariants 18 & 19) :**
+    - Les moteurs ne doivent JAMAIS interagir directement avec le pilote matériel physique ou `FastMatrixPanel` (`getMatrix()->fillScreen(0)` est strictement proscrit).
+    - Tous les effacements et opérations de pixels doivent obligatoirement passer par `context->getSurface()->clear(0)` ou `fillScreen(0)`.
+    - `CanvasBufferedSurface` garantit que l'effacement du canvas modifie uniquement la SRAM interne et n'écrit jamais dans le buffer DMA HUB75 en cours de balayage actif, éliminant intégralement le scintillement d'écran noir sur les systèmes à simple buffer.
+16. **Règle d'Or #16 — Désactivation Sans Allocation & Quiescente (Invariants 15 & 16) :**
+    - `deactivate()` doit être 100% sans allocation : ne jamais appeler `std::vector::shrink_to_fit()` ou de redimensionnement dynamique pendant la désactivation ; utiliser `std::vector<T>().swap(vec)` ou `{}` pour désallouer inconditionnellement sans allouer de métadonnées.
+    - `deactivate()` doit garantir la quiescence : toutes les tâches réseau d'arrière-plan, instances de clients HTTP, timers et descripteurs de fichiers ouverts doivent être intégralement arrêtés, joints ou détachés avant le retour de `deactivate()`.
 
 ---
 

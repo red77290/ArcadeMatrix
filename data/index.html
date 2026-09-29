@@ -4295,7 +4295,7 @@ function parseOptionItem(item) {
 
   // Handle known strftime formats with colons in the format string
   if (s.startsWith('%H:%M:%S:')) {
-    return { value: '%H:%M:%S', label: s.substring(10).trim() };
+    return { value: '%H:%M:%S', label: s.substring(9).trim() };
   }
   if (s.startsWith('%H:%M:')) {
     return { value: '%H:%M', label: s.substring(6).trim() };
@@ -4304,7 +4304,7 @@ function parseOptionItem(item) {
     return { value: '%I:%M:%S %p', label: s.substring(12).trim() };
   }
   if (s.startsWith('%I:%M %p:')) {
-    return { value: '%I:%M %p', label: s.substring(8).trim() };
+    return { value: '%I:%M %p', label: s.substring(9).trim() };
   }
 
   // Standard 'value:label' parsing (e.g. "C:Celsius (°C)", "system:System (General)", "0:Digital Modern")
