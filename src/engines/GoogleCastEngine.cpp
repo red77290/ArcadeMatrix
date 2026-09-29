@@ -371,20 +371,25 @@ void GoogleCastEngine::pollCastStatus() {
             return;
         }
 
-        // Serialize this (rare, reconnect-only) handshake against every other TLS user in
-        // the system -- see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only.
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            LOGW("GoogleCast", "Skipping reconnect: another TLS handshake is in progress.");
-            m_nextReconnectMs = now + 2000;
-            return;
+        // Invariant N2: Scope the TLS handshake lock strictly to connect() so it is
+        // released immediately upon handshake completion, before any message transfer.
+        bool connectOk = false;
+        {
+            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+            if (!tlsLock) {
+                LOGW("GoogleCast", "Skipping reconnect: another TLS handshake is in progress.");
+                m_nextReconnectMs = now + 2000;
+                return;
+            }
+
+            m_client.stop();
+            m_client.setInsecure();
+
+            LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
+            connectOk = m_client.connect(m_resolvedIp.c_str(), m_resolvedPort);
         }
 
-        m_client.stop();
-        m_client.setInsecure();
-
-        LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
-        if (!m_client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+        if (!connectOk) {
             const uint32_t postFree = NetworkBudget::freeInternal();
             const uint32_t postLargest = NetworkBudget::largestInternalBlock();
             const uint32_t postFreeDma = NetworkBudget::freeDmaInternal();

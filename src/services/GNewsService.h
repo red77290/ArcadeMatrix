@@ -71,6 +71,7 @@ private:
     int _lastFetchDay = -1;
     bool _loadedFromSd = false;
 
+    bool parseGNewsJson(Stream& stream, const char* defaultCategory);
     bool parseGNewsJson(const String& payload, const char* defaultCategory);
 
     /**

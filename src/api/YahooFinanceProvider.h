@@ -25,4 +25,5 @@ public:
     bool parsePayload(const String& payload, float& outPrice, float& outChange);
     bool parsePayload(Stream& stream, float& outPrice, float& outChange);
     bool parseChart(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax);
+    bool parseChart(Stream& stream, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax);
 };

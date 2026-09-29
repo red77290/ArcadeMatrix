@@ -3141,6 +3141,8 @@ void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
     auto v2 = CompatibilityEvaluator::evaluate(prefDesc, ctx);
     TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)v2.status);
     TEST_ASSERT_TRUE(v2.degraded());
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v2.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
 
     // 3. Single-buffer blanking budget exceeded:
     // Tight blanking budget 100µs on canvas_single where transfer estimate is ~150-250µs

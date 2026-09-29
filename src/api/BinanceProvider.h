@@ -24,7 +24,9 @@ public:
         Timeframe tf, float* outPoints, size_t maxPoints,
         size_t& outCount, float& outMin, float& outMax);
 
-    // Public parsing methods for TDD
+    // Public parsing methods for TDD & Direct Streaming
+    bool parsePayload(Stream& stream, float& outPrice, float& outChange);
     bool parsePayload(const String& payload, float& outPrice, float& outChange);
+    bool parseKlines(Stream& stream, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax);
     bool parseKlines(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax);
 };

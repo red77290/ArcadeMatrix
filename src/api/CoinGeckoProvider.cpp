@@ -1,76 +1,48 @@
 #include "CoinGeckoProvider.h"
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
-#include <WiFiClientSecure.h>
+#include "../core/net/SecureHttpClient.h"
 
 bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
-    // See BinanceProvider::fetchQuote: attempting a handshake without the required
-    // internal DRAM only fragments the heap and starves the SD/FATFS layer.
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("CoinGecko", "Skipping quote for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
-             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        return false;
-    }
-
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("CoinGecko", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
-        return false;
-    }
-
     String lowerSymbol = symbol;
     lowerSymbol.toLowerCase();
-    
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setHandshakeTimeout(4);
-
-    HTTPClient http;
-    http.setTimeout(4500);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     
     String vsCur = m_currency;
     vsCur.toLowerCase();
     if (vsCur.isEmpty()) vsCur = "usd";
 
     // Primary API
-    int code = -1;
     String cgUrl = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=" + vsCur + "&symbols=" + lowerSymbol;
-    if (http.begin(client, cgUrl)) {
-        code = http.GET();
-        if (code == 200) {
-            String payload = http.getString();
-            if (parsePrimary(payload, outPrice, outChange, outImageUrl)) {
-                http.end();
-                client.stop();
-                return true;
-            }
-        }
-        http.end();
-        client.stop();
+    auto res = net::SecureHttpClient::get(cgUrl);
+    if (res.ok() && parsePrimary(res.stream(), outPrice, outChange, outImageUrl)) {
+        return true;
     }
-    
+
     // Simple API fallback (only if primary endpoint was not found or failed softly, never on 429 rate limit)
-    if (code > 0 && code != 429 && code != 403) {
+    if (res.statusCode() > 0 && res.statusCode() != 429 && res.statusCode() != 403) {
         String coinId = lowerSymbol;
         if (lowerSymbol == "erg") coinId = "ergo";
         
         String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=" + vsCur + "&include_24hr_change=true";
-        if (http.begin(client, cgSimpleUrl)) {
-            int codeSimple = http.GET();
-            if (codeSimple == 200) {
-                String payload = http.getString();
-                if (parseSimple(payload, coinId, outPrice, outChange)) {
-                    http.end();
-                    client.stop();
-                    return true;
-                }
-            }
-            http.end();
-            client.stop();
+        auto resSimple = net::SecureHttpClient::get(cgSimpleUrl);
+        if (resSimple.ok() && parseSimple(resSimple.stream(), coinId, outPrice, outChange)) {
+            return true;
         }
     }
     
+    return false;
+}
+
+bool CoinGeckoProvider::parsePrimary(Stream& stream, float& outPrice, float& outChange, String& outImageUrl) {
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, stream);
+    if (!err && doc.is<JsonArray>() && doc.size() > 0) {
+        JsonObject coin = doc[0];
+        outPrice = coin["current_price"] | 0.0f;
+        outChange = coin["price_change_percentage_24h"] | 0.0f;
+        outImageUrl = coin["image"].as<String>();
+        return (outPrice > 0.0f);
+    }
     return false;
 }
 
@@ -82,6 +54,18 @@ bool CoinGeckoProvider::parsePrimary(const String& payload, float& outPrice, flo
         outPrice = coin["current_price"] | 0.0f;
         outChange = coin["price_change_percentage_24h"] | 0.0f;
         outImageUrl = coin["image"].as<String>();
+        return (outPrice > 0.0f);
+    }
+    return false;
+}
+
+bool CoinGeckoProvider::parseSimple(Stream& stream, const String& coinId, float& outPrice, float& outChange) {
+    DynamicJsonDocument doc(1024);
+    DeserializationError err = deserializeJson(doc, stream);
+    if (!err && doc.containsKey(coinId)) {
+        JsonObject item = doc[coinId];
+        outPrice = item["usd"] | 0.0f;
+        outChange = item["usd_24h_change"] | 0.0f;
         return (outPrice > 0.0f);
     }
     return false;
@@ -102,24 +86,12 @@ bool CoinGeckoProvider::parseSimple(const String& payload, const String& coinId,
 bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("CoinGecko", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
-        return false;
-    }
-
-    // Safety guard: CoinGecko market_chart payload (~30KB JSON) requires concurrent TLS (32KB)
-    // + response body (30KB) in internal DRAM. Use freeInternal() (DRAM-only, excludes PSRAM).
+    // Safety guard against memory explosion: CoinGecko market_chart payload (~30KB JSON)
     const uint32_t freeDram = NetworkBudget::freeInternal();
     const uint32_t largestDram = NetworkBudget::largestInternalBlock();
-    if (freeDram < 75000 || largestDram < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
+    if (freeDram < 65000 || largestDram < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
         LOGW("CoinGecko", "Skipping market_chart for %s: payload (~30KB) exceeds safe DRAM headroom (free=%u, largest=%u)",
              symbol.c_str(), (unsigned)freeDram, (unsigned)largestDram);
-        return false;
-    }
-
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("CoinGecko", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
         return false;
     }
 
@@ -139,18 +111,10 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     const char* days = "1";
     switch (tf) {
-        case Timeframe::Hourly:
-            days = "1";
-            break;
-        case Timeframe::Daily:
-            days = "1";
-            break;
-        case Timeframe::Weekly:
-            days = "7";
-            break;
-        case Timeframe::Monthly:
-            days = "30";
-            break;
+        case Timeframe::Hourly:  days = "1";  break;
+        case Timeframe::Daily:   days = "1";  break;
+        case Timeframe::Weekly:  days = "7";  break;
+        case Timeframe::Monthly: days = "30"; break;
     }
 
     String vsCur = m_currency;
@@ -158,29 +122,94 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
     if (vsCur.isEmpty()) vsCur = "usd";
 
     String url = "https://api.coingecko.com/api/v3/coins/" + coinId + "/market_chart?vs_currency=" + vsCur + "&days=" + String(days);
-
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setHandshakeTimeout(4);
-
-    HTTPClient http;
-    http.setTimeout(4500);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-
-    if (http.begin(client, url)) {
-        int code = http.GET();
-        if (code == 200) {
-            String payload = http.getString();
-            if (parseMarketChart(payload, tf, outPoints, maxPoints, outCount, outMin, outMax)) {
-                http.end();
-                client.stop();
-                return true;
-            }
-        }
-        http.end();
-        client.stop();
+    auto res = net::SecureHttpClient::get(url);
+    if (res.ok() && parseMarketChart(res.stream(), tf, outPoints, maxPoints, outCount, outMin, outMax)) {
+        return true;
     }
     return false;
+}
+
+bool CoinGeckoProvider::parseMarketChart(Stream& stream, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
+    return parseMarketChart(stream, Timeframe::Daily, outPoints, maxPoints, outCount, outMin, outMax);
+}
+
+bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
+    if (!outPoints || maxPoints == 0) return false;
+
+    // Scan stream for "\"prices\":"
+    const char* target = "\"prices\":";
+    size_t targetIdx = 0;
+    while (stream.available() > 0) {
+        int c = stream.read();
+        if ((char)c == target[targetIdx]) {
+            targetIdx++;
+            if (target[targetIdx] == '\0') break;
+        } else {
+            targetIdx = ((char)c == target[0]) ? 1 : 0;
+        }
+    }
+    if (target[targetIdx] != '\0') return false;
+
+    // Scan until '['
+    while (stream.available() > 0) {
+        int c = stream.read();
+        if (c == '[') break;
+    }
+
+    std::vector<float> allPrices;
+    allPrices.reserve(300);
+
+    // Stream-parse [timestamp, price] pairs
+    while (stream.available() > 0) {
+        int c = stream.read();
+        if (c == ']') break;
+        if (c == '[') {
+            // Read until comma
+            while (stream.available() > 0) {
+                int ch = stream.read();
+                if (ch == ',') break;
+            }
+            // Read price float until ']'
+            String numStr = "";
+            while (stream.available() > 0) {
+                int ch = stream.read();
+                if (ch == ']') break;
+                if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == 'e' || ch == 'E') {
+                    numStr += (char)ch;
+                }
+            }
+            float val = numStr.toFloat();
+            if (val > 0.0f) {
+                allPrices.push_back(val);
+            }
+        }
+    }
+
+    size_t n = allPrices.size();
+    if (n == 0) return false;
+
+    outCount = 0;
+    outMin = 1e9f;
+    outMax = -1e9f;
+
+    size_t startIdx = 0;
+    size_t endIdx = n;
+    if (tf == Timeframe::Hourly && n > 12) {
+        startIdx = n - 12;
+    }
+
+    size_t range = endIdx - startIdx;
+    size_t step = (range > maxPoints) ? (range / maxPoints) : 1;
+    if (step == 0) step = 1;
+
+    for (size_t i = startIdx; i < endIdx && outCount < maxPoints; i += step) {
+        float val = allPrices[i];
+        outPoints[outCount++] = val;
+        if (val < outMin) outMin = val;
+        if (val > outMax) outMax = val;
+    }
+
+    return (outCount > 0 && outMin <= outMax);
 }
 
 bool CoinGeckoProvider::parseMarketChart(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
@@ -218,7 +247,6 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
             }
         }
         cur = closeBracket + 1;
-        // If we reach the end of the outer prices array
         while (cur < len && (payload[cur] == ' ' || payload[cur] == '\n' || payload[cur] == '\r' || payload[cur] == '\t')) {
             cur++;
         }

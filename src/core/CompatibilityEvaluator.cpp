@@ -216,6 +216,10 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
 
         if (req.prefersDoubleBuffer && !isDouble && verdict.status == CompatibilityStatus::Compatible) {
             verdict.status = CompatibilityStatus::CompatibleDegraded;
+            verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::DoubleBufferUnavailable);
+            if (verdict.primaryReason == CompatibilityReason::None) {
+                verdict.primaryReason = CompatibilityReason::RequiresDoubleBuffer;
+            }
         }
     }
 
@@ -238,10 +242,10 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
     {
         verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::BlankBudgetExceeded);
         if (!ctx.presentationPolicy.degradedBlankingPermitted) {
-            if (verdict.primaryReason == CompatibilityReason::None) {
+            if (verdict.primaryReason == CompatibilityReason::None || verdict.status == CompatibilityStatus::CompatibleDegraded) {
                 verdict.primaryReason = CompatibilityReason::BlankBudgetExceeded;
-                verdict.status = CompatibilityStatus::Incompatible;
             }
+            verdict.status = CompatibilityStatus::Incompatible;
         } else {
             if (verdict.status == CompatibilityStatus::Compatible) {
                 verdict.status = CompatibilityStatus::CompatibleDegraded;
@@ -297,28 +301,28 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
     // Check Total Free DRAM
     if (ctx.memory.freeInternalHeap > 0 && totalInternalReq > ctx.memory.freeInternalHeap) {
         verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::LowInternalHeap);
-        if (verdict.primaryReason == CompatibilityReason::None) {
+        if (verdict.primaryReason == CompatibilityReason::None || verdict.status == CompatibilityStatus::CompatibleDegraded) {
             verdict.primaryReason = CompatibilityReason::InsufficientInternalHeap;
-            verdict.status = CompatibilityStatus::Incompatible;
         }
+        verdict.status = CompatibilityStatus::Incompatible;
     }
 
     // Check Contiguous Free DRAM Block
     if (ctx.memory.largestInternalBlock > 0 && contiguousReq > ctx.memory.largestInternalBlock) {
         verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::FragmentedInternalHeap);
-        if (verdict.primaryReason == CompatibilityReason::None) {
+        if (verdict.primaryReason == CompatibilityReason::None || verdict.status == CompatibilityStatus::CompatibleDegraded) {
             verdict.primaryReason = CompatibilityReason::InsufficientLargestBlock;
-            verdict.status = CompatibilityStatus::Incompatible;
         }
+        verdict.status = CompatibilityStatus::Incompatible;
     }
 
     // Check External PSRAM
     if (psramReq > 0 && ctx.memory.freePsram > 0 && psramReq > ctx.memory.freePsram) {
         verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::LowPsram);
-        if (verdict.primaryReason == CompatibilityReason::None) {
+        if (verdict.primaryReason == CompatibilityReason::None || verdict.status == CompatibilityStatus::CompatibleDegraded) {
             verdict.primaryReason = CompatibilityReason::InsufficientPsram;
-            verdict.status = CompatibilityStatus::Incompatible;
         }
+        verdict.status = CompatibilityStatus::Incompatible;
     }
 
     // =========================================================================

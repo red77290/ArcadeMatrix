@@ -2,9 +2,8 @@
 #include "../core/Logger.h"
 #include "../core/I18n.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/SecureHttpClient.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
@@ -349,6 +348,98 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
     return true;
 }
 
+bool GNewsService::parseGNewsJson(Stream& stream, const char* defaultCategory) {
+    DynamicJsonDocument doc(16384);
+    DeserializationError error = deserializeJson(doc, stream);
+    if (error) {
+        LOGE("GNewsService", "JSON deserialize error: %s", error.c_str());
+        return false;
+    }
+
+    JsonArray articles = doc["articles"].as<JsonArray>();
+    if (articles.isNull() || articles.size() == 0) {
+        LOGW("GNewsService", "No articles returned in JSON payload");
+        return false;
+    }
+
+    const char* defCat = (defaultCategory && strlen(defaultCategory) > 0) ? defaultCategory : "News";
+    uint16_t catColor = getCategoryColor(defCat);
+
+    std::vector<GNewsArticle> incoming;
+    for (JsonObject obj : articles) {
+        const char* rawTitle = obj["title"] | "";
+        if (!rawTitle || strlen(rawTitle) == 0) continue;
+
+        String cleanTitle = cleanNewsText(rawTitle);
+        if (cleanTitle.length() == 0) continue;
+
+        GNewsArticle art;
+        strncpy(art.title, cleanTitle.c_str(), sizeof(art.title) - 1);
+        art.title[sizeof(art.title) - 1] = '\0';
+
+        const char* rawDesc = obj["description"] | obj["content"] | "";
+        String cleanDesc = cleanNewsText(rawDesc);
+        int bracketPos = cleanDesc.lastIndexOf("[+");
+        if (bracketPos > 0) {
+            cleanDesc = cleanDesc.substring(0, bracketPos);
+            cleanDesc.trim();
+        }
+        strncpy(art.description, cleanDesc.c_str(), sizeof(art.description) - 1);
+        art.description[sizeof(art.description) - 1] = '\0';
+
+        const char* sourceName = obj["source"]["name"] | "News";
+        String cleanSource = cleanNewsText(sourceName);
+        strncpy(art.source, cleanSource.c_str(), sizeof(art.source) - 1);
+        art.source[sizeof(art.source) - 1] = '\0';
+
+        strncpy(art.category, defCat, sizeof(art.category) - 1);
+        art.category[sizeof(art.category) - 1] = '\0';
+
+        art.publishedEpoch = 0;
+        art.badgeColor = catColor;
+        incoming.push_back(art);
+    }
+
+    if (incoming.empty()) return false;
+
+    // Merge incoming into the snapshot articles with title deduplication
+    std::vector<GNewsArticle> merged;
+    for (const auto& inc : incoming) {
+        merged.push_back(inc);
+    }
+    for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
+        bool dup = false;
+        for (const auto& m : merged) {
+            if (strcmp(m.title, _snapshot.articles[i].title) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup && merged.size() < GNEWS_MAX_ARTICLES) {
+            merged.push_back(_snapshot.articles[i]);
+        }
+    }
+
+    if (!ensureArticleStorage()) {
+        _snapshot.count = 0;
+        _snapshot.hasData = false;
+        return false;
+    }
+
+    _snapshot.count = min((size_t)GNEWS_MAX_ARTICLES, merged.size());
+    for (size_t i = 0; i < _snapshot.count; i++) {
+        _snapshot.articles[i] = merged[i];
+    }
+
+    _snapshot.hasData = (_snapshot.count > 0);
+    _snapshot.fetchSuccess = true;
+    _snapshot.lastFetchTime = millis();
+    time_t curEp = 0;
+    time(&curEp);
+    _snapshot.lastFetchEpoch = (curEp > 1600000000) ? (uint32_t)curEp : 0;
+    return true;
+}
+
 void GNewsService::fetchNews(const String& apiKey, const String& category, const String& keywords,
                             const String& lang, const String& country, int maxArticles, int cacheTtlMin,
                             int requestsPerDay, bool forceRefresh) {
@@ -460,25 +551,10 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     String targetCat = cats[_catRoundRobinIdx % cats.size()];
     _catRoundRobinIdx = (_catRoundRobinIdx + 1) % cats.size();
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("GNewsService", "Skipping news fetch: insufficient internal DRAM for a TLS session.");
-        return;
-    }
-    // Held across the whole key-failover loop below (sequential, non-recursive handshakes
-    // against the same host) -- see HardwareHAL::begin() for why mbedTLS must stay
-    // internal-DRAM-only and all TLS handshakes must be serialized system-wide.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("GNewsService", "Skipping news fetch: another TLS handshake is in progress.");
-        return;
-    }
-
-    esp_task_wdt_reset();
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setHandshakeTimeout(4);
-    HTTPClient http;
-    http.setTimeout(4500);
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 4500;
+    options.handshakeTimeoutSec = 4;
+    auto session = net::SecureHttpClient::session("gnews.io", 443, options);
 
     size_t startKeyIdx = _activeKeyIdx % _apiKeys.size();
     bool querySucceeded = false;
@@ -487,53 +563,47 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         size_t curKeyIdx = (startKeyIdx + attempt) % _apiKeys.size();
         String currentKey = _apiKeys[curKeyIdx];
 
-        String url = "https://gnews.io/api/v4/";
+        String path = "/api/v4/";
         if (keywords.length() > 0) {
-            url += "search?q=" + keywords;
+            path += "search?q=" + keywords;
         } else {
-            url += "top-headlines?category=" + targetCat;
+            path += "top-headlines?category=" + targetCat;
         }
-        url += "&lang=" + reqLang;
+        path += "&lang=" + reqLang;
         if (country.length() > 0 && country != "auto") {
-            url += "&country=" + country;
+            path += "&country=" + country;
         }
         int count = (maxArticles >= 1 && maxArticles <= 10) ? maxArticles : 5;
-        url += "&max=" + String(count);
-        url += "&apikey=" + currentKey;
+        path += "&max=" + String(count);
+        path += "&apikey=" + currentKey;
 
         LOGI("GNewsService", "Fetching live news with key %d/%d for '%s'", (int)curKeyIdx + 1, (int)_apiKeys.size(), targetCat.c_str());
 
-        if (http.begin(client, url)) {
-            int httpCode = http.GET();
-            if (httpCode == HTTP_CODE_OK) {
-                String payload = http.getString();
-                if (parseGNewsJson(payload, targetCat.c_str())) {
-                    _activeKeyIdx = curKeyIdx;
-                    if (curKeyIdx < _keyUsages.size()) _keyUsages[curKeyIdx]++;
-                    _snapshot.status = 0; // OK
-                    saveToSd();
-                    querySucceeded = true;
-                    http.end();
-                    break;
-                }
-            } else {
-                String errBody = http.getString();
-                errBody.toLowerCase();
-                if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
-                    LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
-                    _snapshot.status = 3; // RATE_LIMITED
-                } else if (httpCode == 401 || errBody.indexOf("invalid") >= 0 || errBody.indexOf("forbidden") >= 0) {
-                    LOGW("GNewsService", "Key %d/%d invalid (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
-                    _snapshot.status = 2; // INVALID_KEY
-                } else {
-                    LOGW("GNewsService", "HTTP GET failed with code: %d", httpCode);
-                    _snapshot.status = 4; // NETWORK_ERROR
-                }
+        auto response = session.get(path);
+        int httpCode = response.statusCode();
+
+        if (response.ok()) {
+            if (parseGNewsJson(response.stream(), targetCat.c_str())) {
+                _activeKeyIdx = curKeyIdx;
+                if (curKeyIdx < _keyUsages.size()) _keyUsages[curKeyIdx]++;
+                _snapshot.status = 0; // OK
+                saveToSd();
+                querySucceeded = true;
+                break;
             }
-            http.end();
         } else {
-            LOGE("GNewsService", "Unable to connect to GNews endpoint");
-            _snapshot.status = 4; // NETWORK_ERROR
+            String errBody = response.stream().readString();
+            errBody.toLowerCase();
+            if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
+                LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                _snapshot.status = 3; // RATE_LIMITED
+            } else if (httpCode == 401 || errBody.indexOf("invalid") >= 0 || errBody.indexOf("forbidden") >= 0) {
+                LOGW("GNewsService", "Key %d/%d invalid (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                _snapshot.status = 2; // INVALID_KEY
+            } else {
+                LOGW("GNewsService", "HTTP GET failed with code: %d (error: %s)", httpCode, response.errorMessage());
+                _snapshot.status = 4; // NETWORK_ERROR
+            }
         }
     }
     esp_task_wdt_reset();

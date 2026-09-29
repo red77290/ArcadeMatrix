@@ -2,7 +2,7 @@
 #include <string.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+#include "../core/net/SecureHttpClient.h"
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
@@ -93,90 +93,186 @@ void MarqueeEngine::setMarqueeFile(const char* path) {
     }
 }
 
-bool MarqueeEngine::downloadUrlViaProxy(const String& targetUrl, const String& destPath) {
-    if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
+namespace {
 
-    String fitParam = "contain";
-    if (m_fitMode == "stretch") fitParam = "fill";
-    else if (m_fitMode == "center") fitParam = "cover";
+struct ImageHeaderInfo {
+    int width = -1;
+    int height = -1;
+    bool isGif = false;
+    bool isPng = false;
+    bool valid = false;
+};
+
+static ImageHeaderInfo parseImageDimensions(const uint8_t* header, size_t len) {
+    ImageHeaderInfo info;
+    if (len >= 10 && memcmp(header, "GIF8", 4) == 0) {
+        info.width = header[6] | (header[7] << 8);
+        info.height = header[8] | (header[9] << 8);
+        info.isGif = true;
+        info.valid = (info.width > 0 && info.height > 0);
+        return info;
+    }
+    if (len >= 24 && header[0] == 0x89 && header[1] == 'P' && header[2] == 'N' && header[3] == 'G') {
+        info.width = (header[16] << 24) | (header[17] << 16) | (header[18] << 8) | header[19];
+        info.height = (header[20] << 24) | (header[21] << 16) | (header[22] << 8) | header[23];
+        info.isPng = true;
+        info.valid = (info.width > 0 && info.height > 0);
+        return info;
+    }
+    return info;
+}
+
+static bool writeStreamToSd(Stream& s, const uint8_t* initialHeader, size_t initialHeaderLen, size_t totalExpectedLen, const String& destPath) {
+    SdLockGuard guard(pdMS_TO_TICKS(3000));
+    if (!guard) return false;
+    if (!sd.exists("/marquees")) sd.mkdir("/marquees");
+    FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+    if (!f) return false;
+
+    if (initialHeader && initialHeaderLen > 0) {
+        f.write(initialHeader, initialHeaderLen);
+    }
+    uint8_t chunk[512];
+    size_t written = initialHeaderLen;
+    while (totalExpectedLen == 0 || written < totalExpectedLen) {
+        int avail = s.available();
+        if (avail > 0) {
+            int toRead = std::min(avail, (int)sizeof(chunk));
+            if (totalExpectedLen > 0 && written + toRead > totalExpectedLen) {
+                toRead = totalExpectedLen - written;
+            }
+            int r = s.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            if (r > 0) {
+                f.write(chunk, r);
+                written += r;
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            if (!s.available()) break;
+        }
+    }
+    f.close();
+    return written > 0;
+}
+
+} // anonymous namespace
+
+bool MarqueeEngine::downloadUrlWithResizeCheck(const String& targetUrl, String& outDestPath) {
+    if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
 
     int w = panelWidth > 0 ? panelWidth : 128;
     int h = panelHeight > 0 ? panelHeight : 32;
 
-    String proxyUrl = "http://images.weserv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
-    LOGI("MarqueeEngine", "Downloading marquee via resize proxy: %s", proxyUrl.c_str());
+    // 1. Inspect target image resolution directly
+    bool isHttps = targetUrl.startsWith("https://");
+    uint8_t header[32];
+    size_t headerBytes = 0;
+    ImageHeaderInfo headerInfo;
+    bool directInspectionSuccess = false;
 
+    if (isHttps) {
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 5000;
+        options.userAgent = "Mozilla/5.0 ArcadeMatrix/3.2";
+        auto response = net::SecureHttpClient::get(targetUrl, options);
+        if (response.ok()) {
+            Stream& s = response.stream();
+            uint32_t startMs = millis();
+            while (headerBytes < sizeof(header) && (millis() - startMs < 2000)) {
+                if (s.available()) {
+                    header[headerBytes++] = (uint8_t)s.read();
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+            }
+            headerInfo = parseImageDimensions(header, headerBytes);
+            if (headerInfo.valid && headerInfo.width == w && headerInfo.height == h) {
+                outDestPath = headerInfo.isGif ? "/marquees/marquee.gif" : "/marquees/marquee.png";
+                LOGI("MarqueeEngine", "Marquee matches panel resolution (%dx%d), downloading directly as %s", w, h, outDestPath.c_str());
+                return writeStreamToSd(s, header, headerBytes, response.contentLength(), outDestPath);
+            }
+            directInspectionSuccess = true;
+        }
+    } else {
+        HTTPClient http;
+        WiFiClient client;
+        http.setTimeout(5000);
+        http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
+        if (http.begin(client, targetUrl)) {
+            int code = http.GET();
+            if (code == 200) {
+                int contentLen = http.getSize();
+                WiFiClient* s = http.getStreamPtr();
+                uint32_t startMs = millis();
+                while (headerBytes < sizeof(header) && (millis() - startMs < 2000)) {
+                    if (s->available()) {
+                        header[headerBytes++] = (uint8_t)s->read();
+                    } else {
+                        vTaskDelay(pdMS_TO_TICKS(5));
+                    }
+                }
+                headerInfo = parseImageDimensions(header, headerBytes);
+                if (headerInfo.valid && headerInfo.width == w && headerInfo.height == h) {
+                    outDestPath = headerInfo.isGif ? "/marquees/marquee.gif" : "/marquees/marquee.png";
+                    LOGI("MarqueeEngine", "Marquee matches panel resolution (%dx%d), downloading directly as %s", w, h, outDestPath.c_str());
+                    bool ok = writeStreamToSd(*s, header, headerBytes, contentLen, outDestPath);
+                    http.end();
+                    client.stop();
+                    return ok;
+                }
+                directInspectionSuccess = true;
+            }
+            http.end();
+            client.stop();
+        }
+    }
+
+    if (directInspectionSuccess && headerInfo.valid) {
+        LOGI("MarqueeEngine", "Marquee resolution (%dx%d) != panel (%dx%d), resizing via proxy", headerInfo.width, headerInfo.height, w, h);
+    } else {
+        LOGI("MarqueeEngine", "Marquee format requires proxy normalization/resize (%dx%d)", w, h);
+    }
+
+    // 2. Fetch resized image via proxy (wsrv.nl HTTPS first, weserv.nl HTTP fallback)
+    String fitParam = "contain";
+    if (m_fitMode == "stretch") fitParam = "fill";
+    else if (m_fitMode == "center") fitParam = "cover";
+
+    outDestPath = "/marquees/marquee.png";
+    String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 6000;
+    options.userAgent = "Mozilla/5.0 ArcadeMatrix/3.2";
+    auto response = net::SecureHttpClient::get(secureProxyUrl, options);
+    if (response.ok()) {
+        return writeStreamToSd(response.stream(), nullptr, 0, response.contentLength(), outDestPath);
+    }
+
+    String proxyUrl = "http://images.weserv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
     HTTPClient http;
     WiFiClient client;
-    http.setTimeout(5000);
+    http.setTimeout(6000);
     http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
-
-    bool success = false;
     if (http.begin(client, proxyUrl)) {
         int code = http.GET();
         if (code == 200) {
-            int len = http.getSize();
-            if (len > 0 && len < 65536) {
-                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                    if (!sd.exists("/marquees")) sd.mkdir("/marquees");
-                    FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-                    if (f) {
-                        http.writeToStream(&f);
-                        f.close();
-                        success = true;
-                    }
-                    xSemaphoreGive(sdMutex);
-                }
-            }
+            bool ok = writeStreamToSd(*http.getStreamPtr(), nullptr, 0, http.getSize(), outDestPath);
+            http.end();
+            client.stop();
+            return ok;
         }
         http.end();
         client.stop();
     }
 
-    if (!success) {
-        if (!NetworkBudget::canStartTlsSession()) {
-            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: insufficient internal DRAM for TLS session.");
-            return false;
-        }
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: another TLS handshake is in progress.");
-            return false;
-        }
-        WiFiClientSecure secureClient;
-        secureClient.setInsecure();
-        String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
-        HTTPClient secureHttp;
-        secureHttp.setTimeout(5000);
-        secureHttp.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
-        if (secureHttp.begin(secureClient, secureProxyUrl)) {
-            int code = secureHttp.GET();
-            if (code == 200) {
-                int len = secureHttp.getSize();
-                if (len > 0 && len < 65536) {
-                    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                        if (!sd.exists("/marquees")) sd.mkdir("/marquees");
-                        FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-                        if (f) {
-                            secureHttp.writeToStream(&f);
-                            f.close();
-                            success = true;
-                        }
-                        xSemaphoreGive(sdMutex);
-                    }
-                }
-            }
-            secureHttp.end();
-            secureClient.stop();
-        }
-    }
-    return success;
+    return false;
 }
 
 String MarqueeEngine::resolveMarqueeFile() {
     if (m_filePath.startsWith("http://") || m_filePath.startsWith("https://")) {
-        if (downloadUrlViaProxy(m_filePath, "/marquees/marquee.png")) {
-            return "/marquees/marquee.png";
+        String downloadedFile;
+        if (downloadUrlWithResizeCheck(m_filePath, downloadedFile)) {
+            return downloadedFile;
         }
     }
     SdLockGuard guard(pdMS_TO_TICKS(1500));

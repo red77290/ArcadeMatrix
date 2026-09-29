@@ -3,10 +3,9 @@
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include "../core/SpiRamJsonDocument.h"
+#include "../core/net/SecureHttpClient.h"
 #include "../services/ArtworkService.h"
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 SpotifyEngine::SpotifyEngine() {
@@ -124,40 +123,12 @@ bool SpotifyEngine::refreshAccessToken() {
     if (m_clientId.isEmpty() || m_refreshToken.isEmpty()) return false;
     if (!m_accessToken.isEmpty() && millis() < m_tokenExpiry) return true;
 
-    // Same admission control as the other HTTPS providers (Binance/CoinGecko/Yahoo,
-    // GoogleCast): a WiFiClientSecure handshake needs a contiguous ~16KB internal-DRAM
-    // block even with setInsecure(). Attempting it while fragmented fails silently deep
-    // inside HTTPClient (http.begin()/POST() just return false/-1), which looked
-    // identical to "the refresh token is invalid" or "Spotify stopped answering" from the
-    // engine's perspective, with nothing in the log to tell them apart.
-    if (!NetworkBudget::canStartTlsSession()) {
-        static unsigned long lastBudgetWarn = 0;
-        unsigned long now = millis();
-        if (now - lastBudgetWarn > 10000) {
-            lastBudgetWarn = now;
-            LOGW("Spotify", "Skipping token refresh: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
-                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        }
-        return false;
-    }
-
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("Spotify", "Skipping token refresh: another TLS handshake is in progress.");
-        return false;
-    }
-
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(4000);
-    HTTPClient http;
-    http.setTimeout(4500);
-
-    if (!http.begin(client, "https://accounts.spotify.com/api/token")) return false;
-
-    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 4500;
+    options.handshakeTimeoutSec = 4;
     if (!m_clientSecret.isEmpty()) {
-        http.setAuthorization(m_clientId.c_str(), m_clientSecret.c_str());
+        options.authUser = m_clientId;
+        options.authPassword = m_clientSecret;
     }
 
     String postData = "grant_type=refresh_token&refresh_token=" + m_refreshToken;
@@ -165,63 +136,35 @@ bool SpotifyEngine::refreshAccessToken() {
         postData += "&client_id=" + m_clientId;
     }
 
-    int httpCode = http.POST(postData);
-    if (httpCode == 200) {
-        // PSRAM-backed: refreshAccessToken() can run every poll cycle (~1.5s)
-        // when the cached token is close to expiry, same rationale as the
-        // Cast status docs (see SpiRamJsonDocument.h).
+    auto response = net::SecureHttpClient::post("https://accounts.spotify.com/api/token",
+                                                "application/x-www-form-urlencoded",
+                                                postData, options);
+    if (response.ok()) {
         SpiRamJsonDocument doc(1024);
-        deserializeJson(doc, http.getString());
+        deserializeJson(doc, response.stream());
         m_accessToken = doc["access_token"].as<String>();
         uint32_t expiresIn = doc["expires_in"] | 3600;
         m_tokenExpiry = millis() + (expiresIn * 1000) - 60000;
-        http.end();
-        client.stop();
         return true;
     }
 
-    http.end();
-    client.stop();
     return false;
 }
 
 void SpotifyEngine::pollSpotifyStatus() {
     if (!refreshAccessToken()) return;
 
-    // refreshAccessToken() only opens a TLS session when the cached token actually needs
-    // renewing; on a cache hit this poll's own connect() below is the first (and only)
-    // handshake this round, so it needs its own admission check.
-    if (!NetworkBudget::canStartTlsSession()) {
-        static unsigned long lastBudgetWarn = 0;
-        unsigned long now = millis();
-        if (now - lastBudgetWarn > 10000) {
-            lastBudgetWarn = now;
-            LOGW("Spotify", "Skipping status poll: insufficient internal DRAM for a TLS session (free=%u, largest=%u).",
-                 (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        }
-        return;
-    }
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 4500;
+    options.handshakeTimeoutSec = 4;
+    std::vector<std::pair<String, String>> headers = {
+        {"Authorization", "Bearer " + m_accessToken}
+    };
 
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("Spotify", "Skipping status poll: another TLS handshake is in progress.");
-        return;
-    }
+    auto response = net::SecureHttpClient::get("https://api.spotify.com/v1/me/player", options, headers);
+    int httpCode = response.statusCode();
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(4000);
-    HTTPClient http;
-    http.setTimeout(4500);
-
-    if (!http.begin(client, "https://api.spotify.com/v1/me/player")) return;
-    http.addHeader("Authorization", "Bearer " + m_accessToken);
-
-    int httpCode = http.GET();
     if (httpCode == 204) {
-        http.end();
-        client.stop();
-
         uint8_t target = 1 - m_publishedPodIdx.load(std::memory_order_relaxed);
         m_podBuffers[target].isActive = false;
         m_podBuffers[target].isPlaying = false;
@@ -242,7 +185,7 @@ void SpotifyEngine::pollSpotifyStatus() {
     if (httpCode == 200) {
         // PSRAM-backed: this poll cycle runs every ~1.5s while the engine is active.
         SpiRamJsonDocument doc(4096);
-        deserializeJson(doc, http.getString());
+        deserializeJson(doc, response.stream());
 
         isPlaying = doc["is_playing"] | false;
         progressMs = doc["progress_ms"] | 0;
@@ -272,9 +215,6 @@ void SpotifyEngine::pollSpotifyStatus() {
             volumePercent = device["volume_percent"] | 50;
         }
     }
-
-    http.end();
-    client.stop();
 
     String artworkId = "";
     if (m_hasPsram && m_showAlbumArt && !imageUrl.isEmpty()) {

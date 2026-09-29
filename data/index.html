@@ -2394,6 +2394,25 @@ const translations = {
     hide_incompatible: "Hide Incompatible",
     incompatible: "Incompatible",
     incompatible_hardware: "Missing required hardware or memory",
+    compat_reason_0: "Fully compatible",
+    compat_reason_1: "Requires external PSRAM memory",
+    compat_reason_2: "Requires PSRAM with direct DMA capability",
+    compat_reason_3: "Requires I2S microphone hardware",
+    compat_reason_4: "Requires I2S audio speaker/DAC output",
+    compat_reason_5: "Requires SHTC3 temperature sensor",
+    compat_reason_6: "Requires QMI8658 gyroscope/IMU sensor",
+    compat_reason_7: "Requires active Wi-Fi connection",
+    compat_reason_8: "Requires MicroSD card storage",
+    compat_reason_9: "Insufficient internal DRAM headroom",
+    compat_reason_10: "Internal memory fragmented (largest block too small)",
+    compat_reason_11: "Insufficient free PSRAM memory",
+    compat_reason_12: "Insufficient DMA-capable internal memory",
+    compat_reason_13: "Requires double buffering (single-buffer fallback)",
+    compat_reason_14: "Single-buffer blanking budget exceeded (>400µs)",
+    compat_reason_15: "Frame period budget exceeded (>16.6ms)",
+    compat_reason_16: "Matrix panel dimensions unsupported",
+    compat_reason_17: "Color depth unsupported by configuration",
+    compat_reason_18: "Insufficient memory reserve for TLS/network sockets",
     confirm_remove_screen: "Are you sure you want to remove this screen?",
     confirm_remove_instance: "Are you sure you want to remove this instance?",
     
@@ -2939,6 +2958,25 @@ const translations = {
     hide_incompatible: "Masquer incompatibles",
     incompatible: "Incompatible",
     incompatible_hardware: "Matériel ou mémoire requis manquant",
+    compat_reason_0: "Entièrement compatible",
+    compat_reason_1: "Nécessite une mémoire PSRAM externe",
+    compat_reason_2: "Nécessite de la PSRAM avec capacité DMA directe",
+    compat_reason_3: "Nécessite un micro matériel I2S",
+    compat_reason_4: "Nécessite une sortie audio I2S (haut-parleur/DAC)",
+    compat_reason_5: "Nécessite un capteur de température SHTC3",
+    compat_reason_6: "Nécessite un gyroscope/IMU QMI8658",
+    compat_reason_7: "Nécessite une connexion Wi-Fi active",
+    compat_reason_8: "Nécessite une carte MicroSD",
+    compat_reason_9: "Marge de mémoire DRAM interne insuffisante",
+    compat_reason_10: "Mémoire interne fragmentée (bloc contigu trop petit)",
+    compat_reason_11: "Mémoire PSRAM libre insuffisante",
+    compat_reason_12: "Mémoire interne compatible DMA insuffisante",
+    compat_reason_13: "Double buffering indisponible (repli sur buffer unique)",
+    compat_reason_14: "Budget d'extinction buffer unique dépassé (>400µs)",
+    compat_reason_15: "Budget de période d'image dépassé (>16.6ms)",
+    compat_reason_16: "Dimensions de matrice non prises en charge",
+    compat_reason_17: "Profondeur de couleur non prise en charge",
+    compat_reason_18: "Réserve mémoire insuffisante pour les sockets TLS/réseau",
     confirm_remove_screen: "Êtes-vous sûr de vouloir supprimer cet écran ?",
     confirm_remove_instance: "Êtes-vous sûr de vouloir supprimer cette instance ?",
     
@@ -3484,6 +3522,25 @@ const translations = {
     hide_incompatible: "Ocultar incompatibles",
     incompatible: "Incompatible",
     incompatible_hardware: "Falta hardware o memoria requerida",
+    compat_reason_0: "Totalmente compatible",
+    compat_reason_1: "Requiere memoria PSRAM externa",
+    compat_reason_2: "Requiere PSRAM con capacidad DMA directa",
+    compat_reason_3: "Requiere micrófono hardware I2S",
+    compat_reason_4: "Requiere salida de audio I2S (altavoz/DAC)",
+    compat_reason_5: "Requiere sensor de temperatura SHTC3",
+    compat_reason_6: "Requiere sensor giroscopio/IMU QMI8658",
+    compat_reason_7: "Requiere conexión Wi-Fi activa",
+    compat_reason_8: "Requiere tarjeta MicroSD",
+    compat_reason_9: "Margen de memoria DRAM interna insuficiente",
+    compat_reason_10: "Memoria interna fragmentada (bloque contiguo demasiado pequeño)",
+    compat_reason_11: "Memoria PSRAM libre insuficiente",
+    compat_reason_12: "Memoria interna con soporte DMA insuficiente",
+    compat_reason_13: "Doble búfer no disponible (modo búfer único)",
+    compat_reason_14: "Presupuesto de extinción en búfer único excedido (>400µs)",
+    compat_reason_15: "Presupuesto de período de fotograma excedido (>16.6ms)",
+    compat_reason_16: "Dimensiones de panel de matriz no compatibles",
+    compat_reason_17: "Profundidad de color no compatible",
+    compat_reason_18: "Reserva de memoria insuficiente para sockets TLS/red",
     confirm_remove_screen: "¿Estás seguro de que deseas eliminar esta pantalla?",
     confirm_remove_instance: "¿Estás seguro de que deseas eliminar esta instancia?",
     
@@ -3927,6 +3984,17 @@ function t(key, fallback) {
   const lang = localStorage.getItem('lang') || 'en';
   const dict = translations[lang] || translations.en;
   return dict[key] !== undefined ? dict[key] : (fallback || key);
+}
+
+function getCompatReasonLabel(comp, desc) {
+  if (!comp && !desc) return t('incompatible', 'Incompatible');
+  const code = comp?.primary_reason;
+  if (code !== undefined && code !== null) {
+    const key = `compat_reason_${code}`;
+    const translated = t(key, null);
+    if (translated) return translated;
+  }
+  return comp?.reason_text || desc?.reason || t('incompatible', 'Incompatible');
 }
 
 function applyTooltips(root = document) {
@@ -4777,7 +4845,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
                 const isSel = d.metadata.id === currentEngineId ? 'selected' : '';
                 const comp = d.compatibility || {};
                 const isCompat = comp.status !== 'incompatible' && comp.compatible !== false && d.available !== false;
-                const badge = !isCompat ? ` 🚫 [${comp.reason_text || d.reason || 'Incompatible'}]` : (comp.status === 'degraded' ? ' ⚡ [Degraded]' : '');
+                const badge = !isCompat ? ` 🚫 [${getCompatReasonLabel(comp, d)}]` : (comp.status === 'degraded' ? ` ⚡ [${t('degraded_perf', 'Degraded')}]` : '');
                 return `<option value="${d.metadata.id}" ${isSel} ${!isCompat ? 'disabled style="color:#94a3b8;"' : ''}>${dMeta.icon} ${dMeta.name}${badge}</option>`;
               }).join('')}
             </select>
@@ -5430,7 +5498,7 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
 
     let tagsHtml = '';
     if (isIncompatible) {
-      tagsHtml += `<span class="engine-tag" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🚫 ${comp.reason_text || desc.reason || t('incompatible', 'Incompatible')}</span>`;
+      tagsHtml += `<span class="engine-tag" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🚫 ${getCompatReasonLabel(comp, desc)}</span>`;
     } else if (isDegraded) {
       tagsHtml += `<span class="engine-tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">⚡ ${t('degraded_perf', 'Degraded')}</span>`;
     } else {
@@ -5449,7 +5517,7 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
 
     let diagnosticHtml = '';
     if (isIncompatible) {
-      const reasonMsg = comp.reason_text || desc.reason || t('incompatible_hardware', 'Missing required hardware or memory');
+      const reasonMsg = getCompatReasonLabel(comp, desc);
       diagnosticHtml = `
         <div style="margin-top: 0.6rem; padding: 0.45rem 0.6rem; background: rgba(0,0,0,0.35); border-radius: 6px; font-size: 0.73rem; color: #cbd5e1; line-height: 1.4; border-left: 3px solid #ef4444;">
           <div style="font-weight: 600; color: #fca5a5; margin-bottom: 2px;">⚠️ ${reasonMsg}</div>
@@ -5457,16 +5525,17 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
           ${comp.memory && comp.memory.largest_required_block > 0 ? `<div style="color: #94a3b8;">Contiguous: ${Math.round(comp.memory.largest_required_block/1024)} KB req. (max block: ${Math.round(comp.memory.largest_available_block/1024)} KB)</div>` : ''}
         </div>
       `;
-    } else if (isDegraded && comp.reason_text) {
+    } else if (isDegraded) {
+      const reasonMsg = getCompatReasonLabel(comp, desc);
       diagnosticHtml = `
         <div style="margin-top: 0.5rem; padding: 0.35rem 0.5rem; background: rgba(245, 158, 11, 0.1); border-radius: 4px; font-size: 0.73rem; color: #fcd34d; border-left: 2px solid #f59e0b;">
-          ⚠️ ${comp.reason_text}
+          ⚠️ ${reasonMsg}
         </div>
       `;
     }
 
     const actionBtnHtml = isIncompatible
-      ? `<button class="btn btn-secondary btn-add-loop" disabled style="opacity: 0.45; width: 100%; cursor: not-allowed;" title="${comp.reason_text || desc.reason || ''}">🚫 ${t('incompatible', 'Incompatible')}</button>`
+      ? `<button class="btn btn-secondary btn-add-loop" disabled style="opacity: 0.45; width: 100%; cursor: not-allowed;" title="${getCompatReasonLabel(comp, desc)}">🚫 ${t('incompatible', 'Incompatible')}</button>`
       : `<button class="btn btn-primary btn-add-loop" style="font-weight:600; width: 100%;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>`;
 
     card.innerHTML = `

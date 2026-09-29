@@ -5,6 +5,7 @@
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/SecureHttpClient.h"
 #include <esp_task_wdt.h>
 
 FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
@@ -874,142 +875,118 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
     String dirPath = "/pixelcade/" + folder;
     String savePath = dirPath + "/" + filename;
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("RetroFrontend", "Skipping artwork download: insufficient internal DRAM for a TLS session.");
-        return false;
-    }
-    // Held across the whole download below (can take several seconds for large GIFs) --
-    // see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only and all TLS
-    // handshakes must be serialized system-wide.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("RetroFrontend", "Skipping artwork download: another TLS handshake is in progress.");
-        return false;
-    }
+    auto writeStreamToSd = [&](Stream& stream, int len, const String& dPath, const String& sPath) -> bool {
+        SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
+        if (!sdGuard) {
+            LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", sPath.c_str());
+            return false;
+        }
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
-    http.setTimeout(4000);
-    http.setUserAgent("ArcadeMatrix-ESP32");
-    
-    LOGI("RetroFrontend", "Downloading %s", url.c_str());
-    
-    // Disable Task Watchdog on Core 1 temporarily because HTTP GET or TLS decryption 
-    // can block for > 5 seconds on massive GIFs over a slow connection!
-    esp_task_wdt_delete(NULL);
-    
-    if (http.begin(client, url)) {
-        LOGI("RetroFrontend", "Starting HTTP GET...");
-        int httpCode = http.GET();
-        LOGI("RetroFrontend", "HTTP GET returned %d", httpCode);
-        
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-            int len = http.getSize();
-            WiFiClient* stream = http.getStreamPtr();
-            
-            String dirPath = "/pixelcade/" + folder;
-            String savePath = dirPath + "/" + filename;
-            
-            SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
-            if (!sdGuard) {
-                LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", savePath.c_str());
-                http.end();
-                client.stop();
-                esp_task_wdt_add(NULL);
-                return false;
-            }
+        if (!sd.exists("/pixelcade")) {
+            sd.mkdir("/pixelcade");
+        }
+        if (!sd.exists(dPath.c_str())) {
+            sd.mkdir(dPath.c_str());
+        }
 
-            if (!sd.exists("/pixelcade")) {
-                sd.mkdir("/pixelcade");
-            }
-            if (!sd.exists(dirPath.c_str())) {
-                sd.mkdir(dirPath.c_str());
-            }
-            
-            FsFile file = sd.open(savePath.c_str(), FILE_OPEN_WRITE);
-            if (file) {
-                WiFiClient* stream = http.getStreamPtr();
-                    int len = http.getSize();
-                    uint8_t buff[512] = { 0 };
-                    
-                    int bytesWrittenTotal = 0;
-                    unsigned long lastLog = millis();
-                    
-                    while (http.connected() && (len > 0 || len == -1)) {
-                        size_t size = stream->available();
-                        if (size) {
-                            // Use non-blocking read() instead of blocking readBytes()!
-                            // readBytes() can block for many seconds if Wi-Fi is slow, bypassing our watchdog reset.
-                            int c = stream->read(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-                            if (c > 0) {
-                                file.write(buff, c);
-                                bytesWrittenTotal += c;
-                                if (len > 0) len -= c;
-                            }
-                        } else {
-                            delay(1);
-                        }
-                        
-                        // THIS IS THE FIX: The Pixelcade GIFs can be 2MB and take 20s to download.
-                        // delay(1) does NOT feed the Task Watchdog for the loopTask, so we must
-                        // explicitly reset it here to prevent the ESP32 from panicking!
-                        esp_task_wdt_reset();
-                        
-                        if (millis() - lastLog > 2000) {
-                            LOGI("RetroFrontend", "Downloading... %d bytes written", bytesWrittenTotal);
-                            lastLog = millis();
-                        }
-                        
-                        // Keep processing MQTT messages while downloading!
-                        if (internalBroker) internalBroker->loop();
-                        if (mqttClient.connected()) mqttClient.loop();
-                        
-                        // If the user scrolled to a new game, abort this download!
-                        if (reqId != currentRequestId) {
-                            LOGI("RetroFrontend", "User scrolled to a new game, aborting download of %s", savePath.c_str());
-                            file.close();
-                            sd.remove(savePath.c_str());
-                            http.end();
-                            client.stop();
-                            esp_task_wdt_add(NULL);
-                            return false;
-                        }
-                    }
-                    
-                file.close();
-                
-                // Verify file was written
-                if (bytesWrittenTotal > 0) {
-                    bool validFile = false;
-                    if (sd.exists(savePath.c_str())) {
-                        FsFile checkFile = sd.open(savePath.c_str(), FILE_OPEN_READ);
-                        if (checkFile) {
-                            validFile = (checkFile.size() > 100);
-                            checkFile.close();
-                        }
-                    }
-                    if (validFile) {
-                        outPath = savePath;
-                        http.end();
-                        client.stop();
-                        LOGI("RetroFrontend", "Successfully downloaded and saved to %s", savePath.c_str());
-                        esp_task_wdt_add(NULL); // Re-enable watchdog
-                        return true;
-                    }
-                    // Delete corrupted/empty file
-                    sd.remove(savePath.c_str());
+        FsFile file = sd.open(sPath.c_str(), FILE_OPEN_WRITE);
+        if (!file) {
+            LOGE("RetroFrontend", "Failed to open file for writing: %s", sPath.c_str());
+            return false;
+        }
+
+        uint8_t buff[512] = { 0 };
+        int bytesWrittenTotal = 0;
+        unsigned long lastLog = millis();
+        uint32_t startMs = millis();
+
+        while (len > 0 || len == -1) {
+            size_t size = stream.available();
+            if (size) {
+                int toRead = (size > sizeof(buff)) ? sizeof(buff) : size;
+                if (len > 0 && toRead > len) toRead = len;
+                int c = stream.readBytes(reinterpret_cast<char*>(buff), toRead);
+                if (c > 0) {
+                    file.write(buff, c);
+                    bytesWrittenTotal += c;
+                    if (len > 0) len -= c;
+                    startMs = millis();
                 }
             } else {
-                LOGE("RetroFrontend", "Failed to open file for writing: %s", savePath.c_str());
+                if (millis() - startMs > 4000) break;
+                delay(1);
             }
-        } else {
-            LOGI("RetroFrontend", "HTTP GET failed for %s, error: %s", filename.c_str(), http.errorToString(httpCode).c_str());
+
+            esp_task_wdt_reset();
+
+            if (millis() - lastLog > 2000) {
+                LOGI("RetroFrontend", "Downloading... %d bytes written", bytesWrittenTotal);
+                lastLog = millis();
+            }
+
+            if (internalBroker) internalBroker->loop();
+            if (mqttClient.connected()) mqttClient.loop();
+
+            if (reqId != currentRequestId) {
+                LOGI("RetroFrontend", "User scrolled to a new game, aborting download of %s", sPath.c_str());
+                file.close();
+                sd.remove(sPath.c_str());
+                return false;
+            }
         }
-        http.end();
-        client.stop();
+
+        file.close();
+
+        if (bytesWrittenTotal > 0) {
+            bool validFile = false;
+            if (sd.exists(sPath.c_str())) {
+                FsFile checkFile = sd.open(sPath.c_str(), FILE_OPEN_READ);
+                if (checkFile) {
+                    validFile = (checkFile.size() > 100);
+                    checkFile.close();
+                }
+            }
+            if (validFile) {
+                outPath = sPath;
+                LOGI("RetroFrontend", "Successfully downloaded and saved to %s", sPath.c_str());
+                return true;
+            }
+            sd.remove(sPath.c_str());
+        }
+        return false;
+    };
+
+    bool isHttps = url.startsWith("https://");
+    bool downloaded = false;
+
+    if (isHttps) {
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 6000;
+        options.handshakeTimeoutSec = 4;
+        options.userAgent = "ArcadeMatrix-ESP32";
+        options.followRedirects = true;
+
+        LOGI("RetroFrontend", "Downloading %s via SecureHttpClient", url.c_str());
+        auto response = net::SecureHttpClient::get(url, options);
+        if (response.ok()) {
+            downloaded = writeStreamToSd(response.stream(), response.contentLength(), dirPath, savePath);
+        } else {
+            LOGW("RetroFrontend", "HTTPS GET failed with code %d (%s)", response.statusCode(), response.errorMessage());
+        }
+    } else {
+        HTTPClient http;
+        http.setTimeout(4000);
+        http.setUserAgent("ArcadeMatrix-ESP32");
+        WiFiClient plainClient;
+        if (http.begin(plainClient, url)) {
+            int httpCode = http.GET();
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+                downloaded = writeStreamToSd(*http.getStreamPtr(), http.getSize(), dirPath, savePath);
+            }
+            http.end();
+            plainClient.stop();
+        }
     }
-    
-    esp_task_wdt_add(NULL); // Re-enable watchdog on failure paths!
-    return false;
+
+    return downloaded;
 }

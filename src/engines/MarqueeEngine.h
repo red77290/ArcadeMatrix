@@ -56,7 +56,8 @@ public:
     String resolveMarqueeFile();
 
 private:
-    bool downloadUrlViaProxy(const String& targetUrl, const String& destPath);
+    bool downloadUrlWithResizeCheck(const String& targetUrl, String& outDestPath);
+
     int panelWidth;
     int panelHeight;
     uint16_t* m_rawBuffer;
