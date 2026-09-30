@@ -25,6 +25,7 @@ TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode, const E
     strcpy(lastTimeStr, "");
     blockSize = max(1, (int)(matrix->height() / 16));
     faceFont.load(config);
+    glow = ClockFaceFont::resolveGlow(config);
 }
 
 void TetrisClock::draw(const TimeData& t) {
@@ -52,10 +53,20 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
     canvas.setCursor(2 - bx + cursorX, 2 - by);
     canvas.write((uint8_t)str[charIdx]);
 
-    for (int py = 0; py < bh + 4; py++) {
-        for (int px = 0; px < bw + 4; px++) {
+    // The canvas holds the finished character, so a cell's neighbours are known here and the
+    // outline never has to be searched for among the blocks once they are falling.
+    const int canvasW = bw + 4, canvasH = bh + 4;
+    auto lit = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) return false;
+        return canvas.getPixel(x, y) != 0;
+    };
+
+    for (int py = 0; py < canvasH; py++) {
+        for (int px = 0; px < canvasW; px++) {
             if (!canvas.getPixel(px, py)) continue;
             TetrisBlock b;
+            b.edges = (uint8_t)((lit(px - 1, py) ? 0 : 1) | (lit(px + 1, py) ? 0 : 2) |
+                                (lit(px, py - 1) ? 0 : 4) | (lit(px, py + 1) ? 0 : 8));
             b.charIndex = labelIdx;   // index in the full time string (colour + change tracking)
             b.tx = originX + (px - 2) * blockSize;
             b.ty = originY + (py - 2) * blockSize;
@@ -229,9 +240,35 @@ void TetrisClock::update() {
     // Clear and draw
     if (matrix) {
         matrix->fillScreen(0);
+        drawOutline();
         for (const auto& b : blocks) {
             matrix->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
         }
+    }
+}
+
+// The digits stand outlined from the moment the time changes, and the blocks drop into the shape.
+// Each cell already knows which of its sides face open space, so this is a pass over the blocks
+// with no searching: the interior cells carry no edges and cost only the test.
+void TetrisClock::drawOutline() {
+    if (glow.mode == 0) return;
+    const uint16_t custom = glow.hasColor ? glow.color : 0;
+
+    for (const auto& b : blocks) {
+        if (b.state == 2 || b.edges == 0) continue;   // falling away, or buried inside the digit
+        // Neon traces each cell in the colour of the block landing there, the way the Matrix face
+        // takes its halo from the text; a custom colour outlines the whole time in one colour.
+        const uint16_t c = (glow.mode == 1 || !glow.hasColor) ? b.color : custom;
+        const int x0 = (int)b.tx, y0 = (int)b.ty;
+        if (b.edges & 1) matrix->drawFastVLine(x0 - 1, y0, blockSize, c);
+        if (b.edges & 2) matrix->drawFastVLine(x0 + blockSize, y0, blockSize, c);
+        if (b.edges & 4) matrix->drawFastHLine(x0, y0 - 1, blockSize, c);
+        if (b.edges & 8) matrix->drawFastHLine(x0, y0 + blockSize, blockSize, c);
+        // Close the ring at the corners the two runs leave open.
+        if ((b.edges & 5) == 5) matrix->drawPixel(x0 - 1, y0 - 1, c);
+        if ((b.edges & 6) == 6) matrix->drawPixel(x0 + blockSize, y0 - 1, c);
+        if ((b.edges & 9) == 9) matrix->drawPixel(x0 - 1, y0 + blockSize, c);
+        if ((b.edges & 10) == 10) matrix->drawPixel(x0 + blockSize, y0 + blockSize, c);
     }
 }
 

@@ -1,8 +1,9 @@
 #include "VersusClock.h"
+#include "ClockFaceFont.h"
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-VersusClock::VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config);
+VersusClock::VersusClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config); glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animating = false; // Kept for compatibility but unused
@@ -137,15 +138,8 @@ void VersusClock::update() {
         int tyM = (h / 2) + 3 + offY;
         int cx = tx - bx, cyH = tyH - by, cyM = tyM - by;   // custom fonts take the cursor as baseline
 
-        matrix->setTextColor(0);
-        matrix->setCursor(cx - 1, cyH); matrix->print(hStr);
-        matrix->setCursor(cx + 1, cyH); matrix->print(hStr);
-        matrix->setCursor(cx, cyH); matrix->setTextColor(color1); matrix->print(hStr);
-
-        matrix->setTextColor(0);
-        matrix->setCursor(cx - 1, cyM); matrix->print(mStr);
-        matrix->setCursor(cx + 1, cyM); matrix->print(mStr);
-        matrix->setCursor(cx, cyM); matrix->setTextColor(color1); matrix->print(mStr);
+        ClockFaceFont::print(*matrix, glow, cx, cyH, hStr, color1);
+        ClockFaceFont::print(*matrix, glow, cx, cyM, mStr, color1);
 
         matrix->fillRect(2, h - 8 + bounce1, 5, 5, blue);
         matrix->fillRect(w - 7, h - 8 + bounce2, 5, 5, orange);
@@ -174,15 +168,7 @@ void VersusClock::update() {
         int ty = (h - bh) / 2 + 4 + offY;
         int cx = tx - bx, cy = ty - by;
         
-        matrix->setTextColor(0);
-        matrix->setCursor(cx - 1, cy); matrix->print(timeStr);
-        matrix->setCursor(cx + 1, cy); matrix->print(timeStr);
-        matrix->setCursor(cx, cy - 1); matrix->print(timeStr);
-        matrix->setCursor(cx, cy + 1); matrix->print(timeStr);
-
-        matrix->setCursor(cx, cy);
-        matrix->setTextColor(color1);
-        matrix->print(timeStr);
+        ClockFaceFont::print(*matrix, glow, cx, cy, timeStr, color1);
         
         matrix->fillRect(10, h - 8 + bounce1, 6, 6, blue);
         matrix->fillRect(w - 16, h - 8 + bounce2, 6, 6, orange);

@@ -252,6 +252,17 @@ Only instances listed here are ever initialized, saving memory for unused featur
 
 ---
 
+### Clock instance options
+
+Beyond `clock_theme`, `clock_font`, `clock_size` and the colours, a clock instance takes:
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `clock_glow` | `enum` | Outline around the digits: `0` off, `1` neon (the chosen colour at full strength with a near-white centre, as the Matrix face draws it), `2` a colour of its own. Default `0`. |
+| `clock_glow_color` | `color` | Outline colour when `clock_glow` is `2` (default `#00FF41`). |
+
+---
+
 ## 8. Self-Healing Validation
 
 On every boot **and** on every write via `POST /api/instances`, the `ConfigSanitizer` reconciles each instance against its engine `ConfigSchema`:

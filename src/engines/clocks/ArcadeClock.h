@@ -4,6 +4,8 @@
 #include "../DateEngine.h" // For PublisherTheme
 #include "../../core/BitmapFontLoader.h"
 
+#include "ClockFaceFont.h"
+
 class ArcadeClock : public ClockFace {
 public:
     ArcadeClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
@@ -13,6 +15,7 @@ public:
     void setTheme(PublisherTheme theme);
 
 private:
+    ClockFaceFont::Glow glow;   ///< resolved once at build time, never on the draw path
     uint8_t lastMinute;
     TimeData storedTime;
     PublisherTheme currentTheme;

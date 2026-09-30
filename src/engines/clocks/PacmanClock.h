@@ -21,6 +21,7 @@ public:
     void update() override;
 
 private:
+    ClockFaceFont::Glow glow;   ///< resolved once at build time, never on the draw path
     TimeData storedTime;
     char oldTimeStr[12];
     char newTimeStr[12];
