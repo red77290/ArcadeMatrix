@@ -78,6 +78,14 @@ void CryptoEngine::activate() {
 void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache) {
     if (cache.hasIcon || cache.iconAttempted) return;
     
+    // Check if device has contiguous heap for PNGdec (~45 KB).
+    // On ESP32 STD without PSRAM (largest block ~31 KB), PNGdec cannot allocate.
+    // Skip downloading/decoding and fall back to crisp built-in icons with zero RAM overhead.
+    if (ESP.getMaxAllocHeap() < sizeof(PNG)) {
+        cache.iconAttempted = true;
+        return;
+    }
+    
     String safeName = symbol;
     safeName.toLowerCase();
     String sdPath = "/crypto_icons/" + safeName + ".png";

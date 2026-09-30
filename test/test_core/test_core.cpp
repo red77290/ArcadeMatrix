@@ -1784,7 +1784,7 @@ void test_cross_priority_and_edge_transitions(void) {
 
 void test_network_budget_admission_and_telemetry(void) {
     // Validate calibrated thresholds
-    TEST_ASSERT_EQUAL_UINT32(48u * 1024u, NetworkBudget::TLS_MIN_FREE_INTERNAL);
+    TEST_ASSERT_EQUAL_UINT32(45u * 1024u, NetworkBudget::TLS_MIN_FREE_INTERNAL);
     TEST_ASSERT_EQUAL_UINT32(16896u, NetworkBudget::TLS_MIN_LARGEST_BLOCK);
 
     // Validate telemetry counter increments on admission check

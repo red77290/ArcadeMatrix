@@ -24,14 +24,14 @@ namespace NetworkBudget {
 
 /// Admission heuristic watermark for internal DRAM (needs dual ~16.9 KB record buffers + ~8 KB context/BIGNUM + ~14 KB Core 0 margin).
 /// NOTE: This is an admission control watermark, not an allocation guarantee.
-static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 48u * 1024u; // 49,152 bytes
+static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 45u * 1024u; // 46,080 bytes
 
 /// Contiguous allocation watermark to satisfy a single 16 KB mbedTLS record buffer.
 static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
 
-/// Contiguous watermark for a full TLS session: dual 16.9 KB record buffers + ~12 KB BIGNUM RSA workspace + ~4 KB cert/context.
-/// Calibrated to admit TLS at ESP32 STD baseline idle (largest ~45 KB) while rejecting under fragmentation/contention (< 40 KB).
-static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 40960u; // 40 KB
+/// Contiguous watermark for a full TLS session.
+/// Calibrated for ESP32 with dual SRAM banks where dual 16.9 KB record buffers span pools.
+static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 28672u; // 28 KB
 
 /// Healthy operation target for internal DRAM with active stream.
 static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
@@ -54,15 +54,25 @@ inline uint32_t largestInternalBlock() {
  * @brief Evaluates whether internal DRAM can accommodate both mbedTLS record buffers (in + out)
  *        plus required BIGNUM working limbs for RSA certificate verification.
  *
- * Probes whether two simultaneous 16.5 KB allocations (record buffers) plus an 8 KB allocation
- * (mbedtls_mpi BIGNUM limbs for RSA sliding-window exponentiation) can actually succeed concurrently in internal DRAM,
- * eliminating false admissions that would otherwise crash mbedtls with -16 (BIGNUM alloc failed)
- * or -17040 (RSA public key operation failed).
+ * On ESP32, internal SRAM is split across dual physical banks (SRAM1 + SRAM2).
+ * If largestBlock >= 30 KB and freeInternal >= 45 KB, the dual pools accommodate dual ~16.9 KB buffers.
+ * If largestBlock is between 16.9 KB and 30 KB, probes whether two simultaneous record buffers can allocate.
  */
 inline bool hasTlsRecordBufferHeadroom() {
-    // Arithmetic check only — trial malloc/free probes caused fragmentation and gave
-    // false positives (passed at 47 KB but mbedTLS still crashed with -17040).
-    return largestInternalBlock() >= TLS_MIN_COMBINED_BLOCK;
+    const uint32_t largest = largestInternalBlock();
+    if (largest < TLS_MIN_LARGEST_BLOCK) {
+        return false;
+    }
+    if (largest >= 30000u && freeInternal() >= TLS_MIN_FREE_INTERNAL) {
+        return true;
+    }
+    void* b1 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!b1) return false;
+    void* b2 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    heap_caps_free(b1);
+    if (!b2) return false;
+    heap_caps_free(b2);
+    return true;
 }
 
 /// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
