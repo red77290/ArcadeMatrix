@@ -261,6 +261,8 @@ Beyond `clock_theme`, `clock_font`, `clock_size` and the colours, a clock instan
 | `clock_glow` | `enum` | Outline around the digits: `0` off, `1` neon (the chosen colour at full strength with a near-white centre, as the Matrix face draws it), `2` a colour of its own. Default `0`. |
 | `clock_glow_color` | `color` | Outline colour when `clock_glow` is `2` (default `#00FF41`). |
 
+Themes `30`-`34` and `37` are faces adapted from the Clockwise clockfaces. Those named `(256x64)`
+are laid out for a wide panel and show a notice on smaller ones.
 ---
 
 ## 8. Self-Healing Validation
