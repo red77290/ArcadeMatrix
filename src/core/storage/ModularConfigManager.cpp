@@ -156,6 +156,12 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
     if (doc.containsKey("rotation_transition_duration_ms")) outMatrix.rotation_transition_duration_ms = doc["rotation_transition_duration_ms"].as<int>();
     else if (doc.containsKey("rotationTransitionDurationMs")) outMatrix.rotation_transition_duration_ms = doc["rotationTransitionDurationMs"].as<int>();
 
+    if (doc.containsKey("slot_transition")) outMatrix.slot_transition = doc["slot_transition"].as<String>();
+    else if (doc.containsKey("slotTransition")) outMatrix.slot_transition = doc["slotTransition"].as<String>();
+
+    if (doc.containsKey("slot_transition_duration_ms")) outMatrix.slot_transition_duration_ms = doc["slot_transition_duration_ms"].as<int>();
+    else if (doc.containsKey("slotTransitionDurationMs")) outMatrix.slot_transition_duration_ms = doc["slotTransitionDurationMs"].as<int>();
+
     if (doc.containsKey("matrix_power")) outMatrix.matrix_power = doc["matrix_power"].as<bool>();
     else if (doc.containsKey("matrixPower")) outMatrix.matrix_power = doc["matrixPower"].as<bool>();
 
@@ -185,6 +191,8 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["auto_rotate"] = matrix.auto_rotate;
     doc["rotation_transition"] = matrix.rotation_transition;
     doc["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
+    doc["slot_transition"] = matrix.slot_transition;
+    doc["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     doc["matrix_power"] = matrix.matrix_power;
     doc["render_pipeline"] = matrix.render_pipeline;
 
