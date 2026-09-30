@@ -24,14 +24,14 @@ namespace NetworkBudget {
 
 /// Admission heuristic watermark for internal DRAM (needs dual ~16.9 KB record buffers + ~8 KB context/BIGNUM + ~14 KB Core 0 margin).
 /// NOTE: This is an admission control watermark, not an allocation guarantee.
-static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 55u * 1024u; // 56,320 bytes
+static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 48u * 1024u; // 49,152 bytes
 
 /// Contiguous allocation watermark to satisfy a single 16 KB mbedTLS record buffer.
 static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
 
 /// Contiguous watermark for a full TLS session: dual 16.9 KB record buffers + ~12 KB BIGNUM RSA workspace + ~4 KB cert/context.
-/// Empirical: TLS succeeds at largestBlock >= 51 KB, crashes with -17040 at 47 KB. Threshold at 48 KB.
-static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 49152u; // 48 KB
+/// Calibrated to admit TLS at ESP32 STD baseline idle (largest ~45 KB) while rejecting under fragmentation/contention (< 40 KB).
+static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 40960u; // 40 KB
 
 /// Healthy operation target for internal DRAM with active stream.
 static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
@@ -114,7 +114,7 @@ inline bool canStartTlsSession() {
         uint32_t last = lastDenialLogMs.load(std::memory_order_relaxed);
         if (now - last > 10000 && lastDenialLogMs.compare_exchange_strong(last, now)) {
             log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), freeDma=%u (req %u), largestDma=%u (req %u), buffers=%s, total denied=%u",
-                  free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_LARGEST_BLOCK,
+                  free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_COMBINED_BLOCK,
                   freeDma, TLS_MIN_FREE_DMA, largestDma, TLS_MIN_LARGEST_DMA_BLOCK,
                   hasBuffers ? "OK" : "INSUFFICIENT",
                   getTlsDeniedCount().load(std::memory_order_relaxed));

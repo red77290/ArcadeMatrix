@@ -29,7 +29,7 @@ public:
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
 private:
-    static constexpr size_t MAX_BLOCKS = 240;
+    static constexpr size_t MAX_BLOCKS = 512;
 
     bool isGameboy;
     TimeData storedTime;

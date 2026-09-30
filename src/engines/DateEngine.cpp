@@ -572,7 +572,7 @@ bool DateEngine::loop() {
     int effectDepth = (logicalSize >= 5) ? 2 : 1;
     
     int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
-    if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+    if ((currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) || currentTheme == THEME_TAITO) {
         leftExtra = 1; rightExtra = effectDepth + 1;
         topExtra = 1; bottomExtra = effectDepth + 1;
     } else if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
@@ -598,25 +598,30 @@ bool DateEngine::loop() {
             matrix->setCursor(x, y + i); matrix->print(currentDate);
             matrix->setCursor(x, y - i); matrix->print(currentDate);
         }
-    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+    } else if ((currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) || currentTheme == THEME_TAITO) {
         // Arcade 3D Outline Effect
         int shadowDepth = effectDepth + 1;
-        for (int i = 1; i <= shadowDepth; i++) {
-            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
-            matrix->setCursor(x + i - 1, y + i); matrix->print(currentDate);
-            matrix->setCursor(x + i, y + i - 1); matrix->print(currentDate);
-        }
-
         uint16_t outline = matrix->color565(0, 0, 0);
+
+        // 1. Black outline around the outer perimeter of the 3D block
         matrix->setTextColor(outline);
         matrix->setCursor(x - 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x, y - 1); matrix->print(currentDate);
         matrix->setCursor(x + 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x - 1, y); matrix->print(currentDate);
-        matrix->setCursor(x + 1, y); matrix->print(currentDate);
         matrix->setCursor(x - 1, y + 1); matrix->print(currentDate);
-        matrix->setCursor(x, y + 1); matrix->print(currentDate);
-        matrix->setCursor(x + 1, y + 1); matrix->print(currentDate);
+        for (int i = 1; i <= shadowDepth + 1; i++) {
+            matrix->setCursor(x + i, y + shadowDepth + 1); matrix->print(currentDate);
+            matrix->setCursor(x + shadowDepth + 1, y + i); matrix->print(currentDate);
+        }
+
+        // 2. 3D Extrusion Shadow (drawn on top of outline, connecting solidly to text with zero gap)
+        matrix->setTextColor(shadowColor);
+        for (int i = shadowDepth; i >= 1; i--) {
+            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i - 1, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i, y + i - 1); matrix->print(currentDate);
+        }
     } else {
         // Drop shadow
         for (int i = 1; i <= effectDepth; i++) {

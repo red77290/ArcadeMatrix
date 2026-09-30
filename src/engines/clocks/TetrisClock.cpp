@@ -67,8 +67,8 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
 
     // The canvas holds the finished character, so a cell's neighbours are known here and the
     // outline never has to be searched for among the blocks once they are falling.
-    const int canvasW = min((int)(bw + 4), (int)canvas->width());
-    const int canvasH = min((int)(bh + 4), (int)canvas->height());
+    const int canvasW = canvas->width();
+    const int canvasH = canvas->height();
     auto lit = [&](int x, int y) {
         if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) return false;
         return canvas->getPixel(x, y) != 0;
@@ -182,12 +182,7 @@ void TetrisClock::update() {
     
     if (strcmp(timeStr, lastTimeStr) != 0) {
         if (strlen(timeStr) != strlen(lastTimeStr) || numBlocks == 0) {
-            for (size_t i = 0; i < numBlocks; i++) {
-                TetrisBlock& b = blocks[i];
-                b.state = 2; // OUT
-                float base_dy = max(1.0f, display->height() / 40.0f);
-                b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
-            }
+            numBlocks = 0;
             int allIndices[10];
             int len = strlen(timeStr);
             for (int i = 0; i < len; i++) allIndices[i] = i;

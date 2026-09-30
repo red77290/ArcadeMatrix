@@ -3986,16 +3986,69 @@ function t(key, fallback) {
   return dict[key] !== undefined ? dict[key] : (fallback || key);
 }
 
-function getCompatReasonLabel(comp, desc) {
-  if (!comp && !desc) return t('incompatible', 'Incompatible');
-  const code = comp?.primary_reason;
-  if (code !== undefined && code !== null) {
-    const key = `compat_reason_${code}`;
-    const translated = t(key, null);
-    if (translated) return translated;
+function isEngineCompatible(desc, hwData = window.__hwData) {
+  if (!desc) return true;
+  const comp = desc.compatibility;
+  if (comp) {
+    if (comp.status === 'incompatible' || comp.compatible === false) {
+      return false;
+    }
   }
-  return comp?.reason_text || desc?.reason || t('incompatible', 'Incompatible');
+  if (desc.available === false) return false;
+
+  const req = desc.requirements || {};
+  if (hwData) {
+    if (req.needs_psram || req.needsPsram) {
+      if (!hwData.psram || !hwData.psram.available) return false;
+    }
+    if (req.needs_temp_sensor || req.needsTempSensor) {
+      if (!hwData.temperature_sensor) return false;
+    }
+    const needsMic = req.needs_audio_input || req.needsAudioInput || 
+                     ((req.needs_audio || req.needsAudio) && (desc.metadata?.id === 'decibelMeter' || desc.id === 'decibelMeter'));
+    if (needsMic && !hwData.microphone) {
+      return false;
+    }
+    if (req.needs_gyroscope || req.needsGyroscope) {
+      if (!hwData.gyroscope) return false;
+    }
+  }
+  return true;
 }
+window.isEngineCompatible = isEngineCompatible;
+
+function getCompatReasonLabel(comp, desc, hwData = window.__hwData) {
+  if (comp) {
+    const code = comp.primary_reason;
+    if (code !== undefined && code !== null && code !== 0) {
+      const key = `compat_reason_${code}`;
+      const translated = t(key, null);
+      if (translated) return translated;
+    }
+    if (comp.reason_text) return comp.reason_text;
+  }
+  if (desc?.reason) return desc.reason;
+
+  const req = desc?.requirements || {};
+  if (hwData) {
+    if ((req.needs_temp_sensor || req.needsTempSensor) && !hwData.temperature_sensor) {
+      return t('compat_reason_5', 'Requires SHTC3 temperature sensor');
+    }
+    const needsMic = req.needs_audio_input || req.needsAudioInput || 
+                     ((req.needs_audio || req.needsAudio) && (desc?.metadata?.id === 'decibelMeter' || desc?.id === 'decibelMeter'));
+    if (needsMic && !hwData.microphone) {
+      return t('compat_reason_3', 'Requires I2S microphone hardware');
+    }
+    if ((req.needs_psram || req.needsPsram) && (!hwData.psram || !hwData.psram.available)) {
+      return t('compat_reason_1', 'Requires external PSRAM memory');
+    }
+    if ((req.needs_gyroscope || req.needsGyroscope) && !hwData.gyroscope) {
+      return t('compat_reason_6', 'Requires QMI8658 gyroscope/IMU sensor');
+    }
+  }
+  return t('incompatible', 'Incompatible');
+}
+window.getCompatReasonLabel = getCompatReasonLabel;
 
 function applyTooltips(root = document) {
   const currentLang = localStorage.getItem('lang') || 'fr';
@@ -4242,16 +4295,14 @@ async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
     endpointCache.set(url, GLOBAL_TIMEZONES);
     return GLOBAL_TIMEZONES;
   }
-  // Check sessionStorage / localStorage for static endpoints (catalog/themes) across tab navigation
-  const isStaticEndpoint = url === '/api/engines' || url === '/api/themes';
+  // Check sessionStorage / localStorage for static endpoints (themes) across tab navigation
+  const isStaticEndpoint = url === '/api/themes';
   if (isStaticEndpoint) {
     try {
       const stored = sessionStorage.getItem('am_cache_' + url) || localStorage.getItem('am_cache_' + url);
       if (stored) {
         const parsed = JSON.parse(stored);
-        const isStoredValid = (url === '/api/engines')
-          ? (Array.isArray(parsed) && parsed.length > 0)
-          : (parsed && (Array.isArray(parsed) ? parsed.length > 0 : (typeof parsed === 'object' && Object.keys(parsed).length > 0)));
+        const isStoredValid = (parsed && (Array.isArray(parsed) ? parsed.length > 0 : (typeof parsed === 'object' && Object.keys(parsed).length > 0)));
         if (isStoredValid) {
           endpointCache.set(url, parsed);
           return parsed;
@@ -4844,7 +4895,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
                 const dMeta = getEngineMeta(d);
                 const isSel = d.metadata.id === currentEngineId ? 'selected' : '';
                 const comp = d.compatibility || {};
-                const isCompat = comp.status !== 'incompatible' && comp.compatible !== false && d.available !== false;
+                const isCompat = isEngineCompatible(d);
                 const badge = !isCompat ? ` 🚫 [${getCompatReasonLabel(comp, d)}]` : (comp.status === 'degraded' ? ` ⚡ [${t('degraded_perf', 'Degraded')}]` : '');
                 return `<option value="${d.metadata.id}" ${isSel} ${!isCompat ? 'disabled style="color:#94a3b8;"' : ''}>${dMeta.icon} ${dMeta.name}${badge}</option>`;
               }).join('')}
@@ -5345,11 +5396,18 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
   if (Array.isArray(descriptors)) {
     descriptors.forEach(d => {
       if (!d || !d.metadata || !d.metadata.id) return;
+      const isCompat = isEngineCompatible(d);
       const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
       const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
       const opt = document.createElement('option');
       opt.value = `new:${d.metadata.id}`;
-      opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
+      if (!isCompat) {
+        opt.disabled = true;
+        const reason = getCompatReasonLabel(d.compatibility, d);
+        opt.innerText = `${icon} ${name} 🚫 [${reason}]`;
+      } else {
+        opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
+      }
       grpLibrary.appendChild(opt);
     });
   }
@@ -5447,7 +5505,7 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
   catalogWrapper.id = 'engine-catalog-section';
 
   let hideIncompatible = localStorage.getItem('am_hide_incompatible') === 'true';
-  const compatibleCount = descriptors.filter(d => (d.compatibility ? d.compatibility.compatible : d.available !== false)).length;
+  const compatibleCount = descriptors.filter(d => isEngineCompatible(d)).length;
 
   const catalogHeader = document.createElement('div');
   catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;";
@@ -5479,7 +5537,7 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
     const name = meta.name;
     const descText = meta.desc;
 
-    const isIncompatible = comp.status === 'incompatible' || (comp.compatible === false) || (desc.available === false);
+    const isIncompatible = !isEngineCompatible(desc) || comp.status === 'incompatible' || (comp.compatible === false) || (desc.available === false);
     const isDegraded = comp.status === 'degraded' || comp.degraded === true;
 
     const card = document.createElement('div');
@@ -7953,6 +8011,7 @@ async function initHardwareCapabilities() {
       API.get('/api/status').catch(() => null),
     ]);
     if (hw) {
+      window.__hwData = hw;
       if (hw.capabilities && hw.capabilities.http && hw.capabilities.http.recommendedConcurrency) {
         httpQueue.setConcurrency(hw.capabilities.http.recommendedConcurrency);
       }
@@ -8317,7 +8376,10 @@ async function initSettings() {
       try {
         await API.post('/api/system', { matrix, reboot: true });
         endpointCache.delete('/api/engines');
-        try { sessionStorage.removeItem('am_cache_/api/engines'); } catch (_) {}
+        try {
+          sessionStorage.removeItem('am_cache_/api/engines');
+          localStorage.removeItem('am_cache_/api/engines');
+        } catch (_) {}
         if (window.__sysConfig) window.__sysConfig.matrix = matrix;
         window.showToast('Hardware settings saved! Restarting panel driver...', 'success');
       } catch (e) {
@@ -8345,6 +8407,10 @@ async function initSettings() {
 
     // Auto-close sidebar when clicking a nav item on mobile
     document.addEventListener('DOMContentLoaded', () => {
+      try {
+        sessionStorage.removeItem('am_cache_/api/engines');
+        localStorage.removeItem('am_cache_/api/engines');
+      } catch (_) {}
       document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', () => {
           if (window.innerWidth <= 768) {

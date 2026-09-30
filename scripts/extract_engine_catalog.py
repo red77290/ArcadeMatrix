@@ -145,7 +145,6 @@ def extract_engine_catalog(engines_dir="src/engines"):
             },
             "capabilities": cap,
             "requirements": req,
-            "available": True,
             "schema_url": f"/api/engines?id={eng_id}",
             "schema": fields
         })

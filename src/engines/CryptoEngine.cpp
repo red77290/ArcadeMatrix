@@ -132,14 +132,15 @@ void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImg
     cache.iconAttempted = true;
 
     // Decode from SD card into cache.iconPixels (16x16 RGB565)
-    // Invariant: PNGdec allocates ~38KB internally; never allocate on stack, check contiguous DRAM
+    // Invariant: PNGdec allocates ~45KB internally; never allocate on stack, check contiguous DRAM
     if (onSd) {
-        const size_t reqPngHeap = sizeof(PNG) + 512;
-        if (ESP.getMaxAllocHeap() < reqPngHeap) {
+        PNG* png = new (std::nothrow) PNG();
+        if (!png) {
             LOGW("CryptoEngine", "Skipping icon decode for %s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
-                 symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)reqPngHeap);
+                 symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)sizeof(PNG));
             return;
         }
+
         size_t size = 0;
         uint8_t* buf = nullptr;
         {
@@ -163,25 +164,22 @@ void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImg
             memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
             currentDecodeBuffer = cache.iconPixels;
             
-            PNG* png = new (std::nothrow) PNG();
-            if (png) {
-                pngPtr = png;
-                int rc = png->openRAM(buf, size, pngDraw);
-                if (rc == PNG_SUCCESS) {
-                    png->decode((void*)this, 0);
-                    cache.hasIcon = true;
-                    LOGI("CryptoEngine", "Successfully loaded 16x16 icon for %s", symbol.c_str());
-                } else {
-                    LOGW("CryptoEngine", "Failed to decode PNG for %s (rc=%d)", symbol.c_str(), rc);
-                }
-                png->close();
-                delete png;
-                pngPtr = nullptr;
+            pngPtr = png;
+            int rc = png->openRAM(buf, size, pngDraw);
+            if (rc == PNG_SUCCESS) {
+                png->decode((void*)this, 0);
+                cache.hasIcon = true;
+                LOGI("CryptoEngine", "Successfully loaded 16x16 icon for %s", symbol.c_str());
             } else {
-                LOGW("CryptoEngine", "Failed to allocate PNG decoder object");
+                LOGW("CryptoEngine", "Failed to decode PNG for %s (rc=%d)", symbol.c_str(), rc);
             }
+            png->close();
+            pngPtr = nullptr;
+            free(buf);
+        } else if (buf) {
             free(buf);
         }
+        delete png;
     }
 }
 
