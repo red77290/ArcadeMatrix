@@ -258,6 +258,7 @@ void AppRuntime::initialize() {
     rotationManager = new RotationManager();
     m_appCtx = new AppEngineContext(matrixEngine.getDisplay(), m_frontendListener);
     rotationManager->setEngineContext(m_appCtx);
+    rotationManager->setSlotTransition(snapshot.matrix.slot_transition, snapshot.matrix.slot_transition_duration_ms);
     overlayManager.initialize(m_appCtx, &config);
 
     m_displayRuntime.begin(m_appCtx, &matrixEngine, rotationManager,

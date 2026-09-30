@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <unity.h>
+#include "core/RotationTransitionFX.h"
 
 #include "core/EngineRegistry.h"
 #include "core/ConfigSanitizer.h"
@@ -1872,6 +1873,22 @@ void test_engine_retirement_queue_stress_and_saturation(void) {
     TEST_ASSERT_EQUAL(0, Core0LifecycleDispatcher::instance().getQuarantineCount());
 }
 
+
+/**
+ * @brief Slot transition effect names, including the aliases and the safe default.
+ */
+void test_slot_transition_effect_names() {
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("wipe") == RotationEffect::WIPE);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("Curtain") == RotationEffect::CURTAIN);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("blinds") == RotationEffect::SHUTTER);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("checkerboard") == RotationEffect::CHECKER);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("matrix_rain") == RotationEffect::MATRIX_RAIN);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("random") == RotationEffect::RANDOM);
+    // Anything unknown turns the transition off rather than picking a surprise.
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("sparkles") == RotationEffect::NONE);
+    TEST_ASSERT_TRUE(RotationTransitionFX::parseEffect("") == RotationEffect::NONE);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -1949,6 +1966,7 @@ void setup() {
     RUN_TEST(test_engine_retirement_core1_release_barrier);
     RUN_TEST(test_display_runtime_purge_engine_references);
     RUN_TEST(test_engine_retirement_queue_stress_and_saturation);
+    RUN_TEST(test_slot_transition_effect_names);
 
     UNITY_END();
 }

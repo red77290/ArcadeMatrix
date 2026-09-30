@@ -57,6 +57,8 @@ struct MatrixConfig {
     bool auto_rotate = true;
     String rotation_transition = "vortex";
     int rotation_transition_duration_ms = 400;
+    String slot_transition = "none";            ///< effect played when the rotation moves to the next slot
+    int slot_transition_duration_ms = 500;
 };
 
 struct WifiConfig {

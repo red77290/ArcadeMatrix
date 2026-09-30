@@ -170,6 +170,8 @@ void ConfigLoader::setDefaults() {
     matrix.auto_rotate = true;
     matrix.rotation_transition = "vortex";
     matrix.rotation_transition_duration_ms = 400;
+    matrix.slot_transition = "none";
+    matrix.slot_transition_duration_ms = 500;
 
     wifi.ssid = "";
     wifi.password = "";
@@ -285,6 +287,8 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (disp.containsKey("rotation_transition")) matrix.rotation_transition = disp["rotation_transition"].as<String>();
         else if (disp.containsKey("rotationTransition")) matrix.rotation_transition = disp["rotationTransition"].as<String>();
         
+        if (disp.containsKey("slot_transition")) matrix.slot_transition = disp["slot_transition"].as<String>();
+        if (disp.containsKey("slot_transition_duration_ms")) matrix.slot_transition_duration_ms = disp["slot_transition_duration_ms"].as<int>();
         if (disp.containsKey("rotation_transition_duration_ms")) matrix.rotation_transition_duration_ms = disp["rotation_transition_duration_ms"].as<int>();
         else if (disp.containsKey("rotationTransitionDurationMs")) matrix.rotation_transition_duration_ms = disp["rotationTransitionDurationMs"].as<int>();
 
@@ -439,6 +443,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["auto_rotate"] = matrix.auto_rotate;
     dispObj["rotation_transition"] = matrix.rotation_transition;
     dispObj["rotation_transition_duration_ms"] = matrix.rotation_transition_duration_ms;
+    dispObj["slot_transition"] = matrix.slot_transition;
+    dispObj["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     dispObj["matrix_power"] = matrix.matrix_power;
 
     JsonObject wObj = doc.createNestedObject("wifi");

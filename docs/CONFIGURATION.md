@@ -48,6 +48,8 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `auto_rotate` | `bool` | Enable automatic display orientation via onboard Gyroscope/IMU (`true` default). |
 | `rotation_transition` | `String` | Visual transition effect (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Transition effect duration in milliseconds (default `400`). |
+| `slot_transition` | `String` | Effect played when the rotation moves to the next slot (`wipe`, `curtain`, `shutter`, `dissolve`, `checker`, `matrix`, `vortex`, `glitch`, `slide`, `zoom`, `random`, `none`). Default `none`. |
+| `slot_transition_duration_ms` | `int` | Slot transition duration in milliseconds (`100`-`3000`, default `500`). |
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 

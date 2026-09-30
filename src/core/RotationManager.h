@@ -8,8 +8,10 @@
 #include "../engines/FighterEngine.h"
 
 #include "AppEngineContext.h"
+#include "RotationTransitionFX.h"
 #include <memory>
 #include <mutex>
+#include <atomic>
 
 class DisplayRuntime;
 
@@ -51,7 +53,20 @@ public:
 
     // Core Runtime Services for fully migrated engines
     void setEngineContext(AppEngineContext* ctx) { m_ctx = ctx; }
+    RotationTransitionFX m_slotFx;
+    bool m_awaitingFirstFrame = false;   ///< the slot just changed and its engine has not drawn yet
+    uint32_t m_slotFxStartedMs = 0;
+    /// Written from the web server on Core 0, read by the render loop on Core 1.
+    std::atomic<RotationEffect> m_slotEffect{RotationEffect::NONE};
+    std::atomic<int> m_slotFxMs{500};
     void setDisplayRuntime(DisplayRuntime* dr) { m_displayRuntime = dr; }
+
+    /// Effect played over the gap when the rotation moves to the next slot ("none" disables it).
+    void setSlotTransition(const String& effect, int durationMs) {
+        m_slotFxMs.store((durationMs < 100) ? 100 : ((durationMs > 3000) ? 3000 : durationMs),
+                         std::memory_order_relaxed);
+        m_slotEffect.store(RotationTransitionFX::parseEffect(effect), std::memory_order_release);
+    }
     
     /**
      * Hot-path lookup.

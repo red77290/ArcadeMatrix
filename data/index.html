@@ -1517,6 +1517,27 @@ select.input option {
                 <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
                 <input type="number" id="sys-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
+              <div class="form-group">
+                <label data-i18n="slot_transition_label">Between Rotation Slots</label>
+                <select id="sys-slot-transition" class="input">
+                  <option value="none" data-i18n="slot_trans_none">Instant Cut (None)</option>
+                  <option value="wipe" data-i18n="slot_trans_wipe">▶️ Wipe Across</option>
+                  <option value="curtain" data-i18n="slot_trans_curtain">🎭 Curtain</option>
+                  <option value="shutter" data-i18n="slot_trans_shutter">🪟 Shutter</option>
+                  <option value="dissolve" data-i18n="slot_trans_dissolve">✨ Dissolve</option>
+                  <option value="checker" data-i18n="slot_trans_checker">🏁 Checkerboard</option>
+                  <option value="matrix" data-i18n="hw_trans_matrix">🌊 Matrix Rain</option>
+                  <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
+                  <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
+                  <option value="slide" data-i18n="hw_trans_slide">💫 Smooth Slide</option>
+                  <option value="zoom" data-i18n="hw_trans_zoom">🌀 Tunnel Zoom</option>
+                  <option value="random" data-i18n="slot_trans_random">🎲 Random (Every slot)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label data-i18n="slot_transition_duration_label">Slot Transition Duration (ms)</label>
+                <input type="number" id="sys-slot-transition-duration" class="input" value="500" min="100" max="3000" step="50">
+              </div>
             </div>
           </div>
 
@@ -2498,6 +2519,15 @@ const translations = {
     hw_rot_180: "180° - Inverted Landscape",
     hw_rot_270: "270° - Portrait Counter-Clockwise (TATE)",
     hw_rotation_transition_label: "Rotation Transition Effect",
+    slot_transition_label: "Between Rotation Slots",
+    slot_transition_duration_label: "Slot Transition Duration (ms)",
+    slot_trans_none: "Instant Cut (None)",
+    slot_trans_wipe: "▶️ Wipe Across",
+    slot_trans_curtain: "🎭 Curtain",
+    slot_trans_shutter: "🪟 Shutter",
+    slot_trans_dissolve: "✨ Dissolve",
+    slot_trans_checker: "🏁 Checkerboard",
+    slot_trans_random: "🎲 Random (Every slot)",
     hw_transition_duration_label: "Transition Duration (ms)",
     hw_trans_vortex: "✨ Particle Vortex",
     hw_trans_glitch: "⚡ Cyberpunk Glitch",
@@ -2988,6 +3018,15 @@ const translations = {
     hw_rot_180: "180° - Paysage Inversé",
     hw_rot_270: "270° - Portrait Anti-Horaire (TATE)",
     hw_rotation_transition_label: "Effet de Transition de Rotation",
+    slot_transition_label: "Entre les écrans de la rotation",
+    slot_transition_duration_label: "Durée de transition (ms)",
+    slot_trans_none: "Coupe instantanée (aucune)",
+    slot_trans_wipe: "▶️ Balayage",
+    slot_trans_curtain: "🎭 Rideau",
+    slot_trans_shutter: "🪟 Volet",
+    slot_trans_dissolve: "✨ Dissolution",
+    slot_trans_checker: "🏁 Damier",
+    slot_trans_random: "🎲 Aléatoire (à chaque écran)",
     hw_transition_duration_label: "Durée de la Transition (ms)",
     hw_trans_vortex: "✨ Vortex de Particules",
     hw_trans_glitch: "⚡ Glitch Cyberpunk",
@@ -3478,6 +3517,15 @@ const translations = {
     hw_rot_180: "180° - Paisaje Invertido",
     hw_rot_270: "270° - Retrato Antihorario (TATE)",
     hw_rotation_transition_label: "Efecto de Transición de Rotación",
+    slot_transition_label: "Entre pantallas de la rotación",
+    slot_transition_duration_label: "Duración de la transición (ms)",
+    slot_trans_none: "Corte instantáneo (ninguna)",
+    slot_trans_wipe: "▶️ Barrido",
+    slot_trans_curtain: "🎭 Telón",
+    slot_trans_shutter: "🪟 Persiana",
+    slot_trans_dissolve: "✨ Disolución",
+    slot_trans_checker: "🏁 Damero",
+    slot_trans_random: "🎲 Aleatoria (cada pantalla)",
     hw_transition_duration_label: "Duración de la Transición (ms)",
     hw_trans_vortex: "✨ Vórtice de Partículas",
     hw_trans_glitch: "⚡ Glitch Cyberpunk",
@@ -7538,6 +7586,8 @@ async function initSettings() {
     setChk('hw-gyro-autorotate', matrix.auto_rotate ?? true);
     setVal('hw-rotation-transition', matrix.rotation_transition || matrix.transition_effect || 'vortex');
     setVal('hw-transition-duration', matrix.rotation_transition_duration_ms || matrix.transition_duration_ms || 400);
+    setVal('sys-slot-transition', matrix.slot_transition || 'none');
+    setVal('sys-slot-transition-duration', matrix.slot_transition_duration_ms || 500);
 
     // Fetch Live Gyroscope status & telemetry
     try {
@@ -7722,6 +7772,8 @@ async function initSettings() {
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
         rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',
         rotation_transition_duration_ms: numOr('hw-transition-duration', 400),
+        slot_transition: document.getElementById('sys-slot-transition')?.value || 'none',
+        slot_transition_duration_ms: numOr('sys-slot-transition-duration', 500),
       };
 
       try {
