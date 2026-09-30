@@ -3,6 +3,7 @@
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
+#include "../core/net/SecureHttpClient.h"
 #include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
@@ -108,6 +109,7 @@ void StockEngine::loadOrDownloadIcon(const String& symbol, const String& newImgU
 }
 
 void StockEngine::deactivate() {
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_STOCK);
     // Invariant 15 (Allocation-Free Deactivation): reclaim maps with zero dynamic allocations
     std::map<String, AssetQuoteCache>().swap(quoteCache);
     std::map<String, AssetHistoryCache>().swap(historyCache);

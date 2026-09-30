@@ -183,6 +183,7 @@ void DashboardDataProvider::start() {
 void DashboardDataProvider::stop() {
     m_isActive = false;
     m_taskRunning = false;
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 
     if (m_fetchTaskHandle) {
         int timeoutMs = 500;

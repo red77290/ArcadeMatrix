@@ -46,8 +46,8 @@ public:
 
     uint16_t* getRawCanvasBuffer() const { return _canvas; }
 
-    void setPresentationBackend(IPresentationBackend* backend) { _backend = backend; }
-    IPresentationBackend* getPresentationBackend() const { return _backend; }
+    void setPresentationBackend(IPresentationBackend* backend) override { _backend = backend; }
+    IPresentationBackend* getPresentationBackend() const override { return _backend; }
     void setPresentationPolicy(const PresentationPolicy& policy) { _policy = policy; }
     const PresentationPolicy& getPresentationPolicy() const { return _policy; }
 

@@ -1,5 +1,8 @@
 #include "DisplayRuntime.h"
 #include "drawing/IDrawingSurface.h"
+#include "drawing/PipelineSelectionPolicy.h"
+#include "hal/HardwareHAL.h"
+#include "../../include/core/EngineRegistry.h"
 #include "Logger.h"
 #include "MatrixEngine.h"
 
@@ -183,6 +186,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
             m_session.lifecycle
         };
         if (targetEngine && !sameEngine) {
+            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
             targetEngine->activate();
         }
         
@@ -234,6 +238,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         PreemptionEntry parent = m_preemptionStack[parentIdx];
         m_preemptionDepth = (uint8_t)parentIdx; // Secure unwinding
 
+        maybeReconfigurePipelineFor(resumeEngine, parent.handle, parent.sourceId);
         resumeEngine->resume();
 
         // Restore complete parent session snapshot
@@ -267,6 +272,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         m_preemptionDepth = 0;
     }
     if (targetEngine && !sameEngine) {
+        maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
         targetEngine->activate();
     }
     m_session.sessionId = ++m_sessionCounter;
@@ -356,4 +362,45 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
     }
 
     return result;
+}
+
+void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const EngineHandle& handle, DisplaySourceId sourceId) {
+    if (!m_matrixEngine) return;
+
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const auto& matrixCfg = guard->matrix;
+    if (!matrixCfg.dynamicColorDepth) return;
+
+    const char* descId = handle.descriptorId;
+    String engineIdStr;
+    if ((!descId || descId[0] == '\0') && sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
+        engineIdStr = m_rotationManager->getCurrentEngineId();
+        descId = engineIdStr.c_str();
+    }
+
+    EngineRequirements reqs;
+    if (descId && descId[0] != '\0') {
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(descId);
+        if (desc) {
+            reqs = desc->requirements;
+        }
+    }
+
+    uint16_t totalWidth = matrixCfg.width * (matrixCfg.chainLength > 0 ? matrixCfg.chainLength : 1);
+    uint8_t targetDepth = PipelineSelectionPolicy::resolveTargetDepth(
+        matrixCfg.colorDepth,
+        matrixCfg.dynamicColorDepth,
+        totalWidth,
+        matrixCfg.height,
+        hardwareHAL.capabilities().hasPsram,
+        reqs
+    );
+
+    if (targetDepth != m_matrixEngine->getActiveColorDepth()) {
+        auto res = m_matrixEngine->reconfigurePresentationPipeline(targetDepth);
+        if (res.success && m_surface) {
+            m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());
+        }
+    }
 }

@@ -145,6 +145,7 @@ void ConfigLoader::setDefaults() {
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
     matrix.colorDepth = 0; // 0 = Auto (Adaptive TLS / Hardware)
+    matrix.dynamicColorDepth = false;
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
@@ -253,6 +254,9 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"].as<int>();
         else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"].as<int>();
         else if (disp.containsKey("pwm_bits")) matrix.colorDepth = disp["pwm_bits"].as<int>();
+        
+        if (disp.containsKey("dynamic_color_depth")) matrix.dynamicColorDepth = disp["dynamic_color_depth"].as<bool>();
+        else if (disp.containsKey("dynamicColorDepth")) matrix.dynamicColorDepth = disp["dynamicColorDepth"].as<bool>();
         
         if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
         else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
@@ -433,6 +437,8 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["powerLimitPercent"] = matrix.powerLimitPercent;
     dispObj["render_pipeline"] = matrix.render_pipeline;
     dispObj["colorDepth"] = matrix.colorDepth;
+    dispObj["dynamicColorDepth"] = matrix.dynamicColorDepth;
+    dispObj["dynamic_color_depth"] = matrix.dynamicColorDepth;
     dispObj["rgbSequence"] = matrix.rgbSequence;
     dispObj["limitRefreshRateHz"] = matrix.limitRefreshRateHz;
     dispObj["driverChip"] = matrix.driverChip;

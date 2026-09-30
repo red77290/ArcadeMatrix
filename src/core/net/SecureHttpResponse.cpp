@@ -60,7 +60,7 @@ SecureHttpResponse& SecureHttpResponse::operator=(SecureHttpResponse&& other) no
 }
 
 Stream& SecureHttpResponse::stream() {
-    if (_consumed || !_stream) {
+    if (_consumed || !_stream || (_owner && _owner->isAborted())) {
         return s_nullStream;
     }
     return *_stream;

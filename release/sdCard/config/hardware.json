@@ -5,6 +5,8 @@
   "chainLength": 2,
   "powerLimitPercent": 50,
   "colorDepth": 8,
+  "dynamicColorDepth": false,
+  "dynamic_color_depth": false,
   "rgbSequence": "RGB",
   "limitRefreshRateHz": 90,
   "driverChip": "SHIFTREG",

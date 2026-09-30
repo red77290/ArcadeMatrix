@@ -95,6 +95,28 @@ public:
     void close();
 
     /**
+     * @brief Invariant N8: Aborts the session immediately and asynchronously.
+     * Cuts the underlying transport without draining, marks session aborted,
+     * and invalidates any in-flight response.
+     */
+    void abort();
+
+    /**
+     * @brief Checks if session has been aborted.
+     */
+    bool isAborted() const { return _aborted; }
+
+    /**
+     * @brief Gets the owner ID associated with this session.
+     */
+    uint16_t ownerId() const { return _ownerId; }
+
+    /**
+     * @brief Sets the owner ID (e.g. engine or component instance ID).
+     */
+    void setOwnerId(uint16_t id) { _ownerId = id; }
+
+    /**
      * @brief Testing hook to inject a mock transport for host native unit tests.
      */
     void setTransport(std::unique_ptr<SessionTransport> transport);
@@ -106,6 +128,8 @@ private:
     SessionState _state = SessionState::Disconnected;
     TransportError _lastError = TransportError::None;
     bool _hasActiveResponse = false;
+    bool _aborted = false;
+    uint16_t _ownerId = 0;
 
     std::unique_ptr<SessionTransport> _transport;
 };

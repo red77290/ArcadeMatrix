@@ -66,6 +66,7 @@ private:
     std::atomic<bool> m_stopFetch{false};
     std::atomic<bool> m_fetchExited{false};
     void startFetchTask();
+    void stopFetchTask();
     static void fetchTaskEntry(void* arg);
     void fetchOnce();
     // Two forecast buffers with an atomic index instead of a mutex: Core 0 fills the buffer that is

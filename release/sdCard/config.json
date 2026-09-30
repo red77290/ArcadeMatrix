@@ -7,6 +7,7 @@
         "power_limit_percent": 50,
         "render_pipeline": "auto",
         "color_depth": 8,
+        "dynamic_color_depth": false,
         "rgb_sequence": "RGB",
         "limit_refresh_rate_hz": 90,
         "driver_chip": "SHIFTREG",

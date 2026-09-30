@@ -40,6 +40,22 @@ public:
                                    const String& body,
                                    const SecureHttpOptions& options = {},
                                    const std::vector<std::pair<String, String>>& headers = {});
+
+    /**
+     * @brief Invariant N8: Immediately aborts all active sessions owned by ownerId.
+     */
+    static void abortSessionsOwnedBy(uint16_t ownerId);
+
+    /**
+     * @brief Invariant N8: Emergency abort of all active HTTP/TLS sessions system-wide.
+     */
+    static void abortAllActiveSessions();
+
+    /**
+     * @brief Internal registration hooks for active sessions tracking.
+     */
+    static void registerSession(SecureHttpSession* session);
+    static void unregisterSession(SecureHttpSession* session);
 };
 
 } // namespace net

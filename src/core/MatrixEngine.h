@@ -81,6 +81,20 @@ private:
 };
 
 /**
+ * @struct ReconfigureResult
+ * @brief Telemetry and outcome of a dynamic presentation pipeline reconfiguration (Invariant 21).
+ */
+struct ReconfigureResult {
+    bool success = false;
+    uint8_t previousDepth = 0;
+    uint8_t effectiveDepth = 0;
+    size_t dmaBytes = 0;
+    uint32_t blankDurationUs = 0;
+    bool fallbackUsed = false;
+    const char* failureReason = nullptr;
+};
+
+/**
  * @class MatrixEngine
  * @brief Wrapper for the HUB75 I2S DMA Matrix Panel.
  */
@@ -108,6 +122,17 @@ public:
      * @return false if out of memory or initialization failed.
      */
     bool begin(const MatrixConfig& config, uint8_t effectiveColorDepth = 0);
+
+    /**
+     * @brief Atomically reconfigures the HUB75 DMA presentation pipeline to targetDepth (Invariant 21).
+     * Enforces complete hardware OE blanking throughout the entire teardown, reallocation, and initial frame commit.
+     *
+     * @param targetDepth Target color depth (1..8 bits).
+     * @return ReconfigureResult Outcome with telemetry and microsecond blanking duration.
+     */
+    ReconfigureResult reconfigurePresentationPipeline(uint8_t targetDepth);
+
+    uint8_t getActiveColorDepth() const { return m_activeColorDepth; }
     
     /**
      * @brief Clear the entire matrix screen.
@@ -172,6 +197,9 @@ private:
     MatrixPanel_I2S_DMA* display; ///< Pointer to the underlying DMA library instance
     FastMatrixPanel* m_panel = nullptr; ///< same object as `display`, typed for the fast clear hooks
     std::unique_ptr<Hub75PresentationBackend> m_presentationBackend;
+    MatrixConfig m_cachedConfig;
+    uint8_t m_activeColorDepth = 0;
+    int8_t m_oePin = -1;
     uint32_t m_flipCount = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;

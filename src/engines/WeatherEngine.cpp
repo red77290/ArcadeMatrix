@@ -1,6 +1,7 @@
 #include "WeatherEngine.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
+#include "../core/net/SecureHttpClient.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
@@ -16,20 +17,7 @@ WeatherEngine::WeatherEngine() : matrix(nullptr) {
 }
 
 WeatherEngine::~WeatherEngine() {
-    if (m_fetchTask) {          // stop the fetch before the providers it uses are freed
-        // Ask it to finish the round trip it is in and leave the loop itself. Deleting the task
-        // outright would strand its TLS socket and heap, and could cut it off mid-read of the
-        // providers deleted just below.
-        m_stopFetch.store(true, std::memory_order_release);
-        for (int i = 0; i < 500 && !m_fetchExited.load(std::memory_order_acquire); i++) {
-            vTaskDelay(pdMS_TO_TICKS(10));   // up to 5 s, which covers an HTTPS timeout
-        }
-        if (!m_fetchExited.load(std::memory_order_acquire)) {
-            LOGW("WeatherEngine", "fetch task did not stop in time; deleting it");
-            vTaskDelete(m_fetchTask);
-        }
-        m_fetchTask = nullptr;
-    }
+    stopFetchTask();
     for (auto* provider : providers) {
         delete provider;
     }
@@ -62,6 +50,8 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
 }
 
 void WeatherEngine::activate() {
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
     requestRedraw();
     startFetchTask();   // so the first forecast is already on its way before the slot comes round
     if (config_api_key.isEmpty() || config_city.isEmpty()) {
@@ -127,7 +117,9 @@ void WeatherEngine::render(EngineContext* context) {
     m_presented = true;
 }
 
-void WeatherEngine::deactivate() {}
+void WeatherEngine::deactivate() {
+    stopFetchTask();
+}
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
@@ -199,6 +191,21 @@ void WeatherEngine::startFetchTask() {
     if (xTaskCreatePinnedToCore(fetchTaskEntry, "weather_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
         m_fetchTask = nullptr;
         LOGW("WeatherEngine", "fetch task did not start; falling back to no updates");
+    }
+}
+
+void WeatherEngine::stopFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+        for (int i = 0; i < 50 && !m_fetchExited.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (!m_fetchExited.load(std::memory_order_acquire)) {
+            LOGW("WeatherEngine", "fetch task did not stop in time; deleting it");
+            vTaskDelete(m_fetchTask);
+        }
+        m_fetchTask = nullptr;
     }
 }
 

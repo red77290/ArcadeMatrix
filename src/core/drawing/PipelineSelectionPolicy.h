@@ -91,4 +91,16 @@ public:
         const MemoryBudgetConstraints& memory = MemoryBudgetConstraints(),
         const EngineRequirements& requirements = EngineRequirements()
     );
+
+    /**
+     * @brief Resolves target color depth for a specific engine transition under the Dynamic Presentation Pipeline.
+     */
+    static uint8_t resolveTargetDepth(
+        uint8_t configuredDepth,
+        bool dynamicColorDepth,
+        uint16_t width,
+        uint16_t height,
+        bool hasPsram,
+        const EngineRequirements& reqs
+    );
 };

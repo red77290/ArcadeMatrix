@@ -110,6 +110,7 @@ void SpotifyEngine::activate() {
 
 void SpotifyEngine::deactivate() {
     m_isActive = false;
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_SPOTIFY);
     if (m_pollTaskHandle) {
         xTaskNotifyGive(m_pollTaskHandle);
     }
@@ -124,6 +125,7 @@ bool SpotifyEngine::refreshAccessToken() {
     if (!m_accessToken.isEmpty() && millis() < m_tokenExpiry) return true;
 
     net::SecureHttpOptions options;
+    options.ownerId = net::OWNER_SPOTIFY;
     options.requestTimeoutMs = 4500;
     options.handshakeTimeoutSec = 4;
     if (!m_clientSecret.isEmpty()) {
@@ -155,6 +157,7 @@ void SpotifyEngine::pollSpotifyStatus() {
     if (!refreshAccessToken()) return;
 
     net::SecureHttpOptions options;
+    options.ownerId = net::OWNER_SPOTIFY;
     options.requestTimeoutMs = 4500;
     options.handshakeTimeoutSec = 4;
     std::vector<std::pair<String, String>> headers = {

@@ -136,6 +136,9 @@ public:
                presentationStrategy() == PresentationStrategy::DIRECT_DMA_DOUBLE;
     }
 
+    virtual void setPresentationBackend(class IPresentationBackend* backend) {}
+    virtual class IPresentationBackend* getPresentationBackend() const { return nullptr; }
+
     // Invariant physical dimensions (independent of orientation)
     inline int16_t physicalWidth() const { return m_physW; }
     inline int16_t physicalHeight() const { return m_physH; }

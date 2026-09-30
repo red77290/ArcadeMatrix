@@ -3,6 +3,7 @@
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
+#include "../core/net/SecureHttpClient.h"
 #include "../api/CoinGeckoProvider.h"
 #include "../api/BinanceProvider.h"
 #include <HTTPClient.h>
@@ -414,6 +415,7 @@ void CryptoEngine::render(EngineContext* context) {
 }
 
 void CryptoEngine::deactivate() {
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_CRYPTO);
     // Invariant 15 (Allocation-Free Deactivation): reclaim all heap held by caches
     // using swap idiom (zero new allocation, immediate deallocation).
     std::map<String, AssetQuoteCache>().swap(quoteCache);

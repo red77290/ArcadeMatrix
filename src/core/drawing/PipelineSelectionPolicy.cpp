@@ -309,3 +309,33 @@ uint8_t PipelineSelectionPolicy::resolveEffectiveColorDepth(
     PipelineSelectionResult sel = evaluate(width, height, cDepth, "auto", hasPsram, memory, requirements);
     return sel.effectiveColorDepth;
 }
+
+uint8_t PipelineSelectionPolicy::resolveTargetDepth(
+    uint8_t configuredDepth,
+    bool dynamicColorDepth,
+    uint16_t width,
+    uint16_t height,
+    bool hasPsram,
+    const EngineRequirements& reqs)
+{
+    // Auto mode is statically evaluated at boot; dynamic switching is inactive
+    if (configuredDepth == COLOR_DEPTH_AUTO) {
+        return resolveEffectiveColorDepth(0, width, height, hasPsram);
+    }
+
+    // Dynamic presentation adaptation disabled: enforce configured depth strictly
+    if (!dynamicColorDepth) {
+        return configuredDepth;
+    }
+
+    // Dynamic presentation adaptation:
+    // If incoming engine requires TLS on memory-constrained hardware (ESP32 without PSRAM, 128x32),
+    // switch temporarily to 4-bit presentation depth to reclaim DRAM.
+    // Otherwise, preserve user's preferred rich depth (e.g. 8 or 6 bits) for graphical engines.
+    if (reqs.needsTls && !hasPsram && (width * height >= 128 * 32)) {
+        return 4;
+    }
+
+    return configuredDepth;
+}
+

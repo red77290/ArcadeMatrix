@@ -21,7 +21,8 @@ enum class TransportError : uint8_t {
     StreamError,         ///< Premature socket closure or truncation during stream read
     InvalidUrl,          ///< Malformed HTTP/HTTPS URL
     ResponsePending,     ///< New request attempted while previous response is still active
-    Closed               ///< Session explicitly closed
+    Closed,              ///< Session explicitly closed
+    Aborted              ///< Invariant N8: Session aborted via client-side cancellation
 };
 
 inline const char* transportErrorToString(TransportError err) {
@@ -36,6 +37,7 @@ inline const char* transportErrorToString(TransportError err) {
         case TransportError::InvalidUrl:      return "INVALID_URL";
         case TransportError::ResponsePending: return "RESPONSE_PENDING";
         case TransportError::Closed:          return "SESSION_CLOSED";
+        case TransportError::Aborted:         return "ABORTED";
         default:                              return "UNKNOWN_ERROR";
     }
 }
@@ -66,6 +68,21 @@ inline const char* sessionStateToString(SessionState state) {
 }
 
 /**
+ * @enum HttpOwnerId
+ * @brief Well-known owner IDs for scoped network session abortion (Invariant N8).
+ */
+enum HttpOwnerId : uint16_t {
+    OWNER_ANY = 0,
+    OWNER_WEATHER = 100,
+    OWNER_DASHBOARD = 200,
+    OWNER_SPOTIFY = 300,
+    OWNER_CRYPTO = 400,
+    OWNER_STOCK = 500,
+    OWNER_GNEWS = 600,
+    OWNER_ARTWORK = 700
+};
+
+/**
  * @struct SecureHttpOptions
  * @brief Configuration parameters for TLS sessions and HTTP requests.
  */
@@ -75,6 +92,7 @@ struct SecureHttpOptions {
     const char* userAgent = "Mozilla/5.0 (compatible; ArcadeMatrix/4.0)";
     bool keepAlive = true;
     bool followRedirects = false;
+    uint16_t ownerId = OWNER_ANY; ///< Owner ID (engine or subsystem ID) for scoped abort
     String authUser;
     String authPassword;
     std::vector<std::pair<String, String>> customHeaders;

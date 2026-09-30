@@ -1,4 +1,5 @@
 #include "SecureHttpSession.h"
+#include "SecureHttpClient.h"
 #include "../NetworkBudget.h"
 #include <string.h>
 
@@ -100,13 +101,15 @@ private:
 #endif
 
 SecureHttpSession::SecureHttpSession(const String& host, uint16_t port, const SecureHttpOptions& options)
-    : _host(host), _port(port), _options(options) {
+    : _host(host), _port(port), _options(options), _ownerId(options.ownerId) {
 #if defined(ARDUINO)
     _transport.reset(new EspSessionTransport());
 #endif
+    SecureHttpClient::registerSession(this);
 }
 
 SecureHttpSession::~SecureHttpSession() {
+    SecureHttpClient::unregisterSession(this);
     close();
 }
 
@@ -117,13 +120,18 @@ SecureHttpSession::SecureHttpSession(SecureHttpSession&& other) noexcept
       _state(other._state),
       _lastError(other._lastError),
       _hasActiveResponse(other._hasActiveResponse),
+      _aborted(other._aborted),
+      _ownerId(other._ownerId),
       _transport(std::move(other._transport)) {
+    SecureHttpClient::unregisterSession(&other);
+    SecureHttpClient::registerSession(this);
     other._state = SessionState::Closed;
     other._hasActiveResponse = false;
 }
 
 SecureHttpSession& SecureHttpSession::operator=(SecureHttpSession&& other) noexcept {
     if (this != &other) {
+        SecureHttpClient::unregisterSession(this);
         close();
         _host = std::move(other._host);
         _port = other._port;
@@ -131,12 +139,27 @@ SecureHttpSession& SecureHttpSession::operator=(SecureHttpSession&& other) noexc
         _state = other._state;
         _lastError = other._lastError;
         _hasActiveResponse = other._hasActiveResponse;
+        _aborted = other._aborted;
+        _ownerId = other._ownerId;
         _transport = std::move(other._transport);
+
+        SecureHttpClient::unregisterSession(&other);
+        SecureHttpClient::registerSession(this);
 
         other._state = SessionState::Closed;
         other._hasActiveResponse = false;
     }
     return *this;
+}
+
+void SecureHttpSession::abort() {
+    _aborted = true;
+    _lastError = TransportError::Aborted;
+    _state = SessionState::Closed;
+    _hasActiveResponse = false;
+    if (_transport) {
+        _transport->stop();
+    }
 }
 
 void SecureHttpSession::setTransport(std::unique_ptr<SessionTransport> transport) {
@@ -149,6 +172,10 @@ bool SecureHttpSession::isConnected() const {
 }
 
 bool SecureHttpSession::ensureConnected() {
+    if (_aborted) {
+        _lastError = TransportError::Aborted;
+        return false;
+    }
     if (!_transport) {
         _lastError = TransportError::ConnectFailed;
         return false;
@@ -201,6 +228,9 @@ bool SecureHttpSession::ensureConnected() {
 
 SecureHttpResponse SecureHttpSession::get(const String& path,
                                          const std::vector<std::pair<String, String>>& headers) {
+    if (_aborted) {
+        return SecureHttpResponse(this, -1, nullptr, 0, 0, TransportError::Aborted);
+    }
     uint32_t startMs = millis();
 
     // If a previous response stream is still unconsumed, finalize it first
@@ -255,6 +285,9 @@ SecureHttpResponse SecureHttpSession::get(const String& path,
 
 SecureHttpResponse SecureHttpSession::post(const String& path, const String& contentType, const String& body,
                                            const std::vector<std::pair<String, String>>& headers) {
+    if (_aborted) {
+        return SecureHttpResponse(this, -1, nullptr, 0, 0, TransportError::Aborted);
+    }
     uint32_t startMs = millis();
 
     if (_hasActiveResponse) {

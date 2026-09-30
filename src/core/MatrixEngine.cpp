@@ -43,6 +43,11 @@ MatrixEngine::~MatrixEngine() {
  * @return false if out of memory or initialization failed.
  */
 bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth) {
+    if (display) {
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+    }
     int8_t out1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
     int8_t out2[3] = {MATRIX_R2_PIN, MATRIX_G2_PIN, MATRIX_B2_PIN};
     int8_t pins1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
@@ -141,6 +146,11 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     display->setBrightness8(64); // Safe default brightness
     m_panel->rememberBrightness8(64);
 
+    m_cachedConfig = config;
+    m_activeColorDepth = depth;
+    m_oePin = _pins.oe;
+    m_panel->initLuts(depth);
+
     // Initialize Presentation Backend FIRST, before any screen clears or presentations
     LOGI("MatrixEngine", "Initializing Hub75PresentationBackend...");
     m_presentationBackend.reset(new Hub75PresentationBackend(
@@ -156,6 +166,84 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     LOGI("MatrixEngine", "MatrixEngine::begin complete.");
 
     return true;
+}
+
+ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDepth) {
+    ReconfigureResult res;
+    res.previousDepth = m_activeColorDepth;
+    res.effectiveDepth = m_activeColorDepth;
+
+    if (targetDepth < 1 || targetDepth > 8) {
+        res.failureReason = "Invalid target depth (must be 1..8)";
+        return res;
+    }
+
+    if (targetDepth == m_activeColorDepth && display != nullptr) {
+        res.success = true;
+        res.effectiveDepth = m_activeColorDepth;
+        res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
+        return res;
+    }
+
+    LOGI("MatrixEngine", "Starting Presentation Pipeline Reconfiguration: %u -> %u bits...",
+         m_activeColorDepth, targetDepth);
+
+    uint32_t startUs = micros();
+
+    // Invariant 21 (HUB75 Output Isolation):
+    // Blank display output immediately via hardware OE pin to prevent any optical glitches or scanline debris
+    setBlank(true);
+    if (m_oePin >= 0) {
+        pinMode(m_oePin, OUTPUT);
+        digitalWrite(m_oePin, HIGH); // OE active-low: HIGH = LEDs completely disabled
+    }
+
+    uint8_t prevBrightness = m_panel ? m_panel->getBrightness8() : 64;
+
+    // Teardown previous DMA display
+    if (display) {
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+    }
+
+    // Allocate new panel at targetDepth
+    bool allocSuccess = begin(m_cachedConfig, targetDepth);
+    if (!allocSuccess) {
+        LOGE("MatrixEngine", "Failed to allocate pipeline at %u bits! Attempting fallback to previous depth %u bits...",
+             targetDepth, res.previousDepth);
+        res.fallbackUsed = true;
+        bool fallbackOk = begin(m_cachedConfig, res.previousDepth);
+        if (!fallbackOk) {
+            LOGE("MatrixEngine", "CRITICAL: Fallback allocation failed! Trying safe static 4-bit baseline...");
+            begin(m_cachedConfig, 4);
+        }
+        res.failureReason = "Target depth DMA allocation failed";
+        res.success = false;
+        res.effectiveDepth = m_activeColorDepth;
+    } else {
+        res.success = true;
+        res.effectiveDepth = m_activeColorDepth;
+        res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
+    }
+
+    // Restore brightness
+    if (display) {
+        display->setBrightness8(prevBrightness);
+        if (m_panel) m_panel->rememberBrightness8(prevBrightness);
+    }
+
+    // Release OE blanking (Invariant 21: only after frame 1 commit)
+    setBlank(false);
+    if (m_oePin >= 0) {
+        digitalWrite(m_oePin, LOW); // OE enabled
+    }
+
+    res.blankDurationUs = micros() - startUs;
+    LOGI("MatrixEngine", "Presentation Pipeline Reconfiguration completed in %u us (%s, effectiveDepth=%u bits, dmaBytes=%u)",
+         res.blankDurationUs, res.success ? "SUCCESS" : "FALLBACK_FAILED", res.effectiveDepth, (unsigned)res.dmaBytes);
+
+    return res;
 }
 
 IPresentationBackend* MatrixEngine::getPresentationBackend() {

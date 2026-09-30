@@ -45,6 +45,7 @@ struct MatrixConfig {
     int chainLength;
     int powerLimitPercent;
     int colorDepth;
+    bool dynamicColorDepth = false;
     String rgbSequence;
     int limitRefreshRateHz;
     String driverChip;

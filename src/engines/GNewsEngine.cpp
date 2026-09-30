@@ -2,6 +2,7 @@
 #include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
+#include "../core/net/SecureHttpClient.h"
 #include <cmath>
 
 GNewsEngine::GNewsEngine() {
@@ -409,6 +410,7 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
 }
 
 void GNewsEngine::deactivate() {
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
     // Invariant 15 & 16: release article storage buffer from DRAM when deactivated
     gnewsService.releaseArticleStorage();
 }
