@@ -1,10 +1,12 @@
 #include "WordClock.h"
+#include "ClockFaceFont.h"
 #include "../../core/ConfigLoader.h"
 #include "../../core/I18n.h"
 #include "../fonts/ArcadeFonts.h"
 #include <string.h>
 
 WordClock::WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+    glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
     if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
@@ -40,9 +42,8 @@ void WordClock::update() {
     matrix->setFont(_cachedFont);
     matrix->setTextSize(_cachedGfxSize);
     for (uint8_t i = 0; i < _cachedLineCount; i++) {
-        matrix->setTextColor(_cachedLines[i].color);
-        matrix->setCursor(_cachedLines[i].x, _cachedLines[i].y);
-        matrix->print(_cachedLines[i].text);
+        ClockFaceFont::print(*matrix, glow, _cachedLines[i].x, _cachedLines[i].y,
+                             _cachedLines[i].text, _cachedLines[i].color);
     }
 }
 

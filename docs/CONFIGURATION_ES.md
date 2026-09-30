@@ -252,6 +252,17 @@ Solo se inicializan las instancias enumeradas aquí, ahorrando memoria para func
 
 ---
 
+### Opciones de una instancia de reloj
+
+Además de `clock_theme`, `clock_font`, `clock_size` y los colores, una instancia de reloj admite:
+
+| Clave | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `clock_glow` | `enum` | Contorno alrededor de los dígitos: `0` ninguno, `1` neón (el color elegido a plena intensidad con un centro casi blanco, como lo dibuja la cara Matrix), `2` un color propio. Por defecto `0`. |
+| `clock_glow_color` | `color` | Color del contorno cuando `clock_glow` es `2` (por defecto `#00FF41`). |
+
+---
+
 ## 8. Validación Autorreparable
 
 En cada arranque **y** en cada escritura vía `POST /api/instances`, el `ConfigSanitizer` reconcilia cada instancia con el `ConfigSchema` de su motor:

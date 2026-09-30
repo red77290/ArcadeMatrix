@@ -3,6 +3,8 @@
 #include "engines/DecibelEngine.h"
 #include "engines/VisualizerEngine.h"
 #include "engines/TempEngine.h"
+#include "engines/clocks/ClockFaceFont.h"
+#include "core/I18n.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -74,6 +76,54 @@ void test_message_scroll_math(void) {
     TEST_ASSERT_EQUAL_INT(127, (int16_t)roundf(cursorX)); // Frame 3: 127.004 -> rounds to 127
 }
 
+
+/**
+ * @brief The glow outline: how a face's colour turns into an outline and a centre.
+ */
+void test_glow_modes_resolve_colours() {
+    // With no configuration there is no glow, and the centre keeps the colour it was given.
+    uint16_t halo = 0, core = 0;
+    ClockFaceFont::Glow off = ClockFaceFont::resolveGlow(nullptr);
+    TEST_ASSERT_EQUAL_UINT8(0, off.mode);
+    TEST_ASSERT_FALSE(ClockFaceFont::glowFor(off, 0xF800, halo, core));
+    TEST_ASSERT_EQUAL_UINT16(0xF800, core);
+
+    // Neon takes the outline from the text colour; a custom glow takes the one it was given, and
+    // falls back to the text colour when the setting is not a colour at all.
+    ClockFaceFont::Glow neon; neon.mode = 1;
+    TEST_ASSERT_TRUE(ClockFaceFont::glowFor(neon, 0x001F, halo, core));
+    TEST_ASSERT_EQUAL_UINT16(0x001F, halo);
+
+    ClockFaceFont::Glow custom; custom.mode = 2; custom.color = 0xF81F; custom.hasColor = true;
+    TEST_ASSERT_TRUE(ClockFaceFont::glowFor(custom, 0x001F, halo, core));
+    TEST_ASSERT_EQUAL_UINT16(0xF81F, halo);
+    TEST_ASSERT_EQUAL_UINT16(0x001F, core);      // the centre keeps its own colour
+
+    ClockFaceFont::Glow unset; unset.mode = 2;   // "custom" with nothing parseable behind it
+    TEST_ASSERT_TRUE(ClockFaceFont::glowFor(unset, 0x07E0, halo, core));
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, halo);
+
+    // A hex colour parses; anything else falls back rather than drawing black.
+    TEST_ASSERT_EQUAL_UINT16(0xF800, ClockFaceFont::parseHex("#FF0000", 0x0000));
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, ClockFaceFont::parseHex("not a colour", 0x07E0));
+    TEST_ASSERT_EQUAL_UINT16(0x001F, ClockFaceFont::parseHex("0000FF", 0x0000));
+    // Black is a real colour, and is told apart from "not set".
+    uint16_t parsed = 0xFFFF;
+    TEST_ASSERT_TRUE(ClockFaceFont::tryParseHex("#000000", parsed));
+    TEST_ASSERT_EQUAL_UINT16(0x0000, parsed);
+    TEST_ASSERT_FALSE(ClockFaceFont::tryParseHex("nope", parsed));
+
+    // Neon pales the centre towards white, which is what makes the outline read as an outline.
+    uint16_t paled = ClockFaceFont::paled(0x001F);
+    TEST_ASSERT_TRUE(((paled >> 11) & 0x1F) > 0);
+    TEST_ASSERT_TRUE(((paled >> 5) & 0x3F) > 0);
+
+    // Dimming lowers every channel and keeps the hue.
+    uint16_t dim = ClockFaceFont::dim(0xFFFF, 1, 3);
+    TEST_ASSERT_TRUE(((dim >> 11) & 0x1F) < 0x1F);
+    TEST_ASSERT_TRUE((dim & 0x1F) < 0x1F);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -81,6 +131,7 @@ void setup() {
     RUN_TEST(test_decibel_status_mapping);
     RUN_TEST(test_visualizer_mode_parsing);
     RUN_TEST(test_message_scroll_math);
+    RUN_TEST(test_glow_modes_resolve_colours);
     UNITY_END();
 }
 

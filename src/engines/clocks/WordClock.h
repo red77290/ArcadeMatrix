@@ -12,6 +12,8 @@ struct WordClockLine {
     uint16_t color;
 };
 
+#include "ClockFaceFont.h"
+
 class WordClock : public ClockFace {
 public:
     WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
@@ -19,6 +21,7 @@ public:
     void update() override;
 
 private:
+    ClockFaceFont::Glow glow;   ///< resolved once at build time, never on the draw path
     TimeData storedTime;
     BitmapFontLoader customFont;
     

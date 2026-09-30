@@ -5,6 +5,7 @@
 
 PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
     faceFont.load(config);
+    glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     strcpy(oldTimeStr, "");
     strcpy(newTimeStr, "");
@@ -90,7 +91,9 @@ void PacmanClock::printTime(const char* str, int centreX, int centreY, int scale
     int colonAdv = ClockFaceFont::advance(font, ':') * scale;
     int slotColonW = max((int)bw, colonAdv);
 
-    int gap = max(1, scale);
+    // No gap beyond the font's own advance: a scale-sized gap made the same font at the same size
+    // look wider here than on every other face. Tabular cells still keep the digits from shifting.
+    int gap = 0;
 
     int cellW[11], inkOff[11];
     int total = 0;
@@ -121,7 +124,20 @@ void PacmanClock::printTime(const char* str, int centreX, int centreY, int scale
         if (charRight > minX && charLeft < maxX) {
             uint16_t col = (str[i] == ':') ? colonColor : digitColor;
             if (col != 0) {
-                matrix->setTextColor(col);
+                uint16_t glowColor = 0, coreColor = col;
+                bool hasGlow = ClockFaceFont::glowFor(glow, col, glowColor, coreColor);
+                if (!hasGlow) {      // the digits carry Pac-Man's yellow outline by default
+                    hasGlow = true;
+                    glowColor = matrix->color565(255, 255, 0);
+                }
+                if (hasGlow) {   // as the Matrix face draws it
+                    matrix->setTextColor(glowColor);
+                    matrix->setCursor(charLeft - 1, cursorY); matrix->write((uint8_t)str[i]);
+                    matrix->setCursor(charLeft + 1, cursorY); matrix->write((uint8_t)str[i]);
+                    matrix->setCursor(charLeft, cursorY - 1); matrix->write((uint8_t)str[i]);
+                    matrix->setCursor(charLeft, cursorY + 1); matrix->write((uint8_t)str[i]);
+                }
+                matrix->setTextColor(coreColor);
                 matrix->setCursor(charLeft, cursorY);
                 matrix->write((uint8_t)str[i]);
             }
@@ -161,7 +177,8 @@ void PacmanClock::drawPacman(int cx, int cy, int s, int frame, bool facingRight)
     int left = cx - w / 2;
     int top = cy - h / 2;
     if (left + w <= 0 || left >= matrix->width()) return;
-    matrix->fillRect(left, top, w, h, 0);
+    // No box behind the sprite: the frame is already cleared, and blanking the bounding box put a
+    // black square in the open mouth and around the round edges, hiding digits Pac-Man is not on.
     const uint16_t* rows = (frame == 0) ? PAC_FRAME_CLOSED : (frame == 1) ? PAC_FRAME_HALF : PAC_FRAME_OPEN;
     blit(rows, PAC_FRAME_CLOSED_ROWS, PAC_FRAME_CLOSED_COLS, left, top, s, matrix->color565(255, 255, 0), !facingRight);
 }
@@ -176,7 +193,7 @@ void PacmanClock::drawGhost(int cx, int cy, int s, uint16_t color, int skirtFram
     int left = cx - w / 2;
     int top = cy - h / 2;
     if (left + w <= 0 || left >= matrix->width()) return;
-    matrix->fillRect(left, top, w, h, 0);
+    // As with Pac-Man: only the ghost's own pixels cover the clock, not its bounding box.
 
     uint16_t body = frightened ? matrix->color565(33, 33, 255) : color;
     blit(GHOST_BODY, GHOST_BODY_ROWS, cols, left, top, s, body, false);
@@ -239,17 +256,23 @@ void PacmanClock::update() {
     int speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
     speedPct = constrain(speedPct, 25, 300);
 
-    uint16_t color1 = matrix->color565(255, 255, 255);
+    // The face's own palette: the digits carry the blue the colon is drawn in, so the yellow
+    // outline below reads against them instead of bleeding into white. An instance that sets
+    // clock_color_1 still gets exactly what it asked for.
+    uint16_t color1 = matrix->color565(60, 100, 255);
     const char* colStr = engineConfig ? engineConfig->getString("clock_color_1", "").c_str() : "";
     if (colStr[0] == '#') {
         long c1 = strtol(&colStr[1], NULL, 16);
         color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
     }
-    if (color1 == 0) color1 = matrix->color565(255, 255, 255);
+    if (color1 == 0) color1 = matrix->color565(60, 100, 255);
     uint16_t colonColor = matrix->color565(60, 100, 255);
     uint16_t dotColor = matrix->color565(255, 183, 174);
-    uint16_t oldDigitColor = matrix->color565(110, 110, 110);
-    uint16_t oldColonColor = matrix->color565(50, 70, 130);
+    // The digits waiting to be eaten keep the clock's own colours. Dimming them made the whole
+    // clock look grey for the length of a pass and bright again afterwards, which reads as a fault
+    // rather than as an effect.
+    uint16_t oldDigitColor = color1;
+    uint16_t oldColonColor = colonColor;
 
     // Font: the configured face font at the configured size, falling back to the built-in one if the
     // time would not fit.
@@ -280,6 +303,16 @@ void PacmanClock::update() {
     float pauseLen = speed * 0.4f;                                  // beat between the legs
     float path[3] = { legOut, legBack, legOut };
     int legs = isTate ? 3 : 2;
+    // Landscape: the energizer is what turns the ghosts blue, so the first leg ends the moment
+    // Pac-Man's mouth reaches it rather than when the whole line has left the panel. Everyone then
+    // turns on the spot, which is what the arcade does. The portrait layout has no energizer - its
+    // three legs carry the hours, the pellets and the minutes - so it keeps its own path.
+    const int energizerX = w - 4 * s;
+    if (!isTate) {
+        path[0] = energizerX + pacW / 2.0f;     // off the left edge to the energizer
+        path[1] = energizerX + pacW / 2.0f;     // and from there back off the left edge
+        pauseLen = 0.0f;                        // no beat: the turn is the moment he eats it
+    }
     float maxPath = 0;
     for (int i = 0; i < legs; i++) maxPath += path[i] + (i ? pauseLen : 0);
     if (transitioning) {
@@ -337,24 +370,11 @@ void PacmanClock::update() {
                 // Leg 0: Pac-Man eats old hours transformed into pellets, reveals new hours
                 int headX = (int)roundf(-pacW / 2.0f + legPos);
                 int cutX = headX + pacW / 2;
-                int revealX = (int)(headX - chaseLen - ghostW / 2);
-                int margin = max(1, (cutX - revealX) / 2);
-                int dissolveDist = 10 * s;
-                int oldMinX = cutX + dissolveDist;
 
-                printTime(hNew, cX, cyH, scale, font, color1, color1, -100, revealX + margin);
-                printTime(hOld, cX, cyH, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
-                if (cutX > 0 && revealX < w) {
-                    int rL = max(0, revealX);
-                    int rR = min(w, oldMinX);
-                    if (rR > rL) matrix->fillRect(rL, 0, rR - rL, h / 2, 0);
-                }
-
-                // Pellets ahead of Pac-Man on the hours tier
-                int pelletStep = max(4, 4 * s);
-                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < w - 2; px += pelletStep) {
-                    if (px > cutX && px < w) matrix->fillRect(px - 1, cyH - 1, 2, 2, dotColor);
-                }
+                // The tier is never blanked: the new hours run up to Pac-Man's mouth and the old ones
+                // continue from it, so the only digits out of sight are those he is standing on.
+                printTime(hNew, cX, cyH, scale, font, color1, color1, -100, cutX);
+                printTime(hOld, cX, cyH, scale, font, oldDigitColor, oldColonColor, cutX, w + 100);
 
                 for (int i = 0; i < 3; i++) matrix->fillRect(dotX[i] - 1, dotY - 1, 2, 2, dotColor);
                 printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor);
@@ -379,24 +399,10 @@ void PacmanClock::update() {
 
                 int headX = (int)roundf(-pacW / 2.0f + legPos);
                 int cutX = headX + pacW / 2;
-                int revealX = (int)(headX - chaseLen - ghostW / 2);
-                int margin = max(1, (cutX - revealX) / 2);
-                int dissolveDist = 10 * s;
-                int oldMinX = cutX + dissolveDist;
 
-                printTime(mNew, cX, cyM, scale, font, color1, color1, -100, revealX + margin);
-                printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
-                if (cutX > 0 && revealX < w) {
-                    int rL = max(0, revealX);
-                    int rR = min(w, oldMinX);
-                    if (rR > rL) matrix->fillRect(rL, h / 2, rR - rL, h - h / 2, 0);
-                }
-
-                // Pellets ahead of Pac-Man on the minutes tier
-                int pelletStep = max(4, 4 * s);
-                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < w - 2; px += pelletStep) {
-                    if (px > cutX && px < w) matrix->fillRect(px - 1, cyM - 1, 2, 2, dotColor);
-                }
+                // Same as the hours tier: digits everywhere, the parade simply passes in front of them.
+                printTime(mNew, cX, cyM, scale, font, color1, color1, -100, cutX);
+                printTime(mOld, cX, cyM, scale, font, oldDigitColor, oldColonColor, cutX, w + 100);
 
                 if (!inPause) parade(2, legPos, cyM);
             }
@@ -413,43 +419,20 @@ void PacmanClock::update() {
                 // Leg 0: Old time transforms into pellets, Pac-Man eats pellets, new time revealed behind Clyde
                 int headX = (int)roundf(-pacW / 2.0f + legPos);
                 int cutX = headX + pacW / 2;
-                int revealX = (int)(headX - chaseLen - ghostW / 2);
-                int margin = max(1, (cutX - revealX) / 2);
+                // The time is never blanked. New digits run up to Pac-Man's mouth, old digits continue
+                // from it, so the clock only goes out of sight where a character is actually standing.
+                printTime(newTimeStr, cX, cY, scale, font, color1, colonColor, -100, cutX);
+                printTime(oldTimeStr, cX, cY, scale, font, oldDigitColor, oldColonColor, cutX, w + 100);
 
-                // 1. Draw new time revealed on left behind Clyde
-                printTime(newTimeStr, cX, cY, scale, font, color1, colonColor, -100, revealX + margin);
-
-                // 2. Old time starts dissolving into pellets ahead of Pac-Man:
-                int dissolveDist = 14 * s;
-                int oldMinX = cutX + dissolveDist;
-                printTime(oldTimeStr, cX, cY, scale, font, oldDigitColor, oldColonColor, oldMinX, w + 100);
-
-                // 3. Clear the parade gap and dissolve zone
-                if (cutX > 0 && revealX < w) {
-                    int rL = max(0, revealX);
-                    int rR = min(w, oldMinX);
-                    if (rR > rL) matrix->fillRect(rL, 0, rR - rL, h, 0);
-                }
-
-                // 4. In the dissolve zone, draw the pellets (points que Pac-Man mange!)
-                int pelletStep = max(5, 5 * s);
-                int energizerX = w - 4 * s;
-
-                for (int px = ((cutX / pelletStep) + 1) * pelletStep; px < energizerX - pelletStep / 2; px += pelletStep) {
-                    if (px > cutX && px < w) {
-                        matrix->fillRect(px - 1, cY - 1, 2, 2, dotColor);
-                    }
-                }
-
-                // Crumbling particle dissolution effect at the dissolve front:
-                if (oldMinX < w - 6) {
-                    uint8_t seed = (now / 40) ^ (uint8_t)oldMinX;
-                    for (int p = 0; p < 6; p++) {
-                        int pOffX = ((seed + p * 7) % (6 * s)) - 3 * s;
-                        int pOffY = ((seed * 3 + p * 11) % (12 * s)) - 6 * s;
-                        int px = oldMinX + pOffX;
+                // A few crumbs at the mouth, so he still reads as eating the old time.
+                {
+                    uint8_t seed = (now / 40) ^ (uint8_t)cutX;
+                    for (int p = 0; p < 4; p++) {
+                        int pOffX = (int)((seed + p * 7) % (uint8_t)(3 * s));
+                        int pOffY = ((seed * 3 + p * 11) % (8 * s)) - 4 * s;
+                        int px = cutX + pOffX;
                         int py = cY + pOffY;
-                        if (px > cutX && px < w && py >= 0 && py < h) {
+                        if (px < w && py >= 0 && py < h) {
                             matrix->drawPixel(px, py, dotColor);
                         }
                     }
@@ -472,15 +455,19 @@ void PacmanClock::update() {
                     }
                 }
             } else {
-                // Leg 1: The 4 ghosts flee back BLUE and frightened (right->left), Pac-Man chases!
+                // Leg 1: the energizer has just been eaten. The ghosts are blue and everyone has
+                // turned where they stood, so the line carries on from the positions it held at the
+                // end of leg 0 - Pac-Man at the energizer with the ghosts trailing to his left -
+                // and walks back off the left edge with him behind them.
                 printTime(newTimeStr, cX, cY, scale, font, color1, colonColor);
 
                 if (!inPause) {
-                    float headX = roundf((w + ghostW / 2.0f) - legPos);
+                    float pacBackX = energizerX - legPos;
                     for (int i = 0; i < 4; i++) {
-                        drawGhost((int)headX + i * ghostSpacing, cY, s, ghostColors[i], skirtFrame, /*lookRight=*/ false, /*frightened=*/ true);
+                        drawGhost((int)roundf(pacBackX - firstGhost - i * ghostSpacing), cY, s,
+                                  ghostColors[i], skirtFrame, /*lookRight=*/ false, /*frightened=*/ true);
                     }
-                    drawPacman((int)headX + chaseLen, cY, s, pacFrame, /*facingRight=*/ false);
+                    drawPacman((int)roundf(pacBackX), cY, s, pacFrame, /*facingRight=*/ false);
                 }
             }
         }

@@ -6045,12 +6045,16 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           if (f.visible_when && f.visible_when.trim().length > 0) {
             const fg = document.getElementById(`fg-${cleanId}-${f.id}`);
             if (fg) {
-              const parts = f.visible_when.split('=');
+              // "key=value", "key=a,b" (any of), or "key!=a,b" (none of): a field that only makes
+              // sense for some clock faces is hidden for the rest rather than doing nothing.
+              const negated = f.visible_when.includes('!=');
+              const parts = f.visible_when.split(negated ? '!=' : '=');
               if (parts.length === 2) {
                 const targetKey = parts[0].trim();
-                const expected = parts[1].trim();
+                const expected = parts[1].split(',').map(v => v.trim());
                 const actual = String(curVals[targetKey] !== undefined ? curVals[targetKey] : '');
-                fg.style.display = (actual === expected) ? 'block' : 'none';
+                const matches = expected.includes(actual);
+                fg.style.display = (negated ? !matches : matches) ? 'block' : 'none';
               }
             }
           }

@@ -252,6 +252,17 @@ Seules les instances listées ici sont initialisées, ce qui économise de la m�
 
 ---
 
+### Options d'une instance d'horloge
+
+Outre `clock_theme`, `clock_font`, `clock_size` et les couleurs, une instance d'horloge accepte :
+
+| Clé | Type | Description |
+| :--- | :--- | :--- |
+| `clock_glow` | `enum` | Contour autour des chiffres : `0` aucun, `1` néon (la couleur choisie à pleine intensité avec un centre presque blanc, comme le fait la face Matrix), `2` une couleur dédiée. Par défaut `0`. |
+| `clock_glow_color` | `color` | Couleur du contour lorsque `clock_glow` vaut `2` (par défaut `#00FF41`). |
+
+---
+
 ## 8. Validation autoréparatrice
 
 À chaque démarrage **et** à chaque écriture via `POST /api/instances`, le `ConfigSanitizer` réconcilie chaque instance avec le `ConfigSchema` de son moteur :

@@ -9,6 +9,7 @@ public:
     void update() override;
 
 private:
+    ClockFaceFont::Glow glow;   ///< resolved once at build time, never on the draw path
     ClockFaceFont faceFont;   ///< configured clock_font (shared resolver, see ClockFaceFont.h)
     TimeData storedTime;
     unsigned long lastFrameTime;
