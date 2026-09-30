@@ -9,7 +9,7 @@
 #include "../api/Timeframe.h"
 #include "icons/CryptoStockIcons.h"
 #include "renderers/SparklineRenderer.h"
-#include <PNGdec.h>
+#include "../services/IconService.h"
 #include "../core/SDUtils.h"
 
 class BinanceProvider;
@@ -101,10 +101,6 @@ private:
     bool fetchSuccess;
     String currentImageUrl;
     
-    PNG* pngPtr = nullptr;
-    uint16_t* currentDecodeBuffer;
-    static int pngDraw(PNGDRAW *pDraw);
-    static CryptoEngine* instance;
     
     void loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache);
     void parseSymbols(const String& syms);

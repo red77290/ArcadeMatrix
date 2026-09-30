@@ -9,12 +9,9 @@
 #include <WiFiClient.h>
 #include <esp_task_wdt.h>
 
-CryptoEngine* CryptoEngine::instance = nullptr;
-
 CryptoEngine::CryptoEngine() 
     : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
-      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
-    instance = this;
+      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {
     m_binance = new BinanceProvider();
     addProvider(m_binance);
     addProvider(new CoinGeckoProvider());
@@ -88,115 +85,8 @@ void CryptoEngine::activate() {
 
 void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache) {
     if (cache.hasIcon || cache.iconAttempted) return;
-    
-    String safeName = symbol;
-    safeName.toLowerCase();
-    String sdPath = "/crypto_icons/" + safeName + ".png";
-    
-    bool onSd = false;
-    {
-        SdLockGuard guard(pdMS_TO_TICKS(1500));
-        if (guard && sd.exists(sdPath.c_str())) {
-            onSd = true;
-        }
-    }
-    
-    // Download via plain HTTP weserv proxy (no TLS) if not already cached on SD.
-    // Plain HTTP uses ~1.5 KB RAM and does not require contiguous DRAM for PNGdec.
-    if (!onSd && WiFi.isConnected()) {
-        esp_task_wdt_reset();
-        String imgUrl = newImgUrl;
-        if (imgUrl.isEmpty()) {
-            imgUrl = "assets.coincap.io/assets/icons/" + safeName + "@2x.png";
-        }
-        String proxyUrl = "http://images.weserv.nl/?url=" + imgUrl + "&w=16&h=16&output=png";
-        LOGI("CryptoEngine", "Downloading crypto logo for %s via proxy: %s", symbol.c_str(), proxyUrl.c_str());
-        
-        HTTPClient httpImg;
-        WiFiClient imgClient;
-        httpImg.setTimeout(3000);
-        httpImg.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.4");
-        
-        if (httpImg.begin(imgClient, proxyUrl)) {
-            int code = httpImg.GET();
-            if (code == 200) {
-                int len = httpImg.getSize();
-                if (len > 0 && len < 16384) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1500));
-                    if (guard) {
-                        if (!sd.exists("/crypto_icons")) sd.mkdir("/crypto_icons");
-                        FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_WRITE);
-                        if (f) {
-                            httpImg.writeToStream(&f);
-                            f.close();
-                            onSd = true;
-                        }
-                    }
-                }
-            }
-            httpImg.end();
-            imgClient.stop();
-        }
-        esp_task_wdt_reset();
-    }
-    
-    // Mark icon as attempted to prevent retrying on every 16ms frame if decode or download fails
     cache.iconAttempted = true;
-
-    // Decode from SD card into cache.iconPixels (16x16 RGB565)
-    // Invariant: PNGdec allocates ~45KB internally; check contiguous DRAM before instantiation
-    if (onSd) {
-        if (ESP.getMaxAllocHeap() < sizeof(PNG)) {
-            LOGW("CryptoEngine", "Skipping icon decode for %s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
-                 symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)sizeof(PNG));
-            return;
-        }
-        PNG* png = new (std::nothrow) PNG();
-        if (!png) {
-            LOGW("CryptoEngine", "Skipping icon decode for %s: out of memory for PNGdec", symbol.c_str());
-            return;
-        }
-
-        size_t size = 0;
-        uint8_t* buf = nullptr;
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && sd.exists(sdPath.c_str())) {
-                FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_READ);
-                if (f) {
-                    size = f.size();
-                    if (size > 0 && size <= 16384) {
-                        buf = (uint8_t*)malloc(size);
-                        if (buf) {
-                            f.read(buf, size);
-                        }
-                    }
-                    f.close();
-                }
-            }
-        }
-        
-        if (buf && size > 0) {
-            memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
-            currentDecodeBuffer = cache.iconPixels;
-            
-            pngPtr = png;
-            int rc = png->openRAM(buf, size, pngDraw);
-            if (rc == PNG_SUCCESS) {
-                png->decode((void*)this, 0);
-                cache.hasIcon = true;
-                LOGI("CryptoEngine", "Successfully loaded 16x16 icon for %s", symbol.c_str());
-            } else {
-                LOGW("CryptoEngine", "Failed to decode PNG for %s (rc=%d)", symbol.c_str(), rc);
-            }
-            png->close();
-            pngPtr = nullptr;
-            free(buf);
-        } else if (buf) {
-            free(buf);
-        }
-        delete png;
-    }
+    cache.hasIcon = iconService.loadOrFetchIcon("crypto", symbol, newImgUrl, cache.iconPixels, 16, 16);
 }
 
 void CryptoEngine::fetchQuote(const String& symbol) {
@@ -266,31 +156,6 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         requestRedraw();
         LOGW("CryptoEngine", "No quote available for %s", symbol.c_str());
     }
-}
-
-int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
-    CryptoEngine* self = static_cast<CryptoEngine*>(pDraw->pUser);
-    if (!self) self = instance;
-    if (!self || !self->currentDecodeBuffer || !self->pngPtr) return 0;
-    
-    int iWidth = pDraw->iWidth;
-    if (iWidth > 16) iWidth = 16;
-    
-    int y = pDraw->y;
-    if (y >= 16) return 0;
-    
-    uint16_t lineBuffer[16];
-    self->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
-    
-    for (int x = 0; x < iWidth; x++) {
-        uint16_t color = lineBuffer[x];
-        if (color != 0) {
-            self->currentDecodeBuffer[y * 16 + x] = color;
-        } else {
-            self->currentDecodeBuffer[y * 16 + x] = 0x0000;
-        }
-    }
-    return 1;
 }
 
 void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {

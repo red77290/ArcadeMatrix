@@ -4,6 +4,7 @@
 #include "core/EngineRegistry.h"
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
+#include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 
 // =========================================================================
@@ -668,6 +669,18 @@ void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
     TEST_ASSERT_EQUAL((int)vClockRef1.status, (int)vClockRefPost.status);
 }
 
+void test_icon_service_sanitization_and_paths() {
+    TEST_ASSERT_EQUAL_STRING("btc", IconService::sanitizeSymbol("BTC").c_str());
+    TEST_ASSERT_EQUAL_STRING("eth", IconService::sanitizeSymbol(" eth ").c_str());
+    TEST_ASSERT_EQUAL_STRING("_gspc", IconService::sanitizeSymbol("^GSPC").c_str());
+    TEST_ASSERT_EQUAL_STRING("brk_b", IconService::sanitizeSymbol("BRK/B").c_str());
+
+    TEST_ASSERT_EQUAL_STRING("/crypto_icons/btc.png", IconService::getSdPath("crypto", "BTC").c_str());
+    TEST_ASSERT_EQUAL_STRING("/stock_icons/aapl.png", IconService::getSdPath("stock", "AAPL").c_str());
+    TEST_ASSERT_EQUAL_STRING("/stock_icons/_gspc.png", IconService::getSdPath("stock", "^GSPC").c_str());
+    TEST_ASSERT_EQUAL_STRING("/media_icons/spotify.png", IconService::getSdPath("media", "Spotify").c_str());
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -710,6 +723,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
     RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
     RUN_TEST(test_e2e_gif_to_clock_transition_and_catalog_invariance);
+
+    // IconService Tests
+    RUN_TEST(test_icon_service_sanitization_and_paths);
 
     return UNITY_END();
 }
