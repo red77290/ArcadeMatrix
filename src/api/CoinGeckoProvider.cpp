@@ -6,22 +6,28 @@
 bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String lowerSymbol = symbol;
     lowerSymbol.toLowerCase();
+    String upperSymbol = symbol;
+    upperSymbol.toUpperCase();
     
     String vsCur = m_currency;
     vsCur.toLowerCase();
     if (vsCur.isEmpty()) vsCur = "usd";
 
-    // Primary API
+    // Primary API: query CoinGecko /coins/markets by symbol directly
     String cgUrl = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=" + vsCur + "&symbols=" + lowerSymbol;
     auto res = net::SecureHttpClient::get(cgUrl);
-    if (res.ok() && parsePrimary(res.stream(), outPrice, outChange, outImageUrl)) {
+    String discoveredId = "";
+    if (res.ok() && parsePrimary(res.stream(), outPrice, outChange, outImageUrl, &discoveredId)) {
+        if (!discoveredId.isEmpty()) {
+            m_symbolToId[upperSymbol] = discoveredId;
+        }
         return true;
     }
 
-    // Simple API fallback (only if primary endpoint was not found or failed softly, never on 429 rate limit)
+    // Simple API fallback (if markets failed softly, query simple/price using dynamic ID if cached or lowerSymbol)
     if (res.statusCode() > 0 && res.statusCode() != 429 && res.statusCode() != 403) {
-        String coinId = lowerSymbol;
-        if (lowerSymbol == "erg") coinId = "ergo";
+        auto it = m_symbolToId.find(upperSymbol);
+        String coinId = (it != m_symbolToId.end()) ? it->second : lowerSymbol;
         
         String cgSimpleUrl = "https://api.coingecko.com/api/v3/simple/price?ids=" + coinId + "&vs_currencies=" + vsCur + "&include_24hr_change=true";
         auto resSimple = net::SecureHttpClient::get(cgSimpleUrl);
@@ -33,7 +39,7 @@ bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float&
     return false;
 }
 
-bool CoinGeckoProvider::parsePrimary(Stream& stream, float& outPrice, float& outChange, String& outImageUrl) {
+bool CoinGeckoProvider::parsePrimary(Stream& stream, float& outPrice, float& outChange, String& outImageUrl, String* outId) {
     DynamicJsonDocument doc(2048);
     DeserializationError err = deserializeJson(doc, stream);
     if (!err && doc.is<JsonArray>() && doc.size() > 0) {
@@ -41,12 +47,15 @@ bool CoinGeckoProvider::parsePrimary(Stream& stream, float& outPrice, float& out
         outPrice = coin["current_price"] | 0.0f;
         outChange = coin["price_change_percentage_24h"] | 0.0f;
         outImageUrl = coin["image"].as<String>();
+        if (outId && coin.containsKey("id")) {
+            *outId = coin["id"].as<String>();
+        }
         return (outPrice > 0.0f);
     }
     return false;
 }
 
-bool CoinGeckoProvider::parsePrimary(const String& payload, float& outPrice, float& outChange, String& outImageUrl) {
+bool CoinGeckoProvider::parsePrimary(const String& payload, float& outPrice, float& outChange, String& outImageUrl, String* outId) {
     DynamicJsonDocument doc(2048);
     DeserializationError err = deserializeJson(doc, payload);
     if (!err && doc.is<JsonArray>() && doc.size() > 0) {
@@ -54,6 +63,9 @@ bool CoinGeckoProvider::parsePrimary(const String& payload, float& outPrice, flo
         outPrice = coin["current_price"] | 0.0f;
         outChange = coin["price_change_percentage_24h"] | 0.0f;
         outImageUrl = coin["image"].as<String>();
+        if (outId && coin.containsKey("id")) {
+            *outId = coin["id"].as<String>();
+        }
         return (outPrice > 0.0f);
     }
     return false;
@@ -86,28 +98,18 @@ bool CoinGeckoProvider::parseSimple(const String& payload, const String& coinId,
 bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
 
-    // Safety guard against memory explosion: CoinGecko market_chart payload (~30KB JSON)
-    const uint32_t freeDram = NetworkBudget::freeInternal();
-    const uint32_t largestDram = NetworkBudget::largestInternalBlock();
-    if (freeDram < 65000 || largestDram < NetworkBudget::TLS_MIN_COMBINED_BLOCK) {
-        LOGW("CoinGecko", "Skipping market_chart for %s: payload (~30KB) exceeds safe DRAM headroom (free=%u, largest=%u)",
-             symbol.c_str(), (unsigned)freeDram, (unsigned)largestDram);
+    // Safety guard against memory explosion
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("CoinGecko", "Skipping market_chart for %s: safe DRAM admission threshold not met (free=%u, largest=%u)",
+             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
         return false;
     }
 
-    String lower = symbol;
-    lower.toLowerCase();
-    String coinId = lower;
-    if (lower == "btc") coinId = "bitcoin";
-    else if (lower == "eth") coinId = "ethereum";
-    else if (lower == "sol") coinId = "solana";
-    else if (lower == "erg") coinId = "ergo";
-    else if (lower == "doge") coinId = "dogecoin";
-    else if (lower == "ada") coinId = "cardano";
-    else if (lower == "xrp") coinId = "ripple";
-    else if (lower == "dot") coinId = "polkadot";
-    else if (lower == "link") coinId = "chainlink";
-    else if (lower == "avax") coinId = "avalanche-2";
+    String upper = symbol;
+    upper.toUpperCase();
+    auto it = m_symbolToId.find(upper);
+    String coinId = (it != m_symbolToId.end()) ? it->second : symbol;
+    coinId.toLowerCase();
 
     const char* days = "1";
     switch (tf) {

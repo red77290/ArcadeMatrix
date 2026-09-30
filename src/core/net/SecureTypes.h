@@ -70,9 +70,9 @@ inline const char* sessionStateToString(SessionState state) {
  * @brief Configuration parameters for TLS sessions and HTTP requests.
  */
 struct SecureHttpOptions {
-    uint32_t requestTimeoutMs = 4500;
-    uint32_t handshakeTimeoutSec = 4;
-    const char* userAgent = "ArcadeMatrix/4.0";
+    uint32_t requestTimeoutMs = 6000;
+    uint32_t handshakeTimeoutSec = 8;
+    const char* userAgent = "Mozilla/5.0 (compatible; ArcadeMatrix/4.0)";
     bool keepAlive = true;
     bool followRedirects = false;
     String authUser;

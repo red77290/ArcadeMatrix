@@ -4822,7 +4822,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
           <input type="text" id="modal-field-variant" class="input" placeholder="BTC,ETH,SOL" value="BTC,ETH">
           <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; align-items: center;">
             <span style="font-size: 0.72rem; color: var(--text-muted); margin-right: 0.2rem;">⚡ ${t('quick_presets_label', 'Quick presets:')}</span>
-            ${['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'BNB', 'ADA', 'AVAX'].map(c => `
+            ${['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'SUI', 'LINK', 'PEPE', 'SHIB', 'NEAR', 'FLUX', 'ERG', 'KAS', 'TAO'].map(c => `
               <button type="button" class="btn btn-sm modal-quick-chip" data-val="${c}" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; background: rgba(255,255,255,0.06); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;">${c}</button>
             `).join('')}
           </div>
@@ -4836,7 +4836,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
           <input type="text" id="modal-field-variant" class="input" placeholder="AAPL,TSLA,NVDA" value="AAPL,TSLA">
           <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; align-items: center;">
             <span style="font-size: 0.72rem; color: var(--text-muted); margin-right: 0.2rem;">⚡ ${t('quick_presets_label', 'Quick presets:')}</span>
-            ${['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META'].map(s => `
+            ${['AAPL', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'PLTR', 'SPY', 'QQQ', 'NFLX', 'COIN', 'MSTR', 'UBER', 'ARM', 'DIS', 'V', 'BA'].map(s => `
               <button type="button" class="btn btn-sm modal-quick-chip" data-val="${s}" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; background: rgba(255,255,255,0.06); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;">${s}</button>
             `).join('')}
           </div>
@@ -6071,19 +6071,39 @@ function attachQuickPresets(input, fieldId, engineId) {
       "Sydney, AU", "Dubai, AE", "Singapore, SG", "Toronto, CA"
     ];
   } else if (eng === 'crypto' || fieldId === 'coins' || fieldId === 'cryptos') {
-    presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "ADA", "AVAX", "LINK", "SUI", "NEAR", "PEPE", "SHIB"];
+    presets = [
+      "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "SUI", "LINK",
+      "PEPE", "SHIB", "NEAR", "DOT", "LTC", "BCH", "UNI", "APT", "TAO", "ICP",
+      "KAS", "FET", "RENDER", "XLM", "ETC", "AAVE", "ALGO", "FIL", "ATOM", "HBAR",
+      "POL", "ARB", "OP", "BONK", "WIF", "FLUX", "ERG", "TIA", "SEI", "INJ",
+      "CRV", "MKR", "FTM", "RUNE", "SAND", "MANA", "AXS", "GALA", "VET", "TRX"
+    ];
     isMulti = true;
   } else if (eng === 'stock') {
-    presets = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ"];
+    presets = [
+      "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "PLTR",
+      "SPY", "QQQ", "NFLX", "INTC", "QCOM", "TXN", "ARM", "IBM", "ORCL", "CRM",
+      "ADBE", "COIN", "MSTR", "UBER", "DIS", "BA", "BABA", "V", "MA", "BRK.B"
+    ];
     isMulti = true;
   } else if (fieldId === 'tracked_markets') {
-    presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL"];
+    presets = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "SPY", "QQQ"];
     isMulti = true;
   } else if (fieldId === 'symbols') {
     if (eng.includes('crypto')) {
-      presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "ADA", "AVAX", "LINK", "SUI", "NEAR", "PEPE", "SHIB"];
+      presets = [
+        "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "SUI", "LINK",
+        "PEPE", "SHIB", "NEAR", "DOT", "LTC", "BCH", "UNI", "APT", "TAO", "ICP",
+        "KAS", "FET", "RENDER", "XLM", "ETC", "AAVE", "ALGO", "FIL", "ATOM", "HBAR",
+        "POL", "ARB", "OP", "BONK", "WIF", "FLUX", "ERG", "TIA", "SEI", "INJ",
+        "CRV", "MKR", "FTM", "RUNE", "SAND", "MANA", "AXS", "GALA", "VET", "TRX"
+      ];
     } else if (eng.includes('stock')) {
-      presets = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ"];
+      presets = [
+        "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "PLTR",
+        "SPY", "QQQ", "NFLX", "INTC", "QCOM", "TXN", "ARM", "IBM", "ORCL", "CRM",
+        "ADBE", "COIN", "MSTR", "UBER", "DIS", "BA", "BABA", "V", "MA", "BRK.B"
+      ];
     } else {
       presets = ["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"];
     }

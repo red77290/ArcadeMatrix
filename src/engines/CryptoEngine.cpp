@@ -12,9 +12,19 @@
 CryptoEngine::CryptoEngine() 
     : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
       currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {
+    m_coingecko = new CoinGeckoProvider();
     m_binance = new BinanceProvider();
+    addProvider(m_coingecko);
     addProvider(m_binance);
-    addProvider(new CoinGeckoProvider());
+}
+
+CryptoEngine::~CryptoEngine() {
+    for (auto* p : providers) {
+        delete p;
+    }
+    providers.clear();
+    m_coingecko = nullptr;
+    m_binance = nullptr;
 }
 
 EngineError CryptoEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
@@ -117,7 +127,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
     bool fetched = false;
     
     for (size_t i = 0; i < providers.size(); i++) {
-        size_t idx = (config_provider == "binance") ? i : (providers.size() - 1 - i);
+        size_t idx = (config_provider == "binance") ? (providers.size() - 1 - i) : i;
         ICryptoProvider* provider = providers[idx];
         provider->setCurrency(config_currency);
         if (provider->fetchQuote(symbol, newPrice, newChange, newImgUrl)) {
@@ -178,7 +188,7 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
     float maxP = 0.0f;
     
     for (size_t i = 0; i < providers.size(); i++) {
-        size_t idx = (config_provider == "binance") ? i : (providers.size() - 1 - i);
+        size_t idx = (config_provider == "binance") ? (providers.size() - 1 - i) : i;
         ICryptoProvider* provider = providers[idx];
         provider->setCurrency(config_currency);
         if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
@@ -437,9 +447,9 @@ void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (config_currency.isEmpty()) config_currency = "USD";
 
     String prevProvider = config_provider;
-    config_provider = engineConfig->getString("provider", "binance");
+    config_provider = engineConfig->getString("provider", "coingecko");
     config_provider.toLowerCase();
-    if (config_provider.isEmpty()) config_provider = "binance";
+    if (config_provider.isEmpty()) config_provider = "coingecko";
 
     String syms = engineConfig->getString("symbols", "BTC,ETH,SOL");
     parseSymbols(syms);
@@ -1054,12 +1064,12 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     desc_crypto.requirements.internalContiguousBytes = 16000;
     desc_crypto.requirements.psramBytes = 0;
     desc_crypto.schema.fields = {
-        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols (e.g. BTC, ETH) or CoinGecko IDs (e.g. zelcash, ergo)", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("duration_sec", ConfigType::INTEGER, "Page Duration (s)", "Seconds to dwell on each view", "5", false, "3", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("currency", ConfigType::ENUM, "Fiat Currency", "Target currency for quotes", "USD", false, "", "", "", "USD,EUR,GBP,JPY", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("provider", ConfigType::ENUM, "Provider", "Market data provider", "binance", false, "", "", "", "binance,coingecko", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("provider", ConfigType::ENUM, "Provider", "Market data provider", "coingecko", false, "", "", "", "coingecko,binance", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("cache_ttl_min", ConfigType::INTEGER, "Cache TTL (min)", "Minutes between fresh API requests", "5", false, "1", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("crypto_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("crypto_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)

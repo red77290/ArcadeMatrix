@@ -13,6 +13,7 @@
 #include "../core/SDUtils.h"
 
 class BinanceProvider;
+class CoinGeckoProvider;
 
 #ifndef ASSET_QUOTE_CACHE_H
 #define ASSET_QUOTE_CACHE_H
@@ -52,6 +53,7 @@ public:
     };
 
     CryptoEngine();
+    ~CryptoEngine() override;
     
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
@@ -86,6 +88,7 @@ private:
     DisplayPage currentPage = DisplayPage::Info;
     
     std::vector<ICryptoProvider*> providers;
+    CoinGeckoProvider* m_coingecko = nullptr;
     BinanceProvider* m_binance = nullptr;
     bool fetchCombined(const String& symbol);
     
