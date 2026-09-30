@@ -64,7 +64,7 @@ void ConfigSanitizer::sanitizeMatrix(MatrixConfig& matrix, SanitizeResult& resul
         result.modified = true;
     }
     uint8_t maxColorDepth = (BoardProfile::current().memory().tier == MemoryTier::CONSTRAINED) ? 6 : 8;
-    if (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth) {
+    if (matrix.colorDepth != 0 && (matrix.colorDepth < 1 || matrix.colorDepth > maxColorDepth)) {
         matrix.colorDepth = constrain(matrix.colorDepth, (uint8_t)1, maxColorDepth);
         result.values_clamped++;
         result.modified = true;

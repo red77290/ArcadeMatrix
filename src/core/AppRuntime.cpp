@@ -37,6 +37,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "BuildInfo.h"
 #include "../hal/BoardProfile.h"
 #include "drawing/DisplaySurfaceFactory.h"
+#include "drawing/PipelineSelectionPolicy.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -271,9 +272,46 @@ void AppRuntime::initialize() {
     // =========================================================================
     // STEP 4: INITIALIZE MATRIX DISPLAY
     // =========================================================================
-    LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s)...",
-         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength, snapshot.matrix.panelType.c_str());
-    if (!matrixEngine.begin(snapshot.matrix)) {
+    // Aggregate requirements across all enabled engines in the active rotation
+    EngineRequirements rotationReq;
+    for (const auto& entry : snapshot.rotation) {
+        for (const auto& inst : snapshot.instances) {
+            if (inst.instance_id == entry.instance_id) {
+                const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+                if (desc) {
+                    rotationReq.mergeWith(desc->requirements);
+                }
+            }
+        }
+    }
+
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    auto sel = PipelineSelectionPolicy::evaluate(
+        totalWidth,
+        snapshot.matrix.height,
+        snapshot.matrix.colorDepth,
+        snapshot.matrix.render_pipeline,
+        hasPsram,
+#if defined(ESP32)
+        MemoryBudgetConstraints(
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_free_size(MALLOC_CAP_DMA),
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)
+        ),
+#else
+        MemoryBudgetConstraints(),
+#endif
+        rotationReq
+    );
+
+    LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.panelType.c_str(), snapshot.matrix.colorDepth, sel.effectiveColorDepth, sel.reasonText);
+    if (!matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
         LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
     }
@@ -302,7 +340,7 @@ void AppRuntime::initialize() {
     Core0LifecycleDispatcher::instance().begin();
     
     // Initialize v4 Display Surface SPI via Abstract Factory
-    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
     uint16_t totalHeight = snapshot.matrix.height;
     auto surfaceResult = DisplaySurfaceFactory::createSurface(
         &matrixEngine,

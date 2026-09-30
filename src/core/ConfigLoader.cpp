@@ -144,7 +144,7 @@ void ConfigLoader::setDefaults() {
 #endif
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
-    matrix.colorDepth = 8;
+    matrix.colorDepth = 0; // 0 = Auto (Adaptive TLS / Hardware)
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";

@@ -100,6 +100,9 @@ namespace ResourceReserve {
     /// Conservative admission-control reserve for one active TLS connection (lwIP TCP PCB + mbedTLS handshake & context).
     constexpr size_t TLS_SOCKET_ADMISSION_RESERVE     = 45000;
 
+    /// Contiguous internal DRAM headroom required for safe mbedTLS allocation and heap fragmentation guard.
+    constexpr size_t TLS_CONTIGUOUS_HEADROOM_RESERVE  = 58000;
+
     /// Conservative admission-control reserve for AsyncTCP RX/TX connection buffers.
     constexpr size_t ASYNC_TCP_ADMISSION_RESERVE      = 16000;
 

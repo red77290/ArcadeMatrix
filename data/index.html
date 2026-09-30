@@ -1769,8 +1769,18 @@ select.input option {
 
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label><span data-i18n="hw_color_depth_label">Color Depth (Bits)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
-                <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
+                <label><span data-i18n="hw_color_depth_label">Color Depth (Bits)</span> <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
+                <select id="hw-color-depth" class="input">
+                  <option value="0" data-i18n="hw_color_depth_auto">✨ Auto (Adaptive TLS / Hardware)</option>
+                  <option value="8">8 bits (256 nuances)</option>
+                  <option value="7">7 bits (128 nuances)</option>
+                  <option value="6">6 bits (64 nuances)</option>
+                  <option value="5">5 bits (32 nuances)</option>
+                  <option value="4">4 bits (16 nuances - TLS 128x32)</option>
+                  <option value="3">3 bits (8 nuances)</option>
+                  <option value="2">2 bits (4 nuances)</option>
+                  <option value="1">1 bit (2 nuances)</option>
+                </select>
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_latch_blanking_label">Latch Blanking (Cycles)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
@@ -2389,6 +2399,8 @@ const translations = {
     tag_audio: "🎙️ I2S Microphone",
     tag_temp: "🌡️ Temp Sensor",
     tag_gyro: "🧭 Gyroscope",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Requires TLS (HTTPS). In Auto mode, color depth may be reduced automatically when available contiguous memory cannot support the nominal depth.",
     tag_realtime: "⚡ Real-Time",
     degraded_perf: "Degraded",
     hide_incompatible: "Hide Incompatible",
@@ -2826,8 +2838,9 @@ const translations = {
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
+    hw_color_depth_auto: "✨ Auto (Adaptive TLS / Hardware)",
     hw_btn_save: "💾 Save Hardware Settings",
-    tt_hw_color_depth: "Bits per color channel driven by the DMA engine. Lower values raise the refresh rate but reduce color gradation. 8 is the default.",
+    tt_hw_color_depth: "Color depth per RGB channel. In Auto mode (0), dynamically adapts to hardware and memory constraints (e.g. on standard ESP32 128×32, Auto mode may select 4-bit when a TLS engine is configured to preserve sufficient contiguous memory).",
     tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
     tt_hw_clk_phase: "Inverts the HUB75 clock phase. Enable it only if the panel shows shifted or duplicated columns.",
     tt_hw_single_buffer: "Forces a single DMA framebuffer instead of double buffering. Halves SRAM usage at the cost of possible tearing.",
@@ -2953,6 +2966,8 @@ const translations = {
     tag_audio: "🎙️ Micro I2S",
     tag_temp: "🌡️ Capteur Temp",
     tag_gyro: "🧭 Gyroscope",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Nécessite TLS (HTTPS). En mode Auto, la profondeur de couleur peut être réduite automatiquement lorsque la mémoire contiguë disponible ne permet pas de conserver la profondeur nominale.",
     tag_realtime: "⚡ Temps Réel",
     degraded_perf: "Dégradé",
     hide_incompatible: "Masquer incompatibles",
@@ -3390,8 +3405,9 @@ const translations = {
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
+    hw_color_depth_auto: "✨ Auto (Adaptatif TLS / Matériel)",
     hw_btn_save: "💾 Enregistrer les paramètres matériels",
-    tt_hw_color_depth: "Bits par canal de couleur pilotés par le moteur DMA. Une valeur plus faible augmente le rafraîchissement mais réduit les nuances. 8 par défaut.",
+    tt_hw_color_depth: "Profondeur de couleur par canal RGB. En mode Auto (0), s'adapte dynamiquement au matériel et à la mémoire (ex : sur ESP32 standard 128×32, le mode Auto peut sélectionner 4 bits lorsqu'un moteur TLS est configuré afin de préserver suffisamment de mémoire contiguë).",
     tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
     tt_hw_clk_phase: "Inverse la phase d'horloge HUB75. À activer uniquement si la dalle affiche des colonnes décalées ou dupliquées.",
     tt_hw_single_buffer: "Force un unique framebuffer DMA au lieu du double buffering. Divise par deux la SRAM utilisée au prix d'un possible tearing.",
@@ -3517,6 +3533,8 @@ const translations = {
     tag_audio: "🎙️ Micrófono I2S",
     tag_temp: "🌡️ Sensor Temp",
     tag_gyro: "🧭 Giroscopio",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Requiere TLS (HTTPS). En modo Auto, la profundidad de color puede reducirse automáticamente cuando la memoria contigua disponible no permite mantener la profundidad nominal.",
     tag_realtime: "⚡ Tiempo Real",
     degraded_perf: "Degradado",
     hide_incompatible: "Ocultar incompatibles",
@@ -3954,8 +3972,9 @@ const translations = {
     hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
     hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",
+    hw_color_depth_auto: "✨ Auto (Adaptable TLS / Hardware)",
     hw_btn_save: "💾 Guardar la configuración de hardware",
-    tt_hw_color_depth: "Bits por canal de color gestionados por el motor DMA. Un valor menor aumenta el refresco pero reduce los matices. 8 por defecto.",
+    tt_hw_color_depth: "Profundidad de color por canal RGB. En modo Auto (0), se adapta dinámicamente al hardware y a las restricciones de memoria (p. ej. en ESP32 estándar 128×32, el modo Auto puede seleccionar 4 bits cuando se configura un motor TLS para preservar suficiente memoria contigua).",
     tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
     tt_hw_clk_phase: "Invierte la fase de reloj HUB75. Actívalo solo si el panel muestra columnas desplazadas o duplicadas.",
     tt_hw_single_buffer: "Fuerza un único framebuffer DMA en lugar de doble búfer. Reduce a la mitad el uso de SRAM a costa de posible tearing.",
@@ -5568,7 +5587,7 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
     if (req.needsAudio || req.needsAudioInput) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
     if (req.needsTempSensor) tagsHtml += `<span class="engine-tag sensor">${t('tag_temp', '🌡️ Capteur Temp')}</span>`;
     if (req.needsGyroscope) tagsHtml += `<span class="engine-tag sensor">${t('tag_gyro', '🧭 Gyro')}</span>`;
-    if (req.needsTls) tagsHtml += `<span class="engine-tag" style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd;">🔒 TLS</span>`;
+    if (req.needsTls) tagsHtml += `<span class="engine-tag" style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd; cursor: help;" data-tooltip="${t('tt_tag_tls', 'Requires secure TLS sockets (HTTPS). Automatically downgrades color depth to 4-bit on 128×32 ESP32 in Auto mode.')}" title="${t('tt_tag_tls', 'Requires secure TLS sockets (HTTPS). Automatically downgrades color depth to 4-bit on 128×32 ESP32 in Auto mode.')}">${t('tag_tls', '🔒 TLS')}</span>`;
 
     const existingCount = instancesList.filter(i => i.engine_id === eng.id).length;
     const existingBadge = existingCount > 0 ? `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-size: 0.75rem;">${existingCount} ${t('screens_active', 'active screen(s)')}</span>` : '';
@@ -8172,7 +8191,7 @@ async function initSettings() {
     setVal('hw-driver-chip', matrix.driver_chip || 'SHIFTREG');
     setVal('hw-rgb', matrix.rgb_sequence || 'RGB');
     setVal('hw-row-addr-type', matrix.row_address_mode ?? 0);
-    setVal('hw-color-depth', matrix.color_depth || matrix.pwm_bits || 8);
+    setVal('hw-color-depth', matrix.color_depth ?? matrix.pwm_bits ?? 0);
     setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
@@ -8350,7 +8369,7 @@ async function initSettings() {
     btnSaveHw._boundClick = true;
     btnSaveHw.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.matrix) ? { ...window.__sysConfig.matrix } : {};
-      const numOr = (id, d) => parseInt(document.getElementById(id)?.value) || d;
+      const numOr = (id, d) => { const v = parseInt(document.getElementById(id)?.value); return isNaN(v) ? d : v; };
       const matrix = {
         ...base,
         height: numOr('hw-rows', 64),
@@ -8359,8 +8378,8 @@ async function initSettings() {
         driver_chip: document.getElementById('hw-driver-chip')?.value || 'SHIFTREG',
         rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
         row_address_mode: numOr('hw-row-addr-type', 0),
-        color_depth: numOr('hw-color-depth', 8),
-        pwm_bits: numOr('hw-color-depth', 8),
+        color_depth: numOr('hw-color-depth', 0),
+        pwm_bits: numOr('hw-color-depth', 0),
         latch_blanking: numOr('hw-latch-blanking', 4),
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,

@@ -189,6 +189,48 @@ struct EngineRequirements {
         if (requiresDoubleBuffer && supportsSingleBuffer) return false;
         return true;
     }
+
+    /**
+     * @brief Aggregates requirements across multiple engines (e.g. all engines in an active rotation).
+     * Peripheral dependencies and TLS flags are logically OR'd. Footprints and buffers take the peak.
+     */
+    inline void mergeWith(const EngineRequirements& other) {
+        needsPsram |= other.needsPsram;
+        needsPsramDma |= other.needsPsramDma;
+        needsAudio |= other.needsAudio;
+        needsAudioInput |= other.needsAudioInput;
+        needsAudioOutput |= other.needsAudioOutput;
+        needsI2s |= other.needsI2s;
+        needsTempSensor |= other.needsTempSensor;
+        needsGyroscope |= other.needsGyroscope;
+        needsNetwork |= other.needsNetwork;
+        needsSd |= other.needsSd;
+        needsTls |= other.needsTls;
+
+        requiresDoubleBuffer |= other.requiresDoubleBuffer;
+        prefersDoubleBuffer |= other.prefersDoubleBuffer;
+        supportsSingleBuffer = supportsSingleBuffer && other.supportsSingleBuffer;
+
+        targetFps = (targetFps > other.targetFps) ? targetFps : other.targetFps;
+        internalPersistentBytes = (internalPersistentBytes > other.internalPersistentBytes) ? internalPersistentBytes : other.internalPersistentBytes;
+        internalContiguousBytes = (internalContiguousBytes > other.internalContiguousBytes) ? internalContiguousBytes : other.internalContiguousBytes;
+        psramBytes = (psramBytes > other.psramBytes) ? psramBytes : other.psramBytes;
+        shadowBytesPerFrame = (shadowBytesPerFrame > other.shadowBytesPerFrame) ? shadowBytesPerFrame : other.shadowBytesPerFrame;
+
+        minFreeInternalHeapBytes = (minFreeInternalHeapBytes > other.minFreeInternalHeapBytes) ? minFreeInternalHeapBytes : other.minFreeInternalHeapBytes;
+        minLargestInternalBlockBytes = (minLargestInternalBlockBytes > other.minLargestInternalBlockBytes) ? minLargestInternalBlockBytes : other.minLargestInternalBlockBytes;
+        minFreeDmaBytes = (minFreeDmaBytes > other.minFreeDmaBytes) ? minFreeDmaBytes : other.minFreeDmaBytes;
+        minFreePsramBytes = (minFreePsramBytes > other.minFreePsramBytes) ? minFreePsramBytes : other.minFreePsramBytes;
+
+        minWidth = (minWidth > other.minWidth) ? minWidth : other.minWidth;
+        minHeight = (minHeight > other.minHeight) ? minHeight : other.minHeight;
+        if (other.maxWidth > 0) {
+            maxWidth = (maxWidth == 0) ? other.maxWidth : ((maxWidth < other.maxWidth) ? maxWidth : other.maxWidth);
+        }
+        if (other.maxHeight > 0) {
+            maxHeight = (maxHeight == 0) ? other.maxHeight : ((maxHeight < other.maxHeight) ? maxHeight : other.maxHeight);
+        }
+    }
 };
 
 enum class EngineAdmissionStatus : uint8_t {

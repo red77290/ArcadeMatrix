@@ -681,6 +681,106 @@ void test_icon_service_sanitization_and_paths() {
     TEST_ASSERT_EQUAL_STRING("/media_icons/spotify.png", IconService::getSdPath("media", "Spotify").c_str());
 }
 
+void test_pipeline_selection_effective_color_depth(void) {
+    EngineRequirements tlsReq;
+    tlsReq.needsTls = true;
+
+    EngineRequirements noTlsReq;
+    noTlsReq.needsTls = false;
+
+    // --- Nominal cases ---
+    // 1. ESP32-S3 (hasPsram = true) with and without TLS -> 8 bits
+    uint8_t s3Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, true, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, s3Tls);
+    uint8_t s3NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, true, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, s3NoTls);
+
+    // 2. ESP32 Standard (128x32) with TLS in Auto mode -> 4 bits
+    uint8_t esp128Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(4, esp128Tls);
+
+    // 3. ESP32 Standard (128x32) without TLS in Auto mode -> 6 bits
+    uint8_t esp128NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(6, esp128NoTls);
+
+    // 4. ESP32 Standard (64x32) with TLS in Auto mode -> 6 bits
+    uint8_t esp64Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(6, esp64Tls);
+
+    // 5. ESP32 Standard (64x32) without TLS in Auto mode -> 6 bits
+    uint8_t esp64NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(6, esp64NoTls);
+
+    // --- Contractual cases on 128x32 ESP32 Standard with TLS ---
+    EngineDescriptor cryptoDesc;
+    cryptoDesc.metadata.id = "crypto";
+    cryptoDesc.requirements.needsTls = true;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.profile = HwProfile::ESP32_STD;
+    ctx.isConnectedWifi = true;
+    ReferenceMemoryProfile ref = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    ctx.memory.freeInternalHeap = ref.freeInternalHeap;
+    ctx.memory.largestInternalBlock = ref.largestInternalBlock;
+
+    // Case 1: Manual 6-bit depth -> does NOT downscale (effectiveDepth=6), but fails contiguous admission (Incompatible)
+    ctx.colorDepth = 6;
+    auto resManual6 = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(6, resManual6.effectiveColorDepth);
+    auto verdictManual6 = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)verdictManual6.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientLargestBlock, (int)verdictManual6.primaryReason);
+
+    // Case 2: Manual 4-bit depth -> effectiveDepth=4, satisfies admission (Compatible)
+    ctx.colorDepth = 4;
+    auto resManual4 = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(4, resManual4.effectiveColorDepth);
+    auto verdictManual4 = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)verdictManual4.status);
+
+    // Case 3: Auto mode (colorDepth=0) -> resolves to 4 bits, satisfies admission (Compatible)
+    ctx.colorDepth = 0;
+    auto resAuto = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(4, resAuto.effectiveColorDepth);
+    auto verdictAuto = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)verdictAuto.status);
+}
+
+void test_rotation_requirements_aggregation(void) {
+    EngineRequirements clockReq;
+    clockReq.needsTls = false;
+    clockReq.internalPersistentBytes = 1200;
+    clockReq.internalContiguousBytes = 500;
+
+    EngineRequirements cryptoReq;
+    cryptoReq.needsTls = true;
+    cryptoReq.internalPersistentBytes = 4500;
+    cryptoReq.internalContiguousBytes = 8000;
+
+    EngineRequirements stockReq;
+    stockReq.needsTls = true;
+    stockReq.internalPersistentBytes = 3200;
+    stockReq.internalContiguousBytes = 12000;
+
+    EngineRequirements agg;
+    agg.mergeWith(clockReq);
+    TEST_ASSERT_FALSE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(1200, agg.internalPersistentBytes);
+
+    agg.mergeWith(cryptoReq);
+    TEST_ASSERT_TRUE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(4500, agg.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(8000, agg.internalContiguousBytes);
+
+    agg.mergeWith(stockReq);
+    TEST_ASSERT_TRUE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(4500, agg.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(12000, agg.internalContiguousBytes);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -726,6 +826,10 @@ int main(int argc, char** argv) {
 
     // IconService Tests
     RUN_TEST(test_icon_service_sanitization_and_paths);
+
+    // Color Depth & Pipeline Selection Tests
+    RUN_TEST(test_pipeline_selection_effective_color_depth);
+    RUN_TEST(test_rotation_requirements_aggregation);
 
     return UNITY_END();
 }

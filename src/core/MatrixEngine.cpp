@@ -42,7 +42,7 @@ MatrixEngine::~MatrixEngine() {
  * @return true if DMA allocation and initialization succeeded.
  * @return false if out of memory or initialization failed.
  */
-bool MatrixEngine::begin(const MatrixConfig& config) {
+bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth) {
     int8_t out1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
     int8_t out2[3] = {MATRIX_R2_PIN, MATRIX_G2_PIN, MATRIX_B2_PIN};
     int8_t pins1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
@@ -73,22 +73,19 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         _pins              // Custom pin mapping
     );
     
-    // Use configured per-channel color depth (2 to 8, default 8)
-    int depth = config.colorDepth;
-    if (depth <= 0) {
-        depth = 8; // Default fallback
-    } else if (depth > 8) {
-        // Clamp to 8 (max supported color depth bits per channel by the library).
-        // A value of 11 (legacy PWM bits) should map to 8 bits color depth, not 3.
-        depth = 8;
+    uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    uint8_t depth = effectiveColorDepth;
+    if (depth == 0) {
+        auto pipeRes = PipelineSelectionPolicy::evaluate(
+            totalWidth, config.height, config.colorDepth, config.render_pipeline, hasPsram
+        );
+        depth = pipeRes.effectiveColorDepth;
     }
-    if (depth < 2 || depth > 8) {
-        depth = 8; // Safe fallback if invalid range
-    }
-    uint8_t maxDepth = BoardProfile::current().display().defaultColorDepth;
-    if (depth > maxDepth) {
-        depth = maxDepth;
-    }
+
+    LOGI("MatrixEngine", "Effective color depth: %u bits (configured=%d, geometry=%ux%u, psram=%d)",
+         depth, config.colorDepth, totalWidth, config.height, hasPsram);
     
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
@@ -111,10 +108,7 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
-    uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
-
     // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
-    bool hasPsram = hardwareHAL.capabilities().hasPsram;
     auto pipeRes = PipelineSelectionPolicy::evaluate(
         totalWidth, config.height, depth, config.render_pipeline, hasPsram
     );
@@ -125,12 +119,6 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
         LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
 #endif
-    } else {
-        uint8_t profileMaxDepth = BoardProfile::current().display().defaultColorDepth;
-        if (depth > profileMaxDepth) {
-            depth = profileMaxDepth;
-            mxconfig.setPixelColorDepthBits(depth);
-        }
     }
 
     // Initialize display object

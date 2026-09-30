@@ -1,11 +1,16 @@
 /**
  * @file PipelineSelectionPolicy.h
- * @brief Centralized authority governing rendering pipeline and memory tier selection.
+ * @brief Centralized authority governing rendering pipeline, color depth admission, and memory tier selection.
  */
 #pragma once
 #include <Arduino.h>
 #include "PipelineDescriptor.h"
 #include "DmaMemoryLayout.h"
+#include "core/EngineContract.h"
+
+constexpr uint8_t COLOR_DEPTH_AUTO = 0;
+constexpr uint8_t COLOR_DEPTH_MIN  = 1;
+constexpr uint8_t COLOR_DEPTH_MAX  = 8;
 
 enum class SurfaceSelectionReason : uint8_t {
     AutoResolvedPsramCanvas,
@@ -31,6 +36,7 @@ struct MemoryBudgetConstraints {
 
 struct PipelineSelectionResult {
     PipelineDescriptor descriptor;
+    uint8_t effectiveColorDepth = 8;
     SurfaceSelectionReason reason = SurfaceSelectionReason::ExplicitUserPolicy;
     const char* reasonText = "";
     bool valid = true;
@@ -41,14 +47,15 @@ struct PipelineSelectionResult {
 class PipelineSelectionPolicy {
 public:
     /**
-     * @brief Evaluates hardware capabilities, geometry constraints, user preferences, and live memory.
+     * @brief Evaluates hardware capabilities, geometry constraints, user preferences, memory budget, and requirements.
      * @param width Physical display width
      * @param height Physical display height
-     * @param colorDepth HUB75 color depth (bits per channel)
+     * @param colorDepth HUB75 color depth (0 = Auto, 1..8 = manual)
      * @param requestedPipeline User-selected pipeline mode ("auto", "canvas_single", etc.)
      * @param hasPsram Whether PSRAM is physically present and enabled
      * @param memory Live memory constraints (or default unconstrained)
-     * @return PipelineSelectionResult Fully resolved pipeline specification and reasoning
+     * @param requirements Single engine or aggregated rotation requirements
+     * @return PipelineSelectionResult Fully resolved pipeline specification, effective color depth, and reasoning
      */
     static PipelineSelectionResult evaluate(
         uint16_t width,
@@ -56,6 +63,32 @@ public:
         uint8_t colorDepth,
         const String& requestedPipeline = "auto",
         bool hasPsram = false,
-        const MemoryBudgetConstraints& memory = MemoryBudgetConstraints()
+        const MemoryBudgetConstraints& memory = MemoryBudgetConstraints(),
+        const EngineRequirements& requirements = EngineRequirements()
+    );
+
+    /**
+     * @brief Checks whether a given color depth and pipeline satisfy memory admission and contiguous constraints.
+     */
+    static bool pipelineFits(
+        uint16_t width,
+        uint16_t height,
+        uint8_t depth,
+        const PipelineDescriptor& desc,
+        bool hasPsram,
+        const MemoryBudgetConstraints& memory,
+        const EngineRequirements& requirements
+    );
+
+    /**
+     * @brief Convenience helper resolving effective HUB75 DMA color depth based on pipeline admission.
+     */
+    static uint8_t resolveEffectiveColorDepth(
+        int configuredDepth,
+        uint16_t width,
+        uint16_t height,
+        bool hasPsram,
+        const MemoryBudgetConstraints& memory = MemoryBudgetConstraints(),
+        const EngineRequirements& requirements = EngineRequirements()
     );
 };

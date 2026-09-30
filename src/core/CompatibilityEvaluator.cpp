@@ -62,7 +62,7 @@ CompatibilityContext CompatibilityEvaluator::buildCurrentContext(EvaluationMode 
     const auto& snap = guard.get();
     ctx.width = snap.matrix.width > 0 ? snap.matrix.width : 128;
     ctx.height = snap.matrix.height > 0 ? snap.matrix.height : 32;
-    ctx.colorDepth = snap.matrix.colorDepth > 0 ? snap.matrix.colorDepth : 8;
+    ctx.colorDepth = (snap.matrix.colorDepth >= 0 && snap.matrix.colorDepth <= 8) ? snap.matrix.colorDepth : 0;
     ctx.requestedPipeline = snap.matrix.render_pipeline.isEmpty() ? "auto" : snap.matrix.render_pipeline;
     ctx.presentationPolicy.allowBlanking = false;
     ctx.presentationPolicy.degradedBlankingPermitted = false;
@@ -181,7 +181,8 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
         ctx.colorDepth,
         ctx.requestedPipeline,
         ctx.hardware.hasPsram,
-        ctx.memory
+        ctx.memory,
+        desc.requirements
     );
 
     if (!policyRes.valid) {
@@ -231,7 +232,7 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
     bool isSpiram = (ctx.hardware.profile == HwProfile::WAVESHARE_S3 && ctx.hardware.hasPsram);
 
     uint32_t estimatedTransferUs = PresentationTimingModel::estimateTransferUs(
-        ctx.width, ctx.height, ctx.colorDepth, isSingle, isSpiram
+        ctx.width, ctx.height, policyRes.effectiveColorDepth, isSingle, isSpiram
     );
     verdict.estimatedBlankUs = estimatedTransferUs;
 
@@ -325,11 +326,20 @@ CompatibilityVerdict CompatibilityEvaluator::evaluate(
         verdict.status = CompatibilityStatus::Incompatible;
     }
 
+    // Check Pipeline & Color Depth Memory Admission
+    if (!PipelineSelectionPolicy::pipelineFits(ctx.width, ctx.height, policyRes.effectiveColorDepth, policyRes.descriptor, ctx.hardware.hasPsram, ctx.memory, req)) {
+        verdict.issueFlags |= static_cast<uint32_t>(CompatibilityIssue::FragmentedInternalHeap);
+        if (verdict.primaryReason == CompatibilityReason::None || verdict.status == CompatibilityStatus::CompatibleDegraded) {
+            verdict.primaryReason = CompatibilityReason::InsufficientLargestBlock;
+        }
+        verdict.status = CompatibilityStatus::Incompatible;
+    }
+
     // =========================================================================
     // 5. Performance Modeling
     // =========================================================================
     uint32_t encodeEstUs = (verdict.storage != CanvasStorage::NONE) ?
-        ((static_cast<uint32_t>(ctx.width) * ctx.height * ctx.colorDepth) / 12) : 0;
+        ((static_cast<uint32_t>(ctx.width) * ctx.height * policyRes.effectiveColorDepth) / 12) : 0;
     verdict.estimatedFrameUs = estimatedTransferUs + encodeEstUs;
 
     uint32_t fpsFromPresentation = (verdict.estimatedFrameUs > 0) ?

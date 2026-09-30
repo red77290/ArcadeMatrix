@@ -99,14 +99,15 @@ public:
     /**
      * @brief Initialize the hardware matrix panel.
      * 
-     * Automatically adjusts color depth and double-buffering based on the total 
-     * physical pixel count to prevent ESP32 memory limits from being exceeded.
+     * Configures HUB75 DMA bitplanes and presentation backend using effective color depth
+     * resolved by PipelineSelectionPolicy.
      * 
      * @param config The MatrixConfig loaded from config.json
+     * @param effectiveColorDepth Effective color depth (1..8 bits, or 0 = auto-evaluate)
      * @return true if DMA allocation and initialization succeeded.
      * @return false if out of memory or initialization failed.
      */
-    bool begin(const MatrixConfig& config);
+    bool begin(const MatrixConfig& config, uint8_t effectiveColorDepth = 0);
     
     /**
      * @brief Clear the entire matrix screen.

@@ -38,7 +38,7 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `chain_length` | `int` | Número de paneles encadenados horizontalmente. |
 | `driver_chip` | `String` | Chip controlador (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Orden de colores (`RGB`, `RBG`, `BGR`, ...). Corrige aquí colores intercambiados. |
-| `color_depth` | `int` | Profundidad de color (`1`–`8` bits). Por defecto `8`. Reducir para ahorrar RAM DMA. |
+| `color_depth` | `int` | Profundidad de color (`0` = Auto, `1`–`8` bits). Por defecto `0` (Auto). En modo Auto, se adapta a la geometría y requisitos TLS de la rotación. |
 | `limit_refresh_rate_hz` | `int` | Limita la frecuencia de refresco (`0` = sin límite). |
 | `row_address_mode` | `int` | Modo de direccionamiento de filas (`0`: Directo Binario, `1`: ShiftReg, `2`: Directo 16, `3`: Directo 32, `4`: Directo 64). |
 | `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto; poner en `true` si el panel lo requiere). |
