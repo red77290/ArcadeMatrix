@@ -72,19 +72,22 @@ void CryptoEngine::activate() {
             fetchSuccess = false;
         }
     }
+    
+    // Preload icons for all active symbols while heap is clean (before TLS handshakes fragment contiguous DRAM)
+    if (WiFi.isConnected()) {
+        for (const auto& sym : symbolList) {
+            AssetQuoteCache& c = quoteCache[sym];
+            if (!c.hasIcon && !c.iconAttempted) {
+                loadOrDownloadIcon(sym, c.imageUrl, c);
+            }
+        }
+    }
+    
     requestRedraw();
 }
 
 void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache) {
     if (cache.hasIcon || cache.iconAttempted) return;
-    
-    // Check if device has contiguous heap for PNGdec (~45 KB).
-    // On ESP32 STD without PSRAM (largest block ~31 KB), PNGdec cannot allocate.
-    // Skip downloading/decoding and fall back to crisp built-in icons with zero RAM overhead.
-    if (ESP.getMaxAllocHeap() < sizeof(PNG)) {
-        cache.iconAttempted = true;
-        return;
-    }
     
     String safeName = symbol;
     safeName.toLowerCase();
@@ -98,7 +101,8 @@ void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImg
         }
     }
     
-    // Download via plain HTTP weserv proxy (no TLS) if not already cached on SD
+    // Download via plain HTTP weserv proxy (no TLS) if not already cached on SD.
+    // Plain HTTP uses ~1.5 KB RAM and does not require contiguous DRAM for PNGdec.
     if (!onSd && WiFi.isConnected()) {
         esp_task_wdt_reset();
         String imgUrl = newImgUrl;
@@ -140,12 +144,16 @@ void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImg
     cache.iconAttempted = true;
 
     // Decode from SD card into cache.iconPixels (16x16 RGB565)
-    // Invariant: PNGdec allocates ~45KB internally; never allocate on stack, check contiguous DRAM
+    // Invariant: PNGdec allocates ~45KB internally; check contiguous DRAM before instantiation
     if (onSd) {
-        PNG* png = new (std::nothrow) PNG();
-        if (!png) {
+        if (ESP.getMaxAllocHeap() < sizeof(PNG)) {
             LOGW("CryptoEngine", "Skipping icon decode for %s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
                  symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)sizeof(PNG));
+            return;
+        }
+        PNG* png = new (std::nothrow) PNG();
+        if (!png) {
+            LOGW("CryptoEngine", "Skipping icon decode for %s: out of memory for PNGdec", symbol.c_str());
             return;
         }
 
@@ -425,17 +433,29 @@ void CryptoEngine::update(EngineContext* context) {
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             activeSymbol = symbolList[currentSymbolIndex];
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+            if (nextCache.hasData) {
+                currentPrice = nextCache.price;
+                changePercent24h = nextCache.changePercent24h;
+                fetchSuccess = true;
+            } else {
+                currentPrice = 0.0f;
+                changePercent24h = 0.0f;
+                fetchSuccess = false;
+            }
             if (!nextCache.hasIcon && !nextCache.iconAttempted) {
                 loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
             }
-            bool combined = false;
-            if (config_provider == "binance" && config_show_chart) {
-                combined = fetchCombined(activeSymbol);
-            }
-            if (!combined) {
-                fetchQuote(activeSymbol);
-                if (fetchSuccess && config_show_chart) {
-                    fetchHistory(activeSymbol, config_chart_timeframe);
+            bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
+            if (needFetch) {
+                bool combined = false;
+                if (config_provider == "binance" && config_show_chart) {
+                    combined = fetchCombined(activeSymbol);
+                }
+                if (!combined) {
+                    fetchQuote(activeSymbol);
+                    if (fetchSuccess && config_show_chart) {
+                        fetchHistory(activeSymbol, config_chart_timeframe);
+                    }
                 }
             }
         } else {
@@ -450,15 +470,27 @@ void CryptoEngine::update(EngineContext* context) {
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 activeSymbol = symbolList[currentSymbolIndex];
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+                if (nextCache.hasData) {
+                    currentPrice = nextCache.price;
+                    changePercent24h = nextCache.changePercent24h;
+                    fetchSuccess = true;
+                } else {
+                    currentPrice = 0.0f;
+                    changePercent24h = 0.0f;
+                    fetchSuccess = false;
+                }
                 if (!nextCache.hasIcon && !nextCache.iconAttempted) {
                     loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
                 }
-                bool combined = false;
-                if (config_provider == "binance" && config_show_chart) {
-                    combined = fetchCombined(activeSymbol);
-                }
-                if (!combined) {
-                    fetchQuote(activeSymbol);
+                bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
+                if (needFetch) {
+                    bool combined = false;
+                    if (config_provider == "binance" && config_show_chart) {
+                        combined = fetchCombined(activeSymbol);
+                    }
+                    if (!combined) {
+                        fetchQuote(activeSymbol);
+                    }
                 }
             }
         }
