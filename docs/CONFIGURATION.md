@@ -39,6 +39,7 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `driver_chip` | `String` | Controller chip (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Color order (`RGB`, `RBG`, `BGR`, ...). Fix swapped colors here. |
 | `color_depth` | `int` | Color depth (`0` = Auto, `1`–`8` bits). Default `0` (Auto). In Auto mode, adapts to geometry and rotation TLS requirements. |
+| `dynamic_color_depth` | `bool` | Enable dynamic runtime color depth switching ($8 \leftrightarrow 4$ or $6 \leftrightarrow 4$) under complete OE hardware blanking during engine transitions (`false` default). When enabled with a manual `color_depth` (e.g. `8` or `6`), switches temporarily to 4-bit depth for TLS network engines to free DRAM, then restores preferred depth for graphics engines. |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
 | `row_address_mode` | `int` | Row addressing mode (`0`: Direct Binary, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
 | `clk_phase` | `bool` | Invert CLK clock phase (`false` default; set `true` if panel requires inverted clock latching). |

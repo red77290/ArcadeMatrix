@@ -185,6 +185,7 @@ paths:
                       row_address_mode: { type: integer, example: 0 }
                       rgb_sequence: { type: string, example: "RGB" }
                       color_depth: { type: integer, example: 0, description: "Color depth per channel (0 = Auto adaptive TLS / hardware, 1–8 bits)" }
+                      dynamic_color_depth: { type: boolean, example: false, description: "Enable dynamic runtime color depth switching (8/6 <-> 4) under complete OE blanking during engine transitions" }
                       pwm_bits: { type: integer, example: 0, description: "Alias for color_depth" }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
                       clk_phase: { type: boolean, example: false }

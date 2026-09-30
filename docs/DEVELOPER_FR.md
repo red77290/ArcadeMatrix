@@ -177,6 +177,12 @@ Le `DisplayArbiter` résout les sources d'affichage de manière déterministe vi
 16. **Règle d'Or #16 — Désactivation Sans Allocation & Quiescente (Invariants 15 & 16) :**
     - `deactivate()` doit être 100% sans allocation : ne jamais appeler `std::vector::shrink_to_fit()` ou de redimensionnement dynamique pendant la désactivation ; utiliser `std::vector<T>().swap(vec)` ou `{}` pour désallouer inconditionnellement sans allouer de métadonnées.
     - `deactivate()` doit garantir la quiescence : toutes les tâches réseau d'arrière-plan, instances de clients HTTP, timers et descripteurs de fichiers ouverts doivent être intégralement arrêtés, joints ou détachés avant le retour de `deactivate()`.
+17. **Règle d'Or #17 — Quiescence Réseau & Interruption Ciblée de Sockets (Invariant N8) :**
+    - Tout moteur réseau doit procéder à l'interruption immédiate côté client du transport (`session.abort()` / `_client.stop()`) et joindre de façon synchrone ses tâches d'arrière-plan dans `deactivate()`.
+    - Dès qu'une session est annulée, aucun nouveau traitement applicatif ni allocation ne peut avoir lieu sur cette session.
+18. **Règle d'Or #18 — Pipeline de Présentation Dynamique & Fidélité des Couleurs (Invariant 21) :**
+    - Les moteurs ne doivent pas supposer une profondeur de couleur statique figée. Lors du passage entre moteurs graphiques (8 ou 6 bits) et moteurs TLS (4 bits), le pipeline se reconfigure dynamiquement sous extinction matérielle OE ($< 30\text{ ms}$).
+    - `FastMatrixPanel::initLuts(depth)` recalcule à la volée les tables de quantification gamma pour garantir un rendu fidèle sans distorsion des couleurs (voir [MEMORY_OPTIMIZATIONS_FR.md](MEMORY_OPTIMIZATIONS_FR.md)).
 
 ---
 

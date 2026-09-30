@@ -410,3 +410,19 @@ forma atómica y una segunda petición responde `409`.
 ## 19. Metadatos de Compilación y Telemetría
 
 El endpoint `/api/v1/system/version` expone la huella exacta de compilación (`git_commit`, `build_timestamp`, `firmware_version`).
+
+---
+
+## 20. Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria
+
+Para plataformas con limitaciones severas de memoria (como el ESP32 clásico controlando paneles de 128×32), ArcadeMatrix incorpora un **Dynamic Presentation Pipeline** respaldado por un sistema integral de recuperación de memoria:
+1. **Profundidad de Color Dinámica ($8 \leftrightarrow 4$ / $6 \leftrightarrow 4$):** Conmuta dinámicamente entre la profundidad manual preferida para gráficos (8 o 6 bits) y una profundidad optimizada y segura para TLS (4 bits) durante la ejecución de motores de red.
+2. **Transacciones de Presentación de Hardware:** Reconstrucción atómica del pipeline ejecutada en $< 30\text{ ms}$ bajo apagado completo de hardware mediante OE.
+3. **Pipeline Single DMA + Lienzo (`canvas_single`):** Ahorra hasta 32 KB de DRAM en comparación con las arquitecturas tradicionales de doble búfer DMA.
+4. **Sobrescritura Dinámica de LUTs (`FastMatrixPanel::initLuts`):** Recalibra instantáneamente las curvas gamma y tablas de cuantificación a cualquier profundidad sin reiniciar el ESP32.
+5. **Invariantes Formales de Presentación:**
+   - **Invariante 21 — Aislamiento de Salida HUB75:** Durante la reconfiguración del pipeline, OE permanece inactivo (HIGH) hasta que el primer frame del nuevo pipeline es confirmado.
+   - **Invariante N8 — Aislamiento Post-Quiescencia:** Una vez cancelada una sesión de red y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación sobre esa sesión.
+
+El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).
+

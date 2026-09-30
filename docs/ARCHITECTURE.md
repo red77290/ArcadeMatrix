@@ -586,7 +586,7 @@ flowchart TD
 
 ## 3. The Engine Contract (`IEngine`)
 
-Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](file:///Users/red1l/Documents/work/git/perso/ArcadeMatrix/include/core/EngineContract.h):
+Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](../include/core/EngineContract.h):
 
 ```cpp
 class IDisplayGeometryAware {
@@ -858,6 +858,10 @@ To achieve flicker-free rendering on single-buffer DMA panels (e.g. classic ESP3
   Display engines and rotation managers MUST NOT directly access, clear, or modify hardware presentation/DMA storage (`FastMatrixPanel`). All rendering must pass exclusively through `IDrawingSurface`.
 - **🔴 Invariant 20 — Failed Presentation Preservation:**
   A failed presentation attempt MUST NOT clear the dirty state, preserving the unpresented changes for retry on the subsequent frame.
+- **🔴 Invariant 21 — HUB75 Output Isolation & Hardware Presentation Transaction:**
+  During presentation pipeline reconfiguration, OE (Output Enable) remains asserted (HIGH / display blanked) from the beginning of teardown until the new DMA pipeline has been initialized and the first valid frame is committed. No inconsistent GPIO states or transient scan patterns may reach the HUB75 panel.
+- **🔴 Invariant N8 — Post-Quiescence Application Isolation:**
+  Once a network session has been aborted and its owning engine has completed quiescent deactivation, no further application processing, JSON parsing, callback invocation, or buffer allocation may occur on that session.
 
 ### 23.3 Quiescent Baseline Envelope
 
@@ -865,4 +869,16 @@ Rather than an unrealistic promise of exact byte-for-byte heap equality across d
 - Upon `deactivate(old)`, the system returns to the reference idle baseline within a bounded envelope: $|\text{baseline}_{\text{final}} - \text{baseline}_{\text{initial}}| \le 2\text{ KB}$.
 - Zero cumulative memory drift across 100 consecutive rotation cycles (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
 - Zero active engine-owned background tasks, zero leaked file descriptors, and zero dangling network sockets post-deactivation.
+
+---
+
+## 24. Dynamic Presentation Pipeline & Memory Optimization Architecture
+
+For constrained hardware (such as ESP32 classic driving 128×32 matrix geometries), ArcadeMatrix implements a **Dynamic Presentation Pipeline** coupled with extensive memory reclamation systems:
+1. **Dynamic Color Depth ($8 \leftrightarrow 4$ / $6 \leftrightarrow 4$):** Commutes dynamically between preferred manual graphics depth (8 or 6 bits) and a memory-safe presentation depth (4 bits) during TLS network engine execution.
+2. **Hardware Presentation Transactions:** Atomic pipeline rebuild executed in $< 30\text{ ms}$ under complete OE hardware blanking.
+3. **Single DMA + Canvas Pipeline (`canvas_single`):** Reclaims up to 32 KB DRAM over legacy double-buffered DMA architectures.
+4. **Comprehensive Memory Reclamation:** Ephemeral background tasks (`SdSpace`), lazy buffer allocations (`MarqueeEngine`), SoftAP/mDNS teardown, and tuned task stacks.
+
+Detailed architectural analysis, benchmarks, and quantitative baseline comparisons are documented in [docs/MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md).
 

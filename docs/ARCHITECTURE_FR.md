@@ -698,6 +698,10 @@ Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux D
   Les moteurs d'affichage et les gestionnaires de rotation NE DOIVENT PAS accéder directement, effacer ou modifier la mémoire de présentation/DMA matérielle (`FastMatrixPanel`). Tout rendu passe obligatoirement et exclusivement par `IDrawingSurface`.
 - **🔴 Invariant 20 — Préservation lors d'Échec de Présentation :**
   Une tentative de présentation échouée NE DOIT PAS réinitialiser l'état dirty, préservant ainsi les modifications non présentées pour une nouvelle tentative à la trame suivante.
+- **🔴 Invariant 21 — Isolation de Sortie HUB75 & Transaction de Présentation Matérielle :**
+  Pendant toute la durée de reconfiguration du pipeline de présentation, le signal OE (Output Enable) reste fermement asservi à l'état inactif (HIGH / écran éteint) du début du démontage jusqu'à ce que le nouveau pipeline DMA soit initialisé et que la première frame valide soit validée. Aucun état GPIO parasite ni motif de balayage transitoire ne peut atteindre le panneau HUB75.
+- **🔴 Invariant N8 — Isolation Applicative Post-Quiescence :**
+  Une fois qu'une session réseau a été interrompue et que son moteur propriétaire a achevé sa désactivation quiescente, aucun nouveau traitement applicatif, parsing JSON, callback ou allocation de buffer ne peut être effectué sur cette session.
 
 ### 22.3 Enveloppe de Référence Quiescente (Quiescent Baseline Envelope)
 
@@ -705,3 +709,15 @@ Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas f
 - Lors de `deactivate(old)`, le système retourne à l'empreinte de repos de référence dans une enveloppe bornée : $|\text{baseline}_{\text{finale}} - \text{baseline}_{\text{initiale}}| \le 2\text{ Ko}$.
 - Dérive mémoire cumulée nulle sur 100 cycles consécutifs de rotation (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
 - Zéro tâche d'arrière-plan résiduelle, zéro descripteur de fichier orphelin, zéro socket réseau en suspens post-désactivation.
+
+---
+
+## 23. Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire
+
+Pour les cibles matérielles contraintes (telles que l'ESP32 classique pilotant des géométries 128×32), ArcadeMatrix met en œuvre un **Dynamic Presentation Pipeline** adossé à un ensemble de sous-systèmes de réclamation mémoire :
+1. **Profondeur de Couleur Dynamique ($8 \leftrightarrow 4$ / $6 \leftrightarrow 4$) :** Commute dynamiquement entre la profondeur manuelle préférée pour les graphismes (8 ou 6 bits) et une profondeur allégée sécurisée pour TLS (4 bits) pendant l'exécution des moteurs réseau.
+2. **Transactions de Présentation Matérielle :** Reconstruction atomique du pipeline exécutée en $< 30\text{ ms}$ sous extinction matérielle complète via OE.
+3. **Pipeline Single DMA + Canevas (`canvas_single`) :** Économise jusqu'à 32 Ko de DRAM par rapport aux architectures DMA double-buffer traditionnelles.
+4. **Réclamation Mémoire Exhaustive :** Tâches de fond éphémères (`SdSpace`), allocations paresseuses de buffers (`MarqueeEngine`), arrêt SoftAP/mDNS et calibrage fin des piles FreeRTOS.
+
+L'analyse architecturale détaillée, les benchmarks et les comparaisons quantitatives de référence sont documentés dans [docs/MEMORY_OPTIMIZATIONS_FR.md](MEMORY_OPTIMIZATIONS_FR.md).

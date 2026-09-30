@@ -73,7 +73,7 @@ In the Arduino-ESP32 framework (`esp32-hal-spi.c`), passing `SD_CS_PIN` (5) as t
 - **Fix:** Always initialize SPI with `SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, -1)` and explicitly detach the CS pin: `pinMatrixOutDetach(SD_CS_PIN, false, false)`.
 
 ### 🔴 Trap 2: Missing `USER_SPI_BEGIN` in `SdFat`
-In `SdFat` ([`SdSpiArduinoDriver.h`](file:///Users/red1l/Documents/work/git/perso/ArcadeMatrix/.pio/libdeps/esp32dev/SdFat/src/SdCard/SdSpiCard/SpiDriver/SdSpiArduinoDriver.h)), if `spiConfig.options` does not include `USER_SPI_BEGIN`, the driver calls `m_spi->begin()` without arguments, resetting the SPI peripheral with default framework pins.
+In `SdFat` (`SdSpiArduinoDriver.h`), if `spiConfig.options` does not include `USER_SPI_BEGIN`, the driver calls `m_spi->begin()` without arguments, resetting the SPI peripheral with default framework pins.
 - **Fix:** Pass `SdSpiConfig(SD_CS_PIN, SHARED_SPI | USER_SPI_BEGIN, SD_SCK_MHZ(f), &SPI)`.
 
 ### 🟠 Trap 3: Floating MISO Line

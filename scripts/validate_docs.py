@@ -33,6 +33,9 @@ REQUIRED_DOC_FILES = [
     "docs/ASSET_PIPELINE_FR.md",
     "docs/ASSET_PIPELINE_ES.md",
     "docs/ENGINE_COMPATIBILITY_MATRIX.md",
+    "docs/MEMORY_OPTIMIZATIONS.md",
+    "docs/MEMORY_OPTIMIZATIONS_FR.md",
+    "docs/MEMORY_OPTIMIZATIONS_ES.md",
 ]
 
 # Obsolete pattern checks

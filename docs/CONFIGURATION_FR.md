@@ -39,6 +39,7 @@ Ce bloc configure les paramètres DMA pour la bibliothèque `ESP32-HUB75-MatrixP
 | `driver_chip` | `String` | Puce contrôleur (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Ordre des couleurs (`RGB`, `RBG`, `BGR`, ...). Corrigez ici les couleurs inversées. |
 | `color_depth` | `int` | Profondeur des couleurs (`0` = Auto, `1`–`8` bits). Défaut `0` (Auto). En mode Auto, s'adapte à la géométrie et aux exigences TLS de la rotation. |
+| `dynamic_color_depth` | `bool` | Active la commutation dynamique de la profondeur de couleur à chaud ($8 \leftrightarrow 4$ ou $6 \leftrightarrow 4$) sous extinction matérielle OE lors des transitions inter-moteurs (`false` par défaut). Utilisé avec une profondeur manuelle (ex. `8` ou `6`), bascule temporairement à 4 bits pour les moteurs réseau TLS afin de libérer la DRAM, puis restaure la profondeur préférée pour les moteurs graphiques. |
 | `limit_refresh_rate_hz` | `int` | Limite le taux de rafraîchissement (`0` = illimité). |
 | `row_address_mode` | `int` | Type d'adressage des lignes (`0`: Direct Binaire, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
 | `clk_phase` | `bool` | Inverse le front d'horloge CLK (`false` par défaut ; mettre à `true` si la dalle requiert un front inversé). |

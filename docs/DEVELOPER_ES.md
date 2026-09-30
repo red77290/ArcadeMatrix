@@ -148,6 +148,12 @@ public:
 16. **Regla de Oro #16 — Desactivación Sin Asignaciones Dinámicas y Silente (Invariantes 15 y 16):**
     - `deactivate()` NO DEBE realizar ninguna nueva asignación dinámica de memoria (`malloc`, `new`, redimensionamiento de contenedores). Libere la memoria usando `std::vector<T>().swap(vec)` o `{}` en lugar del no vinculante `shrink_to_fit()`.
     - `deactivate()` DEBE retornar solo después de que todas las tareas, temporizadores, callbacks y descriptores de archivo abiertos propiedad del motor se hayan detenido por completo. El sistema regresa a la línea base inactiva de referencia dentro del límite de línea base silente ($|\Delta \text{heap}| \le 2\text{ KB}$).
+17. **Regla de Oro #17 — Quiescencia de Red y Cancelación de Sockets (Invariante N8):**
+    - Todo motor de red debe implementar la cancelación inmediata del transporte del lado del cliente (`session.abort()` / `_client.stop()`) y esperar la finalización síncrona de sus tareas en segundo plano en `deactivate()`.
+    - Una vez cancelada una sesión, no se permite ningún procesamiento de aplicación ni asignación de búferes sobre ella.
+18. **Regla de Oro #18 — Pipeline de Presentación Dinámico y Adaptación de Color (Invariante 21):**
+    - Los motores no deben asumir una profundidad estática fija. Al alternar entre motores gráficos (8 o 6 bits) y motores TLS (4 bits), el pipeline se reconfigura en caliente bajo apagado de hardware OE ($< 30\text{ ms}$).
+    - `FastMatrixPanel::initLuts(depth)` recalcula dinámicamente las tablas de cuantificación gamma para evitar distorsiones de color (ver [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md)).
 
 ---
 

@@ -208,6 +208,12 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
 16. **Golden Rule #16 — Allocation-Free & Quiescent Deactivation (Invariants 15 & 16):**
     - `deactivate()` MUST NOT perform any new dynamic memory allocation (`malloc`, `new`, container resize). Reclaim memory using `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
     - `deactivate()` MUST return only after all engine-owned tasks, timers, callbacks, and open file descriptors have fully stopped. The system returns to the reference idle baseline within the Quiescent Baseline Envelope ($|\Delta \text{heap}| \le 2\text{ KB}$).
+17. **Golden Rule #17 — Network Quiescence & Scoped Socket Abort (Invariant N8):**
+    - All network engines MUST implement immediate client-side socket cancellation (`session.abort()` / `_client.stop()`) and join background worker tasks synchronously inside `deactivate()`.
+    - Once a session is aborted, no subsequent application processing or buffer allocation may take place on that session.
+18. **Golden Rule #18 — Dynamic Presentation Pipeline & Color Depth Adaptation (Invariant 21):**
+    - Engines must not assume permanent static color depth. When switching between rich graphical engines (8 or 6 bits) and memory-intensive TLS engines (4 bits), the presentation pipeline dynamically reconfigures under hardware OE blanking ($< 30\text{ ms}$).
+    - `FastMatrixPanel::initLuts(depth)` dynamically recalculates per-channel gamma lookup tables to prevent color corruption at reduced bit depths (see [MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)).
 
 ---
 
