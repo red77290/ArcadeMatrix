@@ -1,4 +1,5 @@
 #include "WebServerAPI.h"
+#include "../engines/WeatherEngine.h"
 #include "../core/SdSpace.h"
 #include "../core/CpuLoad.h"
 #include "../engines/FighterEngine.h"
@@ -1129,7 +1130,15 @@ void WebServerAPI::setupRoutes() {
             uint32_t loops = g_renderStats.loops.load(), presents = g_renderStats.presents.load();
             uint32_t dtMs = nowMs - lastMs;
             if (lastMs != 0 && dtMs >= 500) {
-                doc["render_loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
+                {
+            WeatherEngine::FetchState ws = WeatherEngine::fetchState();
+            JsonObject wx = doc.createNestedObject("weather_fetch");
+            wx["valid"] = ws.valid;
+            wx["days"] = ws.days;
+            wx["last_attempt_age_s"] = ws.lastAttemptAgeS;
+            wx["last_error"] = ws.lastError;
+        }
+        doc["render_loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
                 doc["render_present_fps"] = (float)(presents - lastPresents) * 1000.0f / dtMs;
             }
             lastMs = nowMs; lastLoops = loops; lastPresents = presents;
