@@ -412,8 +412,12 @@ void AppRuntime::initialize() {
             if (s_servicesRegistered) return;
             s_servicesRegistered = true;
             MDNS.addService("http", "tcp", 80);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+            // Memory optimization on classic ESP32: DLNA/UPnP services not used on standard profile
+            // REVERT INSTRUCTION: Remove #if to advertise UPnP/MediaRenderer on all profiles.
             MDNS.addService("upnp", "tcp", 80);
             MDNS.addService("mediarenderer", "tcp", 80);
+#endif
         };
 
         static String s_wifiHostname;
@@ -439,6 +443,16 @@ void AppRuntime::initialize() {
                 IP_ADDR4(&dns2, 8, 8, 8, 8);
                 dns_setserver(1, &dns1);
                 dns_setserver(2, &dns2);
+
+                // MEMORY OPTIMIZATION: If SoftAP was previously active (or in WIFI_AP_STA),
+                // shut down SoftAP to reclaim internal DRAM buffers (DHCP server, AP beacon pool).
+                // REVERT INSTRUCTION: Remove this block if simultaneous AP+STA mode is explicitly required.
+                if (WiFi.getMode() & WIFI_MODE_AP) {
+                    WiFi.softAPdisconnect(true);
+                    WiFi.mode(WIFI_STA);
+                    LOGI("WiFi", "SoftAP disabled and deallocated to recover internal DRAM.");
+                }
+
                 if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
                     s_mdnsStarted = true;
                     LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());

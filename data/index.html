@@ -6070,7 +6070,7 @@ function attachQuickPresets(input, fieldId, engineId) {
       "Berlin, DE", "Madrid, ES", "Rome, IT", "Los Angeles, US",
       "Sydney, AU", "Dubai, AE", "Singapore, SG", "Toronto, CA"
     ];
-  } else if (eng === 'crypto' || fieldId === 'coins' || fieldId === 'cryptos') {
+  } else if (fieldId === 'coins' || fieldId === 'cryptos' || (fieldId === 'symbols' && eng.includes('crypto'))) {
     presets = [
       "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "SUI", "LINK",
       "PEPE", "SHIB", "NEAR", "DOT", "LTC", "BCH", "UNI", "APT", "TAO", "ICP",
@@ -6079,7 +6079,7 @@ function attachQuickPresets(input, fieldId, engineId) {
       "CRV", "MKR", "FTM", "RUNE", "SAND", "MANA", "AXS", "GALA", "VET", "TRX"
     ];
     isMulti = true;
-  } else if (eng === 'stock') {
+  } else if (fieldId === 'symbols' && eng.includes('stock')) {
     presets = [
       "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "PLTR",
       "SPY", "QQQ", "NFLX", "INTC", "QCOM", "TXN", "ARM", "IBM", "ORCL", "CRM",
@@ -6090,23 +6090,7 @@ function attachQuickPresets(input, fieldId, engineId) {
     presets = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "SPY", "QQQ"];
     isMulti = true;
   } else if (fieldId === 'symbols') {
-    if (eng.includes('crypto')) {
-      presets = [
-        "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "SUI", "LINK",
-        "PEPE", "SHIB", "NEAR", "DOT", "LTC", "BCH", "UNI", "APT", "TAO", "ICP",
-        "KAS", "FET", "RENDER", "XLM", "ETC", "AAVE", "ALGO", "FIL", "ATOM", "HBAR",
-        "POL", "ARB", "OP", "BONK", "WIF", "FLUX", "ERG", "TIA", "SEI", "INJ",
-        "CRV", "MKR", "FTM", "RUNE", "SAND", "MANA", "AXS", "GALA", "VET", "TRX"
-      ];
-    } else if (eng.includes('stock')) {
-      presets = [
-        "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "PLTR",
-        "SPY", "QQQ", "NFLX", "INTC", "QCOM", "TXN", "ARM", "IBM", "ORCL", "CRM",
-        "ADBE", "COIN", "MSTR", "UBER", "DIS", "BA", "BABA", "V", "MA", "BRK.B"
-      ];
-    } else {
-      presets = ["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"];
-    }
+    presets = ["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"];
     isMulti = true;
   } else if (fieldId === 'world_clocks' || fieldId === 'clocks') {
     presets = ["NYC", "TYO", "LON", "PAR", "BER", "DXB", "SYD", "SFO", "SIN", "HKG", "DEL", "MOW"];
@@ -6461,7 +6445,7 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           
           if (input) {
              formGroup.appendChild(input);
-             if (!isBooleanField(field) && !isColorField(field) && !isNumberField(field) && !isFileAssetField(field) && !field.options_endpoint) {
+             if (!isBooleanField(field) && !isColorField(field) && !isNumberField(field) && !isFileAssetField(field) && !field.options_endpoint && !isOptionsField(field) && (!field.options || field.options.length === 0)) {
                const quickPresets = attachQuickPresets(input, field.id, instance.engine_id);
                if (quickPresets) formGroup.appendChild(quickPresets);
              }

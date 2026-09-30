@@ -28,12 +28,18 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     panelWidth = surface ? surface->width() : matrix->width();
     panelHeight = surface ? surface->height() : matrix->height();
 
+    // MEMORY OPTIMIZATION: Do not eagerly allocate 8KB m_rawBuffer at boot time.
+    // Instead, allocate it on-demand in show() if raw pixel streaming is actually used.
+    // REVERT INSTRUCTION: Uncomment the eager allocation below if immediate pre-allocation is required.
+    m_rawBuffer = nullptr;
+    /*
     size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
     if (m_hasPsram) {
         m_rawBuffer = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM);
     } else {
         m_rawBuffer = (uint16_t*)malloc(bufferSize);
     }
+    */
 
     if (!m_gifEngine) {
         m_gifEngine = new GifEngine();
@@ -60,7 +66,16 @@ MarqueeEngine::~MarqueeEngine() {
 }
 
 void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds) {
-    if (!m_rawBuffer || len != expectedBufferBytes()) return;
+    size_t expected = expectedBufferBytes();
+    if (len != expected) return;
+    if (!m_rawBuffer) {
+        if (m_hasPsram) {
+            m_rawBuffer = (uint16_t*)heap_caps_malloc(expected, MALLOC_CAP_SPIRAM);
+        } else {
+            m_rawBuffer = (uint16_t*)malloc(expected);
+        }
+    }
+    if (!m_rawBuffer) return;
     memcpy(m_rawBuffer, rgb565Data, len);
     m_hasRawBuffer = true;
     m_active = true;
@@ -349,6 +364,11 @@ void MarqueeEngine::update(EngineContext* context) {
         if (millis() - m_rawStartTime >= m_rawDurationMs) {
             m_active = false;
             m_hasRawBuffer = false;
+            // On classic ESP32 without PSRAM, free the 8KB raw buffer immediately after playback to recover DRAM
+            if (m_rawBuffer && !m_hasPsram) {
+                free(m_rawBuffer);
+                m_rawBuffer = nullptr;
+            }
         }
     } else if (m_gifEngine) {
         m_gifEngine->update(context);
@@ -391,18 +411,12 @@ void MarqueeEngine::render(EngineContext* context) {
 void MarqueeEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     panelWidth = geometry.width;
     panelHeight = geometry.height;
-    size_t newSize = expectedBufferBytes();
     if (m_rawBuffer) {
-        free(m_rawBuffer);
+        if (m_hasPsram) heap_caps_free(m_rawBuffer);
+        else free(m_rawBuffer);
         m_rawBuffer = nullptr;
     }
-    if (newSize > 0) {
-        if (m_hasPsram) {
-            m_rawBuffer = (uint16_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
-        } else {
-            m_rawBuffer = (uint16_t*)malloc(newSize);
-        }
-    }
+    // Buffer will be reallocated on demand in show() if needed
     if (m_gifEngine) {
         m_gifEngine->onDisplayGeometryChanged(geometry);
     }
