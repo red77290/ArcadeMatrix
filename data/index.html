@@ -6058,9 +6058,11 @@ function buildFileAssetWidget(field, instId, initVal) {
 }
 
 // Helper: Attach Quick-Preset chips underneath text fields (cities, cryptos, stocks, world clocks)
-function attachQuickPresets(input, fieldId) {
+function attachQuickPresets(input, fieldId, engineId) {
   let presets = [];
   let isMulti = false;
+
+  const eng = String(engineId || '').toLowerCase();
 
   if (fieldId === 'city' || fieldId === 'weather_city' || fieldId === 'location') {
     presets = [
@@ -6068,8 +6070,23 @@ function attachQuickPresets(input, fieldId) {
       "Berlin, DE", "Madrid, ES", "Rome, IT", "Los Angeles, US",
       "Sydney, AU", "Dubai, AE", "Singapore, SG", "Toronto, CA"
     ];
-  } else if (fieldId === 'tracked_markets' || fieldId === 'symbols' || fieldId === 'coins' || fieldId === 'cryptos') {
+  } else if (eng === 'crypto' || fieldId === 'coins' || fieldId === 'cryptos') {
+    presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "ADA", "AVAX", "LINK", "SUI", "NEAR", "PEPE", "SHIB"];
+    isMulti = true;
+  } else if (eng === 'stock') {
+    presets = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ"];
+    isMulti = true;
+  } else if (fieldId === 'tracked_markets') {
     presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL"];
+    isMulti = true;
+  } else if (fieldId === 'symbols') {
+    if (eng.includes('crypto')) {
+      presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "ADA", "AVAX", "LINK", "SUI", "NEAR", "PEPE", "SHIB"];
+    } else if (eng.includes('stock')) {
+      presets = ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ"];
+    } else {
+      presets = ["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"];
+    }
     isMulti = true;
   } else if (fieldId === 'world_clocks' || fieldId === 'clocks') {
     presets = ["NYC", "TYO", "LON", "PAR", "BER", "DXB", "SYD", "SFO", "SIN", "HKG", "DEL", "MOW"];
@@ -6425,7 +6442,7 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           if (input) {
              formGroup.appendChild(input);
              if (!isBooleanField(field) && !isColorField(field) && !isNumberField(field) && !isFileAssetField(field) && !field.options_endpoint) {
-               const quickPresets = attachQuickPresets(input, field.id);
+               const quickPresets = attachQuickPresets(input, field.id, instance.engine_id);
                if (quickPresets) formGroup.appendChild(quickPresets);
              }
           }
