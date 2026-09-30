@@ -13,7 +13,12 @@ enum class RotationEffect : uint8_t {
     SMOOTH_SLIDE = 3,
     TUNNEL_ZOOM = 4,
     MATRIX_RAIN = 5,
-    RANDOM = 6
+    RANDOM = 6,
+    WIPE = 7,          ///< a bar sweeps across and takes the picture with it
+    CURTAIN = 8,       ///< closes from both sides, then opens again
+    DISSOLVE = 9,      ///< the picture breaks up into pixels
+    CHECKER = 10,      ///< squares fill in, then clear
+    SHUTTER = 11       ///< horizontal slats close and open
 };
 
 /**
@@ -63,6 +68,16 @@ public:
     bool isRunning() const { return _active; }
 
     /**
+     * @brief Freeze the animation at its covered midpoint.
+     *
+     * The incoming engine does not always have a frame ready when the effect would finish: a GIF is
+     * still reading its file, a weather screen has not repainted yet. Holding keeps the panel
+     * covered instead of revealing black, and the reveal plays as soon as the hold is released.
+     */
+    void setHold(bool hold) { _holding = hold; }
+    bool isHolding() const { return _holding && _active; }
+
+    /**
      * @brief Forces active transition to stop immediately.
      */
     void stop();
@@ -80,6 +95,7 @@ public:
 private:
     bool _active;
     bool _apexApplied;
+    bool _holding = false;
     uint8_t _fromRot;
     uint8_t _toRot;
     RotationEffect _configuredEffect;
@@ -96,6 +112,11 @@ private:
     void renderSlide(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
     void renderZoom(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
     void renderMatrixRain(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
+    void renderWipe(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
+    void renderCurtain(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
+    void renderDissolve(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
+    void renderChecker(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
+    void renderShutter(Adafruit_GFX* display, float progress, int16_t w, int16_t h);
 
     uint16_t getRandomArcadeColor();
 };

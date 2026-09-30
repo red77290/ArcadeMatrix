@@ -1467,6 +1467,8 @@ void WebServerAPI::setupRoutes() {
         doc["auto_rotate"] = snap.matrix.auto_rotate;
         doc["rotation_transition"] = snap.matrix.rotation_transition;
         doc["rotation_transition_duration_ms"] = snap.matrix.rotation_transition_duration_ms;
+        doc["slot_transition"] = snap.matrix.slot_transition;
+        doc["slot_transition_duration_ms"] = snap.matrix.slot_transition_duration_ms;
 
         auto getInst = [&](const String& id) { return snap.getInstance(id); };
         
@@ -1638,6 +1640,14 @@ void WebServerAPI::setupRoutes() {
             }
             if (!doc["auto_rotate"].isNull()) {
                 cfg.matrix.auto_rotate = doc["auto_rotate"].as<bool>();
+            }
+            if (!doc["slot_transition"].isNull()) {
+                cfg.matrix.slot_transition = doc["slot_transition"].as<String>();
+                rotationManager->setSlotTransition(cfg.matrix.slot_transition, cfg.matrix.slot_transition_duration_ms);
+            }
+            if (!doc["slot_transition_duration_ms"].isNull()) {
+                cfg.matrix.slot_transition_duration_ms = doc["slot_transition_duration_ms"].as<int>();
+                rotationManager->setSlotTransition(cfg.matrix.slot_transition, cfg.matrix.slot_transition_duration_ms);
             }
             if (!doc["rotation_transition"].isNull()) {
                 cfg.matrix.rotation_transition = doc["rotation_transition"].as<String>();

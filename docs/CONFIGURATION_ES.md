@@ -48,6 +48,8 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `auto_rotate` | `bool` | Habilitar rotación automática mediante giroscopio/IMU integrado (`true` por defecto). |
 | `rotation_transition` | `String` | Efecto visual de transición (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Duración del efecto de transición en milisegundos (por defecto `400`). |
+| `slot_transition` | `String` | Efecto reproducido cuando la rotación pasa a la siguiente pantalla (`wipe`, `curtain`, `shutter`, `dissolve`, `checker`, `matrix`, `vortex`, `glitch`, `slide`, `zoom`, `random`, `none`). Por defecto `none`. |
+| `slot_transition_duration_ms` | `int` | Duración de la transición entre pantallas, en milisegundos (`100`-`3000`, por defecto `500`). |
 
 > El brillo diurno en vivo **no** se almacena en este bloque; se controla en tiempo de ejecución desde la interfaz Web (deslizador del Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). El brillo nocturno vive en el bloque `system` (§4).
 

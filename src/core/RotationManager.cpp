@@ -304,6 +304,14 @@ void RotationManager::switchToModule(int index) {
               m_ctx->getMatrix()->fillScreen(0);
           }
           matrixEngine.markExternalDraw();
+          // Cover that gap with the configured effect; the next engine loads underneath it.
+          const RotationEffect slotEffect = m_slotEffect.load(std::memory_order_acquire);
+          if (slotEffect != RotationEffect::NONE) {
+              m_slotFx.start(0, 0, slotEffect, (uint32_t)m_slotFxMs.load(std::memory_order_relaxed),
+                             m_ctx->getMatrix()->width(), m_ctx->getMatrix()->height());
+              m_awaitingFirstFrame = true;
+              m_slotFxStartedMs = millis();
+          }
       }
   }
 
@@ -459,6 +467,20 @@ bool RotationManager::loop() {
         currentIndex = (currentIndex + 1) % guard->rotation.size();
         switchToModule(currentIndex);
     }
+    // The transition paints over whatever the engine just drew, so a GIF can spend the animation
+    // opening its file instead of showing a blank panel.
+    if (m_slotFx.isRunning() && m_ctx && m_ctx->getMatrix()) {
+        // Hold the cover until the new engine actually produces a frame, so the reveal never lands
+        // on a blank panel (a GIF still reading its file, a weather screen yet to repaint). Bounded,
+        // so a slot that never draws cannot freeze the rotation.
+        if (m_awaitingFirstFrame && shouldFlip) m_awaitingFirstFrame = false;
+        bool overdue = (millis() - m_slotFxStartedMs) > (uint32_t)(m_slotFxMs.load(std::memory_order_relaxed) + 2500);
+        m_slotFx.setHold(m_awaitingFirstFrame && !overdue);
+        m_slotFx.render(m_ctx->getMatrix(), nullptr);
+        matrixEngine.markExternalDraw();
+        shouldFlip = true;
+    }
+
     return shouldFlip;
 }
 
