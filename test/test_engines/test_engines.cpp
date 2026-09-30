@@ -124,6 +124,50 @@ void test_glow_modes_resolve_colours() {
     TEST_ASSERT_TRUE((dim & 0x1F) < 0x1F);
 }
 
+/**
+ * @brief The time spoken as words, in each language the sign offers.
+ */
+void test_spoken_time_reads_as_words() {
+    char h[24], m[32];
+    I18n::getSpokenTime(12, 0, Lang::EN, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("noon", h);
+    TEST_ASSERT_EQUAL_STRING("", m);          // the hour stands alone, nothing left over
+    I18n::getSpokenTime(0, 0, Lang::EN, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("midnight", h);
+    I18n::getSpokenTime(8, 5, Lang::EN, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("eight", h);
+    TEST_ASSERT_EQUAL_STRING("oh five", m);
+    I18n::getSpokenTime(8, 30, Lang::EN, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("a half", m);
+    I18n::getSpokenTime(8, 42, Lang::EN, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("forty two", m);
+
+    // Each language gets its own phrasing rather than a word-for-word translation.
+    I18n::getSpokenTime(8, 30, Lang::FR, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("huit", h);
+    TEST_ASSERT_EQUAL_STRING("heures et demie", m);
+    I18n::getSpokenTime(8, 21, Lang::FR, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("heures vingt et une", m);
+    I18n::getSpokenTime(8, 30, Lang::ES, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("ocho", h);
+    TEST_ASSERT_EQUAL_STRING("y media", m);
+    I18n::getSpokenTime(8, 21, Lang::ES, h, sizeof(h), m, sizeof(m));
+    TEST_ASSERT_EQUAL_STRING("y veintiuno", m);
+}
+
+/**
+ * @brief Date order: month before day in English, day before month elsewhere.
+ */
+void test_date_line_follows_the_language() {
+    char line[32];
+    I18n::getDateLine(1, 8, 28, Lang::EN, line, sizeof(line));
+    TEST_ASSERT_EQUAL_STRING("MON SEP 28", line);
+    I18n::getDateLine(1, 8, 28, Lang::FR, line, sizeof(line));
+    TEST_ASSERT_EQUAL_STRING("LUN 28 SEPT", line);
+    I18n::getDateLine(1, 8, 28, Lang::ES, line, sizeof(line));
+    TEST_ASSERT_EQUAL_STRING("LUN 28 SEP", line);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -132,6 +176,8 @@ void setup() {
     RUN_TEST(test_visualizer_mode_parsing);
     RUN_TEST(test_message_scroll_math);
     RUN_TEST(test_glow_modes_resolve_colours);
+    RUN_TEST(test_spoken_time_reads_as_words);
+    RUN_TEST(test_date_line_follows_the_language);
     UNITY_END();
 }
 

@@ -16,7 +16,7 @@
  */
 class PacmanClock : public ClockFace {
 public:
-    PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr, bool msVariant = false);
     void draw(const TimeData& t) override;
     void update() override;
 
@@ -34,6 +34,7 @@ private:
     float pacX;                 ///< distance travelled along the parade path, in pixels
     uint16_t ghostColors[4];
     ClockFaceFont faceFont;
+    bool msVariant = false;   ///< Ms Pac-Man: bow, eye and lips over the same body
 
     void formatTime(char* out, size_t n) const;
     static void splitTime(const char* str, char* hours, char* minutes);

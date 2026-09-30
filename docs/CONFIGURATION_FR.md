@@ -261,6 +261,8 @@ Outre `clock_theme`, `clock_font`, `clock_size` et les couleurs, une instance d'
 | `clock_glow` | `enum` | Contour autour des chiffres : `0` aucun, `1` néon (la couleur choisie à pleine intensité avec un centre presque blanc, comme le fait la face Matrix), `2` une couleur dédiée. Par défaut `0`. |
 | `clock_glow_color` | `color` | Couleur du contour lorsque `clock_glow` vaut `2` (par défaut `#00FF41`). |
 
+Les thèmes `30` à `34` et `37` sont des faces adaptées des clockfaces Clockwise. Celles marquées
+`(256x64)` sont conçues pour un panneau large et affichent un avertissement sur les petits panneaux.
 ---
 
 ## 8. Validation autoréparatrice

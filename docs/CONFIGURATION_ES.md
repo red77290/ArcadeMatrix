@@ -261,6 +261,8 @@ Además de `clock_theme`, `clock_font`, `clock_size` y los colores, una instanci
 | `clock_glow` | `enum` | Contorno alrededor de los dígitos: `0` ninguno, `1` neón (el color elegido a plena intensidad con un centro casi blanco, como lo dibuja la cara Matrix), `2` un color propio. Por defecto `0`. |
 | `clock_glow_color` | `color` | Color del contorno cuando `clock_glow` es `2` (por defecto `#00FF41`). |
 
+Los temas `30` a `34` y `37` son caras adaptadas de los clockfaces de Clockwise. Las marcadas
+`(256x64)` están diseñadas para un panel ancho y muestran un aviso en los pequeños.
 ---
 
 ## 8. Validación Autorreparable

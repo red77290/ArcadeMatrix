@@ -472,3 +472,153 @@ const char* I18n::getGNewsStatusLabel(uint8_t status, Lang l) {
             return "GNEWS LIVE";
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Dates and spoken time
+// ---------------------------------------------------------------------------
+
+const char* I18n::getMonthLabel(int month0, Lang l) {
+    static const char* en[] = { "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" };
+    static const char* fr[] = { "JANV", "FEVR", "MARS", "AVR", "MAI", "JUIN",
+                                "JUIL", "AOUT", "SEPT", "OCT", "NOV", "DEC" };
+    static const char* es[] = { "ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+                                "JUL", "AGO", "SEP", "OCT", "NOV", "DIC" };
+    int i = ((month0 % 12) + 12) % 12;
+    switch (l) {
+        case Lang::FR: return fr[i];
+        case Lang::ES: return es[i];
+        default: return en[i];
+    }
+}
+
+void I18n::getDateLine(int weekday, int month0, int day, Lang l, char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    static const char* enDays[] = { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
+    static const char* frDays[] = { "DIM", "LUN", "MAR", "MER", "JEU", "VEN", "SAM" };
+    static const char* esDays[] = { "DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB" };
+    int wd = ((weekday % 7) + 7) % 7;
+    const char* dayName = (l == Lang::FR) ? frDays[wd] : (l == Lang::ES) ? esDays[wd] : enDays[wd];
+    const char* monthName = getMonthLabel(month0, l);
+    if (l == Lang::EN) {
+        snprintf(out, outSize, "%s %s %d", dayName, monthName, day);   // month before the day
+    } else {
+        snprintf(out, outSize, "%s %d %s", dayName, day, monthName);   // day before the month
+    }
+}
+
+namespace {
+
+const char* const EN_HOURS[13] = { "twelve", "one", "two", "three", "four", "five", "six",
+                                   "seven", "eight", "nine", "ten", "eleven", "twelve" };
+const char* const EN_UNITS[20] = { "zero", "one", "two", "three", "four", "five", "six", "seven",
+                                   "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+                                   "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+                                   "nineteen" };
+const char* const EN_TENS[6] = { "", "ten", "twenty", "thirty", "forty", "fifty" };
+
+const char* const FR_HOURS[13] = { "minuit", "une", "deux", "trois", "quatre", "cinq", "six",
+                                   "sept", "huit", "neuf", "dix", "onze", "midi" };
+const char* const FR_UNITS[20] = { "zero", "une", "deux", "trois", "quatre", "cinq", "six", "sept",
+                                   "huit", "neuf", "dix", "onze", "douze", "treize", "quatorze",
+                                   "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf" };
+const char* const FR_TENS[6] = { "", "dix", "vingt", "trente", "quarante", "cinquante" };
+
+const char* const ES_HOURS[13] = { "doce", "una", "dos", "tres", "cuatro", "cinco", "seis",
+                                   "siete", "ocho", "nueve", "diez", "once", "doce" };
+const char* const ES_UNITS[20] = { "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete",
+                                   "ocho", "nueve", "diez", "once", "doce", "trece", "catorce",
+                                   "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve" };
+const char* const ES_TENS[6] = { "", "diez", "veinte", "treinta", "cuarenta", "cincuenta" };
+
+/// Spell a minute count into `out`. Everything here is snprintf into the caller's buffer, so the
+/// face can redraw without a heap allocation on the render core.
+void spellMinutes(int m, Lang l, char* out, size_t n) {
+    if (!out || n == 0) return;
+    if (m < 20) {
+        snprintf(out, n, "%s", (l == Lang::FR) ? FR_UNITS[m] : (l == Lang::ES) ? ES_UNITS[m] : EN_UNITS[m]);
+        return;
+    }
+    int tens = m / 10, units = m % 10;
+    const char* tensWord = (l == Lang::FR) ? FR_TENS[tens] : (l == Lang::ES) ? ES_TENS[tens] : EN_TENS[tens];
+    if (units == 0) {
+        snprintf(out, n, "%s", tensWord);
+        return;
+    }
+    const char* unitWord = (l == Lang::FR) ? FR_UNITS[units] : (l == Lang::ES) ? ES_UNITS[units] : EN_UNITS[units];
+    if (l == Lang::FR) {
+        // vingt et une, trente-deux
+        snprintf(out, n, (units == 1) ? "%s et %s" : "%s-%s", tensWord, unitWord);
+        return;
+    }
+    if (l == Lang::ES) {
+        // veintiuno is one word; from thirty on it is "treinta y uno"
+        if (tens == 2) snprintf(out, n, "veinti%s", unitWord);
+        else           snprintf(out, n, "%s y %s", tensWord, unitWord);
+        return;
+    }
+    snprintf(out, n, "%s %s", tensWord, unitWord);
+}
+
+}  // namespace
+
+void I18n::getSpokenTime(int hours, int minutes, Lang l,
+                         char* hourWords, size_t hourSize,
+                         char* minuteWords, size_t minuteSize) {
+    if (!hourWords || hourSize == 0 || !minuteWords || minuteSize == 0) return;
+    hourWords[0] = '\0';
+    minuteWords[0] = '\0';
+
+    int h24 = ((hours % 24) + 24) % 24;
+    int m = ((minutes % 60) + 60) % 60;
+    int h12 = h24 % 12;
+    char mins[24];
+
+    if (l == Lang::FR) {
+        // "huit" / "heures cinq", with midi and minuit on the hour.
+        if (m == 0 && (h24 == 0 || h24 == 12)) {
+            snprintf(hourWords, hourSize, "%s", (h24 == 0) ? "minuit" : "midi");
+            return;
+        }
+        snprintf(hourWords, hourSize, "%s", FR_HOURS[(h12 == 0) ? ((h24 == 0) ? 0 : 12) : h12]);
+        if (m == 0)       snprintf(minuteWords, minuteSize, "heures");
+        else if (m == 15) snprintf(minuteWords, minuteSize, "heures et quart");
+        else if (m == 30) snprintf(minuteWords, minuteSize, "heures et demie");
+        else if (m == 45) snprintf(minuteWords, minuteSize, "heures quarante-cinq");
+        else {
+            spellMinutes(m, l, mins, sizeof(mins));
+            snprintf(minuteWords, minuteSize, "heures %s", mins);
+        }
+        return;
+    }
+
+    if (l == Lang::ES) {
+        // "ocho" / "y cinco", with mediodia and medianoche on the hour.
+        if (m == 0 && (h24 == 0 || h24 == 12)) {
+            snprintf(hourWords, hourSize, "%s", (h24 == 0) ? "medianoche" : "mediodia");
+            return;
+        }
+        snprintf(hourWords, hourSize, "%s", ES_HOURS[(h12 == 0) ? 0 : h12]);
+        if (m == 0)       snprintf(minuteWords, minuteSize, "en punto");
+        else if (m == 15) snprintf(minuteWords, minuteSize, "y cuarto");
+        else if (m == 30) snprintf(minuteWords, minuteSize, "y media");
+        else {
+            spellMinutes(m, l, mins, sizeof(mins));
+            snprintf(minuteWords, minuteSize, "y %s", mins);
+        }
+        return;
+    }
+
+    // English, the wording of the source face.
+    if (m == 0 && h24 == 0)  { snprintf(hourWords, hourSize, "midnight"); return; }
+    if (m == 0 && h24 == 12) { snprintf(hourWords, hourSize, "noon"); return; }
+    snprintf(hourWords, hourSize, "%s", EN_HOURS[(h12 == 0) ? 0 : h12]);
+    if (m == 0)       snprintf(minuteWords, minuteSize, "o'clock");
+    else if (m == 30) snprintf(minuteWords, minuteSize, "%s", (h24 == 0 || h24 == 12) ? "thirty" : "a half");
+    else if (m < 10)  snprintf(minuteWords, minuteSize, "oh %s", EN_UNITS[m]);
+    else {
+        spellMinutes(m, l, mins, sizeof(mins));
+        snprintf(minuteWords, minuteSize, "%s", mins);
+    }
+}
