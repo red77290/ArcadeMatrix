@@ -184,9 +184,16 @@ paths:
                       driver_chip: { type: string, example: "SHIFTREG" }
                       row_address_mode: { type: integer, example: 0 }
                       rgb_sequence: { type: string, example: "RGB" }
-                      pwm_bits: { type: integer, example: 8 }
+                      color_depth: { type: integer, example: 0, description: "Color depth per channel (0 = Auto adaptive TLS / hardware, 1–8 bits)" }
+                      pwm_bits: { type: integer, example: 0, description: "Alias for color_depth" }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
+                      clk_phase: { type: boolean, example: false }
+                      latch_blanking: { type: integer, example: 4 }
                       render_pipeline: { type: string, example: "auto", enum: [auto, canvas_single, canvas_double, direct_double, direct_single] }
+                      rotation_offset: { type: integer, example: 0 }
+                      auto_rotate: { type: boolean, example: true }
+                      rotation_transition: { type: string, example: "vortex" }
+                      rotation_transition_duration_ms: { type: integer, example: 400 }
                   mqtt:
                     type: object
                     properties:
@@ -1092,6 +1099,11 @@ paths:
                           type: boolean
                         needs_sd:
                           type: boolean
+                        needs_tls:
+                          type: boolean
+                          description: Whether this engine requires TLS secure sockets (HTTPS).
+                        target_fps:
+                          type: integer
                     available:
                       type: boolean
                     reason:
