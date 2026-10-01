@@ -29,24 +29,37 @@ ArcadeMatrix a introduit le pipeline `canvas_single` :
 
 ---
 
-### 2.2 Pipeline de Présentation Dynamique (Adaptive Color Depth $8 \leftrightarrow 4$ / $6 \leftrightarrow 4$)
+### 2.2 Pipeline de Présentation Dynamique & Maximiseur de Couleur Auto ($8 \leftrightarrow 4 \leftrightarrow 2$ Profondeur Adaptative)
 
 #### Le Problème
-Les animations graphiques riches (GIFs, sprites Street Fighter, bandeaux Marquee) exigent une profondeur de 8 ou 6 bits pour un rendu visuel optimal, mais leur empreinte DMA prive mbedTLS de mémoire. À l'inverse, brider le panneau à 4 bits de manière permanente dégrade inutilement l'esthétique visuelle 100 % du temps.
+Les animations graphiques riches (GIFs, sprites Street Fighter, bandeaux Marquee) exigent une profondeur de 8 ou 6 bits pour un rendu visuel optimal, mais leur empreinte DMA prive mbedTLS de mémoire sur le matériel contraint (ESP32 classique 128×32 sans PSRAM). À l'inverse, brider le panneau à 4 bits de manière permanente dégrade inutilement l'esthétique visuelle 100 % du temps. De plus, une remontée naïve à chaud (passer aveuglément de 4 bits à 8 bits) risque d'induire un crash immédiat par Out-Of-Memory (OOM) si la DRAM interne s'est fragmentée pendant l'exécution du moteur réseau.
 
 #### La Solution Architecturale
-Au lieu d'imposer un compromis statique au démarrage, le **Dynamic Presentation Pipeline** reconfigure les ressources matérielles pendant la fenêtre de transition entre moteurs :
-* **Moteurs Graphiques (GIFs, Fighter, Marquee, Clock) :** S'affichent avec la profondeur manuelle préférée (8 ou 6 bits).
-* **Moteurs Réseau TLS (Météo, Crypto, Bourse, Spotify, GNews) :** Basculent temporairement à **4 bits** (`TLS_HOT_RELOAD_COLOR_DEPTH = 4`), réduisant la taille du buffer DMA de ~32 Ko à ~16 Ko et libérant **16 Ko de DRAM contiguë** immédiatement avant la négociation mbedTLS.
-* **Transaction de Présentation Matérielle (Invariant 21) :**
-  1. `OE = HIGH` (Output Enable actif : écran physiquement noir).
-  2. Arrêt du contrôleur I2S DMA.
-  3. Libération de l'ancien buffer DMA.
-  4. Allocation du nouveau buffer DMA à la profondeur cible.
-  5. Redémarrage de l'I2S DMA.
-  6. Rendu et commit de la première frame valide en mémoire hors-écran.
-  7. `OE = LOW` (Output Enable relâché : reprise de l'affichage).
-* **Zéro Glitch / Invisibilité Totale :** La transaction s'exécute en **moins de 30 ms** (environ 1.5 frame à 60 FPS), totalement imperceptible lors de la transition d'engin.
+Au lieu d'imposer un compromis statique au démarrage ou une bascule aveugle, le **Dynamic Presentation Pipeline** associe la quiescence matérielle à un modèle prédictif de mémoire en temps réel dans `PipelineSelectionPolicy::resolveTargetDepth` :
+
+1. **Modélisation de la Mémoire Contiguë en Temps Réel :**
+   Avant d'activer un moteur entrant, `DisplayRuntime` interroge les métriques réelles de la DRAM interne via `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`. La politique calcule mathématiquement le bloc contigu résultant pour chaque profondeur candidate $D \in [2, \text{plafond}]$ :
+   $$\text{estimatedBlock} = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit}$$
+   où $\text{bytesPerBit} = \text{DmaMemoryLayout::calculateTotalBytes}(\text{width}, \text{height}, 1, \text{false})$.
+
+2. **Contrat d'Admission Mémoire des Moteurs :**
+   * **Moteurs Réseau TLS (Météo, Crypto, Bourse, Spotify, GNews) :** Exigent $\ge 26\,624\,\text{octets}$ (`TLS_CONTIGUOUS_REQUIRED`) plus une marge opérationnelle de sécurité de $4\,096\,\text{octets}$ ($30\,720\,\text{octets}$ au total). La politique descend les profondeurs candidates (atterrissant typiquement à 4 bits, ou 2 bits sous pression extrême) pour libérer jusqu'à **16 à 24 Ko de DRAM contiguë** immédiatement avant la négociation mbedTLS.
+   * **Moteurs Graphiques (GIFs, Fighter, Clock, Canvas, Matrix) :** Exigent une marge contiguë suffisante pour les frames d'animation. La politique évalue les profondeurs depuis le plafond configuré (jusqu'à 8 bits en mode Auto) vers le bas, restaurant la fidélité maximale *uniquement si l'opération est mathématiquement protégée contre un OOM*.
+
+3. **Plancher de Protection (Minimum 2 Bits) :**
+   `FastMatrixPanel::initLuts` et les gardes de reconfiguration supportent une profondeur descendant jusqu'à 2 bits ($2 \le \text{depth} \le 8$), garantissant un mode dégradé ultra-économe en cas de fragmentation sévère du tas, sans coupure d'affichage.
+
+4. **Transaction de Présentation Matérielle (Invariant 21) :**
+   Pendant la fenêtre de transition entre moteurs, la transaction matérielle s'exécute proprement :
+   1. `OE = HIGH` (Output Enable actif : écran physiquement noir).
+   2. Arrêt du contrôleur I2S DMA.
+   3. Libération de l'ancien buffer DMA.
+   4. Allocation du nouveau buffer DMA à la profondeur cible.
+   5. Régénération des LUTs de couleur via `FastMatrixPanel::initLuts(targetDepth)`.
+   6. Redémarrage de l'I2S DMA.
+   7. Rendu et commit de la première frame valide en mémoire hors-écran.
+   8. `OE = LOW` (Output Enable relâché : reprise de l'affichage).
+   * **Zéro Glitch / Invisibilité Totale :** La transaction s'exécute en **moins de 30 ms** (environ 1.5 frame à 60 FPS), totalement imperceptible lors de la transition d'engin.
 
 ---
 

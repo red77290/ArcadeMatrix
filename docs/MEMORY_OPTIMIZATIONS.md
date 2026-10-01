@@ -29,24 +29,37 @@ ArcadeMatrix introduced the `canvas_single` pipeline:
 
 ---
 
-### 2.2 Dynamic Presentation Pipeline (Adaptive Color Depth $8 \leftrightarrow 4$ / $6 \leftrightarrow 4$)
+### 2.2 Dynamic Presentation Pipeline & Full Auto Color Maximizer ($8 \leftrightarrow 4 \leftrightarrow 2$ Adaptive Depth)
 
 #### The Problem
-High-contrast graphics (GIFs, Street Fighter sprites, marquee banners) look significantly richer in 8-bit or 6-bit color depth (up to 16.7 million colors), but their DMA footprint starves mbedTLS. Conversely, setting color depth to 4 bits permanently sacrifices graphical richness 100% of the time.
+High-contrast graphics (GIFs, Street Fighter sprites, marquee banners) look significantly richer in 8-bit or 6-bit color depth (up to 16.7 million colors), but their DMA footprint starves mbedTLS on memory-constrained hardware (e.g. ESP32 classic 128×32 without PSRAM). Conversely, fixing color depth to 4 bits permanently degrades graphical fidelity 100% of the time. Furthermore, a naive runtime upscale (e.g. jumping blindly from 4 bits back to 8 bits) risks an immediate Out-Of-Memory (OOM) panic if internal DRAM has fragmented during the network engine's operation.
 
 #### The Architectural Solution
-Rather than enforcing a static compromise at boot, the **Dynamic Presentation Pipeline** reconfigures hardware presentation resources during the inter-engine transition window:
-* **Graphics Engines (GIFs, Fighter, Marquee, Clock):** Render at the user's preferred manual depth (8 or 6 bits).
-* **TLS Network Engines (Weather, Crypto, Stock, Spotify, GNews):** Temporarily transition down to **4 bits** (`TLS_HOT_RELOAD_COLOR_DEPTH = 4`), shrinking the DMA buffer from ~32 KB to ~16 KB and freeing **16 KB of contiguous DRAM** immediately before mbedTLS negotiates.
-* **Hardware Presentation Transaction (Invariant 21):**
-  1. `OE = HIGH` (Output Enable asserted: panel completely blanked in hardware).
-  2. Stop I2S DMA controller.
-  3. Release old DMA buffers.
-  4. Allocate new DMA buffers at target depth.
-  5. Restart I2S DMA.
-  6. Render and commit first valid frame to the offscreen canvas.
-  7. `OE = LOW` (Output Enable released: active display resumes).
-* **Zero Glitch / Visual Invisibility:** The entire hardware transaction executes in **< 30 ms** (less than 2 frames at 60 FPS), imperceptible during normal inter-engine transitions.
+Rather than enforcing a static compromise at boot or a blind toggle, the **Dynamic Presentation Pipeline** combines hardware quiescence with a real-time predictive memory model in `PipelineSelectionPolicy::resolveTargetDepth`:
+
+1. **Real-Time Contiguous Memory Modeling:**
+   Before activating an incoming engine, `DisplayRuntime` queries real-time internal DRAM metrics via `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`. The policy mathematically computes the resulting contiguous block for every candidate depth $D \in [2, \text{ceiling}]$:
+   $$\text{estimatedBlock} = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit}$$
+   where $\text{bytesPerBit} = \text{DmaMemoryLayout::calculateTotalBytes}(\text{width}, \text{height}, 1, \text{false})$.
+
+2. **Engine Memory Admission Contract:**
+   * **TLS Network Engines (Weather, Crypto, Stock, Spotify, GNews):** Require $\ge 26,624\,\text{bytes}$ (`TLS_CONTIGUOUS_REQUIRED`) plus an operating safety margin of $4,096\,\text{bytes}$ ($30,720\,\text{bytes}$ total). The policy steps down through candidate depths (typically landing at 4 bits, or 2 bits under extreme pressure) to free up to **16 to 24 KB of contiguous DRAM** immediately before mbedTLS negotiates.
+   * **Graphical Engines (GIFs, Fighter, Clock, Canvas, Matrix):** Require sufficient contiguous headroom for animation frames. The policy tests depths from the configured ceiling (up to 8 bits in Auto mode) downward, restoring the highest viable fidelity *only when proven safe against OOM*.
+
+3. **Floor Protection (2-Bit Minimum):**
+   `FastMatrixPanel::initLuts` and presentation reconfigure guards support down to 2-bit color depth ($2 \le \text{depth} \le 8$), ensuring an ultra-low memory operational fallback under extreme heap fragmentation without blackouts.
+
+4. **Hardware Presentation Transaction (Invariant 21):**
+   During the inter-engine transition window, the hardware transaction executes cleanly:
+   1. `OE = HIGH` (Output Enable asserted: panel completely blanked in hardware).
+   2. Stop I2S DMA controller.
+   3. Release old DMA buffers.
+   4. Allocate new DMA buffers at target depth.
+   5. Rebuild color LUTs via `FastMatrixPanel::initLuts(targetDepth)`.
+   6. Restart I2S DMA.
+   7. Render and commit first valid frame to the offscreen canvas.
+   8. `OE = LOW` (Output Enable released: active display resumes).
+   * **Zero Glitch / Visual Invisibility:** The entire transaction executes in **< 30 ms** (less than 2 frames at 60 FPS), completely imperceptible during engine transitions.
 
 ---
 
