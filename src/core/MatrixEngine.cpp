@@ -12,6 +12,7 @@ RenderStats g_renderStats;
 #include "drawing/Hub75BulkEncoder.h"
 #include "drawing/Hub75PresentationBackend.h"
 #include "drawing/PipelineSelectionPolicy.h"
+#include "drawing/Hub75DmaLayout.h"
 #include "drawing/DmaMemoryLayout.h"
 #include "../../include/HardwareProfile.h"
 
@@ -245,7 +246,8 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
              targetDepth);
         res.success = false;
         res.effectiveDepth = 0;
-        res.fallbackUsed = true;
+        res.fallbackAttempted = true;
+        res.fallbackUsed = false;
         res.failureReason = ReconfigureFailure::NoValidPipeline;
         res.failureReasonStr = "Target and fallback DMA allocations failed";
         setBlank(true);
@@ -259,22 +261,19 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
     display->setBrightness8(prevBrightness);
     if (m_panel) m_panel->rememberBrightness8(prevBrightness);
 
-    // Invariant P0: Commit Frame 0 to the newly allocated DMA pipeline before releasing OE
+    // Invariant P0: Commit Frame 0 to the newly allocated DMA pipeline via PresentationBackend before releasing OE
     bool frame0Committed = false;
-    if (m_panel) {
-        m_panel->clearScreen();
-        if (m_doubleBuffered && display) {
-            display->flipDMABuffer();
-            m_panel->clearScreen();
-        }
-        frame0Committed = (display != nullptr);
+    if (m_presentationBackend) {
+        PresentationTiming pt = m_presentationBackend->commitFirstFrame();
+        frame0Committed = (pt.result == PresentationResult::Ok);
     }
 
     if (!frame0Committed) {
         LOGE("MatrixEngine", "CRITICAL: Frame 0 commit failed! Maintaining OE HIGH.");
         res.success = false;
         res.effectiveDepth = 0;
-        res.fallbackUsed = true;
+        res.fallbackAttempted = (currentAllocDepth != targetDepth);
+        res.fallbackUsed = false;
         res.failureReason = ReconfigureFailure::Frame0PresentationFailed;
         res.failureReasonStr = "Frame 0 commit failed";
         setBlank(true);
@@ -292,6 +291,7 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
 
     res.success = true;
     res.effectiveDepth = m_activeColorDepth;
+    res.fallbackAttempted = (currentAllocDepth != targetDepth);
     res.fallbackUsed = (res.effectiveDepth != res.requestedDepth);
     res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
     res.blankDurationUs = micros() - startUs;
@@ -360,7 +360,7 @@ void MatrixEngine::blitCanvas565(const uint16_t* src, int canvasWidth, int canva
 }
 
 size_t FastMatrixPanel::getDmaAllocatedBytes() const {
-    return DmaMemoryLayout::calculateTotalBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
+    return Hub75DmaLayout::calculateBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
 }
 
 

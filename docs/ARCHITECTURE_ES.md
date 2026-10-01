@@ -422,7 +422,7 @@ Para plataformas con limitaciones severas de memoria (como el ESP32 clásico con
 4. **Sobrescritura Dinámica de LUTs (`FastMatrixPanel::initLuts`):** Recalibra instantáneamente las curvas gamma y tablas de cuantificación a cualquier profundidad sin reiniciar el ESP32.
 5. **Streaming HTTP Cero-Asignación:** Análisis de respuestas REST sobre búferes de pila fija sin consumo de montón.
 6. **Invariantes Formales de Presentación:**
-   - **Invariante 21 — Aislamiento de Salida HUB75:** Durante la reconfiguración del pipeline, OE permanece inactivo (HIGH / panel apagado) hasta que el fotograma 0 es confirmado (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`). La quiescencia lógica ($\le 150\text{ ms}$) precede al aislamiento OE.
+   - **Invariante 21 — Aislamiento de Salida HUB75:** Durante la reconfiguración del pipeline, OE permanece inactivo (HIGH / panel apagado) hasta que el fotograma 0 es confirmado (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`). `deactivate()` garantiza estrictamente la quiescencia lógica de renderizado en Core 1, mientras que la quiescencia física de tareas y red se finaliza en `shutdownForDestruction()` antes del desmontaje.
    - **Invariante N8 — Aislamiento Post-Quiescencia:** Una vez cancelada una sesión de red y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación sobre esa sesión.
 
 El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).

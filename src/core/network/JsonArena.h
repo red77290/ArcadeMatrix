@@ -1,9 +1,10 @@
 /**
  * @file JsonArena.h
- * @brief Zero-heap REST streaming JSON buffer arena for Core 0 network operations.
+ * @brief Fixed-capacity StaticJsonDocument buffer arena with static Core 0 synchronization.
  *
  * Provides a statically pre-allocated StaticJsonDocument arena to eliminate DynamicJsonDocument
  * heap allocations during REST payload deserialization under concurrent mbedTLS operations.
+ * Guaranteed zero-heap synchronization via StaticSemaphore_t.
  */
 #pragma once
 #include <ArduinoJson.h>
@@ -17,6 +18,10 @@ class JsonArena {
 public:
     static constexpr size_t ARENA_CAPACITY = 4096;
 
+    static void begin() {
+        (void)instance();
+    }
+
     static JsonArena& instance() {
         static JsonArena s_instance;
         return s_instance;
@@ -24,7 +29,7 @@ public:
 
     /**
      * @brief RAII Lock acquiring exclusive access to the Core 0 shared JSON arena.
-     * Guaranteed to be initialized at boot time on Core 0, zero allocations on render path.
+     * Statically initialized at boot time on Core 0, zero dynamic heap allocations.
      */
     class Lock {
     public:
@@ -55,12 +60,13 @@ public:
 private:
     JsonArena() {
 #if defined(ESP32)
-        _mutex = xSemaphoreCreateMutex();
+        _mutex = xSemaphoreCreateMutexStatic(&_mutexBuffer);
 #endif
     }
 
     StaticJsonDocument<ARENA_CAPACITY> _doc;
 #if defined(ESP32)
+    StaticSemaphore_t _mutexBuffer;
     SemaphoreHandle_t _mutex = nullptr;
 #endif
 };

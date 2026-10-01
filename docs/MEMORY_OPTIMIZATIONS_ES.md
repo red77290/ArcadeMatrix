@@ -59,17 +59,17 @@ En lugar de forzar un compromiso estático al inicio o una alternancia a ciegas,
 
 4. **Transacción de Presentación de Hardware (Invariante 21):**
    Durante la ventana de transición entre motores, la transacción de hardware se ejecuta de manera limpia:
-   1. `oldEngine->deactivate()` establece la quiescencia lógica acotada ($\le 150\text{ ms}$).
+   1. `oldEngine->deactivate()` establece la quiescencia lógica de renderizado en Core 1 (desvinculando la superficie). La quiescencia física de tareas y red se finaliza en `shutdownForDestruction()` antes del desmontaje.
    2. `OE = HIGH` (Output Enable activo: panel completamente negro en hardware).
    3. Desmontaje del pipeline DMA activo.
    4. Intento de asignación DMA objetivo (`requestedDepth`: hasta 8 bits para gráficos, 4 bits nominal para TLS).
    5. Si falla, intento de degradación progresiva ($4 \to 2$ bits).
    6. Si fallan todas las degradaciones, mantener `OE = HIGH` en estado `PresentationRecovery` (cero parpadeo ni señal corrupta).
    7. Reconstrucción de las tablas LUT de color con `FastMatrixPanel::initLuts(effectiveDepth)`.
-   8. Renderizado del fotograma 0 y commit en el búfer DMA.
+   8. Commit del fotograma 0 (fotograma negro determinista) mediante `m_presentationBackend->commitFirstFrame()`.
    9. **Invariante P0:** `OE = LOW` (Output Enable desactivado) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`).
-   * **Cero Glitch / Invisibilidad Total:** El apagado de hardware se ejecuta en **menos de 30 ms**, imperceptible durante la rotación entre motores.
-   * La telemetría registra rigurosamente `requestedDepth`, `effectiveDepth`, y `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * **Cero Glitch / Invisibilidad Total:** El apagado de hardware tiene un **objetivo de calificación < 30 ms**, imperceptible durante la rotación entre motores.
+   * La telemetría registra rigurosamente `requestedDepth`, `effectiveDepth`, `fallbackAttempted`, y `fallbackUsed = (effectiveDepth != requestedDepth)`.
    * Las reglas formales y tablas de dimensionamiento se detallan en [MEMORY_MODEL_ES.md](MEMORY_MODEL_ES.md).
 
 ---

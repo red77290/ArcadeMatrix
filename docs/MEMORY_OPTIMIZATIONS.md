@@ -59,17 +59,17 @@ Rather than enforcing a static compromise at boot or a blind toggle, the **Dynam
 
 4. **Hardware Presentation Transaction (Invariant 21):**
    During the inter-engine transition window, the hardware transaction executes cleanly:
-   1. `oldEngine->deactivate()` establishes bounded logical quiescence ($\le 150\text{ ms}$).
+   1. `oldEngine->deactivate()` establishes non-blocking Core 1 logical rendering quiescence (detaching drawing surface). Background task/network quiescence is finalized by `shutdownForDestruction()` prior to pipeline teardown.
    2. `OE = HIGH` (Output Enable asserted: panel physically blanked in hardware).
    3. Teardown active I2S/LCD DMA pipeline.
    4. Attempt target DMA allocation (`requestedDepth`: up to 8 bits for graphics, 4 bits nominal for TLS).
    5. If target allocation fails, initiate Progressive Fallback Attempt ($4 \to 2$ bits).
    6. If all fallbacks fail, maintain `OE = HIGH` in `PresentationRecovery` (no corrupted visual output).
    7. Rebuild color LUTs via `FastMatrixPanel::initLuts(effectiveDepth)`.
-   8. Render Frame 0 to the canvas and commit to DMA.
+   8. Commit Frame 0 (deterministic black frame) via `m_presentationBackend->commitFirstFrame()`.
    9. **Invariant P0:** `OE = LOW` (Output Enable released) strictly after `firstFrameCommitted == true`.
-   * **Zero Glitch / Visual Invisibility:** The entire blackout window executes in **< 30 ms**, completely imperceptible during engine transitions.
-   * Telemetry rigorously tracks `requestedDepth`, `effectiveDepth`, and `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * **Zero Glitch / Visual Invisibility:** The entire blackout window achieves a **< 30 ms qualification target**, completely imperceptible during engine transitions.
+   * Telemetry rigorously tracks `requestedDepth`, `effectiveDepth`, `fallbackAttempted`, and `fallbackUsed = (effectiveDepth != requestedDepth)`.
    * Detailed formal rules and DMA sizing tables are maintained in [MEMORY_MODEL.md](MEMORY_MODEL.md).
 
 ---

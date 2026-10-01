@@ -66,6 +66,17 @@ public:
     virtual PresentationTiming commit(const PresentationPolicy& policy) = 0;
 
     /**
+     * @brief Commits Frame 0 (initial deterministic black frame) to initialize and validate
+     * the DMA pipeline during a presentation reconfiguration before hardware OE unblanking.
+     * @return PresentationTiming Live performance telemetry with status Ok on successful commit
+     */
+    virtual PresentationTiming commitFirstFrame() {
+        PresentationTiming pt;
+        pt.result = PresentationResult::BackendUnavailable;
+        return pt;
+    }
+
+    /**
      * @brief High-level presentation entry point orchestrating encoding and commit.
      * Enforces pipeline-specific ordering:
      * - Double Buffer: Encode -> Cache Writeback -> Safe Window -> (Optional Blank) -> Swap -> Unblank

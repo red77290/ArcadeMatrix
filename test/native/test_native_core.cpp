@@ -4,6 +4,7 @@
 #include "core/EngineRegistry.h"
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
+#include "core/drawing/Hub75DmaLayout.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 
@@ -781,6 +782,68 @@ void test_rotation_requirements_aggregation(void) {
     TEST_ASSERT_EQUAL_UINT32(12000, agg.internalContiguousBytes);
 }
 
+void test_render_transaction_contracts(void) {
+    // 1. Hub75DmaLayout Canonical Payload & Admission Overhead
+    // For 128x32: rows = 16, stride = 256 bytes.
+    // 8 bits: 16 * 8 * 256 = 32768 bytes.
+    size_t dma8 = Hub75DmaLayout::calculateBytes(128, 32, 8, false);
+    TEST_ASSERT_EQUAL_UINT32(32768, dma8);
+
+    // 4 bits: 16 * 4 * 256 = 16384 bytes (saves 16384 bytes DRAM for TLS).
+    size_t dma4 = Hub75DmaLayout::calculateBytes(128, 32, 4, false);
+    TEST_ASSERT_EQUAL_UINT32(16384, dma4);
+
+    // 2 bits: 16 * 2 * 256 = 8192 bytes (saves 24576 bytes DRAM).
+    size_t dma2 = Hub75DmaLayout::calculateBytes(128, 32, 2, false);
+    TEST_ASSERT_EQUAL_UINT32(8192, dma2);
+
+    // With descriptor overhead (16 rows * 8 depth * 1 buffer * 16 bytes = 2048 bytes overhead -> 34816 bytes)
+    size_t dma8Desc = Hub75DmaLayout::calculateBytes(128, 32, 8, false, true);
+    TEST_ASSERT_EQUAL_UINT32(34816, dma8Desc);
+
+    // 2. Deterministic 8 <-> 4 Dynamic Depth targeting
+    EngineRequirements tlsReq;
+    tlsReq.needsTls = true;
+    EngineRequirements graphicsReq;
+    graphicsReq.needsTls = false;
+
+    // A. Transition from Graphics (8 bits) to TLS engine on 128x32 ESP32 (nominal 4 bits)
+    uint8_t targetForTls = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetForTls);
+
+    // B. Transition from TLS engine (4 bits) back to Graphics engine (configured 8 bits)
+    uint8_t targetForGraphics = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, graphicsReq, 4, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, targetForGraphics);
+
+    // C. User configured 6 bits ceiling: TLS targets 4 bits, Graphics targets 6 bits
+    uint8_t targetCeiling6Tls = PipelineSelectionPolicy::resolveTargetDepth(
+        6, true, 128, 32, false, tlsReq, 6, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetCeiling6Tls);
+
+    uint8_t targetCeiling6Graphics = PipelineSelectionPolicy::resolveTargetDepth(
+        6, true, 128, 32, false, graphicsReq, 4, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(6, targetCeiling6Graphics);
+
+    // D. Critical memory pressure (< 28KB contiguous block for TLS) -> progressive fallback floor (2 bits)
+    uint8_t targetPressureFloor = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 12000, 35000, 20000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(2, targetPressureFloor);
+
+    // E. Telemetry contract validation
+    bool fallbackUsedOnTls = (targetForTls != 8); // effective 4 != requested 8
+    TEST_ASSERT_TRUE(fallbackUsedOnTls);
+
+    bool fallbackUsedOnGraphics = (targetForGraphics != 8); // effective 8 == requested 8
+    TEST_ASSERT_FALSE(fallbackUsedOnGraphics);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -830,6 +893,7 @@ int main(int argc, char** argv) {
     // Color Depth & Pipeline Selection Tests
     RUN_TEST(test_pipeline_selection_effective_color_depth);
     RUN_TEST(test_rotation_requirements_aggregation);
+    RUN_TEST(test_render_transaction_contracts);
 
     return UNITY_END();
 }

@@ -3,6 +3,7 @@
  * @brief Implementation of Hub75PresentationBackend.
  */
 #include "Hub75PresentationBackend.h"
+#include "Hub75DmaLayout.h"
 #include "DmaMemoryLayout.h"
 #include "PresentationTimingModel.h"
 #include "Hub75BulkEncoder.h"
@@ -110,6 +111,61 @@ PresentationTiming Hub75PresentationBackend::commit(const PresentationPolicy& po
         timing.result = PresentationResult::FrameBudgetExceeded;
     }
 
+    return timing;
+}
+
+PresentationTiming Hub75PresentationBackend::commitFirstFrame() {
+    PresentationTiming timing;
+    if (!_engine) {
+        timing.result = PresentationResult::BackendUnavailable;
+        return timing;
+    }
+
+    FastMatrixPanel* panel = _engine->getFastPanel();
+    MatrixPanel_I2S_DMA* dma = _engine->getDisplay();
+    if (!panel || !dma) {
+        timing.result = PresentationResult::DmaTargetUnavailable;
+        return timing;
+    }
+
+    uint32_t t0 = micros();
+
+    // 1. Clear active drawing backbuffer to black (Frame 0)
+    panel->clearScreen();
+
+    // 2. Writeback CPU cache lines if SPIRAM DMA
+#if defined(SPIRAM_DMA_BUFFER)
+    uint16_t rpf = _height / 2;
+    for (uint8_t y = 0; y < rpf; y++) {
+        for (uint8_t p = 0; p < _colorDepth; p++) {
+            uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
+            if (dmaRow) {
+                Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
+            }
+        }
+    }
+#endif
+
+    // 3. Hardware presentation (flip to commit Frame 0)
+    _engine->present();
+
+    // 4. In double buffering, clear second buffer so both DMA planes are pristine black
+    if (_doubleBuffer) {
+        panel->clearScreen();
+#if defined(SPIRAM_DMA_BUFFER)
+        for (uint8_t y = 0; y < rpf; y++) {
+            for (uint8_t p = 0; p < _colorDepth; p++) {
+                uint16_t* dmaRow = panel->getBackbufferRowPlane(y, p);
+                if (dmaRow) {
+                    Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)_width * sizeof(uint16_t));
+                }
+            }
+        }
+#endif
+    }
+
+    timing.result = PresentationResult::Ok;
+    timing.totalPresentUs = micros() - t0;
     return timing;
 }
 
@@ -309,7 +365,7 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
 }
 
 size_t Hub75PresentationBackend::calculateDmaBytes() const {
-    return DmaMemoryLayout::calculateTotalBytes(_width, _height, _colorDepth, _doubleBuffer);
+    return Hub75DmaLayout::calculateBytes(_width, _height, _colorDepth, _doubleBuffer);
 }
 
 void Hub75PresentationBackend::markExternalDraw() {

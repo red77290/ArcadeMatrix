@@ -3,6 +3,7 @@
  * @brief Implementation of PipelineSelectionPolicy with live memory awareness and color depth admission.
  */
 #include "PipelineSelectionPolicy.h"
+#include "Hub75DmaLayout.h"
 #include "../../hal/BoardProfile.h"
 #include "../Logger.h"
 #include "../CompatibilityEvaluator.h"
@@ -188,12 +189,12 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
         if (manual > COLOR_DEPTH_MAX) manual = COLOR_DEPTH_MAX;
         res.effectiveColorDepth = manual;
     } else {
-        // Auto mode: evaluate candidate depths from highest quality downwards (up to 8 bits for all platforms)
-        static const uint8_t s_candidates[] = {8, 7, 6, 5, 4, 3, 2, 1};
+        // Auto mode: evaluate candidate depths from highest quality downwards (up to 8 bits, min 2 bits)
+        static const uint8_t s_candidates[] = {8, 7, 6, 5, 4, 3, 2};
         const uint8_t* candidates = s_candidates;
         size_t numCandidates = sizeof(s_candidates);
 
-        uint8_t selectedDepth = candidates[numCandidates - 1]; // fallback lowest
+        uint8_t selectedDepth = candidates[numCandidates - 1]; // fallback lowest (2 bits)
         for (size_t i = 0; i < numCandidates; ++i) {
             uint8_t d = candidates[i];
             if (pipelineFits(width, height, d, res.descriptor, hasPsram, effectiveMem, requirements)) {
@@ -205,7 +206,7 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     }
 
     // Recompute estimated DMA bytes for selected depth
-    res.descriptor.estimatedDmaBytes = DmaMemoryLayout::calculateTotalBytes(
+    res.descriptor.estimatedDmaBytes = Hub75DmaLayout::calculateBytes(
         width, height, res.effectiveColorDepth, res.descriptor.dmaDoubleBuffered
     );
 
@@ -418,8 +419,31 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     }
 #endif
 
-    // Evaluate candidates from maxDepthCeiling (e.g. 8 bits) down to 2 bits
-    for (int candidate = (int)maxDepthCeiling; candidate >= 2; --candidate) {
+    // Determine candidate evaluation sequence:
+    // - For TLS engines: deterministic nominal target is min(maxDepthCeiling, 4), with 2-bit progressive floor.
+    // - For non-TLS graphics engines: nominal target is maxDepthCeiling (e.g. 8 bits), with 4-bit and 2-bit fallback floors.
+    uint8_t candidateDepths[3];
+    size_t numCandidates = 0;
+    if (reqs.needsTls) {
+        uint8_t tlsNominal = (maxDepthCeiling > 4) ? 4 : maxDepthCeiling;
+        candidateDepths[0] = tlsNominal;
+        numCandidates = 1;
+        if (tlsNominal > 2) {
+            candidateDepths[numCandidates++] = 2;
+        }
+    } else {
+        candidateDepths[0] = maxDepthCeiling;
+        numCandidates = 1;
+        if (maxDepthCeiling > 4) {
+            candidateDepths[numCandidates++] = 4;
+        }
+        if (candidateDepths[numCandidates - 1] > 2) {
+            candidateDepths[numCandidates++] = 2;
+        }
+    }
+
+    for (size_t i = 0; i < numCandidates; ++i) {
+        uint8_t candidate = candidateDepths[i];
         int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)bytesPerBit;
         int64_t estimatedFree = (int64_t)currentFreeInternalHeap + deltaMem;
         int64_t estimatedBlock = (int64_t)currentLargestBlock + deltaMem;
@@ -431,7 +455,7 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + 65536));
 
         if (freeOk && blockOk && dmaOk && psramOk) {
-            return (uint8_t)candidate;
+            return candidate;
         }
     }
 

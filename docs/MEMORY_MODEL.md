@@ -90,7 +90,7 @@ sequenceDiagram
     participant F0 as Frame 0 Commit
 
     Note over RM: 1. Quiescent Deactivation
-    RM->>RM: oldEngine->deactivate() [Bounded cooperative wait <= 150ms]
+    RM->>RM: oldEngine->deactivate() [Non-blocking Core 1 logical rendering quiescence]
     
     Note over OE: 2. Hardware Blanking
     ME->>OE: digitalWrite(OE, HIGH) [LEDs physically disabled]

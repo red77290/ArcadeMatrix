@@ -101,6 +101,7 @@ struct ReconfigureResult {
     uint8_t effectiveDepth = 0;
     size_t dmaBytes = 0;
     uint32_t blankDurationUs = 0;
+    bool fallbackAttempted = false;
     bool fallbackUsed = false;
     ReconfigureFailure failureReason = ReconfigureFailure::None;
     const char* failureReasonStr = nullptr;

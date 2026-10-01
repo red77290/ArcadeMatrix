@@ -35,6 +35,8 @@ typedef enum {
  */
 struct LastResetContext {
     uint32_t magic = 0;              ///< Signature 0xB007C0DE
+    uint16_t version = 1;            ///< Schema version (1)
+    uint16_t reserved = 0;           ///< 32-bit alignment padding
     esp_reset_reason_t reason = ESP_RST_UNKNOWN;
     char activeEngineId[16] = {0};
     uint8_t colorDepth = 0;
@@ -43,6 +45,7 @@ struct LastResetContext {
     uint32_t core1StallMs = 0;
     bool tlsSessionActive = false;
     uint32_t timestamp = 0;
+    uint32_t crc32 = 0;              ///< CRC32 integrity check
 };
 
 class SystemWatchdog {
@@ -60,10 +63,12 @@ public:
     void recordCore1Heartbeat(uint32_t frameDurationUs);
 
     const LastResetContext& getLastResetContext() const { return m_capturedContext; }
+    esp_reset_reason_t getCurrentResetReason() const { return m_currentResetReason; }
     bool hadUnexpectedReset() const { return m_hadUnexpectedReset; }
 
 private:
     SystemWatchdog();
     LastResetContext m_capturedContext;
+    esp_reset_reason_t m_currentResetReason = ESP_RST_UNKNOWN;
     bool m_hadUnexpectedReset = false;
 };

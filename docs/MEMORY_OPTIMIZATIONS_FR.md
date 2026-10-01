@@ -59,17 +59,17 @@ Au lieu d'imposer un compromis statique au démarrage ou une bascule aveugle, le
 
 4. **Transaction de Présentation Matérielle (Invariant 21) :**
    Pendant la fenêtre de transition entre moteurs, la transaction matérielle s'exécute proprement :
-   1. `oldEngine->deactivate()` établit la quiescence logique bornée ($\le 150\text{ ms}$).
+   1. `oldEngine->deactivate()` établit la quiescence logique de rendu sur Core 1 (détachement de surface). La quiescence physique des workers/réseau est finalisée par `shutdownForDestruction()` avant démontage.
    2. `OE = HIGH` (Output Enable actif : écran physiquement noir).
    3. Démontage du pipeline DMA actif.
    4. Tentative d'allocation DMA cible (`requestedDepth` : jusqu'à 8 bits pour le graphisme, 4 bits nominal pour TLS).
    5. Si échec, tentative de repli progressif ($4 \to 2$ bits).
    6. Si tous les replis échouent, maintien de `OE = HIGH` en état `PresentationRecovery` (zéro signal parasite visible).
    7. Régénération des LUTs de couleur via `FastMatrixPanel::initLuts(effectiveDepth)`.
-   8. Rendu de la Frame 0 sur le canvas et commit dans le contrôleur DMA.
+   8. Commit de la Frame 0 (trame noire déterministe) via `m_presentationBackend->commitFirstFrame()`.
    9. **Invariant P0 :** `OE = LOW` (Output Enable relâché) strictement après `firstFrameCommitted == true`.
-   * **Zéro Glitch / Invisibilité Totale :** Le blackout matériel s'exécute en **moins de 30 ms**, totalement imperceptible lors de la transition d'engin.
-   * La télémétrie suit rigoureusement `requestedDepth`, `effectiveDepth`, et `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * **Zéro Glitch / Invisibilité Totale :** Le blackout matériel vise une **qualification cible < 30 ms**, totalement imperceptible lors de la transition d'engin.
+   * La télémétrie suit rigoureusement `requestedDepth`, `effectiveDepth`, `fallbackAttempted`, et `fallbackUsed = (effectiveDepth != requestedDepth)`.
    * Les règles formelles et tables de dimensionnement sont détaillées dans [MEMORY_MODEL_FR.md](MEMORY_MODEL_FR.md).
 
 ---
