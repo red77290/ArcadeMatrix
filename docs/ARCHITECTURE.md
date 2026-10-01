@@ -859,7 +859,7 @@ To achieve flicker-free rendering on single-buffer DMA panels (e.g. classic ESP3
 - **🔴 Invariant 20 — Failed Presentation Preservation:**
   A failed presentation attempt MUST NOT clear the dirty state, preserving the unpresented changes for retry on the subsequent frame.
 - **🔴 Invariant 21 — HUB75 Output Isolation & Hardware Presentation Transaction:**
-  During presentation pipeline reconfiguration, OE (Output Enable) remains asserted (HIGH / display blanked) from the beginning of teardown until the new DMA pipeline has been initialized and the first valid frame is committed. No inconsistent GPIO states or transient scan patterns may reach the HUB75 panel.
+  During presentation pipeline reconfiguration, OE (Output Enable) remains asserted (HIGH / display physically blanked) from the beginning of teardown until the new DMA pipeline has been initialized and the first valid frame (Frame 0) is committed (`firstFrameCommitted == true`). If target and fallback allocations fail, OE remains asserted (HIGH) in `PresentationRecovery` state: no inconsistent GPIO states, transient scan patterns, or unhandled corrupted outputs may reach the HUB75 panel. Bounded logical quiescence of the outgoing engine ($\le 150\text{ ms}$) strictly precedes OE isolation.
 - **🔴 Invariant N8 — Post-Quiescence Application Isolation:**
   Once a network session has been aborted and its owning engine has completed quiescent deactivation, no further application processing, JSON parsing, callback invocation, or buffer allocation may occur on that session.
 
@@ -875,10 +875,10 @@ Rather than an unrealistic promise of exact byte-for-byte heap equality across d
 ## 24. Dynamic Presentation Pipeline & Memory Optimization Architecture
 
 For constrained hardware (such as ESP32 classic driving 128×32 matrix geometries), ArcadeMatrix implements a **Dynamic Presentation Pipeline** coupled with extensive memory reclamation systems:
-1. **Dynamic Color Depth ($8 \leftrightarrow 4$ / $6 \leftrightarrow 4$):** Commutes dynamically between preferred manual graphics depth (8 or 6 bits) and a memory-safe presentation depth (4 bits) during TLS network engine execution.
+1. **Dynamic Color Depth ($8 \leftrightarrow 7 \dots 2$):** Commutes dynamically between preferred unconstrained graphics depth (up to 8 bits across all platforms including classic ESP32) and a memory-safe presentation depth (typically 4 bits or 2 bits) during TLS network engine execution, evaluating multi-dimensional free DRAM, largest contiguous block, and DMA headroom.
 2. **Hardware Presentation Transactions:** Atomic pipeline rebuild executed in $< 30\text{ ms}$ under complete OE hardware blanking.
 3. **Single DMA + Canvas Pipeline (`canvas_single`):** Reclaims up to 32 KB DRAM over legacy double-buffered DMA architectures.
-4. **Comprehensive Memory Reclamation:** Ephemeral background tasks (`SdSpace`), lazy buffer allocations (`MarqueeEngine`), SoftAP/mDNS teardown, and tuned task stacks.
+4. **Comprehensive Memory Reclamation:** Ephemeral background tasks (`SdSpace`), zero-allocation HTTP streaming stack buffers, lazy buffer allocations (`MarqueeEngine`), SoftAP/mDNS teardown, and tuned task stacks.
 
 Detailed architectural analysis, benchmarks, and quantitative baseline comparisons are documented in [docs/MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md).
 

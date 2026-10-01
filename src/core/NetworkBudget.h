@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 #include <atomic>
+#ifdef ESP32
 #include <esp_heap_caps.h>
+#endif
 
 /**
  * @file NetworkBudget.h
@@ -36,6 +38,11 @@ static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 28672u; // 28 KB
 /// Healthy operation target for internal DRAM with active stream.
 static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
 
+/// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
+static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
+static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
+
+#ifdef ESP32
 /**
  * @brief Returns the total free internal DRAM in bytes.
  */
@@ -74,10 +81,6 @@ inline bool hasTlsRecordBufferHeadroom() {
     heap_caps_free(b2);
     return true;
 }
-
-/// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
-static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
-static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
 
 /**
  * @brief Returns the total free internal DMA-capable memory in bytes.
@@ -207,6 +210,36 @@ private:
     bool _locked;
     bool _deniedByBudget;
 };
+
+#else // !ESP32 (Native host / mock)
+
+inline uint32_t freeInternal() { return 160000; }
+inline uint32_t largestInternalBlock() { return 80000; }
+inline bool hasTlsRecordBufferHeadroom() { return true; }
+inline uint32_t freeDmaInternal() { return 60000; }
+inline uint32_t largestDmaInternalBlock() { return 40000; }
+inline std::atomic<uint32_t>& getTlsDeniedCount() {
+    static std::atomic<uint32_t> count{0};
+    return count;
+}
+inline bool canStartTlsSession() { return true; }
+inline uint32_t freePsram() { return 0; }
+
+class ScopedTlsHandshakeLock {
+public:
+    explicit ScopedTlsHandshakeLock(uint32_t timeout = 5000) : _locked(true), _deniedByBudget(false) { (void)timeout; }
+    ~ScopedTlsHandshakeLock() = default;
+    void unlock() { _locked = false; }
+    bool isLocked() const { return _locked; }
+    explicit operator bool() const { return _locked; }
+    bool isDeniedByBudget() const { return _deniedByBudget; }
+    bool isContended() const { return false; }
+private:
+    bool _locked;
+    bool _deniedByBudget;
+};
+
+#endif
 
 /**
  * @brief Architectural gate for plain HTTP connections.

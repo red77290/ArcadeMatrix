@@ -8,23 +8,23 @@
 
 | Engine | Category | ESP32 Classic (128x32, No PSRAM) | ESP32 Classic (64x32, No PSRAM) | ESP32 Classic (128x64, No PSRAM) | ESP32-S3 Waveshare (128x32, 8MB PSRAM) | ESP32-S3 Waveshare (256x64, 8MB PSRAM) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Clock Engine** (`clock`) | `info` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
-| **Live Weather** (`weather`) | `info` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
-| **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
-| **Audio Sound Level Meter** (`decibel`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Stock Ticker & Indices** (`stock`) | `finance` | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Date Display** (`date`) | `info` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **GIF Player** (`gifs`) | `media` | ⚡ **30 FPS** (Engine requires double buffering (tear-free)) | ⚡ **30 FPS** (Engine requires double buffering (tear-free)) | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Environment Sensor** (`temp`) | `sensor` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Google Nest Cast Audio** (`google_cast`) | `media` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Spotify Player** (`spotify`) | `media` | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **System Monitor** (`system_info`) | `system` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **Universal Music Player** (`music_player`) | `media` | 🟢 **30 FPS** (HW Validated) | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Dashboard Engine** (`dashboard`) | `info` | 🟢 **30 FPS** (HW Validated) | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **10 FPS** |
-| **GNews Live Feed** (`gnews`) | `news` | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **30 FPS** |
-| **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **60 FPS** (HW Validated) | 🟢 **60 FPS** |
+| **Clock Engine** (`clock`) | `info` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Live Weather** (`weather`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
+| **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** | 🟢 **60 FPS** |
+| **Audio Sound Level Meter** (`decibel`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
+| **Stock Ticker & Indices** (`stock`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
+| **Date Display** (`date`) | `info` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **GIF Player** (`gifs`) | `media` | ⚡ **30 FPS** (Engine requires double buffering (tear-free)) | ⚡ **30 FPS** (Engine requires double buffering (tear-free)) | ⚡ **30 FPS** (Engine requires double buffering (tear-free)) | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Environment Sensor** (`temp`) | `sensor` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Google Nest Cast Audio** (`google_cast`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Spotify Player** (`spotify`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **System Monitor** (`system_info`) | `system` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
+| **Universal Music Player** (`music_player`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Dashboard Engine** (`dashboard`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
+| **GNews Live Feed** (`gnews`) | `news` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
 
 ## 2. Hardware Resource & Peripheral Requirements
 
@@ -60,4 +60,4 @@ To prevent system crashes and heap starvation during heavy network or audio acti
 Any engine requiring TLS or Wi-Fi will be safely marked **Incompatible** if the free internal heap cannot cover its persistent requirements *plus* these admission reserves and panel canvas requirements.
 
 ---
-*Generated by ArcadeMatrix V4 Architecture Tools on 2026-09-30 16:47:10 UTC*
+*Generated by ArcadeMatrix V4 Architecture Tools on 2026-10-01 15:44:48 UTC*

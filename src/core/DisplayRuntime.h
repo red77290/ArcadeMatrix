@@ -113,6 +113,8 @@ public:
      */
     void resetSharedTextState();
 
+    void maybeReconfigurePipelineFor(IEngine* targetEngine, const EngineHandle& handle, DisplaySourceId sourceId);
+
 private:
     struct SourceEngineRegistration {
         DisplaySourceId sourceId = DisplaySourceId::ROTATION;
@@ -141,7 +143,5 @@ private:
     uint8_t m_preemptionDepth = 0;
     uint32_t m_sessionCounter = 0;
     uint32_t m_lastReconciledVersion = 0;
-
-    void maybeReconfigurePipelineFor(IEngine* targetEngine, const EngineHandle& handle, DisplaySourceId sourceId);
 };
 

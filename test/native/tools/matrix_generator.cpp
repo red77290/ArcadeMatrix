@@ -42,7 +42,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         "esp32_dev_128x32",
         "ESP32 Classic (128x32, No PSRAM)",
         HwProfile::ESP32_STD,
-        128, 32, 8,
+        128, 32, 0,
         false, 0,
         false, true, false, true, true,
         140000, 70000, 0
@@ -51,7 +51,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         "esp32_dev_64x32",
         "ESP32 Classic (64x32, No PSRAM)",
         HwProfile::ESP32_STD,
-        64, 32, 8,
+        64, 32, 0,
         false, 0,
         false, true, false, true, true,
         160000, 80000, 0
@@ -60,7 +60,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         "esp32_dev_128x64",
         "ESP32 Classic (128x64, No PSRAM)",
         HwProfile::ESP32_STD,
-        128, 64, 8,
+        128, 64, 0,
         false, 0,
         false, true, false, true, true,
         110000, 50000, 0
@@ -69,7 +69,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         "esp32s3_waveshare_128x32",
         "ESP32-S3 Waveshare (128x32, 8MB PSRAM)",
         HwProfile::WAVESHARE_S3,
-        128, 32, 8,
+        128, 32, 0,
         true, 8388608,
         true, true, true, true, true,
         230000, 115000, 7500000
@@ -78,7 +78,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         "esp32s3_waveshare_256x64",
         "ESP32-S3 Waveshare (256x64, 8MB PSRAM)",
         HwProfile::WAVESHARE_S3,
-        256, 64, 8,
+        256, 64, 0,
         true, 8388608,
         true, true, true, true, true,
         220000, 110000, 7340032

@@ -8243,22 +8243,22 @@ async function initSettings() {
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
     setChk('hw-dynamic-color-depth', matrix.dynamic_color_depth ?? matrix.dynamicColorDepth ?? false);
     const updateDynDepthUI = () => {
-      const depth = parseInt(document.getElementById('hw-color-depth')?.value || '0', 10);
       const dynChk = document.getElementById('hw-dynamic-color-depth');
-      if (dynChk) {
-        if (depth === 0) {
-          dynChk.disabled = true;
-          dynChk.checked = false;
-        } else {
-          dynChk.disabled = false;
-        }
+      const depthEl = document.getElementById('hw-color-depth');
+      const noteEl = document.getElementById('hw-color-depth-note');
+      const isDynamic = dynChk ? dynChk.checked : false;
+      if (depthEl) {
+        depthEl.disabled = isDynamic;
+      }
+      if (noteEl) {
+        noteEl.style.display = isDynamic ? 'block' : 'none';
       }
     };
     updateDynDepthUI();
-    const hwColorDepthEl = document.getElementById('hw-color-depth');
-    if (hwColorDepthEl && !hwColorDepthEl._boundDynChange) {
-      hwColorDepthEl._boundDynChange = true;
-      hwColorDepthEl.addEventListener('change', updateDynDepthUI);
+    const dynChkEl = document.getElementById('hw-dynamic-color-depth');
+    if (dynChkEl && !dynChkEl._boundDynChange) {
+      dynChkEl._boundDynChange = true;
+      dynChkEl.addEventListener('change', updateDynDepthUI);
     }
     setVal('hw-render-pipeline', matrix.render_pipeline || 'auto');
 

@@ -6,6 +6,7 @@
 #include "../../hal/BoardProfile.h"
 #include "../Logger.h"
 #include "../CompatibilityEvaluator.h"
+#include "../NetworkBudget.h"
 
 PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     uint16_t width,
@@ -45,7 +46,7 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     pipeline.toLowerCase();
 
     // Use candidate nominal depth for initial pipeline sizing
-    uint8_t sizingDepth = (colorDepth > 0) ? colorDepth : (hasPsram ? 8 : 6);
+    uint8_t sizingDepth = (colorDepth > 0) ? colorDepth : 8;
 
     size_t canvasBytes = (size_t)width * height * sizeof(uint16_t);
     size_t dmaBytesSingle = DmaMemoryLayout::calculateTotalBytes(width, height, sizingDepth, false);
@@ -187,11 +188,10 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
         if (manual > COLOR_DEPTH_MAX) manual = COLOR_DEPTH_MAX;
         res.effectiveColorDepth = manual;
     } else {
-        // Auto mode: evaluate candidate depths from highest quality downwards
-        static const uint8_t s_candidatesPsram[] = {8, 7, 6, 5, 4, 3, 2, 1};
-        static const uint8_t s_candidatesStd[]   = {6, 5, 4, 3, 2, 1};
-        const uint8_t* candidates = hasPsram ? s_candidatesPsram : s_candidatesStd;
-        size_t numCandidates = hasPsram ? sizeof(s_candidatesPsram) : sizeof(s_candidatesStd);
+        // Auto mode: evaluate candidate depths from highest quality downwards (up to 8 bits for all platforms)
+        static const uint8_t s_candidates[] = {8, 7, 6, 5, 4, 3, 2, 1};
+        const uint8_t* candidates = s_candidates;
+        size_t numCandidates = sizeof(s_candidates);
 
         uint8_t selectedDepth = candidates[numCandidates - 1]; // fallback lowest
         for (size_t i = 0; i < numCandidates; ++i) {
@@ -319,7 +319,10 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     const EngineRequirements& reqs,
     uint8_t currentDepth,
     size_t currentLargestBlock,
-    size_t currentFreeInternalHeap)
+    size_t currentFreeInternalHeap,
+    size_t currentFreeDma,
+    bool isDoubleBuffer,
+    bool hasCanvas)
 {
     // Auto mode resolves to maximum capability ceiling (up to 8 bits)
     uint8_t maxDepthCeiling = (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0)
@@ -337,45 +340,15 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         return configuredDepth;
     }
 
-    // Hardware with external PSRAM has abundant headroom; dynamic reduction not required
-    if (hasPsram) {
-        return maxDepthCeiling;
-    }
-
-    // Panels smaller than 128x32 (e.g. 64x32) consume <= 8 KB DMA even at 8 bits; no reduction needed
+    // Panels smaller than 128x32 consume <= 8 KB DMA even at 8 bits; no reduction needed
     if (width * height < 128 * 32) {
         return maxDepthCeiling;
     }
 
-    // Base memory requirement for incoming engine:
-    // TLS requires at least ~26 KB of contiguous internal DRAM for handshake buffers and crypto state
-    constexpr size_t TLS_CONTIGUOUS_REQUIRED = 26624;
-    constexpr size_t ENGINE_SAFETY_MARGIN = 4096; // Operating margin for FreeRTOS / Wi-Fi driver
-
-    size_t targetContiguousNeeded = 0;
-    if (reqs.needsTls) {
-        targetContiguousNeeded = TLS_CONTIGUOUS_REQUIRED + ENGINE_SAFETY_MARGIN;
-    } else {
-        // Non-TLS engines: respect internal contiguous bytes if requested, or minimum safety baseline (10 KB)
-        size_t engineSpecific = reqs.minLargestInternalBlockBytes > reqs.internalContiguousBytes
-            ? reqs.minLargestInternalBlockBytes
-            : reqs.internalContiguousBytes;
-        targetContiguousNeeded = engineSpecific > 0 ? (engineSpecific + ENGINE_SAFETY_MARGIN) : 10240;
-    }
-
-    // Calculate bytes reclaimed per bit of depth
-    size_t bytesPerBit = DmaMemoryLayout::calculateTotalBytes(width, height, 1, false);
+    // Calculate bytes reclaimed or consumed per bit of depth
+    size_t bytesPerBit = DmaMemoryLayout::calculateTotalBytes(width, height, 1, isDoubleBuffer);
     if (bytesPerBit == 0) {
-        bytesPerBit = 4096;
-    }
-
-    // If no runtime memory metrics were provided (e.g. host unit tests / static evaluation):
-    // Fall back to reference estimation
-    if (currentLargestBlock == 0) {
-        if (reqs.needsTls) {
-            return 4; // Conservative reference baseline for TLS on 128x32 without PSRAM
-        }
-        return maxDepthCeiling;
+        bytesPerBit = (size_t)(width * height / 2) * (isDoubleBuffer ? 2 : 1);
     }
 
     // If current depth is unset or invalid, assume maxDepthCeiling
@@ -383,18 +356,81 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         currentDepth = maxDepthCeiling;
     }
 
-    // Full Auto Color Maximizer:
-    // Evaluate candidate depths from maxDepthCeiling down to 2 bits.
-    // When switching from currentDepth to candidateDepth D:
-    // The DMA buffer changes by (currentDepth - D) * bytesPerBit.
-    // If D < currentDepth, memory is FREED: estBlock = currentLargestBlock + (currentDepth - D) * bytesPerBit.
-    // If D > currentDepth, memory is CONSUMED: estBlock = currentLargestBlock - (D - currentDepth) * bytesPerBit.
-    // We select the highest candidate depth whose estimated contiguous block satisfies targetContiguousNeeded.
+    // Fallback if no runtime memory metrics were provided (e.g. host unit tests / static evaluation)
+    if (currentLargestBlock == 0 && currentFreeInternalHeap == 0) {
+        if (reqs.needsTls) return 4;
+        return maxDepthCeiling;
+    }
+
+    // --- MATHEMATICAL ADMISSION & DEPTH MAXIMIZER ---
+    // Invariant: Permanent heap allocations are ALREADY deducted from currentFreeInternalHeap.
+    // We only model the DELTA of DMA memory (+/- deltaMem) and the NEW TRANSIENT requirements
+    // of the incoming engine.
+
+    // 1. Operating system safety reserve (FreeRTOS kernel, ISR stacks, LwIP core, Wi-Fi driver)
+    constexpr size_t SYSTEM_MIN_RESERVE = 12288; // 12 KB incompressible safety floor
+
+    // 2. Incoming engine working memory
+    size_t engineRam = (reqs.internalPersistentBytes > reqs.minFreeInternalHeapBytes)
+        ? reqs.internalPersistentBytes : reqs.minFreeInternalHeapBytes;
+    engineRam += reqs.shadowBytesPerFrame;
+    if (hasPsram) {
+        // On boards with external PSRAM, persistent engine working sets and shadow buffers
+        // reside in SPIRAM, sparing internal SRAM.
+        engineRam = 0;
+    }
+
+    // 3. Network & Cryptographic TLS admission reserve
+    size_t netReserve = 0;
+    size_t minContiguousNeeded = 0;
+    size_t minDmaNeeded = 4096;
+
+    if (reqs.needsTls) {
+        // mbedTLS needs dual in/out record buffers (~33 KB) + context & RSA BIGNUM working limbs
+        netReserve = ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE; // 45,000 bytes
+        minContiguousNeeded = NetworkBudget::TLS_MIN_COMBINED_BLOCK; // 28,672 bytes
+        minDmaNeeded = NetworkBudget::TLS_MIN_FREE_DMA;              // 16,384 bytes
+        if (reqs.internalContiguousBytes + 4096 > minContiguousNeeded) {
+            minContiguousNeeded = reqs.internalContiguousBytes + 4096;
+        }
+    } else if (reqs.needsNetwork) {
+        // Plain network (AsyncTCP socket RX/TX buffers)
+        netReserve = ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE; // 16,000 bytes
+        minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 10240;
+    } else {
+        // Pure graphics engine (Clock, Canvas, Tetris, etc.)
+        netReserve = 0;
+        minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 8192;
+    }
+
+    // 4. Audio peripherals (I2S DMA ringbuffers)
+    size_t audioReserve = (reqs.needsAudio || reqs.needsAudioInput || reqs.needsAudioOutput)
+        ? ResourceReserve::AUDIO_DMA_RING_ADMISSION_RESERVE : 0;
+
+    // Total new internal DRAM required to safely run the incoming engine
+    size_t totalNewRamNeeded = SYSTEM_MIN_RESERVE + engineRam + netReserve + audioReserve;
+
+    // Query PSRAM headroom if present (ESP32-S3)
+    size_t freePsram = 0;
+#if defined(ESP32)
+    if (hasPsram) {
+        freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    }
+#endif
+
+    // Evaluate candidates from maxDepthCeiling (e.g. 8 bits) down to 2 bits
     for (int candidate = (int)maxDepthCeiling; candidate >= 2; --candidate) {
         int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)bytesPerBit;
+        int64_t estimatedFree = (int64_t)currentFreeInternalHeap + deltaMem;
         int64_t estimatedBlock = (int64_t)currentLargestBlock + deltaMem;
+        int64_t estimatedDma = (int64_t)currentFreeDma + deltaMem;
 
-        if (estimatedBlock >= (int64_t)targetContiguousNeeded) {
+        bool freeOk = (currentFreeInternalHeap == 0) || (estimatedFree >= (int64_t)totalNewRamNeeded);
+        bool blockOk = (currentLargestBlock == 0) || (estimatedBlock >= (int64_t)minContiguousNeeded);
+        bool dmaOk = (currentFreeDma == 0) || (estimatedDma >= (int64_t)minDmaNeeded);
+        bool psramOk = (!hasPsram) || (freePsram == 0) || (freePsram >= (reqs.psramBytes + 65536));
+
+        if (freeOk && blockOk && dmaOk && psramOk) {
             return (uint8_t)candidate;
         }
     }

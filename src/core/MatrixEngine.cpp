@@ -171,20 +171,33 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
 ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDepth) {
     ReconfigureResult res;
     res.previousDepth = m_activeColorDepth;
+    res.requestedDepth = targetDepth;
     res.effectiveDepth = m_activeColorDepth;
 
     if (targetDepth < 2 || targetDepth > 8) {
-        res.failureReason = "Invalid target depth (must be 2..8)";
+        res.failureReason = ReconfigureFailure::InvalidDepth;
+        res.failureReasonStr = "Invalid target depth (must be 2..8)";
+        return res;
+    }
+
+    if (m_lastReconfigMs > 0 && (millis() - m_lastReconfigMs < MIN_RECONFIG_INTERVAL_MS)) {
+        res.success = false;
+        res.effectiveDepth = m_activeColorDepth;
+        res.fallbackUsed = false;
+        res.failureReason = ReconfigureFailure::Throttled;
+        res.failureReasonStr = "Reconfiguration throttled (interval < 500 ms)";
         return res;
     }
 
     if (targetDepth == m_activeColorDepth && display != nullptr) {
         res.success = true;
         res.effectiveDepth = m_activeColorDepth;
+        res.fallbackUsed = false;
         res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
         return res;
     }
 
+    m_lastReconfigMs = millis();
     LOGI("MatrixEngine", "Starting Presentation Pipeline Reconfiguration: %u -> %u bits...",
          m_activeColorDepth, targetDepth);
 
@@ -207,41 +220,83 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
         m_panel = nullptr;
     }
 
-    // Allocate new panel at targetDepth
+    // Progressive Fallback Attempt: Target depth -> 4 bits -> 2 bits
     bool allocSuccess = begin(m_cachedConfig, targetDepth);
+    uint8_t currentAllocDepth = targetDepth;
+
     if (!allocSuccess) {
-        LOGE("MatrixEngine", "Failed to allocate pipeline at %u bits! Attempting fallback to previous depth %u bits...",
-             targetDepth, res.previousDepth);
-        res.fallbackUsed = true;
-        bool fallbackOk = begin(m_cachedConfig, res.previousDepth);
-        if (!fallbackOk) {
-            LOGE("MatrixEngine", "CRITICAL: Fallback allocation failed! Trying safe static 4-bit baseline...");
-            begin(m_cachedConfig, 4);
+        uint8_t fallbacks[] = {4, 2};
+        for (uint8_t fbDepth : fallbacks) {
+            if (fbDepth < currentAllocDepth) {
+                LOGW("MatrixEngine", "Target depth %u failed! Initiating Progressive Fallback Attempt to %u bits...",
+                     currentAllocDepth, fbDepth);
+                if (begin(m_cachedConfig, fbDepth)) {
+                    allocSuccess = true;
+                    currentAllocDepth = fbDepth;
+                    break;
+                }
+            }
         }
-        res.failureReason = "Target depth DMA allocation failed";
+    }
+
+    // Invariant P0: If target and all fallbacks fail, maintain OE HIGH (PresentationRecovery)
+    if (!allocSuccess || display == nullptr) {
+        LOGE("MatrixEngine", "CRITICAL: Target depth %u and all fallbacks failed! Entering PresentationRecovery (OE held HIGH).",
+             targetDepth);
         res.success = false;
-        res.effectiveDepth = m_activeColorDepth;
-    } else {
-        res.success = true;
-        res.effectiveDepth = m_activeColorDepth;
-        res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
+        res.effectiveDepth = 0;
+        res.fallbackUsed = true;
+        res.failureReason = ReconfigureFailure::NoValidPipeline;
+        res.failureReasonStr = "Target and fallback DMA allocations failed";
+        setBlank(true);
+        if (m_oePin >= 0) {
+            digitalWrite(m_oePin, HIGH); // Keep LEDs dark: no unhandled visible output
+        }
+        return res;
     }
 
     // Restore brightness
-    if (display) {
-        display->setBrightness8(prevBrightness);
-        if (m_panel) m_panel->rememberBrightness8(prevBrightness);
+    display->setBrightness8(prevBrightness);
+    if (m_panel) m_panel->rememberBrightness8(prevBrightness);
+
+    // Invariant P0: Commit Frame 0 to the newly allocated DMA pipeline before releasing OE
+    bool frame0Committed = false;
+    if (m_panel) {
+        m_panel->clearScreen();
+        if (m_doubleBuffered && display) {
+            display->flipDMABuffer();
+            m_panel->clearScreen();
+        }
+        frame0Committed = (display != nullptr);
     }
 
-    // Release OE blanking (Invariant 21: only after frame 1 commit)
+    if (!frame0Committed) {
+        LOGE("MatrixEngine", "CRITICAL: Frame 0 commit failed! Maintaining OE HIGH.");
+        res.success = false;
+        res.effectiveDepth = 0;
+        res.fallbackUsed = true;
+        res.failureReason = ReconfigureFailure::Frame0PresentationFailed;
+        res.failureReasonStr = "Frame 0 commit failed";
+        setBlank(true);
+        if (m_oePin >= 0) {
+            digitalWrite(m_oePin, HIGH);
+        }
+        return res;
+    }
+
+    // Invariant P0: OE LOW is strictly conditioned on firstFrameCommitted == true
     setBlank(false);
     if (m_oePin >= 0) {
-        digitalWrite(m_oePin, LOW); // OE enabled
+        digitalWrite(m_oePin, LOW); // OE enabled: clean unblanking
     }
 
+    res.success = true;
+    res.effectiveDepth = m_activeColorDepth;
+    res.fallbackUsed = (res.effectiveDepth != res.requestedDepth);
+    res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
     res.blankDurationUs = micros() - startUs;
-    LOGI("MatrixEngine", "Presentation Pipeline Reconfiguration completed in %u us (%s, effectiveDepth=%u bits, dmaBytes=%u)",
-         res.blankDurationUs, res.success ? "SUCCESS" : "FALLBACK_FAILED", res.effectiveDepth, (unsigned)res.dmaBytes);
+    LOGI("MatrixEngine", "Presentation Pipeline Reconfiguration completed in %u us (%s, requested=%u, effective=%u bits, fallbackUsed=%d, dmaBytes=%u)",
+         res.blankDurationUs, res.success ? "SUCCESS" : "FAILED", res.requestedDepth, res.effectiveDepth, res.fallbackUsed, (unsigned)res.dmaBytes);
 
     return res;
 }

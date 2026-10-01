@@ -29,37 +29,48 @@ ArcadeMatrix introduced the `canvas_single` pipeline:
 
 ---
 
-### 2.2 Dynamic Presentation Pipeline & Full Auto Color Maximizer ($8 \leftrightarrow 4 \leftrightarrow 2$ Adaptive Depth)
+### 2.2 Dynamic Presentation Pipeline & Full Auto Color Maximizer ($8 \leftrightarrow 7 \dots 2$ Adaptive Depth)
 
 #### The Problem
-High-contrast graphics (GIFs, Street Fighter sprites, marquee banners) look significantly richer in 8-bit or 6-bit color depth (up to 16.7 million colors), but their DMA footprint starves mbedTLS on memory-constrained hardware (e.g. ESP32 classic 128×32 without PSRAM). Conversely, fixing color depth to 4 bits permanently degrades graphical fidelity 100% of the time. Furthermore, a naive runtime upscale (e.g. jumping blindly from 4 bits back to 8 bits) risks an immediate Out-Of-Memory (OOM) panic if internal DRAM has fragmented during the network engine's operation.
+High-contrast graphics (GIFs, Street Fighter sprites, marquee banners, clock faces) look significantly richer in 8-bit color depth (16.7 million colors), but their DMA footprint starves mbedTLS on memory-constrained hardware (e.g. ESP32 classic 128×32 without PSRAM). Conversely, fixing color depth to 4 bits permanently degrades graphical fidelity 100% of the time, while setting a static 6-bit clamp unnecessarily limits capable graphics engines. Furthermore, a naive runtime upscale (e.g. jumping blindly from 4 bits back to 8 bits) risks an immediate Out-Of-Memory (OOM) panic if internal DRAM has fragmented during network operations.
 
 #### The Architectural Solution
-Rather than enforcing a static compromise at boot or a blind toggle, the **Dynamic Presentation Pipeline** combines hardware quiescence with a real-time predictive memory model in `PipelineSelectionPolicy::resolveTargetDepth`:
+Rather than enforcing a static compromise at boot or a blind toggle, the **Dynamic Presentation Pipeline** combines hardware quiescence with a rigorous multi-dimensional predictive memory model in `PipelineSelectionPolicy::resolveTargetDepth`:
 
-1. **Real-Time Contiguous Memory Modeling:**
-   Before activating an incoming engine, `DisplayRuntime` queries real-time internal DRAM metrics via `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`. The policy mathematically computes the resulting contiguous block for every candidate depth $D \in [2, \text{ceiling}]$:
-   $$\text{estimatedBlock} = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit}$$
-   where $\text{bytesPerBit} = \text{DmaMemoryLayout::calculateTotalBytes}(\text{width}, \text{height}, 1, \text{false})$.
+1. **Multi-Dimensional Mathematical Capacity Evaluation:**
+   Between rotation slots (strictly after `oldEngine->deactivate()` achieves quiescence and before `newEngine->activate()` allocates), `DisplayRuntime` queries real-time internal DRAM and DMA headroom. Candidate depths $D \in [8 \dots 2]$ are evaluated from the highest quality downward against four mathematical bounds:
+   * **Free Internal DRAM Headroom:**
+     $$\widehat{F}(D) = \text{currentFreeInternalHeap} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{SYSTEM\_MIN\_HEADROOM\_RESERVE} + \text{req.internalPersistentBytes} + \text{netReserve} + \text{audioReserve}$$
+   * **Largest Contiguous DRAM Block:**
+     $$\widehat{L}(D) = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minContiguousNeeded}$$
+     where $\text{minContiguousNeeded} = \text{NetworkBudget::TLS\_MIN\_COMBINED\_BLOCK}$ ($28,672\,\text{bytes}$) for TLS engines.
+   * **Internal DMA Capacity:**
+     $$\widehat{Dma}(D) = \text{currentFreeDma} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minDmaNeeded}$$
+     where $\text{minDmaNeeded} = \text{NetworkBudget::TLS\_MIN\_FREE\_DMA}$ ($16,384\,\text{bytes}$) for TLS hardware SHA acceleration.
+   * **PSRAM Feasibility:** Verified for PSRAM-enabled targets (such as ESP32-S3), ensuring that the same mathematical capacity model protects all hardware targets.
 
-2. **Engine Memory Admission Contract:**
-   * **TLS Network Engines (Weather, Crypto, Stock, Spotify, GNews):** Require $\ge 26,624\,\text{bytes}$ (`TLS_CONTIGUOUS_REQUIRED`) plus an operating safety margin of $4,096\,\text{bytes}$ ($30,720\,\text{bytes}$ total). The policy steps down through candidate depths (typically landing at 4 bits, or 2 bits under extreme pressure) to free up to **16 to 24 KB of contiguous DRAM** immediately before mbedTLS negotiates.
-   * **Graphical Engines (GIFs, Fighter, Clock, Canvas, Matrix):** Require sufficient contiguous headroom for animation frames. The policy tests depths from the configured ceiling (up to 8 bits in Auto mode) downward, restoring the highest viable fidelity *only when proven safe against OOM*.
+2. **Continuous Dynamic Stepping ($8 \leftrightarrow 7 \leftrightarrow 6 \leftrightarrow 5 \leftrightarrow 4 \leftrightarrow 3 \leftrightarrow 2$):**
+   * **TLS Network Engines (Crypto, Stock, Spotify, GNews, Weather):** Step down mathematically to the highest safe depth satisfying all bounds (typically 4 bits, or 2 bits under extreme pressure), releasing up to **16 to 24 KB of contiguous DRAM** immediately before mbedTLS negotiates.
+   * **Graphical Engines (GIFs, Fighter, Clock, Canvas, Matrix, Marquee):** Evaluated from 8 bits downward, restoring full **8-bit color depth** whenever safe. On 128×32 and 64×32 panels without PSRAM, Clock and graphics engines run at full 8-bit depth!
+   * **WebUI Integration:** When "Dynamic Presentation Pipeline" is enabled, the manual `Color Depth` dropdown is automatically disabled (grayed out) with an informative note explaining that depth is determined mathematically per rotation slot.
 
 3. **Floor Protection (2-Bit Minimum):**
    `FastMatrixPanel::initLuts` and presentation reconfigure guards support down to 2-bit color depth ($2 \le \text{depth} \le 8$), ensuring an ultra-low memory operational fallback under extreme heap fragmentation without blackouts.
 
 4. **Hardware Presentation Transaction (Invariant 21):**
    During the inter-engine transition window, the hardware transaction executes cleanly:
-   1. `OE = HIGH` (Output Enable asserted: panel completely blanked in hardware).
-   2. Stop I2S DMA controller.
-   3. Release old DMA buffers.
-   4. Allocate new DMA buffers at target depth.
-   5. Rebuild color LUTs via `FastMatrixPanel::initLuts(targetDepth)`.
-   6. Restart I2S DMA.
-   7. Render and commit first valid frame to the offscreen canvas.
-   8. `OE = LOW` (Output Enable released: active display resumes).
-   * **Zero Glitch / Visual Invisibility:** The entire transaction executes in **< 30 ms** (less than 2 frames at 60 FPS), completely imperceptible during engine transitions.
+   1. `oldEngine->deactivate()` establishes bounded logical quiescence ($\le 150\text{ ms}$).
+   2. `OE = HIGH` (Output Enable asserted: panel physically blanked in hardware).
+   3. Teardown active I2S/LCD DMA pipeline.
+   4. Attempt target DMA allocation (`requestedDepth`: up to 8 bits for graphics, 4 bits nominal for TLS).
+   5. If target allocation fails, initiate Progressive Fallback Attempt ($4 \to 2$ bits).
+   6. If all fallbacks fail, maintain `OE = HIGH` in `PresentationRecovery` (no corrupted visual output).
+   7. Rebuild color LUTs via `FastMatrixPanel::initLuts(effectiveDepth)`.
+   8. Render Frame 0 to the canvas and commit to DMA.
+   9. **Invariant P0:** `OE = LOW` (Output Enable released) strictly after `firstFrameCommitted == true`.
+   * **Zero Glitch / Visual Invisibility:** The entire blackout window executes in **< 30 ms**, completely imperceptible during engine transitions.
+   * Telemetry rigorously tracks `requestedDepth`, `effectiveDepth`, and `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * Detailed formal rules and DMA sizing tables are maintained in [MEMORY_MODEL.md](MEMORY_MODEL.md).
 
 ---
 
@@ -103,7 +114,22 @@ If a network engine's slot ends while an HTTPS request is in-flight, lingering T
 
 ---
 
-### 2.4 Lazy Buffer Allocation (Marquee Raw Buffer & GIF Decoders)
+### 2.5 Zero-Allocation HTTP Streaming & Fixed Stack Buffers
+
+#### The Problem
+During concurrent mbedTLS streaming, mbedTLS retains ~33 KB of internal DRAM for in/out record buffers. If REST API parsers (such as `CoinGeckoProvider::parseMarketChart`) dynamically reallocate heap memory via `std::vector::reserve(300)` while the largest free block is temporarily depressed ($< 8\,\text{KB}$), `operator new` throws `std::bad_alloc`, triggering an immediate system abort/crash on Core 1.
+
+#### The Architectural Solution
+* **Fixed Stack Allocation:** Replaced all dynamic `std::vector` heap resizing in API response parsers with bounded, fixed-capacity stack arrays:
+  ```cpp
+  constexpr size_t MAX_RAW_PRICES = 320;
+  float rawPrices[MAX_RAW_PRICES];
+  ```
+* **Zero Contention with mbedTLS:** REST responses stream into pre-allocated stack frames without touching the heap, guaranteeing zero `bad_alloc` panics even under peak network DRAM pressure.
+
+---
+
+### 2.6 Lazy Buffer Allocation (Marquee Raw Buffer & GIF Decoders)
 
 #### The Problem
 `MarqueeEngine` historically allocated an 8 KB contiguous raw RGB565 image buffer at startup to support icon display, even when running purely text-based marquee animations.
@@ -117,7 +143,7 @@ If a network engine's slot ends while an HTTPS request is in-flight, lingering T
 
 ---
 
-### 2.5 Ephemeral FreeRTOS Tasks (`SdSpace`)
+### 2.7 Ephemeral FreeRTOS Tasks (`SdSpace`)
 
 #### The Problem
 The SD card storage monitor task (`SdSpace`) previously ran as a permanent FreeRTOS background task, holding a dedicated 4 KB stack plus task control block (TCB) in internal DRAM (~4.5 KB total) continuously, despite only querying FATFS once every several minutes.
@@ -131,7 +157,7 @@ The SD card storage monitor task (`SdSpace`) previously ran as a permanent FreeR
 
 ---
 
-### 2.6 Network Subsystem, Stack Footprint & Rate-Limiting Guarding
+### 2.8 Network Subsystem, Stack Footprint & Rate-Limiting Guarding
 
 1. **AsyncTCP and FreeRTOS Stack Size Boundaries:**
    - The `async_tcp` worker task stack on Core 0 must be maintained at **8192 bytes** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Reducing this value (e.g. to 5120 bytes) triggers silent stack starvation during incoming HTTP connection handshakes and serving large gzipped WebUI assets (~105 KB), causing browser connection timeouts (`ERR_CONNECTION_TIMED_OUT`).

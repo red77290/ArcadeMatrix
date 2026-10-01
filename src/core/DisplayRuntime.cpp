@@ -5,6 +5,8 @@
 #include "hal/HardwareHAL.h"
 #include "Logger.h"
 #include "MatrixEngine.h"
+#include "memory/MemoryManager.h"
+#include "SystemWatchdog.h"
 
 #if defined(ESP32)
 #include <esp_heap_caps.h>
@@ -296,6 +298,12 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
 DisplayDecision DisplayRuntime::update(const ConfigSnapshot& snapshot) {
     reconcile(snapshot);
 
+    // Consume non-blocking memory pressure without locks (Sprint 3)
+    MemoryPressureLevel pressure = MemoryManager::instance().consumePendingPressure();
+    if (pressure != MemoryPressureLevel::Nominal && m_session.activeEngine) {
+        m_session.activeEngine->onMemoryPressure(static_cast<uint8_t>(pressure));
+    }
+
     if (m_orientationManager) {
         m_orientationManager->update(snapshot.matrix.auto_rotate, snapshot.matrix.rotation_offset);
     }
@@ -393,13 +401,18 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
 
     size_t largestBlock = 0;
     size_t freeInternal = 0;
+    size_t freeDma = 0;
 #if defined(ESP32)
     largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     freeInternal = esp_get_free_internal_heap_size();
+    freeDma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 #endif
 
     uint16_t totalWidth = matrixCfg.width * (matrixCfg.chainLength > 0 ? matrixCfg.chainLength : 1);
     uint8_t currentDepth = m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : 0;
+    bool isDbl = m_matrixEngine ? m_matrixEngine->isDoubleBuffered() : false;
+    bool hasCanvas = (m_surface != nullptr);
+
     uint8_t targetDepth = PipelineSelectionPolicy::resolveTargetDepth(
         matrixCfg.colorDepth,
         matrixCfg.dynamicColorDepth,
@@ -409,11 +422,14 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         reqs,
         currentDepth,
         largestBlock,
-        freeInternal
+        freeInternal,
+        freeDma,
+        isDbl,
+        hasCanvas
     );
 
-    LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, largestBlock=%u, tls=%d)",
-         descId ? descId : "unknown", currentDepth, targetDepth, matrixCfg.colorDepth, (unsigned)largestBlock, reqs.needsTls);
+    LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, free=%u, largestBlock=%u, tls=%d)",
+         descId ? descId : "unknown", currentDepth, targetDepth, matrixCfg.colorDepth, (unsigned)freeInternal, (unsigned)largestBlock, reqs.needsTls);
 
     if (m_matrixEngine && targetDepth != m_matrixEngine->getActiveColorDepth()) {
         auto res = m_matrixEngine->reconfigurePresentationPipeline(targetDepth);
@@ -421,4 +437,10 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
             m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());
         }
     }
+
+    SystemWatchdog::instance().recordEngineState(
+        descId,
+        m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : targetDepth,
+        reqs.needsTls
+    );
 }

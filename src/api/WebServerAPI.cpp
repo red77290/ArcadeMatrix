@@ -655,7 +655,7 @@ void WebServerAPI::setupRoutes() {
         doc["microphone"] = caps.hasMicrophone;
         doc["temperature_sensor"] = caps.hasTempSensor;
         doc["gyroscope"] = gyroHAL.isAvailable();
-        doc["max_color_depth"] = (caps.profile == HwProfile::WAVESHARE_S3) ? 8 : 6;
+        doc["max_color_depth"] = 8;
         
         JsonObject capabilitiesObj = doc.createNestedObject("capabilities");
         JsonObject httpObj = capabilitiesObj.createNestedObject("http");
@@ -1611,6 +1611,7 @@ void WebServerAPI::setupRoutes() {
             mat["rgb_sequence"] = snap.matrix.rgbSequence;
             mat["color_depth"] = snap.matrix.colorDepth;
             mat["pwm_bits"] = snap.matrix.colorDepth;
+            mat["dynamic_color_depth"] = snap.matrix.dynamicColorDepth;
             mat["limit_refresh_rate_hz"] = snap.matrix.limitRefreshRateHz;
             mat["clk_phase"] = snap.matrix.clkPhase;
             mat["latch_blanking"] = snap.matrix.latchBlanking;
@@ -1768,6 +1769,8 @@ void WebServerAPI::setupRoutes() {
                 if (!mat["rgb_sequence"].isNull()) cfg.matrix.rgbSequence = mat["rgb_sequence"].as<String>();
                 if (!mat["pwm_bits"].isNull()) cfg.matrix.colorDepth = mat["pwm_bits"].as<int>();
                 else if (!mat["color_depth"].isNull()) cfg.matrix.colorDepth = mat["color_depth"].as<int>();
+                if (!mat["dynamic_color_depth"].isNull()) cfg.matrix.dynamicColorDepth = mat["dynamic_color_depth"].as<bool>();
+                else if (!mat["dynamicColorDepth"].isNull()) cfg.matrix.dynamicColorDepth = mat["dynamicColorDepth"].as<bool>();
                 if (!mat["limit_refresh_rate_hz"].isNull()) cfg.matrix.limitRefreshRateHz = mat["limit_refresh_rate_hz"].as<int>();
                 if (!mat["clk_phase"].isNull()) cfg.matrix.clkPhase = mat["clk_phase"].as<bool>();
                 else if (!mat["clkPhase"].isNull()) cfg.matrix.clkPhase = mat["clkPhase"].as<bool>();

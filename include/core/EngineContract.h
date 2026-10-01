@@ -412,6 +412,14 @@ public:
     // Dynamic Configuration
     virtual void onConfigChanged(const EngineConfig* config) {}
     
+    /**
+     * @brief Non-blocking resource pressure notification (Sprint 3 / Invariant 16).
+     * Invoked on Core 1 at update() boundary when heap or DMA pressure rises.
+     * Engines should prune non-essential transient caches, reduce particles, or switch to minimal display.
+     * @param pressureLevel MemoryPressureLevel (0=Nominal, 1=Moderate, 2=Critical)
+     */
+    virtual void onMemoryPressure(uint8_t pressureLevel) { (void)pressureLevel; }
+    
     // Geometry Awareness (rebuilds geometry-derived caches on rotation)
     virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
     

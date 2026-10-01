@@ -699,7 +699,7 @@ Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux D
 - **🔴 Invariant 20 — Préservation lors d'Échec de Présentation :**
   Une tentative de présentation échouée NE DOIT PAS réinitialiser l'état dirty, préservant ainsi les modifications non présentées pour une nouvelle tentative à la trame suivante.
 - **🔴 Invariant 21 — Isolation de Sortie HUB75 & Transaction de Présentation Matérielle :**
-  Pendant toute la durée de reconfiguration du pipeline de présentation, le signal OE (Output Enable) reste fermement asservi à l'état inactif (HIGH / écran éteint) du début du démontage jusqu'à ce que le nouveau pipeline DMA soit initialisé et que la première frame valide soit validée. Aucun état GPIO parasite ni motif de balayage transitoire ne peut atteindre le panneau HUB75.
+  Pendant toute la durée de reconfiguration du pipeline de présentation, le signal OE (Output Enable) reste fermement asservi à l'état inactif (HIGH / écran physiquement éteint) du début du démontage jusqu'à ce que le nouveau pipeline DMA soit initialisé et que la première frame valide (Frame 0) soit commitée (`firstFrameCommitted == true`). En cas d'échec de la cible et des replis progressifs, OE reste à HIGH dans l'état `PresentationRecovery` : aucun état GPIO parasite, motif de balayage transitoire ou signal corrompu ne peut atteindre le panneau HUB75. La quiescence logique bornée du moteur sortant ($\le 150\text{ ms}$) précède obligatoirement l'isolation OE.
 - **🔴 Invariant N8 — Isolation Applicative Post-Quiescence :**
   Une fois qu'une session réseau a été interrompue et que son moteur propriétaire a achevé sa désactivation quiescente, aucun nouveau traitement applicatif, parsing JSON, callback ou allocation de buffer ne peut être effectué sur cette session.
 
@@ -715,9 +715,9 @@ Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas f
 ## 23. Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire
 
 Pour les cibles matérielles contraintes (telles que l'ESP32 classique pilotant des géométries 128×32), ArcadeMatrix met en œuvre un **Dynamic Presentation Pipeline** adossé à un ensemble de sous-systèmes de réclamation mémoire :
-1. **Profondeur de Couleur Dynamique ($8 \leftrightarrow 4$ / $6 \leftrightarrow 4$) :** Commute dynamiquement entre la profondeur manuelle préférée pour les graphismes (8 ou 6 bits) et une profondeur allégée sécurisée pour TLS (4 bits) pendant l'exécution des moteurs réseau.
+1. **Profondeur de Couleur Dynamique ($8 \leftrightarrow 7 \dots 2$) :** Commute dynamiquement entre la profondeur non bridée préférée pour les graphismes (jusqu'à 8 bits sur toutes les cartes, y compris ESP32 classique) et une profondeur allégée sécurisée pour TLS (typiquement 4 bits ou 2 bits) pendant l'exécution des moteurs réseau, en évaluant mathématiquement la DRAM libre, le bloc contigu et la mémoire DMA.
 2. **Transactions de Présentation Matérielle :** Reconstruction atomique du pipeline exécutée en $< 30\text{ ms}$ sous extinction matérielle complète via OE.
 3. **Pipeline Single DMA + Canevas (`canvas_single`) :** Économise jusqu'à 32 Ko de DRAM par rapport aux architectures DMA double-buffer traditionnelles.
-4. **Réclamation Mémoire Exhaustive :** Tâches de fond éphémères (`SdSpace`), allocations paresseuses de buffers (`MarqueeEngine`), arrêt SoftAP/mDNS et calibrage fin des piles FreeRTOS.
+4. **Réclamation Mémoire Exhaustive :** Tâches de fond éphémères (`SdSpace`), streaming HTTP zéro-allocation avec buffers sur pile, allocations paresseuses de buffers (`MarqueeEngine`), arrêt SoftAP/mDNS et calibrage fin des piles FreeRTOS.
 
 L'analyse architecturale détaillée, les benchmarks et les comparaisons quantitatives de référence sont documentés dans [docs/MEMORY_OPTIMIZATIONS_FR.md](MEMORY_OPTIMIZATIONS_FR.md).

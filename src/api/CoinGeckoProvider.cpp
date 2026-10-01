@@ -158,8 +158,9 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* ou
         if (c == '[') break;
     }
 
-    std::vector<float> allPrices;
-    allPrices.reserve(300);
+    constexpr size_t MAX_RAW_PRICES = 320;
+    float rawPrices[MAX_RAW_PRICES];
+    size_t n = 0;
 
     // Stream-parse [timestamp, price] pairs
     while (stream.available() > 0) {
@@ -181,13 +182,12 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* ou
                 }
             }
             float val = numStr.toFloat();
-            if (val > 0.0f) {
-                allPrices.push_back(val);
+            if (val > 0.0f && n < MAX_RAW_PRICES) {
+                rawPrices[n++] = val;
             }
         }
     }
 
-    size_t n = allPrices.size();
     if (n == 0) return false;
 
     outCount = 0;
@@ -205,7 +205,7 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* ou
     if (step == 0) step = 1;
 
     for (size_t i = startIdx; i < endIdx && outCount < maxPoints; i += step) {
-        float val = allPrices[i];
+        float val = rawPrices[i];
         outPoints[outCount++] = val;
         if (val < outMin) outMin = val;
         if (val > outMax) outMax = val;
@@ -227,8 +227,9 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
     int startArr = payload.indexOf('[', pricesPos);
     if (startArr < 0) return false;
 
-    std::vector<float> allPrices;
-    allPrices.reserve(300);
+    constexpr size_t MAX_RAW_PRICES = 320;
+    float rawPrices[MAX_RAW_PRICES];
+    size_t n = 0;
 
     int cur = startArr + 1;
     int len = payload.length();
@@ -244,8 +245,8 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
             String valStr = payload.substring(comma + 1, closeBracket);
             valStr.trim();
             float val = valStr.toFloat();
-            if (val > 0.0f) {
-                allPrices.push_back(val);
+            if (val > 0.0f && n < MAX_RAW_PRICES) {
+                rawPrices[n++] = val;
             }
         }
         cur = closeBracket + 1;
@@ -255,7 +256,6 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
         if (cur < len && payload[cur] == ']') break;
     }
 
-    size_t n = allPrices.size();
     if (n == 0) return false;
 
     outCount = 0;
@@ -264,7 +264,6 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
 
     size_t startIdx = 0;
     size_t endIdx = n;
-
     if (tf == Timeframe::Hourly && n > 12) {
         startIdx = n - 12;
     }
@@ -274,7 +273,7 @@ bool CoinGeckoProvider::parseMarketChart(const String& payload, Timeframe tf, fl
     if (step == 0) step = 1;
 
     for (size_t i = startIdx; i < endIdx && outCount < maxPoints; i += step) {
-        float val = allPrices[i];
+        float val = rawPrices[i];
         outPoints[outCount++] = val;
         if (val < outMin) outMin = val;
         if (val > outMax) outMax = val;

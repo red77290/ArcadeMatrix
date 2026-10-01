@@ -699,17 +699,17 @@ void test_pipeline_selection_effective_color_depth(void) {
     uint8_t esp128Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), tlsReq);
     TEST_ASSERT_EQUAL_UINT8(4, esp128Tls);
 
-    // 3. ESP32 Standard (128x32) without TLS in Auto mode -> 6 bits
+    // 3. ESP32 Standard (128x32) without TLS in Auto mode -> 8 bits (unconstrained graphics)
     uint8_t esp128NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), noTlsReq);
-    TEST_ASSERT_EQUAL_UINT8(6, esp128NoTls);
+    TEST_ASSERT_EQUAL_UINT8(8, esp128NoTls);
 
-    // 4. ESP32 Standard (64x32) with TLS in Auto mode -> 6 bits
+    // 4. ESP32 Standard (64x32) with TLS in Auto mode -> 8 bits (geometry footprint <= 16KB DMA fits TLS headroom)
     uint8_t esp64Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), tlsReq);
-    TEST_ASSERT_EQUAL_UINT8(6, esp64Tls);
+    TEST_ASSERT_EQUAL_UINT8(8, esp64Tls);
 
-    // 5. ESP32 Standard (64x32) without TLS in Auto mode -> 6 bits
+    // 5. ESP32 Standard (64x32) without TLS in Auto mode -> 8 bits
     uint8_t esp64NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), noTlsReq);
-    TEST_ASSERT_EQUAL_UINT8(6, esp64NoTls);
+    TEST_ASSERT_EQUAL_UINT8(8, esp64NoTls);
 
     // --- Contractual cases on 128x32 ESP32 Standard with TLS ---
     EngineDescriptor cryptoDesc;

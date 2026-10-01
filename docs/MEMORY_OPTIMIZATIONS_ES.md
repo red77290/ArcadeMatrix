@@ -29,37 +29,48 @@ ArcadeMatrix introdujo el pipeline `canvas_single`:
 
 ---
 
-### 2.2 Pipeline de Presentación Dinámico & Maximizador de Color Auto ($8 \leftrightarrow 4 \leftrightarrow 2$ Profundidad Adaptativa)
+### 2.2 Pipeline de Presentación Dinámico & Maximizador de Color Auto ($8 \leftrightarrow 7 \dots 2$ Profundidad Adaptativa)
 
 #### El Problema
-Las animaciones gráficas complejas (GIFs, sprites de Street Fighter, textos Marquee) requieren una profundidad de 8 o 6 bits para máxima fidelidad visual, pero su tamaño de DMA priva a mbedTLS de memoria en hardware con limitaciones (ej. ESP32 clásico 128×32 sin PSRAM). Por el contrario, fijar la matriz en 4 bits permanentemente degrada la calidad gráfica el 100% del tiempo. Además, un aumento ingenuo en caliente (pasar a ciegas de 4 bits a 8 bits) corre el riesgo de provocar un pánico inmediato por Out-Of-Memory (OOM) si la DRAM interna se ha fragmentado durante la ejecución del motor de red.
+Las animaciones gráficas complejas (GIFs, sprites de Street Fighter, textos Marquee, esferas de reloj) requieren una profundidad de 8 bits (16.7 millones de colores) para máxima fidelidad visual, pero su tamaño de DMA priva a mbedTLS de memoria en hardware con limitaciones (ej. ESP32 clásico 128×32 sin PSRAM). Por el contrario, fijar la matriz en 4 bits permanentemente degrada la calidad gráfica el 100% del tiempo, mientras que un límite estático de 6 bits restringe innecesariamente a los motores gráficos capaces. Además, un aumento ingenuo en caliente (pasar a ciegas de 4 bits a 8 bits) corre el riesgo de provocar un pánico inmediato por Out-Of-Memory (OOM) si la DRAM interna se ha fragmentado durante operaciones de red.
 
 #### La Solución Arquitectónica
-En lugar de forzar un compromiso estático al inicio o una alternancia a ciegas, el **Dynamic Presentation Pipeline** combina la quiescencia de hardware con un modelo predictivo de memoria en tiempo real en `PipelineSelectionPolicy::resolveTargetDepth`:
+En lugar de forzar un compromiso estático al inicio o una alternancia a ciegas, el **Dynamic Presentation Pipeline** combina la quiescencia de hardware con un modelo predictivo multidimensional riguroso en `PipelineSelectionPolicy::resolveTargetDepth`:
 
-1. **Modelado de Memoria Contigua en Tiempo Real:**
-   Antes de activar un motor entrante, `DisplayRuntime` consulta las métricas reales de la DRAM interna mediante `heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)`. La política calcula matemáticamente el bloque contiguo resultante para cada profundidad candidata $D \in [2, \text{techo}]$:
-   $$\text{estimatedBlock} = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit}$$
-   donde $\text{bytesPerBit} = \text{DmaMemoryLayout::calculateTotalBytes}(\text{width}, \text{height}, 1, \text{false})$.
+1. **Evaluación Multidimensional de Capacidad Matemática:**
+   Entre turnos de rotación (estrictamente después de que `oldEngine->deactivate()` alcanza la quiescencia y antes de que `newEngine->activate()` asigne memoria), `DisplayRuntime` consulta en tiempo real la DRAM interna y la memoria DMA disponibles. Las profundidades candidatas $D \in [8 \dots 2]$ se evalúan desde la máxima calidad hacia abajo según cuatro límites matemáticos:
+   * **Margen de DRAM Interna Libre:**
+     $$\widehat{F}(D) = \text{currentFreeInternalHeap} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{SYSTEM\_MIN\_HEADROOM\_RESERVE} + \text{req.internalPersistentBytes} + \text{netReserve} + \text{audioReserve}$$
+   * **Bloque de DRAM Contiguo Mayor:**
+     $$\widehat{L}(D) = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minContiguousNeeded}$$
+     donde $\text{minContiguousNeeded} = \text{NetworkBudget::TLS\_MIN\_COMBINED\_BLOCK}$ ($28.672\,\text{bytes}$) para motores TLS.
+   * **Capacidad DMA Interna:**
+     $$\widehat{Dma}(D) = \text{currentFreeDma} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minDmaNeeded}$$
+     donde $\text{minDmaNeeded} = \text{NetworkBudget::TLS\_MIN\_FREE\_DMA}$ ($16.384\,\text{bytes}$) para aceleración hardware SHA de esp-sha.
+   * **Viabilidad de PSRAM:** Verificada para placas con PSRAM (como ESP32-S3), garantizando que el mismo modelo matemático protege todos los objetivos de hardware.
 
-2. **Contrato de Admisión de Memoria de Motores:**
-   * **Motores de Red TLS (Clima, Cripto, Bolsa, Spotify, Noticias):** Requieren $\ge 26.624\,\text{bytes}$ (`TLS_CONTIGUOUS_REQUIRED`) más un margen operativo de seguridad de $4.096\,\text{bytes}$ ($30.720\,\text{bytes}$ en total). La política desciende por las profundidades candidatas (aterrizando típicamente en 4 bits, o 2 bits bajo presión extrema) para liberar de **16 a 24 KB de DRAM contigua** justo antes de la negociación mbedTLS.
-   * **Motores Gráficos (GIFs, Fighter, Reloj, Lienzo, Matrix):** Requieren suficiente margen contiguo para los cuadros de animación. La política evalúa las profundidades desde el techo configurado (hasta 8 bits en modo Auto) hacia abajo, restaurando la máxima fidelidad *únicamente cuando es matemáticamente seguro contra OOM*.
+2. **Escalonamiento Dinámico Continuo ($8 \leftrightarrow 7 \leftrightarrow 6 \leftrightarrow 5 \leftrightarrow 4 \leftrightarrow 3 \leftrightarrow 2$):**
+   * **Motores de Red TLS (Cripto, Bolsa, Spotify, Noticias, Clima):** Descienden matemáticamente a la profundidad máxima segura que cumple con todos los límites (típicamente 4 bits, o 2 bits bajo presión extrema), liberando de **16 a 24 KB de DRAM contigua** inmediatamente antes de negociar mbedTLS.
+   * **Motores Gráficos (GIFs, Fighter, Reloj, Lienzo, Matrix, Marquee):** Evaluados desde 8 bits hacia abajo, restaurando la plena calidad de **8 bits** siempre que sea seguro. En paneles 128×32 y 64×32 sin PSRAM, ¡el reloj y los motores gráficos funcionan a 8 bits nativos!
+   * **Integración WebUI:** Al activar "Dynamic Presentation Pipeline", el menú desplegable manual de profundidad de color se deshabilita automáticamente (en gris) con una nota explicativa que indica que la profundidad se determina matemáticamente por turno de rotación.
 
 3. **Protección de Suelo (Mínimo 2 Bits):**
    `FastMatrixPanel::initLuts` y los protectores de reconfiguración admiten hasta 2 bits de profundidad de color ($2 \le \text{depth} \le 8$), garantizando un modo degradado ultraeconómico bajo fragmentación severa del montón, sin pérdida de imagen.
 
 4. **Transacción de Presentación de Hardware (Invariante 21):**
    Durante la ventana de transición entre motores, la transacción de hardware se ejecuta de manera limpia:
-   1. `OE = HIGH` (Output Enable activo: panel completamente negro en hardware).
-   2. Parada del controlador I2S DMA.
-   3. Liberación del búfer DMA anterior.
-   4. Asignación del nuevo búfer DMA a la profundidad objetivo.
-   5. Reconstrucción de las tablas LUT de color con `FastMatrixPanel::initLuts(targetDepth)`.
-   6. Reinicio del controlador I2S DMA.
-   7. Renderizado y commit del primer frame válido en el lienzo fuera de pantalla.
-   8. `OE = LOW` (Output Enable desactivado: reanudación activa de la imagen).
-   * **Cero Glitch / Invisibilidad Total:** La transacción completa se ejecuta en **menos de 30 ms** (alrededor de 1.5 frames a 60 FPS), imperceptible durante la rotación entre motores.
+   1. `oldEngine->deactivate()` establece la quiescencia lógica acotada ($\le 150\text{ ms}$).
+   2. `OE = HIGH` (Output Enable activo: panel completamente negro en hardware).
+   3. Desmontaje del pipeline DMA activo.
+   4. Intento de asignación DMA objetivo (`requestedDepth`: hasta 8 bits para gráficos, 4 bits nominal para TLS).
+   5. Si falla, intento de degradación progresiva ($4 \to 2$ bits).
+   6. Si fallan todas las degradaciones, mantener `OE = HIGH` en estado `PresentationRecovery` (cero parpadeo ni señal corrupta).
+   7. Reconstrucción de las tablas LUT de color con `FastMatrixPanel::initLuts(effectiveDepth)`.
+   8. Renderizado del fotograma 0 y commit en el búfer DMA.
+   9. **Invariante P0:** `OE = LOW` (Output Enable desactivado) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`).
+   * **Cero Glitch / Invisibilidad Total:** El apagado de hardware se ejecuta en **menos de 30 ms**, imperceptible durante la rotación entre motores.
+   * La telemetría registra rigurosamente `requestedDepth`, `effectiveDepth`, y `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * Las reglas formales y tablas de dimensionamiento se detallan en [MEMORY_MODEL_ES.md](MEMORY_MODEL_ES.md).
 
 ---
 
@@ -103,7 +114,22 @@ Si la rotación ocurre mientras una petición HTTPS está en curso, los sockets 
 
 ---
 
-### 2.4 Asignación Perezosa de Búferes (Marquee Raw Buffer y Decodificadores GIF)
+### 2.5 Streaming HTTP Cero-Asignación & Búferes Fijos en Pila (Stack)
+
+#### El Problema
+Durante el streaming HTTPS con mbedTLS, mbedTLS retiene aproximadamente 33 KB de DRAM interna para sus búferes de registros de entrada/salida. Si los analizadores de API REST (como `CoinGeckoProvider::parseMarketChart`) reasignan dinámicamente memoria en el montón mediante `std::vector::reserve(300)` mientras el bloque contiguo mayor se encuentra temporalmente deprimido ($< 8\,\text{KB}$), `operator new` lanza una excepción `std::bad_alloc`, provocando un fallo crítico inmediato (`abort()`) en Core 1.
+
+#### La Solución Arquitectónica
+* **Asignación Fija en Pila:** Sustitución sistemática de todos los redimensionamientos dinámicos de `std::vector` en analizadores de respuestas REST por matrices fijas de capacidad acotada en pila:
+  ```cpp
+  constexpr size_t MAX_RAW_PRICES = 320;
+  float rawPrices[MAX_RAW_PRICES];
+  ```
+* **Cero Contención con mbedTLS:** Las respuestas REST se procesan y muestrean directamente en el marco de pila preasignado sin tocar el heap, eliminando cualquier riesgo de pánico por `std::bad_alloc` incluso bajo máxima tensión de DRAM en red.
+
+---
+
+### 2.6 Asignación Perezosa de Búferes (Búfer Raw de Marquee y Decodificadores GIF)
 
 #### El Problema
 `MarqueeEngine` asignaba históricamente un búfer contiguo de 8 KB (RGB565) al iniciar para soportar la visualización de iconos, incluso si el usuario sólo ejecutaba texto desplazable simple.
@@ -117,7 +143,7 @@ Si la rotación ocurre mientras una petición HTTPS está en curso, los sockets 
 
 ---
 
-### 2.5 Tareas FreeRTOS Efímeras (`SdSpace`)
+### 2.7 Tareas FreeRTOS Efímeras (`SdSpace`)
 
 #### El Problema
 La tarea de monitorización del espacio en tarjeta SD (`SdSpace`) se ejecutaba permanentemente en segundo plano, consumiendo una pila de 4 KB más un bloque TCB en DRAM (~4.5 KB en total), a pesar de ejecutarse sólo cada varios minutos.
@@ -131,7 +157,7 @@ La tarea de monitorización del espacio en tarjeta SD (`SdSpace`) se ejecutaba p
 
 ---
 
-### 2.6 Ajuste del Subsistema de Red, Tamaño de Pilas y Protección Anti-Bucles
+### 2.8 Ajuste del Subsistema de Red, Tamaño de Pilas y Protección Anti-Bucles
 
 1. **Límites Estrictos de Tamaño de Pila para AsyncTCP y FreeRTOS:**
    - La pila de la tarea trabajadora `async_tcp` en el Core 0 debe mantenerse estrictamente en **8192 bytes** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Reducir este valor (ej. a 5120 bytes) causa inanición silenciosa de pila durante la negociación de conexiones entrantes y el servicio de recursos WebUI comprimidos (~105 KB), originando tiempos de espera agotados en navegadores (`ERR_CONNECTION_TIMED_OUT`).

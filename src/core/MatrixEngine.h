@@ -80,6 +80,16 @@ private:
     uint8_t m_lut_b[32];
 };
 
+enum class ReconfigureFailure : uint8_t {
+    None = 0,
+    InvalidDepth,
+    Throttled,
+    TargetDmaAllocFailed,
+    FallbackDmaAllocFailed,
+    Frame0PresentationFailed,
+    NoValidPipeline
+};
+
 /**
  * @struct ReconfigureResult
  * @brief Telemetry and outcome of a dynamic presentation pipeline reconfiguration (Invariant 21).
@@ -87,11 +97,13 @@ private:
 struct ReconfigureResult {
     bool success = false;
     uint8_t previousDepth = 0;
+    uint8_t requestedDepth = 0;
     uint8_t effectiveDepth = 0;
     size_t dmaBytes = 0;
     uint32_t blankDurationUs = 0;
     bool fallbackUsed = false;
-    const char* failureReason = nullptr;
+    ReconfigureFailure failureReason = ReconfigureFailure::None;
+    const char* failureReasonStr = nullptr;
 };
 
 /**
@@ -204,5 +216,7 @@ private:
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;
     bool m_blanked = false;
+    uint32_t m_lastReconfigMs = 0;
+    static constexpr uint32_t MIN_RECONFIG_INTERVAL_MS = 500;
 };
 

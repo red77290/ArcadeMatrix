@@ -328,6 +328,10 @@ void RotationManager::switchToModule(int index) {
   // Activate new engine
   IEngine* newEngine = getOrCreateEngine(newInstanceId.c_str());
   if (newEngine) {
+      if (m_displayRuntime) {
+          EngineHandle h(mod.c_str(), newInstanceId.c_str());
+          m_displayRuntime->maybeReconfigurePipelineFor(newEngine, h, DisplaySourceId::ROTATION);
+      }
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }

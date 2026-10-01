@@ -109,6 +109,9 @@ public:
         const EngineRequirements& reqs,
         uint8_t currentDepth = 0,
         size_t currentLargestBlock = 0,
-        size_t currentFreeInternalHeap = 0
+        size_t currentFreeInternalHeap = 0,
+        size_t currentFreeDma = 0,
+        bool isDoubleBuffer = false,
+        bool hasCanvas = true
     );
 };
