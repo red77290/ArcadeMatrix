@@ -118,13 +118,18 @@ La tâche de surveillance de l'espace carte SD (`SdSpace`) tournait en tâche de
 
 ---
 
-### 2.6 Optimisation de la Pile Réseau & Dimensions des Tâches
+### 2.6 Optimisation de la Pile Réseau, Dimensions des Tâches & Garde-Fou de Rate-Limiting
 
-1. **Destruction du SoftAP / Portail Captif :**
-   - Dès que la connexion Wi-Fi Station est établie (`WL_CONNECTED`), l'interface SoftAP est entièrement démontée via `WiFi.softAPdisconnect(true)`, libérant les buffers du pilote Wi-Fi.
-2. **Optimisation des Buffers mDNS :**
+1. **Bornes Strictes des Piles AsyncTCP et FreeRTOS :**
+   - La pile de la tâche ouvrière `async_tcp` sur le Core 0 doit impérativement être maintenue à **8192 octets** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Réduire cette taille (ex. à 5120 octets) induit une saturation de la pile lors du traitement des connexions entrantes lourdes et de la distribution du payload WebUI compressé (~105 Ko), provoquant des timeouts de connexion navigateur (`ERR_CONNECTION_TIMED_OUT`).
+   - De même, la tâche principale Arduino `loopTask` sur le Core 1 doit rester à **8192 octets** (`CONFIG_ARDUINO_LOOP_STACK_SIZE=8192`).
+2. **Stabilité d'État de l'Interface Wi-Fi :**
+   - Les reconfigurations du mode réseau (`WiFi.mode(WIFI_STA)`) doivent être effectuées de manière statique à l'initialisation et jamais au sein de callbacks d'événements asynchrones LwIP (comme `ARDUINO_EVENT_WIFI_STA_GOT_IP`), ce qui réinitialise l'interface réseau (`netif`) et corrompt les sockets d'écoute actives.
+3. **Garde-Fou de Repli HTTP 429 et Refus Mémoire (Anti-Boucle 20 FPS) :**
+   - Les moteurs d'interrogation réseau (`CryptoEngine`, `StockEngine`) doivent obligatoirement horodater leur repli sur le cache (`cache.lastFetchTime = now`) en cas d'erreur de limitation de débit HTTP (429) ou de rejet d'admission mémoire TLS. L'absence d'horodatage entraîne une boucle infinie de requêtes à chaque trame de 50 ms (20 FPS), saturant la pile de sockets LwIP et gelant le résolveur DNS.
+4. **Optimisation des Buffers mDNS :**
    - Les descripteurs mDNS ne sont maintenus en mémoire que lorsque la découverte locale est activée.
-3. **Calibrage Fin des Piles FreeRTOS :**
+5. **Calibrage Fin des Piles FreeRTOS :**
    - Mesure de l'utilisation réelle des piles via `uxTaskGetStackHighWaterMark()` :
      * `FgtLoader` (chargement Fighter) : pile réduite de 16 Ko à 8 Ko en toute sécurité (8 Ko de DRAM récupérés).
      * `weather_fetch` / `DashFetch` : ajustées à leurs besoins stricts.

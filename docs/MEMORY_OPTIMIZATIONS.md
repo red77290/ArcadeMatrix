@@ -118,13 +118,18 @@ The SD card storage monitor task (`SdSpace`) previously ran as a permanent FreeR
 
 ---
 
-### 2.6 Network Subsystem & Stack Footprint Tuning
+### 2.6 Network Subsystem, Stack Footprint & Rate-Limiting Guarding
 
-1. **SoftAP / Captive Portal Teardown:**
-   - Once Wi-Fi station connectivity is established (`WL_CONNECTED`), the SoftAP interface is completely decommissioned via `WiFi.softAPdisconnect(true)`, liberating internal Wi-Fi driver BSS buffers.
-2. **mDNS Buffer Optimization:**
+1. **AsyncTCP and FreeRTOS Stack Size Boundaries:**
+   - The `async_tcp` worker task stack on Core 0 must be maintained at **8192 bytes** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Reducing this value (e.g. to 5120 bytes) triggers silent stack starvation during incoming HTTP connection handshakes and serving large gzipped WebUI assets (~105 KB), causing browser connection timeouts (`ERR_CONNECTION_TIMED_OUT`).
+   - Similarly, the primary Arduino `loopTask` on Core 1 must remain at **8192 bytes** (`CONFIG_ARDUINO_LOOP_STACK_SIZE=8192`).
+2. **Wi-Fi Interface State Stability:**
+   - Network mode reconfigurations (`WiFi.mode(WIFI_STA)`) and interface teardowns must be performed statically during boot initialization and never within asynchronous event callbacks (such as `ARDUINO_EVENT_WIFI_STA_GOT_IP`), which resets the underlying LwIP network interface (`netif`) and aborts bound listening sockets.
+3. **HTTP 429 & Memory Admission Fallback Guarding (20 FPS Loop Prevention):**
+   - Network polling engines (`CryptoEngine`, `StockEngine`) must record timestamp updates (`cache.lastFetchTime = now`) upon encountering HTTP rate limits (429) or memory admission denials. Failing to update the timestamp causes continuous re-fetch loops on every 20 FPS frame (50 ms), saturating LwIP socket queues and causing DNS resolver lockups.
+4. **mDNS Buffer Optimization:**
    - mDNS responder service records are retained only when enabled, avoiding permanent UDP broadcast parsing allocations.
-3. **Worker Stack High-Water Mark Tuning:**
+5. **Worker Stack High-Water Mark Tuning:**
    - Systematically measured FreeRTOS stack usage across background tasks using `uxTaskGetStackHighWaterMark()`:
      * `FgtLoader` (Fighter engine asset loader): Reduced stack from 16 KB to 8 KB without risk of overflow (saving 8 KB).
      * `weather_fetch` / `DashFetch`: Adjusted to optimal bounded bounds.

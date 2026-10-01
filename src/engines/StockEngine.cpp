@@ -174,6 +174,7 @@ void StockEngine::fetchQuote(const String& symbol) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        cache.lastFetchTime = now; // Guard against instant re-fetch loop on cache fallback
         requestRedraw();
         LOGW("StockEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.2f", symbol.c_str(), currentPrice);
     } else {
@@ -217,6 +218,7 @@ void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
             break;
         }
     }
+    cache.lastFetchTime = now; // Guard against instant re-fetch loop on failure or fallback
     esp_task_wdt_reset();
 }
 

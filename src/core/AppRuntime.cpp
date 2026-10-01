@@ -444,15 +444,6 @@ void AppRuntime::initialize() {
                 dns_setserver(1, &dns1);
                 dns_setserver(2, &dns2);
 
-                // MEMORY OPTIMIZATION: If SoftAP was previously active (or in WIFI_AP_STA),
-                // shut down SoftAP to reclaim internal DRAM buffers (DHCP server, AP beacon pool).
-                // REVERT INSTRUCTION: Remove this block if simultaneous AP+STA mode is explicitly required.
-                if (WiFi.getMode() & WIFI_MODE_AP) {
-                    WiFi.softAPdisconnect(true);
-                    WiFi.mode(WIFI_STA);
-                    LOGI("WiFi", "SoftAP disabled and deallocated to recover internal DRAM.");
-                }
-
                 if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
                     s_mdnsStarted = true;
                     LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());

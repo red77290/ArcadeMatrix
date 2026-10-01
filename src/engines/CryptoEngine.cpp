@@ -157,6 +157,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        cache.lastFetchTime = now; // Guard against instant re-fetch loop on cache fallback
         requestRedraw();
         LOGW("CryptoEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.4f", symbol.c_str(), currentPrice);
     } else {
@@ -204,9 +205,7 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
             break;
         }
     }
-    if (!cache.hasData) {
-        cache.lastFetchTime = now; // Guard against instant re-fetch loop
-    }
+    cache.lastFetchTime = now; // Guard against instant re-fetch loop on failure or fallback
     esp_task_wdt_reset();
 }
 

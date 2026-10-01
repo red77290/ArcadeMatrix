@@ -118,13 +118,18 @@ La tarea de monitorización del espacio en tarjeta SD (`SdSpace`) se ejecutaba p
 
 ---
 
-### 2.6 Ajuste del Subsistema de Red y Tamaño de Pilas
+### 2.6 Ajuste del Subsistema de Red, Tamaño de Pilas y Protección Anti-Bucles
 
-1. **Desmantelamiento de SoftAP / Portal Cautivo:**
-   - Tan pronto como se establece la conexión Wi-Fi (`WL_CONNECTED`), la interfaz SoftAP se desconecta totalmente mediante `WiFi.softAPdisconnect(true)`, liberando los búferes del controlador Wi-Fi.
-2. **Optimización de Búferes mDNS:**
+1. **Límites Estrictos de Tamaño de Pila para AsyncTCP y FreeRTOS:**
+   - La pila de la tarea trabajadora `async_tcp` en el Core 0 debe mantenerse estrictamente en **8192 bytes** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Reducir este valor (ej. a 5120 bytes) causa inanición silenciosa de pila durante la negociación de conexiones entrantes y el servicio de recursos WebUI comprimidos (~105 KB), originando tiempos de espera agotados en navegadores (`ERR_CONNECTION_TIMED_OUT`).
+   - De igual manera, la tarea principal de Arduino `loopTask` en el Core 1 debe permanecer en **8192 bytes** (`CONFIG_ARDUINO_LOOP_STACK_SIZE=8192`).
+2. **Estabilidad de Estado de la Interfaz Wi-Fi:**
+   - Las reconfiguraciones del modo de red (`WiFi.mode(WIFI_STA)`) deben realizarse estáticamente durante la inicialización de arranque y nunca dentro de retornos de llamada de eventos asíncronos LwIP (como `ARDUINO_EVENT_WIFI_STA_GOT_IP`), lo cual reinicia la interfaz de red subyacente (`netif`) y aborta los sockets de escucha activos.
+3. **Protección de Repliegue ante HTTP 429 y Denegación de Memoria (Anti-Bucle 20 FPS):**
+   - Los motores de consulta periódica de red (`CryptoEngine`, `StockEngine`) deben registrar la marca de tiempo de repliegue en caché (`cache.lastFetchTime = now`) al encontrar límites de tasa HTTP (429) o denegaciones de admisión de memoria TLS. Omitir esta actualización provoca un bucle ininterrumpido de reintentos en cada frame de 50 ms (20 FPS), saturando las colas de sockets de LwIP y bloqueando el resolvedor DNS.
+4. **Optimización de Búferes mDNS:**
    - Los registros mDNS se conservan únicamente cuando el servicio local está activado.
-3. **Calibración de Pilas FreeRTOS:**
+5. **Calibración de Pilas FreeRTOS:**
    - Medición sistemática del consumo real de pilas mediante `uxTaskGetStackHighWaterMark()`:
      * `FgtLoader` (carga de sprites de Fighter): Reducción de 16 KB a 8 KB de forma totalmente segura (8 KB de DRAM recuperados).
      * `weather_fetch` / `DashFetch`: Ajustadas a límites seguros estrictos.
