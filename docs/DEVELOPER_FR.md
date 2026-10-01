@@ -178,8 +178,10 @@ Le `DisplayArbiter` résout les sources d'affichage de manière déterministe vi
     - `deactivate()` doit être 100% sans allocation : ne jamais appeler `std::vector::shrink_to_fit()` ou de redimensionnement dynamique pendant la désactivation ; utiliser `std::vector<T>().swap(vec)` ou `{}` pour désallouer inconditionnellement sans allouer de métadonnées.
     - `deactivate()` s'exécute sur le Core 1 de manière strictement non bloquante pour garantir la **quiescence logique de rendu** (cessation immédiate de tout ordre de tracé et détachement de la surface). L'arrêt physique complet des workers d'arrière-plan, timers et sockets réseau est pris en charge sur Core 0 par `shutdownForDestruction()` avant la libération des ressources partagées.
 17. **Règle d'Or #17 — Quiescence Réseau & Interruption Ciblée de Sockets (Invariant N8) :**
-    - Tout moteur réseau doit procéder à l'interruption immédiate côté client du transport (`session.abort()` / `_client.stop()`) et joindre de façon synchrone ses tâches d'arrière-plan dans `deactivate()`.
-    - Dès qu'une session est annulée, aucun nouveau traitement applicatif ni allocation ne peut avoir lieu sur cette session.
+    - Tout moteur réseau doit supporter l'annulation coopérative immédiate (`session.abort()` / `_client.stop()`).
+    - `deactivate()` doit cesser toute interaction de rendu sur Core 1 et signaler l'annulation de session sans attente active ni blocage sur des sockets.
+    - `shutdownForDestruction()` sur Core 0 doit interrompre/joindre les workers d'arrière-plan et finaliser la quiescence des ressources réseau avant toute destruction ou libération partagée.
+    - Dès qu'une session est annulée et son propriétaire quiescent, aucun traitement applicatif, callback, parsing JSON ou allocation ne peut avoir lieu sur cette session.
 18. **Règle d'Or #18 — Pipeline de Présentation Dynamique & Fidélité des Couleurs (Invariant 21) :**
     - Les moteurs ne doivent pas supposer une profondeur de couleur statique figée. Lors du passage entre moteurs graphiques (jusqu'à 8 bits configurés) et moteurs TLS (4 bits nominal), le pipeline se reconfigure de manière déterministe sous extinction matérielle OE ($< 30\text{ ms}$).
     - **Garantie P0 :** L'extinction matérielle OE n'est relâchée (LOW) qu'après le commit et la présentation validée de la Frame 0 (`firstFrameCommitted == true`). En cas d'échec de la cible et des replis progressifs, OE reste à HIGH (`PresentationRecovery`).

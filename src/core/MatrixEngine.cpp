@@ -137,6 +137,10 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     esp_task_wdt_reset();
     if (!display->begin()) {
         LOGE("MatrixEngine", "Failed to allocate memory for Matrix DMA!");
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+        m_presentationBackend.reset();
         return false;
     }
     esp_task_wdt_reset();
@@ -152,21 +156,25 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
     m_oePin = _pins.oe;
     m_panel->initLuts(depth);
 
-    // Initialize Presentation Backend FIRST, before any screen clears or presentations
+    // Initialize Presentation Backend FIRST, purely constructive with zero frame presentation
     LOGI("MatrixEngine", "Initializing Hub75PresentationBackend...");
     m_presentationBackend.reset(new Hub75PresentationBackend(
         this, totalWidth, config.height, depth, m_doubleBuffered
     ));
 
-    LOGI("MatrixEngine", "Clearing screen...");
-    display->clearScreen();
-    present();
-    display->clearScreen();
-    present();
     esp_task_wdt_reset();
     LOGI("MatrixEngine", "MatrixEngine::begin complete.");
 
     return true;
+}
+
+PresentationTiming MatrixEngine::commitFirstFrame() {
+    if (m_presentationBackend) {
+        return m_presentationBackend->commitFirstFrame();
+    }
+    PresentationTiming pt;
+    pt.result = PresentationResult::BackendUnavailable;
+    return pt;
 }
 
 ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDepth) {

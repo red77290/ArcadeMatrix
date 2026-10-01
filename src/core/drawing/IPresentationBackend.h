@@ -66,9 +66,21 @@ public:
     virtual PresentationTiming commit(const PresentationPolicy& policy) = 0;
 
     /**
-     * @brief Commits Frame 0 (initial deterministic black frame) to initialize and validate
+     * @brief Commits Frame 0 (initial deterministic black frame) to initialize and prime
      * the DMA pipeline during a presentation reconfiguration before hardware OE unblanking.
-     * @return PresentationTiming Live performance telemetry with status Ok on successful commit
+     *
+     * Semantics:
+     * Represents a successful presentation pipeline commit operation (Frame 0 successfully
+     * submitted to the active DMA presentation pipeline). As unidirectional HUB75 shift registers
+     * provide no hardware bus readback acknowledgement, this verifies that the backend resources
+     * are fully allocated, cache writeback has completed, and the DMA swap operation has executed.
+     *
+     * Timing / Safe-Window:
+     * commitFirstFrame() is a reconfiguration-only initialization commit performed while OE is
+     * asserted (hardware blanked); it does not use the normal frame safe-window path because
+     * presentation output is physically blanked and tearing cannot be visually observed.
+     *
+     * @return PresentationTiming Live performance telemetry with status Ok on successful submission
      */
     virtual PresentationTiming commitFirstFrame() {
         PresentationTiming pt;

@@ -193,6 +193,6 @@ Mediciones realizadas en **ESP32dev (Xtensa Dual-Core 240 MHz, Sin PSRAM)** cont
 
 * **Invariante 14 (Recuperación de Recursos en Transición):** El motor saliente debe liberar completamente sus búferes transitorios antes de que el motor entrante se inicialice.
 * **Invariante 15 (Desactivación Libre de Asignaciones):** `deactivate()` nunca debe realizar asignaciones dinámicas en el heap; únicamente libera, cierra y aplica el modismo swap.
-* **Invariante 16 (Quiescencia Completa de Desactivación):** `deactivate()` no retorna hasta que todas las tareas, temporizadores y flujos de I/O hayan concluido.
+* **Invariante 16 (Quiescencia en Dos Etapas: Renderizado y Recursos):** `deactivate()` en Core 1 establece la quiescencia lógica de renderizado; `shutdownForDestruction()` en Core 0 finaliza las tareas, sockets y flujos de I/O antes de liberar recursos compartidos.
 * **Invariante 19 (Aislamiento de Hardware DMA):** Los búferes DMA de HUB75 se acceden exclusivamente a través de `IDrawingSurface`.
 * **Invariante 21 (Aislamiento de Salida HUB75):** Durante la reconfiguración del pipeline de presentación, la señal OE se mantiene inactiva (HIGH) hasta que el primer frame válido ha sido confirmado con éxito.

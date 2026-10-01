@@ -193,6 +193,6 @@ Mesures relevées sur **ESP32dev (Xtensa Dual-Core 240 MHz, Sans PSRAM)** pilota
 
 * **Invariant 14 (Réclamation des Ressources de Transition) :** Tout moteur sortant doit libérer intégralement ses buffers transitoires avant l'initialisation du moteur suivant.
 * **Invariant 15 (Désactivation Zéro-Allocation) :** `deactivate()` ne doit jamais allouer de mémoire dynamique ; elle libère, ferme et applique l'idiome de swap.
-* **Invariant 16 (Quiescence Complète de Désactivation) :** `deactivate()` ne retourne que lorsque toutes les tâches, timers et flux I/O sont terminés.
+* **Invariant 16 (Quiescence en Deux Étapes : Rendu et Ressources) :** `deactivate()` sur Core 1 établit la quiescence logique de rendu ; `shutdownForDestruction()` sur Core 0 interrompt les tâches, sockets et flux I/O avant la libération des ressources partagées.
 * **Invariant 19 (Isolation Stricte du Matériel DMA) :** Les framebuffers HUB75 DMA sont accédés exclusivement via `IDrawingSurface`.
 * **Invariant 21 (Isolation de Sortie HUB75) :** Pendant toute la reconfiguration du pipeline de présentation, le signal OE reste fermement asservi à l'état inactif (HIGH) jusqu'au commit validé de la première frame.

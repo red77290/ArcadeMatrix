@@ -149,8 +149,10 @@ public:
     - `deactivate()` NO DEBE realizar ninguna nueva asignación dinámica de memoria (`malloc`, `new`, redimensionamiento de contenedores). Libere la memoria usando `std::vector<T>().swap(vec)` o `{}` en lugar del no vinculante `shrink_to_fit()`.
     - `deactivate()` se ejecuta en Core 1 de forma estrictamente no bloqueante para garantizar la **quiescencia lógica de renderizado** (cese inmediato de órdenes de dibujo y desvinculación de la superficie). La finalización física de tareas de red y temporizadores se gestiona en Core 0 mediante `shutdownForDestruction()` antes de liberar recursos compartidos. El sistema regresa a la línea base inactiva de referencia ($|\Delta \text{heap}| \le 2\text{ KB}$).
 17. **Regla de Oro #17 — Quiescencia de Red y Cancelación de Sockets (Invariante N8):**
-    - Todo motor de red debe implementar la cancelación inmediata del transporte del lado del cliente (`session.abort()` / `_client.stop()`) y esperar la finalización síncrona de sus tareas en segundo plano en `deactivate()`.
-    - Una vez cancelada una sesión, no se permite ningún procesamiento de aplicación ni asignación de búferes sobre ella.
+    - Los motores de red deben implementar la cancelación cooperativa inmediata (`session.abort()` / `_client.stop()`).
+    - `deactivate()` debe detener las interacciones de renderizado en Core 1 y solicitar la cancelación sin bloqueos en sockets.
+    - `shutdownForDestruction()` en Core 0 debe cancelar/unir las tareas en segundo plano y finalizar la quiescencia de red antes de liberar recursos compartidos.
+    - Una vez cancelada una sesión y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación, callback, análisis JSON ni asignación sobre ella.
 18. **Regla de Oro #18 — Pipeline de Presentación Dinámico y Adaptación de Color (Invariante 21):**
     - Los motores no deben asumir una profundidad estática fija. Al alternar entre motores gráficos (hasta 8 bits configurados) y motores TLS (4 bits nominales), el pipeline se reconfigura de forma determinista bajo apagado de hardware OE ($< 30\text{ ms}$).
     - **Garantía P0:** La señal OE solo se libera (LOW) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`).

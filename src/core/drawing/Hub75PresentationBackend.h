@@ -15,6 +15,11 @@ public:
 
     Hub75DmaTarget acquireDmaTarget() override;
     PresentationTiming commit(const PresentationPolicy& policy) override;
+
+    /**
+     * @brief Commits Frame 0 (deterministic black frame) to active DMA backbuffer and flips.
+     * Reconfiguration-only initialization commit performed while OE is asserted (omits safe-window).
+     */
     PresentationTiming commitFirstFrame() override;
     PresentationTiming presentCanvas(const uint16_t* canvas, uint16_t canvasWidth, uint16_t canvasHeight,
                                      PresentationStrategy strategy, const PresentationPolicy& policy) override;

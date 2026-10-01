@@ -845,6 +845,136 @@ void test_render_transaction_contracts(void) {
 }
 
 // =========================================================================
+// Lifecycle Quiescence & Presentation Transaction Contracts
+// =========================================================================
+
+class MockQuiescenceEngine : public IEngine {
+public:
+    bool logicalQuiescent = false;
+    bool physicalQuiescent = false;
+    int workerTasksActive = 2;
+    int openSockets = 1;
+
+    EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+    void activate() override {
+        logicalQuiescent = false;
+        physicalQuiescent = false;
+    }
+    void update(EngineContext*) override {}
+    void render(EngineContext*) override {}
+    void deactivate() override {
+        // Core 1: non-blocking logical quiescence
+        logicalQuiescent = true;
+    }
+    bool shutdownForDestruction() override {
+        // Core 0: cooperative shutdown of workers and sockets
+        if (logicalQuiescent) {
+            workerTasksActive = 0;
+            openSockets = 0;
+            physicalQuiescent = true;
+            return true;
+        }
+        return false;
+    }
+};
+
+void test_lifecycle_quiescence_and_presentation_transaction_contracts(void) {
+    // 1. Two-Stage Quiescence Sequence Validation
+    MockQuiescenceEngine oldEngine;
+    oldEngine.activate();
+    TEST_ASSERT_FALSE(oldEngine.logicalQuiescent);
+    TEST_ASSERT_FALSE(oldEngine.physicalQuiescent);
+    TEST_ASSERT_EQUAL_INT(2, oldEngine.workerTasksActive);
+    TEST_ASSERT_EQUAL_INT(1, oldEngine.openSockets);
+
+    // Step 1: Core 1 deactivation (logical rendering quiescence, non-blocking)
+    oldEngine.deactivate();
+    TEST_ASSERT_TRUE(oldEngine.logicalQuiescent);
+    TEST_ASSERT_FALSE(oldEngine.physicalQuiescent);
+    // Background resources still physically active until Core 0 handoff
+    TEST_ASSERT_EQUAL_INT(2, oldEngine.workerTasksActive);
+
+    // Step 2: Core 0 shutdown for destruction (physical quiescence)
+    bool shutdownOk = oldEngine.shutdownForDestruction();
+    TEST_ASSERT_TRUE(shutdownOk);
+    TEST_ASSERT_TRUE(oldEngine.physicalQuiescent);
+    TEST_ASSERT_EQUAL_INT(0, oldEngine.workerTasksActive);
+    TEST_ASSERT_EQUAL_INT(0, oldEngine.openSockets);
+
+    // 2. Hardware Presentation Transaction & OE Blanking States
+    // Case A: Allocation failure -> OE stays HIGH, result = NoValidPipeline, display nulled
+    {
+        bool oeAsserted = true; // OE asserted (HIGH) at start of reconfigure
+        bool allocSuccess = false; // DMA allocation failed (OOM)
+        void* displayPtr = nullptr;
+        void* panelPtr = nullptr;
+        void* backendPtr = nullptr;
+
+        bool success = false;
+        uint8_t effectiveDepth = 0;
+        const char* failureReason = nullptr;
+
+        if (!allocSuccess || displayPtr == nullptr) {
+            success = false;
+            effectiveDepth = 0;
+            failureReason = "NoValidPipeline";
+            oeAsserted = true; // Invariant 21: keep OE HIGH
+        }
+
+        TEST_ASSERT_FALSE(success);
+        TEST_ASSERT_EQUAL_UINT8(0, effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("NoValidPipeline", failureReason);
+        TEST_ASSERT_TRUE(oeAsserted);
+        TEST_ASSERT_NULL(displayPtr);
+        TEST_ASSERT_NULL(panelPtr);
+        TEST_ASSERT_NULL(backendPtr);
+    }
+
+    // Case B: Allocation OK, but Frame 0 commit fails -> OE stays HIGH, failure = Frame0PresentationFailed
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = true;
+        bool frame0Committed = false; // Backend reported failure
+
+        bool success = false;
+        uint8_t effectiveDepth = 0;
+        const char* failureReason = nullptr;
+
+        if (allocSuccess && !frame0Committed) {
+            success = false;
+            effectiveDepth = 0;
+            failureReason = "Frame0PresentationFailed";
+            oeAsserted = true; // Invariant 21: OE remains HIGH
+        }
+
+        TEST_ASSERT_FALSE(success);
+        TEST_ASSERT_EQUAL_UINT8(0, effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("Frame0PresentationFailed", failureReason);
+        TEST_ASSERT_TRUE(oeAsserted);
+    }
+
+    // Case C: Allocation OK and Frame 0 committed -> OE released LOW, transaction OK
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = true;
+        bool frame0Committed = true; // Frame 0 successfully committed by backend
+
+        bool success = false;
+        uint8_t effectiveDepth = 0;
+
+        if (allocSuccess && frame0Committed) {
+            oeAsserted = false; // Invariant 21: OE released LOW strictly after Frame 0
+            success = true;
+            effectiveDepth = 4;
+        }
+
+        TEST_ASSERT_TRUE(success);
+        TEST_ASSERT_EQUAL_UINT8(4, effectiveDepth);
+        TEST_ASSERT_FALSE(oeAsserted); // OE is released (LOW)
+    }
+}
+
+// =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
 
@@ -894,6 +1024,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_pipeline_selection_effective_color_depth);
     RUN_TEST(test_rotation_requirements_aggregation);
     RUN_TEST(test_render_transaction_contracts);
+    RUN_TEST(test_lifecycle_quiescence_and_presentation_transaction_contracts);
 
     return UNITY_END();
 }

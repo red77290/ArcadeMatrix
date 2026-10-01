@@ -16,8 +16,9 @@
 
 #include "ConfigLoader.h"
 
+#include "drawing/IPresentationBackend.h"
+
 class Hub75PresentationBackend;
-class IPresentationBackend;
 
 #if defined(ESP32_THE_ORIG)
 #define MATRIX_TX_ADJUST(x_coord) (((x_coord) & 1U) ? ((x_coord) - 1) : ((x_coord) + 1))
@@ -146,6 +147,12 @@ public:
     ReconfigureResult reconfigurePresentationPipeline(uint8_t targetDepth);
 
     uint8_t getActiveColorDepth() const { return m_activeColorDepth; }
+    
+    /**
+     * @brief Commits Frame 0 (initial deterministic black frame) via presentation backend.
+     * Guaranteed to present black to active and back buffers.
+     */
+    PresentationTiming commitFirstFrame();
     
     /**
      * @brief Clear the entire matrix screen.

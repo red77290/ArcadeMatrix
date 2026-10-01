@@ -848,8 +848,10 @@ To achieve flicker-free rendering on single-buffer DMA panels (e.g. classic ESP3
 
 - **🔴 Invariant 15 — Allocation-Free Deactivation:**
   Once deactivation begins, the outgoing engine MUST NOT perform any new dynamic allocation. Deactivation may only release, close, stop, or detach resources owned by the engine. All internal container deallocations use `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
-- **🔴 Invariant 16 — Quiescent Deactivation:**
-  `deactivate()` MUST return only after all engine-owned tasks (`FgtLoader`, `DashFetch`, `CastPoll`), timers, callbacks, asynchronous I/O operations and open file descriptors have fully stopped or been detached from engine-owned resources.
+- **🔴 Invariant 16 — Quiescent Deactivation (Two-Stage Rendering & Resource Quiescence):**
+  Deactivation strictly enforces two-stage quiescence:
+  1. `deactivate()` on Core 1 MUST execute without blocking or waiting on network sockets, establishing immediate **logical rendering quiescence** (detaching drawing surface, immediately stopping all draw calls, and signaling cooperative cancellation to background tasks).
+  2. `shutdownForDestruction()` on Core 0 cooperatively halts and joins all engine-owned background tasks (`FgtLoader`, `DashFetch`, `CastPoll`), terminates timers, aborts network sockets, and closes open file descriptors before shared hardware or memory resources are released.
 - **🔴 Invariant 17 — Dirty State Represents Unpresented Changes:**
   `IDrawingSurface::isDirty()` MUST remain true until the corresponding canvas state has been successfully committed to the display hardware (`PresentationResult::Ok`).
 - **🔴 Invariant 18 — Canvas-Only Clear:**

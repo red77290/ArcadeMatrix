@@ -688,8 +688,10 @@ Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux D
 
 - **🔴 Invariant 15 — Désactivation Sans Allocation :**
   Dès que la désactivation débute, le moteur sortant NE DOIT effectuer aucune nouvelle allocation dynamique. La désactivation peut uniquement libérer, fermer, stopper ou détacher les ressources détenues par le moteur. Toutes les désallocations internes de conteneurs utilisent `std::vector<T>().swap(vec)` ou `{}` plutôt qu'un appel non contraignant à `shrink_to_fit()`.
-- **🔴 Invariant 16 — Désactivation Quiescente :**
-  `deactivate()` DOIT retourner uniquement après que toutes les tâches d'arrière-plan du moteur (`FgtLoader`, `DashFetch`, `CastPoll`), timers, rappels, I/O asynchrones et descripteurs de fichiers ouverts ont été intégralement arrêtés ou détachés des ressources du moteur.
+- **🔴 Invariant 16 — Désactivation Quiescente (Quiescence en Deux Étapes : Rendu et Ressources) :**
+  La désactivation applique strictement une quiescence en deux étapes :
+  1. `deactivate()` sur Core 1 S'EXÉCUTE de manière strictement non bloquante sans attente sur des sockets, garantissant la **quiescence logique de rendu** immédiate (détachement de la surface de tracé, cessation de tout ordre de tracé, signalement d'annulation coopérative aux tâches).
+  2. `shutdownForDestruction()` sur Core 0 interrompt et joint de façon coopérative l'ensemble des tâches d'arrière-plan du moteur (`FgtLoader`, `DashFetch`, `CastPoll`), stoppe les timers, interrompt les sockets réseau et ferme les descripteurs de fichiers avant toute libération des ressources partagées.
 - **🔴 Invariant 17 — L'État Dirty Représente les Changements Non Présentés :**
   `IDrawingSurface::isDirty()` DOIT rester vrai jusqu'à ce que l'état du canvas correspondant ait été validé avec succès sur le matériel d'affichage (`PresentationResult::Ok`).
 - **🔴 Invariant 18 — Effacement Limité au Canvas :**

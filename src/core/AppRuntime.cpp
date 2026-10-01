@@ -315,6 +315,8 @@ void AppRuntime::initialize() {
         LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
     }
+    // Commit Frame 0 (deterministic black frame) via backend as sole presentation authority
+    matrixEngine.commitFirstFrame();
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());

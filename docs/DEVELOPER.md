@@ -209,8 +209,10 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
     - `deactivate()` MUST NOT perform any new dynamic memory allocation (`malloc`, `new`, container resize). Reclaim memory using `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
     - `deactivate()` executes on Core 1 strictly non-blocking to guarantee **logical rendering quiescence** (immediately halting all draw commands and detaching the surface). Complete background task, timer, and network socket termination is performed on Core 0 via `shutdownForDestruction()` prior to releasing shared resources. The system returns to the reference idle baseline within the Quiescent Baseline Envelope ($|\Delta \text{heap}| \le 2\text{ KB}$).
 17. **Golden Rule #17 — Network Quiescence & Scoped Socket Abort (Invariant N8):**
-    - All network engines MUST implement immediate client-side socket cancellation (`session.abort()` / `_client.stop()`) and join background worker tasks synchronously inside `deactivate()`.
-    - Once a session is aborted, no subsequent application processing or buffer allocation may take place on that session.
+    - Network engines MUST support immediate cooperative cancellation (`session.abort()` / `_client.stop()`).
+    - `deactivate()` MUST stop Core-1 rendering interaction and signal session cancellation without waiting or blocking on network sockets.
+    - `shutdownForDestruction()` MUST abort/join engine-owned background workers and finalize network resource quiescence on Core 0 before shared resources are released.
+    - Once a session is aborted and its owner is physically quiescent, no further application processing, callbacks, JSON parsing, or allocation may occur on that session.
 18. **Golden Rule #18 — Dynamic Presentation Pipeline & Color Depth Adaptation (Invariant 21):**
     - Engines must not assume permanent static color depth. When switching between rich graphical engines (up to 8 bits configured) and memory-intensive TLS engines (4 bits nominal), the presentation pipeline deterministically reconfigures under hardware OE blanking ($< 30\text{ ms}$).
     - **P0 Guarantee:** Output Enable (OE) is released (LOW) strictly after Frame 0 is rendered and committed (`firstFrameCommitted == true`). If target and progressive fallback allocations fail, OE remains HIGH (`PresentationRecovery`).

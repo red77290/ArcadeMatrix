@@ -193,6 +193,6 @@ Measurements taken on **ESP32dev (Xtensa Dual-Core 240 MHz, No PSRAM)** driving 
 
 * **Invariant 14 (Transition Resource Reclamation):** Outgoing engines must fully surrender transient buffers before incoming engines initialize.
 * **Invariant 15 (Allocation-Free Deactivation):** `deactivate()` must never allocate heap memory; it only frees, closes, and swaps out existing containers.
-* **Invariant 16 (Complete Quiescent Deactivation):** `deactivate()` returns only after all tasks, timers, callbacks, and I/O handles are terminated.
+* **Invariant 16 (Two-Stage Quiescent Deactivation):** `deactivate()` on Core 1 establishes immediate logical rendering quiescence; `shutdownForDestruction()` on Core 0 terminates background tasks, sockets, and I/O handles before shared resource release.
 * **Invariant 19 (DMA Isolation):** HUB75 DMA framebuffers are accessed solely through `IDrawingSurface` transactions.
 * **Invariant 21 (HUB75 Output Isolation):** During presentation pipeline reconfiguration, OE remains asserted (HIGH) until the first valid frame of the new pipeline is committed.
