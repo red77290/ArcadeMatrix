@@ -145,7 +145,7 @@ void ConfigLoader::setDefaults() {
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
     matrix.colorDepth = 0; // 0 = Auto (Adaptive TLS / Hardware)
-    matrix.dynamicColorDepth = false;
+    matrix.dynamicColorDepth = true; // Auto adaptive presentation pipeline enabled by default
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
@@ -257,6 +257,7 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         
         if (disp.containsKey("dynamic_color_depth")) matrix.dynamicColorDepth = disp["dynamic_color_depth"].as<bool>();
         else if (disp.containsKey("dynamicColorDepth")) matrix.dynamicColorDepth = disp["dynamicColorDepth"].as<bool>();
+        else if (matrix.colorDepth == 0) matrix.dynamicColorDepth = true;
         
         if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
         else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();

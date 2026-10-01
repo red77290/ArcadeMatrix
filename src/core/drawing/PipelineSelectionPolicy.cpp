@@ -316,26 +316,90 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     uint16_t width,
     uint16_t height,
     bool hasPsram,
-    const EngineRequirements& reqs)
+    const EngineRequirements& reqs,
+    uint8_t currentDepth,
+    size_t currentLargestBlock,
+    size_t currentFreeInternalHeap)
 {
-    // Auto mode is statically evaluated at boot; dynamic switching is inactive
-    if (configuredDepth == COLOR_DEPTH_AUTO) {
-        return resolveEffectiveColorDepth(0, width, height, hasPsram);
-    }
+    // Auto mode resolves to maximum capability ceiling (up to 8 bits)
+    uint8_t maxDepthCeiling = (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0)
+        ? 8
+        : configuredDepth;
+
+    if (maxDepthCeiling > 8) maxDepthCeiling = 8;
+    if (maxDepthCeiling < 2) maxDepthCeiling = 2;
 
     // Dynamic presentation adaptation disabled: enforce configured depth strictly
     if (!dynamicColorDepth) {
+        if (configuredDepth == COLOR_DEPTH_AUTO || configuredDepth == 0) {
+            return resolveEffectiveColorDepth(0, width, height, hasPsram);
+        }
         return configuredDepth;
     }
 
-    // Dynamic presentation adaptation:
-    // If incoming engine requires TLS on memory-constrained hardware (ESP32 without PSRAM, 128x32),
-    // switch temporarily to 4-bit presentation depth to reclaim DRAM.
-    // Otherwise, preserve user's preferred rich depth (e.g. 8 or 6 bits) for graphical engines.
-    if (reqs.needsTls && !hasPsram && (width * height >= 128 * 32)) {
-        return 4;
+    // Hardware with external PSRAM has abundant headroom; dynamic reduction not required
+    if (hasPsram) {
+        return maxDepthCeiling;
     }
 
-    return configuredDepth;
+    // Panels smaller than 128x32 (e.g. 64x32) consume <= 8 KB DMA even at 8 bits; no reduction needed
+    if (width * height < 128 * 32) {
+        return maxDepthCeiling;
+    }
+
+    // Base memory requirement for incoming engine:
+    // TLS requires at least ~26 KB of contiguous internal DRAM for handshake buffers and crypto state
+    constexpr size_t TLS_CONTIGUOUS_REQUIRED = 26624;
+    constexpr size_t ENGINE_SAFETY_MARGIN = 4096; // Operating margin for FreeRTOS / Wi-Fi driver
+
+    size_t targetContiguousNeeded = 0;
+    if (reqs.needsTls) {
+        targetContiguousNeeded = TLS_CONTIGUOUS_REQUIRED + ENGINE_SAFETY_MARGIN;
+    } else {
+        // Non-TLS engines: respect internal contiguous bytes if requested, or minimum safety baseline (10 KB)
+        size_t engineSpecific = reqs.minLargestInternalBlockBytes > reqs.internalContiguousBytes
+            ? reqs.minLargestInternalBlockBytes
+            : reqs.internalContiguousBytes;
+        targetContiguousNeeded = engineSpecific > 0 ? (engineSpecific + ENGINE_SAFETY_MARGIN) : 10240;
+    }
+
+    // Calculate bytes reclaimed per bit of depth
+    size_t bytesPerBit = DmaMemoryLayout::calculateTotalBytes(width, height, 1, false);
+    if (bytesPerBit == 0) {
+        bytesPerBit = 4096;
+    }
+
+    // If no runtime memory metrics were provided (e.g. host unit tests / static evaluation):
+    // Fall back to reference estimation
+    if (currentLargestBlock == 0) {
+        if (reqs.needsTls) {
+            return 4; // Conservative reference baseline for TLS on 128x32 without PSRAM
+        }
+        return maxDepthCeiling;
+    }
+
+    // If current depth is unset or invalid, assume maxDepthCeiling
+    if (currentDepth < 2 || currentDepth > 8) {
+        currentDepth = maxDepthCeiling;
+    }
+
+    // Full Auto Color Maximizer:
+    // Evaluate candidate depths from maxDepthCeiling down to 2 bits.
+    // When switching from currentDepth to candidateDepth D:
+    // The DMA buffer changes by (currentDepth - D) * bytesPerBit.
+    // If D < currentDepth, memory is FREED: estBlock = currentLargestBlock + (currentDepth - D) * bytesPerBit.
+    // If D > currentDepth, memory is CONSUMED: estBlock = currentLargestBlock - (D - currentDepth) * bytesPerBit.
+    // We select the highest candidate depth whose estimated contiguous block satisfies targetContiguousNeeded.
+    for (int candidate = (int)maxDepthCeiling; candidate >= 2; --candidate) {
+        int64_t deltaMem = ((int64_t)currentDepth - candidate) * (int64_t)bytesPerBit;
+        int64_t estimatedBlock = (int64_t)currentLargestBlock + deltaMem;
+
+        if (estimatedBlock >= (int64_t)targetContiguousNeeded) {
+            return (uint8_t)candidate;
+        }
+    }
+
+    // Extreme memory pressure fallback floor: minimum 2 bits (maximum possible DRAM reclaimed)
+    return 2;
 }
 

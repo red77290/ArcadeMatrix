@@ -173,8 +173,8 @@ ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDe
     res.previousDepth = m_activeColorDepth;
     res.effectiveDepth = m_activeColorDepth;
 
-    if (targetDepth < 1 || targetDepth > 8) {
-        res.failureReason = "Invalid target depth (must be 1..8)";
+    if (targetDepth < 2 || targetDepth > 8) {
+        res.failureReason = "Invalid target depth (must be 2..8)";
         return res;
     }
 
@@ -364,7 +364,7 @@ uint16_t* FastMatrixPanel::getBackbufferRowPlane(uint8_t row, uint8_t plane) {
 }
 
 void FastMatrixPanel::initLuts(uint8_t depth) {
-    if (depth < 2) depth = 8;
+    if (depth < 2) depth = 2;
     if (depth > 8) depth = 8;
     m_depth = depth;
     uint8_t shift = 8 - depth;

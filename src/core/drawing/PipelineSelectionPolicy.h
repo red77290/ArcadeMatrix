@@ -94,6 +94,11 @@ public:
 
     /**
      * @brief Resolves target color depth for a specific engine transition under the Dynamic Presentation Pipeline.
+     *
+     * Automatically calculates the maximum possible color depth (up to configuredDepth ceiling,
+     * or 8 in Auto mode) that guarantees sufficient contiguous internal DRAM for the incoming engine's
+     * memory requirements (including TLS handshake buffers), scaling down to 2 bits if needed under memory pressure.
+     * Exiting a TLS engine automatically restores user configured depth if memory permits.
      */
     static uint8_t resolveTargetDepth(
         uint8_t configuredDepth,
@@ -101,6 +106,9 @@ public:
         uint16_t width,
         uint16_t height,
         bool hasPsram,
-        const EngineRequirements& reqs
+        const EngineRequirements& reqs,
+        uint8_t currentDepth = 0,
+        size_t currentLargestBlock = 0,
+        size_t currentFreeInternalHeap = 0
     );
 };

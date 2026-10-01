@@ -1,10 +1,14 @@
 #include "DisplayRuntime.h"
 #include "drawing/IDrawingSurface.h"
 #include "drawing/PipelineSelectionPolicy.h"
+#include "core/EngineRegistry.h"
 #include "hal/HardwareHAL.h"
-#include "../../include/core/EngineRegistry.h"
 #include "Logger.h"
 #include "MatrixEngine.h"
+
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
 
 extern MatrixEngine matrixEngine;
 
@@ -387,17 +391,31 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         }
     }
 
+    size_t largestBlock = 0;
+    size_t freeInternal = 0;
+#if defined(ESP32)
+    largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    freeInternal = esp_get_free_internal_heap_size();
+#endif
+
     uint16_t totalWidth = matrixCfg.width * (matrixCfg.chainLength > 0 ? matrixCfg.chainLength : 1);
+    uint8_t currentDepth = m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : 0;
     uint8_t targetDepth = PipelineSelectionPolicy::resolveTargetDepth(
         matrixCfg.colorDepth,
         matrixCfg.dynamicColorDepth,
         totalWidth,
         matrixCfg.height,
         hardwareHAL.capabilities().hasPsram,
-        reqs
+        reqs,
+        currentDepth,
+        largestBlock,
+        freeInternal
     );
 
-    if (targetDepth != m_matrixEngine->getActiveColorDepth()) {
+    LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, largestBlock=%u, tls=%d)",
+         descId ? descId : "unknown", currentDepth, targetDepth, matrixCfg.colorDepth, (unsigned)largestBlock, reqs.needsTls);
+
+    if (m_matrixEngine && targetDepth != m_matrixEngine->getActiveColorDepth()) {
         auto res = m_matrixEngine->reconfigurePresentationPipeline(targetDepth);
         if (res.success && m_surface) {
             m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());

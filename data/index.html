@@ -1781,6 +1781,7 @@ select.input option {
                   <option value="2">2 bits (4 nuances)</option>
                   <option value="1">1 bit (2 nuances)</option>
                 </select>
+                <small id="hw-color-depth-note" style="display:none; font-size:0.75rem; color:var(--accent-info); margin-top:0.25rem;" data-i18n="hw_color_depth_auto_active">✨ Auto mode active: color depth is dynamically managed by firmware (up to 8 bits for rich graphics, adaptive 4-2 bits for TLS).</small>
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_latch_blanking_label">Latch Blanking (Cycles)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
@@ -1814,7 +1815,11 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label><span data-i18n="hw_dynamic_color_depth_label">Dynamic Presentation Pipeline</span> <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_dynamic_color_depth">?</span></label>
+                <label>
+                  <span data-i18n="hw_dynamic_color_depth_label">Dynamic Presentation Pipeline</span>
+                  <span class="badge" style="background:var(--accent-info); font-size:0.7rem; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.35rem;" data-i18n="hw_recommended_esp32">Recommended for ESP32</span>
+                  <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_dynamic_color_depth">?</span>
+                </label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-dynamic-color-depth">
@@ -2847,6 +2852,8 @@ const translations = {
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
     hw_color_depth_auto: "✨ Auto (Adaptive TLS / Hardware)",
+    hw_color_depth_auto_active: "✨ Auto mode active: color depth is dynamically managed by firmware (up to 8 bits for rich graphics, adaptive 4-2 bits for TLS).",
+    hw_recommended_esp32: "Recommended for ESP32",
     hw_dynamic_color_depth_label: "Dynamic Presentation Pipeline",
     tt_hw_dynamic_color_depth: "Dynamic Presentation Adaptation:\nWhen enabled with manual color depth (8, 6, or 5 bits), rich graphics run at preferred color depth, while memory-intensive TLS engines temporarily switch to 4 bits to guarantee DRAM for TLS.\nSwitching occurs smoothly during inter-engine transition with zero visible flicker under hardware OE blanking (<30ms).",
     hw_btn_save: "💾 Save Hardware Settings",
@@ -3416,6 +3423,8 @@ const translations = {
     hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
     hw_color_depth_auto: "✨ Auto (Adaptatif TLS / Matériel)",
+    hw_color_depth_auto_active: "✨ Mode Auto actif : la profondeur des couleurs est gérée dynamiquement par le firmware (jusqu'à 8 bits pour les graphismes riches, 4-2 bits adaptatifs pour TLS).",
+    hw_recommended_esp32: "Recommandé pour ESP32",
     hw_dynamic_color_depth_label: "Pipeline de Présentation Dynamique",
     tt_hw_dynamic_color_depth: "Adaptation dynamique du pipeline :\nLorsqu'il est activé avec une profondeur manuelle (8, 6 ou 5 bits), les moteurs graphiques profitent de leur fidélité colorimétrique maximale, tandis que les moteurs réseau TLS (Crypto, Météo, Bourse, Spotify) basculent temporairement en 4 bits pour libérer la DRAM indispensable à mbedTLS.\nLa transition s'effectue sans clignotement sous extinction matérielle OE (<30ms).",
     hw_btn_save: "💾 Enregistrer les paramètres matériels",
@@ -3985,6 +3994,8 @@ const translations = {
     hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
     hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",
     hw_color_depth_auto: "✨ Auto (Adaptable TLS / Hardware)",
+    hw_color_depth_auto_active: "✨ Modo Auto activo: la profundidad de color es gestionada dinámicamente por el firmware (hasta 8 bits para gráficos ricos, 4-2 bits adaptativos para TLS).",
+    hw_recommended_esp32: "Recomendado para ESP32",
     hw_dynamic_color_depth_label: "Pipeline de Presentación Dinámico",
     tt_hw_dynamic_color_depth: "Adaptación dinámica de presentación:\nCuando está habilitado con profundidad manual (8, 6 o 5 bits), los motores gráficos mantienen su máxima fidelidad de color, mientras que los motores de red TLS (Crypto, Tiempo, Bolsa, Spotify) cambian temporalmente a 4 bits para garantizar DRAM para mbedTLS.\nLa transición ocurre sin parpadeo bajo apagado por hardware OE (<30ms).",
     hw_btn_save: "💾 Guardar la configuración de hardware",
