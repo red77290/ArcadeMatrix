@@ -22,6 +22,7 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override { requestRedraw(); }
     /// The screen is static between slides: it is painted once into each DMA buffer after a change

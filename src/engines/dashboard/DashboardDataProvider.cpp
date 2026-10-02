@@ -180,22 +180,31 @@ void DashboardDataProvider::start() {
     }
 }
 
-void DashboardDataProvider::stop() {
+void DashboardDataProvider::deactivate() {
+    // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
+    m_isActive = false;
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+}
+
+bool DashboardDataProvider::shutdown() {
     m_isActive = false;
     m_taskRunning = false;
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 
     if (m_fetchTaskHandle) {
-        int timeoutMs = 500;
-        while (m_fetchTaskHandle != nullptr && timeoutMs > 0) {
+        for (int i = 0; i < 30 && m_fetchTaskHandle != nullptr; i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            timeoutMs -= 10;
         }
-        if (m_fetchTaskHandle) {
-            vTaskDelete(m_fetchTaskHandle);
-            m_fetchTaskHandle = nullptr;
+        if (m_fetchTaskHandle != nullptr) {
+            LOGW("Dashboard", "DashFetch task did not exit within 300ms cooperative window");
+            return false;
         }
     }
+    return true;
+}
+
+void DashboardDataProvider::stop() {
+    shutdown();
 }
 
 void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, const String& weatherApiKey, const String& weatherCity, const String& weatherUnits) {
@@ -333,10 +342,14 @@ void DashboardDataProvider::fetchTaskLoop() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Responsive sleep in slices to acknowledge cooperative shutdown promptly
+        for (int i = 0; i < 10 && m_taskRunning; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 
     m_fetchTaskHandle = nullptr;
+    m_taskRunning = false;
 }
 
 void DashboardDataProvider::updateWorldTimes(const String& clocks) {

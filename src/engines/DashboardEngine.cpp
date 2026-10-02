@@ -10,7 +10,7 @@ DashboardEngine::DashboardEngine()
 }
 
 DashboardEngine::~DashboardEngine() {
-    m_dataProvider.stop();
+    m_dataProvider.shutdown();
 }
 
 EngineError DashboardEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
@@ -39,7 +39,12 @@ void DashboardEngine::activate() {
 
 void DashboardEngine::deactivate() {
     LOGI("Dashboard", "DashboardEngine::deactivate called.");
-    m_dataProvider.stop();
+    m_dataProvider.deactivate();
+}
+
+bool DashboardEngine::shutdownForDestruction() {
+    LOGI("Dashboard", "DashboardEngine::shutdownForDestruction called on Core 0.");
+    return m_dataProvider.shutdown();
 }
 
 void DashboardEngine::update(EngineContext* context) {

@@ -118,7 +118,14 @@ void WeatherEngine::render(EngineContext* context) {
 }
 
 void WeatherEngine::deactivate() {
+    // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
+    m_stopFetch.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+}
+
+bool WeatherEngine::shutdownForDestruction() {
     stopFetchTask();
+    return m_fetchExited.load(std::memory_order_acquire) || (m_fetchTask == nullptr);
 }
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
@@ -186,7 +193,12 @@ WeatherEngine::FetchState WeatherEngine::fetchState() {
 }
 
 void WeatherEngine::startFetchTask() {
-    if (m_fetchTask) return;
+    if (m_fetchTask) {
+        m_stopFetch.store(false, std::memory_order_release);
+        return;
+    }
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
     // Core 0 keeps the render loop on Core 1 free; 8 KB covers a TLS handshake and JSON parse.
     if (xTaskCreatePinnedToCore(fetchTaskEntry, "weather_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
         m_fetchTask = nullptr;
@@ -198,14 +210,15 @@ void WeatherEngine::stopFetchTask() {
     if (m_fetchTask) {
         m_stopFetch.store(true, std::memory_order_release);
         net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
-        for (int i = 0; i < 50 && !m_fetchExited.load(std::memory_order_acquire); i++) {
+        for (int i = 0; i < 30 && !m_fetchExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        if (!m_fetchExited.load(std::memory_order_acquire)) {
-            LOGW("WeatherEngine", "fetch task did not stop in time; deleting it");
-            vTaskDelete(m_fetchTask);
+        if (m_fetchExited.load(std::memory_order_acquire)) {
+            m_fetchTask = nullptr;
+        } else {
+            LOGW("WeatherEngine", "fetch task did not exit within 300ms cooperative window");
+            // Strict cooperative shutdown: ZERO forced vTaskDelete() fallback
         }
-        m_fetchTask = nullptr;
     }
 }
 
@@ -219,6 +232,7 @@ void WeatherEngine::fetchTaskEntry(void* arg) {
         }
     }
     self->m_fetchExited.store(true, std::memory_order_release);
+    self->m_fetchTask = nullptr;
     vTaskDelete(nullptr);
 }
 

@@ -5,10 +5,7 @@
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
-#include "MatrixEngine.h"
 #include <WiFi.h>
-
-extern MatrixEngine matrixEngine;
 
 extern ConfigLoader config;
 
@@ -300,23 +297,11 @@ void RotationManager::switchToModule(int index) {
       }
       if (m_ctx && m_ctx->getSurface()) {
           m_ctx->getSurface()->clear(0);
-      }
-      if (m_ctx && m_ctx->getMatrix()) {
-          // Both DMA buffers have to go black. Clearing once only blanks the back buffer, so the
-          // front one still holds the engine that just ended; while the next engine loads its first
-          // frame (a GIF read from the card takes a moment) any flip puts that old frame back on the
-          // panel for an instant.
-          m_ctx->getMatrix()->fillScreen(0);
-          if (matrixEngine.isDoubleBuffered()) {
-              matrixEngine.present();
-              m_ctx->getMatrix()->fillScreen(0);
-          }
-          matrixEngine.markExternalDraw();
-          // Cover that gap with the configured effect; the next engine loads underneath it.
+          // Cover transition gap with configured effect over surface canvas
           const RotationEffect slotEffect = m_slotEffect.load(std::memory_order_acquire);
           if (slotEffect != RotationEffect::NONE) {
               m_slotFx.start(0, 0, slotEffect, (uint32_t)m_slotFxMs.load(std::memory_order_relaxed),
-                             m_ctx->getMatrix()->width(), m_ctx->getMatrix()->height());
+                             m_ctx->getSurface()->width(), m_ctx->getSurface()->height());
               m_awaitingFirstFrame = true;
               m_slotFxStartedMs = millis();
           }
@@ -435,9 +420,6 @@ bool RotationManager::loop() {
         if (activeEngine->needsClear()) {
             if (m_ctx && m_ctx->getSurface()) {
                 m_ctx->getSurface()->clear(0);
-            } else if (m_ctx && m_ctx->getMatrix()) {
-                m_ctx->getMatrix()->fillScreen(0);
-                matrixEngine.markExternalDraw();
             }
         }
         activeEngine->update(m_ctx);
@@ -471,7 +453,6 @@ bool RotationManager::loop() {
         }
         if (m_missingClears < 2) {
             if (m_ctx && m_ctx->getSurface()) m_ctx->getSurface()->clear(0);
-            if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
             m_missingClears++;
             shouldFlip = true;
         } else {
@@ -488,15 +469,15 @@ bool RotationManager::loop() {
     }
     // The transition paints over whatever the engine just drew, so a GIF can spend the animation
     // opening its file instead of showing a blank panel.
-    if (m_slotFx.isRunning() && m_ctx && m_ctx->getMatrix()) {
+    if (m_slotFx.isRunning() && m_ctx && m_ctx->getSurface()) {
         // Hold the cover until the new engine actually produces a frame, so the reveal never lands
         // on a blank panel (a GIF still reading its file, a weather screen yet to repaint). Bounded,
         // so a slot that never draws cannot freeze the rotation.
         if (m_awaitingFirstFrame && shouldFlip) m_awaitingFirstFrame = false;
         bool overdue = (millis() - m_slotFxStartedMs) > (uint32_t)(m_slotFxMs.load(std::memory_order_relaxed) + 2500);
         m_slotFx.setHold(m_awaitingFirstFrame && !overdue);
-        m_slotFx.render(m_ctx->getMatrix(), nullptr);
-        matrixEngine.markExternalDraw();
+        m_slotFx.render(m_ctx->getSurface(), nullptr);
+        m_ctx->getSurface()->markDirty();
         shouldFlip = true;
     }
 

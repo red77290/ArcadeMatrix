@@ -974,6 +974,184 @@ void test_lifecycle_quiescence_and_presentation_transaction_contracts(void) {
     }
 }
 
+// 3. Simulated Transaction Reconfiguration Pipeline (Mirroring MatrixEngine)
+struct MockPresentationReconfigurator {
+    uint8_t activeDepth = 8;
+    bool oeAsserted = false;
+    uint32_t lastReconfigMs = 0;
+    static constexpr uint32_t MIN_RECONFIG_INTERVAL_MS = 500;
+
+    bool failAllocationFor8 = false;
+    bool failAllocationFor4 = false;
+    bool failAllocationFor2 = false;
+    bool failFrame0Commit = false;
+
+    struct Outcome {
+        bool success = false;
+        uint8_t requestedDepth = 0;
+        uint8_t effectiveDepth = 0;
+        bool fallbackAttempted = false;
+        bool fallbackUsed = false;
+        const char* failureReason = nullptr;
+    };
+
+    Outcome reconfigure(uint8_t targetDepth, uint32_t currentMs) {
+        Outcome res;
+        res.requestedDepth = targetDepth;
+        res.effectiveDepth = activeDepth;
+
+        if (targetDepth < 2 || targetDepth > 8) {
+            res.failureReason = "InvalidDepth";
+            return res;
+        }
+
+        if (lastReconfigMs > 0 && (currentMs - lastReconfigMs < MIN_RECONFIG_INTERVAL_MS)) {
+            res.failureReason = "Throttled";
+            return res;
+        }
+
+        if (targetDepth == activeDepth) {
+            res.success = true;
+            res.effectiveDepth = activeDepth;
+            return res;
+        }
+
+        lastReconfigMs = currentMs;
+        oeAsserted = true; // Invariant 21: OE asserted HIGH before tearing down DMA
+
+        bool allocSuccess = false;
+        uint8_t currentAllocDepth = targetDepth;
+
+        auto tryAlloc = [this](uint8_t d) -> bool {
+            if (d == 8 && failAllocationFor8) return false;
+            if (d == 4 && failAllocationFor4) return false;
+            if (d == 2 && failAllocationFor2) return false;
+            return true;
+        };
+
+        allocSuccess = tryAlloc(targetDepth);
+        if (!allocSuccess) {
+            uint8_t fallbacks[] = {4, 2};
+            for (uint8_t fb : fallbacks) {
+                if (fb < currentAllocDepth) {
+                    if (tryAlloc(fb)) {
+                        allocSuccess = true;
+                        currentAllocDepth = fb;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!allocSuccess) {
+            res.success = false;
+            res.effectiveDepth = 0;
+            res.fallbackAttempted = true;
+            res.fallbackUsed = false;
+            res.failureReason = "NoValidPipeline";
+            oeAsserted = true; // Invariant 21: keep OE HIGH in PresentationRecovery
+            return res;
+        }
+
+        bool frame0Committed = !failFrame0Commit;
+        if (!frame0Committed) {
+            res.success = false;
+            res.effectiveDepth = 0;
+            res.fallbackAttempted = (currentAllocDepth != targetDepth);
+            res.fallbackUsed = false;
+            res.failureReason = "Frame0PresentationFailed";
+            oeAsserted = true; // Invariant 21: OE remains HIGH
+            return res;
+        }
+
+        oeAsserted = false; // OE released LOW strictly after Frame 0 commit
+        activeDepth = currentAllocDepth;
+        res.success = true;
+        res.effectiveDepth = currentAllocDepth;
+        res.fallbackAttempted = (currentAllocDepth != targetDepth);
+        res.fallbackUsed = (res.effectiveDepth != res.requestedDepth);
+        return res;
+    }
+};
+
+void test_simulated_hardware_presentation_transaction_engine(void) {
+    // Scenario 1: Nominal 8 -> 4 transition on TLS admission
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        auto res = rec.reconfigure(4, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(4, res.effectiveDepth);
+        TEST_ASSERT_FALSE(res.fallbackAttempted);
+        TEST_ASSERT_FALSE(res.fallbackUsed);
+        TEST_ASSERT_FALSE(rec.oeAsserted);
+    }
+
+    // Scenario 2: Target 8 fails, fallback 4 succeeds
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true; // 8-bit allocation fails
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(4, res.effectiveDepth);
+        TEST_ASSERT_TRUE(res.fallbackAttempted);
+        TEST_ASSERT_TRUE(res.fallbackUsed); // Requested 8 != effective 4
+        TEST_ASSERT_FALSE(rec.oeAsserted); // OE released because fallback 4 committed Frame 0
+    }
+
+    // Scenario 3: Target 8 and 4 fail, progressive fallback 2 succeeds
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true;
+        rec.failAllocationFor4 = true;
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(2, res.effectiveDepth);
+        TEST_ASSERT_TRUE(res.fallbackAttempted);
+        TEST_ASSERT_TRUE(res.fallbackUsed);
+        TEST_ASSERT_FALSE(rec.oeAsserted);
+    }
+
+    // Scenario 4: All allocations fail -> NoValidPipeline, OE held HIGH
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true;
+        rec.failAllocationFor4 = true;
+        rec.failAllocationFor2 = true;
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_FALSE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(0, res.effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("NoValidPipeline", res.failureReason);
+        TEST_ASSERT_TRUE(rec.oeAsserted); // Invariant 21: PresentationRecovery holds OE HIGH
+    }
+
+    // Scenario 5: Allocation succeeds but Frame 0 commit fails -> Frame0PresentationFailed, OE held HIGH
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        rec.failFrame0Commit = true;
+        auto res = rec.reconfigure(4, 1000);
+        TEST_ASSERT_FALSE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(0, res.effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("Frame0PresentationFailed", res.failureReason);
+        TEST_ASSERT_TRUE(rec.oeAsserted); // Invariant 21: OE remains HIGH
+    }
+
+    // Scenario 6: Reconfiguration rate limit (< 500 ms) throttles gracefully
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        auto res1 = rec.reconfigure(4, 1000);
+        TEST_ASSERT_TRUE(res1.success);
+        auto res2 = rec.reconfigure(8, 1200); // 200 ms later -> throttled
+        TEST_ASSERT_FALSE(res2.success);
+        TEST_ASSERT_EQUAL_STRING("Throttled", res2.failureReason);
+    }
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -1025,6 +1203,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_rotation_requirements_aggregation);
     RUN_TEST(test_render_transaction_contracts);
     RUN_TEST(test_lifecycle_quiescence_and_presentation_transaction_contracts);
+    RUN_TEST(test_simulated_hardware_presentation_transaction_engine);
 
     return UNITY_END();
 }

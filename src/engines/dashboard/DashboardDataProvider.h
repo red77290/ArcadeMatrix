@@ -17,6 +17,8 @@ public:
 
     void initialize(IWeatherProvider* weatherProvider);
     void start();
+    void deactivate();
+    bool shutdown();
     void stop();
 
     void updateConfig(const DashboardConfigParams& config, const String& weatherApiKey, const String& weatherCity, const String& weatherUnits);
