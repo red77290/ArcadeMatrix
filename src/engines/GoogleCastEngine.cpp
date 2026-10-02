@@ -151,9 +151,10 @@ GoogleCastEngine::~GoogleCastEngine() {
         m_taskRunning = false;
         m_isActive = false;
         xTaskNotifyGive(m_pollTaskHandle);
-        for (int i = 0; i < 30 && !m_taskStopped.load(std::memory_order_acquire); ++i) {
+        while (!m_taskStopped.load(std::memory_order_acquire)) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
+        m_pollTaskHandle = nullptr;
     }
 }
 

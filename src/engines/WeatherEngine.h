@@ -65,7 +65,7 @@ private:
     // where it stands: vTaskDelete on a task inside an HTTPS round trip drops the socket and the
     // buffers it holds, and could land while it is still reading the providers this object owns.
     std::atomic<bool> m_stopFetch{false};
-    std::atomic<bool> m_fetchExited{false};
+    std::atomic<bool> m_fetchExited{true};
     void startFetchTask();
     void stopFetchTask();
     static void fetchTaskEntry(void* arg);

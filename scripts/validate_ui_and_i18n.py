@@ -209,8 +209,10 @@ def test_marquee_screen_clear():
     marquee_cpp = os.path.join(REPO_ROOT, "src", "engines", "MarqueeEngine.cpp")
     with open(marquee_cpp, "r", encoding="utf-8") as f:
         marq_content = f.read()
-    if "surface->clear(0)" not in marq_content and "matrix->fillScreen(0)" not in marq_content:
-        fail("MarqueeEngine.cpp: missing clear(0) in activate()")
+    if "surface->clear(0)" not in marq_content:
+        fail("MarqueeEngine.cpp: missing surface clear(0) in activate() (Invariant 18)")
+    if "matrix->fillScreen(" in marq_content:
+        fail("MarqueeEngine.cpp: direct matrix fillScreen forbidden (Invariant 19)")
 
     pass_step("Screen clearance verified: pure IDrawingSurface isolation maintained across transitions.")
 

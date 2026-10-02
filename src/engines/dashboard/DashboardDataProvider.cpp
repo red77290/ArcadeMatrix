@@ -106,6 +106,7 @@ DashboardDataProvider::DashboardDataProvider()
     : m_weatherProvider(nullptr),
       m_fetchTaskHandle(nullptr),
       m_taskRunning(false),
+      m_taskExited(true),
       m_isActive(false),
       m_forceFetchWeather(false),
       m_forceFetchMarkets(false),
@@ -141,7 +142,19 @@ DashboardDataProvider::DashboardDataProvider()
 }
 
 DashboardDataProvider::~DashboardDataProvider() {
-    stop();
+    // Destructor safety barrier (Anti-UAF):
+    // In normal operation, shutdown() has already completed on Core 0
+    // and m_taskExited is true (0 ms wait). If called directly or quarantined destruction
+    // was bypassed, we must guarantee the worker is dead before deleting m_weatherProvider.
+    if (m_fetchTaskHandle && !m_taskExited.load(std::memory_order_acquire)) {
+        m_isActive.store(false, std::memory_order_release);
+        m_taskRunning.store(false, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+        while (!m_taskExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_fetchTaskHandle = nullptr;
+    }
     if (m_weatherProvider) {
         delete m_weatherProvider;
         m_weatherProvider = nullptr;
@@ -157,9 +170,10 @@ void DashboardDataProvider::initialize(IWeatherProvider* weatherProvider) {
 }
 
 void DashboardDataProvider::start() {
-    if (m_taskRunning) return;
-    m_taskRunning = true;
-    m_isActive = true;
+    if (m_taskRunning.load(std::memory_order_acquire)) return;
+    m_taskRunning.store(true, std::memory_order_release);
+    m_taskExited.store(false, std::memory_order_release);
+    m_isActive.store(true, std::memory_order_release);
 
     BaseType_t res = xTaskCreatePinnedToCore(
         fetchTaskStatic,
@@ -173,7 +187,8 @@ void DashboardDataProvider::start() {
 
     if (res != pdPASS) {
         LOGE("Dashboard", "Failed to create DashFetch background task!");
-        m_taskRunning = false;
+        m_taskRunning.store(false, std::memory_order_release);
+        m_taskExited.store(true, std::memory_order_release);
         m_fetchTaskHandle = nullptr;
     } else {
         LOGI("Dashboard", "DashFetch task spawned successfully on Core 0.");
@@ -182,20 +197,23 @@ void DashboardDataProvider::start() {
 
 void DashboardDataProvider::deactivate() {
     // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
-    m_isActive = false;
+    m_isActive.store(false, std::memory_order_release);
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 }
 
 bool DashboardDataProvider::shutdown() {
-    m_isActive = false;
-    m_taskRunning = false;
+    m_isActive.store(false, std::memory_order_release);
+    m_taskRunning.store(false, std::memory_order_release);
     net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 
     if (m_fetchTaskHandle) {
-        for (int i = 0; i < 30 && m_fetchTaskHandle != nullptr; i++) {
+        for (int i = 0; i < 30 && !m_taskExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        if (m_fetchTaskHandle != nullptr) {
+        if (m_taskExited.load(std::memory_order_acquire)) {
+            m_fetchTaskHandle = nullptr;
+            return true;
+        } else {
             LOGW("Dashboard", "DashFetch task did not exit within 300ms cooperative window");
             return false;
         }
@@ -303,10 +321,12 @@ void DashboardDataProvider::fetchTaskLoop() {
     // Core 0 background preload of any existing icons on SD card (zero impact on Core 1)
     preloadIconsFromSd();
 
-    vTaskDelay(pdMS_TO_TICKS(4000)); // Delay initial network queries so boot settles
+    for (int i = 0; i < 40 && m_taskRunning.load(std::memory_order_acquire); i++) {
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay initial network queries so boot settles
+    }
 
-    while (m_taskRunning) {
-        if (m_isActive && WiFi.status() == WL_CONNECTED) {
+    while (m_taskRunning.load(std::memory_order_acquire)) {
+        if (m_isActive.load(std::memory_order_acquire) && WiFi.status() == WL_CONNECTED) {
             uint32_t now = millis();
             uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
 
@@ -319,15 +339,19 @@ void DashboardDataProvider::fetchTaskLoop() {
                 LOGI("Dashboard", "Executing sequential synchronized data fetch (interval=%d min)...", m_config.refreshIntervalMin);
 
                 // 1. Fetch Weather first
-                if (m_config.showWeather && m_isActive) {
+                if (m_config.showWeather && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchWeather();
-                    vTaskDelay(pdMS_TO_TICKS(500)); // Yield to let Core 0 network memory settle
+                    for (int i = 0; i < 5 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100)); // Yield to let Core 0 network memory settle
+                    }
                 }
 
                 // 2. Fetch Market items strictly one by one
-                if (m_config.showMarkets && m_isActive) {
+                if (m_config.showMarkets && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchMarkets();
-                    vTaskDelay(pdMS_TO_TICKS(300));
+                    for (int i = 0; i < 3 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
                 }
 
                 LOGI("Dashboard", "Sequential data fetch completed. Next refresh in %d min.", m_config.refreshIntervalMin);
@@ -343,13 +367,13 @@ void DashboardDataProvider::fetchTaskLoop() {
         }
 
         // Responsive sleep in slices to acknowledge cooperative shutdown promptly
-        for (int i = 0; i < 10 && m_taskRunning; i++) {
+        for (int i = 0; i < 10 && m_taskRunning.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
 
-    m_fetchTaskHandle = nullptr;
-    m_taskRunning = false;
+    m_taskRunning.store(false, std::memory_order_release);
+    m_taskExited.store(true, std::memory_order_release);
 }
 
 void DashboardDataProvider::updateWorldTimes(const String& clocks) {

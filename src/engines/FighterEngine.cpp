@@ -82,10 +82,10 @@ FighterEngine::~FighterEngine() {
     if (loaderTaskHandle && !m_loaderStopped.load(std::memory_order_acquire)) {
         m_taskShouldExit = true;
         xTaskNotifyGive(loaderTaskHandle);
-        for (int i = 0; i < 30 && !m_loaderStopped.load(std::memory_order_acquire); i++) {
+        while (!m_loaderStopped.load(std::memory_order_acquire)) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        // Strict cooperative shutdown: ZERO forced vTaskDelete() fallback
+        loaderTaskHandle = nullptr;
     }
     if (m_roster) {
         if (esp_ptr_external_ram(m_roster)) {

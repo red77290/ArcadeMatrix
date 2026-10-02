@@ -85,11 +85,6 @@ void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long du
     auto surface = m_context ? m_context->getSurface() : nullptr;
     if (surface) {
         surface->clear(0);
-    } else {
-        auto matrix = m_context ? m_context->getMatrix() : nullptr;
-        if (matrix) {
-            matrix->fillScreen(0);
-        }
     }
     if (m_gifEngine) {
         m_gifEngine->stop();
@@ -319,11 +314,6 @@ void MarqueeEngine::activate() {
     auto surface = m_context ? m_context->getSurface() : nullptr;
     if (surface) {
         surface->clear(0);
-    } else {
-        auto matrix = m_context ? m_context->getMatrix() : nullptr;
-        if (matrix) {
-            matrix->fillScreen(0);
-        }
     }
     if (m_hasRawBuffer) {
         return;

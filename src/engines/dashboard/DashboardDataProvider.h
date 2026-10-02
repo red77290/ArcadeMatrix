@@ -69,9 +69,10 @@ private:
     // Cold-path configuration mutex (never taken on Core 1 hot-path)
     mutable std::mutex m_configMutex;
 
-    TaskHandle_t m_fetchTaskHandle;
-    volatile bool m_taskRunning;
-    volatile bool m_isActive;
+    TaskHandle_t m_fetchTaskHandle = nullptr;
+    std::atomic<bool> m_taskRunning{false};
+    std::atomic<bool> m_taskExited{true};
+    std::atomic<bool> m_isActive{false};
 
     DashboardConfigParams m_config;
     String m_weatherApiKey;

@@ -17,10 +17,22 @@ WeatherEngine::WeatherEngine() : matrix(nullptr) {
 }
 
 WeatherEngine::~WeatherEngine() {
-    stopFetchTask();
+    // Destructor safety barrier (Anti-UAF):
+    // In normal operation, shutdownForDestruction() has already succeeded on Core 0
+    // and m_fetchExited is true (0 ms wait). If called directly or quarantined destruction
+    // was bypassed, we must guarantee the worker is dead before deleting providers.
+    if (m_fetchTask && !m_fetchExited.load(std::memory_order_acquire)) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+        while (!m_fetchExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_fetchTask = nullptr;
+    }
     for (auto* provider : providers) {
         delete provider;
     }
+    providers.clear();
 }
 
 EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig* config) {
@@ -124,8 +136,11 @@ void WeatherEngine::deactivate() {
 }
 
 bool WeatherEngine::shutdownForDestruction() {
+    if (!m_fetchTask) {
+        return true;
+    }
     stopFetchTask();
-    return m_fetchExited.load(std::memory_order_acquire) || (m_fetchTask == nullptr);
+    return m_fetchExited.load(std::memory_order_acquire);
 }
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
@@ -232,7 +247,6 @@ void WeatherEngine::fetchTaskEntry(void* arg) {
         }
     }
     self->m_fetchExited.store(true, std::memory_order_release);
-    self->m_fetchTask = nullptr;
     vTaskDelete(nullptr);
 }
 

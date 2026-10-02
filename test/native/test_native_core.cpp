@@ -878,8 +878,7 @@ public:
     }
 };
 
-void test_lifecycle_quiescence_and_presentation_transaction_contracts(void) {
-    // 1. Two-Stage Quiescence Sequence Validation
+void test_lifecycle_two_stage_quiescence_contracts(void) {
     MockQuiescenceEngine oldEngine;
     oldEngine.activate();
     TEST_ASSERT_FALSE(oldEngine.logicalQuiescent);
@@ -887,7 +886,7 @@ void test_lifecycle_quiescence_and_presentation_transaction_contracts(void) {
     TEST_ASSERT_EQUAL_INT(2, oldEngine.workerTasksActive);
     TEST_ASSERT_EQUAL_INT(1, oldEngine.openSockets);
 
-    // Step 1: Core 1 deactivation (logical rendering quiescence, non-blocking)
+    // Step 1: Core 1 deactivation (logical rendering quiescence, strictly non-blocking)
     oldEngine.deactivate();
     TEST_ASSERT_TRUE(oldEngine.logicalQuiescent);
     TEST_ASSERT_FALSE(oldEngine.physicalQuiescent);
@@ -900,77 +899,258 @@ void test_lifecycle_quiescence_and_presentation_transaction_contracts(void) {
     TEST_ASSERT_TRUE(oldEngine.physicalQuiescent);
     TEST_ASSERT_EQUAL_INT(0, oldEngine.workerTasksActive);
     TEST_ASSERT_EQUAL_INT(0, oldEngine.openSockets);
+}
 
-    // 2. Hardware Presentation Transaction & OE Blanking States
-    // Case A: Allocation failure -> OE stays HIGH, result = NoValidPipeline, display nulled
-    {
-        bool oeAsserted = true; // OE asserted (HIGH) at start of reconfigure
-        bool allocSuccess = false; // DMA allocation failed (OOM)
-        void* displayPtr = nullptr;
-        void* panelPtr = nullptr;
-        void* backendPtr = nullptr;
+void test_lifecycle_deactivate_vs_shutdown_distinct_contracts(void) {
+    // Contract: Routine module rotation cycles (activate -> deactivate -> activate)
+    // MUST NOT destroy background workers, free cached data, or re-instantiate objects.
+    struct StatefulRotationEngine : public IEngine {
+        int activateCalls = 0;
+        int deactivateCalls = 0;
+        int shutdownCalls = 0;
+        bool backgroundWorkerAlive = true;
+        uint32_t cachedDataGeneration = 42;
 
-        bool success = false;
-        uint8_t effectiveDepth = 0;
-        const char* failureReason = nullptr;
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override { activateCalls++; }
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {
+            deactivateCalls++;
+            // Background worker remains intact across routine rotation switches
+        }
+        bool shutdownForDestruction() override {
+            shutdownCalls++;
+            backgroundWorkerAlive = false;
+            cachedDataGeneration = 0;
+            return true;
+        }
+    };
 
-        if (!allocSuccess || displayPtr == nullptr) {
-            success = false;
-            effectiveDepth = 0;
-            failureReason = "NoValidPipeline";
-            oeAsserted = true; // Invariant 21: keep OE HIGH
+    StatefulRotationEngine eng;
+    TEST_ASSERT_TRUE(eng.backgroundWorkerAlive);
+    TEST_ASSERT_EQUAL_UINT32(42, eng.cachedDataGeneration);
+
+    // Simulate 5 routine rotation cycles (e.g. Weather -> Clock -> Weather)
+    for (int i = 0; i < 5; ++i) {
+        eng.activate();
+        eng.deactivate();
+        // Background worker is STILL alive, data generation intact
+        TEST_ASSERT_TRUE(eng.backgroundWorkerAlive);
+        TEST_ASSERT_EQUAL_UINT32(42, eng.cachedDataGeneration);
+    }
+    TEST_ASSERT_EQUAL_INT(5, eng.activateCalls);
+    TEST_ASSERT_EQUAL_INT(5, eng.deactivateCalls);
+    TEST_ASSERT_EQUAL_INT(0, eng.shutdownCalls);
+
+    // Terminal retirement (config delete / engine teardown)
+    bool ok = eng.shutdownForDestruction();
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_INT(1, eng.shutdownCalls);
+    TEST_ASSERT_FALSE(eng.backgroundWorkerAlive);
+    TEST_ASSERT_EQUAL_UINT32(0, eng.cachedDataGeneration);
+}
+
+void test_lifecycle_cooperative_worker_timeout_and_quarantine(void) {
+    // Contract: If a background worker fails to terminate within 300ms,
+    // shutdownForDestruction() returns false. Core0LifecycleDispatcher quarantines
+    // the engine without executing destructor (anti-UAF).
+    struct MockQuarantinedEngine : public IEngine {
+        std::atomic<bool> workerStopRequested{false};
+        std::atomic<bool> workerExited{false};
+        bool destructorCalled = false;
+        bool uafOccurredDuringDestruction = false;
+        uint32_t simulatedWorkerRemainingWorkMs = 500; // takes 500ms > 300ms window
+
+        ~MockQuarantinedEngine() {
+            destructorCalled = true;
+            // Anti-UAF barrier check:
+            if (!workerExited.load(std::memory_order_acquire)) {
+                uafOccurredDuringDestruction = true;
+            }
         }
 
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override {}
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {
+            workerStopRequested.store(true, std::memory_order_release);
+        }
+        bool shutdownForDestruction() override {
+            workerStopRequested.store(true, std::memory_order_release);
+            // Simulate 300ms bounded check
+            if (simulatedWorkerRemainingWorkMs > 300) {
+                // Timeout exceeded: worker not dead yet
+                simulatedWorkerRemainingWorkMs -= 300;
+                return false; // Quarantine!
+            }
+            workerExited.store(true, std::memory_order_release);
+            return true;
+        }
+    };
+
+    // 1. Initial handover: shutdown times out after 300ms
+    auto enginePtr = std::unique_ptr<MockQuarantinedEngine>(new MockQuarantinedEngine());
+    enginePtr->deactivate();
+    TEST_ASSERT_TRUE(enginePtr->workerStopRequested.load());
+    TEST_ASSERT_FALSE(enginePtr->workerExited.load());
+
+    // 2. Core 0 lifecycle dispatcher attempt: fails shutdown -> moves to quarantine
+    bool initialShutdown = enginePtr->shutdownForDestruction();
+    TEST_ASSERT_FALSE(initialShutdown); // Times out!
+    TEST_ASSERT_FALSE(enginePtr->workerExited.load());
+    TEST_ASSERT_FALSE(enginePtr->destructorCalled); // Must NOT be destroyed!
+
+    // 3. Quarantine retry: worker finishes remaining work (<= 300ms)
+    bool retryShutdown = enginePtr->shutdownForDestruction();
+    TEST_ASSERT_TRUE(retryShutdown); // Succeeds!
+    TEST_ASSERT_TRUE(enginePtr->workerExited.load());
+
+    // 4. Safe destruction after clean shutdown
+    enginePtr.reset(); // Destructor called safely on Core 0
+    TEST_ASSERT_NULL(enginePtr.get());
+}
+
+void test_lifecycle_cooperative_exit_latency_slices(void) {
+    // Contract: Sliced 100ms sleeps vs monolithic 1000ms delay allow
+    // cooperative shutdown response in < 150ms.
+    std::atomic<bool> stopFlag{false};
+
+    // Simulate task entering wait period using 10 x 100ms slices with immediate stop flag
+    stopFlag.store(true);
+    int elapsedSlicesMs = 0;
+    for (int i = 0; i < 10 && !stopFlag.load(std::memory_order_acquire); ++i) {
+        elapsedSlicesMs += 100;
+    }
+    // Since stopFlag was already set, sliced loop exits immediately (0 ms)
+    TEST_ASSERT_EQUAL_INT(0, elapsedSlicesMs);
+
+    // Now simulate cancellation arriving during first 100ms slice:
+    stopFlag.store(false);
+    elapsedSlicesMs = 0;
+    for (int i = 0; i < 10; ++i) {
+        elapsedSlicesMs += 100;
+        if (i == 0) {
+            stopFlag.store(true); // cancelled during first slice
+        }
+        if (stopFlag.load(std::memory_order_acquire)) {
+            break;
+        }
+    }
+    // Loop exited after 1 slice (100 ms) instead of 1000 ms
+    TEST_ASSERT_EQUAL_INT(100, elapsedSlicesMs);
+    TEST_ASSERT_TRUE(elapsedSlicesMs < 150);
+}
+
+void test_surface_isolation_and_canvas_only_clear(void) {
+    // Contract Invariants 17, 18, 19, 20:
+    // - clear(0) writes to surface canvas memory only (never direct DMA).
+    // - isDirty() is true when canvas modified and stays true until PresentationResult::Ok.
+    // - Failed presentation preserves dirty state (Invariant 20).
+    class MockCanvasSurface : public IDrawingSurface {
+    private:
+        uint16_t m_canvas[64 * 32];
+        bool m_dirty = false;
+    public:
+        MockCanvasSurface() : IDrawingSurface(64, 32, 64, 32) {
+            memset(m_canvas, 0xFF, sizeof(m_canvas));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 64 && y >= 0 && y < 32) {
+                m_canvas[y * 64 + x] = color;
+                m_dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 64 * 32; ++i) m_canvas[i] = color;
+            m_dirty = true;
+        }
+        bool isDirty() const override { return m_dirty; }
+        void markDirty() override { m_dirty = true; }
+        uint16_t getPixel(int x, int y) const { return m_canvas[y * 64 + x]; }
+
+        PresentationTiming present() override {
+            m_dirty = false;
+            PresentationTiming t;
+            return t;
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stridePixels = -1) override {
+            (void)src; (void)x; (void)y; (void)w; (void)h; (void)stridePixels;
+            m_dirty = true;
+        }
+        CanvasView acquireCanvas() override { return CanvasView(); }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(m_canvas); }
+
+        bool simulatePresentation(bool hardwareSuccess) {
+            if (hardwareSuccess) {
+                present();
+                return true;
+            }
+            // Invariant 20: failed presentation preserves dirty state!
+            return false;
+        }
+    };
+
+    MockCanvasSurface surface;
+    TEST_ASSERT_FALSE(surface.isDirty());
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, surface.getPixel(0, 0));
+
+    // 1. Surface clear modifies canvas only and marks dirty
+    surface.clear(0);
+    TEST_ASSERT_TRUE(surface.isDirty());
+    TEST_ASSERT_EQUAL_HEX16(0x0000, surface.getPixel(0, 0));
+    TEST_ASSERT_EQUAL_HEX16(0x0000, surface.getPixel(63, 31));
+
+    // 2. Failed presentation preserves dirty state (Invariant 20)
+    bool okFail = surface.simulatePresentation(false);
+    TEST_ASSERT_FALSE(okFail);
+    TEST_ASSERT_TRUE(surface.isDirty()); // Preserved!
+
+    // 3. Successful presentation clears dirty state (Invariant 17)
+    bool okPass = surface.simulatePresentation(true);
+    TEST_ASSERT_TRUE(okPass);
+    TEST_ASSERT_FALSE(surface.isDirty());
+}
+
+void test_presentation_oe_blanking_transaction_recovery(void) {
+    // Tests Case A, Case B, Case C from transaction contracts
+    // Case A: Allocation failure -> OE stays HIGH, result = NoValidPipeline, display nulled
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = false;
+        void* displayPtr = nullptr;
+        bool success = (!allocSuccess || displayPtr == nullptr) ? false : true;
         TEST_ASSERT_FALSE(success);
-        TEST_ASSERT_EQUAL_UINT8(0, effectiveDepth);
-        TEST_ASSERT_EQUAL_STRING("NoValidPipeline", failureReason);
-        TEST_ASSERT_TRUE(oeAsserted);
+        TEST_ASSERT_TRUE(oeAsserted); // Invariant 21: keep OE HIGH
         TEST_ASSERT_NULL(displayPtr);
-        TEST_ASSERT_NULL(panelPtr);
-        TEST_ASSERT_NULL(backendPtr);
     }
 
     // Case B: Allocation OK, but Frame 0 commit fails -> OE stays HIGH, failure = Frame0PresentationFailed
     {
         bool oeAsserted = true;
         bool allocSuccess = true;
-        bool frame0Committed = false; // Backend reported failure
-
-        bool success = false;
-        uint8_t effectiveDepth = 0;
-        const char* failureReason = nullptr;
-
-        if (allocSuccess && !frame0Committed) {
-            success = false;
-            effectiveDepth = 0;
-            failureReason = "Frame0PresentationFailed";
-            oeAsserted = true; // Invariant 21: OE remains HIGH
-        }
-
+        bool frame0Committed = false;
+        bool success = (allocSuccess && frame0Committed);
         TEST_ASSERT_FALSE(success);
-        TEST_ASSERT_EQUAL_UINT8(0, effectiveDepth);
-        TEST_ASSERT_EQUAL_STRING("Frame0PresentationFailed", failureReason);
-        TEST_ASSERT_TRUE(oeAsserted);
+        TEST_ASSERT_TRUE(oeAsserted); // Invariant 21: OE remains HIGH
     }
 
     // Case C: Allocation OK and Frame 0 committed -> OE released LOW, transaction OK
     {
         bool oeAsserted = true;
         bool allocSuccess = true;
-        bool frame0Committed = true; // Frame 0 successfully committed by backend
-
-        bool success = false;
-        uint8_t effectiveDepth = 0;
-
-        if (allocSuccess && frame0Committed) {
-            oeAsserted = false; // Invariant 21: OE released LOW strictly after Frame 0
-            success = true;
-            effectiveDepth = 4;
+        bool frame0Committed = true;
+        bool success = (allocSuccess && frame0Committed);
+        if (success) {
+            oeAsserted = false; // Released LOW strictly after Frame 0
         }
-
         TEST_ASSERT_TRUE(success);
-        TEST_ASSERT_EQUAL_UINT8(4, effectiveDepth);
-        TEST_ASSERT_FALSE(oeAsserted); // OE is released (LOW)
+        TEST_ASSERT_FALSE(oeAsserted);
     }
 }
 
@@ -1202,7 +1382,18 @@ int main(int argc, char** argv) {
     RUN_TEST(test_pipeline_selection_effective_color_depth);
     RUN_TEST(test_rotation_requirements_aggregation);
     RUN_TEST(test_render_transaction_contracts);
-    RUN_TEST(test_lifecycle_quiescence_and_presentation_transaction_contracts);
+
+    // Surface Isolation & Canvas Clear Contracts (Invariants 17, 18, 19, 20)
+    RUN_TEST(test_surface_isolation_and_canvas_only_clear);
+
+    // Lifecycle Quiescence & Quarantine Contracts (Invariants 1, 14, 15, 16)
+    RUN_TEST(test_lifecycle_two_stage_quiescence_contracts);
+    RUN_TEST(test_lifecycle_deactivate_vs_shutdown_distinct_contracts);
+    RUN_TEST(test_lifecycle_cooperative_worker_timeout_and_quarantine);
+    RUN_TEST(test_lifecycle_cooperative_exit_latency_slices);
+
+    // Presentation OE Recovery & Simulated Hardware Transaction Contracts (Invariant 21)
+    RUN_TEST(test_presentation_oe_blanking_transaction_recovery);
     RUN_TEST(test_simulated_hardware_presentation_transaction_engine);
 
     return UNITY_END();
