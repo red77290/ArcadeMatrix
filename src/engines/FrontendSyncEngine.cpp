@@ -229,6 +229,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
                 String testPaths[] = {
                     "/pixelcade/" + folder + "/" + nameVar,
                     "/" + folder + "/" + nameVar,
+                    "/pixelcade/console/" + folder + "/" + nameVar,
                     "/pixelcade/console/" + nameVar,
                     "/console/" + nameVar
                 };
@@ -299,6 +300,13 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
         if (message) {
             message->deactivate();
         }
+        return;
+    }
+
+    // Fallback: If no game marquee is found, fallback to system marquee (e.g. /console/snes.png)
+    if (cleanSystem.length() > 0) {
+        LOGI("RetroFrontend", "No game marquee found for %s (%s), falling back to system marquee...", game.c_str(), cleanSystem.c_str());
+        handleSystemEvent(cleanSystem, reqId);
     }
 }
 
