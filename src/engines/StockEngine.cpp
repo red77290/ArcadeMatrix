@@ -4,6 +4,7 @@
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/NetworkBudget.h"
 #include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
@@ -40,11 +41,9 @@ void StockEngine::onConfigChanged(const EngineConfig* engineConfig) {
     parseSymbols(syms);
 
     if (config_chart_timeframe != prevTf && !symbolList.empty()) {
-        LOGI("StockEngine", "Timeframe changed to %s. Triggering immediate history fetch.", timeframeLabel(config_chart_timeframe));
-        if (config_show_chart) {
-            String sym = symbolList[currentSymbolIndex % symbolList.size()];
-            fetchHistory(sym, config_chart_timeframe);
-        }
+        LOGI("StockEngine", "Timeframe changed to %s. Invalidating history cache.", timeframeLabel(config_chart_timeframe));
+        historyCache.clear();
+        requestRedraw();
     }
 }
 
@@ -293,7 +292,9 @@ void StockEngine::update(EngineContext* context) {
         needsFetch = true;
     }
 
-    if (needsFetch) {
+    bool networkReady = (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+    if (needsFetch && networkReady) {
         bool combined = false;
         if (config_show_chart) {
             combined = fetchCombined(activeSymbol);
@@ -317,8 +318,9 @@ void StockEngine::update(EngineContext* context) {
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             activeSymbol = symbolList[currentSymbolIndex];
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
-            bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
-            if (needFetch) {
+            bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                             (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+            if (needFetch && networkReady) {
                 bool combined = false;
                 if (config_show_chart) {
                     combined = fetchCombined(activeSymbol);
@@ -343,7 +345,7 @@ void StockEngine::update(EngineContext* context) {
                 currentPage = DisplayPage::Chart;
                 String histKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
                 AssetHistoryCache& hCache = historyCache[histKey];
-                if (fetchSuccess && (!hCache.hasData || (now - hCache.lastFetchTime >= ttlMs))) {
+                if (fetchSuccess && networkReady && (!hCache.hasData || (now - hCache.lastFetchTime >= ttlMs))) {
                     fetchHistory(activeSymbol, config_chart_timeframe);
                 }
             } else {
@@ -352,8 +354,9 @@ void StockEngine::update(EngineContext* context) {
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 activeSymbol = symbolList[currentSymbolIndex];
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
-                bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
-                if (needFetch) {
+                bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                                 (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+                if (needFetch && networkReady) {
                     bool combined = false;
                     if (config_show_chart) {
                         combined = fetchCombined(activeSymbol);

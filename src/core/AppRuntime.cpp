@@ -439,12 +439,20 @@ void AppRuntime::initialize() {
                 LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
             } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
                 LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-                // Configure fallback DNS servers (Cloudflare 1.1.1.1 and Google 8.8.8.8) to prevent resolution failures
-                ip_addr_t dns1, dns2;
-                IP_ADDR4(&dns1, 1, 1, 1, 1);
-                IP_ADDR4(&dns2, 8, 8, 8, 8);
+                // Configure high-availability public DNS servers: Cloudflare (1.1.1.1) as primary,
+                // Google (8.8.8.8) as secondary, and preserve router DHCP DNS as tertiary fallback.
+                const ip_addr_t* dhcpDns = dns_getserver(0);
+                ip_addr_t routerDns;
+                if (dhcpDns && !ip_addr_isany(dhcpDns)) {
+                    routerDns = *dhcpDns;
+                    dns_setserver(2, &routerDns);
+                }
+                ip_addr_t dns0, dns1;
+                IP_ADDR4(&dns0, 1, 1, 1, 1);
+                IP_ADDR4(&dns1, 8, 8, 8, 8);
+                dns_setserver(0, &dns0);
                 dns_setserver(1, &dns1);
-                dns_setserver(2, &dns2);
+                LOGI("WiFi", "DNS configured: 1.1.1.1 (primary), 8.8.8.8 (secondary)");
 
                 if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
                     s_mdnsStarted = true;

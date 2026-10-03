@@ -4,6 +4,7 @@
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/NetworkBudget.h"
 #include "../api/CoinGeckoProvider.h"
 #include "../api/BinanceProvider.h"
 #include <HTTPClient.h>
@@ -285,7 +286,9 @@ void CryptoEngine::update(EngineContext* context) {
         needsFetch = true;
     }
 
-    if (needsFetch) {
+    bool networkReady = (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+    if (needsFetch && networkReady) {
         bool combined = false;
         if (config_provider == "binance" && config_show_chart) {
             combined = fetchCombined(activeSymbol);
@@ -320,8 +323,9 @@ void CryptoEngine::update(EngineContext* context) {
             if (!nextCache.hasIcon && !nextCache.iconAttempted) {
                 loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
             }
-            bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
-            if (needFetch) {
+            bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                             (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+            if (needFetch && networkReady) {
                 bool combined = false;
                 if (config_provider == "binance" && config_show_chart) {
                     combined = fetchCombined(activeSymbol);
@@ -336,7 +340,7 @@ void CryptoEngine::update(EngineContext* context) {
         } else {
             if (currentPage == DisplayPage::Info) {
                 currentPage = DisplayPage::Chart;
-                if (fetchSuccess) {
+                if (fetchSuccess && networkReady) {
                     fetchHistory(activeSymbol, config_chart_timeframe);
                 }
             } else {
@@ -357,8 +361,9 @@ void CryptoEngine::update(EngineContext* context) {
                 if (!nextCache.hasIcon && !nextCache.iconAttempted) {
                     loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
                 }
-                bool needFetch = !nextCache.hasData || (now - nextCache.lastFetchTime >= ttlMs);
-                if (needFetch) {
+                bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                                 (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+                if (needFetch && networkReady) {
                     bool combined = false;
                     if (config_provider == "binance" && config_show_chart) {
                         combined = fetchCombined(activeSymbol);
@@ -467,15 +472,8 @@ void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
         currentPrice = 0.0f;
     }
 
-    if (needHistFetch && !symbolList.empty()) {
-        String sym = symbolList[currentSymbolIndex % symbolList.size()];
-        if (needQuoteFetch) {
-            fetchQuote(sym);
-        }
-        if (config_show_chart) {
-            fetchHistory(sym, config_chart_timeframe);
-        }
-    }
+    // Invariant 1 (Core 1 Zero-Blocking): Do NOT perform synchronous network requests
+    // inside onConfigChanged(). Data will be loaded on-demand by update() when network is ready.
     requestRedraw();
 }
 
