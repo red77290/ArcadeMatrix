@@ -842,6 +842,20 @@ void test_render_transaction_contracts(void) {
 
     bool fallbackUsedOnGraphics = (targetForGraphics != 8); // effective 8 == requested 8
     TEST_ASSERT_FALSE(fallbackUsedOnGraphics);
+
+    // F. Heavy graphics engine (e.g. GifEngine with 28KB dynamic working set) on 128x32 ESP32 without PSRAM
+    EngineRequirements gifReq;
+    gifReq.needsTls = false;
+    gifReq.minFreeInternalHeapBytes = 28000;
+    gifReq.internalContiguousBytes = 25000;
+
+    // At baseline (48KB free internal heap, 45KB largest block):
+    // 8-bit requires 28,288 (system+AsyncTCP) + 28,000 (GIF) = 56,288 bytes > 48,416 -> 8-bit rejected.
+    // 4-bit reclaims 17,408 bytes DMA -> 65,824 bytes >= 56,288 -> 4-bit accepted.
+    uint8_t targetForGif = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, gifReq, 8, 45044, 48416, 45044, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetForGif);
 }
 
 // =========================================================================

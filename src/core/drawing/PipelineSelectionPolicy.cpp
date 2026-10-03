@@ -255,16 +255,21 @@ bool PipelineSelectionPolicy::pipelineFits(
     size_t netReserve = 0;
     if (requirements.needsTls) {
         netReserve += ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE;
-    } else if (requirements.needsNetwork) {
+    } else {
+        // Classic ESP32 without PSRAM always runs AsyncWebServer on Core 0.
+        // It requires ASYNC_TCP_ADMISSION_RESERVE to reliably serve WebUI and API traffic.
         netReserve += ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE;
     }
 
     size_t audioReserve = (requirements.needsAudio || requirements.needsAudioInput || requirements.needsAudioOutput)
         ? ResourceReserve::AUDIO_DMA_RING_ADMISSION_RESERVE : 0;
 
+    size_t engineRam = (requirements.internalPersistentBytes > requirements.minFreeInternalHeapBytes)
+        ? requirements.internalPersistentBytes : requirements.minFreeInternalHeapBytes;
+
     size_t totalInternalNeeded = displayInternalBytes + netReserve + audioReserve +
                                  ResourceReserve::SYSTEM_MIN_HEADROOM_RESERVE +
-                                 requirements.internalPersistentBytes +
+                                 engineRam +
                                  requirements.shadowBytesPerFrame;
 
     if (memory.freeInternalHeap > 0 && totalInternalNeeded > memory.freeInternalHeap) {
@@ -274,13 +279,22 @@ bool PipelineSelectionPolicy::pipelineFits(
     // Contiguous internal DRAM block qualification:
     // When display allocations are committed, they consume contiguous blocks from the free heap.
     // The largest remaining contiguous block must be able to satisfy both engine contiguous requirements
-    // and the TLS contiguous allocation reserve (if TLS is active).
+    // and the TLS / WebServer contiguous allocation reserve.
     size_t minContiguousNeeded = requirements.internalContiguousBytes;
     if (requirements.shadowBytesPerFrame > minContiguousNeeded) {
         minContiguousNeeded = requirements.shadowBytesPerFrame;
     }
-    if (requirements.needsTls && ResourceReserve::TLS_CONTIGUOUS_HEADROOM_RESERVE > minContiguousNeeded) {
-        minContiguousNeeded = ResourceReserve::TLS_CONTIGUOUS_HEADROOM_RESERVE;
+    if (requirements.needsTls) {
+        if (ResourceReserve::TLS_CONTIGUOUS_HEADROOM_RESERVE > minContiguousNeeded) {
+            minContiguousNeeded = ResourceReserve::TLS_CONTIGUOUS_HEADROOM_RESERVE;
+        }
+    } else {
+        // Guarantee at least 10KB contiguous headroom for AsyncTCP / WebServer buffers
+        if (minContiguousNeeded > 0) {
+            minContiguousNeeded += 10240;
+        } else {
+            minContiguousNeeded = 10240;
+        }
     }
 
     if (memory.largestInternalBlock > 0) {
@@ -387,12 +401,14 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
         if (reqs.internalContiguousBytes + 4096 > minContiguousNeeded) {
             minContiguousNeeded = reqs.internalContiguousBytes + 4096;
         }
-    } else if (reqs.needsNetwork) {
-        baseSystemReserve = SYSTEM_MIN_RESERVE + ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE; // 12,288 + 16,000 = 28,288 bytes
-        minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 10240;
     } else {
-        baseSystemReserve = SYSTEM_MIN_RESERVE; // 12,288 bytes
-        minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 8192;
+        // Classic ESP32 without PSRAM always runs AsyncWebServer on Core 0.
+        // It requires SYSTEM_MIN_RESERVE (12 KB OS floor) + ASYNC_TCP_ADMISSION_RESERVE (16 KB)
+        // to reliably serve HTTP requests and the 106 KB WebUI without TCP connection drops.
+        baseSystemReserve = SYSTEM_MIN_RESERVE + ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE; // 28,288 bytes
+        minContiguousNeeded = reqs.internalContiguousBytes > 0 
+            ? (reqs.internalContiguousBytes + 10240) 
+            : 10240;
     }
 
     // 3. Audio peripherals (I2S DMA ringbuffers)

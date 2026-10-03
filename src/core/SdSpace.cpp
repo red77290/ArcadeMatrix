@@ -25,13 +25,13 @@ namespace {
     uint32_t g_bootTime = 0;
 #endif
 
-    constexpr uint32_t FIRST_DELAY_MS   = 20000;    // let boot, Wi-Fi and the first screens settle
+    constexpr uint32_t FIRST_DELAY_MS   = 35000;    // let boot, Wi-Fi and the first screens settle
     constexpr uint32_t MIN_INTERVAL_MS  = 60000;    // never re-measure faster than this
     constexpr uint32_t PERIODIC_MS      = 30UL * 60UL * 1000UL;
 
     bool measure(uint64_t& total, uint64_t& freeB) {
         if (!BoardProfile::current().isStorageAvailable()) return false;
-        SdLockGuard guard(pdMS_TO_TICKS(15000));
+        SdLockGuard guard(pdMS_TO_TICKS(2000));
         if (!guard) return false;
         total = BoardProfile::current().getStorageTotalBytes();
         freeB = BoardProfile::current().getStorageFreeBytes();
@@ -115,6 +115,12 @@ namespace SdSpace {
         if (!due && g_valid.load() && (now - g_measuredAt.load()) >= PERIODIC_MS) due = true;
 
         if (due) {
+#if defined(ESP32) && !defined(HARDWARE_PROFILE_WAVESHARE_S3)
+            // On Classic ESP32 without PSRAM, do not start SD space task if contiguous memory is tight
+            if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 20480) {
+                return; // Defer measurement until RAM pressure subsides
+            }
+#endif
             g_isMeasuring.store(true);
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
             constexpr size_t stackSize = 6144;

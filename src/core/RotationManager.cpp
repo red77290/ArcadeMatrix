@@ -123,6 +123,12 @@ void RotationManager::processPendingActions() {
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.second.c_str(), sizeof(activeEngines[i].instanceId)) == 0) {
                     retireEngineSlot(i);
+#if defined(ESP32)
+                    uint32_t waitStart = millis();
+                    while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart < 100)) {
+                        vTaskDelay(pdMS_TO_TICKS(10));
+                    }
+#endif
                     break;
                 }
             }
@@ -131,6 +137,7 @@ void RotationManager::processPendingActions() {
             ConfigSnapshotGuard guard = config.acquireSnapshot();
 
             // Prune and retire any active engines that are no longer in the rotation sequence
+            bool hasPruned = false;
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && activeEngines[i].instanceId[0] != '\0') {
                     bool stillInRotation = false;
@@ -143,9 +150,22 @@ void RotationManager::processPendingActions() {
                     if (!stillInRotation) {
                         LOGI("RotationManager", "Pruning deactivated engine '%s' (removed from rotation)", activeEngines[i].instanceId);
                         retireEngineSlot(i);
+                        hasPruned = true;
                     }
                 }
             }
+
+#if defined(ESP32)
+            if (hasPruned) {
+                // Invariant 14: Transition Resource Reclamation
+                // Ensure Core 0 lifecycle dispatcher finishes cooperative shutdown and frees heap
+                // memory before activating the incoming module.
+                uint32_t waitStart = millis();
+                while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart < 150)) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                }
+            }
+#endif
 
             // Re-anchor to wherever the currently active instance now sits in the updated
             // rotation list instead of unconditionally jumping back to slot 0. Every single

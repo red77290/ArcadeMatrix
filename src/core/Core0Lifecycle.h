@@ -58,6 +58,7 @@ public:
     }
 
     size_t getQuarantineCount() const { return _quarantineCount; }
+    bool hasPending() const { return !_retireQueue.isEmpty(); }
 
 private:
     Core0LifecycleDispatcher() = default;

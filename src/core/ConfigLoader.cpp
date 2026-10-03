@@ -731,6 +731,12 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
+    SdLockGuard lock(pdMS_TO_TICKS(5000));
+    if (!lock) {
+        LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
+        return false;
+    }
+
     if (strcmp(filepath, "/config.json") == 0) {
         SdConfigStorage sdStorage;
         ModularConfigManager mgr(sdStorage);
@@ -742,11 +748,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         mgr.workingSet().syncWithPlaylist(rotation);
     }
     publishSnapshot();
-    SdLockGuard lock(pdMS_TO_TICKS(3000));
-    if (!lock) {
-        LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
-        return false;
-    }
 
     String jsonStr = serializeToJson(true);
     if (_jsonScratch.overflowed()) {

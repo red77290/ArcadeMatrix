@@ -444,6 +444,15 @@ void WebServerAPI::begin() {
             }
         }
 
+#if defined(ESP32)
+        if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 6144) {
+            LOGW("WebServer", "Serving WebUI deferred: insufficient contiguous DRAM (%u bytes)",
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+            request->send(503, "text/plain", "Server Busy - Low Memory");
+            return;
+        }
+#endif
+
         AsyncWebServerResponse* response = request->beginResponse_P(200, "text/html; charset=utf-8", WebUI_html, WebUI_html_len);
         response->addHeader("Content-Encoding", "gzip");
         response->addHeader("Content-Disposition", "inline");
