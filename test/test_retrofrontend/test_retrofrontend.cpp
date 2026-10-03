@@ -72,6 +72,34 @@ void test_arcade_manufacturer_cleaning(void) {
     TEST_ASSERT_TRUE(foundDirectAtari);
 }
 
+/**
+ * @brief Tests system ID to Pixelcade artwork folder mapping.
+ *
+ * Verifies that console systems correctly map to their canonical Pixelcade folders
+ * without any erroneous "console/" prefix (which is strictly reserved for system logos).
+ */
+void test_map_system_to_pixelcade_folder(void) {
+    TEST_ASSERT_EQUAL_STRING("snes", FrontendSyncEngine::mapSystemToPixelcadeFolder("snes").c_str());
+    TEST_ASSERT_EQUAL_STRING("snes", FrontendSyncEngine::mapSystemToPixelcadeFolder("supernintendo").c_str());
+    TEST_ASSERT_EQUAL_STRING("nes", FrontendSyncEngine::mapSystemToPixelcadeFolder("nes").c_str());
+    TEST_ASSERT_EQUAL_STRING("genesis", FrontendSyncEngine::mapSystemToPixelcadeFolder("megadrive").c_str());
+    TEST_ASSERT_EQUAL_STRING("genesis", FrontendSyncEngine::mapSystemToPixelcadeFolder("genesis").c_str());
+    TEST_ASSERT_EQUAL_STRING("psx", FrontendSyncEngine::mapSystemToPixelcadeFolder("psx").c_str());
+    TEST_ASSERT_EQUAL_STRING("psx", FrontendSyncEngine::mapSystemToPixelcadeFolder("playstation").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", FrontendSyncEngine::mapSystemToPixelcadeFolder("cps1").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", FrontendSyncEngine::mapSystemToPixelcadeFolder("cps2").c_str());
+    TEST_ASSERT_EQUAL_STRING("mame", FrontendSyncEngine::mapSystemToPixelcadeFolder("mame").c_str());
+    TEST_ASSERT_EQUAL_STRING("neogeo", FrontendSyncEngine::mapSystemToPixelcadeFolder("neogeo").c_str());
+    TEST_ASSERT_EQUAL_STRING("n64", FrontendSyncEngine::mapSystemToPixelcadeFolder("n64").c_str());
+    TEST_ASSERT_EQUAL_STRING("gba", FrontendSyncEngine::mapSystemToPixelcadeFolder("gba").c_str());
+
+    // Verify no "console/" prefix is introduced in game folder resolution
+    String snesFolder = FrontendSyncEngine::mapSystemToPixelcadeFolder("snes");
+    TEST_ASSERT_FALSE(snesFolder.startsWith("console/"));
+    String nesFolder = FrontendSyncEngine::mapSystemToPixelcadeFolder("nes");
+    TEST_ASSERT_FALSE(nesFolder.startsWith("console/"));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -79,6 +107,7 @@ void setup() {
     RUN_TEST(test_clean_system_name);
     RUN_TEST(test_system_name_variants_priority);
     RUN_TEST(test_arcade_manufacturer_cleaning);
+    RUN_TEST(test_map_system_to_pixelcade_folder);
     UNITY_END();
 }
 

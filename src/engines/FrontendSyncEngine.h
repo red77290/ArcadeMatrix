@@ -39,6 +39,12 @@ public:
     static std::vector<SystemVariant> getSystemNameVariantsMapped(const std::map<String, std::vector<String>>& mappings, const String& systemId);
     static std::map<String, std::vector<String>> loadMappingsFromSD();
 
+    // Maps a Recalbox/Batocera SystemId (e.g. "snes", "fbneo") to the folder name used by the
+    // Pixelcade repository (e.g. "snes", "mame") - mirrors ArcadeMatrix_RPi's core/dmd_cache.py
+    // SYSTEM_MAP exactly, so artwork synced by tools/pixelcade_sync/ resolves identically on
+    // both projects.
+    static String mapSystemToPixelcadeFolder(const String& systemId);
+
 private:
     MqttConfig mqttConfig;
     GifEngine* gif;
@@ -65,6 +71,7 @@ private:
     void handleMessage(String topic, String payload);
 
     bool hasPendingEvent = false;
+    unsigned long pendingEventTime = 0;
     String pendingPayload = "";
 
     // Parses a {"status": "...", "game": "...", "system": "..."} JSON payload (the format
@@ -72,14 +79,6 @@ private:
     // SD-cached Pixelcade artwork, falls back to scrolling text, or stops playback on "stopped".
     void handleGameEvent(const String& jsonPayload, uint32_t reqId);
     void handleSystemEvent(const String& systemId, uint32_t reqId);
-
-
-
-    // Maps a Recalbox/Batocera SystemId (e.g. "snes", "fbneo") to the folder name used by the
-    // Pixelcade repository (e.g. "snes", "mame") - mirrors ArcadeMatrix_RPi's core/dmd_cache.py
-    // SYSTEM_MAP exactly, so artwork synced by tools/pixelcade_sync/ resolves identically on
-    // both projects.
-    static String mapSystemToPixelcadeFolder(const String& systemId);
 
     // Downloads the missing artwork from Pixelcade GitHub repository to the SD card.
     // Returns true if successfully downloaded.
