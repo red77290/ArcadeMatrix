@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$PixelcadeZipUrl = "https://github.com/alinke/pixelcade/archive/refs/heads/master.zip"
+$PixelcadeZipUrl = "https://github.com/red77290/pixelcade/archive/refs/heads/master.zip"
 $ZipRootPrefix = "pixelcade-master"
 $SkipDirs = @(".git", ".github", "scripts", "docs")
 $ValidExtensions = @(".png", ".gif", ".jpg", ".jpeg")

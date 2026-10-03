@@ -2,7 +2,7 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 Français | 🇪🇸 [Español](README_ES.md)
 
-Outil one-shot côté PC qui télécharge le dépôt d'artworks marquee de [Pixelcade](https://github.com/alinke/pixelcade)
+Outil one-shot côté PC qui télécharge le dépôt d'artworks marquee de [Pixelcade](https://github.com/red77290/pixelcade)
 et l'organise de façon prête à copier sur votre carte SD ArcadeMatrix, afin que l'ESP32 n'ait jamais besoin d'un accès internet en direct pour afficher box-art / marquees pendant le jeu.
 
 ## Pourquoi ne pas le récupérer en direct depuis l'ESP32 ?
