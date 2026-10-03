@@ -6,6 +6,7 @@ import re
 
 import gzip
 import hashlib
+import json
 
 input_file = "data/index.html"
 output_file = "src/api/WebUI.h"
@@ -46,7 +47,7 @@ try:
         "hw-row-addr-type",
         "hw-latch-blanking",
         "hw-clk-phase",
-        "hw-force-single-buffer",
+        "hw-render-pipeline",
     ]
     for term in REQUIRED_ESP32_TERMS:
         if term not in html_text:
@@ -80,6 +81,29 @@ def minify_webui(content):
     content = re.sub(r'<style([^>]*)>([\s\S]*?)</style>', replace_style, content)
     return content
 
+# Compile-Time Dynamic Engine Catalog & Theme Extraction
+script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.path.abspath("scripts")
+sys.path.insert(0, script_dir)
+from extract_engine_catalog import extract_engine_catalog, extract_themes, extract_engine_meta_map
+
+engine_catalog = extract_engine_catalog("src/engines")
+themes = extract_themes("src/api/WebServerAPI.cpp")
+engine_meta_map = extract_engine_meta_map(engine_catalog)
+
+catalog_json = json.dumps(engine_catalog, separators=(',', ':'))
+themes_json = json.dumps(themes, separators=(',', ':'))
+meta_map_json = json.dumps(engine_meta_map, separators=(',', ':'))
+
+injections = (
+    f"window.COMPILED_ENGINE_CATALOG = {catalog_json};\n"
+    f"window.COMPILED_THEMES = {themes_json};\n"
+    f"window.ENGINE_META_MAP = {meta_map_json};"
+)
+
+if "/* [[COMPILED_ENGINE_CATALOG]] */" in html_text:
+    html_text = html_text.replace("/* [[COMPILED_ENGINE_CATALOG]] */", injections)
+    print(f"✅ Injected compile-time engine catalog ({len(engine_catalog)} engines), {len(themes)} themes, and metadata into WebUI.")
+
 minified_html = minify_webui(html_text)
 raw_data = minified_html.encode('utf-8')
 
@@ -105,11 +129,13 @@ for i in range(0, len(bytes_strs), 12):
 
 out.append("};")
 
-with open(output_file, "w") as f:
-    f.write("\n".join(out))
-    f.write("\n")
-
-print(f"Successfully generated {output_file} ({len(data)} bytes gzipped, saved {len(raw_data) - len(data)} bytes).")
+webui_content = "\n".join(out) + "\n"
+if not os.path.exists(output_file) or open(output_file, "r", encoding="utf-8").read() != webui_content:
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(webui_content)
+    print(f"Successfully generated {output_file} ({len(data)} bytes gzipped, saved {len(raw_data) - len(data)} bytes).")
+else:
+    print(f"WebUI {output_file} is up-to-date ({len(data)} bytes gzipped).")
 
 # Determine Firmware Version dynamically from CI/CD Tag -> Git Tag -> VERSION file
 firmware_version = ""
@@ -150,10 +176,35 @@ try:
 except Exception:
     git_commit = "unknown"
 
-build_timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-with open("src/core/BuildInfo.h", "w") as f:
-    f.write(f'#pragma once\n'
-            f'#ifndef FIRMWARE_VERSION\n#define FIRMWARE_VERSION "{firmware_version}"\n#endif\n'
-            f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
-            f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
-print(f"Successfully generated src/core/BuildInfo.h (v{firmware_version}, commit {git_commit}).")
+# Use deterministic commit timestamp if in git repository, fallback to current UTC time
+build_timestamp = ""
+try:
+    build_timestamp = subprocess.check_output(
+        ['git', 'log', '-1', '--format=%cd', '--date=format:%Y-%m-%d %H:%M:%S UTC'],
+        stderr=subprocess.DEVNULL
+    ).decode('ascii').strip()
+except Exception:
+    pass
+
+if not build_timestamp:
+    build_timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+
+build_info_content = (f'#pragma once\n'
+                      f'#ifndef FIRMWARE_VERSION\n#define FIRMWARE_VERSION "{firmware_version}"\n#endif\n'
+                      f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
+                      f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
+
+build_info_file = "src/core/BuildInfo.h"
+if not os.path.exists(build_info_file) or open(build_info_file, "r", encoding="utf-8").read() != build_info_content:
+    with open(build_info_file, "w", encoding="utf-8") as f:
+        f.write(build_info_content)
+    print(f"Successfully generated {build_info_file} (v{firmware_version}, commit {git_commit}).")
+else:
+    print(f"{build_info_file} is up-to-date (v{firmware_version}, commit {git_commit}).")
+
+try:
+    Import("env")
+    env.Append(CPPDEFINES=[("BUILD_GIT_COMMIT", f'\\"{git_commit}\\"')])
+except Exception:
+    pass
+

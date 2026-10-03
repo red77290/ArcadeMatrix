@@ -1,6 +1,5 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -33,6 +32,7 @@ public:
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
     bool isRealtime() const override { return true; }
+    bool shutdownForDestruction() override;
 
 private:
     String m_clientId = "";
@@ -56,6 +56,7 @@ private:
     TaskHandle_t m_pollTaskHandle = nullptr;
     volatile bool m_taskRunning = false;
     volatile bool m_isActive = false;
+    std::atomic<bool> m_taskStopped{false};
     static void pollTaskStatic(void* pvParameters);
     void pollTaskLoop();
 

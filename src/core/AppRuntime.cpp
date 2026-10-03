@@ -6,11 +6,13 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
+#include <nvs_flash.h>
 #include "Logger.h"
 #include "RenderStats.h"
 #include "SdSpace.h"
 #include "CpuLoad.h"
 #include <time.h>
+#include <lwip/dns.h>
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
 #include "esp_sntp.h"
@@ -25,6 +27,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 
 #include "../include/core/EngineRegistry.h"
 #include "../engines/EngineRegistrar.h"
+#include "../engines/GifEngine.h"
 #include "ConfigSanitizer.h"
 #include "../hal/HardwareHAL.h"
 #include "../hal/GyroHAL.h"
@@ -32,6 +35,9 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "Core0Lifecycle.h"
 #include <esp_ota_ops.h>
 #include "BuildInfo.h"
+#include "../hal/BoardProfile.h"
+#include "drawing/DisplaySurfaceFactory.h"
+#include "drawing/PipelineSelectionPolicy.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -117,6 +123,7 @@ AppRuntime::~AppRuntime() {
 }
 
 void AppRuntime::initialize() {
+    BoardProfile::current().applyPowerQuirks();
     Serial.begin(115200);
     delay(1000);
     
@@ -145,8 +152,10 @@ void AppRuntime::initialize() {
          runningPartition ? runningPartition->label : "app0",
          runningPartition ? (unsigned)runningPartition->address : 0);
 
+    // Hardware watchdog: 30s timeout initialized early to prevent TG1WDT reset during boot
     constexpr uint32_t WDT_TIMEOUT_S = 30;
     esp_task_wdt_init(WDT_TIMEOUT_S, true);
+    esp_task_wdt_add(NULL);
 
 #if defined(USE_RTC) && USE_RTC
     // The I2C bus is already up: hardwareHAL.begin() owns Wire.begin() plus the tuned clock and
@@ -174,10 +183,7 @@ void AppRuntime::initialize() {
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
 #endif
 
-    esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
-
-    WiFi.mode(WIFI_STA);
 
     if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
@@ -186,35 +192,25 @@ void AppRuntime::initialize() {
         LOGI("System", "No PSRAM detected on hardware.");
     }
 
-    // Initialize SD Card
-#if USE_SD_MMC
-    if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
-        Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
-        while (1) { delay(100); }
+    // =========================================================================
+    // STEP 1: MOUNT MICRO SD STORAGE
+    // =========================================================================
+    if (!BoardProfile::current().beginStorage()) {
+        LOGW("SD", "Storage unavailable at boot. Starting in Safe Mode (Flash defaults).");
+    } else {
+        SdSpace::start();
     }
-    // Configure SD_MMC with max_files=3 so vfs_fat_ctx_t (~1.7KB) stays strictly in fast internal DRAM (<2KB threshold)
-    // rather than spilling into external PSRAM where HUB75 DMA bus contention and cache invalidations can occur.
-    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 3)) {
-        Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#else
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
-    if (!sd.begin(spiConfig)) {
-        Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#endif
-    LOGI("SD", "SD Card mounted successfully.");
-    SdSpace::start();
     CpuLoad::start();
 
+    // =========================================================================
+    // STEP 2: LOAD & SANITIZE CONFIGURATION
+    // =========================================================================
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
+        ConfigSanitizer::sanitize(config, true);
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
@@ -227,11 +223,100 @@ void AppRuntime::initialize() {
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
 
-    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength);
-    if (!matrixEngine.begin(snapshot.matrix)) {
+    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d, Power: %s, Brightness: %d%%",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.matrix_power ? "ON" : "OFF", snapshot.matrix.powerLimitPercent);
+    if (!snapshot.matrix.matrix_power) {
+        LOGW("Matrix", "Matrix display is configured OFF (matrix_power=false). Panel will remain dark until turned ON via WebUI/API.");
+    }
+    if (snapshot.matrix.powerLimitPercent == 0) {
+        LOGW("Matrix", "Matrix brightness is 0%%. Display will appear dark.");
+    }
+
+    // =========================================================================
+    // STEP 3: HEAL NVS PARTITION & PRE-INITIALIZE WI-FI
+    // =========================================================================
+    LOGI("System", "Step 3: Initializing NVS...");
+    esp_task_wdt_reset();
+    esp_err_t nvsErr = nvs_flash_init();
+    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
+        LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
+        const esp_partition_t* nvsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        if (nvsPart != nullptr) {
+            for (size_t offset = 0; offset < nvsPart->size; offset += 4096) {
+                esp_task_wdt_reset();
+                esp_partition_erase_range(nvsPart, offset, 4096);
+                delay(5);
+            }
+        } else {
+            esp_task_wdt_reset();
+            nvs_flash_erase();
+        }
+        esp_task_wdt_reset();
+        nvsErr = nvs_flash_init();
+    }
+    if (nvsErr != ESP_OK) {
+        LOGE("System", "Failed to initialize NVS: %d (Wi-Fi may fail)", (int)nvsErr);
+    } else {
+        LOGI("System", "NVS flash partition ready.");
+    }
+
+    // Pre-initialize Wi-Fi driver to reserve its internal RAM buffers before HUB75 DMA allocations
+    LOGI("System", "Step 3b: Pre-initializing WiFi driver...");
+    esp_task_wdt_reset();
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    esp_task_wdt_reset();
+    LOGI("System", "Step 3b: WiFi driver pre-initialized.");
+
+    // =========================================================================
+    // STEP 4: INITIALIZE MATRIX DISPLAY
+    // =========================================================================
+    // Aggregate requirements across all enabled engines in the active rotation
+    EngineRequirements rotationReq;
+    for (const auto& entry : snapshot.rotation) {
+        for (const auto& inst : snapshot.instances) {
+            if (inst.instance_id == entry.instance_id) {
+                const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+                if (desc) {
+                    rotationReq.mergeWith(desc->requirements);
+                }
+            }
+        }
+    }
+
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    auto sel = PipelineSelectionPolicy::evaluate(
+        totalWidth,
+        snapshot.matrix.height,
+        snapshot.matrix.colorDepth,
+        snapshot.matrix.render_pipeline,
+        hasPsram,
+#if defined(ESP32)
+        MemoryBudgetConstraints(
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_free_size(MALLOC_CAP_DMA),
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)
+        ),
+#else
+        MemoryBudgetConstraints(),
+#endif
+        rotationReq
+    );
+
+    LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.panelType.c_str(), snapshot.matrix.colorDepth, sel.effectiveColorDepth, sel.reasonText);
+    if (!matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
         LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
     }
+    // Commit Frame 0 (deterministic black frame) via backend as sole presentation authority
+    matrixEngine.commitFirstFrame();
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
@@ -255,14 +340,33 @@ void AppRuntime::initialize() {
     audioHub.begin();
 
     Core0LifecycleDispatcher::instance().begin();
+    
+    // Initialize v4 Display Surface SPI via Abstract Factory
+    totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    uint16_t totalHeight = snapshot.matrix.height;
+    auto surfaceResult = DisplaySurfaceFactory::createSurface(
+        &matrixEngine,
+        totalWidth,
+        totalHeight,
+        snapshot.matrix.render_pipeline
+    );
+    m_drawingSurface = std::move(surfaceResult.surface);
+    LOGI("AppRuntime", "Display surface initialized: %s (%s)",
+         m_drawingSurface ? "OK" : "FAILED", surfaceResult.reasonText);
+    displayOrientationManager.setSurface(m_drawingSurface.get());
+    if (m_drawingSurface) {
+        m_drawingSurface->setRotation(displayOrientationManager.getRotation());
+    }
+
     rotationManager = new RotationManager();
-    m_appCtx = new AppEngineContext(matrixEngine.getDisplay(), m_frontendListener);
+    m_appCtx = new AppEngineContext(m_drawingSurface.get(), matrixEngine.getDisplay(), m_frontendListener);
     rotationManager->setEngineContext(m_appCtx);
     rotationManager->setSlotTransition(snapshot.matrix.slot_transition, snapshot.matrix.slot_transition_duration_ms);
     overlayManager.initialize(m_appCtx, &config);
 
     m_displayRuntime.begin(m_appCtx, &matrixEngine, rotationManager,
                            &overlayManager, &displayOrientationManager, &m_displayArbiter);
+    m_displayRuntime.setSurface(m_drawingSurface.get());
 
     auto desc = EngineRegistry::getDescriptor("audiovisualizer");
     if (desc && desc->factory) {
@@ -310,20 +414,49 @@ void AppRuntime::initialize() {
             if (s_servicesRegistered) return;
             s_servicesRegistered = true;
             MDNS.addService("http", "tcp", 80);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+            // Memory optimization on classic ESP32: DLNA/UPnP services not used on standard profile
+            // REVERT INSTRUCTION: Remove #if to advertise UPnP/MediaRenderer on all profiles.
             MDNS.addService("upnp", "tcp", 80);
             MDNS.addService("mediarenderer", "tcp", 80);
+#endif
         };
 
-        String wifiHostname = snapshot.wifi.hostname;
-        WiFi.onEvent([wifiHostname](WiFiEvent_t event, WiFiEventInfo_t info) {
-            (void)info;
+        static String s_wifiHostname;
+        s_wifiHostname = snapshot.wifi.hostname;
+        static bool s_mdnsStarted = false;
+        auto startMdns = []() {
+            if (s_mdnsStarted) return;
+            if (MDNS.begin(s_wifiHostname.c_str())) {
+                s_mdnsStarted = true;
+                LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
+                registerMdnsServices();
+            }
+        };
+
+        WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
             if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-                Serial.println("Wi-Fi disconnected - attempting to reconnect...");
-                WiFi.reconnect();
+                LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
             } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
                 LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-                if (MDNS.begin(wifiHostname.c_str())) {
-                    LOGI("WiFi", "mDNS responder started: http://%s.local", wifiHostname.c_str());
+                // Configure high-availability public DNS servers: Cloudflare (1.1.1.1) as primary,
+                // Google (8.8.8.8) as secondary, and preserve router DHCP DNS as tertiary fallback.
+                const ip_addr_t* dhcpDns = dns_getserver(0);
+                ip_addr_t routerDns;
+                if (dhcpDns && !ip_addr_isany(dhcpDns)) {
+                    routerDns = *dhcpDns;
+                    dns_setserver(2, &routerDns);
+                }
+                ip_addr_t dns0, dns1;
+                IP_ADDR4(&dns0, 1, 1, 1, 1);
+                IP_ADDR4(&dns1, 8, 8, 8, 8);
+                dns_setserver(0, &dns0);
+                dns_setserver(1, &dns1);
+                LOGI("WiFi", "DNS configured: 1.1.1.1 (primary), 8.8.8.8 (secondary)");
+
+                if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
+                    s_mdnsStarted = true;
+                    LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
                     registerMdnsServices();
                 }
             }
@@ -331,34 +464,53 @@ void AppRuntime::initialize() {
 
         WiFi.mode(WIFI_STA);
         WiFi.setHostname(snapshot.wifi.hostname.c_str());
+        WiFi.setAutoReconnect(true);
         WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+        BoardProfile::current().configureWifiTxPower();
         WiFi.setSleep(false);
         
         int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        while (WiFi.status() != WL_CONNECTED && attempts < 50) {
             delay(500);
             Serial.print(".");
-            matrixEngine.getDisplay()->fillScreen(0);
-            m_messageEngine->update(m_appCtx);
-            m_messageEngine->render(m_appCtx);
-            matrixEngine.present();
+            if (m_drawingSurface) {
+                m_drawingSurface->clear(0);
+                m_messageEngine->update(m_appCtx);
+                m_messageEngine->render(m_appCtx);
+                m_drawingSurface->present();
+            } else {
+                matrixEngine.getDisplay()->fillScreen(0);
+                m_messageEngine->update(m_appCtx);
+                m_messageEngine->render(m_appCtx);
+                matrixEngine.present();
+            }
             attempts++;
+            if (WiFi.status() != WL_CONNECTED && (attempts % 10 == 0)) {
+                LOGW("WiFi", "Wi-Fi connecting... retrying association with AP");
+                WiFi.disconnect(false, false);
+                delay(100);
+                WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+                BoardProfile::current().configureWifiTxPower();
+                WiFi.setSleep(false);
+            }
         }
         Serial.println();
 
         if (WiFi.status() == WL_CONNECTED) {
             LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
             String ipMsg = "IP: " + WiFi.localIP().toString();
-            MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 50, 5};
+            MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 35, 1};
             m_messageEngine->displayMessage(ipConfig);
             
-            if (MDNS.begin(snapshot.wifi.hostname.c_str())) {
-                LOGI("WiFi", "mDNS responder started: http://%s.local", snapshot.wifi.hostname.c_str());
-            }
+            startMdns();
             configTzTime(getPosixTimezone(snapshot.system.timezone).c_str(), "pool.ntp.org");
             
+            LOGI("WebServer", "Starting WebServer... (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer = new WebServerAPI(80, m_messageEngine);
             m_webServer->begin();
+            LOGI("WebServer", "WebServer started successfully! (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer->setVisualizerEngine(visualizerEngine);
 
             auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
@@ -383,14 +535,21 @@ void AppRuntime::initialize() {
             }
         } else {
             Serial.println("Wi-Fi connection timed out. Starting dual Access Point (AP) & Station mode...");
+            WiFi.disconnect(false, false);
+            delay(100);
             WiFi.mode(WIFI_AP_STA);
             WiFi.softAP("ArcadeMatrix", "12345678");
+            LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
             String apMsg = "Offline Mode (AP: ArcadeMatrix)";
             MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
             m_messageEngine->displayMessage(failConfig);
             
+            LOGI("WebServer", "Starting WebServer (AP Mode)... (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer = new WebServerAPI(80, m_messageEngine);
             m_webServer->begin();
+            LOGI("WebServer", "WebServer started successfully (AP Mode)! (Free Heap: %u bytes, Largest Block: %u bytes)",
+                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             m_webServer->setVisualizerEngine(visualizerEngine);
             auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
             if (marqueeDesc && marqueeDesc->factory) {
@@ -402,11 +561,14 @@ void AppRuntime::initialize() {
             m_webServer->setMarqueeEngine(m_marqueeEngine);
             // Re-arm background station connection so it automatically connects as soon as AP is ready
             WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+            BoardProfile::current().configureWifiTxPower();
+            WiFi.setSleep(false);
         }
     } else {
         Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
         WiFi.mode(WIFI_AP);
         WiFi.softAP("ArcadeMatrix", "12345678");
+        LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
         String apMsg = "Offline Mode (AP: ArcadeMatrix)";
         MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
         m_messageEngine->displayMessage(failConfig);
@@ -427,16 +589,27 @@ void AppRuntime::initialize() {
     LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
     while (m_messageEngine->isActive()) {
-        matrixEngine.getDisplay()->fillScreen(0);
-        m_messageEngine->update(m_appCtx);
-        m_messageEngine->render(m_appCtx);
-        matrixEngine.present();
-        delay(5);
-        if (millis() - startWait > 5000) {
+        if (m_drawingSurface) {
+            m_drawingSurface->clear(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.getDisplay()->fillScreen(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            matrixEngine.present();
+        }
+        delay(10);
+        if (millis() - startWait > 15000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
             m_messageEngine->deactivate();
             break;
         }
+    }
+    if (m_drawingSurface) {
+        m_drawingSurface->clear(0);
+        m_drawingSurface->present();
     }
     LOGD("System", "MessageEngine finished.");
     
@@ -448,7 +621,6 @@ void AppRuntime::initialize() {
     audioSessionManager.update(snapshot);
 
     m_lastReconciledVersion = snapshot.version;
-    evaluateDisplayRequests(snapshot);
 
     LOGI("System", "Setup complete. Entering loop().");
 }
@@ -642,6 +814,16 @@ void AppRuntime::update() {
 
     audioSessionManager.update(snapshot);
 
+    // Non-blocking Wi-Fi background health check
+    static unsigned long lastWifiCheck = millis();
+    if (snapshot.wifi.ssid.length() > 0 && millis() - lastWifiCheck > 60000) {
+        lastWifiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            LOGW("WiFi", "Wi-Fi disconnected (status=%d), requesting background reconnect...", WiFi.status());
+            WiFi.reconnect();
+        }
+    }
+
     if (m_displayRuntime.isTransitioning()) {
         m_displayRuntime.renderTransition();
         matrixEngine.markExternalDraw();
@@ -659,6 +841,10 @@ void AppRuntime::update() {
 
     if (!displayActive) {
         if (m_wasPoweredOn) {
+            LOGW("Display", "Matrix output deactivated (matrix_power=%s, night_mode=%s, night_brightness=%d). Blanking panel.",
+                 snapshot.matrix.matrix_power ? "true" : "false",
+                 snapshot.system.night_mode_enabled ? "true" : "false",
+                 snapshot.system.night_brightness);
             matrixEngine.setBrightness(0);
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.present();
@@ -699,7 +885,11 @@ void AppRuntime::update() {
     lastFrameEnd = tAfterRender;
 
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
-        matrixEngine.present();
+        if (m_drawingSurface) {
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.present();
+        }
     }
 
     // Periodic 5s render performance telemetry to serial logs

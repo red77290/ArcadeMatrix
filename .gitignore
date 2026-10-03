@@ -29,5 +29,9 @@ release/sdCard/fighters_64/
 # IDE
 .idea/
 
+# Release artifacts
+*.zip
+release/sdCard/gif_indexation/
+
 # Python
 __pycache__/

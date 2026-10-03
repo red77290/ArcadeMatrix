@@ -1,13 +1,11 @@
 #include "../../include/core/EngineRegistry.h"
 #include "RotationManager.h"
 #include "DisplayRuntime.h"
+#include "drawing/IDrawingSurface.h"
 #include "ConfigLoader.h"
 #include "Core0Lifecycle.h"
 #include "Logger.h"
-#include "MatrixEngine.h"
 #include <WiFi.h>
-
-extern MatrixEngine matrixEngine;
 
 extern ConfigLoader config;
 
@@ -125,6 +123,12 @@ void RotationManager::processPendingActions() {
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.second.c_str(), sizeof(activeEngines[i].instanceId)) == 0) {
                     retireEngineSlot(i);
+#if defined(ESP32)
+                    uint32_t waitStart = millis();
+                    while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart < 100)) {
+                        vTaskDelay(pdMS_TO_TICKS(10));
+                    }
+#endif
                     break;
                 }
             }
@@ -133,6 +137,7 @@ void RotationManager::processPendingActions() {
             ConfigSnapshotGuard guard = config.acquireSnapshot();
 
             // Prune and retire any active engines that are no longer in the rotation sequence
+            bool hasPruned = false;
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
                 if (activeEngines[i].engine && activeEngines[i].instanceId[0] != '\0') {
                     bool stillInRotation = false;
@@ -145,9 +150,22 @@ void RotationManager::processPendingActions() {
                     if (!stillInRotation) {
                         LOGI("RotationManager", "Pruning deactivated engine '%s' (removed from rotation)", activeEngines[i].instanceId);
                         retireEngineSlot(i);
+                        hasPruned = true;
                     }
                 }
             }
+
+#if defined(ESP32)
+            if (hasPruned) {
+                // Invariant 14: Transition Resource Reclamation
+                // Ensure Core 0 lifecycle dispatcher finishes cooperative shutdown and frees heap
+                // memory before activating the incoming module.
+                uint32_t waitStart = millis();
+                while (Core0LifecycleDispatcher::instance().hasPending() && (millis() - waitStart < 150)) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                }
+            }
+#endif
 
             // Re-anchor to wherever the currently active instance now sits in the updated
             // rotation list instead of unconditionally jumping back to slot 0. Every single
@@ -218,6 +236,10 @@ IEngine* RotationManager::getOrCreateEngine(const char* instanceId) {
     for (const auto& inst : guard->instances) {
         if (inst.instance_id == instanceId) {
             auto desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+            if (desc && !desc->available) {
+                LOGW("RotationManager", "Engine '%s' is unavailable on this hardware profile, skipping instance '%s'", inst.engine_id.c_str(), instanceId);
+                return nullptr;
+            }
             if (desc && desc->factory) {
                 auto engine = desc->factory();
                 if (engine) {
@@ -293,31 +315,28 @@ void RotationManager::switchToModule(int index) {
       if (oldEngine) {
           oldEngine->deactivate();
       }
-      if (m_ctx && m_ctx->getMatrix()) {
-          // Both DMA buffers have to go black. Clearing once only blanks the back buffer, so the
-          // front one still holds the engine that just ended; while the next engine loads its first
-          // frame (a GIF read from the card takes a moment) any flip puts that old frame back on the
-          // panel for an instant.
-          m_ctx->getMatrix()->fillScreen(0);
-          if (matrixEngine.isDoubleBuffered()) {
-              matrixEngine.present();
-              m_ctx->getMatrix()->fillScreen(0);
-          }
-          matrixEngine.markExternalDraw();
-          // Cover that gap with the configured effect; the next engine loads underneath it.
+      if (m_ctx && m_ctx->getSurface()) {
+          m_ctx->getSurface()->clear(0);
+          // Cover transition gap with configured effect over surface canvas
           const RotationEffect slotEffect = m_slotEffect.load(std::memory_order_acquire);
           if (slotEffect != RotationEffect::NONE) {
               m_slotFx.start(0, 0, slotEffect, (uint32_t)m_slotFxMs.load(std::memory_order_relaxed),
-                             m_ctx->getMatrix()->width(), m_ctx->getMatrix()->height());
+                             m_ctx->getSurface()->width(), m_ctx->getSurface()->height());
               m_awaitingFirstFrame = true;
               m_slotFxStartedMs = millis();
           }
       }
+      LOGI("RotationManager", "[Rotation Transition] Deactivated '%s' -> Baseline Heap: Free=%u, LargestBlock=%u",
+           currentActiveInstanceId, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   // Activate new engine
   IEngine* newEngine = getOrCreateEngine(newInstanceId.c_str());
   if (newEngine) {
+      if (m_displayRuntime) {
+          EngineHandle h(mod.c_str(), newInstanceId.c_str());
+          m_displayRuntime->maybeReconfigurePipelineFor(newEngine, h, DisplaySourceId::ROTATION);
+      }
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
@@ -329,8 +348,8 @@ void RotationManager::switchToModule(int index) {
   strncpy(currentActiveInstanceId, newInstanceId.c_str(), sizeof(currentActiveInstanceId) - 1);
   currentActiveInstanceId[sizeof(currentActiveInstanceId) - 1] = '\0';
   
-  LOGI("RotationManager", "Switched to engine %s | Heap: Free=%u, MinFree=%u, MaxAlloc=%u", 
-      mod.c_str(), ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+  LOGI("RotationManager", "[Rotation Transition] Activated '%s' (%s) | Heap: Free=%u, MinFree=%u, LargestBlock=%u", 
+      newInstanceId.c_str(), mod.c_str(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   switchDepth = 0;
 }
 
@@ -418,9 +437,10 @@ bool RotationManager::loop() {
     
     bool shouldFlip = true;
     if (activeEngine) {
-        if (activeEngine->needsClear() && m_ctx && m_ctx->getMatrix()) {
-            m_ctx->getMatrix()->fillScreen(0);
-            matrixEngine.markExternalDraw();
+        if (activeEngine->needsClear()) {
+            if (m_ctx && m_ctx->getSurface()) {
+                m_ctx->getSurface()->clear(0);
+            }
         }
         activeEngine->update(m_ctx);
         activeEngine->render(m_ctx);
@@ -452,7 +472,7 @@ bool RotationManager::loop() {
                  (int)currentIndex, (inst_id ? inst_id : "(null)"), isSoloMode ? "showing a blank panel" : "skipping it");
         }
         if (m_missingClears < 2) {
-            if (m_ctx && m_ctx->getMatrix()) m_ctx->getMatrix()->fillScreen(0);
+            if (m_ctx && m_ctx->getSurface()) m_ctx->getSurface()->clear(0);
             m_missingClears++;
             shouldFlip = true;
         } else {
@@ -469,15 +489,15 @@ bool RotationManager::loop() {
     }
     // The transition paints over whatever the engine just drew, so a GIF can spend the animation
     // opening its file instead of showing a blank panel.
-    if (m_slotFx.isRunning() && m_ctx && m_ctx->getMatrix()) {
+    if (m_slotFx.isRunning() && m_ctx && m_ctx->getSurface()) {
         // Hold the cover until the new engine actually produces a frame, so the reveal never lands
         // on a blank panel (a GIF still reading its file, a weather screen yet to repaint). Bounded,
         // so a slot that never draws cannot freeze the rotation.
         if (m_awaitingFirstFrame && shouldFlip) m_awaitingFirstFrame = false;
         bool overdue = (millis() - m_slotFxStartedMs) > (uint32_t)(m_slotFxMs.load(std::memory_order_relaxed) + 2500);
         m_slotFx.setHold(m_awaitingFirstFrame && !overdue);
-        m_slotFx.render(m_ctx->getMatrix(), nullptr);
-        matrixEngine.markExternalDraw();
+        m_slotFx.render(m_ctx->getSurface(), nullptr);
+        m_ctx->getSurface()->markDirty();
         shouldFlip = true;
     }
 

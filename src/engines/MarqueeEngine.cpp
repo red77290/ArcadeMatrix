@@ -2,12 +2,13 @@
 #include <string.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+#include "../core/net/SecureHttpClient.h"
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
 #include "core/BuildInfo.h"
 #include "../core/Logger.h"
+#include "../core/drawing/IDrawingSurface.h"
 
 MarqueeEngine::MarqueeEngine()
     : panelWidth(0), panelHeight(0), m_rawBuffer(nullptr),
@@ -18,25 +19,32 @@ MarqueeEngine::MarqueeEngine()
 
 EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
     if (!context) return EngineError::InitializationFailed;
+    auto surface = context->getSurface();
     auto matrix = context->getMatrix();
-    if (!matrix) return EngineError::HardwareUnavailable;
+    if (!surface && !matrix) return EngineError::HardwareUnavailable;
 
     m_context = context;
     m_hasPsram = context->hasPsram();
-    panelWidth = matrix->width();
-    panelHeight = matrix->height();
+    panelWidth = surface ? surface->width() : matrix->width();
+    panelHeight = surface ? surface->height() : matrix->height();
 
+    // MEMORY OPTIMIZATION: Do not eagerly allocate 8KB m_rawBuffer at boot time.
+    // Instead, allocate it on-demand in show() if raw pixel streaming is actually used.
+    // REVERT INSTRUCTION: Uncomment the eager allocation below if immediate pre-allocation is required.
+    m_rawBuffer = nullptr;
+    /*
     size_t bufferSize = (size_t)panelWidth * panelHeight * sizeof(uint16_t);
     if (m_hasPsram) {
         m_rawBuffer = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM);
     } else {
         m_rawBuffer = (uint16_t*)malloc(bufferSize);
     }
+    */
 
     if (!m_gifEngine) {
         m_gifEngine = new GifEngine();
         m_gifEngine->initialize(context, engineConfig);
-        m_gifEngine->begin(matrix);
+        m_gifEngine->begin(surface ? surface : context->getSurface());
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
     }
@@ -58,16 +66,25 @@ MarqueeEngine::~MarqueeEngine() {
 }
 
 void MarqueeEngine::show(const uint8_t* rgb565Data, size_t len, unsigned long durationSeconds) {
-    if (!m_rawBuffer || len != expectedBufferBytes()) return;
+    size_t expected = expectedBufferBytes();
+    if (len != expected) return;
+    if (!m_rawBuffer) {
+        if (m_hasPsram) {
+            m_rawBuffer = (uint16_t*)heap_caps_malloc(expected, MALLOC_CAP_SPIRAM);
+        } else {
+            m_rawBuffer = (uint16_t*)malloc(expected);
+        }
+    }
+    if (!m_rawBuffer) return;
     memcpy(m_rawBuffer, rgb565Data, len);
     m_hasRawBuffer = true;
     m_active = true;
     m_rawStartTime = millis();
     m_rawDurationMs = durationSeconds * 1000UL;
     m_clearFramesRemaining.store(2, std::memory_order_relaxed);
-    auto matrix = m_context ? m_context->getMatrix() : nullptr;
-    if (matrix) {
-        matrix->fillScreen(0);
+    auto surface = m_context ? m_context->getSurface() : nullptr;
+    if (surface) {
+        surface->clear(0);
     }
     if (m_gifEngine) {
         m_gifEngine->stop();
@@ -86,90 +103,186 @@ void MarqueeEngine::setMarqueeFile(const char* path) {
     }
 }
 
-bool MarqueeEngine::downloadUrlViaProxy(const String& targetUrl, const String& destPath) {
-    if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
+namespace {
 
-    String fitParam = "contain";
-    if (m_fitMode == "stretch") fitParam = "fill";
-    else if (m_fitMode == "center") fitParam = "cover";
+struct ImageHeaderInfo {
+    int width = -1;
+    int height = -1;
+    bool isGif = false;
+    bool isPng = false;
+    bool valid = false;
+};
+
+static ImageHeaderInfo parseImageDimensions(const uint8_t* header, size_t len) {
+    ImageHeaderInfo info;
+    if (len >= 10 && memcmp(header, "GIF8", 4) == 0) {
+        info.width = header[6] | (header[7] << 8);
+        info.height = header[8] | (header[9] << 8);
+        info.isGif = true;
+        info.valid = (info.width > 0 && info.height > 0);
+        return info;
+    }
+    if (len >= 24 && header[0] == 0x89 && header[1] == 'P' && header[2] == 'N' && header[3] == 'G') {
+        info.width = (header[16] << 24) | (header[17] << 16) | (header[18] << 8) | header[19];
+        info.height = (header[20] << 24) | (header[21] << 16) | (header[22] << 8) | header[23];
+        info.isPng = true;
+        info.valid = (info.width > 0 && info.height > 0);
+        return info;
+    }
+    return info;
+}
+
+static bool writeStreamToSd(Stream& s, const uint8_t* initialHeader, size_t initialHeaderLen, size_t totalExpectedLen, const String& destPath) {
+    SdLockGuard guard(pdMS_TO_TICKS(3000));
+    if (!guard) return false;
+    if (!sd.exists("/marquees")) sd.mkdir("/marquees");
+    FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
+    if (!f) return false;
+
+    if (initialHeader && initialHeaderLen > 0) {
+        f.write(initialHeader, initialHeaderLen);
+    }
+    uint8_t chunk[512];
+    size_t written = initialHeaderLen;
+    while (totalExpectedLen == 0 || written < totalExpectedLen) {
+        int avail = s.available();
+        if (avail > 0) {
+            int toRead = std::min(avail, (int)sizeof(chunk));
+            if (totalExpectedLen > 0 && written + toRead > totalExpectedLen) {
+                toRead = totalExpectedLen - written;
+            }
+            int r = s.readBytes(reinterpret_cast<char*>(chunk), toRead);
+            if (r > 0) {
+                f.write(chunk, r);
+                written += r;
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            if (!s.available()) break;
+        }
+    }
+    f.close();
+    return written > 0;
+}
+
+} // anonymous namespace
+
+bool MarqueeEngine::downloadUrlWithResizeCheck(const String& targetUrl, String& outDestPath) {
+    if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
 
     int w = panelWidth > 0 ? panelWidth : 128;
     int h = panelHeight > 0 ? panelHeight : 32;
 
-    String proxyUrl = "http://images.weserv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
-    LOGI("MarqueeEngine", "Downloading marquee via resize proxy: %s", proxyUrl.c_str());
+    // 1. Inspect target image resolution directly
+    bool isHttps = targetUrl.startsWith("https://");
+    uint8_t header[32];
+    size_t headerBytes = 0;
+    ImageHeaderInfo headerInfo;
+    bool directInspectionSuccess = false;
 
+    if (isHttps) {
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 5000;
+        options.userAgent = "Mozilla/5.0 ArcadeMatrix/3.2";
+        auto response = net::SecureHttpClient::get(targetUrl, options);
+        if (response.ok()) {
+            Stream& s = response.stream();
+            uint32_t startMs = millis();
+            while (headerBytes < sizeof(header) && (millis() - startMs < 2000)) {
+                if (s.available()) {
+                    header[headerBytes++] = (uint8_t)s.read();
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+            }
+            headerInfo = parseImageDimensions(header, headerBytes);
+            if (headerInfo.valid && headerInfo.width == w && headerInfo.height == h) {
+                outDestPath = headerInfo.isGif ? "/marquees/marquee.gif" : "/marquees/marquee.png";
+                LOGI("MarqueeEngine", "Marquee matches panel resolution (%dx%d), downloading directly as %s", w, h, outDestPath.c_str());
+                return writeStreamToSd(s, header, headerBytes, response.contentLength(), outDestPath);
+            }
+            directInspectionSuccess = true;
+        }
+    } else {
+        HTTPClient http;
+        WiFiClient client;
+        http.setTimeout(5000);
+        http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
+        if (http.begin(client, targetUrl)) {
+            int code = http.GET();
+            if (code == 200) {
+                int contentLen = http.getSize();
+                WiFiClient* s = http.getStreamPtr();
+                uint32_t startMs = millis();
+                while (headerBytes < sizeof(header) && (millis() - startMs < 2000)) {
+                    if (s->available()) {
+                        header[headerBytes++] = (uint8_t)s->read();
+                    } else {
+                        vTaskDelay(pdMS_TO_TICKS(5));
+                    }
+                }
+                headerInfo = parseImageDimensions(header, headerBytes);
+                if (headerInfo.valid && headerInfo.width == w && headerInfo.height == h) {
+                    outDestPath = headerInfo.isGif ? "/marquees/marquee.gif" : "/marquees/marquee.png";
+                    LOGI("MarqueeEngine", "Marquee matches panel resolution (%dx%d), downloading directly as %s", w, h, outDestPath.c_str());
+                    bool ok = writeStreamToSd(*s, header, headerBytes, contentLen, outDestPath);
+                    http.end();
+                    client.stop();
+                    return ok;
+                }
+                directInspectionSuccess = true;
+            }
+            http.end();
+            client.stop();
+        }
+    }
+
+    if (directInspectionSuccess && headerInfo.valid) {
+        LOGI("MarqueeEngine", "Marquee resolution (%dx%d) != panel (%dx%d), resizing via proxy", headerInfo.width, headerInfo.height, w, h);
+    } else {
+        LOGI("MarqueeEngine", "Marquee format requires proxy normalization/resize (%dx%d)", w, h);
+    }
+
+    // 2. Fetch resized image via proxy (wsrv.nl HTTPS first, weserv.nl HTTP fallback)
+    String fitParam = "contain";
+    if (m_fitMode == "stretch") fitParam = "fill";
+    else if (m_fitMode == "center") fitParam = "cover";
+
+    outDestPath = "/marquees/marquee.png";
+    String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 6000;
+    options.userAgent = "Mozilla/5.0 ArcadeMatrix/3.2";
+    auto response = net::SecureHttpClient::get(secureProxyUrl, options);
+    if (response.ok()) {
+        return writeStreamToSd(response.stream(), nullptr, 0, response.contentLength(), outDestPath);
+    }
+
+    String proxyUrl = "http://images.weserv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
     HTTPClient http;
     WiFiClient client;
-    http.setTimeout(5000);
+    http.setTimeout(6000);
     http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
-
-    bool success = false;
     if (http.begin(client, proxyUrl)) {
         int code = http.GET();
         if (code == 200) {
-            int len = http.getSize();
-            if (len > 0 && len < 65536) {
-                if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                    if (!sd.exists("/marquees")) sd.mkdir("/marquees");
-                    FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-                    if (f) {
-                        http.writeToStream(&f);
-                        f.close();
-                        success = true;
-                    }
-                    xSemaphoreGive(sdMutex);
-                }
-            }
+            bool ok = writeStreamToSd(*http.getStreamPtr(), nullptr, 0, http.getSize(), outDestPath);
+            http.end();
+            client.stop();
+            return ok;
         }
         http.end();
         client.stop();
     }
 
-    if (!success) {
-        if (!NetworkBudget::canStartTlsSession()) {
-            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: insufficient internal DRAM for TLS session.");
-            return false;
-        }
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            LOGW("MarqueeEngine", "Skipping HTTPS marquee fallback: another TLS handshake is in progress.");
-            return false;
-        }
-        WiFiClientSecure secureClient;
-        secureClient.setInsecure();
-        String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=" + String(w) + "&h=" + String(h) + "&fit=" + fitParam + "&output=png";
-        HTTPClient secureHttp;
-        secureHttp.setTimeout(5000);
-        secureHttp.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.2");
-        if (secureHttp.begin(secureClient, secureProxyUrl)) {
-            int code = secureHttp.GET();
-            if (code == 200) {
-                int len = secureHttp.getSize();
-                if (len > 0 && len < 65536) {
-                    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-                        if (!sd.exists("/marquees")) sd.mkdir("/marquees");
-                        FsFile f = sd.open(destPath.c_str(), FILE_OPEN_WRITE);
-                        if (f) {
-                            secureHttp.writeToStream(&f);
-                            f.close();
-                            success = true;
-                        }
-                        xSemaphoreGive(sdMutex);
-                    }
-                }
-            }
-            secureHttp.end();
-            secureClient.stop();
-        }
-    }
-    return success;
+    return false;
 }
 
 String MarqueeEngine::resolveMarqueeFile() {
     if (m_filePath.startsWith("http://") || m_filePath.startsWith("https://")) {
-        if (downloadUrlViaProxy(m_filePath, "/marquees/marquee.png")) {
-            return "/marquees/marquee.png";
+        String downloadedFile;
+        if (downloadUrlWithResizeCheck(m_filePath, downloadedFile)) {
+            return downloadedFile;
         }
     }
     SdLockGuard guard(pdMS_TO_TICKS(1500));
@@ -198,9 +311,9 @@ String MarqueeEngine::resolveMarqueeFile() {
 void MarqueeEngine::activate() {
     m_active = true;
     m_clearFramesRemaining.store(2, std::memory_order_relaxed);
-    auto matrix = m_context ? m_context->getMatrix() : nullptr;
-    if (matrix) {
-        matrix->fillScreen(0);
+    auto surface = m_context ? m_context->getSurface() : nullptr;
+    if (surface) {
+        surface->clear(0);
     }
     if (m_hasRawBuffer) {
         return;
@@ -241,6 +354,11 @@ void MarqueeEngine::update(EngineContext* context) {
         if (millis() - m_rawStartTime >= m_rawDurationMs) {
             m_active = false;
             m_hasRawBuffer = false;
+            // On classic ESP32 without PSRAM, free the 8KB raw buffer immediately after playback to recover DRAM
+            if (m_rawBuffer && !m_hasPsram) {
+                free(m_rawBuffer);
+                m_rawBuffer = nullptr;
+            }
         }
     } else if (m_gifEngine) {
         m_gifEngine->update(context);
@@ -263,11 +381,16 @@ bool MarqueeEngine::isFinished() const {
 void MarqueeEngine::render(EngineContext* context) {
     if (!m_active) return;
     if (m_hasRawBuffer && m_rawBuffer) {
-        auto matrix = context ? context->getMatrix() : nullptr;
-        if (!matrix) return;
-        for (int y = 0; y < panelHeight; y++) {
-            for (int x = 0; x < panelWidth; x++) {
-                matrix->drawPixel(x, y, m_rawBuffer[y * panelWidth + x]);
+        auto surface = context ? context->getSurface() : nullptr;
+        if (surface) {
+            surface->blit565(m_rawBuffer, 0, 0, panelWidth, panelHeight, panelWidth);
+        } else {
+            auto matrix = context ? context->getMatrix() : nullptr;
+            if (!matrix) return;
+            for (int y = 0; y < panelHeight; y++) {
+                for (int x = 0; x < panelWidth; x++) {
+                    matrix->drawPixel(x, y, m_rawBuffer[y * panelWidth + x]);
+                }
             }
         }
     } else if (m_gifEngine) {
@@ -278,18 +401,12 @@ void MarqueeEngine::render(EngineContext* context) {
 void MarqueeEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     panelWidth = geometry.width;
     panelHeight = geometry.height;
-    size_t newSize = expectedBufferBytes();
     if (m_rawBuffer) {
-        free(m_rawBuffer);
+        if (m_hasPsram) heap_caps_free(m_rawBuffer);
+        else free(m_rawBuffer);
         m_rawBuffer = nullptr;
     }
-    if (newSize > 0) {
-        if (m_hasPsram) {
-            m_rawBuffer = (uint16_t*)heap_caps_malloc(newSize, MALLOC_CAP_SPIRAM);
-        } else {
-            m_rawBuffer = (uint16_t*)malloc(newSize);
-        }
-    }
+    // Buffer will be reallocated on demand in show() if needed
     if (m_gifEngine) {
         m_gifEngine->onDisplayGeometryChanged(geometry);
     }
@@ -303,6 +420,12 @@ EngineDescriptor MarqueeEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.selfPaced = false;
     desc.requirements.needsAudio = false;
     desc.requirements.needsNetwork = false;
+    desc.requirements.needsSd = true;
+    desc.requirements.targetFps = 60;
+    desc.requirements.prefersDoubleBuffer = true;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalContiguousBytes = 16000;
     desc.schema.fields = {
         ConfigField("file_path", ConfigType::FILE_ASSET, "Marquee File", "Path to marquee GIF or image on SD", "/marquees/marquee.gif", false, "", "", "", ".gif,.png,.jpg,.jpeg", "/api/upload?target=marquee", false, "", ValidationPolicy::Accept),
         ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Animation playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),

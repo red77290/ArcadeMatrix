@@ -3,19 +3,30 @@
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
+#include "../core/net/SecureHttpClient.h"
+#include "../core/NetworkBudget.h"
 #include "../api/CoinGeckoProvider.h"
 #include "../api/BinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
-
-CryptoEngine* CryptoEngine::instance = nullptr;
+#include <esp_task_wdt.h>
 
 CryptoEngine::CryptoEngine() 
     : currentSymbolIndex(0), lastItemSwitchTime(0), lastFetchTime(0),
-      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
-    instance = this;
-    addProvider(new CoinGeckoProvider());
-    addProvider(new BinanceProvider());
+      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {
+    m_coingecko = new CoinGeckoProvider();
+    m_binance = new BinanceProvider();
+    addProvider(m_coingecko);
+    addProvider(m_binance);
+}
+
+CryptoEngine::~CryptoEngine() {
+    for (auto* p : providers) {
+        delete p;
+    }
+    providers.clear();
+    m_coingecko = nullptr;
+    m_binance = nullptr;
 }
 
 EngineError CryptoEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
@@ -56,13 +67,38 @@ void CryptoEngine::parseSymbols(const String& syms) {
 void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
     symbolsShownThisCycle = 0;
+    m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
-        String sym = symbolList[currentSymbolIndex % symbolList.size()];
-        fetchQuote(sym);
-        if (config_show_chart) {
-            fetchHistory(sym, config_chart_timeframe);
+        activeSymbol = symbolList[currentSymbolIndex % symbolList.size()];
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasData) {
+            currentPrice = cache.price;
+            changePercent24h = cache.changePercent24h;
+            fetchSuccess = true;
+        } else {
+            currentPrice = 0.0f;
+            changePercent24h = 0.0f;
+            fetchSuccess = false;
         }
     }
+    
+    // Preload icons for all active symbols while heap is clean (before TLS handshakes fragment contiguous DRAM)
+    if (WiFi.isConnected()) {
+        for (const auto& sym : symbolList) {
+            AssetQuoteCache& c = quoteCache[sym];
+            if (!c.hasIcon && !c.iconAttempted) {
+                loadOrDownloadIcon(sym, c.imageUrl, c);
+            }
+        }
+    }
+    
+    requestRedraw();
+}
+
+void CryptoEngine::loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache) {
+    if (cache.hasIcon || cache.iconAttempted) return;
+    cache.iconAttempted = true;
+    cache.hasIcon = iconService.loadOrFetchIcon("crypto", symbol, newImgUrl, cache.iconPixels, 16, 16);
 }
 
 void CryptoEngine::fetchQuote(const String& symbol) {
@@ -78,10 +114,15 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        if (!cache.hasIcon) {
+            loadOrDownloadIcon(symbol, cache.imageUrl, cache);
+        }
+        requestRedraw();
         LOGI("CryptoEngine", "[Cache Hit] Using cached quote for %s: $%.4f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
         return;
     }
     
+    esp_task_wdt_reset();
     float newPrice = 0.0f;
     float newChange = 0.0f;
     String newImgUrl = "";
@@ -96,79 +137,7 @@ void CryptoEngine::fetchQuote(const String& symbol) {
             break;
         }
     }
-    
-    if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
-        String safeName = symbol;
-        safeName.toLowerCase();
-        String sdPath = "/crypto_icons/" + safeName + ".png";
-        
-        bool iconExists = false;
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard) {
-                iconExists = sd.exists(sdPath);
-            }
-        }
-        
-        if (!iconExists) {
-            HTTPClient httpImg;
-            WiFiClient imgClient;
-            String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
-            httpImg.setTimeout(5000);
-            if (httpImg.begin(imgClient, proxyUrl)) {
-                int code = httpImg.GET();
-                if (code == 200) {
-                    SdLockGuard guard(pdMS_TO_TICKS(1500));
-                    if (guard) {
-                        if (!sd.exists("/crypto_icons")) sd.mkdir("/crypto_icons");
-                        FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
-                        if (f) {
-                            httpImg.writeToStream(&f);
-                            f.close();
-                        }
-                    }
-                }
-                httpImg.end();
-                imgClient.stop();
-            }
-        }
-        
-        size_t size = 0;
-        uint8_t* buf = nullptr;
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && sd.exists(sdPath)) {
-                FsFile f = sd.open(sdPath, FILE_OPEN_READ);
-                if (f) {
-                    size = f.size();
-                    if (size > 0 && size <= 16384) {
-                        buf = (uint8_t*)malloc(size);
-                        if (buf) {
-                            f.read(buf, size);
-                        }
-                    }
-                    f.close();
-                }
-            }
-        }
-
-        if (buf && size > 0) {
-            memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
-            currentDecodeBuffer = cache.iconPixels;
-            
-            PNG* png = new PNG();
-            pngPtr = png;
-            int rc = png->openRAM(buf, size, pngDraw);
-            if (rc == PNG_SUCCESS) {
-                png->decode((void*)this, 0);
-                cache.hasIcon = true;
-            }
-            png->close();
-            delete png;
-            pngPtr = nullptr;
-            free(buf);
-        }
-    }
+    esp_task_wdt_reset();
     
     if (fetched && newPrice > 0.0f) {
         cache.price = newPrice;
@@ -180,43 +149,26 @@ void CryptoEngine::fetchQuote(const String& symbol) {
         currentPrice = newPrice;
         changePercent24h = newChange;
         fetchSuccess = true;
+        if (!cache.hasIcon) {
+            loadOrDownloadIcon(symbol, newImgUrl, cache);
+        }
+        requestRedraw();
         LOGI("CryptoEngine", "[Fetch Success] Updated cache for %s: $%.4f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
     } else if (cache.hasData) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        cache.lastFetchTime = now; // Guard against instant re-fetch loop on cache fallback
+        requestRedraw();
         LOGW("CryptoEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.4f", symbol.c_str(), currentPrice);
     } else {
         currentPrice = 0.0f;
         changePercent24h = 0.0f;
         fetchSuccess = false;
+        cache.lastFetchTime = now; // Record attempt time to prevent continuous frame re-fetch
+        requestRedraw();
         LOGW("CryptoEngine", "No quote available for %s", symbol.c_str());
     }
-}
-
-int CryptoEngine::pngDraw(PNGDRAW *pDraw) {
-    CryptoEngine* self = static_cast<CryptoEngine*>(pDraw->pUser);
-    if (!self) self = instance;
-    if (!self || !self->currentDecodeBuffer || !self->pngPtr) return 0;
-    
-    int iWidth = pDraw->iWidth;
-    if (iWidth > 16) iWidth = 16;
-    
-    int y = pDraw->y;
-    if (y >= 16) return 0;
-    
-    uint16_t lineBuffer[16];
-    self->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
-    
-    for (int x = 0; x < iWidth; x++) {
-        uint16_t color = lineBuffer[x];
-        if (color != 0) {
-            self->currentDecodeBuffer[y * 16 + x] = color;
-        } else {
-            self->currentDecodeBuffer[y * 16 + x] = 0x0000;
-        }
-    }
-    return 1;
 }
 
 void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
@@ -227,10 +179,12 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
     uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
     
     if (cache.hasData && (now - cache.lastFetchTime < ttlMs)) {
+        requestRedraw();
         LOGI("CryptoEngine", "[Cache Hit] Using cached history for %s (%s)", symbol.c_str(), timeframeLabel(tf));
         return;
     }
     
+    esp_task_wdt_reset();
     float points[64];
     size_t count = 0;
     float minP = 0.0f;
@@ -247,18 +201,107 @@ void CryptoEngine::fetchHistory(const String& symbol, Timeframe tf) {
             cache.maxPrice = maxP;
             cache.lastFetchTime = now;
             cache.hasData = true;
+            requestRedraw();
             LOGI("CryptoEngine", "[History Success] Fetched %d points for %s (%s)", (int)count, symbol.c_str(), timeframeLabel(tf));
-            return;
+            break;
         }
     }
+    cache.lastFetchTime = now; // Guard against instant re-fetch loop on failure or fallback
+    esp_task_wdt_reset();
+}
+
+bool CryptoEngine::fetchCombined(const String& symbol) {
+    if (!m_binance) return false;
+    uint32_t now = millis();
+    AssetQuoteCache& qCache = quoteCache[symbol];
+    String histKey = symbol + "_" + timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hCache = historyCache[histKey];
+
+    m_binance->setCurrency(config_currency);
+    float newPrice = 0.0f;
+    float newChange = 0.0f;
+    String newImgUrl = "";
+    float points[64];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+
+    bool ok = m_binance->fetchQuoteAndHistory(symbol, newPrice, newChange, newImgUrl,
+                                              config_chart_timeframe, points, 64, count, minP, maxP);
+    if (ok && newPrice > 0.0f) {
+        qCache.price = newPrice;
+        qCache.changePercent24h = newChange;
+        qCache.imageUrl = newImgUrl;
+        qCache.lastFetchTime = now;
+        qCache.hasData = true;
+
+        currentPrice = newPrice;
+        changePercent24h = newChange;
+        fetchSuccess = true;
+
+        if (!qCache.hasIcon) {
+            loadOrDownloadIcon(symbol, newImgUrl, qCache);
+        }
+
+        if (count > 0) {
+            memcpy(hCache.points, points, count * sizeof(float));
+            hCache.count = count;
+            hCache.minPrice = minP;
+            hCache.maxPrice = maxP;
+            hCache.lastFetchTime = now;
+            hCache.hasData = true;
+            LOGI("CryptoEngine", "[Combined Success] Fetched quote + %d history points for %s", (int)count, symbol.c_str());
+        } else {
+            hCache.lastFetchTime = now;
+        }
+        requestRedraw();
+        return true;
+    }
+    return false;
 }
 
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    
+    // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
+    if (!m_renderedFirstFrame) return;
+
+    auto* matrix = context ? context->getSurface() : nullptr;
     int mH = matrix ? matrix->height() : 32;
     
     uint32_t now = millis();
+
+    // Check if initial quote for active symbol is missing or expired
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    if (!cache.hasIcon && !cache.iconAttempted) {
+        loadOrDownloadIcon(activeSymbol, cache.imageUrl, cache);
+    }
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+    bool needsFetch = false;
+    if (!cache.hasData) {
+        if (cache.lastFetchTime == 0 || (now - cache.lastFetchTime >= 30000UL)) {
+            needsFetch = true;
+        }
+    } else if (now - cache.lastFetchTime >= ttlMs) {
+        needsFetch = true;
+    }
+
+    bool networkReady = (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+    if (needsFetch && networkReady) {
+        bool combined = false;
+        if (config_provider == "binance" && config_show_chart) {
+            combined = fetchCombined(activeSymbol);
+        }
+        if (!combined) {
+            fetchQuote(activeSymbol);
+            if (fetchSuccess && config_show_chart) {
+                fetchHistory(activeSymbol, config_chart_timeframe);
+            }
+        }
+        requestRedraw();
+    }
+
     uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
@@ -266,22 +309,72 @@ void CryptoEngine::update(EngineContext* context) {
             currentPage = DisplayPage::Info;
             symbolsShownThisCycle++;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
-            String nextSym = symbolList[currentSymbolIndex];
-            fetchQuote(nextSym);
-            if (config_show_chart) {
-                fetchHistory(nextSym, config_chart_timeframe);
+            activeSymbol = symbolList[currentSymbolIndex];
+            AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+            if (nextCache.hasData) {
+                currentPrice = nextCache.price;
+                changePercent24h = nextCache.changePercent24h;
+                fetchSuccess = true;
+            } else {
+                currentPrice = 0.0f;
+                changePercent24h = 0.0f;
+                fetchSuccess = false;
+            }
+            if (!nextCache.hasIcon && !nextCache.iconAttempted) {
+                loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+            }
+            bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                             (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+            if (needFetch && networkReady) {
+                bool combined = false;
+                if (config_provider == "binance" && config_show_chart) {
+                    combined = fetchCombined(activeSymbol);
+                }
+                if (!combined) {
+                    fetchQuote(activeSymbol);
+                    if (fetchSuccess && config_show_chart) {
+                        fetchHistory(activeSymbol, config_chart_timeframe);
+                    }
+                }
             }
         } else {
             if (currentPage == DisplayPage::Info) {
                 currentPage = DisplayPage::Chart;
-                fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
+                if (fetchSuccess && networkReady) {
+                    fetchHistory(activeSymbol, config_chart_timeframe);
+                }
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
-                fetchQuote(symbolList[currentSymbolIndex]);
+                activeSymbol = symbolList[currentSymbolIndex];
+                AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+                if (nextCache.hasData) {
+                    currentPrice = nextCache.price;
+                    changePercent24h = nextCache.changePercent24h;
+                    fetchSuccess = true;
+                } else {
+                    currentPrice = 0.0f;
+                    changePercent24h = 0.0f;
+                    fetchSuccess = false;
+                }
+                if (!nextCache.hasIcon && !nextCache.iconAttempted) {
+                    loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                }
+                bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                                 (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+                if (needFetch && networkReady) {
+                    bool combined = false;
+                    if (config_provider == "binance" && config_show_chart) {
+                        combined = fetchCombined(activeSymbol);
+                    }
+                    if (!combined) {
+                        fetchQuote(activeSymbol);
+                    }
+                }
             }
         }
+        requestRedraw();
     }
 }
 
@@ -292,7 +385,13 @@ bool CryptoEngine::isFinished() const {
 
 void CryptoEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context->getMatrix();
+    if (m_redrawFrames == 0) return;
+    m_redrawFrames--;
+
+    m_renderedFirstFrame = true;
+
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -320,6 +419,14 @@ void CryptoEngine::render(EngineContext* context) {
 }
 
 void CryptoEngine::deactivate() {
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_CRYPTO);
+    // Invariant 15 (Allocation-Free Deactivation): reclaim all heap held by caches
+    // using swap idiom (zero new allocation, immediate deallocation).
+    std::map<String, AssetQuoteCache>().swap(quoteCache);
+    std::map<String, AssetHistoryCache>().swap(historyCache);
+    currentPrice = 0.0f;
+    changePercent24h = 0.0f;
+    fetchSuccess = false;
 }
 
 static const char* getCurrencyPrefix(const String& currency) {
@@ -365,19 +472,14 @@ void CryptoEngine::onConfigChanged(const EngineConfig* engineConfig) {
         currentPrice = 0.0f;
     }
 
-    if (needHistFetch && !symbolList.empty()) {
-        String sym = symbolList[currentSymbolIndex % symbolList.size()];
-        if (needQuoteFetch) {
-            fetchQuote(sym);
-        }
-        if (config_show_chart) {
-            fetchHistory(sym, config_chart_timeframe);
-        }
-    }
+    // Invariant 1 (Core 1 Zero-Blocking): Do NOT perform synchronous network requests
+    // inside onConfigChanged(). Data will be loaded on-demand by update() when network is ready.
+    requestRedraw();
 }
 
 void CryptoEngine::renderUnifiedVertical(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -525,7 +627,8 @@ void CryptoEngine::renderUnifiedVertical(EngineContext* context) {
 }
 
 void CryptoEngine::renderUnifiedWide(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -620,7 +723,8 @@ void CryptoEngine::renderUnifiedWide(EngineContext* context) {
 }
 
 void CryptoEngine::renderChart(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -672,7 +776,8 @@ void CryptoEngine::renderChart(EngineContext* context) {
 }
 
 void CryptoEngine::renderQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -758,7 +863,8 @@ void CryptoEngine::renderQuote(EngineContext* context) {
 }
 
 void CryptoEngine::renderFullScreenQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -948,10 +1054,16 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_crypto;
     desc_crypto.metadata = {"crypto", "Crypto Tracker", "finance", FIRMWARE_VERSION};
     desc_crypto.capabilities.realtime = false;
-    desc_crypto.requirements.needsPsram = true;
+    desc_crypto.requirements.needsPsram = false;
     desc_crypto.requirements.needsNetwork = true;
+    desc_crypto.requirements.needsTls = true;
+    desc_crypto.requirements.targetFps = 30;
+    desc_crypto.requirements.supportsSingleBuffer = true;
+    desc_crypto.requirements.internalPersistentBytes = 2048;
+    desc_crypto.requirements.internalContiguousBytes = 8192;
+    desc_crypto.requirements.psramBytes = 0;
     desc_crypto.schema.fields = {
-        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols (e.g. BTC, ETH) or CoinGecko IDs (e.g. zelcash, ergo)", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("chart_timeframe", ConfigType::ENUM, "Chart Timeframe", "Historical chart timeframe", "daily", false, "", "", "", "hourly,daily,weekly,monthly", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("duration_sec", ConfigType::INTEGER, "Page Duration (s)", "Seconds to dwell on each view", "5", false, "3", "30", "1", "", "", false, "", ValidationPolicy::Clamp),

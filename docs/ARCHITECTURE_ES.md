@@ -59,7 +59,8 @@ flowchart TD
         WS["AsyncWebServer (Puerto 80)"]
         WS --> API["API REST (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Guardado Atómico)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (Caché RAM Flyweight)"]
         MDNS["Respondedor mDNS"]
         AH["AudioHub (Árbitro de Audio en Segundo Plano)"]
         AH --> AHAL["AudioOutputHAL (DAC I2S TX)"]
@@ -69,10 +70,11 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["IEngine Activo (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Paso Fighter)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer hacia LEDs HUB75"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["Salida DMA hacia LEDs HUB75"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
@@ -167,8 +169,42 @@ classDiagram
 ## 4. Autodescubrimiento: Registry, Registrar, Handlers y Gating
 
 1. Cada motor encapsula sus metadatos, su esquema `ConfigSchema`, sus requisitos de hardware `EngineRequirements` y su fábrica en un `IEngineDescriptorHandler`.
-2. Al iniciar, `EngineRegistrar::registerAll()` compara los requisitos con `hardwareHAL.capabilities()`.
+2. Al iniciar, `EngineRegistrar::registerAll()` delega la verificación de viabilidad a `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), que evalúa `hardwareHAL.capabilities()` y la geometría activa.
 3. Solo los motores soportados se registran como activos en `EngineRegistry`. Los no compatibles se marcan con `available: false` y un motivo descriptivo para la WebUI.
+
+### Modelo Canónico de Compatibilidad (Única Fuente de Verdad)
+
+ArcadeMatrix V4 prohíbe terminantemente la duplicación de algoritmos de compatibilidad entre lenguajes. El componente C++ `CompatibilityEvaluator` es la **única autoridad fuente de verdad**:
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Autoridad Canónica Única)"]
+    EVAL -->|"Evaluación Dinámica Core 0"| ESP["WebServerAPI ESP32 (/api/engines)"]
+    EVAL -->|"Ejecución Nativa Anfitrión (macOS / Linux)"| CLI["Binario matrix_generator"]
+    ESP -->|"Doble Filtro (UI + Gating)"| UI["Catálogo WebUI (data/index.html)"]
+    CLI -->|"Artefacto JSON"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Generación y Validación CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Filtro Nivel 1 (Catálogo WebUI y ReferenceCapability):** El catálogo (`/api/engines`) evalúa los motores en `EvaluationMode::ReferenceCapability` contra el perfil estático de referencia `ReferenceMemoryProfile` (calificación en reposo). Esto garantiza la invariancia total del catálogo ante la presión de memoria volátil del Core 1 (como la decodificación de GIFs). Los motores incompatibles se muestran deshabilitados con una insignia `🚫 Incompatible: <motivo>` y diagnósticos detallados.
+- **Filtro Nivel 2 (Seguridad Runtime sobre Pipeline Solicitado):** Los endpoints `POST /api/rotation` y `POST /api/instances` evalúan los motores contra el *pipeline destino solicitado* (`targetPipeline`) y no contra el pipeline activo, en modo `ReferenceCapability` para eliminar bloqueos mutuos durante las transiciones desde motores pesados hacia motores base.
+- **Validación CI Continua:** Toda adición o modificación de un motor exige actualizar `test/native/tools/matrix_generator.cpp` y ejecutar `scripts/generate_engine_matrix.py`. La conformidad de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) se comprueba en CI mediante `scripts/validate_docs.py`.
+
+### Concurrencia HTTP Declarativa y Prevención de Inanición de Sockets LwIP
+
+La pila de red (LwIP en Core 0) comparte la DRAM interna con los periféricos de hardware. Para prevenir la inanición de sockets durante ciclos gráficos intensivos (p. ej. reproducción de GIFs):
+1. **Declaración del Firmware (`/api/hardware`):** El firmware anuncia `capabilities.http.recommendedConcurrency` (1 en `ESP32_STD`, 3 en `WAVESHARE_S3`).
+2. **Cola Frontend `HttpRequestQueue` (`data/index.html`):** La WebUI inicia con concurrencia 1 y se modula dinámicamente. La cola engloba **estrictamente la operación de red `fetch()`**; el análisis JSON, los callbacks y el renderizado DOM se ejecutan asíncronamente fuera de la cola.
+
+### Ciclo de Transición y Safe Fallback Estático
+
+Las transiciones siguen un ciclo atómico:
+`deactivate(old) -> liberación de RAM transitoria -> initialize(new) -> activate(new)`
+
+Si la asignación de memoria falla durante `initialize(new)`:
+- El sistema activa un **Safe Fallback calificado estáticamente** (0 PSRAM, 0 audio, 0 red, $\le 2$ KB acotados).
+- Nunca se intenta reasignar el motor pesado descartado, garantizando la permanencia ininterrumpida de la pantalla.
+- La configuración persistente (`config.json`) se guarda únicamente tras la activación exitosa.
 
 ---
 
@@ -374,3 +410,20 @@ forma atómica y una segunda petición responde `409`.
 ## 19. Metadatos de Compilación y Telemetría
 
 El endpoint `/api/v1/system/version` expone la huella exacta de compilación (`git_commit`, `build_timestamp`, `firmware_version`).
+
+---
+
+## 20. Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria
+
+Para plataformas con limitaciones severas de memoria (como el ESP32 clásico controlando paneles de 128×32), ArcadeMatrix incorpora un **Dynamic Presentation Pipeline** respaldado por un sistema integral de recuperación de memoria:
+1. **Profundidad de Color Dinámica ($8 \leftrightarrow 7 \dots 2$):** Conmuta dinámicamente entre la profundidad sin restricciones preferida para gráficos (hasta 8 bits en todas las placas, incluyendo ESP32 clásico) y una profundidad optimizada y segura para TLS (típicamente 4 bits o 2 bits) durante la ejecución de motores de red, evaluando matemáticamente la DRAM libre, el bloque contiguo mayor y la memoria DMA.
+2. **Transacciones de Presentación de Hardware:** Reconstrucción atómica del pipeline ejecutada en $< 30\text{ ms}$ bajo apagado completo de hardware mediante OE.
+3. **Pipeline Single DMA + Lienzo (`canvas_single`):** Ahorra hasta 32 KB de DRAM en comparación con las arquitecturas tradicionales de doble búfer DMA.
+4. **Sobrescritura Dinámica de LUTs (`FastMatrixPanel::initLuts`):** Recalibra instantáneamente las curvas gamma y tablas de cuantificación a cualquier profundidad sin reiniciar el ESP32.
+5. **Streaming HTTP Cero-Asignación:** Análisis de respuestas REST sobre búferes de pila fija sin consumo de montón.
+6. **Invariantes Formales de Presentación:**
+   - **Invariante 21 — Aislamiento de Salida HUB75:** Durante la reconfiguración del pipeline, OE permanece inactivo (HIGH / panel apagado) hasta que el fotograma 0 es confirmado (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`). `deactivate()` garantiza estrictamente la quiescencia lógica de renderizado en Core 1, mientras que la quiescencia física de tareas y red se finaliza en `shutdownForDestruction()` antes del desmontaje.
+   - **Invariante N8 — Aislamiento Post-Quiescencia:** Una vez cancelada una sesión de red y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación sobre esa sesión.
+
+El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).
+

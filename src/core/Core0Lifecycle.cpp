@@ -1,5 +1,6 @@
 #include "Core0Lifecycle.h"
 #include "ConfigLoader.h"
+#include "SdSpace.h"
 
 void Core0LifecycleDispatcher::lifecycleTaskFunc(void* param) {
     auto* self = static_cast<Core0LifecycleDispatcher*>(param);
@@ -9,6 +10,8 @@ void Core0LifecycleDispatcher::lifecycleTaskFunc(void* param) {
         self->processRetirements();
         extern ConfigLoader config;
         config.checkDeferredPublish();
+        // Periodically checks if an ephemeral SD space measurement is due on Core 0
+        SdSpace::poll();
     }
 }
 

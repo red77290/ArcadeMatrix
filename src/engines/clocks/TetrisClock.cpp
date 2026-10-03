@@ -20,12 +20,25 @@ const uint16_t gameboyColors[4] = {
     0x9DE1  // Lightest green
 };
 
-TetrisClock::TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode, const EngineConfig* config) : ClockFace(display, config), isGameboy(gameboyMode), lastFrameTime(0) {
+TetrisClock::TetrisClock(IDrawingSurface* display, bool gameboyMode, const EngineConfig* config)
+    : ClockFace(display, config), isGameboy(gameboyMode), numBlocks(0), lastFrameTime(0), canvas(nullptr) {
     storedTime = {0, 0, 0};
     strcpy(lastTimeStr, "");
-    blockSize = max(1, (int)(matrix->height() / 16));
+    blockSize = max(1, (int)(display->height() / 16));
     faceFont.load(config);
     glow = ClockFaceFont::resolveGlow(config);
+    canvas = new (std::nothrow) GFXcanvas1(128, 64);
+}
+
+TetrisClock::~TetrisClock() {
+    delete canvas;
+    canvas = nullptr;
+}
+
+void TetrisClock::addBlock(const TetrisBlock& b) {
+    if (numBlocks < MAX_BLOCKS) {
+        blocks[numBlocks++] = b;
+    }
 }
 
 void TetrisClock::draw(const TimeData& t) {
@@ -42,35 +55,34 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
     int cursorX = 0;
     for (int i = 0; i < charIdx; i++) cursorX += ClockFaceFont::advance(font, str[i]);
 
-    GFXcanvas1 canvas(bw + 4, bh + 4);
-    if (!canvas.getBuffer()) return;
-    canvas.fillScreen(0);
-    canvas.setFont(font);
-    canvas.setTextSize(1);
-    canvas.setTextWrap(false);
-    canvas.setTextColor(1);
+    if (!canvas || !canvas->getBuffer()) return;
+    canvas->fillScreen(0);
+    canvas->setFont(font);
+    canvas->setTextSize(1);
+    canvas->setTextWrap(false);
+    canvas->setTextColor(1);
     // the string's bounding box is normalised to canvas (2, 2); custom fonts take the cursor as baseline
-    canvas.setCursor(2 - bx + cursorX, 2 - by);
-    canvas.write((uint8_t)str[charIdx]);
+    canvas->setCursor(2 - bx + cursorX, 2 - by);
+    canvas->write((uint8_t)str[charIdx]);
 
     // The canvas holds the finished character, so a cell's neighbours are known here and the
     // outline never has to be searched for among the blocks once they are falling.
-    const int canvasW = bw + 4, canvasH = bh + 4;
+    const int canvasW = canvas->width();
+    const int canvasH = canvas->height();
     auto lit = [&](int x, int y) {
         if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) return false;
-        return canvas.getPixel(x, y) != 0;
+        return canvas->getPixel(x, y) != 0;
     };
 
     for (int py = 0; py < canvasH; py++) {
         for (int px = 0; px < canvasW; px++) {
-            if (!canvas.getPixel(px, py)) continue;
+            if (!canvas->getPixel(px, py)) continue;
             TetrisBlock b;
             b.edges = (uint8_t)((lit(px - 1, py) ? 0 : 1) | (lit(px + 1, py) ? 0 : 2) |
                                 (lit(px, py - 1) ? 0 : 4) | (lit(px, py + 1) ? 0 : 8));
             b.charIndex = labelIdx;   // index in the full time string (colour + change tracking)
-            b.tx = originX + (px - 2) * blockSize;
+            b.x = originX + (px - 2) * blockSize;
             b.ty = originY + (py - 2) * blockSize;
-            b.x = b.tx;
             b.startY = b.ty - fallFrom - (rand() % (fallJitter + 1));
             b.y = b.startY;
             // Time-based descent: every block lands within landMs (plus a little stagger so the digit
@@ -82,14 +94,14 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
             b.dy = 0.0f;
             b.color = isGameboy ? gameboyColors[labelIdx % 4] : tetrisColors[labelIdx % 7];
             b.state = 0; // IN
-            blocks.push_back(b);
+            addBlock(b);
         }
     }
 }
 
 void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount) {
-    int w = matrix->width();
-    int h = matrix->height();
+    int w = display->width();
+    int h = display->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
     int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
@@ -169,12 +181,8 @@ void TetrisClock::update() {
     sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     
     if (strcmp(timeStr, lastTimeStr) != 0) {
-        if (strlen(timeStr) != strlen(lastTimeStr) || blocks.empty()) {
-            for (auto& b : blocks) {
-                b.state = 2; // OUT
-                float base_dy = max(1.0f, matrix->height() / 40.0f);
-                b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
-            }
+        if (strlen(timeStr) != strlen(lastTimeStr) || numBlocks == 0) {
+            numBlocks = 0;
             int allIndices[10];
             int len = strlen(timeStr);
             for (int i = 0; i < len; i++) allIndices[i] = i;
@@ -189,12 +197,13 @@ void TetrisClock::update() {
                 }
             }
             if (changedCount > 0) {
-                for (auto& b : blocks) {
+                for (size_t i = 0; i < numBlocks; i++) {
+                    TetrisBlock& b = blocks[i];
                     if (b.state != 2) {
                         for (size_t c = 0; c < changedCount; c++) {
                             if (b.charIndex == changedIndices[c]) {
                                 b.state = 2; // OUT
-                                float base_dy = max(1.5f, matrix->height() / 15.0f);
+                                float base_dy = max(1.5f, display->height() / 15.0f);
                                 b.dy = base_dy * 0.5f + (((float)rand() / RAND_MAX) * base_dy * 0.5f);
                                 break;
                             }
@@ -214,35 +223,37 @@ void TetrisClock::update() {
     lastFrameTime = currentMillis;
     float timeScale = dt / 16.0f; // Scale relative to 60fps
         
-    for (auto it = blocks.begin(); it != blocks.end(); ) {
-        if (it->state == 0) { // IN: position is a function of elapsed time, not of frames rendered
-            float p = it->durationMs ? (float)(currentMillis - it->spawnMs) / (float)it->durationMs : 1.0f;
+    size_t writeIdx = 0;
+    for (size_t i = 0; i < numBlocks; i++) {
+        TetrisBlock& b = blocks[i];
+        if (b.state == 0) { // IN: position is a function of elapsed time, not of frames rendered
+            float p = b.durationMs ? (float)(currentMillis - b.spawnMs) / (float)b.durationMs : 1.0f;
             if (p >= 1.0f) {
-                it->y = it->ty;
-                it->state = 1; // FIXED
+                b.y = b.ty;
+                b.state = 1; // FIXED
             } else {
-                it->y = it->startY + (it->ty - it->startY) * (p * p);   // accelerating, like gravity
+                b.y = b.startY + (b.ty - b.startY) * (p * p);   // accelerating, like gravity
             }
-            ++it;
-        } else if (it->state == 2) { // OUT
-            it->y += it->dy * timeScale;
-            it->dy += 0.4f * timeScale; // Gravity matches v3.0.0
-            if (it->y > matrix->height()) {
-                it = blocks.erase(it);
-            } else {
-                ++it;
+            blocks[writeIdx++] = b;
+        } else if (b.state == 2) { // OUT
+            b.y += b.dy * timeScale;
+            b.dy += 0.4f * timeScale; // Gravity matches v3.0.0
+            if (b.y <= display->height()) {
+                blocks[writeIdx++] = b;
             }
         } else {
-            ++it; // FIXED
+            blocks[writeIdx++] = b; // FIXED
         }
     }
+    numBlocks = writeIdx;
 
     // Clear and draw
-    if (matrix) {
-        matrix->fillScreen(0);
+    if (display) {
+        display->fillScreen(0);
         drawOutline();
-        for (const auto& b : blocks) {
-            matrix->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
+        for (size_t i = 0; i < numBlocks; i++) {
+            const TetrisBlock& b = blocks[i];
+            display->fillRect((int)b.x, (int)b.y, blockSize, blockSize, b.color);
         }
     }
 }
@@ -251,29 +262,32 @@ void TetrisClock::update() {
 // Each cell already knows which of its sides face open space, so this is a pass over the blocks
 // with no searching: the interior cells carry no edges and cost only the test.
 void TetrisClock::drawOutline() {
-    if (glow.mode == 0) return;
+    if (glow.mode == 0 || !display) return;
     const uint16_t custom = glow.hasColor ? glow.color : 0;
 
-    for (const auto& b : blocks) {
+    for (size_t i = 0; i < numBlocks; i++) {
+        const auto& b = blocks[i];
         if (b.state == 2 || b.edges == 0) continue;   // falling away, or buried inside the digit
         // Neon traces each cell in the colour of the block landing there, the way the Matrix face
         // takes its halo from the text; a custom colour outlines the whole time in one colour.
         const uint16_t c = (glow.mode == 1 || !glow.hasColor) ? b.color : custom;
-        const int x0 = (int)b.tx, y0 = (int)b.ty;
-        if (b.edges & 1) matrix->drawFastVLine(x0 - 1, y0, blockSize, c);
-        if (b.edges & 2) matrix->drawFastVLine(x0 + blockSize, y0, blockSize, c);
-        if (b.edges & 4) matrix->drawFastHLine(x0, y0 - 1, blockSize, c);
-        if (b.edges & 8) matrix->drawFastHLine(x0, y0 + blockSize, blockSize, c);
+        const int x0 = (int)b.x, y0 = (int)b.ty;
+        if (b.edges & 1) display->drawFastVLine(x0 - 1, y0, blockSize, c);
+        if (b.edges & 2) display->drawFastVLine(x0 + blockSize, y0, blockSize, c);
+        if (b.edges & 4) display->drawFastHLine(x0, y0 - 1, blockSize, c);
+        if (b.edges & 8) display->drawFastHLine(x0, y0 + blockSize, blockSize, c);
         // Close the ring at the corners the two runs leave open.
-        if ((b.edges & 5) == 5) matrix->drawPixel(x0 - 1, y0 - 1, c);
-        if ((b.edges & 6) == 6) matrix->drawPixel(x0 + blockSize, y0 - 1, c);
-        if ((b.edges & 9) == 9) matrix->drawPixel(x0 - 1, y0 + blockSize, c);
-        if ((b.edges & 10) == 10) matrix->drawPixel(x0 + blockSize, y0 + blockSize, c);
+        if ((b.edges & 5) == 5) display->drawPixel(x0 - 1, y0 - 1, c);
+        if ((b.edges & 6) == 6) display->drawPixel(x0 + blockSize, y0 - 1, c);
+        if ((b.edges & 9) == 9) display->drawPixel(x0 - 1, y0 + blockSize, c);
+        if ((b.edges & 10) == 10) display->drawPixel(x0 + blockSize, y0 + blockSize, c);
     }
 }
 
 void TetrisClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
-    blocks.clear();
+    (void)geometry;
+    numBlocks = 0;
     strcpy(lastTimeStr, "");
-    if (matrix) matrix->fillScreen(0);
+    if (display) display->fillScreen(0);
 }
+

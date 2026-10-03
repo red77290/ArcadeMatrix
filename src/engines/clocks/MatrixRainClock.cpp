@@ -7,7 +7,7 @@ static uint8_t randomGlyph() {
     return rand() % MATRIX_RAIN_NUM_GLYPHS;
 }
 
-MatrixRainClock::MatrixRainClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) 
+MatrixRainClock::MatrixRainClock(IDrawingSurface* display, const EngineConfig* config) 
     : ClockFace(display, config), numColumns(0), numRows(0), initialized(false), lastFrameTime(0) { faceFont.load(config);
     storedTime = {0, 0, 0};
 }

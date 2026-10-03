@@ -201,6 +201,23 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
     - Large non-DMA graphical framebuffers (such as `GifEngine`'s 32 KB canvas) MUST prioritize PSRAM allocation (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) when PSRAM is available, reserving internal DRAM for mbedTLS and LwIP networking.
     - AsyncTCP background worker stack is sized to 8192 bytes and strictly pinned to Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) to protect the Core 1 display rendering hot-path (Invariant 1).
     - Persistent network services (Google Cast) MUST implement exponential backoff (5s, 10s, 20s, 60s) initialized upon session drop, preventing reconnection storms during bursty HTTP/LwIP activity.
+15. **Golden Rule #15 — Pure Drawing via `IDrawingSurface` & DMA Isolation (Invariants 18 & 19):**
+    - An engine is a pure algorithm: it MUST NEVER call `context->getMatrix()->fillScreen(0)` or manipulate the physical DMA framebuffer directly.
+    - All drawing operations MUST target `context->getSurface()`. Mutating primitives (`drawPixel`, `blit565`, `fillRect`, `clear`) automatically mark the surface as dirty via `markModified()`.
+    - If an engine has no new frame or is static between updates, `present()` is a zero-cost no-op without DMA transfer, completely eliminating single-buffer DMA screen flickering.
+16. **Golden Rule #16 — Allocation-Free & Quiescent Deactivation (Invariants 15 & 16):**
+    - `deactivate()` MUST NOT perform any new dynamic memory allocation (`malloc`, `new`, container resize). Reclaim memory using `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
+    - `deactivate()` executes on Core 1 strictly non-blocking to guarantee **logical rendering quiescence** (immediately halting all draw commands and detaching the surface). Complete background task, timer, and network socket termination is performed on Core 0 via `shutdownForDestruction()` prior to releasing shared resources. The system returns to the reference idle baseline within the Quiescent Baseline Envelope ($|\Delta \text{heap}| \le 2\text{ KB}$).
+17. **Golden Rule #17 — Network Quiescence & Scoped Socket Abort (Invariant N8):**
+    - Network engines MUST support immediate cooperative cancellation (`session.abort()` / `_client.stop()`).
+    - `deactivate()` MUST stop Core-1 rendering interaction and signal session cancellation without waiting or blocking on network sockets.
+    - `shutdownForDestruction()` MUST abort/join engine-owned background workers and finalize network resource quiescence on Core 0 before shared resources are released.
+    - Once a session is aborted and its owner is physically quiescent, no further application processing, callbacks, JSON parsing, or allocation may occur on that session.
+18. **Golden Rule #18 — Dynamic Presentation Pipeline & Color Depth Adaptation (Invariant 21):**
+    - Engines must not assume permanent static color depth. When switching between rich graphical engines (up to 8 bits configured) and memory-intensive TLS engines (4 bits nominal), the presentation pipeline deterministically reconfigures under hardware OE blanking ($< 30\text{ ms}$).
+    - **P0 Guarantee:** Output Enable (OE) is released (LOW) strictly after Frame 0 is rendered and committed (`firstFrameCommitted == true`). If target and progressive fallback allocations fail, OE remains HIGH (`PresentationRecovery`).
+    - Telemetry distinguishes `requestedDepth` (policy), `effectiveDepth` (actual), and `fallbackUsed = (effectiveDepth != requestedDepth)`.
+    - `FastMatrixPanel::initLuts(depth)` dynamically recalculates per-channel gamma lookup tables to prevent color corruption at reduced bit depths (see [MEMORY_MODEL.md](MEMORY_MODEL.md) and [MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)).
 
 ---
 
@@ -218,16 +235,63 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // e.g. Crypto/Stock quote history caches
-    bool needsAudio = false;      // e.g. Visualizer requiring ES7210/I2S mic
-    bool needsTempSensor = false; // e.g. Indoor environment sensor
-    bool needsGyroscope = false;  // Reserved for orientation
-    bool needsNetwork = false;    // Weather, NTP, MQTT
-    bool needsSd = false;         // GIF playback, MUGEN sprites
+    // --- Hardware Peripheral Dependencies (Hard Constraints) ---
+    bool needsPsram = false;            // External SPIRAM strictly required
+    bool needsPsramDma = false;         // DMA-capable SPIRAM required (ESP32-S3)
+    bool needsAudio = false;            // Audio hardware required
+    bool needsAudioInput = false;       // I2S Microphone required (e.g. Decibel, Visualizer)
+    bool needsAudioOutput = false;      // I2S DAC/Speaker required
+    bool needsI2s = false;              // General I2S bus required
+    bool needsTempSensor = false;       // SHTC3 temperature sensor required
+    bool needsGyroscope = false;        // QMI8658 IMU required
+    bool needsNetwork = false;          // Active Wi-Fi network connection required
+    bool needsTls = false;              // TLS/HTTPS handshake required
+    bool needsSd = false;               // SD storage required
+
+    // --- Presentation & Buffer Strategy ---
+    bool requiresDoubleBuffer = false;  // Engine cannot tolerate tearing
+    bool prefersDoubleBuffer = false;   // Prefers tear-free double buffer, runs degraded in single buffer
+    bool supportsSingleBuffer = true;   // Allows running in single buffer
+
+    // --- Performance & Frame Timing ---
+    uint16_t targetFps = 60;            // Target presentation framerate
+
+    // --- Granular Memory Footprint Modeling ---
+    uint32_t internalPersistentBytes = 0;   // Persistent DRAM retained across frames
+    uint32_t internalContiguousBytes = 0;   // Largest single contiguous allocation needed
+    uint32_t psramBytes = 0;                // Dedicated working buffer in SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Transient allocations per frame
+    uint32_t minFreeHeapBytes = 0;          // Dynamic heap headroom floor
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Geometry Limits ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = unlimited
+    uint16_t maxHeight = 0;             // 0 = unlimited
 };
 ```
 
-`EngineRegistrar::registerAll()` evaluates `HardwareHAL::capabilities()` at boot. If a requirement is not met, the engine is cleanly skipped with an explanatory reason (`reason = "Requires PSRAM"`), preventing Out-Of-Memory panics.
+### CompatibilityEvaluator: Canonical Source of Truth
+
+ArcadeMatrix V4 relies on `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) as the **sole, centralized authority** for determining whether an engine is feasible on the active device:
+- Evaluates peripherals (`HardwareHAL`), panel geometry (`width`, `height`, `colorDepth`), presentation pipeline, and blanking budget.
+- Models heap fragmentation by comparing `max(canvasBytes, internalContiguousBytes)` against `largestInternalBlock`.
+- Enforces conservative admission reserves: `ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE` (45 KB), `TLS_CONTIGUOUS_HEADROOM_RESERVE` (58 KB), `ASYNC_TCP_ADMISSION_RESERVE` (16 KB), `AUDIO_DMA_RING_ADMISSION_RESERVE` (12 KB), and `SYSTEM_MIN_HEADROOM_RESERVE` (35 KB).
+- **Adaptive Color Depth (`COLOR_DEPTH_AUTO = 0`):** `PipelineSelectionPolicy` dynamically evaluates the optimal HUB75 DMA color depth based on geometry, PSRAM availability, and incoming engine requirements (`EngineRequirements`). Candidates are evaluated from the highest quality (8-bit) downward ($8 \dots 2$) across all platforms, including classic ESP32 without PSRAM. For graphics engines (e.g. Clock, Date, Temp, Marquee, GIFs), classic ESP32 on 128×32 and 64×32 panels achieves full **8-bit color depth**. When an incoming engine requires TLS (`needsTls = true`), the pipeline mathematically scales down to **4-bit depth**, freeing up to 16–24 KB of contiguous DRAM and ensuring 100% reliable TLS handshakes.
+- **Atomic Rotation Transition Ordering:** In `RotationManager`, transitions execute in a deterministic sequence: `oldEngine->deactivate()` (full resource reclamation & socket quiescence) $\to$ `maybeReconfigurePipelineFor(newEngine)` (evaluates available headroom under complete OE hardware blanking and adjusts depth) $\to$ `newEngine->activate()` (instantiates with maximum available memory).
+- **Two Distinct Evaluation Modes:**
+  * `EvaluationMode::ReferenceCapability`: Static qualification against the hardware profile under reference budget baseline (`ReferenceMemoryProfile`). Powers the WebUI Catalog (`/api/engines`) and safety gating in `POST /api/rotation` and `POST /api/instances`, completely decoupled from transient Core 1 memory pressure (such as GIF playback). Evaluates against the *requested pipeline* (`targetPipeline`).
+  * `EvaluationMode::RuntimeAdmission`: Dynamic pre-allocation validation checking live volatile heap state before allocating heavy resources.
+- **Declarative HTTP Concurrency:** The firmware advertises `capabilities.http.recommendedConcurrency` (1 on `ESP32_STD`, 3 on `WAVESHARE_S3`). The frontend `HttpRequestQueue` bounds transport `fetch()` calls to this limit, preventing LwIP socket starvation while GIF or canvas operations run.
+- **Statically Qualified Safe Fallback:** If dynamic memory allocation fails during transition `initialize(new)`, the runtime falls back to a statically qualified Safe Fallback engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
+
+> [!IMPORTANT]
+> **Mandatory Workflow When Adding a New Engine:**
+> 1. Declare all resource constraints accurately in `EngineRequirements` in your engine descriptor.
+> 2. Add your engine's descriptor to `getCanonicalEngineDescriptors()` in `test/native/tools/matrix_generator.cpp`.
+> 3. Run `rtk python3 scripts/generate_engine_matrix.py` to regenerate [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Verify CI pass with `rtk python3 scripts/validate_docs.py` (which runs `generate_engine_matrix.py --check`).
 
 ---
 
@@ -328,6 +392,8 @@ Hide or show fields depending on another field's value:
 #pragma once
 #include "../../include/core/EngineContract.h"
 #include <Arduino.h>
+#include "core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 class MatrixRainEngine : public IEngine {
 public:
@@ -343,7 +409,7 @@ public:
     bool isRealtime() const override { return true; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix = nullptr;
+    IDrawingSurface* surface = nullptr;
     int speed = 2;
     int dropY[128];
 };
@@ -359,8 +425,8 @@ MatrixRainEngine::MatrixRainEngine() {
 }
 
 EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
-    matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
+    surface = context->getSurface();
     if (config) speed = config->getInt("speed", 2);
     return EngineError::OK;
 }
@@ -370,18 +436,18 @@ void MatrixRainEngine::activate() {
 }
 
 void MatrixRainEngine::update(EngineContext* context) {
-    if (!matrix) return;
-    for (int x = 0; x < matrix->width(); x += 4) {
+    if (!surface) return;
+    for (int x = 0; x < surface->width(); x += 4) {
         dropY[x] += speed;
-        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
+        if (dropY[x] > surface->height()) dropY[x] = random(-16, 0);
     }
 }
 
 void MatrixRainEngine::render(EngineContext* context) {
-    if (!matrix) return;
-    matrix->fillScreen(0);
-    for (int x = 0; x < matrix->width(); x += 4) {
-        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
+    if (!surface) return;
+    surface->fillScreen(0);
+    for (int x = 0; x < surface->width(); x += 4) {
+        surface->drawPixel(x, dropY[x], IDrawingSurface::color565(0, 255, 70));
     }
 }
 
@@ -470,10 +536,11 @@ Inherit from the `ClockFace` base class (`src/engines/ClockEngine.h`):
 // src/engines/clocks/SpaceInvadersClock.h
 #pragma once
 #include "../ClockEngine.h"
+#include "../../core/drawing/IDrawingSurface.h"
 
 class SpaceInvadersClock : public ClockFace {
 public:
-    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 
@@ -487,7 +554,7 @@ private:
 // src/engines/clocks/SpaceInvadersClock.cpp
 #include "SpaceInvadersClock.h"
 
-SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+SpaceInvadersClock::SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {}
 
 void SpaceInvadersClock::update() {
@@ -532,18 +599,18 @@ case THEME_SPACE_INVADERS:
     break;
 ```
 
-### Step 4: Expose in `/api/themes` in `src/api/WebServerAPI.cpp`
+### Step 4: Expose Theme in `scripts/extract_engine_catalog.py`
 
-Add your theme to the `themes` table so it automatically populates the WebUI dropdown:
+Add your theme to `CANONICAL_THEMES` in `scripts/extract_engine_catalog.py` so it is automatically pre-compiled into the WebUI at build time:
 
-```cpp
-static const ThemeItem themes[] = {
-    // ...
-    { 25, "Space Invaders Clock" }
-};
+```python
+CANONICAL_THEMES = [
+    # ...
+    {"id": 25, "name": "Space Invaders Clock"},
+]
 ```
 
-The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, persist it in `config.json`, and apply it live via hot reload.
+The WebUI will automatically embed "Space Invaders Clock" in the theme dropdown at compile time (with zero RAM overhead on the ESP32), persist it in `config.json`, and apply it live via hot reload.
 
 ---
 
@@ -613,16 +680,20 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Rendering into the LED Matrix & Responsive Geometry
 
-Always obtain the matrix pointer via `context->getMatrix()`:
+ArcadeMatrix v4 abstracts display rendering behind the hardware-agnostic `IDrawingSurface` interface (which extends `Adafruit_GFX`). Always obtain the drawing surface pointer via `context->getSurface()`:
 
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
-matrix->setCursor(x, y);
-matrix->print("TEXT");
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// Or high-performance block blit for streaming animations (GIFs, fighters):
+surface->blit565(canvasBuffer, width, height);
 ```
-*Never call `flipDMABuffer()` inside an engine — the main display loop handles flipping centrally.*
+*(For backwards compatibility, `context->getMatrix()` is preserved as a shim returning `MatrixPanel_I2S_DMA*`).
+*Never call `flipDMABuffer()` inside an engine — the main display loop handles presentation centrally.*
 
 ### 15.1 The Golden Rule for Multi-Resolution & TATE Responsive Layouts
 
@@ -716,7 +787,7 @@ rtk pio run -e esp32s3_waveshare
 Compile and validate test suites locally via PlatformIO:
 
 ```bash
-# Compile all 7 unit test suites without physical board attached
+# Compile all 8 unit test suites without physical board attached
 rtk pio test -e esp32dev --without-uploading --without-testing
 
 # Compile a specific test suite (e.g. test_core)

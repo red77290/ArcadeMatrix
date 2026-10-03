@@ -93,7 +93,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 
 Le firmware nécessite une carte SD externe (câblée selon `docs/WIRING_FR.md`, chip-select sur GPIO 5 par
 défaut - voir `SD_CS_PIN` dans `src/main.cpp`) pour :
-- `/config.json` — vos paramètres Wi-Fi / matrice / thèmes (généré automatiquement avec des valeurs par défaut au premier démarrage s'il est absent ; modifiez-le directement sur la carte, ou via `/api/settings` dans l'interface Web une fois le Wi-Fi actif).
+- `/config.json` — vos paramètres Wi-Fi / matrice / thèmes (généré automatiquement avec des valeurs par défaut au premier démarrage s'il est absent ; modifiez-le directement sur la carte, ou via l'interface Web une fois le Wi-Fi actif).
 - `/gifs/`, playlists d'assets `.gif` / `.raw` / `.png` (voir §4 de `docs/ARCHITECTURE_FR.md` pour les différences de format entre les trois).
 - `/fighters_32/` ou `/fighters_64/` — feuilles de sprites `.fgt` dérivées de MUGEN (voir `tools/mugen_extractor/README_FR.md` pour générer les vôtres à partir de fichiers de personnages MUGEN).
 - Facultatif : `/fonts/*.amf` — polices bitmap personnalisées chargeables depuis la SD (voir la section « Charger une police bitmap personnalisée depuis la SD » de `docs/DEVELOPER_FR.md` et `tools/bdf_to_amfont/`).
@@ -102,11 +102,22 @@ Une carte formatée en FAT32 est requise (standard pour les cartes jusqu'à 32GB
 
 ## 7. Exécuter la suite de tests
 
+ArcadeMatrix propose à la fois des tests unitaires natifs rapides sur machine hôte et des suites embarquées PlatformIO :
+
+### Tests Unitaires Natifs Hôte (Recommandé pendant le développement)
+Compile et exécute instantanément les suites d'architecture (modèles Core, Triple-Buffer atomique, préemption de l'Arbiter, baselines de `CompatibilityEvaluator`, transitions bout-en-bout) sur votre machine (macOS / Linux) en moins d'une seconde, sans matériel physique :
 ```bash
-pio test -e esp32dev
+python3 scripts/run_native_tests.py
 ```
 
-**Point important :** `test/test_core/test_core.cpp` (comme chaque suite de `test/`) est un test Unity **sur cible** - il compile contre le vrai cœur Arduino ESP32 (`WiFi.h`, `FS.h`, etc.) et doit être **uploadé sur une carte physique** pour être exécuté (PlatformIO le flashe, puis lit les résultats pass/fail sur le port série). Il n'existe actuellement aucune cible de test indépendante du matériel (« native » / hôte) pour ce firmware - voir `docs/ARCHITECTURE_FR.md` et `docs/DEVELOPER_FR.md` pour comprendre pourquoi (le codebase s'appuie largement sur des API spécifiques ESP32 comme `SD.h` / `WiFi.h`, qui n'ont pas d'équivalents desktop directement interchangeables sans un effort de mocking plus important). C'est aussi pour cela que la CI (`.github/workflows/build.yml`) se contente de **compiler** la cible de test (`pio test -e <env> --without-uploading --without-testing`) au lieu de l'exécuter : les runners GitHub Actions n'ont pas d'ESP32 physique branché, mais une passe de compilation seule détecte quand même les régressions de build (includes obsolètes, signatures cassées, etc.) à chaque push / PR. Si vous avez une carte connectée en local, la commande `pio test -e esp32dev` (sans flags) est la bonne pour vraiment la flasher et l'exécuter.
+### Suites de Tests Embarquées PlatformIO
+```bash
+# Vérification de compilation seule (identique à la CI GitHub Actions) :
+pio test -e esp32dev --without-uploading --without-testing
+
+# Flash et exécution sur une carte physique connectée en USB :
+pio test -e esp32dev
+```
 
 ## Dépannage
 

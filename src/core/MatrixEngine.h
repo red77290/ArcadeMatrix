@@ -16,6 +16,10 @@
 
 #include "ConfigLoader.h"
 
+#include "drawing/IPresentationBackend.h"
+
+class Hub75PresentationBackend;
+
 #if defined(ESP32_THE_ORIG)
 #define MATRIX_TX_ADJUST(x_coord) (((x_coord) & 1U) ? ((x_coord) - 1) : ((x_coord) + 1))
 #else
@@ -56,9 +60,15 @@ public:
     void setBuffering(bool doubleBuffered);
     void noteFlip() { if (m_double) m_back ^= 1; }
     void rememberBrightness8(uint8_t b) { m_brightness8 = b; }
+    uint8_t getBrightness8() const { return m_brightness8; }
+    size_t getDmaAllocatedBytes() const;
     void initLuts(uint8_t depth);
     uint8_t getActiveBackBuffer() const { return m_back; }
     void flushDirtyRows();
+    uint16_t* getBackbufferRowPlane(uint8_t row, uint8_t plane);
+    const uint8_t* getLutR() const { return m_lut_r; }
+    const uint8_t* getLutG() const { return m_lut_g; }
+    const uint8_t* getLutB() const { return m_lut_b; }
 
 private:
     bool m_double = false;
@@ -69,6 +79,33 @@ private:
     uint8_t m_lut_r[32];
     uint8_t m_lut_g[64];
     uint8_t m_lut_b[32];
+};
+
+enum class ReconfigureFailure : uint8_t {
+    None = 0,
+    InvalidDepth,
+    Throttled,
+    TargetDmaAllocFailed,
+    FallbackDmaAllocFailed,
+    Frame0PresentationFailed,
+    NoValidPipeline
+};
+
+/**
+ * @struct ReconfigureResult
+ * @brief Telemetry and outcome of a dynamic presentation pipeline reconfiguration (Invariant 21).
+ */
+struct ReconfigureResult {
+    bool success = false;
+    uint8_t previousDepth = 0;
+    uint8_t requestedDepth = 0;
+    uint8_t effectiveDepth = 0;
+    size_t dmaBytes = 0;
+    uint32_t blankDurationUs = 0;
+    bool fallbackAttempted = false;
+    bool fallbackUsed = false;
+    ReconfigureFailure failureReason = ReconfigureFailure::None;
+    const char* failureReasonStr = nullptr;
 };
 
 /**
@@ -90,14 +127,32 @@ public:
     /**
      * @brief Initialize the hardware matrix panel.
      * 
-     * Automatically adjusts color depth and double-buffering based on the total 
-     * physical pixel count to prevent ESP32 memory limits from being exceeded.
+     * Configures HUB75 DMA bitplanes and presentation backend using effective color depth
+     * resolved by PipelineSelectionPolicy.
      * 
      * @param config The MatrixConfig loaded from config.json
+     * @param effectiveColorDepth Effective color depth (1..8 bits, or 0 = auto-evaluate)
      * @return true if DMA allocation and initialization succeeded.
      * @return false if out of memory or initialization failed.
      */
-    bool begin(const MatrixConfig& config);
+    bool begin(const MatrixConfig& config, uint8_t effectiveColorDepth = 0);
+
+    /**
+     * @brief Atomically reconfigures the HUB75 DMA presentation pipeline to targetDepth (Invariant 21).
+     * Enforces complete hardware OE blanking throughout the entire teardown, reallocation, and initial frame commit.
+     *
+     * @param targetDepth Target color depth (1..8 bits).
+     * @return ReconfigureResult Outcome with telemetry and microsecond blanking duration.
+     */
+    ReconfigureResult reconfigurePresentationPipeline(uint8_t targetDepth);
+
+    uint8_t getActiveColorDepth() const { return m_activeColorDepth; }
+    
+    /**
+     * @brief Commits Frame 0 (initial deterministic black frame) via presentation backend.
+     * Guaranteed to present black to active and back buffers.
+     */
+    PresentationTiming commitFirstFrame();
     
     /**
      * @brief Clear the entire matrix screen.
@@ -147,11 +202,29 @@ public:
     void markExternalDraw() { m_externalDrawGeneration++; }
     uint32_t externalDrawGeneration() const { return m_externalDrawGeneration; }
 
+    /**
+     * @brief Temporarily blanks or restores the display output (used for glitch-free buffer swaps).
+     */
+    void setBlank(bool blank);
+    bool isBlanked() const { return m_blanked; }
+
+    /**
+     * @brief Get the active presentation backend driving the HUB75 DMA pipeline.
+     */
+    IPresentationBackend* getPresentationBackend();
+
 private:
     MatrixPanel_I2S_DMA* display; ///< Pointer to the underlying DMA library instance
     FastMatrixPanel* m_panel = nullptr; ///< same object as `display`, typed for the fast clear hooks
+    std::unique_ptr<Hub75PresentationBackend> m_presentationBackend;
+    MatrixConfig m_cachedConfig;
+    uint8_t m_activeColorDepth = 0;
+    int8_t m_oePin = -1;
     uint32_t m_flipCount = 0;
     uint32_t m_externalDrawGeneration = 0;
     bool m_doubleBuffered = false;
+    bool m_blanked = false;
+    uint32_t m_lastReconfigMs = 0;
+    static constexpr uint32_t MIN_RECONFIG_INTERVAL_MS = 500;
 };
 

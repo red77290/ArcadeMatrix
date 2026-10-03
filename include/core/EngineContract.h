@@ -16,6 +16,7 @@
 #endif
 
 // Forward declarations to avoid heavy includes in the contract
+class IDrawingSurface;
 class MatrixPanel_I2S_DMA;
 class FrontendSyncEngine; // Represents EventBus/MQTT currently
 // class Logger; // Could be added later
@@ -147,12 +148,96 @@ struct EngineCapabilities {
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;
-    bool needsAudio = false;
-    bool needsTempSensor = false;
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
+    // --- Hardware Peripheral Dependencies (Hard Constraints) ---
+    bool needsPsram = false;            ///< External SPIRAM strictly required
+    bool needsPsramDma = false;         ///< DMA-capable SPIRAM required (ESP32-S3)
+    bool needsAudio = false;            ///< Audio hardware required (backward-compatibility alias)
+    bool needsAudioInput = false;       ///< I2S Microphone required (e.g. Decibel, Visualizer)
+    bool needsAudioOutput = false;      ///< I2S DAC/Speaker required
+    bool needsI2s = false;              ///< General I2S bus required
+    bool needsTempSensor = false;       ///< SHTC3 temperature sensor required
+    bool needsGyroscope = false;        ///< QMI8658 IMU required
+    bool needsNetwork = false;          ///< Active Wi-Fi network connection required
+    bool needsSd = false;               ///< MicroSD card storage required
+    bool needsTls = false;              ///< HTTPS / TLS cryptographic socket required
+
+    // --- Presentation & Pipeline Constraints ---
+    bool requiresDoubleBuffer = false;  ///< Engine cannot tolerate transient blanking or tearing (implies supportsSingleBuffer=false)
+    bool prefersDoubleBuffer = false;   ///< Engine operates best in double-buffering but tolerates single-buffer blanking
+    bool supportsSingleBuffer = true;   ///< Engine operates cleanly under CANVAS_BURST_SINGLE / DIRECT_DMA_SINGLE
+    uint16_t targetFps = 60;            ///< Nominal design framerate (60, 30, 10, or 1 FPS)
+
+    // --- Dynamic Memory & Footprint Modeling ---
+    uint32_t internalPersistentBytes = 0;   ///< Static heap allocated by engine context
+    uint32_t internalContiguousBytes = 0;   ///< Largest single contiguous allocation needed by engine
+    uint32_t psramBytes = 0;                ///< Persistent external PSRAM required
+    uint32_t shadowBytesPerFrame = 0;       ///< Dynamic canvas/shadow memory (e.g. GifEngine delta canvas)
+
+    // Conservative runtime admission thresholds (ArcadeMatrix policy margins)
+    uint32_t minFreeInternalHeapBytes = 0;
+    uint32_t minLargestInternalBlockBytes = 0;
+    uint32_t minFreeDmaBytes = 0;
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Geometry Limits ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              ///< 0 = unlimited
+    uint16_t maxHeight = 0;             ///< 0 = unlimited
+
+    inline bool isValid() const {
+        if (requiresDoubleBuffer && supportsSingleBuffer) return false;
+        return true;
+    }
+
+    /**
+     * @brief Aggregates requirements across multiple engines (e.g. all engines in an active rotation).
+     * Peripheral dependencies and TLS flags are logically OR'd. Footprints and buffers take the peak.
+     */
+    inline void mergeWith(const EngineRequirements& other) {
+        needsPsram |= other.needsPsram;
+        needsPsramDma |= other.needsPsramDma;
+        needsAudio |= other.needsAudio;
+        needsAudioInput |= other.needsAudioInput;
+        needsAudioOutput |= other.needsAudioOutput;
+        needsI2s |= other.needsI2s;
+        needsTempSensor |= other.needsTempSensor;
+        needsGyroscope |= other.needsGyroscope;
+        needsNetwork |= other.needsNetwork;
+        needsSd |= other.needsSd;
+        needsTls |= other.needsTls;
+
+        requiresDoubleBuffer |= other.requiresDoubleBuffer;
+        prefersDoubleBuffer |= other.prefersDoubleBuffer;
+        supportsSingleBuffer = supportsSingleBuffer && other.supportsSingleBuffer;
+
+        targetFps = (targetFps > other.targetFps) ? targetFps : other.targetFps;
+        internalPersistentBytes = (internalPersistentBytes > other.internalPersistentBytes) ? internalPersistentBytes : other.internalPersistentBytes;
+        internalContiguousBytes = (internalContiguousBytes > other.internalContiguousBytes) ? internalContiguousBytes : other.internalContiguousBytes;
+        psramBytes = (psramBytes > other.psramBytes) ? psramBytes : other.psramBytes;
+        shadowBytesPerFrame = (shadowBytesPerFrame > other.shadowBytesPerFrame) ? shadowBytesPerFrame : other.shadowBytesPerFrame;
+
+        minFreeInternalHeapBytes = (minFreeInternalHeapBytes > other.minFreeInternalHeapBytes) ? minFreeInternalHeapBytes : other.minFreeInternalHeapBytes;
+        minLargestInternalBlockBytes = (minLargestInternalBlockBytes > other.minLargestInternalBlockBytes) ? minLargestInternalBlockBytes : other.minLargestInternalBlockBytes;
+        minFreeDmaBytes = (minFreeDmaBytes > other.minFreeDmaBytes) ? minFreeDmaBytes : other.minFreeDmaBytes;
+        minFreePsramBytes = (minFreePsramBytes > other.minFreePsramBytes) ? minFreePsramBytes : other.minFreePsramBytes;
+
+        minWidth = (minWidth > other.minWidth) ? minWidth : other.minWidth;
+        minHeight = (minHeight > other.minHeight) ? minHeight : other.minHeight;
+        if (other.maxWidth > 0) {
+            maxWidth = (maxWidth == 0) ? other.maxWidth : ((maxWidth < other.maxWidth) ? maxWidth : other.maxWidth);
+        }
+        if (other.maxHeight > 0) {
+            maxHeight = (maxHeight == 0) ? other.maxHeight : ((maxHeight < other.maxHeight) ? maxHeight : other.maxHeight);
+        }
+    }
+};
+
+enum class EngineAdmissionStatus : uint8_t {
+    Available = 0,
+    AvailableWithResourceWarning = 1,
+    TemporarilyUnavailable = 2,
+    HardwareConstrained = 3
 };
 
 // =======================================================
@@ -219,8 +304,14 @@ class EngineContext {
 public:
     virtual ~EngineContext() = default;
 
-    // Core matrix wrapper for drawing operations
-    virtual MatrixPanel_I2S_DMA* getMatrix() = 0;
+    // Primary v4 Drawing Surface SPI (Adafruit_GFX derived)
+    virtual IDrawingSurface* getSurface() { return nullptr; }
+
+    // Core matrix wrapper for drawing operations (legacy fallback)
+    virtual MatrixPanel_I2S_DMA* getMatrix() { return nullptr; }
+
+    // Explicit legacy escape hatch: returns nullptr on non-DMA surfaces
+    virtual MatrixPanel_I2S_DMA* getLegacyMatrix() { return getMatrix(); }
     
     // Optional Event Bus (MQTT / Batocera events)
     virtual FrontendSyncEngine* getEventBus() = 0;
@@ -320,6 +411,14 @@ public:
     
     // Dynamic Configuration
     virtual void onConfigChanged(const EngineConfig* config) {}
+    
+    /**
+     * @brief Non-blocking resource pressure notification (Sprint 3 / Invariant 16).
+     * Invoked on Core 1 at update() boundary when heap or DMA pressure rises.
+     * Engines should prune non-essential transient caches, reduce particles, or switch to minimal display.
+     * @param pressureLevel MemoryPressureLevel (0=Nominal, 1=Moderate, 2=Critical)
+     */
+    virtual void onMemoryPressure(uint8_t pressureLevel) { (void)pressureLevel; }
     
     // Geometry Awareness (rebuilds geometry-derived caches on rotation)
     virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}

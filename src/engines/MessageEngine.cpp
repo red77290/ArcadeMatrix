@@ -8,7 +8,7 @@ void MessageEngine::setCustomFont(GFXfont* font) {
 }
 
 EngineError MessageEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
-    if (context) matrixDisplay = context->getMatrix();
+    if (context) matrixDisplay = context->getSurface();
     if (engineConfig) onConfigChanged(engineConfig);
     return EngineError::OK;
 }
@@ -134,7 +134,7 @@ void MessageEngine::update(EngineContext* context) {
     }
     if (!active) return;
     
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
     matrixDisplay = matrix;
 
@@ -180,7 +180,7 @@ void MessageEngine::update(EngineContext* context) {
 
 void MessageEngine::render(EngineContext* context) {
     if (!active) return;
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix) return;
 
     matrix->fillScreen(0);
@@ -195,6 +195,10 @@ EngineDescriptor MessageEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_msg;
     desc_msg.metadata = {"message", "Message", "display", FIRMWARE_VERSION};
     desc_msg.capabilities.realtime = true;
+    desc_msg.requirements.targetFps = 60;
+    desc_msg.requirements.prefersDoubleBuffer = true;
+    desc_msg.requirements.supportsSingleBuffer = true;
+    desc_msg.requirements.internalPersistentBytes = 5000;
     desc_msg.schema.fields = {
         ConfigField("text", ConfigType::STRING, "Message Text", "Text banner or message to display", "ArcadeMatrix", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("color", ConfigType::COLOR, "Text Color", "Hex color code (#RRGGBB)", "#ffffff", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

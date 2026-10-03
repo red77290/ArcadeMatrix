@@ -38,18 +38,42 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 | `chain_length` | `int` | Número de paneles encadenados horizontalmente. |
 | `driver_chip` | `String` | Chip controlador (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Orden de colores (`RGB`, `RBG`, `BGR`, ...). Corrige aquí colores intercambiados. |
-| `color_depth` | `int` | Profundidad de color (`1`–`8` bits). Por defecto `8`. Reducir para ahorrar RAM DMA. |
+| `color_depth` | `int` | Profundidad de color (`0` = Auto, `1`–`8` bits en todas las placas, incluyendo ESP32 Estándar). Por defecto `0` (Auto). En modo Auto o cuando el pipeline dinámico está activo, se adapta matemáticamente a la geometría del panel y a las necesidades del siguiente motor. En la WebUI, este campo queda deshabilitado (gris) cuando el Pipeline de Presentación Dinámico está activado. |
+| `dynamic_color_depth` | `bool` | Habilita el cambio dinámico de profundidad de color en caliente ($8 \leftrightarrow 7 \leftrightarrow 6 \leftrightarrow 5 \leftrightarrow 4 \leftrightarrow 3 \leftrightarrow 2$) bajo apagado de hardware OE durante transiciones entre motores (`true` por defecto en ESP32, Recomendado para ESP32). Alterna de forma determinista entre la profundidad configurada (hasta 8 bits) para motores gráficos y 4 bits nominales para motores TLS (liberando de 16 a 24 KB de DRAM contigua), con intentos de degradación progresiva ($4 \to 2$ bits) si ocurre fragmentación. En la WebUI, activar esta opción pone en gris el selector manual de profundidad de color. Ver [MEMORY_MODEL_ES.md](MEMORY_MODEL_ES.md). |
 | `limit_refresh_rate_hz` | `int` | Limita la frecuencia de refresco (`0` = sin límite). |
 | `row_address_mode` | `int` | Modo de direccionamiento de filas (`0`: Directo Binario, `1`: ShiftReg, `2`: Directo 16, `3`: Directo 32, `4`: Directo 64). |
 | `clk_phase` | `bool` | Invierte la fase de reloj CLK (`false` por defecto; poner en `true` si el panel lo requiere). |
 | `latch_blanking` | `int` | Ciclos de ocultación de latch (`0`–`8`) para reducir el ghosting (líneas fantasma). |
-| `force_single_buffer` | `bool` | Forzar buffer simple DMA para ahorrar SRAM interna (`false` por defecto). |
+| `render_pipeline` | `String` | Canalización de renderizado y búfer (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Por defecto `auto`. Controla la asignación del canvas intermedio y la sincronización DMA. |
 | `rotation_offset` | `int` | Desfase de orientación física (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Habilitar rotación automática mediante giroscopio/IMU integrado (`true` por defecto). |
 | `rotation_transition` | `String` | Efecto visual de transición (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Duración del efecto de transición en milisegundos (por defecto `400`). |
 | `slot_transition` | `String` | Efecto reproducido cuando la rotación pasa a la siguiente pantalla (`wipe`, `curtain`, `shutter`, `dissolve`, `checker`, `matrix`, `vortex`, `glitch`, `slide`, `zoom`, `random`, `none`). Por defecto `none`. |
 | `slot_transition_duration_ms` | `int` | Duración de la transición entre pantallas, en milisegundos (`100`-`3000`, por defecto `500`). |
+
+### 2.1 Opciones de Canalización de Renderizado y Búfer
+
+ArcadeMatrix v4 introduce el SPI gráfico agnóstico al hardware (`IDrawingSurface`), desacoplando la rasterización de píxeles de los controladores DMA físicos. Puede configurar la canalización directamente en `config.json` o desde la pestaña **Configuración del Sistema → Hardware** de la interfaz Web:
+
+- **`auto`** *(Recomendado)*: Resuelve automáticamente la canalización óptima según el perfil de hardware y el nivel de memoria RAM:
+  - **ESP32-S3 / Placas con PSRAM**: Asigna un canvas intermedio de 16 bits RGB565 en PSRAM externa con búfer doble DMA (`canvas_double`) para un rendimiento máximo y animación a 60 FPS sin fragmentación.
+  - **ESP32 Clásico (Sin PSRAM)**: Asigna un canvas intermedio en SRAM interna con un búfer simple DMA (`canvas_single`). Esto libera ~16 a 20 KB de memoria DMA crítica, evitando fallos de inicialización Wi-Fi (`esp_wifi_init 4353`) mientras elimina el tearing mediante codificación por ráfagas sincronizadas.
+- **`canvas_single`**: Canvas de 16 bits RGB565 + búfer simple DMA. Reduce a la mitad la memoria RAM DMA requerida utilizando `Hub75BulkEncoder` para evitar el desgarro de pantalla.
+- **`canvas_double`**: Canvas de 16 bits RGB565 + búfer doble DMA. Ideal para matrices grandes (128×64, 256×64) con PSRAM.
+- **`direct_double`**: Renderizado directo heredado en búferes dobles HUB75 DMA sin canvas intermedio.
+- **`direct_single`**: Renderizado directo heredado en un búfer simple DMA (huella de memoria mínima absoluta; riesgo de parpadeo o desgarro durante el dibujado).
+
+> [!NOTE]
+> Por compatibilidad hacia atrás con configuraciones heredadas, cualquier parámetro `force_single_buffer: true` se migra automáticamente a `render_pipeline: canvas_single`.
+>
+> **Admisión de Motores y Gating sobre Pipeline Solicitado:** Al modificar rotaciones (`POST /api/rotation`) o instancias (`POST /api/instances`), la compatibilidad se evalúa frente al *pipeline de destino* (`targetPipeline`), evitando rechazos erróneos durante transiciones de motores. Asimismo, el firmware anuncia `capabilities.http.recommendedConcurrency` (1 en `ESP32_STD`, 3 en `WAVESHARE_S3`) para coordinar el tráfico HTTP del navegador y erradicar la inanición de sockets LwIP.
+
+### 2.2 Integración en la Pestaña de Hardware de la Web UI
+
+La interfaz Web (Configuración del Sistema → Hardware) controla directamente estas opciones:
+1. **Desplegable Canalización de Renderizado y Búfer (`hw-render-pipeline`)**: Selección entre `auto`, `canvas_single`, `canvas_double`, `direct_double` o `direct_single`.
+2. **Guardar**: Al pulsar **Guardar Configuración de Hardware** (`btn-save-hw`), los parámetros se envían a `POST /api/system`, reiniciando limpiamente el panel con la nueva canalización.
 
 > El brillo diurno en vivo **no** se almacena en este bloque; se controla en tiempo de ejecución desde la interfaz Web (deslizador del Dashboard → `POST /api/system { "brightness_limit": 0-100 }`). El brillo nocturno vive en el bloque `system` (§4).
 
@@ -59,13 +83,13 @@ Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-Matrix
 
 | Clave | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `ssid` | `String` | El nombre de su red Wi-Fi. |
+| `ssid` | `String` | El nombre de su red Wi-Fi (2.4 GHz). |
 | `password` | `String` | La clave WPA2. |
-| `hostname` | `String` | Nombre de host del dispositivo anunciado en la red. |
-| `configured` | `bool` | Ponlo en `false` para forzar un intento de (re)conexión en el próximo arranque. Se vuelve a poner en `true` automáticamente al tener éxito. |
-| `disable_internal` | `bool` | Si usa un adaptador USB externo, deshabilita el Wi-Fi interno de la Pi (cambiar esto activa un reinicio). |
+| `hostname` | `String` | Nombre de host del dispositivo anunciado mediante mDNS / DHCP (`arcadematrix` por defecto). |
 
-También puedes enviar credenciales en tiempo de ejecución con `POST /api/wifi { "ssid": "...", "password": "..." }`, lo que establece `configured=false` y reinicia el aprovisionamiento de red.
+Si `ssid` está vacío o las credenciales no logran conectarse, ArcadeMatrix genera automáticamente un SoftAP Captive Portal integrado llamado `ArcadeMatrix-Setup` (IP: `192.168.4.1`) que permite el aprovisionamiento inmediato desde un teléfono o portátil.
+
+También puedes enviar nuevas credenciales Wi-Fi en tiempo de ejecución con `POST /api/wifi { "ssid": "...", "password": "..." }`, lo que las guarda en el almacenamiento persistente y se reconecta.
 
 ---
 
@@ -175,7 +199,7 @@ Cuando la seguridad API está habilitada (`api_auth_enabled: true`), un nuevo us
      `http://arcadematrix.local/?token=mi_token_secreto_super_seguro_123`
      Al cargar la página, la WebUI detecta automáticamente el parámetro `token` y lo guarda en el `localStorage`. El usuario queda autenticado de inmediato sin que aparezca ninguna ventana emergente.
 
-* **Seguridad de Solo Escritura (*Write-Only*)**: El ESP32 nunca devuelve el token secreto en `GET /api/system` o `GET /api/settings` (indica únicamente `"api_token_configured": true`), protegiendo totalmente la clave secreta de miradas indiscretas en la red local.
+* **Seguridad de Solo Escritura (*Write-Only*)**: El ESP32 nunca devuelve el token secreto en `GET /api/system` (indica únicamente `"api_token_configured": true`), protegiendo totalmente la clave secreta de miradas indiscretas en la red local.
 * **Modificación o Eliminación del Token**: Introducir un token válido nuevo en el aviso o en Ajustes sobrescribe el valor previo. Dejar el campo vacío y guardar desactiva la autenticación.
 
 ### 6.4 Llamar a la API REST desde Scripts Externos o Home Assistant
@@ -385,7 +409,7 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
    - Puede ingresar múltiples claves API separadas por comas (`api_key: "clave1,clave2,clave3"`).
    - Si una clave resulta inválida (`HTTP 401/403`) o agota su cuota de 100 solicitudes/día (`HTTP 429/403`), el motor conmuta instantáneamente a la siguiente clave y reintenta la solicitud.
    - 2 cuentas = 200 solicitudes/día; 3 cuentas = 300 solicitudes/día.
-2. **Persistencia en Archivo (`/gnews_cache.json` en SD ESP32, `gnews_cache.json` en RPi):**
+2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS):**
    - Los artículos y la telemetría se guardan en almacenamiento local. Al reiniciar, las noticias se muestran al instante sin consumir cuota API.
    - Si no hay conexión o se agota la cuota, las noticias persisten y siguen desplazándose 24/7.
 3. **Presupuesto Diario de Solicitudes (Por defecto: 10 sol/día) y Protección de Claves Compartidas:**
@@ -499,4 +523,30 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 
 ---
 
-*Nota: Todos los esquemas se pueden consultar en vivo en formato JSON mediante `GET /api/engines`.*
+## 10. Arquitectura de Almacenamiento Modular y Caché Working-Set
+
+ArcadeMatrix v4 desacopla la persistencia de configuración del hardware de tarjeta SD física mediante la capa de abstracción `IConfigStorage`:
+
+```text
+ ┌─────────────────────────────────────────────────────────────┐
+ │                      ConfigLoader                           │
+ └──────────────┬───────────────────────────────┬──────────────┘
+                │                               │
+                ▼                               ▼
+ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+ │      WorkingSetCache        │ │       IConfigStorage        │
+ │                             │ │                             │
+ │ • Rastreo de bits dirty     │ │ • SdConfigStorage (Hardware)│
+ │ • Mutaciones atómicas en RAM│ │ • MemoryConfigStorage (Mock)│
+ │ • Cero bloqueos FS Core 1   │ │ • Semántica rename atómica  │
+ └─────────────────────────────┘ └─────────────────────────────┘
+```
+
+1. **Interfaz `IConfigStorage`**: Backend de sistema de archivos abstracto compatible con escritura atómica de cadenas (`writeStringAtomic`), lectura continua, comprobación de existencia y listado de directorios.
+2. **`SdConfigStorage`**: Backend de hardware de producción que gestiona SdFat con bloqueo de bus SPI por hardware (`SdLockGuard`), escribiendo en un archivo temporal (`.tmp`) seguido de un renombramiento atómico para evitar corrupciones por cortes de energía imprevistos.
+3. **`MemoryConfigStorage`**: Backend en memoria RAM (Heap) utilizado para pruebas unitarias herméticas fuera del hardware (`test_core`), simulación y funcionamiento sin tarjeta SD.
+4. **`WorkingSetCache`**: Gestor de estado dirty en memoria en Core 0. Las mutaciones (guardados desde la interfaz Web o actualizaciones MQTT) actualizan de inmediato la caché en RAM y publican instantáneas atómicas hacia Core 1 sin esperar las operaciones lentas de la tarjeta SD. Una sincronización asíncrona vuelca los archivos sucios al almacenamiento persistente en segundo plano.
+
+---
+
+*Nota: Todos los esquemas se pueden consultar en vivo en formato JSON mediante `GET /api/engines` (catálogo ligero) o de forma granular por motor con sus campos completos mediante `GET /api/engines/{id}`.*

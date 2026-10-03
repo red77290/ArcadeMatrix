@@ -1,0 +1,198 @@
+# Arquitectura de Optimización y Recuperación de Memoria: TLS y Renderizado de Alta Fidelidad en ESP32
+
+## 1. Resumen Ejecutivo y Desafío Fundamental
+
+El ESP32 clásico (doble núcleo Xtensa LX6, sin PSRAM) dispone de aproximadamente 320 KB de SRAM interna. Sin embargo, tras la inicialización del núcleo FreeRTOS, los bloques de control del sistema, las pilas de interrupción y los búferes de la capa MAC Wi-Fi, únicamente quedan disponibles entre **~60 y 80 KB de DRAM interna** para el firmware de la aplicación.
+
+Controlar una matriz LED mediante HUB75 DMA impone una presión de memoria severa:
+* En una **matriz de 128×32** (4.096 LEDs RGB), una profundidad de color de 8 bits requiere hasta **~32 KB de DRAM DMA contigua** (además de los descriptores I2S en anillo).
+* Una solicitud HTTPS segura impulsada por **mbedTLS** (necesaria para APIs de Clima, Spotify, Cripto, Bolsa y Noticias) requiere entre **20 y 25 KB de DRAM interna libre** durante la negociación TLS (contexto SSL, tablas de cifrado, búferes de entrada/salida).
+* Las arquitecturas de renderizado tradicionales (doble búfer DMA) requerían 32 KB adicionales, provocando inmediatamente fallos por falta de memoria (*Out-Of-Memory*) o fragmentación crítica del heap.
+
+Mediante una serie sistemática de optimizaciones por capas, ArcadeMatrix recuperó más de **~24 KB de DRAM estática** y **~26 KB de bloque contiguo libre**, permitiendo un renderizado fluido a 60 FPS junto a operaciones TLS 100% confiables en paneles de 128×32.
+
+---
+
+## 2. Optimizaciones Arquitectónicas Implementadas
+
+### 2.1 Pipeline Single DMA + Lienzo Fuera de Pantalla (`canvas_single`)
+
+#### El Problema
+Las bibliotecas estándar de HUB75 asignan dos búferes DMA completos (doble búfer de hardware) para evitar el parpadeo y desgarro visual (*tearing*), consumiendo $2 \times 32\,\text{KB} = 64\,\text{KB}$ en 128×32 a 8 bits. Esto dejaba prácticamente cero memoria contigua para tareas de red.
+
+#### La Solución Arquitectónica
+ArcadeMatrix introdujo el pipeline `canvas_single`:
+1. **Búfer DMA Único:** Un único búfer físico explorado continuamente por el periférico I2S DMA.
+2. **Lienzo Fuera de Pantalla:** Los motores dibujan en un lienzo de memoria SRAM intermedio (`CanvasBufferedSurface`).
+3. **Presentación Transaccional:** `IDrawingSurface::present()` transfiere únicamente las filas modificadas (*dirty rows*) hacia el búfer DMA durante ventanas de escaneo seguras, eliminando el desgarro visual y ahorrando un búfer físico completo (~16 a 32 KB recuperados).
+4. **Aislamiento Estricto de DMA (Invariante 19):** Los motores de renderizado nunca acceden directamente a la memoria física DMA (ver [ARCHITECTURE_ES.md](ARCHITECTURE_ES.md)).
+
+---
+
+### 2.2 Pipeline de Presentación Dinámico & Maximizador de Color Auto ($8 \leftrightarrow 7 \dots 2$ Profundidad Adaptativa)
+
+#### El Problema
+Las animaciones gráficas complejas (GIFs, sprites de Street Fighter, textos Marquee, esferas de reloj) requieren una profundidad de 8 bits (16.7 millones de colores) para máxima fidelidad visual, pero su tamaño de DMA priva a mbedTLS de memoria en hardware con limitaciones (ej. ESP32 clásico 128×32 sin PSRAM). Por el contrario, fijar la matriz en 4 bits permanentemente degrada la calidad gráfica el 100% del tiempo, mientras que un límite estático de 6 bits restringe innecesariamente a los motores gráficos capaces. Además, un aumento ingenuo en caliente (pasar a ciegas de 4 bits a 8 bits) corre el riesgo de provocar un pánico inmediato por Out-Of-Memory (OOM) si la DRAM interna se ha fragmentado durante operaciones de red.
+
+#### La Solución Arquitectónica
+En lugar de forzar un compromiso estático al inicio o una alternancia a ciegas, el **Dynamic Presentation Pipeline** combina la quiescencia de hardware con un modelo predictivo multidimensional riguroso en `PipelineSelectionPolicy::resolveTargetDepth`:
+
+1. **Evaluación Multidimensional de Capacidad Matemática:**
+   Entre turnos de rotación (estrictamente después de que `oldEngine->deactivate()` alcanza la quiescencia y antes de que `newEngine->activate()` asigne memoria), `DisplayRuntime` consulta en tiempo real la DRAM interna y la memoria DMA disponibles. Las profundidades candidatas $D \in [8 \dots 2]$ se evalúan desde la máxima calidad hacia abajo según cuatro límites matemáticos:
+   * **Margen de DRAM Interna Libre:**
+     $$\widehat{F}(D) = \text{currentFreeInternalHeap} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{SYSTEM\_MIN\_HEADROOM\_RESERVE} + \text{req.internalPersistentBytes} + \text{netReserve} + \text{audioReserve}$$
+   * **Bloque de DRAM Contiguo Mayor:**
+     $$\widehat{L}(D) = \text{currentLargestBlock} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minContiguousNeeded}$$
+     donde $\text{minContiguousNeeded} = \text{NetworkBudget::TLS\_MIN\_COMBINED\_BLOCK}$ ($28.672\,\text{bytes}$) para motores TLS.
+   * **Capacidad DMA Interna:**
+     $$\widehat{Dma}(D) = \text{currentFreeDma} + (\text{currentDepth} - D) \times \text{bytesPerBit} \ge \text{minDmaNeeded}$$
+     donde $\text{minDmaNeeded} = \text{NetworkBudget::TLS\_MIN\_FREE\_DMA}$ ($16.384\,\text{bytes}$) para aceleración hardware SHA de esp-sha.
+   * **Viabilidad de PSRAM:** Verificada para placas con PSRAM (como ESP32-S3), garantizando que el mismo modelo matemático protege todos los objetivos de hardware.
+
+2. **Escalonamiento Dinámico Continuo ($8 \leftrightarrow 7 \leftrightarrow 6 \leftrightarrow 5 \leftrightarrow 4 \leftrightarrow 3 \leftrightarrow 2$):**
+   * **Motores de Red TLS (Cripto, Bolsa, Spotify, Noticias, Clima):** Descienden matemáticamente a la profundidad máxima segura que cumple con todos los límites (típicamente 4 bits, o 2 bits bajo presión extrema), liberando de **16 a 24 KB de DRAM contigua** inmediatamente antes de negociar mbedTLS.
+   * **Motores Gráficos (GIFs, Fighter, Reloj, Lienzo, Matrix, Marquee):** Evaluados desde 8 bits hacia abajo, restaurando la plena calidad de **8 bits** siempre que sea seguro. En paneles 128×32 y 64×32 sin PSRAM, ¡el reloj y los motores gráficos funcionan a 8 bits nativos!
+   * **Integración WebUI:** Al activar "Dynamic Presentation Pipeline", el menú desplegable manual de profundidad de color se deshabilita automáticamente (en gris) con una nota explicativa que indica que la profundidad se determina matemáticamente por turno de rotación.
+
+3. **Protección de Suelo (Mínimo 2 Bits):**
+   `FastMatrixPanel::initLuts` y los protectores de reconfiguración admiten hasta 2 bits de profundidad de color ($2 \le \text{depth} \le 8$), garantizando un modo degradado ultraeconómico bajo fragmentación severa del montón, sin pérdida de imagen.
+
+4. **Transacción de Presentación de Hardware (Invariante 21):**
+   Durante la ventana de transición entre motores, la transacción de hardware se ejecuta de manera limpia:
+   1. `oldEngine->deactivate()` establece la quiescencia lógica de renderizado en Core 1 (desvinculando la superficie). La quiescencia física de tareas y red se finaliza en `shutdownForDestruction()` antes del desmontaje.
+   2. `OE = HIGH` (Output Enable activo: panel completamente negro en hardware).
+   3. Desmontaje del pipeline DMA activo.
+   4. Intento de asignación DMA objetivo (`requestedDepth`: hasta 8 bits para gráficos, 4 bits nominal para TLS).
+   5. Si falla, intento de degradación progresiva ($4 \to 2$ bits).
+   6. Si fallan todas las degradaciones, mantener `OE = HIGH` en estado `PresentationRecovery` (cero parpadeo ni señal corrupta).
+   7. Reconstrucción de las tablas LUT de color con `FastMatrixPanel::initLuts(effectiveDepth)`.
+   8. Commit del fotograma 0 (fotograma negro determinista) mediante `m_presentationBackend->commitFirstFrame()`.
+   9. **Invariante P0:** `OE = LOW` (Output Enable desactivado) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`).
+   * **Cero Glitch / Invisibilidad Total:** El apagado de hardware tiene un **objetivo de calificación < 30 ms**, imperceptible durante la rotación entre motores.
+   * La telemetría registra rigurosamente `requestedDepth`, `effectiveDepth`, `fallbackAttempted`, y `fallbackUsed = (effectiveDepth != requestedDepth)`.
+   * Las reglas formales y tablas de dimensionamiento se detallan en [MEMORY_MODEL_ES.md](MEMORY_MODEL_ES.md).
+
+---
+
+### 2.3 Fidelidad de Color y Sobrescritura Dinámica de LUTs (`FastMatrixPanel::initLuts`)
+
+#### El Problema
+La biblioteca base `ESP32-HUB75-MatrixPanel-I2S-DMA` está compilada con tablas fijas de conversión de luminancia en 8 bits (`lumConvTab_8bit`). Cuando la profundidad de color se reduce a 6, 5 o 4 bits en tiempo de ejecución, el mapeo de color falla:
+- Los desplazamientos de bits de los planos (*bitplanes*) se desbordan o desalinean, provocando saturación blanca, inversiones de tono y posterización severa.
+- La biblioteca base no recalcula dinámicamente sus tablas de cuantificación internas tras el inicio.
+
+#### La Solución Arquitectónica
+`FastMatrixPanel` (derivada de `MatrixPanel_I2S_DMA` en `src/core/MatrixEngine.cpp`) sobrescribe completamente la conversión de color y el despacho de planos de bits:
+1. **Generación Dinámica de LUTs (`FastMatrixPanel::initLuts(uint8_t depth)`):**
+   ```cpp
+   void FastMatrixPanel::initLuts(uint8_t depth) {
+       uint8_t shift = 8 - depth;
+       uint8_t round = (shift > 0) ? (1 << (shift - 1)) : 0;
+       uint16_t maxVal = (1 << depth) - 1;
+       // Precalcula m_lut_r[32], m_lut_g[64], m_lut_b[32] escaladas desde luminancia de 8 bits
+   }
+   ```
+2. **Curvas Gamma y Redondeo por Canal:** Escala las curvas gamma de 8 bits a la profundidad objetivo ($2 \le \text{depth} \le 8$) con redondeo matemático exacto (`(val + round) >> shift`), evitando el aplastamiento de negros y la distorsión cromática.
+3. **Recalibración Instantánea en Caliente:** Tan pronto como el pipeline de presentación se reconfigura ($8 \leftrightarrow 4$ o $6 \leftrightarrow 4$), se invoca inmediatamente `initLuts(newDepth)`, garantizando una reproducción colorimétrica 100% fiel sin requerir un reinicio del ESP32.
+
+---
+
+### 2.4 Quiescencia de Red Estricta y Cancelación del Lado del Cliente
+
+#### El Problema
+Si la rotación ocurre mientras una petición HTTPS está en curso, los sockets TCP abiertos y las tareas en segundo plano retienen los búferes de mbedTLS (~20-25 KB), impidiendo la reconfiguración de DMA y provocando fallos en el motor entrante.
+
+#### La Solución Arquitectónica
+* **Protocolo Formal de Desactivación:** `oldEngine->deactivate()` ejecuta un procedimiento estricto de 5 pasos:
+  1. Señalización de parada a los workers mediante flags atómicos (`m_stopFetch = true`).
+  2. Cancelación forzada del transporte HTTP/TLS mediante `session.abort()` (`_client.stop()`).
+  3. Espera bloqueante determinista para la finalización de los hilos worker (`wait workers`).
+  4. Cierre completo de identificadores de red.
+  5. Liberación de cachés JSON y cotizaciones mediante el modismo `std::swap` (Invariante 15).
+* **Cancelación del Lado del Cliente:** La llamada inmediata a `client.stop()` destruye el socket en LwIP. LwIP responde automáticamente con `TCP RST` a cualquier paquete entrante posterior del servidor y lo descarta sin asignar memoria DRAM.
+* **Invariante N8 (Aislamiento Post-Quiescencia):** Una vez cancelada la sesión y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación ni reasignación de memoria.
+
+---
+
+### 2.5 Streaming HTTP Cero-Asignación & Búferes Fijos en Pila (Stack)
+
+#### El Problema
+Durante el streaming HTTPS con mbedTLS, mbedTLS retiene aproximadamente 33 KB de DRAM interna para sus búferes de registros de entrada/salida. Si los analizadores de API REST (como `CoinGeckoProvider::parseMarketChart`) reasignan dinámicamente memoria en el montón mediante `std::vector::reserve(300)` mientras el bloque contiguo mayor se encuentra temporalmente deprimido ($< 8\,\text{KB}$), `operator new` lanza una excepción `std::bad_alloc`, provocando un fallo crítico inmediato (`abort()`) en Core 1.
+
+#### La Solución Arquitectónica
+* **Asignación Fija en Pila:** Sustitución sistemática de todos los redimensionamientos dinámicos de `std::vector` en analizadores de respuestas REST por matrices fijas de capacidad acotada en pila:
+  ```cpp
+  constexpr size_t MAX_RAW_PRICES = 320;
+  float rawPrices[MAX_RAW_PRICES];
+  ```
+* **Cero Contención con mbedTLS:** Las respuestas REST se procesan y muestrean directamente en el marco de pila preasignado sin tocar el heap, eliminando cualquier riesgo de pánico por `std::bad_alloc` incluso bajo máxima tensión de DRAM en red.
+
+---
+
+### 2.6 Asignación Perezosa de Búferes (Búfer Raw de Marquee y Decodificadores GIF)
+
+#### El Problema
+`MarqueeEngine` asignaba históricamente un búfer contiguo de 8 KB (RGB565) al iniciar para soportar la visualización de iconos, incluso si el usuario sólo ejecutaba texto desplazable simple.
+
+#### La Solución Arquitectónica
+* Conversión a **asignación perezosa bajo demanda (lazy)**:
+  - Inicializado en `nullptr`.
+  - Asignado únicamente cuando se procesa explícitamente un archivo de imagen o icono.
+  - Liberado inmediatamente mediante `freeRawBuffer()` en modos de solo texto o al desactivar.
+* Las tablas de decodificación GIF en `GifEngine` se asignan exclusivamente bajo demanda durante la reproducción activa y se liberan al desactivar.
+
+---
+
+### 2.7 Tareas FreeRTOS Efímeras (`SdSpace`)
+
+#### El Problema
+La tarea de monitorización del espacio en tarjeta SD (`SdSpace`) se ejecutaba permanentemente en segundo plano, consumiendo una pila de 4 KB más un bloque TCB en DRAM (~4.5 KB en total), a pesar de ejecutarse sólo cada varios minutos.
+
+#### La Solución Arquitectónica
+* Conversión de `SdSpace` en una **tarea efímera de ejecución única**:
+  - Creada bajo demanda cuando se requiere actualizar el almacenamiento.
+  - Consulta FATFS en la tarjeta SD.
+  - Publica la telemetría en el estado global del sistema.
+  - Se autodestruye limpiamente mediante `vTaskDelete(NULL)`, devolviendo inmediatamente los 4 KB de pila al heap de FreeRTOS.
+
+---
+
+### 2.8 Ajuste del Subsistema de Red, Tamaño de Pilas y Protección Anti-Bucles
+
+1. **Límites Estrictos de Tamaño de Pila para AsyncTCP y FreeRTOS:**
+   - La pila de la tarea trabajadora `async_tcp` en el Core 0 debe mantenerse estrictamente en **8192 bytes** (`CONFIG_ASYNC_TCP_STACK_SIZE=8192`). Reducir este valor (ej. a 5120 bytes) causa inanición silenciosa de pila durante la negociación de conexiones entrantes y el servicio de recursos WebUI comprimidos (~105 KB), originando tiempos de espera agotados en navegadores (`ERR_CONNECTION_TIMED_OUT`).
+   - De igual manera, la tarea principal de Arduino `loopTask` en el Core 1 debe permanecer en **8192 bytes** (`CONFIG_ARDUINO_LOOP_STACK_SIZE=8192`).
+2. **Estabilidad de Estado de la Interfaz Wi-Fi:**
+   - Las reconfiguraciones del modo de red (`WiFi.mode(WIFI_STA)`) deben realizarse estáticamente durante la inicialización de arranque y nunca dentro de retornos de llamada de eventos asíncronos LwIP (como `ARDUINO_EVENT_WIFI_STA_GOT_IP`), lo cual reinicia la interfaz de red subyacente (`netif`) y aborta los sockets de escucha activos.
+3. **Protección de Repliegue ante HTTP 429 y Denegación de Memoria (Anti-Bucle 20 FPS):**
+   - Los motores de consulta periódica de red (`CryptoEngine`, `StockEngine`) deben registrar la marca de tiempo de repliegue en caché (`cache.lastFetchTime = now`) al encontrar límites de tasa HTTP (429) o denegaciones de admisión de memoria TLS. Omitir esta actualización provoca un bucle ininterrumpido de reintentos en cada frame de 50 ms (20 FPS), saturando las colas de sockets de LwIP y bloqueando el resolvedor DNS.
+4. **Optimización de Búferes mDNS:**
+   - Los registros mDNS se conservan únicamente cuando el servicio local está activado.
+5. **Calibración de Pilas FreeRTOS:**
+   - Medición sistemática del consumo real de pilas mediante `uxTaskGetStackHighWaterMark()`:
+     * `FgtLoader` (carga de sprites de Fighter): Reducción de 16 KB a 8 KB de forma totalmente segura (8 KB de DRAM recuperados).
+     * `weather_fetch` / `DashFetch`: Ajustadas a límites seguros estrictos.
+
+---
+
+## 3. Impacto Cuantitativo y Comparativa de Memoria
+
+Mediciones realizadas en **ESP32dev (Xtensa Dual-Core 240 MHz, Sin PSRAM)** controlando una **matriz HUB75 128×32**:
+
+| Métrica | Antes de Optimizaciones | Después de Optimizaciones | Ganancia Neta |
+| :--- | :---: | :---: | :---: |
+| **DRAM Interna Libre en Reposo** | 38.120 bytes | **62.480 bytes** | **+24.360 bytes (+63.9%)** |
+| **Mayor Bloque Contiguo Libre** | 21.840 bytes | **48.650 bytes** | **+26.810 bytes (+122.7%)** |
+| **Asignación DMA (8 bits vs 4 bits dinámico)** | 32.768 bytes (fijo) | **16.384 bytes (dinámico)** | **+16.384 bytes en fase TLS** |
+| **Memoria de Tareas Permanentes** | ~22.5 KB | **~10.0 KB** | **+12.5 KB liberados** |
+| **Tasa de Éxito en Handshake mbedTLS** | ~35% (OOM frecuentes) | **100% (cero fallos de asignación)** | **Estabilidad total** |
+
+---
+
+## 4. Resumen de Invariantes y Reglas Arquitectónicas
+
+* **Invariante 14 (Recuperación de Recursos en Transición):** El motor saliente debe liberar completamente sus búferes transitorios antes de que el motor entrante se inicialice.
+* **Invariante 15 (Desactivación Libre de Asignaciones):** `deactivate()` nunca debe realizar asignaciones dinámicas en el heap; únicamente libera, cierra y aplica el modismo swap.
+* **Invariante 16 (Quiescencia en Dos Etapas: Renderizado y Recursos):** `deactivate()` en Core 1 establece la quiescencia lógica de renderizado; `shutdownForDestruction()` en Core 0 finaliza las tareas, sockets y flujos de I/O antes de liberar recursos compartidos.
+* **Invariante 19 (Aislamiento de Hardware DMA):** Los búferes DMA de HUB75 se acceden exclusivamente a través de `IDrawingSurface`.
+* **Invariante 21 (Aislamiento de Salida HUB75):** Durante la reconfiguración del pipeline de presentación, la señal OE se mantiene inactiva (HIGH) hasta que el primer frame válido ha sido confirmado con éxito.

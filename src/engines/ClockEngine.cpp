@@ -1,4 +1,5 @@
 #include "ClockEngine.h"
+#include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "clocks/ArcadeClock.h"
 #include "clocks/CyberpunkClock.h"
@@ -21,7 +22,7 @@ ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), curren
     currentTime = {10, 42, 00};
 }
 
-ClockEngine::ClockEngine(MatrixPanel_I2S_DMA* display) : matrixDisplay(display), activeFace(nullptr), currentTheme(THEME_NONE) {
+ClockEngine::ClockEngine(IDrawingSurface* display) : matrixDisplay(display), activeFace(nullptr), currentTheme(THEME_NONE) {
     currentTime = {10, 42, 00};
 }
 
@@ -42,43 +43,54 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
     currentTheme = theme;
     
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) CyberpunkClock(matrixDisplay, config);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) FlipClock(matrixDisplay, config);
     } else if (theme == 22) {
-        activeFace = new PongClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PongClock(matrixDisplay, config);
     } else if (theme == 23) {
-        activeFace = new TetrisClock(matrixDisplay, false, config); // Normal Tetris
+        activeFace = new (std::nothrow) TetrisClock(matrixDisplay, false, config); // Normal Tetris
     } else if (theme == 29) {
-        activeFace = new TetrisClock(matrixDisplay, true, config); // Gameboy Tetris
+        activeFace = new (std::nothrow) TetrisClock(matrixDisplay, true, config); // Gameboy Tetris
     } else if (theme == 24) {
-        activeFace = new WordClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) WordClock(matrixDisplay, config);
     } else if (theme == 25) {
-        activeFace = new BinaryClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) BinaryClock(matrixDisplay, config);
     } else if (theme == 26) {
-        activeFace = new PacmanClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PacmanClock(matrixDisplay, config);
     } else if (theme == 27) {
-        activeFace = new VersusClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) VersusClock(matrixDisplay, config);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) MatrixRainClock(matrixDisplay, config);
     } else if (theme == 28) {
-        activeFace = new SlotMachineClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) SlotMachineClock(matrixDisplay, config);
     } else if (theme == 30) {
-        activeFace = new MarioClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) MarioClock(matrixDisplay, config);
     } else if (theme == 31) {
-        activeFace = new CastleClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) CastleClock(matrixDisplay, config);
     } else if (theme == 32) {
-        activeFace = new PokedexClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) PokedexClock(matrixDisplay, config);
     } else if (theme == 33) {
-        activeFace = new WorldMapClock(matrixDisplay, config);
+        activeFace = new (std::nothrow) WorldMapClock(matrixDisplay, config);
     } else if (theme == 37) {
-        activeFace = new WordsClockFace(matrixDisplay, config);
+        activeFace = new (std::nothrow) WordsClockFace(matrixDisplay, config);
     } else if (theme == 34) {
-        activeFace = new PacmanClock(matrixDisplay, config, true);   // Ms Pac-Man
+        activeFace = new (std::nothrow) PacmanClock(matrixDisplay, config, true);   // Ms Pac-Man
     } else {
-        ArcadeClock* arcade = new ArcadeClock(matrixDisplay, config);
-        arcade->setTheme(theme);
-        activeFace = arcade;
+        ArcadeClock* arcade = new (std::nothrow) ArcadeClock(matrixDisplay, config);
+        if (arcade) {
+            arcade->setTheme(theme);
+            activeFace = arcade;
+        }
+    }
+
+    if (!activeFace) {
+        LOGW("ClockEngine", "Failed to allocate clock theme %d, falling back to basic ArcadeClock", (int)theme);
+        ArcadeClock* fallback = new (std::nothrow) ArcadeClock(matrixDisplay, config);
+        if (fallback) {
+            fallback->setTheme(THEME_NONE);
+            activeFace = fallback;
+        }
     }
     
     if (activeFace) {
@@ -123,11 +135,11 @@ void ClockEngine::updateFormatMode(const EngineConfig* config) {
 // =========================================================
 
 EngineError ClockEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrixDisplay = context ? context->getMatrix() : nullptr;
+    matrixDisplay = context ? context->getSurface() : nullptr;
     currentConfig = config;
     updateFormatMode(config);
     int theme = config ? config->getInt("clock_theme", config->getInt("theme", 0)) : 0;
-    setTheme(static_cast<PublisherTheme>(theme), true, config);
+    currentTheme = static_cast<PublisherTheme>(theme);
     return EngineError::OK;
 }
 
@@ -140,6 +152,9 @@ bool ClockEngine::hasNewFrame() const {
 }
 
 void ClockEngine::activate() {
+    if (!activeFace) {
+        setTheme(currentTheme, true, currentConfig);
+    }
     if (activeFace) activeFace->onActivated();
     // Clock is active, maybe reset time fetcher
 }
@@ -177,27 +192,34 @@ void ClockEngine::update(EngineContext* context) {
     }
     if (activeFace) {
         activeFace->draw(currentTime);
-        activeFace->update();
     }
 }
 
 void ClockEngine::render(EngineContext* context) {
     if (activeFace) {
-        activeFace->draw(currentTime);
+        activeFace->update();
     }
 }
 
 void ClockEngine::deactivate() {
-    // Cleanup if needed
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+        LOGI("ClockEngine", "Deallocated active clock face on deactivate.");
+    }
 }
 
 void ClockEngine::onConfigChanged(const EngineConfig* config) {
     if (config) {
         currentConfig = config;
-        configDirty = true;
         updateFormatMode(config);
         int theme = config->getInt("clock_theme", config->getInt("theme", 0));
-        setTheme(static_cast<PublisherTheme>(theme), true, config);
+        currentTheme = static_cast<PublisherTheme>(theme);
+        if (activeFace) {
+            setTheme(currentTheme, true, config);
+        } else {
+            configDirty = true;
+        }
     }
 }
 
@@ -212,11 +234,15 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     clockDesc.metadata = {"clock", "Clock", "info", FIRMWARE_VERSION};
     clockDesc.capabilities.realtime = true;
     clockDesc.requirements.needsAudio = false;
+    clockDesc.requirements.targetFps = 60;
+    clockDesc.requirements.prefersDoubleBuffer = true;
+    clockDesc.requirements.supportsSingleBuffer = true;
+    clockDesc.requirements.internalPersistentBytes = 4000;
     clockDesc.schema.fields = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "system", false, "", "", "", "system:System (General),%H:%M:%S:24 Hours with seconds (%H:%M:%S),%H:%M:24 Hours without seconds (%H:%M),%I:%M:%S %p:12 Hours with seconds (%I:%M:%S %p),%I:%M %p:12 Hours without seconds (%I:%M %p)", "", false, "", ValidationPolicy::Accept),
         ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "clock_theme!=30,31,32,33,37", ValidationPolicy::FallbackDefault),
-        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_speed", ConfigType::INTEGER, "Animation Speed", "Animation speed in percent (Tetris block fall, Pac-Man sweep); lower is slower", "100", false, "25", "300", "25", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),

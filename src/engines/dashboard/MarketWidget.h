@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <vector>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "DashboardData.h"
 
 /**
@@ -10,5 +10,5 @@ class MatrixPanel_I2S_DMA;
  */
 class MarketWidget {
 public:
-    static void render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme);
+    static void render(IDrawingSurface* matrix, const Rect& rect, const std::vector<MarketItem>& items, const DashboardTheme& theme);
 };

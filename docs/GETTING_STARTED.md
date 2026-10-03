@@ -113,7 +113,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 The firmware needs an external SD card (wired per `docs/WIRING.md`, chip-select on GPIO 5 by
 default - see `SD_CS_PIN` in `src/main.cpp`) for:
 - `/config.json` — your Wi-Fi/matrix/theme settings (auto-generated with defaults on first boot if
-  missing; edit it directly on the card, or via the web UI's `/api/settings` once Wi-Fi is up).
+  missing; edit it directly on the card, or via the web UI once Wi-Fi is up).
 - `/gifs/`, playlists of `.gif`/`.raw`/`.png` assets (see `docs/ARCHITECTURE.md` §4 for the format
   differences between the three).
 - `/fighters_32/` or `/fighters_64/` — MUGEN-derived `.fgt` sprite sheets (see
@@ -126,22 +126,23 @@ reformatted from exFAT to FAT32).
 
 ## 7. Running the test suite
 
+ArcadeMatrix features both fast native host-side unit tests and on-target hardware suites:
+
+### Native Host Unit Tests (Recommended during development)
+Instantly compiles and executes the core architecture suites on your host machine (macOS / Linux) in under 1 second without needing physical hardware:
 ```bash
+python3 scripts/run_native_tests.py
+```
+Validates SRSW Triple-Buffer atomic state machines, `DisplayArbiter` preemption, `CompatibilityEvaluator` reference baselines, and end-to-end engine transition invariants.
+
+### PlatformIO Embedded Test Suites
+```bash
+# Compile-only verification (same as CI):
+pio test -e esp32dev --without-uploading --without-testing
+
+# Flash and execute on physical hardware attached via USB:
 pio test -e esp32dev
 ```
-
-**Important caveat**: `test/test_core/test_core.cpp` (like every suite under `test/`) is an **on-target** Unity test - it
-compiles against the real ESP32 Arduino core (`WiFi.h`, `FS.h`, etc.) and must be **uploaded to a
-physical board** to execute (PlatformIO flashes it, then reads pass/fail results back over serial).
-There is currently no hardware-independent ("native"/host) test target for this firmware - see
-`docs/ARCHITECTURE.md` and `docs/DEVELOPER.md` for why (the codebase leans on ESP32-specific APIs
-like `SD.h`/`WiFi.h` throughout, which don't have drop-in desktop equivalents without a larger
-mocking effort). This is also why CI (`.github/workflows/build.yml`) only **compiles** the test
-target (`pio test -e <env> --without-uploading --without-testing`) rather than executing it -
-GitHub Actions runners don't have a physical ESP32 attached, but a compile-only pass still catches
-build regressions (stale includes, broken signatures, etc.) on every push/PR. If you have a board
-connected locally, plain `pio test -e esp32dev` (no flags) is the right command to actually flash
-and run it.
 
 ## Troubleshooting
 

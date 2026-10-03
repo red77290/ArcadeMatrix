@@ -4,8 +4,8 @@
 #include "../../core/I18n.h"
 #include "../../hal/HardwareHAL.h"
 #include "../../api/YahooFinanceProvider.h"
+#include "../../core/net/SecureHttpClient.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include "../../core/NetworkBudget.h"
 #include <ArduinoJson.h>
@@ -106,6 +106,7 @@ DashboardDataProvider::DashboardDataProvider()
     : m_weatherProvider(nullptr),
       m_fetchTaskHandle(nullptr),
       m_taskRunning(false),
+      m_taskExited(true),
       m_isActive(false),
       m_forceFetchWeather(false),
       m_forceFetchMarkets(false),
@@ -141,7 +142,19 @@ DashboardDataProvider::DashboardDataProvider()
 }
 
 DashboardDataProvider::~DashboardDataProvider() {
-    stop();
+    // Destructor safety barrier (Anti-UAF):
+    // In normal operation, shutdown() has already completed on Core 0
+    // and m_taskExited is true (0 ms wait). If called directly or quarantined destruction
+    // was bypassed, we must guarantee the worker is dead before deleting m_weatherProvider.
+    if (m_fetchTaskHandle && !m_taskExited.load(std::memory_order_acquire)) {
+        m_isActive.store(false, std::memory_order_release);
+        m_taskRunning.store(false, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+        while (!m_taskExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_fetchTaskHandle = nullptr;
+    }
     if (m_weatherProvider) {
         delete m_weatherProvider;
         m_weatherProvider = nullptr;
@@ -157,9 +170,10 @@ void DashboardDataProvider::initialize(IWeatherProvider* weatherProvider) {
 }
 
 void DashboardDataProvider::start() {
-    if (m_taskRunning) return;
-    m_taskRunning = true;
-    m_isActive = true;
+    if (m_taskRunning.load(std::memory_order_acquire)) return;
+    m_taskRunning.store(true, std::memory_order_release);
+    m_taskExited.store(false, std::memory_order_release);
+    m_isActive.store(true, std::memory_order_release);
 
     BaseType_t res = xTaskCreatePinnedToCore(
         fetchTaskStatic,
@@ -173,28 +187,42 @@ void DashboardDataProvider::start() {
 
     if (res != pdPASS) {
         LOGE("Dashboard", "Failed to create DashFetch background task!");
-        m_taskRunning = false;
+        m_taskRunning.store(false, std::memory_order_release);
+        m_taskExited.store(true, std::memory_order_release);
         m_fetchTaskHandle = nullptr;
     } else {
         LOGI("Dashboard", "DashFetch task spawned successfully on Core 0.");
     }
 }
 
-void DashboardDataProvider::stop() {
-    m_isActive = false;
-    m_taskRunning = false;
+void DashboardDataProvider::deactivate() {
+    // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
+    m_isActive.store(false, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+}
+
+bool DashboardDataProvider::shutdown() {
+    m_isActive.store(false, std::memory_order_release);
+    m_taskRunning.store(false, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 
     if (m_fetchTaskHandle) {
-        int timeoutMs = 500;
-        while (m_fetchTaskHandle != nullptr && timeoutMs > 0) {
+        for (int i = 0; i < 30 && !m_taskExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            timeoutMs -= 10;
         }
-        if (m_fetchTaskHandle) {
-            vTaskDelete(m_fetchTaskHandle);
+        if (m_taskExited.load(std::memory_order_acquire)) {
             m_fetchTaskHandle = nullptr;
+            return true;
+        } else {
+            LOGW("Dashboard", "DashFetch task did not exit within 300ms cooperative window");
+            return false;
         }
     }
+    return true;
+}
+
+void DashboardDataProvider::stop() {
+    shutdown();
 }
 
 void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, const String& weatherApiKey, const String& weatherCity, const String& weatherUnits) {
@@ -293,10 +321,12 @@ void DashboardDataProvider::fetchTaskLoop() {
     // Core 0 background preload of any existing icons on SD card (zero impact on Core 1)
     preloadIconsFromSd();
 
-    vTaskDelay(pdMS_TO_TICKS(4000)); // Delay initial network queries so boot settles
+    for (int i = 0; i < 40 && m_taskRunning.load(std::memory_order_acquire); i++) {
+        vTaskDelay(pdMS_TO_TICKS(100)); // Delay initial network queries so boot settles
+    }
 
-    while (m_taskRunning) {
-        if (m_isActive && WiFi.status() == WL_CONNECTED) {
+    while (m_taskRunning.load(std::memory_order_acquire)) {
+        if (m_isActive.load(std::memory_order_acquire) && WiFi.status() == WL_CONNECTED) {
             uint32_t now = millis();
             uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
 
@@ -309,15 +339,19 @@ void DashboardDataProvider::fetchTaskLoop() {
                 LOGI("Dashboard", "Executing sequential synchronized data fetch (interval=%d min)...", m_config.refreshIntervalMin);
 
                 // 1. Fetch Weather first
-                if (m_config.showWeather && m_isActive) {
+                if (m_config.showWeather && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchWeather();
-                    vTaskDelay(pdMS_TO_TICKS(500)); // Yield to let Core 0 network memory settle
+                    for (int i = 0; i < 5 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100)); // Yield to let Core 0 network memory settle
+                    }
                 }
 
                 // 2. Fetch Market items strictly one by one
-                if (m_config.showMarkets && m_isActive) {
+                if (m_config.showMarkets && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchMarkets();
-                    vTaskDelay(pdMS_TO_TICKS(300));
+                    for (int i = 0; i < 3 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
                 }
 
                 LOGI("Dashboard", "Sequential data fetch completed. Next refresh in %d min.", m_config.refreshIntervalMin);
@@ -332,10 +366,14 @@ void DashboardDataProvider::fetchTaskLoop() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Responsive sleep in slices to acknowledge cooperative shutdown promptly
+        for (int i = 0; i < 10 && m_taskRunning.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 
-    m_fetchTaskHandle = nullptr;
+    m_taskRunning.store(false, std::memory_order_release);
+    m_taskExited.store(true, std::memory_order_release);
 }
 
 void DashboardDataProvider::updateWorldTimes(const String& clocks) {
@@ -428,20 +466,6 @@ void DashboardDataProvider::updateWorldTimes(const String& clocks) {
 void DashboardDataProvider::fetchWeather() {
     if (WiFi.status() != WL_CONNECTED) return;
 
-    // Serialize the whole weather fetch (geocode + forecast, both TLS) against every other TLS
-    // user in the system. See BinanceProvider.cpp / HardwareHAL::begin() for why: mbedTLS's
-    // ~32KB combined record buffers must stay in internal DRAM only on this board (PSRAM would
-    // corrupt the HUB75 display), so overlapping handshakes compound peak internal DRAM demand.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        if (tlsLock.isDeniedByBudget()) {
-            LOGW("Dashboard", "Skipping weather fetch: internal DRAM budget denied TLS admission.");
-        } else {
-            LOGW("Dashboard", "Skipping weather fetch: another TLS handshake is in progress.");
-        }
-        return;
-    }
-
     String apiKey;
     String city;
     String lang;
@@ -479,48 +503,32 @@ void DashboardDataProvider::fetchWeather() {
     float lat = 48.8566f;
     float lon = 2.3522f;
 
-    if (!city.equalsIgnoreCase("Paris") && NetworkBudget::canStartTlsSession()) {
-        WiFiClientSecure geoClient;
-        geoClient.setInsecure();
-        HTTPClient geoHttp;
-        geoHttp.setTimeout(3000);
+    net::SecureHttpOptions options;
+    options.requestTimeoutMs = 3000;
+    options.handshakeTimeoutSec = 4;
+
+    if (!city.equalsIgnoreCase("Paris")) {
         String encCity = city;
         encCity.trim();
         encCity.replace(" ", "%20");
         String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=" + lang + "&format=json";
-        if (geoHttp.begin(geoClient, geoUrl)) {
-            int code = geoHttp.GET();
-            if (code == 200) {
-                DynamicJsonDocument geoDoc(2048);
-                if (deserializeJson(geoDoc, geoHttp.getStream()) == DeserializationError::Ok) {
-                    if (geoDoc["results"].is<JsonArray>() && geoDoc["results"].size() > 0) {
-                        lat = geoDoc["results"][0]["latitude"].as<float>();
-                        lon = geoDoc["results"][0]["longitude"].as<float>();
-                    }
+        auto geoRes = net::SecureHttpClient::get(geoUrl, options);
+        if (geoRes.ok()) {
+            DynamicJsonDocument geoDoc(2048);
+            if (deserializeJson(geoDoc, geoRes.stream()) == DeserializationError::Ok) {
+                if (geoDoc["results"].is<JsonArray>() && geoDoc["results"].size() > 0) {
+                    lat = geoDoc["results"][0]["latitude"].as<float>();
+                    lon = geoDoc["results"][0]["longitude"].as<float>();
                 }
             }
-            geoHttp.end();
-            geoClient.stop();
         }
     }
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("Dashboard", "Skipping weather fetch: internal heap too low (free=%u, largest=%u).",
-             (unsigned)NetworkBudget::freeInternal(),
-             (unsigned)NetworkBudget::largestInternalBlock());
-        return;
-    }
-
-    WiFiClientSecure metClient;
-    metClient.setInsecure();
-    HTTPClient metHttp;
-    metHttp.setTimeout(3000);
     String metUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat, 4) + "&longitude=" + String(lon, 4) + "&current=temperature_2m,weather_code";
-    if (metHttp.begin(metClient, metUrl)) {
-        int code = metHttp.GET();
-        if (code == 200) {
-            DynamicJsonDocument metDoc(2048);
-            if (deserializeJson(metDoc, metHttp.getStream()) == DeserializationError::Ok) {
+    auto metRes = net::SecureHttpClient::get(metUrl, options);
+    if (metRes.ok()) {
+        DynamicJsonDocument metDoc(2048);
+        if (deserializeJson(metDoc, metRes.stream()) == DeserializationError::Ok) {
                 float temp = metDoc["current"]["temperature_2m"].as<float>();
                 int wCode = metDoc["current"]["weather_code"].as<int>();
 
@@ -550,10 +558,7 @@ void DashboardDataProvider::fetchWeather() {
                 LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s)", wd.temp, wd.description.c_str());
             }
         }
-        metHttp.end();
-        metClient.stop();
     }
-}
 
 bool DashboardDataProvider::loadIconFromSd(const String& path, uint16_t outPixels[64]) {
     if (!outPixels) return false;
@@ -653,66 +658,51 @@ bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const 
     }
 
     // If HTTP failed (e.g. proxy redirected or blocked), try https://wsrv.nl fallback
-    if (!success && NetworkBudget::canStartTlsSession()) {
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            if (tlsLock.isDeniedByBudget()) {
-                LOGW("Dashboard", "Skipping HTTPS icon fallback: internal DRAM budget denied TLS admission.");
-            } else {
-                LOGW("Dashboard", "Skipping HTTPS icon fallback: another TLS handshake is in progress.");
-            }
-            return false;
-        }
-        WiFiClientSecure secureClient;
-        secureClient.setInsecure();
+    if (!success) {
         String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
-        HTTPClient secureHttp;
-        secureHttp.setTimeout(4000);
-        secureHttp.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.1");
-        if (secureHttp.begin(secureClient, secureProxyUrl)) {
-            int code = secureHttp.GET();
-            if (code == 200) {
-                int len = secureHttp.getSize();
-                if (len > 0 && len < 12000) {
-                    std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
-                    if (iconData) {
-                        WiFiClientSecure* stream = static_cast<WiFiClientSecure*>(secureHttp.getStreamPtr());
-                        size_t totalRead = 0;
-                        uint32_t startMs = millis();
-                        while (totalRead < (size_t)len && (millis() - startMs < 3000)) {
-                            size_t avail = stream->available();
-                            if (avail > 0) {
-                                size_t toRead = std::min(avail, (size_t)len - totalRead);
-                                int bytesRead = stream->read(iconData.get() + totalRead, toRead);
-                                if (bytesRead > 0) totalRead += bytesRead;
-                            } else {
-                                vTaskDelay(pdMS_TO_TICKS(10));
-                            }
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 4000;
+        options.userAgent = "Mozilla/5.0 ArcadeMatrix/3.1";
+        auto response = net::SecureHttpClient::get(secureProxyUrl, options);
+        if (response.ok()) {
+            size_t len = response.contentLength();
+            if (len > 0 && len < 12000) {
+                std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
+                if (iconData) {
+                    Stream& stream = response.stream();
+                    size_t totalRead = 0;
+                    uint32_t startMs = millis();
+                    while (totalRead < len && (millis() - startMs < 3000)) {
+                        size_t avail = stream.available();
+                        if (avail > 0) {
+                            size_t toRead = std::min(avail, len - totalRead);
+                            int bytesRead = stream.readBytes(reinterpret_cast<char*>(iconData.get() + totalRead), toRead);
+                            if (bytesRead > 0) totalRead += bytesRead;
+                        } else {
+                            vTaskDelay(pdMS_TO_TICKS(10));
                         }
-                        if (totalRead == (size_t)len) {
-                            SdLockGuard guard(pdMS_TO_TICKS(2000));
-                            if (guard) {
-                                int lastSlash = destPath.lastIndexOf('/');
-                                if (lastSlash > 0) {
-                                    String dir = destPath.substring(0, lastSlash);
-                                    if (!sd.exists(dir)) sd.mkdir(dir);
-                                }
-                                FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
-                                if (f) {
-                                    f.write(iconData.get(), totalRead);
-                                    f.close();
-                                    success = true;
-                                    LOGI("Dashboard", "Saved HTTPS icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
-                                }
-                            } else {
-                                LOGW("Dashboard", "Could not acquire SD lock to save HTTPS icon: %s (timeout)", destPath.c_str());
+                    }
+                    if (totalRead == len) {
+                        SdLockGuard guard(pdMS_TO_TICKS(2000));
+                        if (guard) {
+                            int lastSlash = destPath.lastIndexOf('/');
+                            if (lastSlash > 0) {
+                                String dir = destPath.substring(0, lastSlash);
+                                if (!sd.exists(dir)) sd.mkdir(dir);
                             }
+                            FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
+                            if (f) {
+                                f.write(iconData.get(), totalRead);
+                                f.close();
+                                success = true;
+                                LOGI("Dashboard", "Saved HTTPS icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
+                            }
+                        } else {
+                            LOGW("Dashboard", "Could not acquire SD lock to save HTTPS icon: %s (timeout)", destPath.c_str());
                         }
                     }
                 }
             }
-            secureHttp.end();
-            secureClient.stop();
         }
     }
 
@@ -917,33 +907,17 @@ void DashboardDataProvider::fetchMarkets() {
 
         // 1. Check Binance (fast crypto API)
         {
-            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-            if (!tlsLock) {
-                if (tlsLock.isDeniedByBudget()) {
-                    LOGW("Dashboard", "Skipping Binance quote for %s: internal DRAM budget denied TLS admission.", sym.c_str());
-                } else {
-                    LOGW("Dashboard", "Skipping Binance quote for %s: another TLS handshake is in progress.", sym.c_str());
+            net::SecureHttpOptions options;
+            options.requestTimeoutMs = 2500;
+            String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
+            auto response = net::SecureHttpClient::get(url, options);
+            if (response.ok()) {
+                DynamicJsonDocument doc(1024);
+                if (deserializeJson(doc, response.stream()) == DeserializationError::Ok) {
+                    fetchedPrice = doc["lastPrice"].as<float>();
+                    fetchedChange = doc["priceChangePercent"].as<float>();
+                    fetchSuccess = true;
                 }
-            } else {
-                WiFiClientSecure binanceClient;
-                binanceClient.setInsecure();
-                HTTPClient http;
-                http.setTimeout(2500);
-                String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
-
-                if (http.begin(binanceClient, url)) {
-                    int code = http.GET();
-                    if (code == 200) {
-                        DynamicJsonDocument doc(1024);
-                        if (deserializeJson(doc, http.getStream()) == DeserializationError::Ok) {
-                            fetchedPrice = doc["lastPrice"].as<float>();
-                            fetchedChange = doc["priceChangePercent"].as<float>();
-                            fetchSuccess = true;
-                        }
-                    }
-                    http.end();
-                }
-                binanceClient.stop();
             }
         }
 
