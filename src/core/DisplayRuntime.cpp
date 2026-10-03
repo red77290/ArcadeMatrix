@@ -264,8 +264,12 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
     }
 
     // CASE 4: REPLACE
+    const bool isInternalRotationSwitch = (decision.sourceId == DisplaySourceId::ROTATION && m_session.sourceId == DisplaySourceId::ROTATION);
+
     if (oldEngine && !sameEngine) {
-        oldEngine->deactivate();
+        if (!isInternalRotationSwitch) {
+            oldEngine->deactivate();
+        }
     }
     // If replacing baseline without preemption, unwind any orphaned preemption entries safely
     if (!decision.preemptive && m_preemptionDepth > 0) {
@@ -278,8 +282,10 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         m_preemptionDepth = 0;
     }
     if (targetEngine && !sameEngine) {
-        maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
-        targetEngine->activate();
+        if (!isInternalRotationSwitch) {
+            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
+            targetEngine->activate();
+        }
     }
     m_session.sessionId = ++m_sessionCounter;
     m_session.sourceId = decision.sourceId;

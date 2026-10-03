@@ -1059,8 +1059,8 @@ EngineDescriptor CryptoEngineDescriptorHandler::getDescriptor() const {
     desc_crypto.requirements.needsTls = true;
     desc_crypto.requirements.targetFps = 30;
     desc_crypto.requirements.supportsSingleBuffer = true;
-    desc_crypto.requirements.internalPersistentBytes = 12000;
-    desc_crypto.requirements.internalContiguousBytes = 16000;
+    desc_crypto.requirements.internalPersistentBytes = 2048;
+    desc_crypto.requirements.internalContiguousBytes = 8192;
     desc_crypto.requirements.psramBytes = 0;
     desc_crypto.schema.fields = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated crypto symbols (e.g. BTC, ETH) or CoinGecko IDs (e.g. zelcash, ergo)", "BTC,ETH,SOL", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),

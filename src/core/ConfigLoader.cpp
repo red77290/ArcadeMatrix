@@ -740,7 +740,6 @@ bool ConfigLoader::saveToSD(const char* filepath) {
             }
         }
         mgr.workingSet().syncWithPlaylist(rotation);
-        instances = mgr.workingSet().getCachedInstances();
     }
     publishSnapshot();
     SdLockGuard lock(pdMS_TO_TICKS(3000));

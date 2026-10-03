@@ -25,6 +25,19 @@
 #ifdef MOTOLONG
 #undef MOTOLONG
 #endif
+#include <JPEGDEC.h>
+#ifdef INTELSHORT
+#undef INTELSHORT
+#endif
+#ifdef INTELLONG
+#undef INTELLONG
+#endif
+#ifdef MOTOSHORT
+#undef MOTOSHORT
+#endif
+#ifdef MOTOLONG
+#undef MOTOLONG
+#endif
 #endif
 
 IconService iconService;
@@ -61,6 +74,24 @@ static int iconPngDrawCallback(PNGDRAW* pDraw) {
     }
     return 1;
 }
+
+static int iconJpegDrawCallback(JPEGDRAW* pDraw) {
+    if (!s_targetBuf || s_targetW <= 0 || s_targetH <= 0) return 0;
+    int srcW = pDraw->iWidth;
+    int srcH = (s_srcH > 0) ? s_srcH : s_targetH;
+
+    for (int y = 0; y < pDraw->iHeight; y++) {
+        int targetY = ((pDraw->y + y) * s_targetH) / srcH;
+        if (targetY < 0 || targetY >= s_targetH) continue;
+        for (int x = 0; x < srcW; x++) {
+            int targetX = ((pDraw->x + x) * s_targetW) / srcW;
+            if (targetX >= 0 && targetX < s_targetW) {
+                s_targetBuf[targetY * s_targetW + targetX] = pDraw->pPixels[y * srcW + x];
+            }
+        }
+    }
+    return 1;
+}
 #endif
 
 String IconService::sanitizeSymbol(const String& symbol) {
@@ -78,7 +109,21 @@ String IconService::sanitizeSymbol(const String& symbol) {
 
 String IconService::getSdPath(const char* category, const String& symbol) {
     String safe = sanitizeSymbol(symbol);
-    return "/" + String(category) + "_icons/" + safe + ".png";
+    String basePath = "/" + String(category) + "_icons/" + safe;
+#if defined(ARDUINO)
+    SdLockGuard guard(pdMS_TO_TICKS(500));
+    if (guard) {
+        if (sd.exists((basePath + ".png").c_str())) return basePath + ".png";
+        if (sd.exists((basePath + ".jpg").c_str())) return basePath + ".jpg";
+    }
+#if defined(ESP32)
+    return basePath + (psramFound() ? ".png" : ".jpg");
+#else
+    return basePath + ".jpg";
+#endif
+#else
+    return basePath + ".png";
+#endif
 }
 
 bool IconService::hasIconOnSd(const char* category, const String& symbol) const {
@@ -137,14 +182,15 @@ bool IconService::downloadIconToSd(const char* category, const String& symbol, c
     for (const auto& candUrl : candidates) {
         esp_task_wdt_reset();
 
-        String proxyUrl = "http://images.weserv.nl/?url=" + candUrl + "&w=" + String(width) + "&h=" + String(height) + "&output=png";
+        const char* outFormat = psramFound() ? "png" : "jpg";
+        String proxyUrl = "http://images.weserv.nl/?url=" + candUrl + "&w=" + String(width) + "&h=" + String(height) + "&output=" + outFormat;
         LOGI("IconService", "Downloading %s icon for %s via proxy: %s", category, symbol.c_str(), proxyUrl.c_str());
 
         if (http.begin(client, proxyUrl)) {
             int code = http.GET();
             if (code == 200) {
                 int len = http.getSize();
-                if (len > 0 && len < 16384) {
+                if (len < 16384) {
                     SdLockGuard guard(pdMS_TO_TICKS(1500));
                     if (guard) {
                         String dir = "/" + String(category) + "_icons";
@@ -154,10 +200,14 @@ bool IconService::downloadIconToSd(const char* category, const String& symbol, c
                         String sdPath = getSdPath(category, symbol);
                         FsFile f = sd.open(sdPath.c_str(), FILE_OPEN_WRITE);
                         if (f) {
-                            http.writeToStream(&f);
+                            int written = http.writeToStream(&f);
                             f.close();
-                            downloaded = true;
-                            LOGI("IconService", "Saved %s icon for %s to %s (%d bytes)", category, symbol.c_str(), sdPath.c_str(), len);
+                            if (written > 0) {
+                                downloaded = true;
+                                LOGI("IconService", "Saved %s icon for %s to %s (%d bytes)", category, symbol.c_str(), sdPath.c_str(), written);
+                            } else {
+                                sd.remove(sdPath.c_str());
+                            }
                         }
                     }
                 }
@@ -208,16 +258,51 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
         return false;
     }
 
-    // Invariant: PNGdec allocates ~45KB internally; verify contiguous DRAM headroom
-    const size_t reqPngHeap = sizeof(PNG) + 1024;
-    if (ESP.getMaxAllocHeap() < reqPngHeap) {
-        LOGW("IconService", "Skipping decode for %s:%s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
-             category, symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)reqPngHeap);
+    bool success = false;
+
+    // 1. Check if file is JPEG (header 0xFF 0xD8)
+    if (size >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
+        auto* jpg = new (std::nothrow) JPEGDEC();
+        if (jpg) {
+            memset(outPixels, 0, width * height * sizeof(uint16_t));
+            s_targetBuf = outPixels;
+            s_targetW = width;
+            s_targetH = height;
+            if (jpg->openRAM(buf, size, iconJpegDrawCallback)) {
+                s_srcW = jpg->getWidth();
+                s_srcH = jpg->getHeight();
+                if (jpg->decode(0, 0, 0)) {
+                    success = true;
+                    LOGI("IconService", "Successfully decoded %dx%d JPEG icon for %s (%s, src=%dx%d)",
+                         width, height, symbol.c_str(), category, s_srcW, s_srcH);
+                }
+                jpg->close();
+            }
+            delete jpg;
+            s_targetBuf = nullptr;
+        }
         free(buf);
-        return false;
+        return success;
     }
 
-    PNG* png = new (std::nothrow) PNG();
+    // 2. Decode as PNG
+    PNG* png = nullptr;
+#if defined(ESP32)
+    if (psramFound()) {
+        void* mem = heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (mem) png = new (mem) PNG();
+    }
+#endif
+    if (!png) {
+        const size_t reqPngHeap = sizeof(PNG) + 1024;
+        if (ESP.getMaxAllocHeap() < reqPngHeap) {
+            LOGW("IconService", "Skipping PNG decode for %s:%s: insufficient contiguous heap (largest=%u, need ~%u bytes)",
+                 category, symbol.c_str(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)reqPngHeap);
+            free(buf);
+            return false;
+        }
+        png = new (std::nothrow) PNG();
+    }
     if (!png) {
         LOGW("IconService", "Failed to allocate PNGdec for %s:%s", category, symbol.c_str());
         free(buf);
@@ -230,7 +315,6 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
     s_targetW = width;
     s_targetH = height;
 
-    bool success = false;
     int rc = png->openRAM(buf, size, iconPngDrawCallback);
     if (rc == PNG_SUCCESS) {
         s_srcW = png->getWidth();
@@ -239,7 +323,7 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
         if (s_srcW > 0 && s_srcH > 0 && s_srcW <= 256 && s_srcH <= 256) {
             png->decode(nullptr, 0);
             success = true;
-            LOGI("IconService", "Successfully decoded %dx%d icon for %s (%s, src=%dx%d)",
+            LOGI("IconService", "Successfully decoded %dx%d PNG icon for %s (%s, src=%dx%d)",
                  width, height, symbol.c_str(), category, s_srcW, s_srcH);
         } else {
             LOGW("IconService", "Invalid icon dimensions for %s:%s (%dx%d)", category, symbol.c_str(), s_srcW, s_srcH);
@@ -249,7 +333,16 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
     }
 
     png->close();
+#if defined(ESP32)
+    if (psramFound()) {
+        png->~PNG();
+        heap_caps_free(png);
+    } else {
+        delete png;
+    }
+#else
     delete png;
+#endif
     s_png = nullptr;
     s_targetBuf = nullptr;
     free(buf);

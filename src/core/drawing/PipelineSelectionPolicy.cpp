@@ -371,45 +371,50 @@ uint8_t PipelineSelectionPolicy::resolveTargetDepth(
     // 1. Operating system safety reserve (FreeRTOS kernel, ISR stacks, LwIP core, Wi-Fi driver)
     constexpr size_t SYSTEM_MIN_RESERVE = 12288; // 12 KB incompressible safety floor
 
-    // 2. Incoming engine working memory
-    size_t engineRam = (reqs.internalPersistentBytes > reqs.minFreeInternalHeapBytes)
-        ? reqs.internalPersistentBytes : reqs.minFreeInternalHeapBytes;
-    engineRam += reqs.shadowBytesPerFrame;
-    if (hasPsram) {
-        // On boards with external PSRAM, persistent engine working sets and shadow buffers
-        // reside in SPIRAM, sparing internal SRAM.
-        engineRam = 0;
-    }
-
-    // 3. Network & Cryptographic TLS admission reserve
-    size_t netReserve = 0;
+    // 2. Base admission floor & network reserve
+    // Invariant: NetworkBudget::TLS_MIN_FREE_INTERNAL (45 KB) ALREADY incorporates the OS
+    // safety floor (~14 KB) alongside the dual 16.9 KB mbedTLS record buffers and RSA BIGNUM limbs.
+    // Therefore, TLS engines use TLS_MIN_FREE_INTERNAL directly as their base floor rather than
+    // adding SYSTEM_MIN_RESERVE on top of it (preventing double-counting).
+    size_t baseSystemReserve = 0;
     size_t minContiguousNeeded = 0;
     size_t minDmaNeeded = 4096;
 
     if (reqs.needsTls) {
-        // mbedTLS needs dual in/out record buffers (~33 KB) + context & RSA BIGNUM working limbs
-        netReserve = ResourceReserve::TLS_SOCKET_ADMISSION_RESERVE; // 45,000 bytes
+        baseSystemReserve = NetworkBudget::TLS_MIN_FREE_INTERNAL; // 46,080 bytes (includes OS floor)
         minContiguousNeeded = NetworkBudget::TLS_MIN_COMBINED_BLOCK; // 28,672 bytes
         minDmaNeeded = NetworkBudget::TLS_MIN_FREE_DMA;              // 16,384 bytes
         if (reqs.internalContiguousBytes + 4096 > minContiguousNeeded) {
             minContiguousNeeded = reqs.internalContiguousBytes + 4096;
         }
     } else if (reqs.needsNetwork) {
-        // Plain network (AsyncTCP socket RX/TX buffers)
-        netReserve = ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE; // 16,000 bytes
+        baseSystemReserve = SYSTEM_MIN_RESERVE + ResourceReserve::ASYNC_TCP_ADMISSION_RESERVE; // 12,288 + 16,000 = 28,288 bytes
         minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 10240;
     } else {
-        // Pure graphics engine (Clock, Canvas, Tetris, etc.)
-        netReserve = 0;
+        baseSystemReserve = SYSTEM_MIN_RESERVE; // 12,288 bytes
         minContiguousNeeded = reqs.internalContiguousBytes > 0 ? (reqs.internalContiguousBytes + 4096) : 8192;
     }
 
-    // 4. Audio peripherals (I2S DMA ringbuffers)
+    // 3. Audio peripherals (I2S DMA ringbuffers)
     size_t audioReserve = (reqs.needsAudio || reqs.needsAudioInput || reqs.needsAudioOutput)
         ? ResourceReserve::AUDIO_DMA_RING_ADMISSION_RESERVE : 0;
 
+    // 4. Dynamic engine working memory (e.g. GifEngine AnimatedGIF decoder or delta canvas)
+    // On boards with external PSRAM, persistent engine working sets and shadow buffers reside in SPIRAM.
+    // On non-PSRAM boards, static engine objects are ALREADY deducted from currentFreeInternalHeap.
+    // Only engines with true transient dynamic heap allocations (such as GifEngine decoder) and non-TLS
+    // require additional dynamic RAM. For TLS engines, working memory is the TLS session itself.
+    size_t engineDynamicRam = 0;
+    if (!hasPsram) {
+        if (!reqs.needsTls) {
+            engineDynamicRam = (reqs.internalPersistentBytes > reqs.minFreeInternalHeapBytes)
+                ? reqs.internalPersistentBytes : reqs.minFreeInternalHeapBytes;
+            engineDynamicRam += reqs.shadowBytesPerFrame;
+        }
+    }
+
     // Total new internal DRAM required to safely run the incoming engine
-    size_t totalNewRamNeeded = SYSTEM_MIN_RESERVE + engineRam + netReserve + audioReserve;
+    size_t totalNewRamNeeded = baseSystemReserve + engineDynamicRam + audioReserve;
 
     // Query PSRAM headroom if present (ESP32-S3)
     size_t freePsram = 0;

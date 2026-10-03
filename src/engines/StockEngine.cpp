@@ -977,8 +977,8 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     desc_stock.requirements.needsTls = true;
     desc_stock.requirements.targetFps = 30;
     desc_stock.requirements.supportsSingleBuffer = true;
-    desc_stock.requirements.internalPersistentBytes = 12000;
-    desc_stock.requirements.internalContiguousBytes = 16000;
+    desc_stock.requirements.internalPersistentBytes = 2048;
+    desc_stock.requirements.internalContiguousBytes = 8192;
     desc_stock.requirements.psramBytes = 0;
     desc_stock.schema.fields = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated stock symbols", "AAPL,TSLA,NVDA", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),

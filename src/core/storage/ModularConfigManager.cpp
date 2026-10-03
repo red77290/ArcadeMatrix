@@ -76,6 +76,29 @@ bool ModularConfigManager::loadAll(ConfigLoader& config) {
     _workingSet.syncWithPlaylist(config.rotation);
     config.instances = _workingSet.getCachedInstances();
 
+    // Also load any standby configured instances from /config/instances/*.json
+    std::vector<String> files;
+    if (_storage.listFiles("/config/instances", files)) {
+        for (const auto& f : files) {
+            if (f.endsWith(".json")) {
+                String instId = f.substring(0, f.length() - 5);
+                bool alreadyIn = false;
+                for (const auto& ex : config.instances) {
+                    if (ex.instance_id == instId) {
+                        alreadyIn = true;
+                        break;
+                    }
+                }
+                if (!alreadyIn) {
+                    EngineInstance standbyInst;
+                    if (_workingSet.loadTransientInstance(instId, standbyInst)) {
+                        config.instances.push_back(standbyInst);
+                    }
+                }
+            }
+        }
+    }
+
     return true;
 }
 

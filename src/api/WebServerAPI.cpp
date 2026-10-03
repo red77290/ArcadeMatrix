@@ -860,6 +860,16 @@ void WebServerAPI::setupRoutes() {
             return;
         }
         
+        {
+            SdLockGuard sdGuard(pdMS_TO_TICKS(1500));
+            if (sdGuard) {
+                String instPath = "/config/instances/" + instanceId + ".json";
+                if (sd.exists(instPath.c_str())) {
+                    sd.remove(instPath.c_str());
+                }
+            }
+        }
+        
         // Also remove from rotation if present
         for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
             if (it->instance_id == instanceId) {
@@ -903,6 +913,16 @@ void WebServerAPI::setupRoutes() {
         if (!removed) {
             request->send(404, "application/json", "{\"error\":\"Instance not found\"}");
             return;
+        }
+        
+        {
+            SdLockGuard sdGuard(pdMS_TO_TICKS(1500));
+            if (sdGuard) {
+                String instPath = "/config/instances/" + instanceId + ".json";
+                if (sd.exists(instPath.c_str())) {
+                    sd.remove(instPath.c_str());
+                }
+            }
         }
         
         for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {

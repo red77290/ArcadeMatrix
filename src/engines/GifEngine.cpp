@@ -141,9 +141,9 @@ void GifEngine::rebuildActivePlaylists() {
     auto safeExists = [](const String& path) -> bool {
         if (path.isEmpty()) return false;
         bool exists = false;
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+        SdLockGuard guard(pdMS_TO_TICKS(1500));
+        if (guard) {
             exists = sd.exists(path.c_str());
-            xSemaphoreGive(sdMutex);
         }
         return exists;
     };
@@ -555,9 +555,9 @@ bool GifEngine::playGif(const char* filepath) {
     LOGI("GifEngine", "Trying to play: %s", path.c_str());
     
     if (path.endsWith(".raw") || path.endsWith(".RAW")) {
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+        SdLockGuard guard(pdMS_TO_TICKS(1500));
+        if (guard) {
             currentFile = sd.open(path.c_str(), FILE_OPEN_READ);
-            xSemaphoreGive(sdMutex);
         }
         if (!currentFile) {
             LOGE("GifEngine", "Failed to open RAW file: %s", path.c_str());
@@ -586,37 +586,39 @@ bool GifEngine::playGif(const char* filepath) {
     } else {
         if (m_hasPsram) {
             bool loaded = false;
-            if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
-                FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
-                if (f) {
-                    size_t fileSize = f.size();
-                    // Check if we have enough free PSRAM, leave some headroom (e.g. 500KB)
-                    if (ESP.getFreePsram() > fileSize + 512000) {
-                        psramBuffer = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
-                        if (psramBuffer) {
-                            size_t toRead = fileSize;
-                            size_t offset = 0;
-                            while (toRead > 0) {
-                                size_t chunk = (toRead > 8192) ? 8192 : toRead;
-                                size_t r = f.read(psramBuffer + offset, chunk);
-                                if (r == 0) break;
-                                offset += r;
-                                toRead -= r;
+            {
+                SdLockGuard guard(pdMS_TO_TICKS(3000));
+                if (guard) {
+                    FsFile f = sd.open(path.c_str(), FILE_OPEN_READ);
+                    if (f) {
+                        size_t fileSize = f.size();
+                        // Check if we have enough free PSRAM, leave some headroom (e.g. 500KB)
+                        if (ESP.getFreePsram() > fileSize + 512000) {
+                            psramBuffer = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
+                            if (psramBuffer) {
+                                size_t toRead = fileSize;
+                                size_t offset = 0;
+                                while (toRead > 0) {
+                                    size_t chunk = (toRead > 8192) ? 8192 : toRead;
+                                    size_t r = f.read(psramBuffer + offset, chunk);
+                                    if (r == 0) break;
+                                    offset += r;
+                                    toRead -= r;
+                                }
+                                size_t bytesRead = offset;
+                                f.close();
+                                if (bytesRead == fileSize) {
+                                    psramBufferSize = fileSize;
+                                    loaded = true;
+                                } else {
+                                    freePsramBuffer();
+                                }
                             }
-                            size_t bytesRead = offset;
+                        } else {
                             f.close();
-                            if (bytesRead == fileSize) {
-                                psramBufferSize = fileSize;
-                                loaded = true;
-                            } else {
-                                freePsramBuffer();
-                            }
                         }
-                    } else {
-                        f.close();
                     }
                 }
-                xSemaphoreGive(sdMutex);
             }
             if (loaded) {
                 if (ensureGifDecoder() && gif->open(psramBuffer, psramBufferSize, GIFDraw)) {
@@ -635,9 +637,11 @@ bool GifEngine::playGif(const char* filepath) {
         }
         // Fallback to streaming from SD card
         bool streamOpened = false;
-        if (ensureGifDecoder() && sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            streamOpened = gif->open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw);
-            xSemaphoreGive(sdMutex);
+        if (ensureGifDecoder()) {
+            SdLockGuard guard(pdMS_TO_TICKS(2000));
+            if (guard) {
+                streamOpened = gif->open(filepath, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw);
+            }
         }
         if (streamOpened && gif) {
             updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
@@ -677,7 +681,8 @@ bool GifEngine::decodePng(const char* filepath) {
         memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
     }
 
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+    SdLockGuard guard(pdMS_TO_TICKS(2000));
+    if (!guard) {
         LOGE("GifEngine", "Failed to acquire sdMutex for %s", filepath);
         return false;
     }
@@ -688,13 +693,11 @@ bool GifEngine::decodePng(const char* filepath) {
     int rc = png->open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.open() failed for %s (rc=%d)", filepath, rc);
-        xSemaphoreGive(sdMutex);
         return false;
     }
     updateFitGeometry(png->getWidth(), png->getHeight());
     rc = png->decode((void*)this, 0);
     png->close();
-    xSemaphoreGive(sdMutex);
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.decode() failed for %s (rc=%d)", filepath, rc);
         return false;
@@ -712,7 +715,8 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
             String rootP = (cleanPath == "/gifs_tate") ? "/gifs_tate" : "/gifs";
             String plJson = rootP + "/playlists.json";
             size_t beforeCount = outPaths.size();
-            if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+            SdLockGuard plGuard(pdMS_TO_TICKS(1500));
+            if (plGuard) {
                 if (sd.exists(plJson.c_str())) {
                     FsFile plFile = sd.open(plJson.c_str(), FILE_OPEN_READ);
                     if (plFile) {
@@ -1004,48 +1008,50 @@ void GifEngine::loadNextFileInPlaylist() {
         size_t totalValidEntries = 0;
         bool sdAccessOk = false;
 
-        if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
-            sdAccessOk = true;
-            if (sd.exists(indexPath.c_str())) {
-                FsFile indexFile = sd.open(indexPath.c_str(), FILE_OPEN_READ);
-                if (indexFile && indexFile.size() > 0) {
-                    char lineBuf[128];
-                    // Pass 1: Count valid lines (zero heap allocation)
-                    while (indexFile.available()) {
-                        if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
-                            totalValidEntries++;
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard) {
+                sdAccessOk = true;
+                if (sd.exists(indexPath.c_str())) {
+                    FsFile indexFile = sd.open(indexPath.c_str(), FILE_OPEN_READ);
+                    if (indexFile && indexFile.size() > 0) {
+                        char lineBuf[128];
+                        // Pass 1: Count valid lines (zero heap allocation)
+                        while (indexFile.available()) {
+                            if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
+                                totalValidEntries++;
+                            }
                         }
-                    }
 
-                    if (totalValidEntries > 0) {
-                        // Pass 2: Pick a random line and seek to it (trying up to 4 picks if recently played)
-                        size_t chosenIdx = (size_t)random(totalValidEntries);
-                        for (int retry = 0; retry < 4; retry++) {
-                            indexFile.seek(0);
-                            size_t currentValid = 0;
-                            while (indexFile.available()) {
-                                if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
-                                    if (currentValid == chosenIdx) {
-                                        strncpy(selectedFile, lineBuf, sizeof(selectedFile) - 1);
-                                        selectedFile[sizeof(selectedFile) - 1] = '\0';
-                                        break;
+                        if (totalValidEntries > 0) {
+                            // Pass 2: Pick a random line and seek to it (trying up to 4 picks if recently played)
+                            size_t chosenIdx = (size_t)random(totalValidEntries);
+                            for (int retry = 0; retry < 4; retry++) {
+                                indexFile.seek(0);
+                                size_t currentValid = 0;
+                                while (indexFile.available()) {
+                                    if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
+                                        if (currentValid == chosenIdx) {
+                                            strncpy(selectedFile, lineBuf, sizeof(selectedFile) - 1);
+                                            selectedFile[sizeof(selectedFile) - 1] = '\0';
+                                            break;
+                                        }
+                                        currentValid++;
                                     }
-                                    currentValid++;
                                 }
+                                if (totalValidEntries <= 1) break;
+                                String candidate = pPath + "/" + selectedFile;
+                                candidate.replace("//", "/");
+                                if (candidate != lastPlayedGif && !playedRecently(pathHash(candidate.c_str()), totalValidEntries)) {
+                                    break; // Found fresh pick
+                                }
+                                chosenIdx = (size_t)random(totalValidEntries);
                             }
-                            if (totalValidEntries <= 1) break;
-                            String candidate = pPath + "/" + selectedFile;
-                            candidate.replace("//", "/");
-                            if (candidate != lastPlayedGif && !playedRecently(pathHash(candidate.c_str()), totalValidEntries)) {
-                                break; // Found fresh pick
-                            }
-                            chosenIdx = (size_t)random(totalValidEntries);
                         }
+                        indexFile.close();
                     }
-                    indexFile.close();
                 }
             }
-            xSemaphoreGive(sdMutex);
         }
 
         // Single-folder directory scan fallback if index.txt is not found or empty (v3.1.0 compatibility)
@@ -1053,7 +1059,8 @@ void GifEngine::loadNextFileInPlaylist() {
         char subDirs[16][128];
         uint8_t subDirCount = 0;
         if (selectedFile[0] == '\0') {
-            if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(1500)) == pdTRUE) {
+            SdLockGuard guard(pdMS_TO_TICKS(1500));
+            if (guard) {
                 sdAccessOk = true;
                 FsFile pDir = sd.open(pPath.c_str(), FILE_OPEN_READ);
                 if (pDir && isDirectory(pDir)) {
@@ -1089,7 +1096,6 @@ void GifEngine::loadNextFileInPlaylist() {
                     pDir.close();
                     totalValidEntries = scanCount;
                 }
-                xSemaphoreGive(sdMutex);
             }
         }
 
@@ -1309,6 +1315,9 @@ int32_t GifEngine::GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
     FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
 
+    SdLockGuard guard(pdMS_TO_TICKS(100));
+    if (!guard) return 0;
+
     int32_t iBytesRead = f->read(pBuf, iLen);
     if (iBytesRead < 0) iBytesRead = 0;
     pFile->iPos = f->position();
@@ -1318,6 +1327,9 @@ int32_t GifEngine::GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
 int32_t GifEngine::GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
     FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
+
+    SdLockGuard guard(pdMS_TO_TICKS(100));
+    if (!guard) return 0;
 
     f->seek(iPosition);
     pFile->iPos = f->position();
@@ -1429,6 +1441,9 @@ int32_t GifEngine::PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen) {
     FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
 
+    SdLockGuard guard(pdMS_TO_TICKS(100));
+    if (!guard) return 0;
+
     int32_t iBytesRead = f->read(pBuf, iLen);
     pFile->iPos = f->position();
     return iBytesRead;
@@ -1437,6 +1452,9 @@ int32_t GifEngine::PNGReadFile(PNGFILE *pFile, uint8_t *pBuf, int32_t iLen) {
 int32_t GifEngine::PNGSeekFile(PNGFILE *pFile, int32_t iPosition) {
     FsFile *f = static_cast<FsFile *>(pFile->fHandle);
     if (!f || !*f) return 0;
+
+    SdLockGuard guard(pdMS_TO_TICKS(100));
+    if (!guard) return 0;
 
     f->seek(iPosition);
     pFile->iPos = f->position();
@@ -1500,9 +1518,10 @@ EngineDescriptor GifEngineDescriptorHandler::getDescriptor() const {
     desc_gifs.requirements.targetFps = 30;
     desc_gifs.requirements.prefersDoubleBuffer = true;
     desc_gifs.requirements.supportsSingleBuffer = true;
-    desc_gifs.requirements.internalPersistentBytes = 12000;
-    desc_gifs.requirements.internalContiguousBytes = 16000;
-    desc_gifs.requirements.shadowBytesPerFrame = 8192;
+    desc_gifs.requirements.internalPersistentBytes = 0;
+    desc_gifs.requirements.minFreeInternalHeapBytes = 28000;
+    desc_gifs.requirements.internalContiguousBytes = 25000;
+    desc_gifs.requirements.shadowBytesPerFrame = 0;
     desc_gifs.schema.fields = {
         ConfigField("folder", ConfigType::LIST, "Playlists", "Active GIF playlists", "all", false, "", "", "", "", "/api/playlists", true, "", ValidationPolicy::Accept),
         ConfigField("speed_multiplier", ConfigType::FLOAT, "Speed Multiplier", "Playback speed factor", "1.0", false, "0.25", "3.0", "0.25", "", "", false, "", ValidationPolicy::Clamp),
