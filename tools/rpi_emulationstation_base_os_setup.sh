@@ -204,16 +204,30 @@ elif [ "$SYSTEM" = "batocera" ]; then
 BROKER="MQTT_BROKER_IP_PLACEHOLDER"
 TOPIC="system/playing/batocera"
 LOG_FILE="/userdata/system/scripts/daemon.log"
+DEBOUNCE_TOKEN_FILE="/tmp/arcadematrix_debounce_token"
+MQTT_PUB_PID_FILE="/tmp/arcadematrix_mqtt_pub.pid"
 
 send_mqtt() {
     _PAYLOAD="$1"
+
+    # Terminate any previously running publication to avoid concurrent socket accumulation
+    if [ -f "$MQTT_PUB_PID_FILE" ]; then
+        OLD_PID=$(cat "$MQTT_PUB_PID_FILE" 2>/dev/null)
+        if [ -n "$OLD_PID" ]; then
+            kill "$OLD_PID" 2>/dev/null || true
+        fi
+        rm -f "$MQTT_PUB_PID_FILE"
+    fi
+
     if command -v mosquitto_pub >/dev/null 2>&1; then
-        mosquitto_pub -h "$BROKER" -t "$TOPIC" -m "$_PAYLOAD" >> "$LOG_FILE" 2>&1 &
+        mosquitto_pub -h "$BROKER" -t "$TOPIC" -i "batocera_es_$$" -m "$_PAYLOAD" >> "$LOG_FILE" 2>&1 &
+        echo $! > "$MQTT_PUB_PID_FILE"
         return 0
     fi
     for p in /usr/bin/mosquitto_pub /usr/local/bin/mosquitto_pub /bin/mosquitto_pub; do
         if [ -x "$p" ]; then
-            "$p" -h "$BROKER" -t "$TOPIC" -m "$_PAYLOAD" >> "$LOG_FILE" 2>&1 &
+            "$p" -h "$BROKER" -t "$TOPIC" -i "batocera_es_$$" -m "$_PAYLOAD" >> "$LOG_FILE" 2>&1 &
+            echo $! > "$MQTT_PUB_PID_FILE"
             return 0
         fi
     done
@@ -227,7 +241,7 @@ send_mqtt() {
     fi
     if [ -n "$PYTHON_BIN" ]; then
         "$PYTHON_BIN" -c "
-import sys, socket
+import sys, socket, os, time
 broker, port, topic, payload = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 def enc(l):
     r = bytearray()
@@ -239,7 +253,7 @@ def enc(l):
         if l == 0: break
     return bytes(r)
 try:
-    cid = b'batocera_es'
+    cid = f'batocera_es_{os.getpid()}'.encode('utf-8')
     c_body = b'\x00\x04MQTT\x04\x02\x00\x3c' + len(cid).to_bytes(2, 'big') + cid
     c_pkt = b'\x10' + enc(len(c_body)) + c_body
     t_b = topic.encode('utf-8')
@@ -257,10 +271,25 @@ try:
 except Exception as e:
     print(f'MQTT Error: {e}', file=sys.stderr)
 " "$BROKER" 1883 "$TOPIC" "$_PAYLOAD" >> "$LOG_FILE" 2>&1 &
+        echo $! > "$MQTT_PUB_PID_FILE"
         return 0
     fi
     echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] ERROR: Neither mosquitto_pub nor python3 found" >> "$LOG_FILE"
     return 1
+}
+
+send_mqtt_debounced() {
+    _PAYLOAD="$1"
+    TOKEN="$(date +%s%N 2>/dev/null || date +%s)_$$"
+    echo "$TOKEN" > "$DEBOUNCE_TOKEN_FILE"
+    (
+        sleep 0.15
+        CURRENT_TOKEN="$(cat "$DEBOUNCE_TOKEN_FILE" 2>/dev/null)"
+        if [ "$CURRENT_TOKEN" = "$TOKEN" ]; then
+            rm -f "$DEBOUNCE_TOKEN_FILE"
+            send_mqtt "$_PAYLOAD"
+        fi
+    ) &
 }
 
 clean_name() {
@@ -307,6 +336,7 @@ fi
 
 case "$EVENT" in
     gameStart)
+        rm -f "$DEBOUNCE_TOKEN_FILE"
         SYS_NAME="$1"
         if [ -n "$4" ]; then
             ROM_PATH="$4"
@@ -328,6 +358,7 @@ case "$EVENT" in
         ;;
 
     gameStop)
+        rm -f "$DEBOUNCE_TOKEN_FILE"
         PAYLOAD="{\"status\": \"stopped\"}"
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: gameStop | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
@@ -356,17 +387,18 @@ case "$EVENT" in
         SYS_CLEAN=$(clean_name "$SYS_NAME")
         PAYLOAD="{\"status\": \"browsing\", \"game\": \"$GAME_CLEAN\", \"system\": \"$SYS_CLEAN\"}"
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-selected | Rom: $ROM_PATH | Sys: $SYS_NAME | Title: $TITLE | Sent: $PAYLOAD" >> "$LOG_FILE"
-        send_mqtt "$PAYLOAD"
+        send_mqtt_debounced "$PAYLOAD"
         ;;
 
     system-selected|systemSelected)
         SYS_CLEAN=$(clean_name "$1")
         PAYLOAD="{\"status\": \"browsing\", \"system\": \"$SYS_CLEAN\", \"type\": \"system\"}"
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: system-selected | Sys: $1 | Sent: $PAYLOAD" >> "$LOG_FILE"
-        send_mqtt "$PAYLOAD"
+        send_mqtt_debounced "$PAYLOAD"
         ;;
 
     game-start)
+        rm -f "$DEBOUNCE_TOKEN_FILE"
         SYS_NAME="$1"
         ROM_PATH="$2"
         TITLE="$3"
@@ -393,6 +425,7 @@ case "$EVENT" in
         ;;
 
     game-end)
+        rm -f "$DEBOUNCE_TOKEN_FILE"
         PAYLOAD="{\"status\": \"stopped\"}"
         echo "$(date '+%Y-%m-%d %H:%M:%S') [arcadematrix] Event: game-end | Sent: $PAYLOAD" >> "$LOG_FILE"
         send_mqtt "$PAYLOAD"
