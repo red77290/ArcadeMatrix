@@ -1,0 +1,68 @@
+blueprint:
+  name: ArcadeMatrix - publish a value
+  description: >-
+    Publishes one entity's state as an ArcadeMatrix MQTT Data "value" page (retained).
+    Add the topic to an MQTT Data screen on the sign.
+  domain: automation
+  source_url: https://github.com/red77290/ArcadeMatrix/blob/main/tools/home_assistant/blueprints/arcadematrix_value.yaml
+  input:
+    entity:
+      name: Entity
+      selector:
+        entity: {}
+    topic:
+      name: MQTT topic
+      default: arcadematrix/value/example
+      selector:
+        text: {}
+    label:
+      name: Label
+      description: Shown above the value. Leave empty to use the entity's name.
+      default: ""
+      selector:
+        text: {}
+    unit:
+      name: Unit
+      description: Leave empty to use the entity's unit of measurement.
+      default: ""
+      selector:
+        text: {}
+    decimals:
+      name: Decimals
+      description: Rounding for numeric states (-1 = publish the state as is).
+      default: -1
+      selector:
+        number:
+          min: -1
+          max: 3
+          mode: box
+    color:
+      name: Value colour
+      default: "#FFFFFF"
+      selector:
+        text: {}
+mode: queued
+max: 5
+variables:
+  entity: !input entity
+  topic: !input topic
+  label_in: !input label
+  unit_in: !input unit
+  decimals: !input decimals
+  color: !input color
+triggers:
+  - trigger: state
+    entity_id: !input entity
+  - trigger: homeassistant
+    event: start
+actions:
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      retain: true
+      payload: >-
+        {%- set s = states(entity) %}
+        {%- set v = (s | float(0) | round(decimals | int)) if decimals | int >= 0 and is_number(s) else s %}
+        {%- set lbl = label_in if label_in else (state_attr(entity, 'friendly_name') or entity) %}
+        {%- set unit = unit_in if unit_in else (state_attr(entity, 'unit_of_measurement') or '') %}
+        {{ {'v': 1, 'type': 'value', 'value': v | string, 'unit': unit, 'label': lbl | upper, 'color': color} | to_json }}

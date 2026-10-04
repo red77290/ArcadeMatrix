@@ -60,12 +60,13 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
     m->setTextWrap(false);
 
     const int mw = m->width(), mh = m->height();
+    const uint16_t white = m->color565(255, 255, 255);
     const uint16_t cyan = m->color565(120, 200, 255);       // the low
     const uint16_t orange = m->color565(255, 150, 50);      // the high
     const uint16_t colorLabel = m->color565(180, 180, 255);
     const uint16_t colorDesc = m->color565(210, 210, 210);
-    const uint16_t topColor = p.topIsHigh ? orange : cyan;
-    const uint16_t bottomColor = p.topIsHigh ? cyan : orange;
+    const uint16_t topColor = p.isNow ? white : (p.topIsHigh ? orange : cyan);
+    const uint16_t bottomColor = p.isNow ? colorDesc : (p.topIsHigh ? cyan : orange);
     const char* icon = p.icon ? p.icon : "";
 
     const bool wide = mw >= 256 && mh >= 64;
@@ -80,14 +81,17 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
         const int rightEdge = mw - margin + ox;
         const int midX = iconX + 24 * s + margin;
 
+        // A now page's second line must start at or after the label column, else its short form.
         const char* bottom = p.bottom;
+        if (p.isNow && p.bottomShort[0] && rightEdge - textW(p.bottom, s) < midX) bottom = p.bottomShort;
 
         m->setTextSize(s);
         printShadowed(m, rightEdge - textW(p.top, s), row1, p.top, topColor, shadow);
         printShadowed(m, rightEdge - textW(bottom, s), row2, bottom, bottomColor, shadow);
 
-        // The widest temperature sets the middle column.
-        const int tempW = textW(p.top, s) > textW(bottom, s) ? textW(p.top, s) : textW(bottom, s);
+        // The widest temperature sets the middle column (on a now page only the reading does).
+        const int tempW = p.isNow ? textW(p.top, s)
+                                  : (textW(p.top, s) > textW(bottom, s) ? textW(p.top, s) : textW(bottom, s));
         const int midW = rightEdge - tempW - margin - midX;
         char text[40];
         if (wide) {
@@ -96,7 +100,7 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
             m->setTextColor(colorLabel);
             m->setCursor(midX, row1);
             m->print(text);
-            if (p.descLong[0] || p.desc[0]) {
+            if (!p.isNow && (p.descLong[0] || p.desc[0])) {
                 const char* desc = p.descLong[0] ? p.descLong : p.desc;
                 int size = textW(desc, 2) <= midW ? 2 : 1;
                 if (size == 1 && textW(desc, 1) > midW) desc = p.desc;   // last resort: short form
@@ -110,7 +114,7 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
             m->setTextColor(colorLabel);
             m->setCursor(midX, row1);
             m->print(text);
-            if (p.descLong[0] || p.desc[0]) {
+            if (!p.isNow && (p.descLong[0] || p.desc[0])) {
                 fitText(p.descLong, p.desc, midW, 1, text, sizeof(text));
                 m->setTextColor(colorDesc);
                 m->setCursor(midX, row2);
@@ -133,11 +137,13 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
         m->setTextColor(topColor);
         m->setCursor(rightX, 11 + oy);
         m->print(p.top);
-        m->setTextColor(bottomColor);
-        m->setCursor(rightX + (int)strlen(p.top) * 6 + 2, 11 + oy);
-        m->print(p.bottom);
+        if (!p.isNow) {
+            m->setTextColor(bottomColor);
+            m->setCursor(rightX + (int)strlen(p.top) * 6 + 2, 11 + oy);
+            m->print(p.bottom);
+        }
         char text[40];
-        strlcpy(text, p.desc, sizeof(text));
+        strlcpy(text, p.isNow ? (p.bottomShort[0] ? p.bottomShort : p.bottom) : p.desc, sizeof(text));
         cut(text, maxChars);
         m->setTextColor(colorDesc);
         m->setCursor(rightX, 21 + oy);
@@ -150,15 +156,18 @@ void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow
     m->setTextColor(colorLabel);
     m->setCursor((mw - (int)strlen(p.label) * 6) / 2 + ox, 3 + oy);
     m->print(p.label);
+    const char* line = p.isNow ? (p.bottomShort[0] ? p.bottomShort : p.bottom) : p.desc;
     m->setTextColor(colorDesc);
-    m->setCursor((mw - (int)strlen(p.desc) * 6) / 2 + ox, 40 + oy);
-    m->print(p.desc);
+    m->setCursor((mw - (int)strlen(line) * 6) / 2 + ox, 40 + oy);
+    m->print(line);
     m->setTextColor(topColor);
     m->setCursor((mw - (int)strlen(p.top) * 6) / 2 + ox, 49 + oy);
     m->print(p.top);
-    m->setTextColor(bottomColor);
-    m->setCursor((mw - (int)strlen(p.bottom) * 6) / 2 + ox, 57 + oy);
-    m->print(p.bottom);
+    if (!p.isNow) {
+        m->setTextColor(bottomColor);
+        m->setCursor((mw - (int)strlen(p.bottom) * 6) / 2 + ox, 57 + oy);
+        m->print(p.bottom);
+    }
 }
 
 }  // namespace weather_layout

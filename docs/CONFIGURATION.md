@@ -15,6 +15,7 @@ The configuration system relies exclusively on a single `config.json` file locat
   "matrix": { ... },
   "wifi": { ... },
   "mqtt": { ... },
+  "data_mqtt": { ... },
   "system": { ... },
   "display": { ... },
   "audio": { ... },
@@ -105,6 +106,21 @@ The sync daemon can be installed on the console (Recalbox, Batocera, RetroPie) o
 
 > [!NOTE]
 > For Batocera, version **v33 or newer** is required for dynamic marquee browsing (`game-selected` and `system-selected` hooks). Batocera v32 and earlier only trigger game launch/stop events. Recalbox is supported on all versions.
+
+---
+
+## 5.1 The `"data_mqtt"` Block (MQTT Data broker)
+
+The broker the `mqttdata` engine connects to **while it is on screen**. Only credentials: nothing connects or runs in the background, and it is separate from the `"mqtt"` arcade link above (which can take over the display).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `broker` | `String` | `""` | Broker IP/host. |
+| `port` | `int` | `1883` | Broker port. |
+| `user` | `String` | `""` | Broker username (optional). |
+| `pass` | `String` | `""` | Broker password (optional). |
+
+Web UI: *System → MQTT & API → MQTT Data*. Flat keys on `/api/settings`: `data_mqtt_broker`, `data_mqtt_port`, `data_mqtt_user`, `data_mqtt_pass`; nested `data_mqtt` object on `/api/system`. The client id is `<wifi hostname>-data`. See [MQTT_DATA_CONTRACT.md](MQTT_DATA_CONTRACT.md) for the protocol and [HOME_ASSISTANT.md](HOME_ASSISTANT.md) for Home Assistant.
 
 ---
 
@@ -496,6 +512,15 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | *(auto)* | `None` | — | Internal Pixelcade/Recalbox/Batocera marquee sync engine. Displays scraped game box-art and marquees received via MQTT / Webhook. |
+
+### Engine: `mqttdata` (MQTT Data)
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `topics` | `String` | `""` | Comma-separated full MQTT topics, one page each, in this order. Up to 6 (4 on boards without PSRAM). |
+
+Shows pages published over MQTT by any publisher: a `value`, a `table` of up to 4 values, a `graph` or a `weather` page, chosen by each payload's `type`. Only the topics are configured here; everything else (time per page, titles, colours) comes from the payloads, which must be published **retained**. The screen connects only while it is on screen and sets its own time on screen (one cycle of its pages), so its rotation duration is ignored. Protocol, payload formats, limits and notices: [MQTT_DATA_CONTRACT.md](MQTT_DATA_CONTRACT.md). Home Assistant blueprints: [HOME_ASSISTANT.md](HOME_ASSISTANT.md).
+
+Instance example: `{"instance_id":"home_data","engine_id":"mqttdata","config":{"topics":"arcadematrix/weather/local,arcadematrix/graph/inside,arcadematrix/value/outside"}}`.
 
 ---
 
