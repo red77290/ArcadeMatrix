@@ -54,6 +54,7 @@ public:
     // IEngine implementation
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
+    void resume() override { if (activeFace) activeFace->onActivated(); }   // repaint static faces after a preemption or slot transition
     bool needsClear() const override;
     bool hasNewFrame() const override;
     void update(EngineContext* context) override;

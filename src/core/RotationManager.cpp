@@ -480,6 +480,16 @@ bool RotationManager::loop() {
         matrixEngine.markExternalDraw();
         shouldFlip = true;
     }
+    // The effect paints over the engine's frames, so a screen that only paints when something
+    // changes (weather, the static clock faces) would be left blank under it once the effect ends,
+    // and GIF's dirty-blit shadows go stale. Ask the slot's engine to repaint (resume()) on every
+    // loop while the effect runs and once after it ends.
+    bool fxRunning = m_slotFx.isRunning();
+    if (fxRunning || m_slotFxWasRunning) {
+        IEngine* current = findActiveEngine(guard->rotation[currentIndex].instance_id.c_str());
+        if (current) current->resume();
+    }
+    m_slotFxWasRunning = fxRunning;
 
     return shouldFlip;
 }

@@ -125,6 +125,16 @@ void MarioClock::update() {
     int speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
     speedPct = constrain(speedPct, 25, 300);
 
+    if (m_snapToNow) {
+        m_snapToNow = false;
+        strcpy(shownHH, hh);
+        strcpy(shownMM, mm);
+        lastMinute = storedTime.minutes;
+        phase = Phase::Waiting;
+        pendingDigits = false;
+        blockBounce[0] = blockBounce[1] = 0.0f;
+        m_dirty = 2;
+    }
     if (lastMinute != storedTime.minutes) {
         bool newHour = (lastMinute >= 0 && storedTime.minutes == 0);
         lastMinute = storedTime.minutes;

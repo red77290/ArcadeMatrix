@@ -27,7 +27,9 @@ public:
     /// The face paints every pixel of the scene itself, and only when something moved.
     bool wantsClear() const override { return false; }
     bool hasNewFrame() const override { return m_hasFrame; }
-    void onActivated() override { m_dirty = 2; m_hasFrame = true; }
+    // Coming on screen shows the current time straight away; Mario only runs for a minute that changes while the
+    // face is up (otherwise the digits from its last visit stay until he strikes the block).
+    void onActivated() override { m_dirty = 2; m_hasFrame = true; m_snapToNow = true; }
 
 private:
     enum class Phase : uint8_t { Waiting, RunIn, Jump, RunOut };
@@ -48,6 +50,7 @@ private:
 
     uint8_t m_dirty = 2;        ///< full repaints still owed (both DMA buffers)
     bool m_hasFrame = true;
+    bool m_snapToNow = true;   ///< next update shows the current time without the run-in
 
     void drawScene(int w, int h);
     void drawBlockAt(int x, int y, const char* text);
