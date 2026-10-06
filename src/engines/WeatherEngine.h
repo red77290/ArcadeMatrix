@@ -24,6 +24,7 @@ public:
     void deactivate() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override { requestRedraw(); }
+    void resume() override { requestRedraw(); }   // back from a preemption or a slot transition
     /// The screen is static between slides: it is painted once into each DMA buffer after a change
     /// and not presented again until the next one. Repainting every frame (clear, then draw) let the
     /// panel show the black gap for a few milliseconds after each flip, which read as a flicker in

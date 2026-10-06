@@ -56,6 +56,7 @@ public:
     RotationTransitionFX m_slotFx;
     bool m_awaitingFirstFrame = false;   ///< the slot just changed and its engine has not drawn yet
     uint32_t m_slotFxStartedMs = 0;
+    bool m_slotFxWasRunning = false;     ///< the effect was running on the previous loop
     /// Written from the web server on Core 0, read by the render loop on Core 1.
     std::atomic<RotationEffect> m_slotEffect{RotationEffect::NONE};
     std::atomic<int> m_slotFxMs{500};
