@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
 #include <atomic>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include "GifEngine.h"
 
@@ -57,7 +56,8 @@ public:
     String resolveMarqueeFile();
 
 private:
-    bool downloadUrlViaProxy(const String& targetUrl, const String& destPath);
+    bool downloadUrlWithResizeCheck(const String& targetUrl, String& outDestPath);
+
     int panelWidth;
     int panelHeight;
     uint16_t* m_rawBuffer;

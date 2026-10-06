@@ -22,39 +22,31 @@
 #include "MarqueeEngine.h"
 #include "MqttDataEngine.h"
 
-RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
-    const auto& caps = hardwareHAL.capabilities();
-    if (req.needsPsram && !caps.hasPsram) {
-        return {false, "Requires PSRAM"};
+CompatibilityVerdict EngineRegistrar::evaluateCompatibility(const EngineDescriptor& desc, const char* targetPipeline, EvaluationMode mode) {
+    auto ctx = CompatibilityEvaluator::buildCurrentContext(mode);
+    if (targetPipeline && strlen(targetPipeline) > 0) {
+        ctx.requestedPipeline = targetPipeline;
     }
-    if (req.needsAudio && !caps.hasMicrophone) {
-        return {false, "Requires microphone"};
-    }
-    if (req.needsTempSensor && !caps.hasTempSensor) {
-        return {false, "Requires temperature sensor"};
-    }
-    if (req.needsGyroscope && !caps.hasGyroscope) {
-        return {false, "Requires gyroscope"};
-    }
-    if (req.needsNetwork && !caps.hasNetwork) {
-        return {false, "Requires network/WiFi connection"};
-    }
-    if (req.needsSd && !caps.hasSd) {
-        return {false, "Requires SD card"};
-    }
-    return {true, ""};
+    return CompatibilityEvaluator::evaluate(desc, ctx);
 }
 
-bool EngineRegistrar::meetsRequirements(const EngineRequirements& req) {
-    return checkRequirements(req).satisfied;
+RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req, const char* targetPipeline, EvaluationMode mode) {
+    EngineDescriptor dummyDesc;
+    dummyDesc.requirements = req;
+    auto verdict = evaluateCompatibility(dummyDesc, targetPipeline, mode);
+    return { verdict.compatible(), String(verdict.reasonText) };
+}
+
+bool EngineRegistrar::meetsRequirements(const EngineRequirements& req, const char* targetPipeline, EvaluationMode mode) {
+    return checkRequirements(req, targetPipeline, mode).satisfied;
 }
 
 bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {
     EngineDescriptor desc = handler.getDescriptor();
-    auto res = checkRequirements(desc.requirements);
-    desc.available = res.satisfied;
-    desc.unavailableReason = res.reason.c_str();
-    if (!res.satisfied) {
+    auto verdict = evaluateCompatibility(desc);
+    desc.available = verdict.compatible();
+    desc.unavailableReason = verdict.reasonText;
+    if (!verdict.compatible()) {
         LOGW("Registrar", "Engine %s registered as unavailable: %s", desc.metadata.id ? desc.metadata.id : "", desc.unavailableReason);
     }
     return EngineRegistry::registerEngine(desc);

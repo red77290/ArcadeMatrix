@@ -1,4 +1,5 @@
 #include "WeatherLayout.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -27,7 +28,7 @@ void fitText(const char* longText, const char* shortText, int w, int size, char*
     }
 }
 
-void printShadowed(MatrixPanel_I2S_DMA* m, int x, int y, const char* t, uint16_t c, uint16_t shadow) {
+void printShadowed(IDrawingSurface* m, int x, int y, const char* t, uint16_t c, uint16_t shadow) {
     m->setTextColor(shadow);
     m->setCursor(x + 1, y + 1);
     m->print(t);
@@ -53,7 +54,7 @@ void setRange(Page& p, float low, float high, bool fahrenheit) {
     snprintf(p.bottom, sizeof(p.bottom), "%ld%c%c", lroundf(fahrenheit ? low : high), kDegree, unit);
 }
 
-void draw(MatrixPanel_I2S_DMA* m, const Page& p, int ox, int oy, uint16_t shadow) {
+void draw(IDrawingSurface* m, const Page& p, int ox, int oy, uint16_t shadow) {
     if (!m) return;
     m->setFont(nullptr);
     m->cp437(false);   // the degree byte relies on it (another engine may have left it on)

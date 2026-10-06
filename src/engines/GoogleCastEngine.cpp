@@ -1,4 +1,5 @@
 #include "GoogleCastEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
 #include "../core/SpiRamJsonDocument.h"
@@ -150,9 +151,10 @@ GoogleCastEngine::~GoogleCastEngine() {
         m_taskRunning = false;
         m_isActive = false;
         xTaskNotifyGive(m_pollTaskHandle);
-        for (int i = 0; i < 30 && !m_taskStopped.load(std::memory_order_acquire); ++i) {
+        while (!m_taskStopped.load(std::memory_order_acquire)) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
+        m_pollTaskHandle = nullptr;
     }
 }
 
@@ -370,20 +372,25 @@ void GoogleCastEngine::pollCastStatus() {
             return;
         }
 
-        // Serialize this (rare, reconnect-only) handshake against every other TLS user in
-        // the system -- see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only.
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            LOGW("GoogleCast", "Skipping reconnect: another TLS handshake is in progress.");
-            m_nextReconnectMs = now + 2000;
-            return;
+        // Invariant N2: Scope the TLS handshake lock strictly to connect() so it is
+        // released immediately upon handshake completion, before any message transfer.
+        bool connectOk = false;
+        {
+            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
+            if (!tlsLock) {
+                LOGW("GoogleCast", "Skipping reconnect: another TLS handshake is in progress.");
+                m_nextReconnectMs = now + 2000;
+                return;
+            }
+
+            m_client.stop();
+            m_client.setInsecure();
+
+            LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
+            connectOk = m_client.connect(m_resolvedIp.c_str(), m_resolvedPort);
         }
 
-        m_client.stop();
-        m_client.setInsecure();
-
-        LOGI("GoogleCast", "Opening persistent TLS connection to %s:%u...", m_resolvedIp.c_str(), m_resolvedPort);
-        if (!m_client.connect(m_resolvedIp.c_str(), m_resolvedPort)) {
+        if (!connectOk) {
             const uint32_t postFree = NetworkBudget::freeInternal();
             const uint32_t postLargest = NetworkBudget::largestInternalBlock();
             const uint32_t postFreeDma = NetworkBudget::freeDmaInternal();
@@ -713,7 +720,7 @@ static void renderMarquee(Adafruit_GFX* display, const char* text, int y, int cl
 
 void GoogleCastEngine::render(EngineContext* context) {
     if (!context) return;
-    auto* display = context->getMatrix();
+    auto* display = context->getSurface();
     if (!display) return;
 
     int w = display->width();
@@ -880,7 +887,11 @@ EngineDescriptor GoogleCastDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
 
     desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = false;
     desc.requirements.needsPsram = false; // Adaptive: works on both ESP32 classic and S3!
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 16000;
 
     desc.schema.fields = {
         ConfigField("device_ip", ConfigType::STRING, "Device IP (Optional)", "Static IP of your Google Home / Nest Audio. Leave empty for automatic discovery.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

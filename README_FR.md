@@ -40,6 +40,7 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **📰 Actualités & Ticker GNews en Direct (`gnews`) :** flux de grands titres et dépêches d'actualités filtrés par catégories (Tech, Monde, Économie, Science, Sport...), témoin lumineux de direct clignotant, défilement sous-pixel fluide à 60 FPS et filtrage multi-langue/région !
 - **🌦️ Météo dynamique (`weather`) :** météo en direct, température actuelle, prévisions sur 3 jours et icônes rétro animées via OpenWeatherMap.
 - **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
+- **📊 Moteur Home Assistant & Données MQTT (`mqttdata`) :** Affichez en direct vos tableaux de bord Home Assistant, valeurs de capteurs, tables multi-entités, graphiques historiques sur 24h et prévisions météo locales via MQTT ! Zéro template complexe requis grâce aux [Blueprints Home Assistant](https://github.com/red77290/ArcadeMatrix/tree/main/tools/home_assistant/blueprints) prêts à importer et au [Guide d'intégration Home Assistant](docs/HOME_ASSISTANT_FR.md) — réalisé par [@TooncesToo](https://github.com/TooncesToo) !
 - **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
 - **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour gérer vos playlists, calibrer l'orientation d'écran et modifier la configuration en direct !
@@ -48,6 +49,20 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **Support MQTT (`marquee`) :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees de jeux officiels via votre fork Pixelcade.
 - **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
 - **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
+
+## 🚀 Compatibilité Universelle des Moteurs : Auto Depth & Auto Buffer
+
+ArcadeMatrix intègre un pipeline d'exécution ultra-optimisé avec gestion intelligente de la mémoire vive, permettant aux 18 moteurs (y compris les plus gourmands comme `AnimatedGIF`, `Stock`, `Crypto` et `MUGEN`) de tourner sans compromis sur **ESP32 classique (sans PSRAM)** comme sur **ESP32-S3 (16 Mo de PSRAM)** :
+
+- **🎨 Auto Color Depth (`dynamic_color_depth`)** :
+  - **Couleurs 8 Bits Riches par Défaut** : Horloges, combats MUGEN, visualiseurs, messages et marquees s'affichent avec la qualité maximale en 8 bits (jusqu'à 256 niveaux de luminosité par composante RVB).
+  - **Récupération Dynamique de la Sandbox Mémoire** : Lorsque les moteurs réseau (`stock`, `crypto`, `weather`, `gnews`) doivent télécharger des flux HTTPS, le contrôleur HUB75 DMA bascule temporairement en 4 bits sous extinction matérielle (blanking OE). Cela libère instantanément **16 à 24 Ko de RAM DMA contiguë**, garantissant l'espace nécessaire aux certificats TLS et aux volumineux flux JSON sans fragmentation du heap.
+  - **Transitions Instantanées à 0 ms** : Dès que les cotations, prix cryptos et graphiques sont valides en cache (`needsTlsFetch() == false`), la descente en 4 bits est court-circuitée. Stock et Crypto s'activent immédiatement en **qualité 8 bits intégrale avec 0 ms de latence (zéro coupure d'écran)**.
+
+- **⚡ Pipeline de Buffering Automatique (`render_pipeline: auto`)** :
+  - **Accélération PSRAM** : Sur ESP32-S3, alloue un canvas 16 bits en PSRAM avec double buffer DMA (`canvas_double`) pour une fluidité absolue à 60 FPS sans tearing.
+  - **Sanctuaire DMA en SRAM1** : Sur ESP32 classique, le canvas hors-écran de 8 Ko est pré-alloué dès le boot en **SRAM1** (mémoire interne dédiée au CPU) avant le démarrage du Wi-Fi et du serveur Web. Cela préserve **8 192 octets de mémoire contiguë DMA dans la SRAM2**, évitant la saturation.
+  - **Simple Buffer DMA sans Tearing** : Utilise le processeur de transfert par rafale `Hub75BulkEncoder` pour synchroniser l'écriture des trames, éliminant tout déchirement d'image même en simple buffer DMA.
 
 ## Structure de la carte SD
 Formatez votre carte SD en **FAT32** ou **exFAT**. Votre carte SD doit ressembler à ceci :
@@ -119,29 +134,44 @@ L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap p
 
 Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 
-## ⚡ Compatibilité Matérielle & Fonctionnalités
+## ⚡ Compatibilité Matérielle & Moteurs
 
-| Fonctionnalité | ESP32-S3 (Carte Waveshare) | ESP32 Classique (DevKit) |
-| :--- | :---: | :---: |
-| Taille de matrice | Jusqu'à 256x64 (Vraie Matrice) | Jusqu'à 128x32 |
-| Double Buffering | ✅ Oui (Fluide) | ✅ Oui (Fluide) |
-| Animations (GIFs) | ✅ Oui | ✅ Oui |
-| Moteur MUGEN | ✅ Oui | ✅ Oui |
-| Interface Web & Wi-Fi | ✅ Oui | ✅ Oui |
-| **WebRadio Autonome (Streaming MP3 Wi-Fi)** | ✅ Oui (DAC ES8311 & Ampli intégrés) | ❌ Non (Nécessite DAC I2S & PSRAM) |
-| **Streaming Audio Bluetooth (A2DP)** | ❌ Non (L'ESP32-S3 est BLE 5.0 uniquement ; pas d'A2DP audio) | ❌ Non |
-| **Bluetooth 5 (BLE Contrôle/Config)** | ✅ Oui (Natif ESP32-S3 BLE) | ✅ Oui |
-| **Auto-Rotation Gyroscope 6-Axes (`QMI8658`)** | ✅ Oui (IMU intégré & Calibrate 1-clic) | ❌ Non (Nécessite capteur I2C externe) |
-| **Crypto en Temps Réel** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
-| **Bourse** | ✅ Oui | ❌ Non (Manque de RAM pour le SSL) |
-| **Décibelmètre** | ✅ Oui (Double Micro ES7210 intégré) | ❌ Non (Nécessite un micro I2S externe & du code personnalisé) |
-| **Température & Humidité (SHTC3)** | ✅ Oui (Capteur Intégré) | ❌ Non (Nécessite un SHTC3 I2C externe & du code personnalisé) |
+| Moteur / Fonctionnalité | Catégorie | ESP32-S3 (Carte Waveshare) | ESP32 Classique (DevKit / `esp32dev`) | Prérequis Matériel / Réseau |
+| :--- | :--- | :---: | :---: | :--- |
+| **Horloge & Watch Faces (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Polices bitmap dynamiques, thèmes rétro/arcade |
+| **Animations GIFs (`gifs`)** | `media` | 🟢 Fullspeed 60 FPS | 🟢 Fullspeed 60 FPS | Carte Micro-SD (orientations Yoko / Tate) |
+| **Combat M.U.G.E.N (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Carte Micro-SD (streaming sprites RGB565) |
+| **Tableau de Bord Desk Deck (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Horloge multi-widgets, météo & marchés) |
+| **Crypto en Temps Réel (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
+| **Bourse & Graphiques Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
+| **Actualités en Direct (`gnews`)** | `news` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS (API GNews) |
+| **Météo en Direct (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
+| **Date & Calendrier (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Heure système locale & fond sprite optionnel |
+| **Défilement de Texte (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Scroller textuel sous-pixel à 60 FPS |
+| **Télémétrie Système (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Jauges temps réel CPU, RAM, Temp & Uptime |
+| **Marquee Rétro Gameroom (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
+| **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, API Web Spotify |
+| **Affichage Google Cast (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, découverte locale mDNS |
+| **WebRadio Autonome (`music`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | DAC ES8311 & PSRAM requis |
+| **Spectre Audio FFT (`audiovisualizer`)** | `audio` | 🟢 60 FPS (Micro I2S) | ❌ Incompatible | Double micro ES7210 requis |
+| **Sonomètre SPL / Décibels (`decibel`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Double micro ES7210 requis |
+| **Capteur Climat Intérieur (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Capteur température/humidité SHTC3 requis |
+| **Home Assistant & Données MQTT (`mqttdata`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Broker MQTT / Blueprints Home Assistant |
+
+👉 *Pour l'analyse technique exhaustive (budgets FPS, RAM interne et DMA), consultez la [Matrice de Compatibilité des Moteurs](docs/ENGINE_COMPATIBILITY_MATRIX.md).*
+
+> [!NOTE]
+> ### 💡 Compatibilité Totale TLS sur ESP32 Classique (`esp32dev`) & Préfetch de Transition
+> L'ESP32 standard (WROOM-32 sans PSRAM) est désormais **totalement compatible** avec les moteurs connectés HTTPS/TLS (`crypto`, `stock`, `gnews`, `weather`) grâce à un **bac à sable mémoire à libération DMA** :
+> 1. **Pourquoi une pause d'environ 1 seconde lors de la première rotation ?** Sur ESP32 classique, le balayage physique de l'écran HUB75 DMA et le handshake cryptographique mbedTLS ne peuvent pas coexister en même temps en raison des limites de mémoire SRAM interne contiguë (~45 Ko requis par mbedTLS). Lors du basculement vers un moteur TLS, le firmware relâche temporairement le framebuffer DMA, ouvrant une **fenêtre mémoire propre de 89 Ko** pour pré-télécharger en lot tous les cours, graphiques et icônes en keep-alive HTTP/1.1 en ~700 ms avant de reconfigurer l'écran.
+> 2. **Rotations Suivantes Instantanées :** Ce préfetch de transition n'a lieu **qu'une seule fois** lors de la première rotation ! Pour toutes les rotations suivantes tant que le cache est frais (durée configurable depuis l'UI, ex: 10 à 15 minutes), le moteur affiche instantanément les cours et courbes depuis la RAM à **pleine profondeur 8 bits, sans aucun délai de transition ni trafic réseau**.
+> 3. **Rafraîchissement Automatique :** À l'expiration du cache, le moteur effectue un rafraîchissement transparent lors de la rotation suivante et réinitialise le cycle.
 
 > [!NOTE]
 > **Détection Matérielle Dynamique & Dégradation Douce :** Tous les capteurs matériels (Gyroscope `QMI8658`, Microphone `ES7210`, DAC `ES8311`, Capteur de température `SHTC3`) sont sondés dynamiquement au démarrage sur le bus I2C/I2S. Si un composant est absent de votre carte, la fonctionnalité est **automatiquement désactivée sans aucun plantage**, avec repli sur le pilotage manuel via l'interface Web.
 
-- **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, le streaming audio WebRadio, l'auto-rotation gyroscopique, les modules gourmands en RAM (Crypto, Bourse), et exploite les capteurs matériels intégrés (Décibelmètre, Température, DAC HP) directement.
-- **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte les animations de base, l'interface Web et MUGEN pour les matrices **128x32 / 64x32**. Ne supporte pas les fonctionnalités lourdes en RAM (HTTPS/SSL, streaming audio autonome). Les capteurs intégrés sont également absents.
+- **Carte ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)** : **100% compatible avec toutes les fonctionnalités.** Fortement recommandée. Indispensable pour les grands panneaux **256x64**, le streaming audio WebRadio, l'auto-rotation gyroscopique, et exploite les capteurs matériels intégrés (Décibelmètre, Température, DAC HP) directement.
+- **ESP32 Classique (WROOM-32 / `esp32dev`)** : Processeur double cœur Tensilica Xtensa LX6 @ 240MHz. Supporte pleinement les animations, l'interface Web, MUGEN et désormais tous les moteurs cloud HTTPS/TLS (`crypto`, `stock`, `gnews`, `weather`) pour les matrices **128x32 / 64x32**. Les capteurs physiques audio/température sont absents des DevKits standards sauf câblage externe.
 
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
@@ -160,6 +190,8 @@ pio run -e esp32dev
 - [Guide de câblage](docs/WIRING_FR.md)
 - [Guide de configuration](docs/CONFIGURATION_FR.md)
 - [Guide développeur](docs/DEVELOPER_FR.md)
+- [Guide d'intégration Home Assistant](docs/HOME_ASSISTANT_FR.md)
+- [Blueprints Home Assistant](tools/home_assistant/blueprints/)
 - [Architecture](docs/ARCHITECTURE_FR.md)
 
 ## 🙏 Remerciements
@@ -173,7 +205,7 @@ Un immense merci à la communauté open source et aux créateurs des formidables
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** par mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** par Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** par greiman
-- **[@TooncesToo](https://github.com/TooncesToo)** pour le développement de l'API bibliothèque GIF réseau, du téléversement multi-fichiers et du gestionnaire de fichiers Web UI avec support double orientation sur ESP32 et Raspberry Pi.
+- **[@TooncesToo](https://github.com/TooncesToo)** pour le développement du moteur Home Assistant & Données MQTT avec blueprints prêts à l'emploi, l'API de bibliothèque GIF réseau, le téléversement multi-fichiers et le gestionnaire de fichiers Web UI avec support double orientation sur ESP32 et Raspberry Pi.
 
 Un grand merci à la **RPiTeam** pour le super pack de 600 GIFs !
 

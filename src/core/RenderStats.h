@@ -17,6 +17,12 @@ struct RenderStats {
     std::atomic<uint32_t> gifPixelsTotal{0};    ///< panel pixels those frames covered
     std::atomic<uint32_t> gifBlitMicros{0};     ///< time spent pushing pixels
     std::atomic<uint32_t> gifDecodeMicros{0};   ///< time spent decoding
+
+    // --- Core 1 Allocation & Timing Telemetry (Sprint 0 / Invariant 1) ---
+    std::atomic<uint32_t> frameAllocCount{0};   ///< Dynamic allocations on Core 1 (MUST be 0 in active render)
+    std::atomic<uint32_t> frameFreeCount{0};    ///< Dynamic frees on Core 1 (MUST be 0 in active render)
+    std::atomic<uint32_t> peakFrameRenderUs{0}; ///< Peak render execution latency in microseconds
+    std::atomic<uint32_t> frameStalls{0};       ///< Count of frame stalls detected on Core 1
 };
 
 extern RenderStats g_renderStats;

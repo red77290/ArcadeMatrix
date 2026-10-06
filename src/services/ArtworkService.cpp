@@ -1,10 +1,10 @@
 #include "ArtworkService.h"
 #include "../core/Logger.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/SecureHttpClient.h"
 #include <memory>
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_heap_caps.h>
 
@@ -107,123 +107,11 @@ static int jpegDrawToBuffer(JPEGDRAW *pDraw) {
     return 1;
 }
 
-static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int targetW, int targetH, bool hasPsram, int redirectDepth = 0) {
-    if (redirectDepth > 3) {
-        LOGW("ArtworkService", "Exceeded max redirects (3) for %s", downloadUrl.c_str());
+static bool decodeImageData(uint8_t* imgData, size_t bytesRead, uint16_t* targetBuf, int targetW, int targetH) {
+    if (!imgData || bytesRead < 10) {
+        if (imgData) free(imgData);
         return false;
     }
-
-    const bool isHttps = downloadUrl.startsWith("https://");
-
-    std::unique_ptr<NetworkBudget::ScopedTlsHandshakeLock> tlsLock;
-    if (isHttps) {
-        if (!NetworkBudget::canStartTlsSession()) {
-            LOGW("ArtworkService", "Skipping HTTPS artwork: insufficient internal DRAM for TLS session.");
-            return false;
-        }
-        // Serialize against every other TLS user (Dashboard, Cast, Spotify, etc.) -- see
-        // HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only on this board.
-        // Explicitly unlocked (tlsLock.reset()) before the recursive redirect call below,
-        // since the mutex is not recursive/re-entrant.
-        tlsLock.reset(new NetworkBudget::ScopedTlsHandshakeLock());
-        if (!*tlsLock) {
-            LOGW("ArtworkService", "Skipping HTTPS artwork: another TLS handshake is in progress.");
-            return false;
-        }
-    } else {
-        NetworkBudget::acquireHttp();
-    }
-
-    HTTPClient http;
-    http.setTimeout(4000);
-    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS); // Explicit redirect handling
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-
-    bool beginOk = false;
-    WiFiClient plainClient;
-    WiFiClientSecure secureClient;
-
-    if (isHttps) {
-        secureClient.setInsecure();
-        beginOk = http.begin(secureClient, downloadUrl);
-    } else {
-        beginOk = http.begin(plainClient, downloadUrl);
-    }
-
-    if (!beginOk) {
-        LOGW("ArtworkService", "HTTP begin failed for URL: %s", downloadUrl.c_str());
-        if (!isHttps) NetworkBudget::releaseHttp();
-        return false;
-    }
-
-    int httpCode = http.GET();
-
-    // Check for HTTP Redirection (3xx)
-    if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND ||
-        httpCode == HTTP_CODE_SEE_OTHER || httpCode == HTTP_CODE_TEMPORARY_REDIRECT) {
-        String newUrl = http.getLocation();
-        http.end();
-        if (isHttps) secureClient.stop();
-        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
-
-        if (newUrl.isEmpty()) {
-            LOGW("ArtworkService", "Redirect with empty Location header for %s", downloadUrl.c_str());
-            return false;
-        }
-
-        LOGI("ArtworkService", "Redirect (%d) -> %s", httpCode, newUrl.c_str());
-        tlsLock.reset(); // Release before recursing: the handshake mutex is not re-entrant.
-        return fetchAndDecode(newUrl, targetBuf, targetW, targetH, hasPsram, redirectDepth + 1);
-    }
-
-    if (httpCode != HTTP_CODE_OK) {
-        LOGW("ArtworkService", "HTTP GET failed with code: %d for %s", httpCode, downloadUrl.c_str());
-        http.end();
-        if (isHttps) secureClient.stop();
-        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
-        return false;
-    }
-
-    size_t maxAlloc = 16 * 1024;
-    uint8_t* imgData = hasPsram ? 
-        (uint8_t*)heap_caps_malloc(maxAlloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) :
-        (uint8_t*)malloc(maxAlloc);
-
-    if (!imgData) {
-        LOGE("ArtworkService", "Failed to allocate download buffer (%u bytes)", (unsigned)maxAlloc);
-        http.end();
-        if (isHttps) secureClient.stop();
-        else { plainClient.stop(); NetworkBudget::releaseHttp(); }
-        return false;
-    }
-
-    WiFiClient* stream = http.getStreamPtr();
-    size_t bytesRead = 0;
-    uint32_t startRead = millis();
-
-    while (http.connected() && bytesRead < maxAlloc) {
-        size_t avail = stream->available();
-        if (avail) {
-            size_t toRead = min(avail, maxAlloc - bytesRead);
-            int r = stream->readBytes(imgData + bytesRead, toRead);
-            if (r > 0) bytesRead += r;
-            startRead = millis();
-        } else {
-            if (millis() - startRead > 1500) break;
-            delay(2);
-        }
-    }
-    http.end();
-    if (isHttps) secureClient.stop();
-    else { plainClient.stop(); NetworkBudget::releaseHttp(); }
-
-    if (bytesRead < 10) {
-        LOGW("ArtworkService", "Image download was empty or too small (%u bytes) for %s", (unsigned)bytesRead, downloadUrl.c_str());
-        free(imgData);
-        return false;
-    }
-
-    // Decode image into RGB565 bitmap buffer in PSRAM
     s_targetBuf = targetBuf;
     s_targetW = targetW;
     s_targetH = targetH;
@@ -261,6 +149,136 @@ static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int t
 
     free(imgData);
     return decoded;
+}
+
+static bool fetchAndDecode(const String& downloadUrl, uint16_t* targetBuf, int targetW, int targetH, bool hasPsram, int redirectDepth = 0) {
+    if (redirectDepth > 3) {
+        LOGW("ArtworkService", "Exceeded max redirects (3) for %s", downloadUrl.c_str());
+        return false;
+    }
+
+    const bool isHttps = downloadUrl.startsWith("https://");
+
+    if (isHttps) {
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 4000;
+        options.handshakeTimeoutSec = 4;
+        options.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+        options.followRedirects = true;
+
+        auto response = net::SecureHttpClient::get(downloadUrl, options);
+        if (!response.ok()) {
+            LOGW("ArtworkService", "HTTPS GET failed with code: %d for %s", response.statusCode(), downloadUrl.c_str());
+            return false;
+        }
+
+        size_t maxAlloc = 16 * 1024;
+        uint8_t* imgData = hasPsram ? 
+            (uint8_t*)heap_caps_malloc(maxAlloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) :
+            (uint8_t*)malloc(maxAlloc);
+
+        if (!imgData) {
+            LOGE("ArtworkService", "Failed to allocate download buffer (%u bytes)", (unsigned)maxAlloc);
+            return false;
+        }
+
+        Stream& stream = response.stream();
+        size_t bytesRead = 0;
+        uint32_t startRead = millis();
+        while (bytesRead < maxAlloc) {
+            size_t avail = stream.available();
+            if (avail) {
+                size_t toRead = min(avail, maxAlloc - bytesRead);
+                int r = stream.readBytes(reinterpret_cast<char*>(imgData + bytesRead), toRead);
+                if (r > 0) bytesRead += r;
+                startRead = millis();
+            } else {
+                if (millis() - startRead > 1500) break;
+                delay(2);
+            }
+        }
+
+        if (bytesRead < 10) {
+            LOGW("ArtworkService", "Image download was empty or too small (%u bytes) for %s", (unsigned)bytesRead, downloadUrl.c_str());
+            free(imgData);
+            return false;
+        }
+
+        return decodeImageData(imgData, bytesRead, targetBuf, targetW, targetH);
+    }
+
+    // Plain HTTP fallback
+    NetworkBudget::acquireHttp();
+
+    HTTPClient http;
+    http.setTimeout(4000);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+    WiFiClient plainClient;
+    if (!http.begin(plainClient, downloadUrl)) {
+        LOGW("ArtworkService", "HTTP begin failed for URL: %s", downloadUrl.c_str());
+        NetworkBudget::releaseHttp();
+        return false;
+    }
+
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_MOVED_PERMANENTLY || httpCode == HTTP_CODE_FOUND ||
+        httpCode == HTTP_CODE_SEE_OTHER || httpCode == HTTP_CODE_TEMPORARY_REDIRECT) {
+        String newUrl = http.getLocation();
+        http.end();
+        plainClient.stop();
+        NetworkBudget::releaseHttp();
+
+        if (newUrl.isEmpty()) {
+            LOGW("ArtworkService", "Redirect with empty Location header for %s", downloadUrl.c_str());
+            return false;
+        }
+        LOGI("ArtworkService", "Redirect (%d) -> %s", httpCode, newUrl.c_str());
+        return fetchAndDecode(newUrl, targetBuf, targetW, targetH, hasPsram, redirectDepth + 1);
+    }
+
+    if (httpCode != HTTP_CODE_OK) {
+        LOGW("ArtworkService", "HTTP GET failed with code: %d for %s", httpCode, downloadUrl.c_str());
+        http.end();
+        plainClient.stop();
+        NetworkBudget::releaseHttp();
+        return false;
+    }
+
+    size_t maxAlloc = 16 * 1024;
+    uint8_t* imgData = hasPsram ? 
+        (uint8_t*)heap_caps_malloc(maxAlloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) :
+        (uint8_t*)malloc(maxAlloc);
+
+    if (!imgData) {
+        LOGE("ArtworkService", "Failed to allocate download buffer (%u bytes)", (unsigned)maxAlloc);
+        http.end();
+        plainClient.stop();
+        NetworkBudget::releaseHttp();
+        return false;
+    }
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t bytesRead = 0;
+    uint32_t startRead = millis();
+    while (http.connected() && bytesRead < maxAlloc) {
+        size_t avail = stream->available();
+        if (avail) {
+            size_t toRead = min(avail, maxAlloc - bytesRead);
+            int r = stream->readBytes(reinterpret_cast<char*>(imgData + bytesRead), toRead);
+            if (r > 0) bytesRead += r;
+            startRead = millis();
+        } else {
+            if (millis() - startRead > 1500) break;
+            delay(2);
+        }
+    }
+    http.end();
+    plainClient.stop();
+    NetworkBudget::releaseHttp();
+
+    return decodeImageData(imgData, bytesRead, targetBuf, targetW, targetH);
 }
 
 String ArtworkService::loadArtwork(const String& url, int targetWidth, int targetHeight) {

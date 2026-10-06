@@ -1,6 +1,7 @@
 #pragma once
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "FeedPayloads.h"
+
+class IDrawingSurface;
 
 /**
  * Draws one page of a "weather" payload: page 0 is NOW (the live station reading)
@@ -10,6 +11,6 @@
  */
 namespace weather_page {
 
-void draw(MatrixPanel_I2S_DMA* matrix, const feed::WeatherFeed& wx, uint8_t page);
+void draw(IDrawingSurface* matrix, const feed::WeatherFeed& wx, uint8_t page);
 
 }  // namespace weather_page

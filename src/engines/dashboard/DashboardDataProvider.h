@@ -17,6 +17,8 @@ public:
 
     void initialize(IWeatherProvider* weatherProvider);
     void start();
+    void deactivate();
+    bool shutdown();
     void stop();
 
     void updateConfig(const DashboardConfigParams& config, const String& weatherApiKey, const String& weatherCity, const String& weatherUnits);
@@ -25,6 +27,8 @@ public:
 
     void forceFetchWeather() { m_forceFetchWeather = true; }
     void forceFetchMarkets() { m_forceFetchMarkets = true; }
+    void fetchSynchronousBurst();
+    uint32_t getLastBatchFetch() const { return m_lastBatchFetch; }
 
 private:
     static void fetchTaskStatic(void* param);
@@ -44,8 +48,6 @@ private:
     std::map<String, CachedIcon> m_iconCache;
 
     void preloadIconsFromSd();
-    bool loadIconFromSd(const String& path, uint16_t outPixels[64]);
-    bool downloadIconViaProxy(const String& targetUrl, const String& destPath);
     bool resolveMarketIcon(const String& symbol, const String& yahooImgUrl, uint16_t outPixels[64]);
 
     IWeatherProvider* m_weatherProvider;
@@ -67,9 +69,10 @@ private:
     // Cold-path configuration mutex (never taken on Core 1 hot-path)
     mutable std::mutex m_configMutex;
 
-    TaskHandle_t m_fetchTaskHandle;
-    volatile bool m_taskRunning;
-    volatile bool m_isActive;
+    TaskHandle_t m_fetchTaskHandle = nullptr;
+    std::atomic<bool> m_taskRunning{false};
+    std::atomic<bool> m_taskExited{true};
+    std::atomic<bool> m_isActive{false};
 
     DashboardConfigParams m_config;
     String m_weatherApiKey;

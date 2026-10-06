@@ -1,4 +1,5 @@
 #include "WeatherPageRenderer.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <math.h>
 #include <string.h>
 #include <time.h>
@@ -24,7 +25,7 @@ void conditionText(const char* cond, Lang lang, char* shortOut, size_t shortCap,
 
 }  // namespace
 
-void draw(MatrixPanel_I2S_DMA* m, const feed::WeatherFeed& wx, uint8_t page) {
+void draw(IDrawingSurface* m, const feed::WeatherFeed& wx, uint8_t page) {
     if (!m) return;
     weather_layout::Page p;
     const Lang lang = I18n::getLang();

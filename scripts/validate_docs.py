@@ -32,6 +32,10 @@ REQUIRED_DOC_FILES = [
     "docs/ASSET_PIPELINE.md",
     "docs/ASSET_PIPELINE_FR.md",
     "docs/ASSET_PIPELINE_ES.md",
+    "docs/ENGINE_COMPATIBILITY_MATRIX.md",
+    "docs/MEMORY_OPTIMIZATIONS.md",
+    "docs/MEMORY_OPTIMIZATIONS_FR.md",
+    "docs/MEMORY_OPTIMIZATIONS_ES.md",
 ]
 
 # Obsolete pattern checks
@@ -103,6 +107,80 @@ def check_sd_config_json():
         return True
     return False
 
+def check_modular_sd_config():
+    conf_dir = os.path.join(ROOT_DIR, "release", "sdCard", "config")
+    if not os.path.isdir(conf_dir):
+        print(f"❌ Modular SD Card config directory missing: {conf_dir}")
+        return False
+
+    required_files = ["hardware.json", "system.json", "network.json", "playlist.json"]
+    for req in required_files:
+        p = os.path.join(conf_dir, req)
+        if not os.path.exists(p):
+            print(f"❌ Modular SD config missing: {p}")
+            return False
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if req == "hardware.json" and "render_pipeline" not in d and "renderPipeline" not in d:
+                print(f"❌ {p} missing required 'render_pipeline' key")
+                return False
+        except Exception as e:
+            print(f"❌ {p} JSON error: {e}")
+            return False
+
+    inst_dir = os.path.join(conf_dir, "instances")
+    if not os.path.isdir(inst_dir):
+        print(f"❌ Modular SD config instances directory missing: {inst_dir}")
+        return False
+
+    print("  ✓ release/sdCard/config/ modular domain structure valid.")
+    return True
+
+def check_build_info():
+    import subprocess
+    build_info_path = os.path.join(ROOT_DIR, "src", "core", "BuildInfo.h")
+    if not os.path.exists(build_info_path):
+        print("❌ src/core/BuildInfo.h missing")
+        return False
+    with open(build_info_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "BUILD_GIT_COMMIT" not in content or "FIRMWARE_VERSION" not in content or "BUILD_TIMESTAMP" not in content:
+        print("❌ src/core/BuildInfo.h missing required macros")
+        return False
+
+    # Extract commit hash macro
+    m = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', content)
+    if not m:
+        print("❌ src/core/BuildInfo.h has invalid BUILD_GIT_COMMIT format")
+        return False
+    header_commit = m.group(1).strip()
+
+    # Check against git HEAD
+    try:
+        git_head = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT_DIR,
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+
+        if git_head and header_commit != git_head:
+            print(f"  ℹ Synchronizing BuildInfo.h ({header_commit} -> {git_head})...")
+            import runpy
+            runpy.run_path(os.path.join(ROOT_DIR, "scripts", "build_webui.py"))
+            with open(build_info_path, "r", encoding="utf-8") as f:
+                updated = f.read()
+            m2 = re.search(r'#define\s+BUILD_GIT_COMMIT\s+"([^"]+)"', updated)
+            if not m2 or m2.group(1).strip() != git_head:
+                print(f"❌ Failed to synchronize BuildInfo.h with git HEAD ({git_head})")
+                return False
+            header_commit = git_head
+    except Exception:
+        pass
+
+    print(f"  ✓ src/core/BuildInfo.h valid and synchronized with HEAD ({header_commit}).")
+    return True
+
 def main():
     print("🔍 Validating Documentation files & SD config.json...")
     all_ok = True
@@ -112,6 +190,27 @@ def main():
 
     if not check_sd_config_json():
         all_ok = False
+
+    if not check_modular_sd_config():
+        all_ok = False
+
+    if not check_build_info():
+        all_ok = False
+
+    # Also run CI Architecture Guard
+    import subprocess
+    guard_script = os.path.join(ROOT_DIR, "scripts", "ci_architecture_guard.py")
+    if os.path.exists(guard_script):
+        ret = subprocess.call([sys.executable, guard_script], cwd=ROOT_DIR)
+        if ret != 0:
+            all_ok = False
+
+    # Validate Engine Compatibility Matrix
+    matrix_script = os.path.join(ROOT_DIR, "scripts", "generate_engine_matrix.py")
+    if os.path.exists(matrix_script):
+        ret = subprocess.call([sys.executable, matrix_script, "--check"], cwd=ROOT_DIR)
+        if ret != 0:
+            all_ok = False
 
     if all_ok:
         print("🎉 Documentation & SD Config validation PASSED.")

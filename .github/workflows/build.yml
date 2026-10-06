@@ -35,6 +35,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install PlatformIO library dependencies (${{ matrix.env }})
+        run: pio pkg install -e ${{ matrix.env }}
+
+      - name: Generate WebUI and BuildInfo
+        run: python3 scripts/build_webui.py
+
       - name: Validate documentation & SD configuration
         run: python3 scripts/validate_docs.py
 

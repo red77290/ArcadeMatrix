@@ -6,11 +6,14 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
+#include <nvs_flash.h>
 #include "Logger.h"
+#include "MemTrace.h"
 #include "RenderStats.h"
 #include "SdSpace.h"
 #include "CpuLoad.h"
 #include <time.h>
+#include <lwip/dns.h>
 #if defined(USE_RTC) && USE_RTC
 #include "RTCUtils.h"
 #include "esp_sntp.h"
@@ -25,6 +28,7 @@ static void time_sync_notification_cb(struct timeval *tv) {
 
 #include "../include/core/EngineRegistry.h"
 #include "../engines/EngineRegistrar.h"
+#include "../engines/GifEngine.h"
 #include "ConfigSanitizer.h"
 #include "../hal/HardwareHAL.h"
 #include "../hal/GyroHAL.h"
@@ -32,6 +36,9 @@ static void time_sync_notification_cb(struct timeval *tv) {
 #include "Core0Lifecycle.h"
 #include <esp_ota_ops.h>
 #include "BuildInfo.h"
+#include "../hal/BoardProfile.h"
+#include "drawing/DisplaySurfaceFactory.h"
+#include "drawing/PipelineSelectionPolicy.h"
 
 ConfigLoader config;
 SemaphoreHandle_t sdMutex = nullptr;
@@ -114,9 +121,15 @@ AppRuntime::~AppRuntime() {
     delete gifEngine;
     delete m_webServer;
     delete m_frontendListener;
+    if (m_preallocatedCanvasBuffer) {
+        free(m_preallocatedCanvasBuffer);
+        m_preallocatedCanvasBuffer = nullptr;
+    }
 }
 
 void AppRuntime::initialize() {
+    BoardProfile::current().applyPowerQuirks();
+    MemTrace::arm();
     Serial.begin(115200);
     delay(1000);
     
@@ -129,6 +142,7 @@ void AppRuntime::initialize() {
     // 1. Initialize HAL first so auto-detection can be used by Registrar
     hardwareHAL.begin();
     EngineRegistrar::registerAll();
+    MemTrace::mark("after HAL + registry");
     
     randomSeed(esp_random());
 
@@ -145,8 +159,10 @@ void AppRuntime::initialize() {
          runningPartition ? runningPartition->label : "app0",
          runningPartition ? (unsigned)runningPartition->address : 0);
 
+    // Hardware watchdog: 30s timeout initialized early to prevent TG1WDT reset during boot
     constexpr uint32_t WDT_TIMEOUT_S = 30;
     esp_task_wdt_init(WDT_TIMEOUT_S, true);
+    esp_task_wdt_add(NULL);
 
 #if defined(USE_RTC) && USE_RTC
     // The I2C bus is already up: hardwareHAL.begin() owns Wire.begin() plus the tuned clock and
@@ -174,10 +190,7 @@ void AppRuntime::initialize() {
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
 #endif
 
-    esp_task_wdt_add(NULL);
     sdMutex = xSemaphoreCreateMutex();
-
-    WiFi.mode(WIFI_STA);
 
     if (hardwareHAL.capabilities().hasPsram) {
         LOGI("System", "PSRAM Detected: Total Hardware = %u MB (%u bytes), Currently Free = %u bytes",
@@ -186,35 +199,26 @@ void AppRuntime::initialize() {
         LOGI("System", "No PSRAM detected on hardware.");
     }
 
-    // Initialize SD Card
-#if USE_SD_MMC
-    if (!SD_MMC.setPins(SD_MMC_CLK_PIN, SD_MMC_CMD_PIN, SD_MMC_D0_PIN)) {
-        Serial.println("CRITICAL ERROR: SD_MMC setPins Failed! Rebooting...");
-        while (1) { delay(100); }
+    // =========================================================================
+    // STEP 1: MOUNT MICRO SD STORAGE
+    // =========================================================================
+    if (!BoardProfile::current().beginStorage()) {
+        LOGW("SD", "Storage unavailable at boot. Starting in Safe Mode (Flash defaults).");
+    } else {
+        SdSpace::start();
     }
-    // Configure SD_MMC with max_files=3 so vfs_fat_ctx_t (~1.7KB) stays strictly in fast internal DRAM (<2KB threshold)
-    // rather than spilling into external PSRAM where HUB75 DMA bus contention and cache invalidations can occur.
-    if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 3)) {
-        Serial.println("CRITICAL ERROR: SD_MMC Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#else
-    SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, SD_CS_PIN);
-    SdSpiConfig spiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(25), &SPI);
-    if (!sd.begin(spiConfig)) {
-        Serial.println("CRITICAL ERROR: SD Card Mount Failed! Rebooting via watchdog...");
-        while (1) { delay(100); }
-    }
-#endif
-    LOGI("SD", "SD Card mounted successfully.");
-    SdSpace::start();
     CpuLoad::start();
+    MemTrace::mark("after SD mount");
 
+    // =========================================================================
+    // STEP 2: LOAD & SANITIZE CONFIGURATION
+    // =========================================================================
     uint32_t preConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     uint32_t preConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
+        ConfigSanitizer::sanitize(config, true);
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
@@ -223,18 +227,229 @@ void AppRuntime::initialize() {
     uint32_t postConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     LOGI("Config", "ConfigLoader DRAM telemetry: freeInternal=%u (delta=%d), largestInternal=%u, largestDma=%u",
          postConfigFree, (int)(postConfigFree - preConfigFree), postConfigLargest, postConfigLargestDma);
+    MemTrace::mark("after config load");
 
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
 
-    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d", snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength);
-    if (!matrixEngine.begin(snapshot.matrix)) {
+    LOGI("Matrix", "Matrix Config: %dx%d, Chain: %d, Power: %s, Brightness: %d%%",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.matrix_power ? "ON" : "OFF", snapshot.matrix.powerLimitPercent);
+    if (!snapshot.matrix.matrix_power) {
+        LOGW("Matrix", "Matrix display is configured OFF (matrix_power=false). Panel will remain dark until turned ON via WebUI/API.");
+    }
+    if (snapshot.matrix.powerLimitPercent == 0) {
+        LOGW("Matrix", "Matrix brightness is 0%%. Display will appear dark.");
+    }
+
+    // Early allocation of off-screen canvas in SRAM1 (non-DMA) for boards without PSRAM.
+    // By allocating before WiFi and WebServer consume SRAM1 (0x3ffb...), the 8 KB canvas lands
+    // in CPU-only internal RAM, preserving 8,192 bytes of contiguous DMA-capable memory in SRAM2.
+    if (!hardwareHAL.capabilities().hasPsram) {
+        uint16_t totalW = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+        uint16_t totalH = snapshot.matrix.height;
+        size_t canvasBytes = (size_t)totalW * totalH * sizeof(uint16_t);
+        m_preallocatedCanvasBuffer = static_cast<uint16_t*>(heap_caps_malloc(canvasBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        if (m_preallocatedCanvasBuffer) {
+            LOGI("AppRuntime", "Pre-allocated %u KB canvas in SRAM1 at %p (preserving SRAM2 for DMA/TLS)",
+                 (unsigned)(canvasBytes / 1024), m_preallocatedCanvasBuffer);
+        } else {
+            LOGW("AppRuntime", "Early canvas pre-allocation failed; will allocate dynamically at Step 5.");
+        }
+    }
+
+    // =========================================================================
+    // STEP 3: HEAL NVS PARTITION & PRE-INITIALIZE WI-FI
+    // =========================================================================
+    LOGI("System", "Step 3: Initializing NVS...");
+    esp_task_wdt_reset();
+    esp_err_t nvsErr = nvs_flash_init();
+    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND || nvsErr == ESP_ERR_NOT_FOUND) {
+        LOGW("System", "NVS initialization issue (%d). Formatting NVS partition...", (int)nvsErr);
+        const esp_partition_t* nvsPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        if (nvsPart != nullptr) {
+            for (size_t offset = 0; offset < nvsPart->size; offset += 4096) {
+                esp_task_wdt_reset();
+                esp_partition_erase_range(nvsPart, offset, 4096);
+                delay(5);
+            }
+        } else {
+            esp_task_wdt_reset();
+            nvs_flash_erase();
+        }
+        esp_task_wdt_reset();
+        nvsErr = nvs_flash_init();
+    }
+    if (nvsErr != ESP_OK) {
+        LOGE("System", "Failed to initialize NVS: %d (Wi-Fi may fail)", (int)nvsErr);
+    } else {
+        LOGI("System", "NVS flash partition ready.");
+    }
+
+    // Step 3b: Connect Wi-Fi & establish network baseline BEFORE HUB75 DMA allocations.
+    // Packing lwIP, DHCP, DNS, and mDNS into the Persistent System Zone guarantees
+    // they never fragment the volatile Sandbox Zone.
+    LOGI("System", "Step 3b: Initializing WiFi & networking baseline...");
+    esp_task_wdt_reset();
+    WiFi.persistent(false);
+
+    static auto registerMdnsServices = []() {
+        static bool s_servicesRegistered = false;
+        if (s_servicesRegistered) return;
+        s_servicesRegistered = true;
+        MDNS.addService("http", "tcp", 80);
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+        MDNS.addService("upnp", "tcp", 80);
+        MDNS.addService("mediarenderer", "tcp", 80);
+#endif
+    };
+
+    static String s_wifiHostname;
+    s_wifiHostname = snapshot.wifi.hostname;
+    static bool s_mdnsStarted = false;
+    auto startMdns = []() {
+        if (s_mdnsStarted) return;
+        if (MDNS.begin(s_wifiHostname.c_str())) {
+            s_mdnsStarted = true;
+            LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
+            registerMdnsServices();
+        }
+    };
+
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            LOGW("WiFi", "Wi-Fi disconnected (reason: %d)", info.wifi_sta_disconnected.reason);
+        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+            const ip_addr_t* dhcpDns = dns_getserver(0);
+            ip_addr_t routerDns;
+            if (dhcpDns && !ip_addr_isany(dhcpDns)) {
+                routerDns = *dhcpDns;
+                dns_setserver(2, &routerDns);
+            }
+            ip_addr_t dns0, dns1;
+            IP_ADDR4(&dns0, 1, 1, 1, 1);
+            IP_ADDR4(&dns1, 8, 8, 8, 8);
+            dns_setserver(0, &dns0);
+            dns_setserver(1, &dns1);
+            LOGI("WiFi", "DNS configured: 1.1.1.1 (primary), 8.8.8.8 (secondary)");
+
+            if (!s_mdnsStarted && MDNS.begin(s_wifiHostname.c_str())) {
+                s_mdnsStarted = true;
+                LOGI("WiFi", "mDNS responder started: http://%s.local", s_wifiHostname.c_str());
+                registerMdnsServices();
+            }
+        }
+    });
+
+    bool wifiConnected = false;
+    if (snapshot.wifi.ssid.length() > 0) {
+        WiFi.mode(WIFI_STA);
+        WiFi.setHostname(snapshot.wifi.hostname.c_str());
+        WiFi.setAutoReconnect(true);
+        Serial.printf("Connecting to Wi-Fi: %s\n", snapshot.wifi.ssid.c_str());
+        WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+        BoardProfile::current().configureWifiTxPower();
+        WiFi.setSleep(false);
+
+        constexpr int WIFI_MAX_ATTEMPTS = 150; // 15 seconds maximum wait for association & DHCP lease
+        int attempts = 0;
+        while ((WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress(0, 0, 0, 0)) && attempts < WIFI_MAX_ATTEMPTS) {
+            delay(100);
+            esp_task_wdt_reset();
+            attempts++;
+            if (attempts % 10 == 0) {
+                Serial.printf("Waiting for Wi-Fi connection... (%d s)\n", attempts / 10);
+            }
+        }
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+            wifiConnected = true;
+            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
+            startMdns();
+            configTzTime(getPosixTimezone(snapshot.system.timezone).c_str(), "pool.ntp.org");
+            delay(150); // Allow lwIP, DHCP and mDNS FreeRTOS tasks to settle allocations in Persistent Zone
+            esp_task_wdt_reset();
+        } else {
+            LOGW("WiFi", "Wi-Fi connection timed out after %d s. Starting dual Access Point (AP) & Station mode...", WIFI_MAX_ATTEMPTS / 10);
+            WiFi.disconnect(false, false);
+            delay(50);
+            WiFi.mode(WIFI_AP_STA);
+            WiFi.softAP("ArcadeMatrix", "12345678");
+            LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
+            WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
+            BoardProfile::current().configureWifiTxPower();
+            WiFi.setSleep(false);
+        }
+    } else {
+        Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP("ArcadeMatrix", "12345678");
+        LOGI("WiFi", "AP Mode active. SSID: 'ArcadeMatrix' (key: '12345678') | IP: %s", WiFi.softAPIP().toString().c_str());
+    }
+    MemTrace::mark("after WiFi init");
+
+    // Pre-initialize WebServer and start async_tcp task early at heap baseline before HUB75 DMA allocations
+    LOGI("System", "Step 3c: Starting WebServer and async_tcp task at heap baseline...");
+    m_webServer = new WebServerAPI(80, nullptr);
+    m_webServer->begin();
+    MemTrace::mark("after early web server begin");
+
+    // Step 3d: AudioHub & Core0 lifecycle dispatcher before HUB75 DMA allocations
+    audioHub.begin();
+    Core0LifecycleDispatcher::instance().begin();
+
+    // =========================================================================
+    // STEP 4: INITIALIZE MATRIX DISPLAY
+    // =========================================================================
+    // Aggregate requirements across all enabled engines in the active rotation
+    EngineRequirements rotationReq;
+    for (const auto& entry : snapshot.rotation) {
+        for (const auto& inst : snapshot.instances) {
+            if (inst.instance_id == entry.instance_id) {
+                const EngineDescriptor* desc = EngineRegistry::getDescriptor(inst.engine_id.c_str());
+                if (desc) {
+                    rotationReq.mergeWith(desc->requirements);
+                }
+            }
+        }
+    }
+
+    uint16_t totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    auto sel = PipelineSelectionPolicy::evaluate(
+        totalWidth,
+        snapshot.matrix.height,
+        snapshot.matrix.colorDepth,
+        snapshot.matrix.render_pipeline,
+        hasPsram,
+#if defined(ESP32)
+        MemoryBudgetConstraints(
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            heap_caps_get_free_size(MALLOC_CAP_DMA),
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)
+        ),
+#else
+        MemoryBudgetConstraints(),
+#endif
+        rotationReq
+    );
+
+    LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
+         snapshot.matrix.width, snapshot.matrix.height, snapshot.matrix.chainLength,
+         snapshot.matrix.panelType.c_str(), snapshot.matrix.colorDepth, sel.effectiveColorDepth, sel.reasonText);
+    if (!matrixEngine.begin(snapshot.matrix, sel.effectiveColorDepth)) {
         LOGE("Matrix", "CRITICAL ERROR: Matrix init failed!");
         while (1) { delay(100); }
     }
+    // Commit Frame 0 (deterministic black frame) via backend as sole presentation authority
+    matrixEngine.commitFirstFrame();
     matrixEngine.setBrightness(snapshot.matrix.powerLimitPercent);
     m_lastAppliedBrightness = snapshot.matrix.powerLimitPercent;
     LOGI("System", "Free Heap after Matrix init: %d bytes", ESP.getFreeHeap());
+    MemTrace::mark("after matrix begin (DMA)");
 
     // NOTE: begin() does NOT re-probe the gyroscope (that's HardwareHAL's job); it only
     // captures the Adafruit_GFX display pointer and reads its real width()/height() to seed
@@ -252,17 +467,36 @@ void AppRuntime::initialize() {
         : (snapshot.matrix.rotation_offset % 4);
     displayOrientationManager.setRotation(initialRotation, false);
 
-    audioHub.begin();
+    // AudioHub and Core0LifecycleDispatcher were initialized in Step 3d before HUB75 DMA
+    
+    // Initialize v4 Display Surface SPI via Abstract Factory
+    totalWidth = snapshot.matrix.width * (snapshot.matrix.chainLength > 0 ? snapshot.matrix.chainLength : 1);
+    uint16_t totalHeight = snapshot.matrix.height;
+    auto surfaceResult = DisplaySurfaceFactory::createSurface(
+        &matrixEngine,
+        totalWidth,
+        totalHeight,
+        snapshot.matrix.render_pipeline,
+        m_preallocatedCanvasBuffer
+    );
+    m_drawingSurface = std::move(surfaceResult.surface);
+    LOGI("AppRuntime", "Display surface initialized: %s (%s)",
+         m_drawingSurface ? "OK" : "FAILED", surfaceResult.reasonText);
+    displayOrientationManager.setSurface(m_drawingSurface.get());
+    if (m_drawingSurface) {
+        m_drawingSurface->setRotation(displayOrientationManager.getRotation());
+    }
 
-    Core0LifecycleDispatcher::instance().begin();
     rotationManager = new RotationManager();
-    m_appCtx = new AppEngineContext(matrixEngine.getDisplay(), m_frontendListener);
+    m_appCtx = new AppEngineContext(m_drawingSurface.get(), matrixEngine.getDisplay(), m_frontendListener);
     rotationManager->setEngineContext(m_appCtx);
     rotationManager->setSlotTransition(snapshot.matrix.slot_transition, snapshot.matrix.slot_transition_duration_ms);
     overlayManager.initialize(m_appCtx, &config);
 
     m_displayRuntime.begin(m_appCtx, &matrixEngine, rotationManager,
                            &overlayManager, &displayOrientationManager, &m_displayArbiter);
+    m_displayRuntime.setSurface(m_drawingSurface.get());
+    MemTrace::mark("after display runtime");
 
     auto desc = EngineRegistry::getDescriptor("audiovisualizer");
     if (desc && desc->factory) {
@@ -271,6 +505,7 @@ void AppRuntime::initialize() {
         visualizerEngine->initialize(m_appCtx, nullptr);
         m_displayRuntime.registerSourceEngine(DisplaySourceId::VISUALIZER, visualizerEngine, EngineHandle("audiovisualizer", "visualizer_main"));
     }
+    MemTrace::mark("after visualizer engine");
 
     auto msgDesc = EngineRegistry::getDescriptor("message");
     if (msgDesc && msgDesc->factory) {
@@ -279,6 +514,7 @@ void AppRuntime::initialize() {
         m_messageEngine->initialize(m_appCtx, nullptr);
         m_displayRuntime.registerSourceEngine(DisplaySourceId::MQTT, m_messageEngine, EngineHandle("message", "message_main"));
     }
+    MemTrace::mark("after message engine");
 
     auto gifDesc = EngineRegistry::getDescriptor("gifs");
     if (gifDesc && gifDesc->factory) {
@@ -287,6 +523,7 @@ void AppRuntime::initialize() {
         gifEngine->initialize(m_appCtx, nullptr);
         m_displayRuntime.registerSourceEngine(DisplaySourceId::GIF, gifEngine, EngineHandle("gifs", "gifs_main"));
     }
+    MemTrace::mark("after gif engine");
 
     const auto* clockInst = snapshot.getInstance("clock_main");
     String fontPath = clockInst ? clockInst->config.getString("clock_font_path") : "";
@@ -299,144 +536,65 @@ void AppRuntime::initialize() {
         }
     }
 
-    // Connect to Wi-Fi
-    if (snapshot.wifi.ssid.length() > 0) {
-        Serial.printf("Connecting to Wi-Fi: %s\n", snapshot.wifi.ssid.c_str());
-        MessageConfig connMsg = {"Connecting to Wi-Fi...", 0xFFFF, 1, "rtl", 50, 10};
-        m_messageEngine->displayMessage(connMsg);
+    auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
+    if (marqueeDesc && marqueeDesc->factory) {
+        auto marqPtr = marqueeDesc->factory();
+        m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
+        m_marqueeEngine->initialize(m_appCtx, nullptr);
+        m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
+    }
+    MemTrace::mark("after marquee engine");
 
-        static auto registerMdnsServices = []() {
-            static bool s_servicesRegistered = false;
-            if (s_servicesRegistered) return;
-            s_servicesRegistered = true;
-            MDNS.addService("http", "tcp", 80);
-            MDNS.addService("upnp", "tcp", 80);
-            MDNS.addService("mediarenderer", "tcp", 80);
-        };
+    m_webServer->setMessageEngine(m_messageEngine);
+    m_webServer->setVisualizerEngine(visualizerEngine);
+    m_webServer->setMarqueeEngine(m_marqueeEngine);
 
-        String wifiHostname = snapshot.wifi.hostname;
-        WiFi.onEvent([wifiHostname](WiFiEvent_t event, WiFiEventInfo_t info) {
-            (void)info;
-            if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-                Serial.println("Wi-Fi disconnected - attempting to reconnect...");
-                WiFi.reconnect();
-            } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-                LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-                if (MDNS.begin(wifiHostname.c_str())) {
-                    LOGI("WiFi", "mDNS responder started: http://%s.local", wifiHostname.c_str());
-                    registerMdnsServices();
-                }
-            }
-        });
+    m_lastMqttEnabled = snapshot.mqtt.enabled;
+    m_lastMqttBroker = snapshot.mqtt.broker;
+    m_lastMqttPort = snapshot.mqtt.port;
+    m_lastMqttUser = snapshot.mqtt.user;
+    m_lastMqttPass = snapshot.mqtt.pass;
+    if (snapshot.mqtt.enabled) {
+        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+        m_frontendListener->begin();
+        if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
+    }
 
-        WiFi.mode(WIFI_STA);
-        WiFi.setHostname(snapshot.wifi.hostname.c_str());
-        WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
-        WiFi.setSleep(false);
-        
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            Serial.print(".");
-            matrixEngine.getDisplay()->fillScreen(0);
-            m_messageEngine->update(m_appCtx);
-            m_messageEngine->render(m_appCtx);
-            matrixEngine.present();
-            attempts++;
-        }
-        Serial.println();
-
-        if (WiFi.status() == WL_CONNECTED) {
-            LOGI("WiFi", "Wi-Fi Connected! IP Address: %s", WiFi.localIP().toString().c_str());
-            String ipMsg = "IP: " + WiFi.localIP().toString();
-            MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 50, 5};
-            m_messageEngine->displayMessage(ipConfig);
-            
-            if (MDNS.begin(snapshot.wifi.hostname.c_str())) {
-                LOGI("WiFi", "mDNS responder started: http://%s.local", snapshot.wifi.hostname.c_str());
-            }
-            configTzTime(getPosixTimezone(snapshot.system.timezone).c_str(), "pool.ntp.org");
-            
-            m_webServer = new WebServerAPI(80, m_messageEngine);
-            m_webServer->begin();
-            m_webServer->setVisualizerEngine(visualizerEngine);
-
-            auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
-            if (marqueeDesc && marqueeDesc->factory) {
-                auto marqPtr = marqueeDesc->factory();
-                m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
-                m_marqueeEngine->initialize(m_appCtx, nullptr);
-            }
-            m_webServer->setMarqueeEngine(m_marqueeEngine);
-            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
-            registerMdnsServices();
-            
-            m_lastMqttEnabled = snapshot.mqtt.enabled;
-            m_lastMqttBroker = snapshot.mqtt.broker;
-            m_lastMqttPort = snapshot.mqtt.port;
-            m_lastMqttUser = snapshot.mqtt.user;
-            m_lastMqttPass = snapshot.mqtt.pass;
-            if (snapshot.mqtt.enabled) {
-                m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
-                m_frontendListener->begin();
-                if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
-            }
-        } else {
-            Serial.println("Wi-Fi connection timed out. Starting dual Access Point (AP) & Station mode...");
-            WiFi.mode(WIFI_AP_STA);
-            WiFi.softAP("ArcadeMatrix", "12345678");
-            String apMsg = "Offline Mode (AP: ArcadeMatrix)";
-            MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
-            m_messageEngine->displayMessage(failConfig);
-            
-            m_webServer = new WebServerAPI(80, m_messageEngine);
-            m_webServer->begin();
-            m_webServer->setVisualizerEngine(visualizerEngine);
-            auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
-            if (marqueeDesc && marqueeDesc->factory) {
-                auto marqPtr = marqueeDesc->factory();
-                m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
-                m_marqueeEngine->initialize(m_appCtx, nullptr);
-                m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
-            }
-            m_webServer->setMarqueeEngine(m_marqueeEngine);
-            // Re-arm background station connection so it automatically connects as soon as AP is ready
-            WiFi.begin(snapshot.wifi.ssid.c_str(), snapshot.wifi.password.c_str());
-        }
+    if (wifiConnected) {
+        String ipMsg = "IP: " + WiFi.localIP().toString();
+        MessageConfig ipConfig = {ipMsg, 0x07E0, 1, "rtl", 35, 1};
+        m_messageEngine->displayMessage(ipConfig);
     } else {
-        Serial.println("No Wi-Fi credentials provided. Starting Access Point (AP) Mode.");
-        WiFi.mode(WIFI_AP);
-        WiFi.softAP("ArcadeMatrix", "12345678");
         String apMsg = "Offline Mode (AP: ArcadeMatrix)";
         MessageConfig failConfig = {apMsg, 0xF800, 1, "rtl", 50, 1};
         m_messageEngine->displayMessage(failConfig);
-        
-        m_webServer = new WebServerAPI(80, m_messageEngine);
-        m_webServer->begin();
-        auto marqueeDesc = EngineRegistry::getDescriptor("marquee");
-        if (marqueeDesc && marqueeDesc->factory) {
-            auto marqPtr = marqueeDesc->factory();
-            m_marqueeEngine = static_cast<MarqueeEngine*>(marqPtr.release());
-            m_marqueeEngine->initialize(m_appCtx, nullptr);
-            m_displayRuntime.registerSourceEngine(DisplaySourceId::MARQUEE, m_marqueeEngine, EngineHandle("marquee", "marquee_main"));
-        }
-        m_webServer->setMarqueeEngine(m_marqueeEngine);
     }
 
     // Allow message to finish scrolling before main loop
     LOGD("System", "Waiting for MessageEngine to finish...");
     unsigned long startWait = millis();
     while (m_messageEngine->isActive()) {
-        matrixEngine.getDisplay()->fillScreen(0);
-        m_messageEngine->update(m_appCtx);
-        m_messageEngine->render(m_appCtx);
-        matrixEngine.present();
-        delay(5);
-        if (millis() - startWait > 5000) {
+        if (m_drawingSurface) {
+            m_drawingSurface->clear(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.getDisplay()->fillScreen(0);
+            m_messageEngine->update(m_appCtx);
+            m_messageEngine->render(m_appCtx);
+            matrixEngine.present();
+        }
+        delay(10);
+        if (millis() - startWait > 15000) {
             LOGW("System", "MessageEngine wait timeout! Force stopping.");
             m_messageEngine->deactivate();
             break;
         }
+    }
+    if (m_drawingSurface) {
+        m_drawingSurface->clear(0);
+        m_drawingSurface->present();
     }
     LOGD("System", "MessageEngine finished.");
     
@@ -448,22 +606,34 @@ void AppRuntime::initialize() {
     audioSessionManager.update(snapshot);
 
     m_lastReconciledVersion = snapshot.version;
-    evaluateDisplayRequests(snapshot);
 
+    MemTrace::mark("boot complete (webserver up)");
+    MemTrace::arm();
     LOGI("System", "Setup complete. Entering loop().");
 }
 
 bool AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
     bool is_night = false;
     struct tm timeinfo;
-    if (snapshot.system.night_mode_enabled && getLocalTime(&timeinfo, 0)) {
-        int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-        int off_min = snapshot.system.turn_off_at.substring(0, 2).toInt() * 60 + snapshot.system.turn_off_at.substring(3).toInt();
-        int wake_min = snapshot.system.wake_up_at.substring(0, 2).toInt() * 60 + snapshot.system.wake_up_at.substring(3).toInt();
-        if (off_min > wake_min) {
-            is_night = (now_min >= off_min || now_min < wake_min);
+    if (snapshot.system.night_mode_enabled) {
+        if (getLocalTime(&timeinfo, 0)) {
+            int now_min = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+            int off_h = 23, off_m = 0, wake_h = 7, wake_m = 0;
+            sscanf(snapshot.system.turn_off_at.c_str(), "%d:%d", &off_h, &off_m);
+            sscanf(snapshot.system.wake_up_at.c_str(), "%d:%d", &wake_h, &wake_m);
+            int off_min = off_h * 60 + off_m;
+            int wake_min = wake_h * 60 + wake_m;
+            if (off_min > wake_min) {
+                is_night = (now_min >= off_min || now_min < wake_min);
+            } else {
+                is_night = (now_min >= off_min && now_min < wake_min);
+            }
         } else {
-            is_night = (now_min >= off_min && now_min < wake_min);
+            static unsigned long lastTimeWarn = 0;
+            if (millis() - lastTimeWarn > 60000) {
+                lastTimeWarn = millis();
+                LOGW("System", "Night mode enabled but system clock is not synchronized (NTP/RTC pending).");
+            }
         }
     }
     
@@ -480,7 +650,8 @@ bool AppRuntime::handleNightMode(const ConfigSnapshot& snapshot) {
 }
 
 void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
-    if (snapshot.mqtt.enabled != m_lastMqttEnabled || 
+    bool needsInit = (snapshot.mqtt.enabled && m_frontendListener == nullptr);
+    if (needsInit || snapshot.mqtt.enabled != m_lastMqttEnabled || 
         (snapshot.mqtt.enabled && (snapshot.mqtt.broker != m_lastMqttBroker || 
                                    snapshot.mqtt.port != m_lastMqttPort || 
                                    snapshot.mqtt.user != m_lastMqttUser || 
@@ -602,7 +773,7 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
         bool active = gifEngine->isActive();
         EngineHandle handle("gifs", "gifs_main");
         if (active) {
-            DisplayPriority priority = snapshot.mqtt.enabled
+            DisplayPriority priority = (m_frontendListener && m_frontendListener->isPlaying())
                 ? DisplayPriority::MQTT
                 : DisplayPriority::GIF;
             if (!m_syncGif.active || m_syncGif.handle != handle || m_syncGif.priority != priority) {
@@ -631,7 +802,7 @@ void AppRuntime::update() {
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const ConfigSnapshot& snapshot = guard.get();
 
-    if (snapshot.version != m_lastReconciledVersion) {
+    if (snapshot.version != m_lastReconciledVersion || (snapshot.mqtt.enabled && !m_frontendListener)) {
         m_lastReconciledVersion = snapshot.version;
         syncMqtt(snapshot);
     }
@@ -641,6 +812,16 @@ void AppRuntime::update() {
     evaluateDisplayRequests(snapshot);
 
     audioSessionManager.update(snapshot);
+
+    // Non-blocking Wi-Fi background health check
+    static unsigned long lastWifiCheck = millis();
+    if (snapshot.wifi.ssid.length() > 0 && millis() - lastWifiCheck > 60000) {
+        lastWifiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            LOGW("WiFi", "Wi-Fi disconnected (status=%d), requesting background reconnect...", WiFi.status());
+            WiFi.reconnect();
+        }
+    }
 
     if (m_displayRuntime.isTransitioning()) {
         m_displayRuntime.renderTransition();
@@ -659,6 +840,10 @@ void AppRuntime::update() {
 
     if (!displayActive) {
         if (m_wasPoweredOn) {
+            LOGW("Display", "Matrix output deactivated (matrix_power=%s, night_mode=%s, night_brightness=%d). Blanking panel.",
+                 snapshot.matrix.matrix_power ? "true" : "false",
+                 snapshot.system.night_mode_enabled ? "true" : "false",
+                 snapshot.system.night_brightness);
             matrixEngine.setBrightness(0);
             matrixEngine.getDisplay()->fillScreen(0);
             matrixEngine.present();
@@ -699,7 +884,11 @@ void AppRuntime::update() {
     lastFrameEnd = tAfterRender;
 
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
-        matrixEngine.present();
+        if (m_drawingSurface) {
+            m_drawingSurface->present();
+        } else {
+            matrixEngine.present();
+        }
     }
 
     // Periodic 5s render performance telemetry to serial logs

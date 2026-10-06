@@ -44,8 +44,8 @@ struct MatrixConfig {
     String panelType;
     int chainLength;
     int powerLimitPercent;
-    bool forceSingleBuffer;
     int colorDepth;
+    bool dynamicColorDepth = false;
     String rgbSequence;
     int limitRefreshRateHz;
     String driverChip;
@@ -57,6 +57,7 @@ struct MatrixConfig {
     bool auto_rotate = true;
     String rotation_transition = "vortex";
     int rotation_transition_duration_ms = 400;
+    String render_pipeline = "auto";
     String slot_transition = "none";            ///< effect played when the rotation moves to the next slot
     int slot_transition_duration_ms = 500;
 };
@@ -112,9 +113,11 @@ struct EngineInstanceSnapshot {
 struct ConfigSnapshot {
     static constexpr uint32_t MAGIC_START = 0x5A5A5A5A;
     static constexpr uint32_t MAGIC_END = 0xA5A5A5A5;
+    static constexpr uint32_t CURRENT_CONFIG_SCHEMA_VERSION = 2;
 
     uint32_t magic_start = MAGIC_START;
     uint32_t version = 1;
+    uint32_t schema_version = CURRENT_CONFIG_SCHEMA_VERSION;
     uint32_t crc32 = 0;
     MatrixConfig matrix;
     WifiConfig wifi;
@@ -221,6 +224,7 @@ public:
     MqttConfig mqtt;
     DataMqttConfig dataMqtt;
     SystemConfig system;
+    uint32_t schema_version = ConfigSnapshot::CURRENT_CONFIG_SCHEMA_VERSION;
 
     friend class ConfigSanitizer;
     friend class ConfigSnapshotGuard;
@@ -308,8 +312,16 @@ private:
     // saveToSD() (serialize) and loadFromSD() (deserialize) are only ever called from a single
     // context at a time (save is always under sdMutex, load only runs once at boot before any
     // other task touches config), so sharing one scratch buffer is safe.
-    mutable SpiRamJsonDocument _jsonScratch{32768};
+    // The scratch document is NOT permanent: callers create a transient SpiRamJsonDocument of
+    // kJsonScratchCapacity bytes (PSRAM on S3, heap on classic ESP32) and release it right
+    // after use, so the 8 KB does not sit in the permanent system zone on esp32dev.
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    static constexpr size_t kJsonScratchCapacity = 32768;
+#else
+    static constexpr size_t kJsonScratchCapacity = 8192;
+#endif
 
+    void buildJsonScratch(SpiRamJsonDocument& doc) const;   // fills doc from the live configuration
     void publishSnapshot_locked();
 };
 

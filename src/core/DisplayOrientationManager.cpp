@@ -1,4 +1,5 @@
 #include "DisplayOrientationManager.h"
+#include "drawing/IDrawingSurface.h"
 #include "Logger.h"
 #include "RotationManager.h"
 #include "OverlayManager.h"
@@ -9,7 +10,7 @@ extern OverlayManager overlayManager;
 DisplayOrientationManager displayOrientationManager;
 
 DisplayOrientationManager::DisplayOrientationManager()
-    : _display(nullptr), _currentRotation(0), _rotationOffset(0),
+    : _display(nullptr), _surface(nullptr), _currentRotation(0), _rotationOffset(0),
       _transitionEffect(RotationEffect::PARTICLE_VORTEX),
       _transitionDurationMs(400), _lastCheckTime(0) {}
 
@@ -19,6 +20,9 @@ void DisplayOrientationManager::begin(Adafruit_GFX* display) {
     _rotationOffset = 0;
     _lastCheckTime = 0;
 
+    if (_surface) {
+        _surface->setRotation(0);
+    }
     if (_display) {
         _display->setRotation(0);
         uint16_t w = _display->width();
@@ -34,6 +38,9 @@ void DisplayOrientationManager::begin(Adafruit_GFX* display) {
 }
 
 void DisplayOrientationManager::applyGeometryAndNotify(uint8_t targetRot) {
+    if (_surface) {
+        _surface->setRotation(targetRot);
+    }
     if (_display) {
         _display->setRotation(targetRot);
         _geometry.width = _display->width();
