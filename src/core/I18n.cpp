@@ -92,6 +92,36 @@ const char* I18n::getWeatherDayLabelLong(int dayOfWeek, bool isToday, bool isTom
     }
 }
 
+const char* I18n::getNowLabel(Lang l) {
+    return (l == Lang::EN) ? "NOW" : (l == Lang::ES) ? "AHORA" : "ACTU.";
+}
+
+const char* I18n::getConditionLabel(int group, bool longForm, Lang l) {
+    // Same table as the RPi firmware, accents folded because the panel fonts are ASCII only.
+    static const char* const kShort[3][14] = {
+        // FR
+        {"Clair", "Soleil", "Nuageux", "Couvert", "Brouil.", "Except.", "Pluie", "Averse",
+         "Orage", "Orage+pl.", "Neige", "Neige fond.", "Grele", "Venteux"},
+        // EN
+        {"Clear", "Sunny", "Pt cloudy", "Cloudy", "Fog", "Unusual", "Rain", "Hvy rain",
+         "Storm", "Storm+rain", "Snow", "Sleet", "Hail", "Windy"},
+        // ES
+        {"Despejado", "Sol", "Nubes", "Nublado", "Niebla", "Inusual", "Lluvia", "Aguacero",
+         "Tormenta", "Torm.+lluv.", "Nieve", "Aguanieve", "Granizo", "Viento"},
+    };
+    static const char* const kLong[3][14] = {
+        {"Degage", "Ensoleille", "Partiellement nuageux", "Couvert", "Brouillard", "Exceptionnel", "Pluie",
+         "Forte pluie", "Orage", "Orage et pluie", "Neige", "Neige fondue", "Grele", "Venteux"},
+        {"Clear", "Sunny", "Partly cloudy", "Cloudy", "Fog", "Unusual", "Rain",
+         "Heavy rain", "Storm", "Storm + rain", "Snow", "Sleet", "Hail", "Windy"},
+        {"Despejado", "Soleado", "Parcialmente nublado", "Nublado", "Niebla", "Inusual", "Lluvia",
+         "Lluvia fuerte", "Tormenta", "Tormenta y lluvia", "Nieve", "Aguanieve", "Granizo", "Ventoso"},
+    };
+    if (group < 0 || group > 13) return "";
+    int li = (l == Lang::EN) ? 1 : (l == Lang::ES) ? 2 : 0;
+    return longForm ? kLong[li][group] : kShort[li][group];
+}
+
 String I18n::getWeatherConditionLong(const String& raw, Lang l) {
     String lower = raw;
     lower.toLowerCase();

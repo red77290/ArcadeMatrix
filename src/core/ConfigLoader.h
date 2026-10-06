@@ -77,6 +77,15 @@ struct MqttConfig {
     bool allow_overlay = false;
 };
 
+/// Broker the MQTT Data engine connects to while it is on screen (credentials only: nothing runs
+/// in the background). Separate from MqttConfig, the arcade marquee link that can take over the display.
+struct DataMqttConfig {
+    String broker = "";
+    int port = 1883;
+    String user = "";
+    String pass = "";
+};
+
 struct SystemConfig {
     String timezone;
     bool format24h;
@@ -110,6 +119,7 @@ struct ConfigSnapshot {
     MatrixConfig matrix;
     WifiConfig wifi;
     MqttConfig mqtt;
+    DataMqttConfig dataMqtt;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
@@ -209,6 +219,7 @@ public:
     MatrixConfig matrix;
     WifiConfig wifi;
     MqttConfig mqtt;
+    DataMqttConfig dataMqtt;
     SystemConfig system;
 
     friend class ConfigSanitizer;

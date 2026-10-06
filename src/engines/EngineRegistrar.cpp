@@ -20,6 +20,7 @@
 #include "DashboardEngine.h"
 #include "GNewsEngine.h"
 #include "MarqueeEngine.h"
+#include "MqttDataEngine.h"
 
 RequirementCheckResult EngineRegistrar::checkRequirements(const EngineRequirements& req) {
     const auto& caps = hardwareHAL.capabilities();
@@ -80,6 +81,7 @@ void EngineRegistrar::registerAll() {
     static const DashboardEngineDescriptorHandler dashboardHandler;
     static const GNewsEngineDescriptorHandler gnewsHandler;
     static const MarqueeEngineDescriptorHandler marqueeHandler;
+    static const MqttDataEngineDescriptorHandler mqttDataHandler;
 
     const IEngineDescriptorHandler* handlers[] = {
         &clockHandler,
@@ -98,7 +100,8 @@ void EngineRegistrar::registerAll() {
         &musicHandler,
         &dashboardHandler,
         &gnewsHandler,
-        &marqueeHandler
+        &marqueeHandler,
+        &mqttDataHandler
     };
 
     for (const auto* handler : handlers) {
