@@ -330,7 +330,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | :--- | :--- | :--- | :--- | :--- |
 | `api_key` | `String` | `""` | Free API key | Your OpenWeatherMap API Key (free tier at [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
 | `city` | `String` | `""` | Text | City location (see formatting guide below). |
-| `units` | `Options` | `metric` | `metric`, `imperial` | Temperature unit: `metric` for Celsius (°C) or `imperial` for Fahrenheit (°F). |
+| `units` | `Options` | `metric` | `metric`, `imperial` | Temperature unit: `metric` for Celsius (°C) or `imperial` for Fahrenheit (°F). Temperatures show the degree sign ("90°F"); in °F the high is shown above the low (US convention). |
 | `lang` | `Options` | `en` | `en`, `fr`, `es` | Language code for day labels (TODAY / AUJ. / HOY). |
 | `offset_x` | `int` | `0` | `-64` to `64` | Horizontal pixel shift. |
 | `offset_y` | `int` | `0` | `-32` to `32` | Vertical pixel shift. |

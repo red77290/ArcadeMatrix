@@ -330,7 +330,7 @@ Chaque moteur expose ses propres champs via son `ConfigSchema` (consultable à `
 | :--- | :--- | :--- | :--- | :--- |
 | `api_key` | `String` | `""` | Clé API gratuite | Clé API OpenWeatherMap (création gratuite sur [openweathermap.org](https://home.openweathermap.org/users/sign_up)). |
 | `city` | `String` | `""` | Texte | Ville pour les prévisions météo (voir guide ci-dessous). |
-| `units` | `Options` | `metric` | `metric`, `imperial` | Unité de température : `metric` pour Celsius (°C) ou `imperial` pour Fahrenheit (°F). |
+| `units` | `Options` | `metric` | `metric`, `imperial` | Unité de température : `metric` pour Celsius (°C) ou `imperial` pour Fahrenheit (°F). Les températures portent le signe degré (« 90°F ») ; en °F, la maximale s'affiche au-dessus de la minimale (convention américaine). |
 | `lang` | `Options` | `en` | `en`, `fr`, `es` | Langue d'affichage des jours (TODAY / AUJ. / HOY). |
 | `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
 | `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
