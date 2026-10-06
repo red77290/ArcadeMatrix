@@ -1,0 +1,72 @@
+blueprint:
+  name: ArcadeMatrix - publish a table (up to 4 values)
+  description: >-
+    Publishes up to four entities as an ArcadeMatrix MQTT Data "table" page (retained),
+    whenever one of them changes. Add the topic to an MQTT Data screen on the sign.
+  domain: automation
+  source_url: https://github.com/red77290/ArcadeMatrix/blob/main/tools/home_assistant/blueprints/arcadematrix_table.yaml
+  input:
+    topic:
+      name: MQTT topic
+      default: arcadematrix/table/example
+      selector:
+        text: {}
+    title:
+      name: Title
+      description: Shown above the values when there is room. Leave empty for none.
+      default: ""
+      selector:
+        text: {}
+    entities:
+      name: Entities (1 to 4, in display order)
+      selector:
+        entity:
+          multiple: true
+    labels:
+      name: Labels
+      description: >-
+        Comma-separated, one per entity in the same order (e.g. "DOWNSTAIRS, UPSTAIRS").
+        Missing labels use the entity's name.
+      default: ""
+      selector:
+        text: {}
+    short_labels:
+      name: Short labels (optional)
+      description: >-
+        Comma-separated, same order. Used by small panels when a label does not fit (e.g. "DOWN, UP").
+      default: ""
+      selector:
+        text: {}
+mode: queued
+max: 5
+variables:
+  topic: !input topic
+  title: !input title
+  entities: !input entities
+  labels: !input labels
+  short_labels: !input short_labels
+triggers:
+  - trigger: state
+    entity_id: !input entities
+  - trigger: homeassistant
+    event: start
+actions:
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      retain: true
+      payload: >-
+        {%- set lbls = labels.split(',') | map('trim') | list if labels else [] %}
+        {%- set shorts = short_labels.split(',') | map('trim') | list if short_labels else [] %}
+        {%- set ns = namespace(tiles=[]) %}
+        {%- for e in entities[:4] %}
+          {%- set s = states(e) %}
+          {%- set v = (s | float(0) | round(1)) if is_number(s) else s %}
+          {%- set lbl = lbls[loop.index0] if loop.index0 < (lbls | length) and lbls[loop.index0] else (state_attr(e, 'friendly_name') or e) %}
+          {%- set tile = {'label': lbl | upper, 'value': v | string, 'unit': state_attr(e, 'unit_of_measurement') or ''} %}
+          {%- if loop.index0 < (shorts | length) and shorts[loop.index0] %}
+            {%- set tile = dict(tile, label_short=shorts[loop.index0] | upper) %}
+          {%- endif %}
+          {%- set ns.tiles = ns.tiles + [tile] %}
+        {%- endfor %}
+        {{ {'v': 1, 'type': 'table', 'title': title | upper, 'show_title': title != '', 'tiles': ns.tiles} | to_json }}

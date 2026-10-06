@@ -7,6 +7,7 @@ SanitizeResult ConfigSanitizer::sanitize(ConfigLoader& config, bool allowRotatio
     sanitizeMatrix(config.matrix, result);
     sanitizeSystem(config.system, result);
     sanitizeMqtt(config.mqtt, result);
+    sanitizeDataMqtt(config.dataMqtt, result);
     sanitizeInstances(config.instances, result);
     sanitizeRotation(config, allowRotationBootstrap, result);
 
@@ -289,6 +290,15 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
         result.defaults_injected++;
         result.modified = true;
     }
+}
+
+void ConfigSanitizer::sanitizeDataMqtt(DataMqttConfig& dm, SanitizeResult& result) {
+    if (dm.port <= 0 || dm.port > 65535) {
+        dm.port = 1883;
+        result.defaults_injected++;
+        result.modified = true;
+    }
+    dm.broker.trim();
 }
 
 void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap, SanitizeResult& result) {

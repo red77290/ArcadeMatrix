@@ -15,6 +15,7 @@ Le système de configuration repose exclusivement sur un fichier unique `config.
   "matrix": { ... },
   "wifi": { ... },
   "mqtt": { ... },
+  "data_mqtt": { ... },
   "system": { ... },
   "display": { ... },
   "audio": { ... },
@@ -105,6 +106,21 @@ Le démon de synchronisation peut être installé sur la console (Recalbox, Bato
 
 > [!NOTE]
 > Pour Batocera, la version **v33 ou supérieure** est requise pour le changement dynamique de marquee pendant la navigation (hooks `game-selected` et `system-selected`). Batocera v32 et versions antérieures ne déclenchent que les événements de lancement/arrêt de jeu. Recalbox est supporté sur toutes ses versions.
+
+---
+
+## 5.1 Le bloc `"data_mqtt"` (broker Données MQTT)
+
+Le broker auquel le moteur `mqttdata` se connecte **pendant qu'il est affiché**. Uniquement des identifiants : rien ne se connecte ni ne tourne en arrière-plan, et c'est distinct de la liaison arcade `"mqtt"` ci-dessus (qui peut prendre la main sur l'affichage).
+
+| Clé | Type | Défaut | Description |
+| :--- | :--- | :--- | :--- |
+| `broker` | `String` | `""` | IP/hôte du broker. |
+| `port` | `int` | `1883` | Port du broker. |
+| `user` | `String` | `""` | Nom d'utilisateur du broker (optionnel). |
+| `pass` | `String` | `""` | Mot de passe du broker (optionnel). |
+
+Web UI : *Système → MQTT & API → Données MQTT*. Clés plates sur `/api/settings` : `data_mqtt_broker`, `data_mqtt_port`, `data_mqtt_user`, `data_mqtt_pass` ; objet `data_mqtt` imbriqué sur `/api/system`. L'identifiant client est `<hostname wifi>-data`. Voir [MQTT_DATA_CONTRACT_FR.md](MQTT_DATA_CONTRACT_FR.md) pour le protocole et [HOME_ASSISTANT_FR.md](HOME_ASSISTANT_FR.md) pour Home Assistant.
 
 ---
 
@@ -494,6 +510,15 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 | Champ | Type | Défaut | Description |
 | :--- | :--- | :--- | :--- |
 | *(auto)* | `None` | — | Moteur interne de synchronisation des marquees Pixelcade / Recalbox / Batocera reçus via MQTT ou Webhook. |
+
+### Moteur : `mqttdata` (Données MQTT)
+| Champ | Type | Défaut | Description |
+| :--- | :--- | :--- | :--- |
+| `topics` | `String` | `""` | Topics MQTT complets séparés par des virgules, une page chacun, dans cet ordre. Jusqu'à 6 (4 sur les cartes sans PSRAM). |
+
+Affiche des pages publiées via MQTT par n'importe quel éditeur : une `value`, une `table` de 4 valeurs au plus, un `graph` ou une page `weather`, selon le `type` de chaque message. Seuls les topics se règlent ici ; tout le reste (durée par page, titres, couleurs) vient des messages, qui doivent être publiés **retenus**. L'écran ne se connecte que pendant qu'il est affiché et fixe lui-même sa durée (un cycle de ses pages) ; sa durée dans la rotation est ignorée. Protocole, formats, limites et messages : [MQTT_DATA_CONTRACT_FR.md](MQTT_DATA_CONTRACT_FR.md). Blueprints Home Assistant : [HOME_ASSISTANT_FR.md](HOME_ASSISTANT_FR.md).
+
+Exemple d'instance : `{"instance_id":"home_data","engine_id":"mqttdata","config":{"topics":"arcadematrix/weather/local,arcadematrix/graph/inside,arcadematrix/value/outside"}}`.
 
 ---
 

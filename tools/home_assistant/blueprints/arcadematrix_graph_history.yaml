@@ -1,0 +1,35 @@
+blueprint:
+  name: ArcadeMatrix - 24 h graph history
+  description: >-
+    Keeps a rolling 24 hour history (96 x 15 min samples) of one or two numeric sensors, for the
+    "ArcadeMatrix - publish a graph" blueprint. Creates one sensor whose attributes hold the samples.
+  domain: template
+  source_url: https://github.com/red77290/ArcadeMatrix/blob/main/tools/home_assistant/blueprints/arcadematrix_graph_history.yaml
+  input:
+    sensor_1:
+      name: Sensor 1
+      selector:
+        entity:
+          domain: sensor
+    sensor_2:
+      name: Sensor 2 (optional)
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+variables:
+  s1: !input sensor_1
+  s2: !input sensor_2
+triggers:
+  - trigger: time_pattern
+    minutes: "/15"
+sensor:
+  state: "{{ now().replace(second=0, microsecond=0).isoformat() }}"
+  icon: mdi:chart-line
+  attributes:
+    a: >-
+      {%- set v = states(s1) | float(none) %}
+      {{ ((this.attributes.get('a', []) | list) + [v | round(2) if v is not none else none])[-96:] }}
+    b: >-
+      {%- set v = states(s2) | float(none) if s2 else none %}
+      {{ ((this.attributes.get('b', []) | list) + [v | round(2) if v is not none else none])[-96:] }}

@@ -1610,6 +1610,12 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_device"] = snap.mqtt.deviceName;
         doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
 
+        // MQTT Data broker (used only while the mqttdata engine is on screen)
+        doc["data_mqtt_broker"] = snap.dataMqtt.broker;
+        doc["data_mqtt_port"] = snap.dataMqtt.port;
+        doc["data_mqtt_user"] = snap.dataMqtt.user;
+        doc["data_mqtt_pass"] = snap.dataMqtt.pass;
+
         response->setLength();
         request->send(response);
     });
@@ -1836,6 +1842,11 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
             if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
+            // Read when the mqttdata engine next connects: no reboot.
+            if (!doc["data_mqtt_broker"].isNull()) cfg.dataMqtt.broker = (const char*)doc["data_mqtt_broker"];
+            if (!doc["data_mqtt_port"].isNull()) cfg.dataMqtt.port = (int)doc["data_mqtt_port"];
+            if (!doc["data_mqtt_user"].isNull()) cfg.dataMqtt.user = (const char*)doc["data_mqtt_user"];
+            if (!doc["data_mqtt_pass"].isNull()) cfg.dataMqtt.pass = (const char*)doc["data_mqtt_pass"];
             if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
             if (!doc["api_token"].isNull()) {
                 String newTok = doc["api_token"].as<String>();
@@ -2040,6 +2051,12 @@ void WebServerAPI::setupRoutes() {
         mqtt["device_name"] = snap.mqtt.deviceName;
         mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
 
+        JsonObject dmq = doc.createNestedObject("data_mqtt");
+        dmq["broker"] = snap.dataMqtt.broker;
+        dmq["port"] = snap.dataMqtt.port;
+        dmq["user"] = snap.dataMqtt.user;
+        dmq["pass"] = snap.dataMqtt.pass;
+
         JsonObject wifi = doc.createNestedObject("wifi");
         wifi["ssid"] = snap.wifi.ssid;
         wifi["hostname"] = snap.wifi.hostname;
@@ -2209,6 +2226,16 @@ void WebServerAPI::setupRoutes() {
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
                 }
+            }
+
+            // MQTT Data broker: read by the mqttdata engine when it next connects; no reboot.
+            if (doc.containsKey("data_mqtt")) {
+                JsonObject dm = doc["data_mqtt"].as<JsonObject>();
+                if (!dm["broker"].isNull()) cfg.dataMqtt.broker = dm["broker"].as<String>();
+                if (!dm["port"].isNull()) cfg.dataMqtt.port = dm["port"].as<int>();
+                if (!dm["user"].isNull()) cfg.dataMqtt.user = dm["user"].as<String>();
+                if (!dm["pass"].isNull()) cfg.dataMqtt.pass = dm["pass"].as<String>();
+                changed = true;
             }
         });
 

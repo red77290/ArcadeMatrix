@@ -1,0 +1,93 @@
+blueprint:
+  name: ArcadeMatrix - publish a graph
+  description: >-
+    Publishes a 24 h line graph from a sensor made with the "ArcadeMatrix - 24 h graph history" blueprint,
+    as an ArcadeMatrix MQTT Data "graph" page (retained), every 15 minutes.
+  domain: automation
+  source_url: https://github.com/red77290/ArcadeMatrix/blob/main/tools/home_assistant/blueprints/arcadematrix_graph.yaml
+  input:
+    history:
+      name: History sensor (from the graph history blueprint)
+      selector:
+        entity:
+          domain: sensor
+    topic:
+      name: MQTT topic
+      default: arcadematrix/graph/example
+      selector:
+        text: {}
+    title:
+      name: Title
+      default: ""
+      selector:
+        text: {}
+    label_1:
+      name: Legend for sensor 1
+      default: ""
+      selector:
+        text: {}
+    color_1:
+      name: Colour for sensor 1
+      default: "#40A0FF"
+      selector:
+        text: {}
+    label_2:
+      name: Legend for sensor 2
+      default: ""
+      selector:
+        text: {}
+    color_2:
+      name: Colour for sensor 2
+      default: "#FF4020"
+      selector:
+        text: {}
+    unit:
+      name: Unit (shown after the latest value in the header)
+      default: ""
+      selector:
+        text: {}
+mode: queued
+max: 3
+variables:
+  history: !input history
+  topic: !input topic
+  title: !input title
+  label_1: !input label_1
+  color_1: !input color_1
+  label_2: !input label_2
+  color_2: !input color_2
+  unit: !input unit
+triggers:
+  - trigger: state
+    entity_id: !input history
+    to: ~
+  - trigger: homeassistant
+    event: start
+actions:
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      retain: true
+      payload: >-
+        {%- set a = state_attr(history, 'a') or [] %}
+        {%- set b = state_attr(history, 'b') or [] %}
+        {%- set n = 96 %}
+        {%- set vals = (a + b) | reject('none') | list %}
+        {%- set series = [{'label': label_1 or 'A', 'style': 'line', 'color': color_1, 'data': a}] %}
+        {%- if b | reject('none') | list | length > 0 %}
+          {%- set series = series + [{'label': label_2 or 'B', 'style': 'line', 'color': color_2, 'data': b}] %}
+        {%- endif %}
+        {%- set legend = [] %}
+        {%- if label_1 %}{% set legend = legend + [{'text': label_1 | upper, 'color': color_1}] %}{% endif %}
+        {%- if label_2 and series | length > 1 %}{% set legend = legend + [{'text': label_2 | upper, 'color': color_2}] %}{% endif %}
+        {%- set last = (a | reject('none') | list | last) if a | reject('none') | list | length > 0 else none %}
+        {%- set t = now() %}
+        {%- set k = n - ((t.hour * 60 + t.minute) // 15) %}
+        {{ {'v': 1, 'type': 'graph', 'title': title | upper,
+            'summary': ('%g' | format(last) ~ unit) if last is not none else '', 'summary_color': color_1,
+            'slots': n,
+            'min': ((vals | min) - 1) | round(0, 'floor') if vals else 0,
+            'max': ((vals | max) + 1) | round(0, 'ceil') if vals else 1,
+            'yaxis': true, 'series': series,
+            'marks': [{'at': k, 'color': '#404040'}] if k > 0 and k < n else [],
+            'legend': legend} | to_json }}

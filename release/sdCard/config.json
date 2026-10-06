@@ -28,6 +28,12 @@
         "device_name": "arcadematrix",
         "allow_overlay": false
     },
+    "data_mqtt": {
+        "broker": "",
+        "port": 1883,
+        "user": "",
+        "pass": ""
+    },
     "system": {
         "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",
         "format_24h": true,

@@ -1,0 +1,66 @@
+blueprint:
+  name: ArcadeMatrix - publish weather
+  description: >-
+    Publishes a weather entity's current conditions and daily forecast as an ArcadeMatrix
+    MQTT Data "weather" page (retained). Optionally use separate sensors for wind direction.
+  domain: automation
+  source_url: https://github.com/red77290/ArcadeMatrix/blob/main/tools/home_assistant/blueprints/arcadematrix_weather.yaml
+  input:
+    weather:
+      name: Weather entity
+      selector:
+        entity:
+          domain: weather
+    topic:
+      name: MQTT topic
+      default: arcadematrix/weather/local
+      selector:
+        text: {}
+    units:
+      name: Units of the weather entity
+      default: imperial
+      selector:
+        select:
+          options: [imperial, metric]
+mode: queued
+max: 3
+variables:
+  weather: !input weather
+  topic: !input topic
+  units: !input units
+triggers:
+  - trigger: state
+    entity_id: !input weather
+  - trigger: time_pattern
+    minutes: "/30"
+  - trigger: homeassistant
+    event: start
+actions:
+  - action: weather.get_forecasts
+    target:
+      entity_id: !input weather
+    data:
+      type: daily
+    response_variable: fc
+    continue_on_error: true
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      retain: true
+      payload: >-
+        {%- set w = states[weather] %}
+        {%- set f = fc[weather].forecast if fc is defined and weather in fc else [] %}
+        {%- set b = w.attributes.wind_bearing %}
+        {%- set deg = b | float(none) if b is not none else none %}
+        {%- set dir = (['N','NE','E','SE','S','SW','W','NW'][(((deg + 22.5) // 45) | int) % 8]) if deg is not none
+              else (b | string | upper if b is string else '') %}
+        {%- set ns = namespace(days=[]) %}
+        {%- for d in f[:5] %}
+          {%- set ns.days = ns.days + [{'temp_max': d.temperature if d.temperature is not none else w.attributes.temperature,
+                                        'temp_min': d.templow, 'condition': d.condition,
+                                        'precip_prob': d.precipitation_probability | default(0, true)}] %}
+        {%- endfor %}
+        {{ {'v': 1, 'type': 'weather', 'units': units,
+            'current': {'temp': w.attributes.temperature, 'condition': w.state, 'humidity': w.attributes.humidity,
+                        'wind': w.attributes.wind_speed, 'wind_unit': w.attributes.wind_speed_unit or '', 'wind_dir': dir},
+            'days': ns.days} | to_json }}

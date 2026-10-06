@@ -1932,6 +1932,32 @@ select.input option {
             <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
           </div>
           
+          <div class="card glass shadow" style="margin-bottom: 2rem;">
+            <h3 data-i18n="dmqtt_title">MQTT Data</h3>
+            <p class="text-muted" style="font-size: 0.9em;" data-i18n="dmqtt_desc">Broker the MQTT Data screen connects to while it is on display (see docs/MQTT_DATA_CONTRACT.md). Separate from the arcade MQTT above; nothing runs in the background.</p>
+            <div class="form-grid">
+              <div class="form-group">
+                <label data-i18n="mqtt_broker">Broker IP</label>
+                <input type="text" id="hw-dmqtt-broker" class="input" placeholder="192.168.1.10">
+              </div>
+              <div class="form-group">
+                <label data-i18n="mqtt_port">Port</label>
+                <input type="number" id="hw-dmqtt-port" class="input" value="1883">
+              </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label data-i18n="mqtt_user">Username</label>
+                <input type="text" id="hw-dmqtt-user" class="input" placeholder="Optional">
+              </div>
+              <div class="form-group">
+                <label data-i18n="mqtt_pass">Password</label>
+                <input type="password" id="hw-dmqtt-pass" class="input" placeholder="Optional">
+              </div>
+            </div>
+            <button id="btn-save-dmqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="dmqtt_save_btn">Save Data MQTT Settings</button>
+          </div>
+
           <div class="card glass shadow">
             <h3 data-i18n="api_auth_title">API Authentication</h3>
             <div class="form-grid">
@@ -2426,6 +2452,11 @@ const translations = {
     mqtt_user: "Username",
     mqtt_pass: "Password",
     mqtt_save_btn: "Save MQTT Settings",
+    dmqtt_title: "MQTT Data",
+    dmqtt_desc: "Broker the MQTT Data screen connects to while it is on display (see docs/MQTT_DATA_CONTRACT.md). Separate from the arcade MQTT above; nothing runs in the background.",
+    dmqtt_save_btn: "Save Data MQTT Settings",
+    dmqtt_saved: "Data MQTT settings saved",
+    dmqtt_save_failed: "Failed to save Data MQTT settings",
     recalbox_title: "Recalbox / Batocera Sync",
     recalbox_desc: "Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.",
     recalbox_custom_auth: "Use custom SSH credentials (Default: root / recalboxroot)",
@@ -2581,6 +2612,7 @@ const translations = {
     engine_decibelmeter: "Sound Meter / Noise Level",
     engine_music: "Music Player",
     engine_music_player: "Music Player",
+    engine_mqttdata: "MQTT Data",
 
     // Field Labels
     field_theme: "Theme / Variant",
@@ -2638,6 +2670,7 @@ const translations = {
     field_show_source: "Show Source Logo",
     field_show_title: "Show Title",
     field_show_artist: "Show Artist",
+    field_topics: "MQTT Topics",
     field_show_progress: "Show Progress Bar",
     field_show_visualizer: "Show Visualizer",
     field_marquee_speed: "Marquee Speed",
@@ -2925,6 +2958,11 @@ const translations = {
     mqtt_user: "Nom d'utilisateur",
     mqtt_pass: "Mot de passe",
     mqtt_save_btn: "Enregistrer les paramètres MQTT",
+    dmqtt_title: "Données MQTT",
+    dmqtt_desc: "Broker auquel l'écran Données MQTT se connecte pendant qu'il est affiché (voir docs/MQTT_DATA_CONTRACT_FR.md). Distinct du MQTT arcade ci-dessus ; rien ne tourne en arrière-plan.",
+    dmqtt_save_btn: "Enregistrer le MQTT Données",
+    dmqtt_saved: "Paramètres MQTT Données enregistrés",
+    dmqtt_save_failed: "Échec de l'enregistrement du MQTT Données",
     recalbox_title: "Synchronisation Recalbox / Batocera",
     recalbox_desc: "Installe automatiquement les scripts de synchro MQTT sur votre console retro-gaming via SSH.",
     recalbox_custom_auth: "Utiliser des identifiants SSH personnalisés (Défaut : root / recalboxroot)",
@@ -3080,6 +3118,7 @@ const translations = {
     engine_decibelmeter: "Sonomètre (Niveau Sonore)",
     engine_music: "Lecteur Musique Universel",
     engine_music_player: "Lecteur Musique Universel",
+    engine_mqttdata: "Données MQTT",
 
     // Field Labels
     field_theme: "Thème / Variante",
@@ -3137,6 +3176,7 @@ const translations = {
     field_show_source: "Afficher le Logo Source",
     field_show_title: "Afficher le Titre",
     field_show_artist: "Afficher l'Artiste",
+    field_topics: "Topics MQTT",
     field_show_progress: "Afficher la Barre de Progression",
     field_show_visualizer: "Afficher le Visualiseur",
     field_marquee_speed: "Vitesse de Défilement",
@@ -3424,6 +3464,11 @@ const translations = {
     mqtt_user: "Usuario",
     mqtt_pass: "Contraseña",
     mqtt_save_btn: "Guardar ajustes MQTT",
+    dmqtt_title: "Datos MQTT",
+    dmqtt_desc: "Broker al que se conecta la pantalla Datos MQTT mientras se muestra (ver docs/MQTT_DATA_CONTRACT_ES.md). Separado del MQTT arcade de arriba; nada se ejecuta en segundo plano.",
+    dmqtt_save_btn: "Guardar MQTT de Datos",
+    dmqtt_saved: "Ajustes de MQTT de Datos guardados",
+    dmqtt_save_failed: "Error al guardar el MQTT de Datos",
     recalbox_title: "Sincronización Recalbox / Batocera",
     recalbox_desc: "Instala automáticamente los scripts de sincronización MQTT en tu consola vía SSH.",
     recalbox_custom_auth: "Usar credenciales SSH personalizadas (Por defecto: root / recalboxroot)",
@@ -3579,6 +3624,7 @@ const translations = {
     engine_decibelmeter: "Sonómetro (Nivel de Ruido)",
     engine_music: "Reproductor de Música Universal",
     engine_music_player: "Reproductor de Música Universal",
+    engine_mqttdata: "Datos MQTT",
 
     // Field Labels
     field_theme: "Tema / Variante",
@@ -3636,6 +3682,7 @@ const translations = {
     field_show_source: "Mostrar Logo de Origen",
     field_show_title: "Mostrar Título",
     field_show_artist: "Mostrar Artista",
+    field_topics: "Topics MQTT",
     field_show_progress: "Mostrar Barra de Progreso",
     field_show_visualizer: "Mostrar Visualizador",
     field_marquee_speed: "Velocidad de Desplazamiento",
@@ -7386,6 +7433,25 @@ function initNetworkSettings() {
     });
   }
 
+  const btnSaveDmqtt = document.getElementById('btn-save-dmqtt');
+  if (btnSaveDmqtt) {
+    btnSaveDmqtt.addEventListener('click', async () => {
+      const data_mqtt = {
+        broker: document.getElementById('hw-dmqtt-broker').value.trim(),
+        port: parseInt(document.getElementById('hw-dmqtt-port').value, 10) || 1883,
+        user: document.getElementById('hw-dmqtt-user').value,
+        pass: document.getElementById('hw-dmqtt-pass').value,
+      };
+      try {
+        await API.post('/api/system', { data_mqtt });
+        if (window.__sysConfig) window.__sysConfig.data_mqtt = data_mqtt;
+        window.showToast(t('dmqtt_saved'), 'success');
+      } catch (e) {
+        window.showToast(t('dmqtt_save_failed'), 'error');
+      }
+    });
+  }
+
   const btnSaveApi = document.getElementById('btn-save-api');
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', async () => {
@@ -7616,6 +7682,13 @@ async function initSettings() {
     setVal('hw-mqtt-port', mqtt.port);
     setVal('hw-mqtt-user', mqtt.user || '');
     setVal('hw-mqtt-pass', mqtt.pass || '');
+
+    // MQTT Data (nested data_mqtt.*): the broker of the MQTT Data screen
+    const dmqtt = cfg.data_mqtt || {};
+    setVal('hw-dmqtt-broker', dmqtt.broker || '');
+    setVal('hw-dmqtt-port', dmqtt.port || 1883);
+    setVal('hw-dmqtt-user', dmqtt.user || '');
+    setVal('hw-dmqtt-pass', dmqtt.pass || '');
 
     // API auth (top-level or nested in system)
     const authEn = (cfg.api_auth_enabled !== undefined) ? cfg.api_auth_enabled : (sys.api_auth_enabled ?? false);

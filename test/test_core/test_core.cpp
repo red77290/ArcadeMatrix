@@ -365,6 +365,28 @@ void test_sanitizer_night_brightness_allows_zero(void) {
     TEST_ASSERT_TRUE(res.values_clamped >= 1);
 }
 
+/**
+ * @brief The MQTT Data broker credentials (the mqttdata engine's broker) round-trip through
+ * config.json; keys of the old background feed ("enabled", "topic_prefix") are ignored and a bad
+ * port falls back to 1883.
+ */
+void test_data_mqtt_config_roundtrip_and_sanitize(void) {
+    ConfigLoader cfg;
+    TEST_ASSERT_TRUE(cfg.parseFromJson("{\"data_mqtt\":{\"enabled\":true,\"topic_prefix\":\"x\",\"broker\":\" 192.168.1.195 \","
+                                       "\"port\":0,\"user\":\"u\",\"pass\":\"p\"}}"));
+    ConfigSanitizer::sanitize(cfg);
+    TEST_ASSERT_EQUAL_STRING("192.168.1.195", cfg.dataMqtt.broker.c_str());
+    TEST_ASSERT_EQUAL(1883, cfg.dataMqtt.port);
+
+    String json = cfg.serializeToJson();
+    TEST_ASSERT_TRUE(json.indexOf("topic_prefix") < 0);
+    ConfigLoader back;
+    TEST_ASSERT_TRUE(back.parseFromJson(json.c_str()));
+    TEST_ASSERT_EQUAL_STRING("u", back.dataMqtt.user.c_str());
+    TEST_ASSERT_EQUAL_STRING("p", back.dataMqtt.pass.c_str());
+    TEST_ASSERT_EQUAL(1883, back.dataMqtt.port);
+}
+
 // =========================================================================
 // 3. DisplayArbiter & OverlayManager Tests
 // =========================================================================
@@ -1967,6 +1989,7 @@ void setup() {
     RUN_TEST(test_display_runtime_purge_engine_references);
     RUN_TEST(test_engine_retirement_queue_stress_and_saturation);
     RUN_TEST(test_slot_transition_effect_names);
+    RUN_TEST(test_data_mqtt_config_roundtrip_and_sanitize);
 
     UNITY_END();
 }
