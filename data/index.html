@@ -589,14 +589,30 @@ body {
   transition: all 0.2s ease;
   z-index: 1000;
   pointer-events: none;
-}
 [data-tooltip]:hover::after,
 [data-tooltip]:hover::before,
 [data-tooltip]:focus::after,
 [data-tooltip]:focus::before {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
+}
+[data-tooltip]:hover::after,
+[data-tooltip]:focus::after {
   transform: translateX(-50%) scale(1);
+}
+.tooltip-lg[data-tooltip]::after {
+  max-width: 440px;
+  text-align: left;
+  line-height: 1.45;
+  white-space: pre-line;
+  font-size: 0.8rem;
+  left: 0;
+  transform: translateX(-30%) scale(0.95);
+}
+.tooltip-lg[data-tooltip]:hover::after,
+.tooltip-lg[data-tooltip]:focus::after {
+  transform: translateX(-30%) scale(1);
 }
 .tooltip-icon {
   display: inline-flex;
@@ -1493,16 +1509,16 @@ select.input option {
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <label><span data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_screen_rotation">?</span></label>
                 <select id="sys-screen-rotation" class="input">
                   <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape / YOKO)</option>
-                  <option value="90" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
-                  <option value="180" data-i18n="hw_rot_180">180° - Inverted Landscape</option>
-                  <option value="270" data-i18n="hw_rot_270">270° - Portrait Counter-Clockwise (TATE)</option>
+                  <option value="1" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
+                  <option value="2" data-i18n="hw_rot_180">180° - Inverted Landscape</option>
+                  <option value="3" data-i18n="hw_rot_270">270° - Portrait Counter-Clockwise (TATE)</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
+                <label><span data-i18n="hw_rotation_transition_label">Rotation Transition Effect</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rotation_transition">?</span></label>
                 <select id="sys-rotation-transition" class="input">
                   <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
                   <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
@@ -1514,7 +1530,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
+                <label><span data-i18n="hw_transition_duration_label">Transition Duration (ms)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_transition_duration">?</span></label>
                 <input type="number" id="sys-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
               <div class="form-group">
@@ -1547,13 +1563,13 @@ select.input option {
             
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="gen_timezone_label">Timezone / Region</label>
+                <label><span data-i18n="gen_timezone_label">Timezone / Region</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_timezone">?</span></label>
                 <select id="sys-timezone" class="input">
                   <!-- Populated dynamically from GLOBAL_TIMEZONES -->
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_language_label">Language</label>
+                <label><span data-i18n="gen_language_label">Language</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_language">?</span></label>
                 <select id="sys-lang" class="input">
                   <option value="en">English</option>
                   <option value="fr">Français</option>
@@ -1561,14 +1577,14 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_timeformat_label">Time Format</label>
+                <label><span data-i18n="gen_timeformat_label">Time Format</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_timeformat">?</span></label>
                 <select id="sys-format-24h" class="input">
                   <option value="true" data-i18n="gen_opt_24h">24 Hours (23:00)</option>
                   <option value="false" data-i18n="gen_opt_12h">12 Hours (11:00 PM)</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_unit_label">Temperature Unit</label>
+                <label><span data-i18n="gen_unit_label">Temperature Unit</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_unit">?</span></label>
                 <select id="sys-unit" class="input">
                   <option value="C" data-i18n="gen_unit_c">Celsius (°C)</option>
                   <option value="F" data-i18n="gen_unit_f">Fahrenheit (°F)</option>
@@ -1578,7 +1594,7 @@ select.input option {
 
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span></label>
+                <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="sys-idle-fighter-enabled" checked>
@@ -1587,11 +1603,11 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</label>
+                <label><span data-i18n="gen_idle_fighter_interval">Interval between fights (seconds)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter_interval">?</span></label>
                 <input type="number" id="sys-idle-fighter-interval" class="input" value="10" min="5" max="3600">
               </div>
               <div class="form-group">
-                <label><span data-i18n="gen_idle_fighter_speed">Fighter Speed</span> (<span id="val-sys-fighter-speed">100</span>%)</label>
+                <label><span data-i18n="gen_idle_fighter_speed">Fighter Speed</span> (<span id="val-sys-fighter-speed">100</span>%) <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter_speed">?</span></label>
                 <input type="range" id="sys-idle-fighter-speed" min="25" max="200" value="100" step="5" class="input" style="height: 38px; padding: 0.2rem;">
               </div>
             </div>
@@ -1641,7 +1657,7 @@ select.input option {
             
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</label>
+                <label><span data-i18n="hw_screen_rotation_label">Screen Rotation / Mounting Offset</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_screen_rotation">?</span></label>
                 <select id="hw-screen-rotation" class="input">
                   <option value="0" data-i18n="hw_rot_0">0° - Normal (Landscape / YOKO)</option>
                   <option value="1" data-i18n="hw_rot_90">90° - Portrait Clockwise (TATE)</option>
@@ -1650,7 +1666,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</label>
+                <label><span data-i18n="hw_gyro_autorotate_label">Gyro Auto-Rotation</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_gyro_autorotate">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="hw-gyro-autorotate" checked>
@@ -1666,7 +1682,7 @@ select.input option {
             <!-- Transition Effects Row -->
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_rotation_transition_label">Rotation Transition Effect</label>
+                <label><span data-i18n="hw_rotation_transition_label">Rotation Transition Effect</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rotation_transition">?</span></label>
                 <select id="hw-rotation-transition" class="input">
                   <option value="vortex" data-i18n="hw_trans_vortex">✨ Particle Vortex</option>
                   <option value="glitch" data-i18n="hw_trans_glitch">⚡ Cyberpunk Glitch</option>
@@ -1678,7 +1694,7 @@ select.input option {
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="hw_transition_duration_label">Transition Duration (ms)</label>
+                <label><span data-i18n="hw_transition_duration_label">Transition Duration (ms)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_transition_duration">?</span></label>
                 <input type="number" id="hw-transition-duration" class="input" value="400" min="150" max="1500" step="50">
               </div>
               <div class="form-group" style="display: flex; flex-direction: column; justify-content: flex-end;">
@@ -1700,11 +1716,11 @@ select.input option {
             
             <div class="form-grid col-4" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="hw_rows_label">Rows (Height)</label>
+                <label><span data-i18n="hw_rows_label">Rows (Height)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_rows">?</span></label>
                 <input type="number" id="hw-rows" class="input" value="64">
               </div>
               <div class="form-group">
-                <label data-i18n="hw_cols_label">Cols (Width)</label>
+                <label><span data-i18n="hw_cols_label">Cols (Width)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_cols">?</span></label>
                 <input type="number" id="hw-cols" class="input" value="256">
               </div>
               <div class="form-group">
@@ -1753,8 +1769,19 @@ select.input option {
 
             <div class="form-grid col-3" style="margin-top: 1rem;">
               <div class="form-group">
-                <label><span data-i18n="hw_color_depth_label">Color Depth (Bits)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
-                <input type="number" id="hw-color-depth" class="input" value="8" min="1" max="8">
+                <label><span data-i18n="hw_color_depth_label">Color Depth (Bits)</span> <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_color_depth">?</span></label>
+                <select id="hw-color-depth" class="input">
+                  <option value="0" data-i18n="hw_color_depth_auto">✨ Auto (Adaptive TLS / Hardware)</option>
+                  <option value="8">8 bits (256 nuances)</option>
+                  <option value="7">7 bits (128 nuances)</option>
+                  <option value="6">6 bits (64 nuances)</option>
+                  <option value="5">5 bits (32 nuances)</option>
+                  <option value="4">4 bits (16 nuances - TLS 128x32)</option>
+                  <option value="3">3 bits (8 nuances)</option>
+                  <option value="2">2 bits (4 nuances)</option>
+                  <option value="1">1 bit (2 nuances)</option>
+                </select>
+                <small id="hw-color-depth-note" style="display:none; font-size:0.75rem; color:var(--accent-info); margin-top:0.25rem;" data-i18n="hw_color_depth_auto_active">✨ Auto mode active: color depth is dynamically managed by firmware (up to 8 bits for rich graphics, adaptive 4-2 bits for TLS).</small>
               </div>
               <div class="form-group">
                 <label><span data-i18n="hw_latch_blanking_label">Latch Blanking (Cycles)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_latch_blanking">?</span></label>
@@ -1764,6 +1791,17 @@ select.input option {
                 <label><span data-i18n="hw_refresh_rate_label">Target Refresh Rate (Hz)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_limit_refresh">?</span></label>
                 <input type="number" id="hw-limit-refresh" class="input" value="0" min="0" max="300">
               </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label><span data-i18n="hw_pipeline_label">Rendering & Buffering Pipeline</span> <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_pipeline">?</span></label>
+              <select id="hw-render-pipeline" class="input">
+                <option value="auto" data-i18n="hw_pipeline_auto">✨ Auto (Recommended - Dynamic Allocation)</option>
+                <option value="canvas_single" data-i18n="hw_pipeline_canvas_single">⚡ Canvas Buffered + Single DMA (Low DMA RAM)</option>
+                <option value="canvas_double" data-i18n="hw_pipeline_canvas_double">🚀 Canvas Buffered + Double DMA (Maximum Throughput)</option>
+                <option value="direct_double" data-i18n="hw_pipeline_direct_double">🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)</option>
+                <option value="direct_single" data-i18n="hw_pipeline_direct_single">⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)</option>
+              </select>
             </div>
 
             <div class="form-grid col-2" style="margin-top: 1rem;">
@@ -1777,10 +1815,14 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label><span data-i18n="hw_single_buffer_label">Force Single Buffer (Low SRAM)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_hw_single_buffer">?</span></label>
+                <label>
+                  <span data-i18n="hw_dynamic_color_depth_label">Dynamic Presentation Pipeline</span>
+                  <span class="badge" style="background:var(--accent-info); font-size:0.7rem; padding:0.1rem 0.4rem; border-radius:4px; margin-left:0.35rem;" data-i18n="hw_recommended_esp32">Recommended for ESP32</span>
+                  <span class="tooltip-icon tooltip-lg" data-i18n-tooltip="tt_hw_dynamic_color_depth">?</span>
+                </label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
-                    <input type="checkbox" id="hw-force-single-buffer">
+                    <input type="checkbox" id="hw-dynamic-color-depth">
                     <span class="slider"></span>
                   </label>
                 </div>
@@ -1797,9 +1839,26 @@ select.input option {
             <h3 data-i18n="night_title">🌙 Night Mode & Standby Schedule</h3>
             <p class="text-muted" data-i18n="night_desc">Automatically reduce matrix brightness or completely turn off the display at night.</p>
             
+            <!-- System Clock & Night Status Banner -->
+            <div id="night-status-banner" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: 8px; background: rgba(255,255,255,0.05); margin-top: 1rem; border: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; gap: 0.75rem;">
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span id="night-live-dot" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #9e9e9e;"></span>
+                <div>
+                  <div style="font-weight: 600; font-size: 0.95rem;">
+                    <span data-i18n="night_clock_label">System Clock:</span> <span id="night-live-text" style="font-family: monospace; font-size: 1rem;">--:--:--</span>
+                  </div>
+                  <div style="font-size: 0.8rem;" class="text-muted" id="night-mode-status-text">Checking time synchronization...</div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span id="night-mode-badge" class="badge" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; display: none;"></span>
+                <button type="button" id="btn-sync-time" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;" data-i18n="night_sync_time_btn">🔄 Sync Browser Time</button>
+              </div>
+            </div>
+            
             <div class="form-grid col-3" style="margin-top: 1.5rem;">
               <div class="form-group">
-                <label data-i18n="night_enable">Enable Night Mode</label>
+                <label><span data-i18n="night_enable">Enable Night Mode</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_enable">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
                     <input type="checkbox" id="cfg-night-mode-enabled">
@@ -1808,18 +1867,18 @@ select.input option {
                 </div>
               </div>
               <div class="form-group">
-                <label data-i18n="night_turn_off">Turn Off Time (Bedtime)</label>
+                <label><span data-i18n="night_turn_off">Turn Off Time (Bedtime)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_turn_off">?</span></label>
                 <input type="time" id="cfg-turn-off-at" class="input" value="23:00">
               </div>
               <div class="form-group">
-                <label data-i18n="night_wake_up">Wake Up Time (Morning)</label>
+                <label><span data-i18n="night_wake_up">Wake Up Time (Morning)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_wake_up">?</span></label>
                 <input type="time" id="cfg-wake-up-at" class="input" value="07:00">
               </div>
             </div>
 
             <div class="form-group" style="margin-top: 1.5rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                <label style="margin: 0;" data-i18n="night_brightness">Night Brightness</label>
+                <label style="margin: 0;"><span data-i18n="night_brightness">Night Brightness</span> <span class="tooltip-icon" data-i18n-tooltip="tt_night_brightness">?</span></label>
                 <span id="night-brightness-val" class="badge" style="font-size: 1rem; font-weight: 700;">10%</span>
               </div>
               <input type="range" id="cfg-night-brightness" min="0" max="100" value="10" step="1" style="width: 100%; accent-color: var(--accent-primary);">
@@ -1836,11 +1895,11 @@ select.input option {
             <h3 data-i18n="wifi_title">Wi-Fi Configuration</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="wifi_ssid">SSID (Network Name)</label>
+                <label><span data-i18n="wifi_ssid">SSID (Network Name)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_wifi_ssid">?</span></label>
                 <input type="text" id="hw-wifi-ssid" class="input" placeholder="Your Network">
               </div>
               <div class="form-group">
-                <label data-i18n="wifi_pass">Password</label>
+                <label><span data-i18n="wifi_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_wifi_pass">?</span></label>
                 <input type="password" id="hw-wifi-pass" class="input" placeholder="••••••••">
               </div>
             </div>
@@ -1854,14 +1913,14 @@ select.input option {
             <h3 data-i18n="mqtt_title">MQTT Integration</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="mqtt_enable">Enable MQTT</label>
+                <label><span data-i18n="mqtt_enable">Enable MQTT</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_enable">?</span></label>
                 <select id="hw-mqtt-enable" class="input">
                   <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_overlay">Fighter Overlay</label>
+                <label><span data-i18n="mqtt_overlay">Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_overlay">?</span></label>
                 <select id="hw-mqtt-overlay" class="input">
                   <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
@@ -1870,21 +1929,21 @@ select.input option {
             </div>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="mqtt_broker">Broker IP</label>
+                <label><span data-i18n="mqtt_broker">Broker IP</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_broker">?</span></label>
                 <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_port">Port</label>
+                <label><span data-i18n="mqtt_port">Port</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_port">?</span></label>
                 <input type="number" id="hw-mqtt-port" class="input" value="1883">
               </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
               <div class="form-group">
-                <label data-i18n="mqtt_user">Username</label>
+                <label><span data-i18n="mqtt_user">Username</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_user">?</span></label>
                 <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
               </div>
               <div class="form-group">
-                <label data-i18n="mqtt_pass">Password</label>
+                <label><span data-i18n="mqtt_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_pass">?</span></label>
                 <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
               </div>
             </div>
@@ -1895,7 +1954,7 @@ select.input option {
             <h4 style="margin-top: 1.5rem;" data-i18n="recalbox_title">Recalbox / Batocera / RetroPie Sync</h4>
             <p class="text-muted" style="font-size: 0.9em;" data-i18n="recalbox_desc">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
             <div class="form-group" style="margin-top: 1rem;">
-              <label style="display:block; margin-bottom:0.35rem;">Target Gaming OS</label>
+              <label style="display:block; margin-bottom:0.35rem;"><span data-i18n="recalbox_target_os">Target Gaming OS</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_target_os">?</span></label>
               <select id="hw-mqtt-target-os" class="input" style="font-weight: 600;">
                 <option value="auto">Auto-Detect (Remote Scan)</option>
                 <option value="recalbox">Recalbox (/recalbox/share)</option>
@@ -1921,7 +1980,7 @@ select.input option {
             </div>
             <div class="form-grid" style="align-items: end;">
               <div class="form-group">
-                <label data-i18n="recalbox_console_ip">Console IP Address</label>
+                <label><span data-i18n="recalbox_console_ip">Console IP Address</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_ip">?</span></label>
                 <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
               </div>
               <div class="form-group" style="display: flex; gap: 0.5rem;">
@@ -1962,14 +2021,14 @@ select.input option {
             <h3 data-i18n="api_auth_title">API Authentication</h3>
             <div class="form-grid">
               <div class="form-group">
-                <label data-i18n="api_auth_enable">Require Auth for API</label>
+                <label><span data-i18n="api_auth_enable">Require Auth for API</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_auth">?</span></label>
                 <select id="hw-api-auth" class="input">
                   <option value="false" data-i18n="mqtt_opt_disabled">Disabled</option>
                   <option value="true" data-i18n="mqtt_opt_enabled">Enabled</option>
                 </select>
               </div>
               <div class="form-group">
-                <label data-i18n="api_token">API Token</label>
+                <label><span data-i18n="api_token">API Token</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_token">?</span></label>
                 <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
               </div>
             </div>
@@ -2100,9 +2159,55 @@ function withTimeout(ms = API_TIMEOUT_MS) {
   return ctrl.signal;
 }
 
+// HTTP transport concurrency limiter ensuring the browser never exhausts LwIP sockets on Core 0.
+// Bound strictly to fetch() transport; parsing, callbacks and UI execution happen outside the queue.
+class HttpRequestQueue {
+  constructor(initialConcurrency = 1) {
+    this.maxConcurrency = initialConcurrency;
+    this.activeRequests = 0;
+    this.queue = [];
+  }
+
+  setConcurrency(limit) {
+    const val = parseInt(limit, 10);
+    if (!isNaN(val) && val >= 1) {
+      this.maxConcurrency = val;
+      this._drain();
+    }
+  }
+
+  enqueue(fetchFn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fetchFn, resolve, reject });
+      this._drain();
+    });
+  }
+
+  _drain() {
+    while (this.activeRequests < this.maxConcurrency && this.queue.length > 0) {
+      const item = this.queue.shift();
+      this.activeRequests++;
+      item.fetchFn()
+        .then(res => {
+          this.activeRequests--;
+          item.resolve(res);
+          this._drain();
+        })
+        .catch(err => {
+          this.activeRequests--;
+          item.reject(err);
+          this._drain();
+        });
+    }
+  }
+}
+
+const httpQueue = new HttpRequestQueue(1);
+window.httpQueue = httpQueue;
+
 const API = {
   async get(url, timeoutMs = API_TIMEOUT_MS) {
-    const res = await fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) });
+    const res = await httpQueue.enqueue(() => fetch(url, { headers: authHeaders(), signal: withTimeout(timeoutMs) }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2111,18 +2216,23 @@ const API = {
     const text = await res.text();
     try {
       return JSON.parse(text);
-    } catch {
+    } catch (e) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        console.warn(`[API] JSON parse error for ${url}:`, e);
+        throw new Error(`Invalid JSON received from ${url}`);
+      }
       return { status: 'success', message: text };
     }
   },
 
   async post(url, data, timeoutMs = API_TIMEOUT_MS) {
-    const res = await fetch(url, {
+    const res = await httpQueue.enqueue(() => fetch(url, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: data ? JSON.stringify(data) : undefined,
       signal: withTimeout(timeoutMs),
-    });
+    }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2141,7 +2251,7 @@ const API = {
   },
 
   async delete(url) {
-    const res = await fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() });
+    const res = await httpQueue.enqueue(() => fetch(url, { method: 'DELETE', headers: authHeaders(), signal: withTimeout() }));
     if (res.status === 401) {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
@@ -2153,11 +2263,11 @@ const API = {
   async uploadMarquee(file) {
     const formData = new FormData();
     formData.append('image', file);
-    const res = await fetch('/api/marquee', {
+    const res = await httpQueue.enqueue(() => fetch('/api/marquee', {
       method: 'POST',
       headers: authHeaders(),
       body: formData
-    });
+    }));
     if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
     return await res.json();
   },
@@ -2344,7 +2454,33 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ I2S Microphone",
     tag_temp: "🌡️ Temp Sensor",
+    tag_gyro: "🧭 Gyroscope",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Requires TLS (HTTPS). In Auto mode, color depth may be reduced automatically when available contiguous memory cannot support the nominal depth.",
     tag_realtime: "⚡ Real-Time",
+    degraded_perf: "Degraded",
+    hide_incompatible: "Hide Incompatible",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Missing required hardware or memory",
+    compat_reason_0: "Fully compatible",
+    compat_reason_1: "Requires external PSRAM memory",
+    compat_reason_2: "Requires PSRAM with direct DMA capability",
+    compat_reason_3: "Requires I2S microphone hardware",
+    compat_reason_4: "Requires I2S audio speaker/DAC output",
+    compat_reason_5: "Requires SHTC3 temperature sensor",
+    compat_reason_6: "Requires QMI8658 gyroscope/IMU sensor",
+    compat_reason_7: "Requires active Wi-Fi connection",
+    compat_reason_8: "Requires MicroSD card storage",
+    compat_reason_9: "Insufficient internal DRAM headroom",
+    compat_reason_10: "Internal memory fragmented (largest block too small)",
+    compat_reason_11: "Insufficient free PSRAM memory",
+    compat_reason_12: "Insufficient DMA-capable internal memory",
+    compat_reason_13: "Requires double buffering (single-buffer fallback)",
+    compat_reason_14: "Single-buffer blanking budget exceeded (>400µs)",
+    compat_reason_15: "Frame period budget exceeded (>16.6ms)",
+    compat_reason_16: "Matrix panel dimensions unsupported",
+    compat_reason_17: "Color depth unsupported by configuration",
+    compat_reason_18: "Insufficient memory reserve for TLS/network sockets",
     confirm_remove_screen: "Are you sure you want to remove this screen?",
     confirm_remove_instance: "Are you sure you want to remove this instance?",
     
@@ -2407,6 +2543,8 @@ const translations = {
     configured_screens_desc: "Click on a screen tab below to customize its visual layout, data feeds, colors, and options.",
     no_screens_title: "No display screens configured yet",
     no_screens_desc: "Choose an engine plugin above and click 'Create Screen' to set up your first display screen.",
+    catalog_load_failed: "Unable to load engine catalog from matrix.",
+    catalog_load_failed_desc: "Please check your connection to the matrix and try again.",
     rotation_loop_title: "Screen Rotation Loop (Matrix Playlist)",
     rotation_loop_badge: "Auto-Cycling",
     rotation_loop_desc: "This sequence controls which screens cycle on your LED Matrix, how long each screen stays active (seconds / GIF count), their display order, and whether the Street Fighter animation overlay is enabled.",
@@ -2438,6 +2576,14 @@ const translations = {
     night_brightness: "Night Brightness",
     night_brightness_help: "Set to 0% to completely power off the LED panel and pause DMA rendering during night hours.",
     night_save_btn: "💾 Save Night Mode Settings",
+    night_clock_label: "System Clock:",
+    night_sync_time_btn: "🔄 Sync Browser Time",
+    night_time_synced: "System clock is synchronized (NTP/RTC ready).",
+    night_time_pending: "Clock not synchronized: click Sync Browser Time to initialize.",
+    night_time_synced_success: "Clock synchronized with browser time!",
+    night_time_sync_failed: "Time sync request sent",
+    night_mode_active: "🌙 Night Mode Active (Sleep)",
+    night_mode_day: "☀️ Day Mode Active (Awake)",
     wifi_title: "Wi-Fi Configuration",
     wifi_ssid: "SSID (Network Name)",
     wifi_pass: "Password",
@@ -2488,6 +2634,36 @@ const translations = {
     tt_hw_limit_refresh: "Caps the DMA refresh rate in Hz. Set to 0 to leave it uncapped and let the driver pick the maximum stable rate.",
     tt_hw_driver_chip: "Selects the matrix driver IC (SHIFTREG standard, FM6124/FM6126A for P2 HD panels, ICN2038S, SM16208).",
     tt_hw_row_addr: "Row addressing mode. 0 = direct binary (default), 1 = shift register, 2 = direct 16 lines (AB), 3 = direct 32 lines (ABC), 4 = direct 64 lines (ABCD).",
+    tt_hw_rows: "Physical height of the matrix in pixels (LED rows), e.g. 64 for a 64x64 or 256x64 display.",
+    tt_hw_cols: "Physical width of a single panel in pixels, e.g. 64 or 128. Total width equals Cols multiplied by Chain Length.",
+    tt_hw_screen_rotation: "Physical mounting orientation offset. 0° = Landscape (YOKO), 90°/270° = Vertical Portrait (TATE).",
+    tt_hw_gyro_autorotate: "Automatically rotates the display orientation based on the onboard IMU accelerometer gravity vector.",
+    tt_hw_rotation_transition: "Visual shader animation applied when the screen rotates or changes orientation (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Duration of the rotation transition animation in milliseconds (150ms to 1500ms).",
+    tt_gen_timezone: "Local timezone for accurate clock synchronization and sunrise/sunset calculations via NTP.",
+    tt_gen_language: "User interface language (English, Français, Español).",
+    tt_gen_timeformat: "Choose between 24-hour military time (23:00) and 12-hour AM/PM format (11:00 PM).",
+    tt_gen_unit: "Temperature unit used across weather, climate widgets and onboard sensors.",
+    tt_gen_fighter: "Spawns retro fighting arcade sprites (Street Fighter, etc.) in the background when the display is idle.",
+    tt_gen_fighter_interval: "Cooldown in seconds between retro fighter battle events.",
+    tt_gen_fighter_speed: "Playback animation speed multiplier for arcade fighter sprites.",
+    tt_night_enable: "Enables automatic sleep schedule to dim or turn off the LED panel during nighttime hours.",
+    tt_night_turn_off: "Time when the matrix automatically dims down or shuts off for the night.",
+    tt_night_wake_up: "Time when the matrix automatically restores normal daytime brightness.",
+    tt_night_brightness: "Target brightness percentage during night hours. Set to 0% to power off LEDs completely.",
+    tt_wifi_ssid: "Name of the 2.4 GHz Wi-Fi network to connect the ArcadeMatrix to.",
+    tt_wifi_pass: "WPA2/WPA3 password for your Wi-Fi network.",
+    tt_mqtt_enable: "Enables MQTT client for remote control, Home Assistant integration and console game sync.",
+    tt_mqtt_overlay: "Allows fighting sprites and external alerts to overlay on top of active screens via MQTT.",
+    tt_mqtt_broker: "Hostname or IPv4 address of your local or remote MQTT broker.",
+    tt_mqtt_port: "TCP network port for the MQTT broker (standard unencrypted default is 1883).",
+    tt_mqtt_user: "Optional MQTT username if your broker requires authentication.",
+    tt_mqtt_pass: "Optional MQTT password if your broker requires authentication.",
+    tt_mqtt_target_os: "Retro-gaming operating system running on your console to install automated game sync hooks.",
+    tt_mqtt_ip: "IP address of your Batocera, Recalbox, or RetroPie console on the local network.",
+    tt_api_auth: "Enables Bearer token authentication on all REST API endpoints for security.",
+    tt_api_token: "Secret alphanumeric token required in the 'Authorization: Bearer <token>' HTTP header.",
+    recalbox_target_os: "Target Gaming OS",
     
     // Time Formats
     opt_time_24s: "24h with Seconds (HH:MM:SS)",
@@ -2687,6 +2863,8 @@ const translations = {
     uploading_file: "Uploading asset...",
     saving_btn: "Saving...",
     btn_retry: "Retry Loading",
+    loading_display: "Loading display settings...",
+    loading_display_desc: "Retrieving engine configurations from matrix...",
     error_loading_engines: "Unable to load display engines",
     error_loading_engines_desc: "Communication with the matrix timed out or returned empty.",
 
@@ -2724,8 +2902,20 @@ const translations = {
     hw_refresh_rate_label: "Target Refresh Rate (Hz)",
     hw_clk_phase_label: "Invert CLK Phase (ESP32)",
     hw_single_buffer_label: "Force Single Buffer (Low SRAM)",
+    hw_pipeline_label: "Rendering & Buffering Pipeline",
+    tt_hw_pipeline: "Selects display buffering & surface architecture:\n• Auto (Recommended): Automatically picks the optimal mode based on PSRAM & internal RAM. On classic ESP32, allocates Canvas SRAM + Single DMA to eliminate all flicker while preserving memory.\n• Canvas Buffered + Single DMA: Virtual offscreen canvas in SRAM. All drawing is tear-free and flicker-free; halves DMA RAM usage.\n• Canvas Buffered + Double DMA: Virtual offscreen canvas with hardware DMA double-buffering. Recommended if PSRAM is available.\n• Direct DMA Double Buffer: Direct drawing into back-buffer. Requires two full DMA buffers.\n• Direct DMA Single Buffer: Ultra-low RAM mode. Direct drawing into active DMA buffer; may flicker.",
+    hw_pipeline_auto: "✨ Auto (Recommended - Dynamic Allocation)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Low DMA RAM)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Maximum Throughput)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Legacy Hardware Buffer)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Ultra-Low Memory Mode)",
+    hw_color_depth_auto: "✨ Auto (Adaptive TLS / Hardware)",
+    hw_color_depth_auto_active: "✨ Auto mode active: color depth is dynamically managed by firmware (up to 8 bits for rich graphics, adaptive 4-2 bits for TLS).",
+    hw_recommended_esp32: "Recommended for ESP32",
+    hw_dynamic_color_depth_label: "Dynamic Presentation Pipeline",
+    tt_hw_dynamic_color_depth: "Dynamic Presentation Adaptation:\nWhen enabled with manual color depth (8, 6, or 5 bits), rich graphics run at preferred color depth, while memory-intensive TLS engines temporarily switch to 4 bits to guarantee DRAM for TLS.\nSwitching occurs smoothly during inter-engine transition with zero visible flicker under hardware OE blanking (<30ms).",
     hw_btn_save: "💾 Save Hardware Settings",
-    tt_hw_color_depth: "Bits per color channel driven by the DMA engine. Lower values raise the refresh rate but reduce color gradation. 8 is the default.",
+    tt_hw_color_depth: "Color depth per RGB channel. In Auto mode (0), dynamically adapts to hardware and memory constraints (e.g. on standard ESP32 128×32, Auto mode may select 4-bit when a TLS engine is configured to preserve sufficient contiguous memory).",
     tt_hw_latch_blanking: "Blanking cycles inserted around the latch pulse. Raise it to suppress ghosting on fast panels. 4 is the default.",
     tt_hw_clk_phase: "Inverts the HUB75 clock phase. Enable it only if the panel shows shifted or duplicated columns.",
     tt_hw_single_buffer: "Forces a single DMA framebuffer instead of double buffering. Halves SRAM usage at the cost of possible tearing.",
@@ -2850,7 +3040,33 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ Micro I2S",
     tag_temp: "🌡️ Capteur Temp",
+    tag_gyro: "🧭 Gyroscope",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Nécessite TLS (HTTPS). En mode Auto, la profondeur de couleur peut être réduite automatiquement lorsque la mémoire contiguë disponible ne permet pas de conserver la profondeur nominale.",
     tag_realtime: "⚡ Temps Réel",
+    degraded_perf: "Dégradé",
+    hide_incompatible: "Masquer incompatibles",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Matériel ou mémoire requis manquant",
+    compat_reason_0: "Entièrement compatible",
+    compat_reason_1: "Nécessite une mémoire PSRAM externe",
+    compat_reason_2: "Nécessite de la PSRAM avec capacité DMA directe",
+    compat_reason_3: "Nécessite un micro matériel I2S",
+    compat_reason_4: "Nécessite une sortie audio I2S (haut-parleur/DAC)",
+    compat_reason_5: "Nécessite un capteur de température SHTC3",
+    compat_reason_6: "Nécessite un gyroscope/IMU QMI8658",
+    compat_reason_7: "Nécessite une connexion Wi-Fi active",
+    compat_reason_8: "Nécessite une carte MicroSD",
+    compat_reason_9: "Marge de mémoire DRAM interne insuffisante",
+    compat_reason_10: "Mémoire interne fragmentée (bloc contigu trop petit)",
+    compat_reason_11: "Mémoire PSRAM libre insuffisante",
+    compat_reason_12: "Mémoire interne compatible DMA insuffisante",
+    compat_reason_13: "Double buffering indisponible (repli sur buffer unique)",
+    compat_reason_14: "Budget d'extinction buffer unique dépassé (>400µs)",
+    compat_reason_15: "Budget de période d'image dépassé (>16.6ms)",
+    compat_reason_16: "Dimensions de matrice non prises en charge",
+    compat_reason_17: "Profondeur de couleur non prise en charge",
+    compat_reason_18: "Réserve mémoire insuffisante pour les sockets TLS/réseau",
     confirm_remove_screen: "Êtes-vous sûr de vouloir supprimer cet écran ?",
     confirm_remove_instance: "Êtes-vous sûr de vouloir supprimer cette instance ?",
     
@@ -2913,6 +3129,8 @@ const translations = {
     configured_screens_desc: "Cliquez sur un onglet ci-dessous pour personnaliser sa disposition, ses sources de données et ses options.",
     no_screens_title: "Aucun écran configuré pour le moment",
     no_screens_desc: "Choisissez un plugin ci-dessus et cliquez sur 'Créer l'écran' pour configurer votre premier écran.",
+    catalog_load_failed: "Impossible de charger le catalogue des moteurs depuis la matrice.",
+    catalog_load_failed_desc: "Veuillez vérifier votre connexion à la matrice et réessayer.",
     rotation_loop_title: "Boucle de Rotation (Playlist Matrice)",
     rotation_loop_badge: "Défilement Auto",
     rotation_loop_desc: "Cette séquence contrôle quels écrans défilent sur la matrice LED, la durée d'affichage (secondes / nombre de GIFs), leur ordre et l'activation de l'overlay de combat Street Fighter.",
@@ -2944,6 +3162,14 @@ const translations = {
     night_brightness: "Luminosité de nuit",
     night_brightness_help: "Réglez à 0% pour éteindre complètement la dalle LED et mettre en pause le rendu DMA la nuit.",
     night_save_btn: "💾 Enregistrer le mode nuit",
+    night_clock_label: "Horloge Système :",
+    night_sync_time_btn: "🔄 Synchroniser l'Heure du Navigateur",
+    night_time_synced: "Horloge système synchronisée (NTP/RTC prêt).",
+    night_time_pending: "Horloge non synchronisée : cliquez sur Synchroniser l'Heure pour initialiser.",
+    night_time_synced_success: "Horloge synchronisée avec l'heure du navigateur !",
+    night_time_sync_failed: "Demande de synchronisation de l'heure envoyée",
+    night_mode_active: "🌙 Mode Nuit Actif (Veille)",
+    night_mode_day: "☀️ Mode Jour Actif (Éveillé)",
     wifi_title: "Configuration Wi-Fi",
     wifi_ssid: "SSID (Nom du réseau)",
     wifi_pass: "Mot de passe",
@@ -2994,6 +3220,36 @@ const translations = {
     tt_hw_limit_refresh: "Plafonne la frequence de rafraichissement DMA en Hz. Mettez 0 pour laisser le pilote choisir la frequence stable maximale.",
     tt_hw_driver_chip: "Sélectionne le contrôleur matériel des panneaux LED (SHIFTREG standard, FM6124/FM6126A pour dalles P2 HD, ICN2038S, SM16208).",
     tt_hw_row_addr: "Mode d'adressage des lignes. 0 = binaire direct (defaut), 1 = registre a decalage, 2 = 16 lignes directes (AB), 3 = 32 lignes directes (ABC), 4 = 64 lignes directes (ABCD).",
+    tt_hw_rows: "Hauteur physique de la matrice en pixels (lignes de LED), ex. 64 pour un affichage 64x64 ou 256x64.",
+    tt_hw_cols: "Largeur physique d'une seule dalle en pixels (ex. 64 ou 128). La largeur totale correspond aux colonnes multipliées par la longueur de chaîne.",
+    tt_hw_screen_rotation: "Décalage d'orientation physique du montage. 0° = Paysage (YOKO), 90°/270° = Portrait vertical (TATE).",
+    tt_hw_gyro_autorotate: "Bascule automatiquement l'orientation de l'écran selon le vecteur gravité du capteur accéléromètre/gyroscope embarqué.",
+    tt_hw_rotation_transition: "Effet d'animation visuelle appliqué lors de la rotation de l'écran ou du changement d'orientation (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Durée de l'effet de transition de rotation en millisecondes (150ms à 1500ms).",
+    tt_gen_timezone: "Fuseau horaire local pour la synchronisation de l'horloge et le calcul des heures de lever/coucher du soleil via NTP.",
+    tt_gen_language: "Langue de l'interface utilisateur (English, Français, Español).",
+    tt_gen_timeformat: "Bascule entre le format 24 heures (23:00) et le format 12 heures AM/PM (11:00 PM).",
+    tt_gen_unit: "Unité de température utilisée dans la météo, les widgets climat et les capteurs embarqués.",
+    tt_gen_fighter: "Anime des combats de sprites arcade rétro (Street Fighter, etc.) en superposition lorsque l'affichage est actif.",
+    tt_gen_fighter_interval: "Délai en secondes entre deux apparitions de combat de fighters arcade.",
+    tt_gen_fighter_speed: "Multiplicateur de vitesse d'animation des sprites de combat arcade.",
+    tt_night_enable: "Active la mise en veille automatique pour réduire la luminosité ou éteindre la matrice la nuit.",
+    tt_night_turn_off: "Heure à laquelle la matrice réduit sa luminosité ou s'éteint pour la nuit.",
+    tt_night_wake_up: "Heure à laquelle la matrice reprend sa luminosité normale de jour.",
+    tt_night_brightness: "Pourcentage de luminosité pendant la nuit. Définissez 0% pour éteindre complètement les LEDs.",
+    tt_wifi_ssid: "Nom du réseau Wi-Fi 2,4 GHz auquel connecter l'ArcadeMatrix.",
+    tt_wifi_pass: "Mot de passe WPA2/WPA3 du réseau Wi-Fi.",
+    tt_mqtt_enable: "Active le client MQTT pour le contrôle à distance, Home Assistant et la synchronisation de jeux.",
+    tt_mqtt_overlay: "Permet aux animations de combat et alertes externes de s'afficher en surimpression via MQTT.",
+    tt_mqtt_broker: "Nom d'hôte ou adresse IPv4 du courtier (broker) MQTT local ou distant.",
+    tt_mqtt_port: "Port réseau TCP du courtier MQTT (1883 par défaut sans chiffrement).",
+    tt_mqtt_user: "Nom d'utilisateur optionnel si votre courtier MQTT exige une authentification.",
+    tt_mqtt_pass: "Mot de passe optionnel si votre courtier MQTT exige une authentification.",
+    tt_mqtt_target_os: "Système de rétrogaming de votre console pour installer les scripts de synchronisation automatique.",
+    tt_mqtt_ip: "Adresse IP de votre console Batocera, Recalbox ou RetroPie sur le réseau local.",
+    tt_api_auth: "Exige un jeton d'authentification (Bearer token) sur tous les points d'accès API REST.",
+    tt_api_token: "Jeton secret requis dans l'en-tête HTTP 'Authorization: Bearer <token>'.",
+    recalbox_target_os: "Système de jeu cible",
     
     // Time Formats
     opt_time_24s: "24h avec secondes (HH:MM:SS)",
@@ -3193,6 +3449,8 @@ const translations = {
     uploading_file: "Téléversement de la ressource...",
     saving_btn: "Enregistrement...",
     btn_retry: "Réessayer le chargement",
+    loading_display: "Chargement des paramètres d'affichage...",
+    loading_display_desc: "Récupération de la configuration des moteurs...",
     error_loading_engines: "Impossible de charger les moteurs d'affichage",
     error_loading_engines_desc: "La communication avec la matrice a expiré ou n'a rien renvoyé.",
 
@@ -3230,8 +3488,20 @@ const translations = {
     hw_refresh_rate_label: "Fréquence de Rafraîchissement Cible (Hz)",
     hw_clk_phase_label: "Inverser la Phase d'Horloge (ESP32)",
     hw_single_buffer_label: "Forcer le Simple Buffer (SRAM faible)",
+    hw_pipeline_label: "Pipeline de Rendu & Buffering",
+    tt_hw_pipeline: "Architecture de mémoire tampon et de surface :\n• Auto (Recommandé) : Sélectionne automatiquement le mode optimal selon la PSRAM et la RAM interne. Sur ESP32 classique, alloue Canvas SRAM + Simple DMA pour éliminer 100% du scintillement tout en préservant la mémoire.\n• Canvas Buffered + Simple DMA : Canvas virtuel hors-écran en SRAM. Rendu sans aucun scintillement ; divise par 2 la RAM DMA requise.\n• Canvas Buffered + Double DMA : Canvas hors-écran avec double buffer DMA matériel. Idéal avec de la PSRAM.\n• Direct DMA Double Buffer : Dessin direct dans le back-buffer DMA. Nécessite deux buffers DMA complets.\n• Direct DMA Single Buffer : Mode ultra-économe en RAM. Dessin direct dans le buffer DMA actif (peut scintiller).",
+    hw_pipeline_auto: "✨ Auto (Recommandé - Allocation Dynamique)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Basse RAM DMA)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Débit maximal)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Double Buffer (Búfer matériel classique)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Single Buffer (Mode mémoire ultra-faible)",
+    hw_color_depth_auto: "✨ Auto (Adaptatif TLS / Matériel)",
+    hw_color_depth_auto_active: "✨ Mode Auto actif : la profondeur des couleurs est gérée dynamiquement par le firmware (jusqu'à 8 bits pour les graphismes riches, 4-2 bits adaptatifs pour TLS).",
+    hw_recommended_esp32: "Recommandé pour ESP32",
+    hw_dynamic_color_depth_label: "Pipeline de Présentation Dynamique",
+    tt_hw_dynamic_color_depth: "Adaptation dynamique du pipeline :\nLorsqu'il est activé avec une profondeur manuelle (8, 6 ou 5 bits), les moteurs graphiques profitent de leur fidélité colorimétrique maximale, tandis que les moteurs réseau TLS (Crypto, Météo, Bourse, Spotify) basculent temporairement en 4 bits pour libérer la DRAM indispensable à mbedTLS.\nLa transition s'effectue sans clignotement sous extinction matérielle OE (<30ms).",
     hw_btn_save: "💾 Enregistrer les paramètres matériels",
-    tt_hw_color_depth: "Bits par canal de couleur pilotés par le moteur DMA. Une valeur plus faible augmente le rafraîchissement mais réduit les nuances. 8 par défaut.",
+    tt_hw_color_depth: "Profondeur de couleur par canal RGB. En mode Auto (0), s'adapte dynamiquement au matériel et à la mémoire (ex : sur ESP32 standard 128×32, le mode Auto peut sélectionner 4 bits lorsqu'un moteur TLS est configuré afin de préserver suffisamment de mémoire contiguë).",
     tt_hw_latch_blanking: "Cycles de blanking insérés autour de l'impulsion de latch. Augmentez-les pour supprimer les effets fantômes sur les dalles rapides. 4 par défaut.",
     tt_hw_clk_phase: "Inverse la phase d'horloge HUB75. À activer uniquement si la dalle affiche des colonnes décalées ou dupliquées.",
     tt_hw_single_buffer: "Force un unique framebuffer DMA au lieu du double buffering. Divise par deux la SRAM utilisée au prix d'un possible tearing.",
@@ -3356,7 +3626,33 @@ const translations = {
     tag_psram: "💾 PSRAM",
     tag_audio: "🎙️ Micrófono I2S",
     tag_temp: "🌡️ Sensor Temp",
+    tag_gyro: "🧭 Giroscopio",
+    tag_tls: "🔒 TLS",
+    tt_tag_tls: "Requiere TLS (HTTPS). En modo Auto, la profundidad de color puede reducirse automáticamente cuando la memoria contigua disponible no permite mantener la profundidad nominal.",
     tag_realtime: "⚡ Tiempo Real",
+    degraded_perf: "Degradado",
+    hide_incompatible: "Ocultar incompatibles",
+    incompatible: "Incompatible",
+    incompatible_hardware: "Falta hardware o memoria requerida",
+    compat_reason_0: "Totalmente compatible",
+    compat_reason_1: "Requiere memoria PSRAM externa",
+    compat_reason_2: "Requiere PSRAM con capacidad DMA directa",
+    compat_reason_3: "Requiere micrófono hardware I2S",
+    compat_reason_4: "Requiere salida de audio I2S (altavoz/DAC)",
+    compat_reason_5: "Requiere sensor de temperatura SHTC3",
+    compat_reason_6: "Requiere sensor giroscopio/IMU QMI8658",
+    compat_reason_7: "Requiere conexión Wi-Fi activa",
+    compat_reason_8: "Requiere tarjeta MicroSD",
+    compat_reason_9: "Margen de memoria DRAM interna insuficiente",
+    compat_reason_10: "Memoria interna fragmentada (bloque contiguo demasiado pequeño)",
+    compat_reason_11: "Memoria PSRAM libre insuficiente",
+    compat_reason_12: "Memoria interna con soporte DMA insuficiente",
+    compat_reason_13: "Doble búfer no disponible (modo búfer único)",
+    compat_reason_14: "Presupuesto de extinción en búfer único excedido (>400µs)",
+    compat_reason_15: "Presupuesto de período de fotograma excedido (>16.6ms)",
+    compat_reason_16: "Dimensiones de panel de matriz no compatibles",
+    compat_reason_17: "Profundidad de color no compatible",
+    compat_reason_18: "Reserva de memoria insuficiente para sockets TLS/red",
     confirm_remove_screen: "¿Estás seguro de que deseas eliminar esta pantalla?",
     confirm_remove_instance: "¿Estás seguro de que deseas eliminar esta instancia?",
     
@@ -3419,6 +3715,8 @@ const translations = {
     configured_screens_desc: "Haz clic en una pestaña para personalizar su diseño, fuentes de datos y opciones.",
     no_screens_title: "Aún no hay pantallas configuradas",
     no_screens_desc: "Elige un plugin arriba y haz clic en 'Crear pantalla' para configurar tu primera pantalla.",
+    catalog_load_failed: "No se pudo cargar el catálogo de motores desde la matriz.",
+    catalog_load_failed_desc: "Por favor, compruebe la conexión con la matriz e inténtelo de nuevo.",
     rotation_loop_title: "Bucle de Rotación (Lista de reproducción)",
     rotation_loop_badge: "Ciclo Automático",
     rotation_loop_desc: "Esta secuencia controla qué pantallas rotan en tu matriz LED, el tiempo de visualización (segundos / cantidad de GIFs), su orden y la superposición de Street Fighter.",
@@ -3450,6 +3748,14 @@ const translations = {
     night_brightness: "Brillo nocturno",
     night_brightness_help: "Ajusta al 0% para apagar completamente el panel LED y pausar el renderizado DMA durante la noche.",
     night_save_btn: "💾 Guardar ajustes de modo noche",
+    night_clock_label: "Reloj del Sistema:",
+    night_sync_time_btn: "🔄 Sincronizar Hora del Navegador",
+    night_time_synced: "Reloj del sistema sincronizado (NTP/RTC listo).",
+    night_time_pending: "Reloj no sincronizado: haz clic en Sincronizar Hora para inicializar.",
+    night_time_synced_success: "¡Reloj sincronizado con la hora del navegador!",
+    night_time_sync_failed: "Solicitud de sincronización de hora enviada",
+    night_mode_active: "🌙 Modo Noche Activo (Reposo)",
+    night_mode_day: "☀️ Modo Día Activo (Despierto)",
     wifi_title: "Configuración Wi-Fi",
     wifi_ssid: "SSID (Nombre de red)",
     wifi_pass: "Contraseña",
@@ -3500,6 +3806,36 @@ const translations = {
     tt_hw_limit_refresh: "Limita la frecuencia de refresco DMA en Hz. Ponlo a 0 para que el controlador elija la frecuencia estable maxima.",
     tt_hw_driver_chip: "Selecciona el chip controlador de matriz (SHIFTREG estándar, FM6124/FM6126A para dalles P2 HD, ICN2038S, SM16208).",
     tt_hw_row_addr: "Modo de direccionamiento de filas. 0 = binario directo (predeterminado), 1 = registro de desplazamiento, 2 = 16 lineas directas (AB), 3 = 32 lineas directas (ABC), 4 = 64 lineas directas (ABCD).",
+    tt_hw_rows: "Altura física de la matriz en píxeles (filas LED), ej. 64 para pantallas de 64x64 o 256x64.",
+    tt_hw_cols: "Ancho físico de un panel en píxeles (ej. 64 o 128). El ancho total es Columnas multiplicado por la Longitud de cadena.",
+    tt_hw_screen_rotation: "Desfase de orientación física de montaje. 0° = Horizontal (YOKO), 90°/270° = Vertical (TATE).",
+    tt_hw_gyro_autorotate: "Gira automáticamente la pantalla según el vector de gravedad del acelerómetro/giroscopio integrado.",
+    tt_hw_rotation_transition: "Efecto de animación visual aplicado al rotar la pantalla o cambiar de orientación (Glitch, Vortex, Rain, Zoom, Slide).",
+    tt_hw_transition_duration: "Duración de la animación de transición de rotación en milisegundos (150ms a 1500ms).",
+    tt_gen_timezone: "Zona horaria local para sincronización horaria precisa y cálculo de amanecer/atardecer por NTP.",
+    tt_gen_language: "Idioma de la interfaz de usuario (English, Français, Español).",
+    tt_gen_timeformat: "Elige entre formato militar de 24 horas (23:00) y formato 12 horas AM/PM (11:00 PM).",
+    tt_gen_unit: "Unidad de temperatura utilizada en el clima, widgets y sensores integrados.",
+    tt_gen_fighter: "Muestra combates de sprites retro arcade en segundo plano mientras la pantalla está activa.",
+    tt_gen_fighter_interval: "Tiempo en segundos entre combates de luchadores arcade.",
+    tt_gen_fighter_speed: "Multiplicador de velocidad de animación para los sprites de lucha arcade.",
+    tt_night_enable: "Activa el modo nocturno programado para atenuar o apagar el panel LED durante la noche.",
+    tt_night_turn_off: "Hora a la que la matriz reduce el brillo o se apaga durante la noche.",
+    tt_night_wake_up: "Hora a la que la matriz reanuda el brillo diurno normal por la mañana.",
+    tt_night_brightness: "Porcentaje de brillo durante la noche. Ponlo a 0% para apagar completamente los LEDs.",
+    tt_wifi_ssid: "Nombre de la red Wi-Fi de 2.4 GHz a la que conectar el ArcadeMatrix.",
+    tt_wifi_pass: "Contraseña WPA2/WPA3 de tu red Wi-Fi.",
+    tt_mqtt_enable: "Activa el cliente MQTT para control remoto, Home Assistant y sincronización de juegos.",
+    tt_mqtt_overlay: "Permite superponer luchadores arcade y alertas externas sobre la pantalla activa vía MQTT.",
+    tt_mqtt_broker: "Nombre de host o dirección IPv4 de tu broker MQTT local o remoto.",
+    tt_mqtt_port: "Puerto de red TCP del broker MQTT (1883 predeterminado sin cifrar).",
+    tt_mqtt_user: "Usuario MQTT opcional si tu broker requiere autenticación.",
+    tt_mqtt_pass: "Contraseña MQTT opcional si tu broker requiere autenticación.",
+    tt_mqtt_target_os: "Sistema operativo de videojuegos retro para instalar los scripts de sincronización automática.",
+    tt_mqtt_ip: "Dirección IP de tu consola Batocera, Recalbox o RetroPie en la red local.",
+    tt_api_auth: "Exige autenticación por token Bearer en todos los endpoints de la API REST.",
+    tt_api_token: "Token secreto requerido en el encabezado HTTP 'Authorization: Bearer <token>'.",
+    recalbox_target_os: "Sistema operativo de juego",
     
     // Time Formats
     opt_time_24s: "24h con segundos (HH:MM:SS)",
@@ -3699,6 +4035,8 @@ const translations = {
     uploading_file: "Subiendo recurso...",
     saving_btn: "Guardando...",
     btn_retry: "Reintentar carga",
+    loading_display: "Cargando configuración de pantalla...",
+    loading_display_desc: "Recuperando la configuración de los motores...",
     error_loading_engines: "No se pueden cargar los motores de visualización",
     error_loading_engines_desc: "La comunicación con la matriz ha expirado o no ha devuelto nada.",
 
@@ -3736,8 +4074,20 @@ const translations = {
     hw_refresh_rate_label: "Frecuencia de Refresco Objetivo (Hz)",
     hw_clk_phase_label: "Invertir Fase de Reloj (ESP32)",
     hw_single_buffer_label: "Forzar Búfer Simple (SRAM baja)",
+    hw_pipeline_label: "Canalización de Renderizado y Búfer",
+    tt_hw_pipeline: "Arquitectura de búfer de pantalla y superficie:\n• Auto (Recomendado): Selecciona automáticamente el modo óptimo según PSRAM y RAM interna. En ESP32 clásico, asigna Canvas SRAM + DMA Simple para eliminar parpadeos preservando memoria.\n• Canvas Buffered + DMA Simple: Lienzo virtual fuera de pantalla en SRAM. Renderizado sin parpadeos; reduce a la mitad la RAM DMA.\n• Canvas Buffered + Doble DMA: Lienzo fuera de pantalla con doble búfer DMA por hardware. Ideal con PSRAM.\n• Direct DMA Doble Búfer: Dibujo directo en el back-buffer DMA. Requiere dos búferes DMA completos.\n• Direct DMA Búfer Simple: Modo de memoria ultra baja. Dibujo directo en el búfer DMA activo (puede parpadear).",
+    hw_pipeline_auto: "✨ Auto (Recomendado - Asignación Dinámica)",
+    hw_pipeline_canvas_single: "⚡ Canvas Buffered + Single DMA (Baja RAM DMA)",
+    hw_pipeline_canvas_double: "🚀 Canvas Buffered + Double DMA (Rendimiento máximo)",
+    hw_pipeline_direct_double: "🛡️ Direct DMA Doble Búfer (Búfer hardware heredado)",
+    hw_pipeline_direct_single: "⚠️ Direct DMA Búfer Simple (Modo memoria ultra-baja)",
+    hw_color_depth_auto: "✨ Auto (Adaptable TLS / Hardware)",
+    hw_color_depth_auto_active: "✨ Modo Auto activo: la profundidad de color es gestionada dinámicamente por el firmware (hasta 8 bits para gráficos ricos, 4-2 bits adaptativos para TLS).",
+    hw_recommended_esp32: "Recomendado para ESP32",
+    hw_dynamic_color_depth_label: "Pipeline de Presentación Dinámico",
+    tt_hw_dynamic_color_depth: "Adaptación dinámica de presentación:\nCuando está habilitado con profundidad manual (8, 6 o 5 bits), los motores gráficos mantienen su máxima fidelidad de color, mientras que los motores de red TLS (Crypto, Tiempo, Bolsa, Spotify) cambian temporalmente a 4 bits para garantizar DRAM para mbedTLS.\nLa transición ocurre sin parpadeo bajo apagado por hardware OE (<30ms).",
     hw_btn_save: "💾 Guardar la configuración de hardware",
-    tt_hw_color_depth: "Bits por canal de color gestionados por el motor DMA. Un valor menor aumenta el refresco pero reduce los matices. 8 por defecto.",
+    tt_hw_color_depth: "Profundidad de color por canal RGB. En modo Auto (0), se adapta dinámicamente al hardware y a las restricciones de memoria (p. ej. en ESP32 estándar 128×32, el modo Auto puede seleccionar 4 bits cuando se configura un motor TLS para preservar suficiente memoria contigua).",
     tt_hw_latch_blanking: "Ciclos de blanking insertados alrededor del pulso de latch. Auméntalos para eliminar el ghosting en paneles rápidos. 4 por defecto.",
     tt_hw_clk_phase: "Invierte la fase de reloj HUB75. Actívalo solo si el panel muestra columnas desplazadas o duplicadas.",
     tt_hw_single_buffer: "Fuerza un único framebuffer DMA en lugar de doble búfer. Reduce a la mitad el uso de SRAM a costa de posible tearing.",
@@ -3768,6 +4118,84 @@ function t(key, fallback) {
   return dict[key] !== undefined ? dict[key] : (fallback || key);
 }
 
+function isEngineCompatible(desc, hwData = window.__hwData) {
+  if (!desc) return true;
+  const comp = desc.compatibility;
+  if (comp) {
+    if (comp.status === 'incompatible' || comp.compatible === false) {
+      return false;
+    }
+  }
+  if (desc.available === false) return false;
+
+  const req = desc.requirements || {};
+  if (hwData) {
+    if (req.needs_psram || req.needsPsram) {
+      if (!hwData.psram || !hwData.psram.available) return false;
+    }
+    if (req.needs_temp_sensor || req.needsTempSensor) {
+      if (!hwData.temperature_sensor) return false;
+    }
+    const needsMic = req.needs_audio_input || req.needsAudioInput || 
+                     ((req.needs_audio || req.needsAudio) && (desc.metadata?.id === 'decibelMeter' || desc.id === 'decibelMeter'));
+    if (needsMic && !hwData.microphone) {
+      return false;
+    }
+    if (req.needs_gyroscope || req.needsGyroscope) {
+      if (!hwData.gyroscope) return false;
+    }
+  }
+  return true;
+}
+window.isEngineCompatible = isEngineCompatible;
+
+function getCompatReasonLabel(comp, desc, hwData = window.__hwData) {
+  if (comp) {
+    const code = comp.primary_reason;
+    if (code !== undefined && code !== null && code !== 0) {
+      const key = `compat_reason_${code}`;
+      const translated = t(key, null);
+      if (translated) return translated;
+    }
+    if (comp.reason_text) return comp.reason_text;
+  }
+  if (desc?.reason) return desc.reason;
+
+  const req = desc?.requirements || {};
+  if (hwData) {
+    if ((req.needs_temp_sensor || req.needsTempSensor) && !hwData.temperature_sensor) {
+      return t('compat_reason_5', 'Requires SHTC3 temperature sensor');
+    }
+    const needsMic = req.needs_audio_input || req.needsAudioInput || 
+                     ((req.needs_audio || req.needsAudio) && (desc?.metadata?.id === 'decibelMeter' || desc?.id === 'decibelMeter'));
+    if (needsMic && !hwData.microphone) {
+      return t('compat_reason_3', 'Requires I2S microphone hardware');
+    }
+    if ((req.needs_psram || req.needsPsram) && (!hwData.psram || !hwData.psram.available)) {
+      return t('compat_reason_1', 'Requires external PSRAM memory');
+    }
+    if ((req.needs_gyroscope || req.needsGyroscope) && !hwData.gyroscope) {
+      return t('compat_reason_6', 'Requires QMI8658 gyroscope/IMU sensor');
+    }
+  }
+  return t('incompatible', 'Incompatible');
+}
+window.getCompatReasonLabel = getCompatReasonLabel;
+
+function applyTooltips(root = document) {
+  const currentLang = localStorage.getItem('lang') || 'fr';
+  const dict = translations[currentLang] || translations.en;
+  if (!dict) return;
+  root.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
+    const key = el.getAttribute('data-i18n-tooltip');
+    if (dict[key] !== undefined) {
+      el.setAttribute('data-tooltip', dict[key]);
+      el.setAttribute('tabindex', '0'); // For mobile focus
+    }
+  });
+}
+window.applyTooltips = applyTooltips;
+
 function setLanguage(lang) {
   localStorage.setItem('lang', lang);
   const dict = translations[lang] || translations.en;
@@ -3781,13 +4209,7 @@ function setLanguage(lang) {
   });
 
   // Tooltip translation
-  document.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
-    const key = el.getAttribute('data-i18n-tooltip');
-    if (dict[key] !== undefined) {
-      el.setAttribute('data-tooltip', dict[key]);
-      el.setAttribute('tabindex', '0'); // For mobile focus
-    }
-  });
+  applyTooltips(document);
 
   // Placeholder translation
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
@@ -3924,7 +4346,9 @@ const GLOBAL_TIMEZONES = [
   { value: "UTC", label: "UTC (Coordinated Universal Time)" }
 ];
 
-const THEME_ID_MAP = {
+/* [[COMPILED_ENGINE_CATALOG]] */
+
+const THEME_ID_MAP = (typeof COMPILED_THEMES !== 'undefined') ? COMPILED_THEMES : {
   "0": "Nintendo", "1": "Capcom", "2": "Taito", "3": "Sega",
   "4": "Cave", "5": "Konami", "6": "SNK", "7": "Technos",
   "8": "IGS", "9": "Hudson", "10": "Banpresto", "11": "Namco",
@@ -3933,21 +4357,18 @@ const THEME_ID_MAP = {
   "18": "Cyberpunk", "19": "Flip Clock", "20": "Custom Gradient",
   "21": "Matrix Rain", "22": "Pong Clock", "23": "Tetris Clock",
   "24": "Word Clock", "25": "Binary Clock", "26": "Pac-Man Clock",
-  "27": "Versus Clock", "28": "Slot Machine Clock", "29": "Tetris Game Boy",
-  "tetris": "Tetris Clock", "matrix": "Matrix Rain", "matrix_rain": "Matrix Rain",
-  "versus": "Capcom Versus", "arcade": "Arcade", "pacman": "Pac-Man",
-  "flip": "Flip Clock", "word": "Word Clock", "cyberpunk": "Cyberpunk",
-  "pong": "Pong", "binary": "Binary", "slot_machine": "Slot Machine"
+  "27": "Versus Clock", "28": "Slot Machine Clock", "29": "Tetris Game Boy"
 };
 
 function getEngineMeta(descOrMeta) {
   const meta = (descOrMeta && descOrMeta.metadata) ? descOrMeta.metadata : (descOrMeta || {});
   const id = String(meta.id || '').toLowerCase();
+  const compiled = (typeof ENGINE_META_MAP !== 'undefined' && ENGINE_META_MAP && ENGINE_META_MAP[id]) ? ENGINE_META_MAP[id] : null;
   const lang = localStorage.getItem('lang') || 'en';
   const dict = (typeof translations !== 'undefined' && translations && translations[lang]) ? translations[lang] : ((typeof translations !== 'undefined' && translations) ? translations.en : {});
-  const rawName = meta.name || (id ? (id.charAt(0).toUpperCase() + id.slice(1)) : 'Display Engine');
+  const rawName = meta.name || (compiled && compiled.name) || (id ? (id.charAt(0).toUpperCase() + id.slice(1)) : 'Display Engine');
   const name = (dict && dict[`engine_${id}`]) ? dict[`engine_${id}`] : rawName;
-  const cat = String(meta.category || '').toLowerCase();
+  const cat = String(meta.category || (compiled && compiled.category) || '').toLowerCase();
   
   let icon = meta.icon || '';
   if (!icon) {
@@ -3976,29 +4397,89 @@ function getEngineMeta(descOrMeta) {
 const endpointCache = new Map();
 const inFlightRequests = new Map();
 
-async function fetchCachedEndpoint(url) {
+function invalidateCachedEndpoint(url) {
+  if (!url) return;
+  endpointCache.delete(url);
+  inFlightRequests.delete(url);
+  try {
+    sessionStorage.removeItem('am_cache_' + url);
+    localStorage.removeItem('am_cache_' + url);
+  } catch (_) {}
+}
+window.invalidateCachedEndpoint = invalidateCachedEndpoint;
+
+async function fetchCachedEndpoint(url, timeoutMs = API_TIMEOUT_MS) {
   if (!url) return [];
   if (endpointCache.has(url)) {
     return endpointCache.get(url);
   }
+  if (url === '/api/themes') {
+    const th = window.COMPILED_THEMES || THEME_ID_MAP;
+    if (th) {
+      const arr = Object.entries(th)
+        .filter(([k]) => !isNaN(parseInt(k)))
+        .map(([k, v]) => ({ id: parseInt(k), name: v, value: String(k), label: v }));
+      endpointCache.set(url, arr);
+      return arr;
+    }
+  }
+  if (url === '/api/timezones') {
+    endpointCache.set(url, GLOBAL_TIMEZONES);
+    return GLOBAL_TIMEZONES;
+  }
+  // Check sessionStorage / localStorage for static endpoints (themes) across tab navigation
+  const isStaticEndpoint = url === '/api/themes';
+  if (isStaticEndpoint) {
+    try {
+      const stored = sessionStorage.getItem('am_cache_' + url) || localStorage.getItem('am_cache_' + url);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const isStoredValid = (parsed && (Array.isArray(parsed) ? parsed.length > 0 : (typeof parsed === 'object' && Object.keys(parsed).length > 0)));
+        if (isStoredValid) {
+          endpointCache.set(url, parsed);
+          return parsed;
+        } else {
+          sessionStorage.removeItem('am_cache_' + url);
+          localStorage.removeItem('am_cache_' + url);
+        }
+      }
+    } catch (_) {}
+  }
+
   if (inFlightRequests.has(url)) {
     return inFlightRequests.get(url);
   }
 
   const promise = (async () => {
-    try {
-      const data = await API.get(url);
-      const isValid = (Array.isArray(data) && data.length > 0) ||
-                      (typeof data === 'object' && data !== null && Object.keys(data).length > 0);
-      if (isValid) {
-        endpointCache.set(url, data);
+    let retries = 1;
+    while (true) {
+      try {
+        const data = await API.get(url, timeoutMs);
+        const isValid = (url === '/api/engines')
+          ? (Array.isArray(data) && data.length > 0)
+          : ((Array.isArray(data) && data.length > 0) ||
+             (typeof data === 'object' && data !== null && !data.error && data.status !== 'success' && Object.keys(data).length > 0));
+        if (isValid) {
+          endpointCache.set(url, data);
+          if (isStaticEndpoint) {
+            try {
+              sessionStorage.setItem('am_cache_' + url, JSON.stringify(data));
+              localStorage.setItem('am_cache_' + url, JSON.stringify(data));
+            } catch (_) {}
+          }
+        }
+        return data || [];
+      } catch (err) {
+        if (retries > 0) {
+          retries--;
+          await new Promise(r => setTimeout(r, 600));
+          continue;
+        }
+        console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
+        return [];
+      } finally {
+        inFlightRequests.delete(url);
       }
-      return data || [];
-    } catch (err) {
-      console.warn(`[API] Failed to fetch endpoint ${url}:`, err);
-      return [];
-    } finally {
-      inFlightRequests.delete(url);
     }
   })();
 
@@ -4012,6 +4493,43 @@ function getSchemaFields(engineDesc) {
   if (Array.isArray(engineDesc.schema.fields)) return engineDesc.schema.fields;
   if (Array.isArray(engineDesc.schema)) return engineDesc.schema;
   return [];
+}
+
+// Engine detailed schema cache and on-demand fetcher
+const _engineSchemaCache = new Map();
+
+async function fetchEngineSchema(engineId) {
+  if (!engineId) return null;
+  const key = String(engineId).toLowerCase().trim();
+  if (_engineSchemaCache.has(key)) {
+    return _engineSchemaCache.get(key);
+  }
+  if (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG)) {
+    const found = COMPILED_ENGINE_CATALOG.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+    if (found && Array.isArray(found.schema) && found.schema.length > 0) {
+      _engineSchemaCache.set(key, found);
+      return found;
+    }
+  }
+  try {
+    let data = await API.get(`/api/engines?id=${encodeURIComponent(key)}`, 10000);
+    if (Array.isArray(data)) {
+      data = data.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+    }
+    if (!data || !data.metadata) {
+      data = await API.get(`/api/engines/${encodeURIComponent(key)}`, 10000);
+      if (Array.isArray(data)) {
+        data = data.find(d => d && d.metadata && (d.metadata.id || '').toLowerCase() === key);
+      }
+    }
+    if (data && data.metadata && data.metadata.id) {
+      _engineSchemaCache.set(key, data);
+      return data;
+    }
+  } catch (err) {
+    console.warn(`[Display] Failed to fetch schema for engine '${key}':`, err);
+  }
+  return null;
 }
 
 function parseOptionItem(item) {
@@ -4028,7 +4546,7 @@ function parseOptionItem(item) {
 
   // Handle known strftime formats with colons in the format string
   if (s.startsWith('%H:%M:%S:')) {
-    return { value: '%H:%M:%S', label: s.substring(10).trim() };
+    return { value: '%H:%M:%S', label: s.substring(9).trim() };
   }
   if (s.startsWith('%H:%M:')) {
     return { value: '%H:%M', label: s.substring(6).trim() };
@@ -4037,7 +4555,7 @@ function parseOptionItem(item) {
     return { value: '%I:%M:%S %p', label: s.substring(12).trim() };
   }
   if (s.startsWith('%I:%M %p:')) {
-    return { value: '%I:%M %p', label: s.substring(8).trim() };
+    return { value: '%I:%M %p', label: s.substring(9).trim() };
   }
 
   // Standard 'value:label' parsing (e.g. "C:Celsius (°C)", "system:System (General)", "0:Digital Modern")
@@ -4340,6 +4858,15 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 
   async function renderModalContent() {
     currentDesc = enginesMap[currentEngineId] || descriptors[0];
+    if (!currentDesc || getSchemaFields(currentDesc).length === 0) {
+      const fullDesc = await fetchEngineSchema(currentEngineId);
+      if (fullDesc && fullDesc.schema) {
+        currentDesc = Object.assign({}, currentDesc, { schema: fullDesc.schema });
+        if (enginesMap[currentEngineId]) {
+          enginesMap[currentEngineId].schema = fullDesc.schema;
+        }
+      }
+    }
     const engId = currentEngineId.toLowerCase();
     const meta = getEngineMeta(currentDesc);
     const icon = meta.icon;
@@ -4408,7 +4935,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
           <input type="text" id="modal-field-variant" class="input" placeholder="BTC,ETH,SOL" value="BTC,ETH">
           <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; align-items: center;">
             <span style="font-size: 0.72rem; color: var(--text-muted); margin-right: 0.2rem;">⚡ ${t('quick_presets_label', 'Quick presets:')}</span>
-            ${['BTC', 'ETH', 'SOL', 'DOGE', 'XRP', 'BNB', 'ADA', 'AVAX'].map(c => `
+            ${['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'SUI', 'LINK', 'PEPE', 'SHIB', 'NEAR', 'FLUX', 'ERG', 'KAS', 'TAO'].map(c => `
               <button type="button" class="btn btn-sm modal-quick-chip" data-val="${c}" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; background: rgba(255,255,255,0.06); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;">${c}</button>
             `).join('')}
           </div>
@@ -4422,7 +4949,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
           <input type="text" id="modal-field-variant" class="input" placeholder="AAPL,TSLA,NVDA" value="AAPL,TSLA">
           <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; align-items: center;">
             <span style="font-size: 0.72rem; color: var(--text-muted); margin-right: 0.2rem;">⚡ ${t('quick_presets_label', 'Quick presets:')}</span>
-            ${['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META'].map(s => `
+            ${['AAPL', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'PLTR', 'SPY', 'QQQ', 'NFLX', 'COIN', 'MSTR', 'UBER', 'ARM', 'DIS', 'V', 'BA'].map(s => `
               <button type="button" class="btn btn-sm modal-quick-chip" data-val="${s}" style="font-size: 0.72rem; padding: 0.15rem 0.45rem; background: rgba(255,255,255,0.06); border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer;">${s}</button>
             `).join('')}
           </div>
@@ -4499,7 +5026,10 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
               ${descriptors.map(d => {
                 const dMeta = getEngineMeta(d);
                 const isSel = d.metadata.id === currentEngineId ? 'selected' : '';
-                return `<option value="${d.metadata.id}" ${isSel}>${dMeta.icon} ${dMeta.name}</option>`;
+                const comp = d.compatibility || {};
+                const isCompat = isEngineCompatible(d);
+                const badge = !isCompat ? ` 🚫 [${getCompatReasonLabel(comp, d)}]` : (comp.status === 'degraded' ? ` ⚡ [${t('degraded_perf', 'Degraded')}]` : '');
+                return `<option value="${d.metadata.id}" ${isSel} ${!isCompat ? 'disabled style="color:#94a3b8;"' : ''}>${dMeta.icon} ${dMeta.name}${badge}</option>`;
               }).join('')}
             </select>
           </div>
@@ -4717,6 +5247,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 
         overlay.remove();
         window.showToast(t('preview_success', 'Screen created successfully!'), 'success');
+        switchPage('display');
         await renderDynamicDisplay(instId);
       } catch (e) {
         console.error('Failed to create screen:', e);
@@ -4994,14 +5525,24 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
   // Group 2: Engine Library
   const grpLibrary = document.createElement('optgroup');
   grpLibrary.label = t('optgroup_library', '🌟 Engine Library (Auto-Create & Add)');
-  descriptors.forEach(d => {
-    const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
-    const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
-    const opt = document.createElement('option');
-    opt.value = `new:${d.metadata.id}`;
-    opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
-    grpLibrary.appendChild(opt);
-  });
+  if (Array.isArray(descriptors)) {
+    descriptors.forEach(d => {
+      if (!d || !d.metadata || !d.metadata.id) return;
+      const isCompat = isEngineCompatible(d);
+      const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
+      const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+      const opt = document.createElement('option');
+      opt.value = `new:${d.metadata.id}`;
+      if (!isCompat) {
+        opt.disabled = true;
+        const reason = getCompatReasonLabel(d.compatibility, d);
+        opt.innerText = `${icon} ${name} 🚫 [${reason}]`;
+      } else {
+        opt.innerText = `${icon} ${name} (${t('modal_add_title', 'New Screen')})`;
+      }
+      grpLibrary.appendChild(opt);
+    });
+  }
   sel.appendChild(grpLibrary);
 
   const addBtn = document.createElement('button');
@@ -5095,14 +5636,23 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
   const catalogWrapper = document.createElement('div');
   catalogWrapper.id = 'engine-catalog-section';
 
+  let hideIncompatible = localStorage.getItem('am_hide_incompatible') === 'true';
+  const compatibleCount = descriptors.filter(d => isEngineCompatible(d)).length;
+
   const catalogHeader = document.createElement('div');
-  catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;";
+  catalogHeader.style = "margin: 2.5rem 0 1rem 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;";
   catalogHeader.innerHTML = `
     <div>
       <h3 style="margin: 0; font-size: 1.25rem;" data-i18n="engine_catalog_title">📚 ${t('engine_catalog_title', 'Plugin & Engine Library')}</h3>
       <p class="text-muted" style="margin: 0.25rem 0 0 0; font-size: 0.85rem;" data-i18n="engine_catalog_desc">${t('engine_catalog_desc', 'All display engines available on your device. Click Add to Loop to launch a new screen on your matrix.')}</p>
     </div>
-    <span class="badge badge-accent">${descriptors.length} ${t('engines_available', 'Engines Available')}</span>
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+      <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; user-select: none; background: rgba(255,255,255,0.05); padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+        <input type="checkbox" id="check-hide-incompatible" ${hideIncompatible ? 'checked' : ''}>
+        <span data-i18n="hide_incompatible">${t('hide_incompatible', 'Hide Incompatible')}</span>
+      </label>
+      <span class="badge badge-accent" id="catalog-count-badge">${compatibleCount} / ${descriptors.length} ${t('engines_available', 'Compatible')}</span>
+    </div>
   `;
   catalogWrapper.appendChild(catalogHeader);
 
@@ -5113,22 +5663,70 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
     const eng = desc.metadata || {};
     const req = desc.requirements || {};
     const cap = desc.capabilities || {};
+    const comp = desc.compatibility || {};
     const meta = getEngineMeta(desc);
     const icon = meta.icon;
     const name = meta.name;
     const descText = meta.desc;
 
+    const isIncompatible = !isEngineCompatible(desc) || comp.status === 'incompatible' || (comp.compatible === false) || (desc.available === false);
+    const isDegraded = comp.status === 'degraded' || comp.degraded === true;
+
     const card = document.createElement('div');
     card.className = 'engine-catalog-card';
+    card.dataset.incompatible = isIncompatible ? 'true' : 'false';
+    if (isIncompatible) {
+      card.style.opacity = '0.65';
+      card.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+      card.style.background = 'rgba(15, 23, 42, 0.45)';
+      if (hideIncompatible) {
+        card.style.display = 'none';
+      }
+    } else if (isDegraded) {
+      card.style.border = '1px solid rgba(245, 158, 11, 0.4)';
+    }
 
     let tagsHtml = '';
+    if (isIncompatible) {
+      tagsHtml += `<span class="engine-tag" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">🚫 ${getCompatReasonLabel(comp, desc)}</span>`;
+    } else if (isDegraded) {
+      tagsHtml += `<span class="engine-tag" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">⚡ ${t('degraded_perf', 'Degraded')}</span>`;
+    } else {
+      const fpsText = comp.empirically_validated ? `⚡ ${comp.validated_fps || 60} FPS (HW Validated)` : `🟢 ${comp.target_fps || 60} FPS`;
+      tagsHtml += `<span class="engine-tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">${fpsText}</span>`;
+    }
+
     if (req.needsPsram) tagsHtml += `<span class="engine-tag psram">${t('tag_psram', '💾 PSRAM')}</span>`;
-    if (req.needsAudio) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
+    if (req.needsAudio || req.needsAudioInput) tagsHtml += `<span class="engine-tag sensor">${t('tag_audio', '🎙️ Micro I2S')}</span>`;
     if (req.needsTempSensor) tagsHtml += `<span class="engine-tag sensor">${t('tag_temp', '🌡️ Capteur Temp')}</span>`;
-    if (cap.realtime) tagsHtml += `<span class="engine-tag realtime">${t('tag_realtime', '⚡ Temps Réel')}</span>`;
+    if (req.needsGyroscope) tagsHtml += `<span class="engine-tag sensor">${t('tag_gyro', '🧭 Gyro')}</span>`;
+    if (req.needsTls) tagsHtml += `<span class="engine-tag" style="background: rgba(139, 92, 246, 0.2); color: #c4b5fd; cursor: help;" data-tooltip="${t('tt_tag_tls', 'Requires secure TLS sockets (HTTPS). Automatically downgrades color depth to 4-bit on 128×32 ESP32 in Auto mode.')}" title="${t('tt_tag_tls', 'Requires secure TLS sockets (HTTPS). Automatically downgrades color depth to 4-bit on 128×32 ESP32 in Auto mode.')}">${t('tag_tls', '🔒 TLS')}</span>`;
 
     const existingCount = instancesList.filter(i => i.engine_id === eng.id).length;
     const existingBadge = existingCount > 0 ? `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-size: 0.75rem;">${existingCount} ${t('screens_active', 'active screen(s)')}</span>` : '';
+
+    let diagnosticHtml = '';
+    if (isIncompatible) {
+      const reasonMsg = getCompatReasonLabel(comp, desc);
+      diagnosticHtml = `
+        <div style="margin-top: 0.6rem; padding: 0.45rem 0.6rem; background: rgba(0,0,0,0.35); border-radius: 6px; font-size: 0.73rem; color: #cbd5e1; line-height: 1.4; border-left: 3px solid #ef4444;">
+          <div style="font-weight: 600; color: #fca5a5; margin-bottom: 2px;">⚠️ ${reasonMsg}</div>
+          ${comp.memory ? `<div style="color: #94a3b8;">DRAM: ${Math.round(comp.memory.internal_required/1024)} KB req. (free: ${Math.round(comp.memory.internal_available/1024)} KB)</div>` : ''}
+          ${comp.memory && comp.memory.largest_required_block > 0 ? `<div style="color: #94a3b8;">Contiguous: ${Math.round(comp.memory.largest_required_block/1024)} KB req. (max block: ${Math.round(comp.memory.largest_available_block/1024)} KB)</div>` : ''}
+        </div>
+      `;
+    } else if (isDegraded) {
+      const reasonMsg = getCompatReasonLabel(comp, desc);
+      diagnosticHtml = `
+        <div style="margin-top: 0.5rem; padding: 0.35rem 0.5rem; background: rgba(245, 158, 11, 0.1); border-radius: 4px; font-size: 0.73rem; color: #fcd34d; border-left: 2px solid #f59e0b;">
+          ⚠️ ${reasonMsg}
+        </div>
+      `;
+    }
+
+    const actionBtnHtml = isIncompatible
+      ? `<button class="btn btn-secondary btn-add-loop" disabled style="opacity: 0.45; width: 100%; cursor: not-allowed;" title="${getCompatReasonLabel(comp, desc)}">🚫 ${t('incompatible', 'Incompatible')}</button>`
+      : `<button class="btn btn-primary btn-add-loop" style="font-weight:600; width: 100%;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>`;
 
     card.innerHTML = `
       <div>
@@ -5144,21 +5742,35 @@ function renderEngineCatalog(descriptors, instancesList, enginesMap) {
           ${tagsHtml}
           ${existingBadge}
         </div>
+        ${diagnosticHtml}
       </div>
       <div class="engine-card-actions">
-        <button class="btn btn-primary btn-add-loop" style="font-weight:600; width: 100%;">➕ ${t('add_to_rotation_btn', 'Add to Loop')}</button>
+        ${actionBtnHtml}
       </div>
     `;
 
-    card.querySelector('.btn-add-loop').onclick = () => {
-      showAddScreenModal(eng.id, descriptors, instancesList, true);
-    };
+    if (!isIncompatible) {
+      card.querySelector('.btn-add-loop').onclick = () => {
+        showAddScreenModal(eng.id, descriptors, instancesList, true);
+      };
+    }
 
     grid.appendChild(card);
   });
 
   catalogWrapper.appendChild(grid);
   dashboardContainer.appendChild(catalogWrapper);
+
+  const hideCheck = catalogWrapper.querySelector('#check-hide-incompatible');
+  if (hideCheck) {
+    hideCheck.onchange = (e) => {
+      const hide = e.target.checked;
+      localStorage.setItem('am_hide_incompatible', hide ? 'true' : 'false');
+      grid.querySelectorAll('.engine-catalog-card[data-incompatible="true"]').forEach(c => {
+        c.style.display = hide ? 'none' : '';
+      });
+    };
+  }
 }
 
 // Helper: Build Rich Multi-Select Group with YOKO / TATE Tabs for Folder / GIF fields
@@ -5559,9 +6171,11 @@ function buildFileAssetWidget(field, instId, initVal) {
 }
 
 // Helper: Attach Quick-Preset chips underneath text fields (cities, cryptos, stocks, world clocks)
-function attachQuickPresets(input, fieldId) {
+function attachQuickPresets(input, fieldId, engineId) {
   let presets = [];
   let isMulti = false;
+
+  const eng = String(engineId || '').toLowerCase();
 
   if (fieldId === 'city' || fieldId === 'weather_city' || fieldId === 'location') {
     presets = [
@@ -5569,8 +6183,27 @@ function attachQuickPresets(input, fieldId) {
       "Berlin, DE", "Madrid, ES", "Rome, IT", "Los Angeles, US",
       "Sydney, AU", "Dubai, AE", "Singapore, SG", "Toronto, CA"
     ];
-  } else if (fieldId === 'tracked_markets' || fieldId === 'symbols' || fieldId === 'coins' || fieldId === 'cryptos') {
-    presets = ["BTC", "ETH", "SOL", "DOGE", "XRP", "BNB", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL"];
+  } else if (fieldId === 'coins' || fieldId === 'cryptos' || (fieldId === 'symbols' && eng.includes('crypto'))) {
+    presets = [
+      "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "SUI", "LINK",
+      "PEPE", "SHIB", "NEAR", "DOT", "LTC", "BCH", "UNI", "APT", "TAO", "ICP",
+      "KAS", "FET", "RENDER", "XLM", "ETC", "AAVE", "ALGO", "FIL", "ATOM", "HBAR",
+      "POL", "ARB", "OP", "BONK", "WIF", "FLUX", "ERG", "TIA", "SEI", "INJ",
+      "CRV", "MKR", "FTM", "RUNE", "SAND", "MANA", "AXS", "GALA", "VET", "TRX"
+    ];
+    isMulti = true;
+  } else if (fieldId === 'symbols' && eng.includes('stock')) {
+    presets = [
+      "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "PLTR",
+      "SPY", "QQQ", "NFLX", "INTC", "QCOM", "TXN", "ARM", "IBM", "ORCL", "CRM",
+      "ADBE", "COIN", "MSTR", "UBER", "DIS", "BA", "BABA", "V", "MA", "BRK.B"
+    ];
+    isMulti = true;
+  } else if (fieldId === 'tracked_markets') {
+    presets = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL", "META", "AMD", "SPY", "QQQ"];
+    isMulti = true;
+  } else if (fieldId === 'symbols') {
+    presets = ["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"];
     isMulti = true;
   } else if (fieldId === 'world_clocks' || fieldId === 'clocks') {
     presets = ["NYC", "TYO", "LON", "PAR", "BER", "DXB", "SYD", "SFO", "SIN", "HKG", "DEL", "MOW"];
@@ -5641,69 +6274,43 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       container.appendChild(wrapper);
     }
 
-    const [descriptors, instancesList, rotationList] = await Promise.all([
-      fetchCachedEndpoint('/api/engines'),
-      API.get('/api/instances').catch(() => []),
-      API.get('/api/rotation').catch(() => [])
-    ]);
-
-    if (!Array.isArray(descriptors) || descriptors.length === 0) {
-      console.warn('[Display] No engine descriptors received from backend, showing retry view.');
-      wrapper.innerHTML = `
-        <div class="card glass shadow" style="text-align: center; padding: 2.5rem; margin-top: 1.5rem;">
-          <div style="font-size: 3rem; margin-bottom: 0.75rem;">⚠️</div>
-          <h4 data-i18n="error_loading_engines">${t('error_loading_engines', 'Unable to load display engines')}</h4>
-          <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1.25rem;" data-i18n="error_loading_engines_desc">
-            ${t('error_loading_engines_desc', 'Communication with the matrix timed out or returned empty.')}
-          </p>
-          <button class="btn btn-primary" id="btn-retry-engines">🔄 ${t('btn_retry', 'Retry Loading')}</button>
-        </div>
-      `;
-      const retryBtn = wrapper.querySelector('#btn-retry-engines');
-      if (retryBtn) {
-        retryBtn.onclick = () => {
-          endpointCache.delete('/api/engines');
-          renderDynamicDisplay(targetActiveInstanceId);
-        };
-      }
-      return;
-    }
+    // Fetch instances, rotation, and dynamic engine catalog from backend (EngineRegistry)
+    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
+    const rotationList = await API.get('/api/rotation', 5000).catch(() => []);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
+      ? rawDescriptors
+      : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);
 
     const enginesMap = {};
     descriptors.forEach(desc => {
-      if (desc && desc.metadata && desc.metadata.id) {
-        enginesMap[desc.metadata.id] = desc;
+      const id = desc?.metadata?.id || desc?.id;
+      if (id) {
+        if (_engineSchemaCache.has(id)) {
+          const cached = _engineSchemaCache.get(id);
+          if (cached && cached.schema) {
+            desc.schema = cached.schema;
+          }
+        }
+        enginesMap[id] = desc;
       }
     });
 
-    // Warm every distinct options endpoint before rendering. The per-field builder awaits
-    // fetchCachedEndpoint() inside nested loops, so without this pre-pass each distinct endpoint
-    // costs a serialized round-trip. Concurrency is capped because the ESP32 AsyncWebServer has a
-    // small socket pool and saturating it is what made the first connection crawl.
-    //
-    // File-asset fields must be skipped: for them options_endpoint carries the multipart UPLOAD
-    // target (e.g. /api/upload?target=marquee), not a list of options. The renderer already
-    // short-circuits them via isFileAssetField(), and warming them issued a GET on a POST-only
-    // route, which the server answered with 404 "Not found".
-    const optionsEndpoints = new Set();
-    descriptors.forEach(desc => {
-      const fields = (desc && desc.schema) || [];
-      fields.forEach(field => {
-        if (!field || !field.options_endpoint) return;
-        if (field.options_endpoint === '/api/timezones') return;
-        if (isFileAssetField(field)) return;
-        optionsEndpoints.add(field.options_endpoint);
-      });
-    });
-    if (optionsEndpoints.size > 0) {
-      const queue = [...optionsEndpoints];
-      const MAX_PARALLEL_WARMUPS = 3;
-      const workers = Array.from({ length: Math.min(MAX_PARALLEL_WARMUPS, queue.length) }, async () => {
-        while (queue.length > 0) {
-          await fetchCachedEndpoint(queue.shift());
-        }
-      });
-      await Promise.all(workers);
+    if (descriptors.length === 0) {
+      wrapper.innerHTML = `
+        <div class="card glass text-center" style="padding: 3rem 1.5rem; margin-top: 1rem;">
+          <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">⚠️</div>
+          <h4 data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</h4>
+          <p class="text-muted" style="margin-bottom: 1.5rem;" data-i18n="catalog_load_failed_desc">${t('catalog_load_failed_desc', 'Please check your connection to the matrix and try again.')}</p>
+          <button class="btn btn-primary" id="btn-retry-engines">🔄 ${t('btn_retry', 'Retry')}</button>
+        </div>
+      `;
+      const retryBtn = wrapper.querySelector('#btn-retry-engines');
+      if (retryBtn) retryBtn.onclick = () => {
+        invalidateCachedEndpoint('/api/engines');
+        renderDynamicDisplay(targetActiveInstanceId);
+      };
+      return;
     }
 
     // 1. Render Visual Engine Catalog directly onto the Dashboard (Home Hub)
@@ -5787,147 +6394,24 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       activeCleanId = instancesList[0].instance_id.replace(/[^a-zA-Z0-9]/g, '-');
     }
 
-    // 6. Generate Dynamic Screen Tabs & Panes
-    for (let index = 0; index < instancesList.length; index++) {
-      const instance = instancesList[index];
-      const engineDesc = enginesMap[instance.engine_id];
-      if (!engineDesc) continue;
-      
-      const info = resolveScreenInfo(instance, engineDesc);
-      const cleanId = instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-');
-      const tabId = `tab-dyn-${cleanId}`;
-      const isTabActive = cleanId === activeCleanId;
-      const rotEntry = Array.isArray(rotationList) ? rotationList.find(r => r.instance_id === instance.instance_id) : null;
-      
-      // Tab Button
-      const tabBtn = document.createElement('button');
-      tabBtn.id = `btn-tab-${cleanId}`;
-      tabBtn.className = 'tab-btn' + (isTabActive ? ' active' : '');
-      tabBtn.setAttribute('data-tab-target', tabId);
-      tabBtn.innerHTML = `${info.icon} <span class="tab-label-text">${info.title}</span>`;
-      tabBtn.onclick = (e) => {
-        document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        
-        document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
-        const pane = document.getElementById(tabId);
-        if (pane) pane.classList.add('active');
-      };
-      
-      tabsContainer.appendChild(tabBtn);
-      
-      // Tab Pane
-      const tabPane = document.createElement('div');
-      tabPane.id = tabId;
-      tabPane.className = 'tab-pane' + (isTabActive ? ' active' : '');
-      
-      const card = document.createElement('div');
-      card.className = 'card glass shadow';
-      card.style.marginTop = '1.5rem';
-      
-      // Header with Title + In-Rotation Badge + Action Buttons
-      const cardHeader = document.createElement('div');
-      cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
-      
-      const statusBadgeHtml = rotEntry ? 
-        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
-        `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
+    async function renderInstanceForm(card, cleanId, instance, engineDesc, info) {
+      if (card.querySelector('.form-grid')) return;
 
-      cardHeader.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <span style="font-size: 1.6rem;" id="header-icon-${cleanId}">${info.icon}</span>
-          <div>
-            <h3 style="margin: 0; font-size: 1.2rem;" id="header-title-${cleanId}">${info.title}</h3>
-            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace;">${instance.instance_id} (${instance.engine_id})</span>
-          </div>
-          ${statusBadgeHtml}
-        </div>
-        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-          ${rotEntry ? 
-            `<button class="btn btn-rot-toggle" style="background: rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); font-size:0.82rem; padding:0.4rem 0.75rem;">${t('remove_from_rotation_btn', '➖ Remove from Loop')}</button>` : 
-            `<button class="btn btn-rot-toggle btn-primary" style="font-size:0.82rem; padding:0.4rem 0.75rem;">${t('add_to_rotation_btn', '➕ Add to Loop')}</button>`}
-          <button class="btn btn-duplicate" style="background: rgba(255,255,255,0.08); color:#fff; font-size:0.82rem; padding:0.4rem 0.75rem;">📋 ${t('duplicate_btn', 'Duplicate')}</button>
-          <button class="btn btn-danger btn-delete" style="font-size:0.82rem; padding:0.4rem 0.75rem;">🗑️</button>
-        </div>
-      `;
-
-      // Wire rotation toggle
-      const rotToggleBtn = cardHeader.querySelector('.btn-rot-toggle');
-      if (rotToggleBtn) {
-        rotToggleBtn.onclick = async () => {
-          rotToggleBtn.disabled = true;
-          const curRot = await API.get('/api/rotation').catch(() => []);
-          let newRot = Array.isArray(curRot) ? curRot.slice() : [];
-          if (rotEntry) {
-            newRot = newRot.filter(r => r.instance_id !== instance.instance_id);
-            window.showToast(`Removed '${info.title}' from rotation`, 'info');
-          } else {
-            const allowOverlay = !engineDesc.capabilities || engineDesc.capabilities.allows_overlay !== false;
-            newRot.push({
-              instance_id: instance.instance_id,
-              duration_sec: 30,
-              overlays: { fighter: false },
-              fighter_overlay: false
-            });
-            window.showToast(`Added '${info.title}' to rotation`, 'success');
+      if (getSchemaFields(engineDesc).length === 0) {
+        const loader = document.createElement('div');
+        loader.className = 'text-center p-3 text-muted';
+        loader.innerHTML = '<div class="spinner-border text-primary" style="width:1.5rem;height:1.5rem;"></div><span style="margin-left:0.5rem;font-size:0.85rem;">Loading settings...</span>';
+        card.appendChild(loader);
+        const fullDesc = await fetchEngineSchema(instance.engine_id);
+        if (fullDesc && fullDesc.schema) {
+          engineDesc.schema = fullDesc.schema;
+          if (enginesMap[instance.engine_id]) {
+            enginesMap[instance.engine_id].schema = fullDesc.schema;
           }
-          await API.post('/api/rotation', newRot);
-          await renderDynamicDisplay(instance.instance_id);
-        };
+        }
+        loader.remove();
       }
 
-      // Wire duplicate button
-      const dupBtn = cardHeader.querySelector('.btn-duplicate');
-      if (dupBtn) {
-        dupBtn.onclick = async () => {
-          dupBtn.disabled = true;
-          let counter = 2;
-          let newId = `${instance.instance_id}_copy`;
-          while (instancesList.some(i => i.instance_id === newId)) {
-            newId = `${instance.instance_id}_copy${counter++}`;
-          }
-          const clonedCfg = JSON.parse(JSON.stringify(instance.config || {}));
-          clonedCfg.screen_title = `${info.title} (${t('copy_suffix', 'Copy')})`;
-          try {
-            await API.post('/api/instances', {
-              instance_id: newId,
-              engine_id: instance.engine_id,
-              config: clonedCfg
-            });
-            window.showToast(`Duplicated screen to '${newId}'!`, 'success');
-            await renderDynamicDisplay(newId);
-          } catch (e) {
-            window.showToast('Failed to duplicate screen', 'error');
-            dupBtn.disabled = false;
-          }
-        };
-      }
-
-      // Wire delete button
-      const delBtn = cardHeader.querySelector('.btn-delete');
-      if (delBtn) {
-        delBtn.onclick = async () => {
-          if (confirm(`${t('confirm_remove_screen', 'Are you sure you want to remove this screen?')}\n${info.title} (${instance.instance_id})`)) {
-            delBtn.disabled = true;
-            try {
-              await API.delete(`/api/instances/${instance.instance_id}`);
-              const curRot = await API.get('/api/rotation').catch(() => []);
-              if (Array.isArray(curRot) && curRot.some(r => r.instance_id === instance.instance_id)) {
-                const cleanedRot = curRot.filter(r => r.instance_id !== instance.instance_id);
-                await API.post('/api/rotation', cleanedRot);
-              }
-              window.showToast('Screen removed', 'success');
-              await renderDynamicDisplay();
-            } catch (e) {
-              window.showToast('Failed to remove screen', 'error');
-              delBtn.disabled = false;
-            }
-          }
-        };
-      }
-
-      card.appendChild(cardHeader);
-      
       const formGrid = document.createElement('div');
       formGrid.className = 'form-grid';
 
@@ -5956,11 +6440,21 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           const dict = (typeof translations !== 'undefined' && translations && translations[lang]) ? translations[lang] : ((typeof translations !== 'undefined' && translations) ? translations.en : {});
           const fieldLabelKey = `field_${field.id}`;
           const fieldDescKey = `field_desc_${field.id}`;
-          label.innerText = (dict && dict[fieldLabelKey]) ? dict[fieldLabelKey] : (field.label || field.id);
-          if (field.description) {
-            label.title = (dict && dict[fieldDescKey]) ? dict[fieldDescKey] : field.description;
-            label.style.cursor = 'help';
-            label.innerHTML += ' ℹ️';
+          const labelText = (dict && dict[fieldLabelKey]) ? dict[fieldLabelKey] : (field.label || field.id);
+          const descText = (dict && dict[fieldDescKey]) ? dict[fieldDescKey] : field.description;
+
+          const labelSpan = document.createElement('span');
+          labelSpan.innerText = labelText;
+          label.appendChild(labelSpan);
+
+          if (descText) {
+            const tip = document.createElement('span');
+            tip.className = 'tooltip-icon tooltip-lg';
+            tip.setAttribute('data-tooltip', descText);
+            tip.setAttribute('tabindex', '0');
+            tip.innerText = '?';
+            label.appendChild(document.createTextNode(' '));
+            label.appendChild(tip);
           }
           formGroup.appendChild(label);
           
@@ -6064,8 +6558,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           
           if (input) {
              formGroup.appendChild(input);
-             if (!isBooleanField(field) && !isColorField(field) && !isNumberField(field) && !isFileAssetField(field) && !field.options_endpoint) {
-               const quickPresets = attachQuickPresets(input, field.id);
+             if (!isBooleanField(field) && !isColorField(field) && !isNumberField(field) && !isFileAssetField(field) && !field.options_endpoint && !isOptionsField(field) && (!field.options || field.options.length === 0)) {
+               const quickPresets = attachQuickPresets(input, field.id, instance.engine_id);
                if (quickPresets) formGroup.appendChild(quickPresets);
              }
           }
@@ -6202,9 +6696,162 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
 
       actionBar.appendChild(saveBtn);
       card.appendChild(actionBar);
+    }
+
+    // 6. Generate Dynamic Screen Tabs & Panes
+    for (let index = 0; index < instancesList.length; index++) {
+      const instance = instancesList[index];
+      const engineDesc = enginesMap[instance.engine_id];
+      if (!engineDesc) continue;
       
+      const info = resolveScreenInfo(instance, engineDesc);
+      const cleanId = instance.instance_id.replace(/[^a-zA-Z0-9]/g, '-');
+      const tabId = `tab-dyn-${cleanId}`;
+      const isTabActive = cleanId === activeCleanId;
+      const rotEntry = Array.isArray(rotationList) ? rotationList.find(r => r.instance_id === instance.instance_id) : null;
+      
+      // Tab Button
+      const tabBtn = document.createElement('button');
+      tabBtn.id = `btn-tab-${cleanId}`;
+      tabBtn.className = 'tab-btn' + (isTabActive ? ' active' : '');
+      tabBtn.setAttribute('data-tab-target', tabId);
+      tabBtn.innerHTML = `${info.icon} <span class="tab-label-text">${info.title}</span>`;
+      
+      tabsContainer.appendChild(tabBtn);
+      
+      // Tab Pane
+      const tabPane = document.createElement('div');
+      tabPane.id = tabId;
+      tabPane.className = 'tab-pane' + (isTabActive ? ' active' : '');
+      
+      const card = document.createElement('div');
+      card.className = 'card glass shadow';
+      card.style.marginTop = '1.5rem';
+      
+      // Header with Title + In-Rotation Badge + Action Buttons
+      const cardHeader = document.createElement('div');
+      cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
+      
+      const statusBadgeHtml = rotEntry ? 
+        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
+        `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
+
+      cardHeader.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <span style="font-size: 1.6rem;" id="header-icon-${cleanId}">${info.icon}</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.2rem;" id="header-title-${cleanId}">${info.title}</h3>
+            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace;">${instance.instance_id} (${instance.engine_id})</span>
+          </div>
+          ${statusBadgeHtml}
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          ${rotEntry ? 
+            `<button class="btn btn-rot-toggle" style="background: rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); font-size:0.82rem; padding:0.4rem 0.75rem;">${t('remove_from_rotation_btn', '➖ Remove from Loop')}</button>` : 
+            `<button class="btn btn-rot-toggle btn-primary" style="font-size:0.82rem; padding:0.4rem 0.75rem;">${t('add_to_rotation_btn', '➕ Add to Loop')}</button>`}
+          <button class="btn btn-duplicate" style="background: rgba(255,255,255,0.08); color:#fff; font-size:0.82rem; padding:0.4rem 0.75rem;">📋 ${t('duplicate_btn', 'Duplicate')}</button>
+          <button class="btn btn-danger btn-delete" style="font-size:0.82rem; padding:0.4rem 0.75rem;">🗑️</button>
+        </div>
+      `;
+
+      // Wire rotation toggle
+      const rotToggleBtn = cardHeader.querySelector('.btn-rot-toggle');
+      if (rotToggleBtn) {
+        rotToggleBtn.onclick = async () => {
+          rotToggleBtn.disabled = true;
+          const curRot = await API.get('/api/rotation').catch(() => []);
+          let newRot = Array.isArray(curRot) ? curRot.slice() : [];
+          if (rotEntry) {
+            newRot = newRot.filter(r => r.instance_id !== instance.instance_id);
+            window.showToast(`Removed '${info.title}' from rotation`, 'info');
+          } else {
+            newRot.push({
+              instance_id: instance.instance_id,
+              duration_sec: 30,
+              overlays: { fighter: false },
+              fighter_overlay: false
+            });
+            window.showToast(`Added '${info.title}' to rotation`, 'success');
+          }
+          await API.post('/api/rotation', newRot);
+          await renderDynamicDisplay(instance.instance_id);
+        };
+      }
+
+      // Wire duplicate button
+      const dupBtn = cardHeader.querySelector('.btn-duplicate');
+      if (dupBtn) {
+        dupBtn.onclick = async () => {
+          dupBtn.disabled = true;
+          let counter = 2;
+          let newId = `${instance.instance_id}_copy`;
+          while (instancesList.some(i => i.instance_id === newId)) {
+            newId = `${instance.instance_id}_copy${counter++}`;
+          }
+          const clonedCfg = JSON.parse(JSON.stringify(instance.config || {}));
+          clonedCfg.screen_title = `${info.title} (${t('copy_suffix', 'Copy')})`;
+          try {
+            await API.post('/api/instances', {
+              instance_id: newId,
+              engine_id: instance.engine_id,
+              config: clonedCfg
+            });
+            window.showToast(`Duplicated screen to '${newId}'!`, 'success');
+            await renderDynamicDisplay(newId);
+          } catch (e) {
+            window.showToast('Failed to duplicate screen', 'error');
+            dupBtn.disabled = false;
+          }
+        };
+      }
+
+      // Wire delete button
+      const delBtn = cardHeader.querySelector('.btn-delete');
+      if (delBtn) {
+        delBtn.onclick = async () => {
+          if (confirm(`${t('confirm_remove_screen', 'Are you sure you want to remove this screen?')}\n${info.title} (${instance.instance_id})`)) {
+            delBtn.disabled = true;
+            try {
+              await API.delete(`/api/instances/${instance.instance_id}`);
+              const curRot = await API.get('/api/rotation').catch(() => []);
+              if (Array.isArray(curRot) && curRot.some(r => r.instance_id === instance.instance_id)) {
+                const cleanedRot = curRot.filter(r => r.instance_id !== instance.instance_id);
+                await API.post('/api/rotation', cleanedRot);
+              }
+              window.showToast('Screen removed', 'success');
+              await renderDynamicDisplay();
+            } catch (e) {
+              window.showToast('Failed to remove screen', 'error');
+              delBtn.disabled = false;
+            }
+          }
+        };
+      }
+
+      card.appendChild(cardHeader);
       tabPane.appendChild(card);
       fragment.appendChild(tabPane);
+
+      // Lazy wire tab button: on-demand schema and form rendering when activated
+      tabBtn.onclick = async (e) => {
+        document.querySelectorAll('#page-display .tab-btn').forEach(btn => btn.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
+        const pane = document.getElementById(tabId);
+        if (pane) {
+          pane.classList.add('active');
+          if (pane.dataset.formRendered !== 'true') {
+            pane.dataset.formRendered = 'true';
+            await renderInstanceForm(card, cleanId, instance, engineDesc, info);
+          }
+        }
+      };
+
+      if (isTabActive) {
+        tabPane.dataset.formRendered = 'true';
+        await renderInstanceForm(card, cleanId, instance, engineDesc, info);
+      }
     }
     
     // Atomically replace existing content with the fully built fragment
@@ -6267,27 +6914,20 @@ window.switchSystemTab = function(tabId) {
     pane.classList.remove('active');
   });
   const pane = document.getElementById('sys-tab-' + tabId);
-  if (pane) pane.classList.add('active');
+  if (pane) {
+    pane.classList.add('active');
+    applyTooltips(pane);
+  }
   if (tabId === 'hardware') {
     initHardwareCapabilities();
   }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Deliberately ordered: initNavigation() restores the last page and lazily renders it.
-  // The Display tree (initDynamicEngines) and the hardware probe (initHardwareCapabilities) are
-  // NOT called eagerly here — each costs several round-trips on a socket-starved AsyncWebServer,
-  // and both panes are hidden on boot unless the user actually navigates to them.
+  // Ordered startup: initHardwareCapabilities sets transport concurrency, initNavigation restores active page.
+  initHardwareCapabilities();
   initNavigation();
-  initDashboard();
-  initOta();
   loadVersion();
-  initCustomMarquee();
-  initFighterOverlay();
-  initGifLibrary();
-  initAudioStreaming();
-  initNetworkSettings();
-  initSettings();
 });
 
 function switchPage(pageName) {
@@ -6297,20 +6937,33 @@ function switchPage(pageName) {
   const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
   const pageEl = document.getElementById(`page-${pageName}`);
   if (navItem) navItem.classList.add('active');
-  if (pageEl) pageEl.classList.add('active');
+  if (pageEl) {
+    pageEl.classList.add('active');
+    applyTooltips(pageEl);
+  }
   localStorage.setItem('activePage', pageName);
 
-  if (pageName === 'display') {
+  if (pageName === 'dashboard') {
+    initDashboard();
+  } else if (pageName === 'display') {
     const wrapper = document.getElementById('dynamic-display-wrapper');
     if (!wrapper || wrapper.children.length === 0 || wrapper.querySelector('#btn-retry-engines')) {
       renderDynamicDisplay();
     }
   } else if (pageName === 'system') {
+    initSettings();
+    initFighterOverlay();
+    initNetworkSettings();
+    initOta();
     const hwPane = document.getElementById('sys-tab-hardware');
     if (hwPane && hwPane.classList.contains('active')) {
       initHardwareCapabilities();
     }
   } else if (pageName === 'media') {
+    initCustomMarquee();
+    initGifLibrary();
+    initFighterOverlay();
+    initAudioStreaming();
     refreshAudioStatus();
     if (!_audioStatusPollInterval) {
       _audioStatusPollInterval = setInterval(fetchAudioStatus, 3000);
@@ -6383,7 +7036,8 @@ async function loadVersion() {
 
 function initDashboard() {
   const btnPower = document.getElementById('btn-power-toggle');
-  if (btnPower) {
+  if (btnPower && !btnPower.dataset.bound) {
+    btnPower.dataset.bound = 'true';
     btnPower.addEventListener('click', async () => {
       const isOff = btnPower.classList.contains('btn-power-off');
       const newState = isOff;
@@ -6398,8 +7052,45 @@ function initDashboard() {
     });
   }
 
+  const sliderBright = document.getElementById('slider-brightness');
+  const valBright = document.getElementById('val-brightness');
+  if (sliderBright && !sliderBright.dataset.bound) {
+    sliderBright.dataset.bound = 'true';
+    sliderBright.addEventListener('input', (e) => {
+      if (valBright) valBright.textContent = e.target.value;
+    });
+    sliderBright.addEventListener('change', async (e) => {
+      const b = parseInt(e.target.value, 10);
+      try {
+        await API.post('/api/system/brightness', { brightness: b });
+        window.showToast('Brightness updated', 'info');
+      } catch (err) {
+        try {
+          await API.post('/api/system', { brightness_limit: b });
+          window.showToast('Brightness updated', 'info');
+        } catch (e2) {
+          window.showToast('Failed to update brightness', 'error');
+        }
+      }
+    });
+  }
+
+  // Fetch initial power and brightness state
+  API.get('/api/system').then(cfg => {
+    const sys = cfg?.system || {};
+    const b = sys.day_brightness ?? sys.brightness_limit ?? 50;
+    if (sliderBright) sliderBright.value = b;
+    if (valBright) valBright.textContent = b;
+    if (btnPower && sys.matrix_power !== undefined) {
+      const isPowerOn = !!sys.matrix_power;
+      btnPower.textContent = isPowerOn ? 'Turn Panel OFF' : 'Turn Panel ON';
+      btnPower.className = `btn ${isPowerOn ? 'btn-power-on' : 'btn-power-off'}`;
+    }
+  }).catch(() => {});
+
   const btnReboot = document.getElementById('btn-reboot');
-  if (btnReboot) {
+  if (btnReboot && !btnReboot.dataset.bound) {
+    btnReboot.dataset.bound = 'true';
     btnReboot.addEventListener('click', async () => {
       if (confirm('Are you sure you want to reboot the system?')) {
         try {
@@ -6413,7 +7104,8 @@ function initDashboard() {
   }
 
   const btnShutdown = document.getElementById('btn-shutdown');
-  if (btnShutdown) {
+  if (btnShutdown && !btnShutdown.dataset.bound) {
+    btnShutdown.dataset.bound = 'true';
     btnShutdown.addEventListener('click', async () => {
       if (confirm('Are you sure you want to shutdown the system?')) {
         try {
@@ -6427,7 +7119,8 @@ function initDashboard() {
   }
 
   const btnRestartApp = document.getElementById('btn-restart-app');
-  if (btnRestartApp) {
+  if (btnRestartApp && !btnRestartApp.dataset.bound) {
+    btnRestartApp.dataset.bound = 'true';
     btnRestartApp.addEventListener('click', async () => {
       if (confirm('Restart the ArcadeMatrix app? The display will go blank for a few seconds.')) {
         try {
@@ -6488,12 +7181,60 @@ function initDashboard() {
           diskEl.textContent = `${typeof info.disk_free_gb === 'number' ? info.disk_free_gb.toFixed(1) : info.disk_free_gb} GB`;
         }
       }
+      if (info.matrix_power !== undefined && btnPower) {
+        const isPowerOn = !!info.matrix_power;
+        btnPower.textContent = isPowerOn ? 'Turn Panel OFF' : 'Turn Panel ON';
+        btnPower.className = `btn ${isPowerOn ? 'btn-power-on' : 'btn-power-off'}`;
+      }
     } catch {}
   };
 
   pollMetrics();
-  setInterval(pollMetrics, 10000);
+  if (!window._dashboardMetricsInterval) {
+    window._dashboardMetricsInterval = setInterval(pollMetrics, 10000);
+  }
+  loadDashboardCatalog();
 }
+
+async function loadDashboardCatalog() {
+  const container = document.getElementById('dashboard-catalog-container');
+  if (!container) return;
+  if (container.children.length > 0 && !container.querySelector('.spinner-border') && container.querySelector('.engine-catalog-card, [data-engine-id], #engine-catalog-section')) return;
+
+  try {
+    const instancesList = await API.get('/api/instances', 5000).catch(() => []);
+    const rawDescriptors = await fetchCachedEndpoint('/api/engines', 8000).catch(() => []);
+    const descriptors = (Array.isArray(rawDescriptors) && rawDescriptors.length > 0)
+      ? rawDescriptors
+      : (typeof COMPILED_ENGINE_CATALOG !== 'undefined' && Array.isArray(COMPILED_ENGINE_CATALOG) ? COMPILED_ENGINE_CATALOG : []);
+    const enginesMap = {};
+    descriptors.forEach(d => {
+      const id = d?.metadata?.id || d?.id;
+      if (id) enginesMap[id] = d;
+    });
+
+    if (descriptors.length > 0) {
+      renderEngineCatalog(descriptors, instancesList, enginesMap);
+      applyTooltips(container);
+    } else {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+          <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
+          <button class="btn btn-sm btn-secondary" onclick="invalidateCachedEndpoint('/api/engines'); loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+        </div>
+      `;
+    }
+  } catch (err) {
+    console.warn('[Dashboard] Failed to load engine catalog:', err);
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+        <p data-i18n="catalog_load_failed">${t('catalog_load_failed', 'Unable to load engine catalog from matrix.')}</p>
+        <button class="btn btn-sm btn-secondary" onclick="invalidateCachedEndpoint('/api/engines'); loadDashboardCatalog()">${t('btn_retry', 'Retry')}</button>
+      </div>
+    `;
+  }
+}
+window.loadDashboardCatalog = loadDashboardCatalog;
 
 function initOta() {
   const dropZone = document.getElementById('ota-drop-zone');
@@ -6507,6 +7248,8 @@ function initOta() {
   const progressText = document.getElementById('ota-progress-text');
 
   if (!dropZone || !fileInput || !btnUpdate) return;
+  if (dropZone._boundOta) return;
+  dropZone._boundOta = true;
 
   dropZone.addEventListener('click', () => fileInput.click());
 
@@ -6836,8 +7579,9 @@ function initCustomMarquee() {
 }
 
 
-// GIF Library card: network upload / whole-folder upload / reindex (parity with ArcadeMatrix_RPI)
+let _gifLibInitialized = false;
 function initGifLibrary() {
+  if (_gifLibInitialized) return;
   const $ = (id) => document.getElementById(id);
   const folderList = $('gif-fm-folder-list'), newFolder = $('gif-fm-newfolder'), mkdirBtn = $('gif-fm-mkdir');
   const title = $('gif-fm-title'), countEl = $('gif-fm-count'), folderActions = $('gif-fm-folder-actions'), renameFolderBtn = $('gif-fm-rename-folder'), deleteFolderBtn = $('gif-fm-delete-folder');
@@ -6845,11 +7589,12 @@ function initGifLibrary() {
   const list = $('gif-fm-list'), moreBtn = $('gif-fm-more'), rescanBtn = $('gif-fm-rescan'), progress = $('gif-lib-progress'), uploadBtn = $('gif-lib-upload-btn');
   const orientTabs = $('gif-fm-orientation');
   if (!folderList || !dropZone || !uploadBtn) return;
+  _gifLibInitialized = true;
   const toast = (m, kind) => (window.showToast ? window.showToast(m, kind) : console.log(kind, m));
   const tr = (k, f, v) => { let s = (typeof t === 'function') ? t(k, f) : f; if (v) Object.keys(v).forEach(x => { s = s.split('{' + x + '}').join(v[x]); }); return s; };
   const headers = () => { const h = {}; const tok = localStorage.getItem('api_token'); if (tok) h['X-API-Token'] = tok; return h; };
   const api = async (url, opts) => {
-    const r = await fetch(url, Object.assign({ headers: headers() }, opts || {}));
+    const r = await httpQueue.enqueue(() => fetch(url, Object.assign({ headers: headers() }, opts || {})));
     if (r.status === 401 && typeof handleUnauthorized === 'function') handleUnauthorized();
     let b = {}; try { b = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(b.message || ('HTTP ' + r.status));
@@ -7137,6 +7882,8 @@ function initFighterOverlay() {
     }
   })();
 
+  if (saveBtn._boundClick) return;
+  saveBtn._boundClick = true;
   saveBtn.addEventListener('click', async () => {
     try {
       await API.post('/api/system', {
@@ -7206,6 +7953,8 @@ function initAudioStreaming() {
   const testBtn = document.getElementById('btn-test-audio');
 
   if (!presetSelect || !playBtn) return;
+  if (presetSelect._boundAudio) return;
+  presetSelect._boundAudio = true;
 
   presetSelect.addEventListener('change', () => {
     const val = presetSelect.value;
@@ -7282,8 +8031,12 @@ function initAudioStreaming() {
 }
 
 function initNetworkSettings() {
+  if (window.__sysConfig && window.__sysConfig.wifi) {
+    setVal('hw-wifi-ssid', window.__sysConfig.wifi.ssid || '');
+  }
   const btnSaveWifi = document.getElementById('btn-save-wifi');
-  if (btnSaveWifi) {
+  if (btnSaveWifi && !btnSaveWifi._boundClick) {
+    btnSaveWifi._boundClick = true;
     btnSaveWifi.addEventListener('click', async () => {
       const ssid = document.getElementById('hw-wifi-ssid').value;
       const pass = document.getElementById('hw-wifi-pass').value;
@@ -7407,7 +8160,8 @@ function initNetworkSettings() {
   }
 
   const btnSaveMqtt = document.getElementById('btn-save-mqtt');
-  if (btnSaveMqtt) {
+  if (btnSaveMqtt && !btnSaveMqtt._boundClick) {
+    btnSaveMqtt._boundClick = true;
     btnSaveMqtt.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.mqtt) ? { ...window.__sysConfig.mqtt } : {};
       const mqtt = {
@@ -7453,7 +8207,8 @@ function initNetworkSettings() {
   }
 
   const btnSaveApi = document.getElementById('btn-save-api');
-  if (btnSaveApi) {
+  if (btnSaveApi && !btnSaveApi._boundClick) {
+    btnSaveApi._boundClick = true;
     btnSaveApi.addEventListener('click', async () => {
       const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
       const api_token = document.getElementById('hw-api-token').value.trim();
@@ -7488,6 +8243,10 @@ async function initHardwareCapabilities() {
       API.get('/api/status').catch(() => null),
     ]);
     if (hw) {
+      window.__hwData = hw;
+      if (hw.capabilities && hw.capabilities.http && hw.capabilities.http.recommendedConcurrency) {
+        httpQueue.setConcurrency(hw.capabilities.http.recommendedConcurrency);
+      }
       const elProf = document.getElementById('hw-cap-profile');
       if (elProf) {
         elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';
@@ -7561,21 +8320,18 @@ async function initSettings() {
       setLanguage(sys.lang);
     }
 
-    // Dashboard brightness (0-100) is the live daytime brightness (day_brightness).
+    // Sync dashboard brightness slider if present
     const sliderBright = document.getElementById('slider-brightness');
     if (sliderBright) {
-      const bright = sys.day_brightness ?? 100;
+      const bright = sys.day_brightness ?? sys.brightness_limit ?? 50;
       sliderBright.value = bright;
       const valEl = document.getElementById('val-brightness');
       if (valEl) valEl.textContent = bright;
-      sliderBright.addEventListener('input', (e) => {
-        const v = document.getElementById('val-brightness');
-        if (v) v.textContent = e.target.value;
-      });
-      sliderBright.addEventListener('change', async (e) => {
-        await API.post('/api/system', { brightness_limit: parseInt(e.target.value) });
-        window.showToast('Brightness updated', 'info');
-      });
+    }
+
+    // Wi-Fi SSID
+    if (cfg.wifi) {
+      setVal('hw-wifi-ssid', cfg.wifi.ssid || '');
     }
 
     // Night Mode
@@ -7588,10 +8344,81 @@ async function initSettings() {
       sliderNightBright.value = nb;
       const v = document.getElementById('night-brightness-val');
       if (v) v.textContent = nb + '%';
-      sliderNightBright.addEventListener('input', (e) => {
-        const val = document.getElementById('night-brightness-val');
-        if (val) val.textContent = e.target.value + '%';
+      if (!sliderNightBright._boundInput) {
+        sliderNightBright._boundInput = true;
+        sliderNightBright.addEventListener('input', (e) => {
+          const val = document.getElementById('night-brightness-val');
+          if (val) val.textContent = e.target.value + '%';
+        });
+      }
+    }
+
+    // Live Clock & Night Mode Status Sync
+    const updateNightStatusUI = (statusData) => {
+      const dot = document.getElementById('night-live-dot');
+      const text = document.getElementById('night-live-text');
+      const statusText = document.getElementById('night-mode-status-text');
+      const badge = document.getElementById('night-mode-badge');
+      if (!dot || !text) return;
+      const synced = !!statusData.time_synced;
+      dot.style.background = synced ? 'var(--accent-success, #22c55e)' : 'var(--accent-warning, #f59e0b)';
+      if (statusData.current_time) {
+        text.textContent = statusData.current_time;
+      }
+      if (statusText) {
+        statusText.textContent = synced 
+          ? t('night_time_synced', 'System clock is synchronized (NTP/RTC ready).') 
+          : t('night_time_pending', 'Clock not synchronized: click Sync Browser Time to initialize.');
+      }
+      if (badge && sys.night_mode_enabled) {
+        badge.style.display = 'inline-block';
+        if (statusData.is_night_mode) {
+          badge.className = 'badge';
+          badge.style.background = 'rgba(99, 102, 241, 0.2)';
+          badge.style.color = '#818cf8';
+          badge.textContent = t('night_mode_active', '🌙 Night Mode Active (Sleep)');
+        } else {
+          badge.className = 'badge';
+          badge.style.background = 'rgba(34, 197, 94, 0.2)';
+          badge.style.color = '#22c55e';
+          badge.textContent = t('night_mode_day', '☀️ Day Mode Active (Awake)');
+        }
+      } else if (badge) {
+        badge.style.display = 'none';
+      }
+    };
+
+    updateNightStatusUI(cfg);
+
+    const btnSyncTime = document.getElementById('btn-sync-time');
+    if (btnSyncTime && !btnSyncTime._boundClick) {
+      btnSyncTime._boundClick = true;
+      btnSyncTime.addEventListener('click', async () => {
+        btnSyncTime.disabled = true;
+        btnSyncTime.textContent = 'Syncing...';
+        try {
+          const epoch = Math.floor(Date.now() / 1000);
+          const res = await API.post('/api/system/time', { epoch });
+          if (res && res.time_synced) {
+            updateNightStatusUI(res);
+            window.showToast(t('night_time_synced_success', 'Clock synchronized with browser time!'), 'success');
+          } else {
+            window.showToast(t('night_time_sync_failed', 'Time sync request sent'), 'info');
+          }
+        } catch (err) {
+          window.showToast('Failed to sync browser time', 'error');
+        } finally {
+          btnSyncTime.disabled = false;
+          btnSyncTime.textContent = t('night_sync_time_btn', '🔄 Sync Browser Time');
+        }
       });
+    }
+
+    // Auto-sync browser time if system time is not yet synchronized
+    if (cfg.time_synced === false) {
+      API.post('/api/system/time', { epoch: Math.floor(Date.now() / 1000) }).then(res => {
+        if (res && res.time_synced) updateNightStatusUI(res);
+      }).catch(() => {});
     }
 
     // Populate Timezone dropdown in General settings tab
@@ -7606,7 +8433,14 @@ async function initSettings() {
     }
 
     // General / Regional Preferences
-    setVal('sys-timezone', sys.timezone || 'CET-1CEST,M3.5.0,M10.5.0/3');
+    let tzVal = sys.timezone || 'Europe/Paris';
+    if (tzVal.startsWith('CET-1CEST')) tzVal = 'Europe/Paris';
+    else if (tzVal.startsWith('GMT0BST')) tzVal = 'Europe/London';
+    else if (tzVal.startsWith('EST5EDT')) tzVal = 'America/New_York';
+    else if (tzVal.startsWith('CST6CDT')) tzVal = 'America/Chicago';
+    else if (tzVal.startsWith('MST7MDT')) tzVal = 'America/Denver';
+    else if (tzVal.startsWith('PST8PDT')) tzVal = 'America/Los_Angeles';
+    setVal('sys-timezone', tzVal);
     setVal('sys-lang', sys.lang || 'en');
     setVal('sys-format-24h', sys.format_24h !== undefined ? String(sys.format_24h) : 'true');
     setVal('sys-unit', sys.temp_unit || 'C');
@@ -7633,9 +8467,18 @@ async function initSettings() {
     }
 
     // Screen Orientation & Transitions (General preferences)
-    setVal('sys-screen-rotation', matrix.rotation ?? 0);
-    setVal('sys-rotation-transition', matrix.transition_effect || 'vortex');
-    setVal('sys-transition-duration', matrix.transition_duration_ms || 400);
+    const initialRot = matrix.rotation_offset ?? matrix.rotation ?? 0;
+    setVal('sys-screen-rotation', initialRot);
+    setVal('sys-rotation-transition', matrix.rotation_transition || matrix.transition_effect || 'vortex');
+    setVal('sys-transition-duration', matrix.rotation_transition_duration_ms || matrix.transition_duration_ms || 400);
+
+    const sysRotSelect = document.getElementById('sys-screen-rotation');
+    if (sysRotSelect && !sysRotSelect._boundChange) {
+      sysRotSelect._boundChange = true;
+      sysRotSelect.addEventListener('change', (e) => {
+        setVal('hw-screen-rotation', e.target.value);
+      });
+    }
 
     // ESP32 Matrix Hardware & Timings (pure ESP32 HUB75 DMA configuration)
     setVal('hw-rows', matrix.height || 64);
@@ -7645,11 +8488,30 @@ async function initSettings() {
     setVal('hw-driver-chip', matrix.driver_chip || 'SHIFTREG');
     setVal('hw-rgb', matrix.rgb_sequence || 'RGB');
     setVal('hw-row-addr-type', matrix.row_address_mode ?? 0);
-    setVal('hw-color-depth', matrix.color_depth || matrix.pwm_bits || 8);
+    setVal('hw-color-depth', matrix.color_depth ?? matrix.pwm_bits ?? 0);
     setVal('hw-latch-blanking', matrix.latch_blanking ?? 4);
     setVal('hw-limit-refresh', matrix.limit_refresh_rate_hz ?? 0);
     setChk('hw-clk-phase', matrix.clk_phase ?? false);
-    setChk('hw-force-single-buffer', matrix.force_single_buffer ?? false);
+    setChk('hw-dynamic-color-depth', matrix.dynamic_color_depth ?? matrix.dynamicColorDepth ?? false);
+    const updateDynDepthUI = () => {
+      const dynChk = document.getElementById('hw-dynamic-color-depth');
+      const depthEl = document.getElementById('hw-color-depth');
+      const noteEl = document.getElementById('hw-color-depth-note');
+      const isDynamic = dynChk ? dynChk.checked : false;
+      if (depthEl) {
+        depthEl.disabled = isDynamic;
+      }
+      if (noteEl) {
+        noteEl.style.display = isDynamic ? 'block' : 'none';
+      }
+    };
+    updateDynDepthUI();
+    const dynChkEl = document.getElementById('hw-dynamic-color-depth');
+    if (dynChkEl && !dynChkEl._boundDynChange) {
+      dynChkEl._boundDynChange = true;
+      dynChkEl.addEventListener('change', updateDynDepthUI);
+    }
+    setVal('hw-render-pipeline', matrix.render_pipeline || 'auto');
 
     // Screen Orientation & Gyroscope
     setVal('hw-screen-rotation', matrix.rotation_offset ?? matrix.rotation ?? 0);
@@ -7714,6 +8576,7 @@ async function initSettings() {
     rotSelect._boundChange = true;
     rotSelect.addEventListener('change', async (e) => {
       const rot = parseInt(e.target.value) || 0;
+      setVal('sys-screen-rotation', rot);
       try {
         await API.post('/api/display/orientation', { manual_rotation: rot, rotation_offset: rot });
         window.showToast(`Display rotation set to ${rot * 90}°`, 'info');
@@ -7733,6 +8596,7 @@ async function initSettings() {
         const res = await API.post('/api/gyro/calibrate');
         if (res && res.rotation_offset !== undefined) {
           setVal('hw-screen-rotation', res.rotation_offset);
+          setVal('sys-screen-rotation', res.rotation_offset);
           const aRot = document.getElementById('gyro-active-rot');
           if (aRot) aRot.textContent = '0° (Calibrated)';
         }
@@ -7774,6 +8638,8 @@ async function initSettings() {
       const rotation = parseInt(document.getElementById('sys-screen-rotation')?.value) || 0;
       const transitionEffect = document.getElementById('sys-rotation-transition')?.value || 'vortex';
       const transitionDuration = parseInt(document.getElementById('sys-transition-duration')?.value) || 400;
+      const slotTransition = document.getElementById('sys-slot-transition')?.value || 'none';
+      const slotTransitionDuration = parseInt(document.getElementById('sys-slot-transition-duration')?.value) || 500;
 
       try {
         await API.post('/api/system', {
@@ -7786,12 +8652,26 @@ async function initSettings() {
           idle_fighter_speed: idleFighterSpeed,
           rotation,
           transition_effect: transitionEffect,
-          transition_duration_ms: transitionDuration
+          transition_duration_ms: transitionDuration,
+          slot_transition: slotTransition,
+          slot_transition_duration_ms: slotTransitionDuration,
+          matrix: {
+            rotation_offset: rotation,
+            rotation_transition: transitionEffect,
+            rotation_transition_duration_ms: transitionDuration,
+            slot_transition: slotTransition,
+            slot_transition_duration_ms: slotTransitionDuration
+          }
         });
         if (window.__sysConfig && window.__sysConfig.matrix) {
           window.__sysConfig.matrix.rotation = rotation;
+          window.__sysConfig.matrix.rotation_offset = rotation;
           window.__sysConfig.matrix.transition_effect = transitionEffect;
+          window.__sysConfig.matrix.rotation_transition = transitionEffect;
           window.__sysConfig.matrix.transition_duration_ms = transitionDuration;
+          window.__sysConfig.matrix.rotation_transition_duration_ms = transitionDuration;
+          window.__sysConfig.matrix.slot_transition = slotTransition;
+          window.__sysConfig.matrix.slot_transition_duration_ms = slotTransitionDuration;
         }
         setLanguage(lang);
         window.showToast(t('system_prefs_saved', 'System preferences and display rotation saved in real-time!'), 'success');
@@ -7803,7 +8683,8 @@ async function initSettings() {
 
   // Save Night Mode settings
   const btnSaveNight = document.getElementById('btn-save-night');
-  if (btnSaveNight) {
+  if (btnSaveNight && !btnSaveNight._boundClick) {
+    btnSaveNight._boundClick = true;
     btnSaveNight.addEventListener('click', async () => {
       const nightEnabled = document.getElementById('cfg-night-mode-enabled')?.checked || false;
       const turnOffAt = document.getElementById('cfg-turn-off-at')?.value || '23:00';
@@ -7817,6 +8698,12 @@ async function initSettings() {
           wake_up_at: wakeUpAt,
           night_brightness: nightBright
         });
+        if (window.__sysConfig && window.__sysConfig.system) {
+          window.__sysConfig.system.night_mode_enabled = nightEnabled;
+          window.__sysConfig.system.turn_off_at = turnOffAt;
+          window.__sysConfig.system.wake_up_at = wakeUpAt;
+          window.__sysConfig.system.night_brightness = nightBright;
+        }
         window.showToast('Night Mode settings saved!', 'success');
       } catch (e) {
         window.showToast('Failed to save Night Mode settings', 'error');
@@ -7830,7 +8717,7 @@ async function initSettings() {
     btnSaveHw._boundClick = true;
     btnSaveHw.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.matrix) ? { ...window.__sysConfig.matrix } : {};
-      const numOr = (id, d) => parseInt(document.getElementById(id)?.value) || d;
+      const numOr = (id, d) => { const v = parseInt(document.getElementById(id)?.value); return isNaN(v) ? d : v; };
       const matrix = {
         ...base,
         height: numOr('hw-rows', 64),
@@ -7839,12 +8726,14 @@ async function initSettings() {
         driver_chip: document.getElementById('hw-driver-chip')?.value || 'SHIFTREG',
         rgb_sequence: document.getElementById('hw-rgb')?.value || 'RGB',
         row_address_mode: numOr('hw-row-addr-type', 0),
-        color_depth: numOr('hw-color-depth', 8),
-        pwm_bits: numOr('hw-color-depth', 8),
+        color_depth: numOr('hw-color-depth', 0),
+        pwm_bits: numOr('hw-color-depth', 0),
         latch_blanking: numOr('hw-latch-blanking', 4),
         limit_refresh_rate_hz: numOr('hw-limit-refresh', 0),
         clk_phase: document.getElementById('hw-clk-phase')?.checked ?? false,
-        force_single_buffer: document.getElementById('hw-force-single-buffer')?.checked ?? false,
+        dynamic_color_depth: document.getElementById('hw-dynamic-color-depth')?.checked ?? false,
+        dynamicColorDepth: document.getElementById('hw-dynamic-color-depth')?.checked ?? false,
+        render_pipeline: document.getElementById('hw-render-pipeline')?.value || 'auto',
         rotation_offset: numOr('hw-screen-rotation', 0),
         auto_rotate: document.getElementById('hw-gyro-autorotate')?.checked ?? true,
         rotation_transition: document.getElementById('hw-rotation-transition')?.value || 'vortex',
@@ -7855,6 +8744,11 @@ async function initSettings() {
 
       try {
         await API.post('/api/system', { matrix, reboot: true });
+        endpointCache.delete('/api/engines');
+        try {
+          sessionStorage.removeItem('am_cache_/api/engines');
+          localStorage.removeItem('am_cache_/api/engines');
+        } catch (_) {}
         if (window.__sysConfig) window.__sysConfig.matrix = matrix;
         window.showToast('Hardware settings saved! Restarting panel driver...', 'success');
       } catch (e) {
@@ -7882,6 +8776,10 @@ async function initSettings() {
 
     // Auto-close sidebar when clicking a nav item on mobile
     document.addEventListener('DOMContentLoaded', () => {
+      try {
+        sessionStorage.removeItem('am_cache_/api/engines');
+        localStorage.removeItem('am_cache_/api/engines');
+      } catch (_) {}
       document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', () => {
           if (window.innerWidth <= 768) {

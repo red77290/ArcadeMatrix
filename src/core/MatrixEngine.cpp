@@ -3,10 +3,17 @@
 #if defined(SPIRAM_DMA_BUFFER)
 #include "rom/cache.h"   // the DMA engine reads PSRAM directly: every write below must be written back
 #endif
+#include <esp_task_wdt.h>
 
 RenderStats g_renderStats;
 #include "../hal/HardwareHAL.h"
+#include "../hal/BoardProfile.h"
 #include "Logger.h"
+#include "drawing/Hub75BulkEncoder.h"
+#include "drawing/Hub75PresentationBackend.h"
+#include "drawing/PipelineSelectionPolicy.h"
+#include "drawing/Hub75DmaLayout.h"
+#include "drawing/DmaMemoryLayout.h"
 #include "../../include/HardwareProfile.h"
 
 /**
@@ -20,6 +27,7 @@ MatrixEngine::MatrixEngine() : display(nullptr) {}
  * Safely deletes the display instance and frees DMA memory.
  */
 MatrixEngine::~MatrixEngine() {
+    m_presentationBackend.reset();
     if (display) {
         delete display;
     }
@@ -35,7 +43,12 @@ MatrixEngine::~MatrixEngine() {
  * @return true if DMA allocation and initialization succeeded.
  * @return false if out of memory or initialization failed.
  */
-bool MatrixEngine::begin(const MatrixConfig& config) {
+bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth) {
+    if (display) {
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+    }
     int8_t out1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
     int8_t out2[3] = {MATRIX_R2_PIN, MATRIX_G2_PIN, MATRIX_B2_PIN};
     int8_t pins1[3] = {MATRIX_R1_PIN, MATRIX_G1_PIN, MATRIX_B1_PIN};
@@ -51,13 +64,13 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         }
     }
 
-    HUB75_I2S_CFG::i2s_pins _pins = {
-        out1[0], out1[1], out1[2],
-        out2[0], out2[1], out2[2],
-        MATRIX_A_PIN, MATRIX_B_PIN, MATRIX_C_PIN,
-        MATRIX_D_PIN, MATRIX_E_PIN,
-        MATRIX_LAT_PIN, MATRIX_OE_PIN, MATRIX_CLK_PIN
-    };
+    HUB75_I2S_CFG::i2s_pins _pins;
+    BoardProfile::current().populateMatrixPins(_pins);
+    _pins.r1 = out1[0]; _pins.g1 = out1[1]; _pins.b1 = out1[2];
+    _pins.r2 = out2[0]; _pins.g2 = out2[1]; _pins.b2 = out2[2];
+    if (config.height < 64) {
+        _pins.e = -1;
+    }
 
     HUB75_I2S_CFG mxconfig(
         config.width,      // Module width
@@ -66,18 +79,19 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         _pins              // Custom pin mapping
     );
     
-    // Use configured per-channel color depth (2 to 8, default 8)
-    int depth = config.colorDepth;
-    if (depth <= 0) {
-        depth = 8; // Default fallback
-    } else if (depth > 8) {
-        // Clamp to 8 (max supported color depth bits per channel by the library).
-        // A value of 11 (legacy PWM bits) should map to 8 bits color depth, not 3.
-        depth = 8;
+    uint16_t totalWidth = config.width * (config.chainLength > 0 ? config.chainLength : 1);
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    uint8_t depth = effectiveColorDepth;
+    if (depth == 0) {
+        auto pipeRes = PipelineSelectionPolicy::evaluate(
+            totalWidth, config.height, config.colorDepth, config.render_pipeline, hasPsram
+        );
+        depth = pipeRes.effectiveColorDepth;
     }
-    if (depth < 2 || depth > 8) {
-        depth = 8; // Safe fallback if invalid range
-    }
+
+    LOGI("MatrixEngine", "Effective color depth: %u bits (configured=%d, geometry=%ux%u, psram=%d)",
+         depth, config.colorDepth, totalWidth, config.height, hasPsram);
     
     mxconfig.setPixelColorDepthBits(depth);
     mxconfig.min_refresh_rate = config.limitRefreshRateHz > 0 ? config.limitRefreshRateHz : 90;
@@ -92,46 +106,227 @@ bool MatrixEngine::begin(const MatrixConfig& config) {
         mxconfig.driver = HUB75_I2S_CFG::FM6126A;
     } else if (chip == "ICN2038S" || chip == "ICN2037" || chip == "SM16208") {
         mxconfig.driver = HUB75_I2S_CFG::ICN2038S;
+    } else if (chip == "MBI5124") {
+        mxconfig.driver = HUB75_I2S_CFG::MBI5124;
+    } else if (chip == "DP3246") {
+        mxconfig.driver = HUB75_I2S_CFG::DP3246;
     } else {
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
-    // Apply double buffering if not forced to single
-    mxconfig.double_buff = !config.forceSingleBuffer;
-    
-    // PSRAM Warning for large panels
-    if (config.width * config.height * config.chainLength >= 16384) { 
-        if (!hardwareHAL.capabilities().hasPsram) {
-            Serial.println("WARNING: 256x64 requested but no PSRAM found! This WILL cause Out-Of-Memory bootloops on a standard ESP32 WROOM.");
-            // We no longer force 3-bit color here, because the user explicitly wants 24-bit on ESP32-S3.
-        } else {
-            LOGI("MatrixEngine", "PSRAM found. 256x64 will use PSRAM for DMA buffering safely.");
+    // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
+    auto pipeRes = PipelineSelectionPolicy::evaluate(
+        totalWidth, config.height, depth, config.render_pipeline, hasPsram
+    );
+    mxconfig.double_buff = pipeRes.descriptor.dmaDoubleBuffered;
+
+    if (hasPsram) {
+        LOGI("MatrixEngine", "PSRAM found. DMA buffering will use PSRAM safely.");
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-            LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
+        LOGW("MatrixEngine", "WARNING: default HUB75 pin map uses GPIO32/33 which conflicts with ESP32-S3 octal PSRAM. Verify/adjust pin map if needed.");
 #endif
-        }
     }
 
     // Initialize display object
+    LOGI("MatrixEngine", "Allocating FastMatrixPanel...");
     m_panel = new FastMatrixPanel(mxconfig);
     display = m_panel;
     
     // Allocate memory and start DMA
+    LOGI("MatrixEngine", "Calling display->begin()...");
+    esp_task_wdt_reset();
     if (!display->begin()) {
         LOGE("MatrixEngine", "Failed to allocate memory for Matrix DMA!");
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+        m_presentationBackend.reset();
         return false;
     }
+    esp_task_wdt_reset();
+    LOGI("MatrixEngine", "display->begin() succeeded.");
 
     m_doubleBuffered = mxconfig.double_buff;
     m_panel->setBuffering(m_doubleBuffered);
     display->setBrightness8(64); // Safe default brightness
     m_panel->rememberBrightness8(64);
-    display->clearScreen();
-    present();
-    display->clearScreen();
-    present();
+
+    m_cachedConfig = config;
+    m_activeColorDepth = depth;
+    m_oePin = _pins.oe;
+    m_panel->initLuts(depth);
+
+    // Initialize Presentation Backend FIRST, purely constructive with zero frame presentation
+    LOGI("MatrixEngine", "Initializing Hub75PresentationBackend...");
+    m_presentationBackend.reset(new Hub75PresentationBackend(
+        this, totalWidth, config.height, depth, m_doubleBuffered
+    ));
+
+    esp_task_wdt_reset();
+    LOGI("MatrixEngine", "MatrixEngine::begin complete.");
 
     return true;
+}
+
+PresentationTiming MatrixEngine::commitFirstFrame() {
+    if (m_presentationBackend) {
+        return m_presentationBackend->commitFirstFrame();
+    }
+    PresentationTiming pt;
+    pt.result = PresentationResult::BackendUnavailable;
+    return pt;
+}
+
+void MatrixEngine::releasePanel() {
+    if (!display) return;
+    if (m_panel) m_savedBrightness8 = m_panel->getBrightness8();
+    setBlank(true);
+    if (m_oePin >= 0) {
+        pinMode(m_oePin, OUTPUT);
+        digitalWrite(m_oePin, HIGH); // OE active-low: HIGH = LEDs disabled
+    }
+    delete display;
+    display = nullptr;
+    m_panel = nullptr;
+    LOGI("MatrixEngine", "Panel released (DMA sandbox freed). Free=%u, LargestBlock=%u",
+         (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+}
+
+ReconfigureResult MatrixEngine::reconfigurePresentationPipeline(uint8_t targetDepth) {
+    ReconfigureResult res;
+    res.previousDepth = m_activeColorDepth;
+    res.requestedDepth = targetDepth;
+    res.effectiveDepth = m_activeColorDepth;
+
+    if (targetDepth < 2 || targetDepth > 8) {
+        res.failureReason = ReconfigureFailure::InvalidDepth;
+        res.failureReasonStr = "Invalid target depth (must be 2..8)";
+        return res;
+    }
+
+    // Throttle only protects a live panel; a released panel (display == nullptr) must be rebuilt.
+    if (display != nullptr && m_lastReconfigMs > 0 && (millis() - m_lastReconfigMs < MIN_RECONFIG_INTERVAL_MS)) {
+        res.success = false;
+        res.effectiveDepth = m_activeColorDepth;
+        res.fallbackUsed = false;
+        res.failureReason = ReconfigureFailure::Throttled;
+        res.failureReasonStr = "Reconfiguration throttled (interval < 500 ms)";
+        return res;
+    }
+
+    if (targetDepth == m_activeColorDepth && display != nullptr) {
+        res.success = true;
+        res.effectiveDepth = m_activeColorDepth;
+        res.fallbackUsed = false;
+        res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
+        return res;
+    }
+
+    m_lastReconfigMs = millis();
+    LOGI("MatrixEngine", "Starting Presentation Pipeline Reconfiguration: %u -> %u bits...",
+         m_activeColorDepth, targetDepth);
+
+    uint32_t startUs = micros();
+
+    // Invariant 21 (HUB75 Output Isolation):
+    // Blank display output immediately via hardware OE pin to prevent any optical glitches or scanline debris
+    setBlank(true);
+    if (m_oePin >= 0) {
+        pinMode(m_oePin, OUTPUT);
+        digitalWrite(m_oePin, HIGH); // OE active-low: HIGH = LEDs completely disabled
+    }
+
+    uint8_t prevBrightness = m_panel ? m_panel->getBrightness8() : m_savedBrightness8;
+
+    // Teardown previous DMA display
+    if (display) {
+        delete display;
+        display = nullptr;
+        m_panel = nullptr;
+    }
+
+    // Progressive Fallback Attempt: Target depth -> 4 bits -> 2 bits
+    bool allocSuccess = begin(m_cachedConfig, targetDepth);
+    uint8_t currentAllocDepth = targetDepth;
+
+    if (!allocSuccess) {
+        uint8_t fallbacks[] = {4, 2};
+        for (uint8_t fbDepth : fallbacks) {
+            if (fbDepth < currentAllocDepth) {
+                LOGW("MatrixEngine", "Target depth %u failed! Initiating Progressive Fallback Attempt to %u bits...",
+                     currentAllocDepth, fbDepth);
+                if (begin(m_cachedConfig, fbDepth)) {
+                    allocSuccess = true;
+                    currentAllocDepth = fbDepth;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Invariant P0: If target and all fallbacks fail, maintain OE HIGH (PresentationRecovery)
+    if (!allocSuccess || display == nullptr) {
+        LOGE("MatrixEngine", "CRITICAL: Target depth %u and all fallbacks failed! Entering PresentationRecovery (OE held HIGH).",
+             targetDepth);
+        res.success = false;
+        res.effectiveDepth = 0;
+        res.fallbackAttempted = true;
+        res.fallbackUsed = false;
+        res.failureReason = ReconfigureFailure::NoValidPipeline;
+        res.failureReasonStr = "Target and fallback DMA allocations failed";
+        setBlank(true);
+        if (m_oePin >= 0) {
+            digitalWrite(m_oePin, HIGH); // Keep LEDs dark: no unhandled visible output
+        }
+        return res;
+    }
+
+    // Restore brightness
+    display->setBrightness8(prevBrightness);
+    if (m_panel) m_panel->rememberBrightness8(prevBrightness);
+
+    // Invariant P0: Commit Frame 0 to the newly allocated DMA pipeline via PresentationBackend before releasing OE
+    bool frame0Committed = false;
+    if (m_presentationBackend) {
+        PresentationTiming pt = m_presentationBackend->commitFirstFrame();
+        frame0Committed = (pt.result == PresentationResult::Ok);
+    }
+
+    if (!frame0Committed) {
+        LOGE("MatrixEngine", "CRITICAL: Frame 0 commit failed! Maintaining OE HIGH.");
+        res.success = false;
+        res.effectiveDepth = 0;
+        res.fallbackAttempted = (currentAllocDepth != targetDepth);
+        res.fallbackUsed = false;
+        res.failureReason = ReconfigureFailure::Frame0PresentationFailed;
+        res.failureReasonStr = "Frame 0 commit failed";
+        setBlank(true);
+        if (m_oePin >= 0) {
+            digitalWrite(m_oePin, HIGH);
+        }
+        return res;
+    }
+
+    // Invariant P0: OE LOW is strictly conditioned on firstFrameCommitted == true
+    setBlank(false);
+    if (m_oePin >= 0) {
+        digitalWrite(m_oePin, LOW); // OE enabled: clean unblanking
+    }
+
+    res.success = true;
+    res.effectiveDepth = m_activeColorDepth;
+    res.fallbackAttempted = (currentAllocDepth != targetDepth);
+    res.fallbackUsed = (res.effectiveDepth != res.requestedDepth);
+    res.dmaBytes = m_panel ? m_panel->getDmaAllocatedBytes() : 0;
+    res.blankDurationUs = micros() - startUs;
+    LOGI("MatrixEngine", "Presentation Pipeline Reconfiguration completed in %u us (%s, requested=%u, effective=%u bits, fallbackUsed=%d, dmaBytes=%u)",
+         res.blankDurationUs, res.success ? "SUCCESS" : "FAILED", res.requestedDepth, res.effectiveDepth, res.fallbackUsed, (unsigned)res.dmaBytes);
+
+    return res;
+}
+
+IPresentationBackend* MatrixEngine::getPresentationBackend() {
+    return m_presentationBackend.get();
 }
 
 void MatrixEngine::present() {
@@ -166,6 +361,18 @@ void MatrixEngine::setBrightness(uint8_t brightness) {
     }
 }
 
+void MatrixEngine::setBlank(bool blank) {
+    if (!display) return;
+    if (blank) {
+        display->setBrightness8(0);
+        m_blanked = true;
+    } else {
+        uint8_t b = m_panel ? m_panel->getBrightness8() : 64;
+        display->setBrightness8(b);
+        m_blanked = false;
+    }
+}
+
 MatrixPanel_I2S_DMA* MatrixEngine::getDisplay() {
     return display;
 }
@@ -175,6 +382,11 @@ void MatrixEngine::blitCanvas565(const uint16_t* src, int canvasWidth, int canva
         m_panel->blitCanvas565(src, canvasWidth, canvasHeight);
     }
 }
+
+size_t FastMatrixPanel::getDmaAllocatedBytes() const {
+    return Hub75DmaLayout::calculateBytes((uint16_t)PIXELS_PER_ROW, (uint16_t)m_cfg.mx_height, m_depth, m_double);
+}
+
 
 void FastMatrixPanel::fillScreen(uint16_t color) {
     if (color != 0) {
@@ -221,8 +433,17 @@ void FastMatrixPanel::setBuffering(bool doubleBuffered) {
     initLuts(m_cfg.getPixelColorDepthBits());
 }
 
+uint16_t* FastMatrixPanel::getBackbufferRowPlane(uint8_t row, uint8_t plane) {
+    if (!initialized) return nullptr;
+    auto& targetFb = frame_buffer[m_back];
+    if (row < targetFb.rowBits.size()) {
+        return targetFb.rowBits[row]->getDataPtr(plane);
+    }
+    return nullptr;
+}
+
 void FastMatrixPanel::initLuts(uint8_t depth) {
-    if (depth < 2) depth = 8;
+    if (depth < 2) depth = 2;
     if (depth > 8) depth = 8;
     m_depth = depth;
     uint8_t shift = 8 - depth;
@@ -250,6 +471,10 @@ void FastMatrixPanel::initLuts(uint8_t depth) {
 }
 
 void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
+    if (m_depth == 8) {
+        MatrixPanel_I2S_DMA::drawPixel(x, y, color);
+        return;
+    }
     if (!initialized || x < 0 || x >= _width || y < 0 || y >= _height) return;
     int16_t w = 1, h = 1;
     transform(x, y, w, h);
@@ -293,16 +518,6 @@ void FastMatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
 void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int canvasHeight) {
     if (!src || !initialized) return;
 
-    if (getRotation() != 0 && getRotation() != 2) {
-        for (int y = 0; y < canvasHeight; y++) {
-            const uint16_t* r = src + (size_t)y * canvasWidth;
-            for (int x = 0; x < canvasWidth; x++) {
-                drawPixel(x, y, r[x]);
-            }
-        }
-        return;
-    }
-
     const int w = PIXELS_PER_ROW;
     const int rpf = ROWS_PER_FRAME;
     if (canvasWidth != w || canvasHeight != (int)m_cfg.mx_height) {
@@ -312,46 +527,33 @@ void FastMatrixPanel::blitCanvas565(const uint16_t* src, int canvasWidth, int ca
     auto& targetFb = frame_buffer[m_back];
     if ((int)targetFb.rowBits.size() < rpf) return;
 
-    bool rot180 = (getRotation() == 2);
+    Hub75EncodingParams params;
+    params.colorDepth = m_depth;
+    params.rowsPerFrame = rpf;
+    params.width = w;
+    params.height = m_cfg.mx_height;
+    params.lutR = m_lut_r;
+    params.lutG = m_lut_g;
+    params.lutB = m_lut_b;
+    params.rotation = 0;
 
-    for (int y = 0; y < rpf; y++) {
-        const uint16_t* src1;
-        const uint16_t* src2;
-        if (!rot180) {
-            src1 = src + (size_t)y * w;
-            src2 = src + (size_t)(y + rpf) * w;
-        } else {
-            src1 = src + (size_t)(m_cfg.mx_height - 1 - y) * w;
-            src2 = src + (size_t)(m_cfg.mx_height - 1 - (y + rpf)) * w;
+    auto rowAccessor = [](void* ctx, uint8_t row, uint8_t plane) -> uint16_t* {
+        auto* fb = static_cast<decltype(&targetFb)>(ctx);
+        if (row < fb->rowBits.size()) {
+            return fb->rowBits[row]->getDataPtr(plane);
         }
+        return nullptr;
+    };
 
+    Hub75BulkEncoder::encode(src, w, rowAccessor, &targetFb, params);
+
+#if defined(SPIRAM_DMA_BUFFER)
+    for (int y = 0; y < rpf; y++) {
         for (uint8_t p = 0; p < m_depth; p++) {
             uint16_t* dmaRow = targetFb.rowBits[y]->getDataPtr(p);
-            for (int x = 0; x < w; x++) {
-                uint16_t c1, c2;
-                if (!rot180) {
-                    c1 = src1[x];
-                    c2 = src2[x];
-                } else {
-                    c1 = src1[w - 1 - x];
-                    c2 = src2[w - 1 - x];
-                }
-
-                uint8_t r1 = (m_lut_r[(c1 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g1 = (m_lut_g[(c1 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b1 = (m_lut_b[c1 & 0x1F] >> p) & 1;
-                uint8_t r2 = (m_lut_r[(c2 >> 11) & 0x1F] >> p) & 1;
-                uint8_t g2 = (m_lut_g[(c2 >> 5) & 0x3F] >> p) & 1;
-                uint8_t b2 = (m_lut_b[c2 & 0x1F] >> p) & 1;
-
-                uint16_t rgb = r1 | (g1 << 1) | (b1 << 2) | (r2 << 3) | (g2 << 4) | (b2 << 5);
-                int ax = MATRIX_TX_ADJUST(x);
-                dmaRow[ax] = (dmaRow[ax] & BITMASK_RGB12_CLEAR) | rgb;
-            }
-#if defined(SPIRAM_DMA_BUFFER)
             Cache_WriteBack_Addr((uint32_t)dmaRow, (uint32_t)w * sizeof(uint16_t));
-#endif
         }
     }
+#endif
     m_dirtyRows[m_back] = 0;
 }

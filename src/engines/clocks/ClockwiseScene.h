@@ -2,7 +2,7 @@
 #define CLOCKWISESCENE_H
 
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../../core/drawing/IDrawingSurface.h"
 
 /**
  * Helpers shared by the faces adapted from the 64x64 "Clockwise" clockfaces.
@@ -35,7 +35,7 @@ inline int mapY(int y, int panelH) { return originY(panelH) + y / divisor(panelH
  * smeared out to the panel edges, and its top and bottom rows filled likewise when the panel is
  * taller than the scene.
  */
-inline void drawBackground(MatrixPanel_I2S_DMA* m, const uint16_t* bg, int panelW, int panelH) {
+inline void drawBackground(IDrawingSurface* m, const uint16_t* bg, int panelW, int panelH) {
     if (!m || !bg) return;
     const int d = divisor(panelH);
     const int size = SIZE / d;
@@ -58,7 +58,7 @@ inline void drawBackground(MatrixPanel_I2S_DMA* m, const uint16_t* bg, int panel
 }
 
 /// Blit a sprite at scene coordinates, skipping `maskColor` (pass 0xFFFF for an opaque blit).
-inline void drawSprite(MatrixPanel_I2S_DMA* m, const uint16_t* data, int w, int h, int sceneX,
+inline void drawSprite(IDrawingSurface* m, const uint16_t* data, int w, int h, int sceneX,
                        int sceneY, int panelW, int panelH, uint16_t maskColor) {
     if (!m || !data) return;
     const int d = divisor(panelH);

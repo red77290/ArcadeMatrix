@@ -86,7 +86,12 @@ public:
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
 
+    // --- Destrucción física en Core 0 ---
+    virtual bool shutdownForDestruction() { return true; }
+
     // --- Opcionales (con valores seguros por defecto) ---
+    virtual void pause() {}
+    virtual void resume() {}
     virtual void onConfigChanged(const EngineConfig* config) {}
     virtual bool isFinished() const { return false; }
     virtual bool isRealtime() const { return true; }
@@ -95,6 +100,18 @@ public:
     virtual bool allowsOverlay() const { return true; }
 };
 ```
+
+| Método | Por Defecto | Cuándo Sobrescribirlo |
+| :--- | :--- | :--- |
+| `initialize()` | — | **Siempre.** Validar contexto/superficie, asignar búferes e inicializar configuración. |
+| `activate()` | — | **Siempre.** Reiniciar fase de animación, temporizadores o programar primer refresco. |
+| `update()` | — | **Siempre.** Avanzar física/simulación, actualizar coordenadas de sprites. Cero dibujo. |
+| `render()` | — | **Siempre.** Dibujar píxeles en `context->getSurface()`. |
+| `deactivate()` | — | **Siempre.** Quiescencia lógica no bloqueante en Core 1: desacoplar superficie, cancelar sockets, fijar banderas de parada. Cero esperas, cero asignaciones. |
+| `shutdownForDestruction()` | `return true;` | **Si el motor tiene tareas en segundo plano.** Quiescencia física en Core 0: esperar cooperativamente a que terminen los workers, liberar pilas de tareas y búferes DMA antes de borrar la instancia. |
+| `pause()` | no-op | **Opcional.** Invocado ante preempción temporal por alerta de alta prioridad. Conserva el estado interno. |
+| `resume()` | no-op | **Opcional.** Invocado al regresar de una preempción sin perder la fase de animación ni los temporizadores. |
+| `onConfigChanged()` | no-op | **Si el motor tiene ajustes.** Recargar parámetros en el lugar sin recrear la instancia. |
 
 ---
 
@@ -141,10 +158,52 @@ public:
     - Los búferes gráficos grandes fuera de DMA directo (como el canvas de 32 KB de `GifEngine`) DEBEN priorizar la asignación en PSRAM (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) cuando hay PSRAM disponible, reservando la DRAM interna para mbedTLS y la red LwIP.
     - La pila de la tarea en segundo plano AsyncTCP se dimensiona en 8192 bytes y se fija estrictamente al Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) para proteger el hot-path de renderizado del Core 1 (Invariante 1).
     - Los servicios de red persistentes (Google Cast) DEBEN implementar backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP/LwIP.
+15. **Regla de Oro #15 — Renderizado Puro vía `IDrawingSurface` y Aislamiento DMA (Invariantes 18 y 19):**
+    - Un motor es un algoritmo puro: NUNCA debe llamar a `context->getMatrix()->fillScreen(0)` ni manipular el framebuffer físico DMA directamente.
+    - Todas las operaciones de dibujo DEBEN dirigirse a `context->getSurface()`. Las primitivas de mutación (`drawPixel`, `blit565`, `fillRect`, `clear`) marcan automáticamente la superficie como sucia vía `markModified()`.
+    - Si un motor no tiene un nuevo cuadro o es estático entre actualizaciones, `present()` es una operación nula sin costo ni transferencia DMA, eliminando por completo el parpadeo de pantalla DMA en búfer simple.
+16. **Regla de Oro #16 — Desactivación Sin Asignaciones Dinámicas y Silente (Invariantes 15 y 16):**
+    - `deactivate()` NO DEBE realizar ninguna nueva asignación dinámica de memoria (`malloc`, `new`, redimensionamiento de contenedores). Libere la memoria usando `std::vector<T>().swap(vec)` o `{}` en lugar del no vinculante `shrink_to_fit()`.
+    - `deactivate()` se ejecuta en Core 1 de forma estrictamente no bloqueante para garantizar la **quiescencia lógica de renderizado** (cese inmediato de órdenes de dibujo y desvinculación de la superficie). La finalización física de tareas de red y temporizadores se gestiona en Core 0 mediante `shutdownForDestruction()` antes de liberar recursos compartidos. El sistema regresa a la línea base inactiva de referencia ($|\Delta \text{heap}| \le 2\text{ KB}$).
+17. **Regla de Oro #17 — Quiescencia de Red y Cancelación de Sockets (Invariante N8):**
+    - Los motores de red deben implementar la cancelación cooperativa inmediata (`session.abort()` / `_client.stop()`).
+    - `deactivate()` debe detener las interacciones de renderizado en Core 1 y solicitar la cancelación sin bloqueos en sockets.
+    - `shutdownForDestruction()` en Core 0 debe cancelar/unir las tareas en segundo plano y finalizar la quiescencia de red antes de liberar recursos compartidos.
+    - Una vez cancelada una sesión y alcanzada la quiescencia, no se permite ningún procesamiento de aplicación, callback, análisis JSON ni asignación sobre ella.
+18. **Regla de Oro #18 — Pipeline de Presentación Dinámico y Adaptación de Color (Invariante 21):**
+    - Los motores no deben asumir una profundidad estática fija. Al alternar entre motores gráficos (hasta 8 bits configurados) y motores TLS (4 bits nominales), el pipeline se reconfigura de forma determinista bajo apagado de hardware OE ($< 30\text{ ms}$).
+    - **Garantía P0:** La señal OE solo se libera (LOW) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`).
+    - La telemetría distingue `requestedDepth` (política), `effectiveDepth` (instalada real) y `fallbackUsed = (effectiveDepth != requestedDepth)`.
+    - `FastMatrixPanel::initLuts(depth)` recalcula dinámicamente las tablas de cuantificación gamma para evitar distorsiones de color (ver [MEMORY_MODEL_ES.md](MEMORY_MODEL_ES.md) y [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md)).
+19. **Regla de Oro #19 — Consolidación de Transacciones de Red y Agrupamiento Keep-Alive:**
+    - Los motores de red que consultan múltiples datos (ej: cotizaciones de mercado, pronósticos del clima) NO DEBEN realizar conexiones TLS secuenciales individuales.
+    - Si hay varios elementos disponibles en un único endpoint REST, usar parámetros de lote multi-símbolo (ej: GET CoinGecko con símbolos separados por coma).
+    - Si se requieren varias peticiones al mismo host, reutilizar una sesión TLS persistente con keep-alive HTTP/1.1 (`net::SecureHttpSession session("host"); session.get(...)`), realizando **un solo handshake TLS por sesión de lote keep-alive exitosa**.
+    - Implementar consolidación por fallo de caché: cuando se obtiene un elemento, actualizar todos los elementos configurados en esa única sesión para que las rotaciones posteriores consuman la caché RAM con cero latencia de red.
+20. **Regla de Oro #20 — Caché de Iconos de 3 Niveles y Proscripción de PNGdec en ESP32 Clásico:**
+    - `PNGdec` integra una ventana interna zlib de 32 KB (`sizeof(PNG) = 34.288 B`). Invocar `new PNG()` en ESP32 clásico sin PSRAM mientras un panel de 4 bits está activo causa invariablemente `std::bad_alloc`. La instanciación dinámica `new PNG()` está **estrictamente prohibida** en ESP32 clásico.
+    - Todos los iconos de mercado y de interfaz DEBEN usar `IconService`:
+      * **L1 (Caché RAM):** Mapas de bits RGB565 en memoria para renderizado instantáneo.
+      * **L2 (Caché SD):** Caché local persistente (`/crypto_icons/`, `/stock_icons/`).
+      * **L3 (Proxy de Red):** Descarga HTTP simple vía `images.weserv.nl` transcodificada a JPEG, decodificada mediante `JPEGDEC` en ~2,5 KB de RAM.
+      * Si el proxy o la red no están disponibles, recurrir a la caché SD o mostrar texto de forma elegante sin icono.
+21. **Regla de Oro #21 — Sondeo de Red Diferido Sensible a la Presentación:**
+    - En hardware sin PSRAM (`!psramFound()`), el sondeo de red en segundo plano DEBE diferirse mientras un panel de 4 bits esté presentando activamente si ya existen datos iniciales en caché. Esto elimina la contención transitoria del heap y previene micro-tirones visuales.
+22. **Regla de Oro #22 — Secuenciación de Arranque y Empaquetado de Zona de Sistema Persistente:**
+    - Todas las asignaciones permanentes del sistema (driver Wi-Fi, asociación STA, negociación DHCP, DNS públicos, respondedor mDNS con pila de 4 KB, cliente SNTP, clausuras de rutas WebServerAPI con tarea worker `async_tcp` de 8 KB, AudioHub, Core0LifecycleDispatcher "Lifecycle0" con pila de 3 KB) DEBEN inicializarse en el Paso 3 *antes* de asignar la matriz de pantalla (`matrixEngine.begin()`).
+    - Esto agrupa toda la memoria permanente en la DRAM baja (`0x3ffe0000..0x3ffee000`), asegurando que la Zona de Sandbox Volátil (`0x3ffee000..0x3fffffff`) permanezca contigua y se fusione a 50–65 KB al liberar el panel.
+23. **Regla de Oro #23 — Precarga en Ventana de Transición y Bloqueo TLS en Presentación:**
+    - Los motores que requieren datos remotos y puntos históricos (ej. `StockEngine`, `CryptoEngine`) DEBEN implementar `prefetchData()` para consultar cotizaciones y gráficos en la ventana limpia con DMA liberado (donde hay 70 a 90 KB libres), antes de asignar el panel objetivo.
+    - El bucle de renderizado (`update()`) DEBE pintar estrictamente desde la caché sin ejecutar handshakes TLS bloqueantes. Toda operación TLS en presentación activa queda bloqueada por `NetworkBudget::canStartTlsSession()` exigiendo `largest >= TLS_MIN_COMBINED_BLOCK` (40 KB).
+    - El método `deactivate()` debe dejar **cero cadenas o búferes supervivientes** (ej. `GifEngine` limpiando `lastPlayedGif` e intercambiando vectores) para preservar el bloque contiguo del sandbox.
 
 ---
 
-## 4. Capacidades y Requisitos de Hardware
+---
+
+## 4. Capacidades, Huella de Memoria Granular y Predicción de Asignación
+
+Declaradas en el descriptor del motor, las capacidades y requisitos estáticos informan al runtime, la WebUI y `CompatibilityEvaluator` sobre dependencias de hardware, presupuestos de presentación y huellas de memoria exactas:
 
 ```cpp
 struct EngineCapabilities {
@@ -153,17 +212,183 @@ struct EngineCapabilities {
     bool realtime = true;
     bool interruptible = true;
     bool selfPaced = false;
+    bool allowsOverlay = true;          // Permite overlays transversales (ej: Fighter)
+    bool allowRotation = true;          // Visible en la rotación de WebUI
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // ej: Historial Cripto/Bolsa
-    bool needsAudio = false;      // ej: Visualizador micro I2S
-    bool needsTempSensor = false; // ej: Sensor temperatura SHTC3
-    bool needsGyroscope = false;
-    bool needsNetwork = false;
-    bool needsSd = false;
+    // --- Dependencias de Periféricos de Hardware ---
+    bool needsPsram = false;            // SPIRAM externa estrictamente requerida
+    bool needsPsramDma = false;         // SPIRAM compatible con DMA requerida (ESP32-S3)
+    bool needsAudio = false;            // Hardware de audio requerido (alias de compatibilidad)
+    bool needsAudioInput = false;       // Micrófono I2S requerido (ej: Decibel, Spectrum)
+    bool needsAudioOutput = false;      // DAC/Altavoz I2S requerido
+    bool needsI2s = false;              // Bus I2S general requerido
+    bool needsTempSensor = false;       // Sensor de temperatura SHTC3 requerido
+    bool needsGyroscope = false;        // IMU QMI8658 requerido
+    bool needsNetwork = false;          // Conexión Wi-Fi activa requerida
+    bool needsTls = false;              // Handshake criptográfico TLS/HTTPS requerido
+    bool needsSd = false;               // Tarjeta MicroSD requerida
+
+    // --- Estrategia de Búfer y Presentación ---
+    bool requiresDoubleBuffer = false;  // No tolera parpadeos ni desgarros
+    bool prefersDoubleBuffer = false;   // Prefiere doble búfer, funciona degradado en simple búfer
+    bool supportsSingleBuffer = true;   // Permite modo simple búfer
+    uint16_t targetFps = 60;            // Frecuencia objetivo de visualización (60, 30, 10, 1)
+
+    // --- Modelado Granular de Huella de Memoria ---
+    uint32_t internalPersistentBytes = 0;   // DRAM interna persistente entre cuadros
+    uint32_t internalContiguousBytes = 0;   // Bloque contiguo más grande requerido en DRAM
+    uint32_t psramBytes = 0;                // Búfer de trabajo dedicado en SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Asignaciones transitorias por cuadro (0 en hot-path)
+    uint32_t minFreeInternalHeapBytes = 0;  // Margen dinámico mínimo del montón
+    uint32_t minLargestInternalBlockBytes = 0;
+    uint32_t minFreeDmaBytes = 0;
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Límites Geométricos ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = ilimitado
+    uint16_t maxHeight = 0;             // 0 = ilimitado
 };
 ```
+
+---
+
+### 4.1 Modelado Granular de Huella de Memoria (`EngineRequirements`)
+
+ArcadeMatrix V4 sustituye las heurísticas imprecisas por un **modelado de memoria determinista**. Cada descriptor de motor DEBE declarar valores realistas en `EngineRequirements`:
+
+1. **`internalPersistentBytes` (Retención Estática de DRAM):**
+   - Cantidad total de DRAM asignada en `initialize()` y retenida entre cuadros mientras el motor reside en memoria (estructuras, cachés, fuentes, estados).
+   - *Ejemplo:* `MatrixRainEngine` retiene ~1 KB para los arrays de coordenadas; `WeatherEngine` retiene ~6 KB para el modelo de datos climáticos y proveedores.
+2. **`internalContiguousBytes` (Asignación Contigua Máxima):**
+   - El bloque contiguo individual más grande necesario durante la ejecución o inicialización (búferes de descompresión, arrays de trabajo, búfer de registro TLS).
+   - *Ejemplo:* Un motor que decodifica iconos JPEG requiere `~4 KB` contiguos para el decodificador; los motores TLS requieren al menos `16.000 B` para el registro entrante de mbedTLS.
+3. **`psramBytes` (Búfer Dedicado en SPIRAM):**
+   - Memoria externa requerida para lienzos fuera de pantalla de alta resolución, efectos de sonido o sprites pesados.
+4. **`shadowBytesPerFrame` (Asignaciones Transitorias por Cuadro):**
+   - Debe ser `0` para todos los motores estándar. Cualquier valor distinto de cero representa asignaciones transitorias por cuadro, estrictamente prohibidas en el Core 1 (Invariante 1).
+5. **Impacto Determinante de `needsTls` en la Selección de Pipeline:**
+   - Declarar `needsTls = true` avisa a `PipelineSelectionPolicy` de que el motor ejecutará handshakes HTTPS. En el ESP32 clásico sin PSRAM, esta bandera ordena degradar la profundidad de color HUB75 DMA de **8 bits a 4 bits**, recuperando **18 KB de RAM DMA** y exponiendo **50 a 64 KB de DRAM contigua** (`NetworkBudget::TLS_MIN_LARGEST_BLOCK = 16.717 B`). Esto garantiza el 100% de éxito en conexiones TLS sin agotar la memoria.
+
+---
+
+### 4.2 Predicción de Asignación y Modelo Sandbox Teardown-Then-Measure
+
+ArcadeMatrix V4 utiliza `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) como la **única autoridad centralizada** para determinar la viabilidad de un motor en el hardware activo:
+
+- **Dos Modos de Evaluación Claros:**
+  * `EvaluationMode::ReferenceCapability`: Calificación estática contra el perfil de hardware bajo presupuesto de referencia (`ReferenceMemoryProfile`). Utilizado por el catálogo WebUI (`/api/engines`) y los controles de mutación (`POST /api/rotation`, `POST /api/instances`), completamente inmune a la presión de memoria volátil del Core 1 (p. ej. reproducción de GIFs). Evalúa contra el *pipeline solicitado* (`targetPipeline`).
+  * `EvaluationMode::RuntimeAdmission`: Validación dinámica que comprueba las restricciones de memoria en tiempo real antes de instanciar componentes pesados.
+- **Profundidad de Color Adaptativa (`COLOR_DEPTH_AUTO = 0`):** `PipelineSelectionPolicy` evalúa dinámicamente la profundidad de color HUB75 DMA óptima según la geometría, la disponibilidad de PSRAM y los requisitos del motor entrante (`EngineRequirements`). Los candidatos se evalúan desde la máxima calidad (8 bits) hacia abajo ($8 \dots 2$) en todas las plataformas, incluyendo ESP32 clásico sin PSRAM. Para motores gráficos (Reloj, Fecha, Temperatura, Marquee, GIFs), el ESP32 clásico en paneles 128×32 y 64×32 alcanza plena calidad de **8 bits**. Cuando un motor entrante requiere TLS (`needsTls = true`), el pipeline se reduce matemáticamente a **4 bits** (2 bits solo si el cálculo demuestra que 4 bits no caben), liberando entre 16 y 24 KB de DRAM contigua y garantizando el 100% de éxito en las conexiones TLS mbedTLS.
+- **Modelo Sandbox Teardown-Then-Measure en `RotationManager`:** Las transiciones se ejecutan en una secuencia estricta:
+  1. `oldEngine->deactivate()`: Desencadena la quiescencia lógica no bloqueante en Core 1 y la cancelación inmediata de sockets.
+  2. `maybeReconfigurePipelineFor(newEngine)`: Evalúa la memoria disponible bajo apagado completo de hardware OE ($< 30\text{ ms}$). En ESP32 clásico sin PSRAM, desmontar el motor anterior libera el canvas y los búferes DMA (`panelReleased == true`), exponiendo el sandbox limpio de ~72 KB (0 bytes de fuga entre rotaciones).
+  3. La evaluación de candidatos ($8 \dots 2$ bits) permite a los motores TLS comprobar `NetworkBudget::TLS_MIN_LARGEST_BLOCK` (16.717 B) en esta zona liberada, garantizando una admisión determinista a 4 bits sin oscilaciones.
+  4. `newEngine->activate()`: Instancia el motor con la máxima memoria contigua disponible.
+  5. La señal OE se libera (LOW) estrictamente tras confirmar el fotograma 0 (`firstFrameCommitted == true`). Si falla, OE permanece en HIGH (`PresentationRecovery`).
+- **Consolidación del Heap en el Arranque (Paso 3c):** `WebServerAPI` y su tarea `async_tcp` (pila de 8 KB) se preinicializan inmediatamente tras el pre-init de Wi-Fi en Core 0, anclando la pila en la base del heap (`0x3ffe4d20`) antes de las reservas DMA de HUB75. Esto elimina el "pilar de cemento" en SRAM 1 (`0x3fff3d70`) que fragmentaba la memoria contigua.
+- **Concurrencia HTTP Declarativa:** El firmware anuncia `capabilities.http.recommendedConcurrency` (1 en `ESP32_STD`, 3 en `WAVESHARE_S3`). La cola frontend `HttpRequestQueue` limita las llamadas `fetch()` a este valor, erradicando la saturación de sockets LwIP.
+- **Safe Fallback Estático Calificado:** Si la asignación dinámica de memoria falla durante la transición (`initialize(new)`), el runtime activa un motor de emergencia que requiere 0 PSRAM, 0 audio, 0 red y $\le 2$ KB acotados.
+
+---
+
+### 4.3 Pipeline de Retiro y Destrucción de Motores (Core 1 vs Core 0)
+
+Para asegurar una presentación a 60 FPS sin micro-tirones y prevenir fallos Use-After-Free (UAF) y fugas de memoria, ArcadeMatrix impone una **separación estricta del ciclo de vida en dos etapas** (Invariantes 15 y 16):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Core1 as Core 1 (Hot-Path Render)
+    participant RM as RotationManager
+    participant Queue as EngineRetirementQueue (SPSC)
+    participant Core0 as Core 0 (Tarea Lifecycle0)
+    participant Engine as Instancia Motor
+
+    Note over Core1,RM: Etapa 1: Quiescencia Lógica (Core 1)
+    RM->>Engine: deactivate() [No bloqueante, O(1), abortar sockets]
+    RM->>RM: Limpia currentActiveInstanceId
+    RM->>RM: DisplayRuntime::purgeEngineReferences()
+    RM->>Engine: setResourceState(CORE1_RELEASED)
+    RM->>Queue: retire(std::move(engineUniquePtr))
+
+    Note over Queue,Core0: Etapa 2: Quiescencia Física y Destrucción (Core 0)
+    Queue-->>Core0: Desencola engineUniquePtr
+    Core0->>Engine: shutdownForDestruction() [Espera cooperativa <= 300ms]
+    alt Éxito (Workers finalizados limpiamente)
+        Core0->>Engine: setResourceState(RETIRED)
+        Core0->>Engine: delete engine (Recupera DRAM / DMA)
+    else Timeout (> 300ms)
+        Core0->>Engine: setResourceState(QUARANTINED)
+        Note over Core0: Pool de cuarentena retiene el puntero (Fuga segura acotada > Crash UAF)
+    end
+```
+
+#### 1. Etapa 1: Quiescencia Lógica en Core 1 (`deactivate()`)
+- **Contexto de Ejecución:** Hilo de renderizado Core 1.
+- **Contrato:** Debe ser $O(1)$, estrictamente no bloqueante, cero esperas (`vTaskDelay`), cero mutex, cero asignaciones dinámicas.
+- **Acciones Requeridas:**
+  * Establecer banderas atómicas de parada a `false` (`m_running.store(false)`).
+  * Desacoplar el puntero de superficie de dibujo (`surface = nullptr`).
+  * Disparar la cancelación inmediata de sockets: `net::SecureHttpClient::abortSessionsOwnedBy(ownerId)` (o `session.abort()`).
+  * **Prohibición Estricta:** ¡NUNCA bloquear el Core 1 esperando a que termine una tarea FreeRTOS o se cierre un socket de red!
+
+#### 2. Etapa 2: Quiescencia Física y Destrucción en Core 0 (`shutdownForDestruction()`)
+- **Contexto de Ejecución:** Tarea en segundo plano `Lifecycle0` en Core 0 (`Core0LifecycleDispatcher`).
+- **Contrato:** Se ejecuta de forma asíncrona tras retirar el motor de la rotación del Core 1.
+- **Acciones Requeridas:**
+  * Solicitar a las tareas de fondo que salgan cooperativamente (`m_stopWorker.store(true)`).
+  * Esperar cooperativamente en intervalos cortos (`vTaskDelay(pdMS_TO_TICKS(10))`) hasta un límite acotado (ej: 300 ms).
+  * Cerrar archivos abiertos, liberar búferes anulares DMA, eliminar colas FreeRTOS.
+  * Devolver `true` si todos los workers salieron limpiamente y los recursos están en reposo.
+  * Devolver `false` si se supera el tiempo límite.
+- **Prohibición Estricta de Terminación Forzada:** ¡Está TERMINANTEMENTE PROHIBIDO invocar `vTaskDelete(taskHandle)` de forma forzada sobre una tarea activa! Si se mata una tarea mientras ejecuta mbedTLS o lwIP, los bloqueos internos quedan tomados, las estructuras del heap se corrompen y el ESP32 colapsa.
+
+#### 3. Los 6 Pasos de la Barrera Anti-UAF en `RotationManager::retireEngineSlot()`
+Cuando un motor es reemplazado o eliminado durante la rotación, `RotationManager` ejecuta la barrera formal de 6 pasos:
+1. `eng->deactivate()`: Señala la quiescencia lógica y cancela sockets.
+2. Limpia `currentActiveInstanceId` si coincide.
+3. `DisplayRuntime::purgeEngineReferences(eng, instId)`: Purga cualquier puntero residual de la sesión activa y la pila de preempción.
+4. `eng->setResourceState(EngineResourceState::CORE1_RELEASED)`: Transición atómica de estado.
+5. Borra la ranura local `instanceId`: El motor nunca más podrá ser localizado mediante `findActiveEngine()`.
+6. Transfiere el `std::unique_ptr<IEngine>` a la cola `EngineRetirementQueue` para su gestión en Core 0.
+
+#### 4. El Mecanismo de Cuarentena (Fuga Segura Acotada > Use-After-Free)
+Si `shutdownForDestruction()` devuelve `false` (tarea atascada o no cooperativa dentro de los 300 ms):
+- El motor pasa al estado `EngineResourceState::QUARANTINED`.
+- Se almacena en una lista acotada de cuarentena en Core 0. El despachador reintenta periódicamente `shutdownForDestruction()`.
+- Si se alcanza la capacidad de cuarentena (8 motores), el puntero se preserva intencionadamente sin eliminar (`engine.release()`).
+- **Garantía Arquitectónica:** Una fuga de memoria controlada y acotada es infinitamente preferible a una corrupción de memoria o un cuelgue por Use-After-Free.
+
+#### 5. Barrera de Seguridad del Destructor (`~MyEngine()`)
+El destructor C++ DEBE ofrecer una barrera de seguridad de respaldo:
+```cpp
+MyEngine::~MyEngine() {
+    // Barrera de Seguridad Anti-UAF:
+    // En funcionamiento normal, shutdownForDestruction() en Core 0 ya detuvo los workers.
+    // Si se destruye directamente o fuera del ciclo normal, garantizar la salida del worker.
+    if (m_workerTask && !m_workerExited.load(std::memory_order_acquire)) {
+        m_stopWorker.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(OWNER_MY_ENGINE);
+        while (!m_workerExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_workerTask = nullptr;
+    }
+    // Liberación limpia de colecciones mediante swap o reset
+    std::vector<MyItem>().swap(m_items);
+}
+```
+
+> [!IMPORTANT]
+> **Procedimiento Obligatorio al Agregar un Motor:**
+> 1. Declarar con precisión todas las restricciones en `EngineRequirements` del descriptor.
+> 2. Agregar el descriptor del motor en `getCanonicalEngineDescriptors()` en `test/native/tools/matrix_generator.cpp`.
+> 3. Ejecutar `rtk python3 scripts/generate_engine_matrix.py` para regenerar [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Validar la integridad en CI con `rtk python3 scripts/validate_docs.py` (que ejecuta `generate_engine_matrix.py --check`).
 
 ---
 
@@ -244,32 +469,41 @@ struct ConfigField {
 ## 10. Tutorial: Crear un Nuevo Motor Paso a Paso
 
 ### Paso 1: Crear `src/engines/MatrixRainEngine.h`
+
 ```cpp
 #pragma once
-#include "../../include/core/EngineContract.h"
 #include <Arduino.h>
+#include "core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 class MatrixRainEngine : public IEngine {
 public:
     MatrixRainEngine();
-    ~MatrixRainEngine() override = default;
+    ~MatrixRainEngine() override;
 
+    // --- Hooks de Ciclo de Vida Core 1 ---
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
-    void deactivate() override;
+    void deactivate() override; // Quiescencia lógica no bloqueante en Core 1
+
+    // --- Hook de Destrucción Core 0 ---
+    bool shutdownForDestruction() override; // Quiescencia física en Core 0
+
+    // --- Configuración Dinámica y Cuadros ---
     void onConfigChanged(const EngineConfig* config) override;
     bool isRealtime() const override { return true; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix = nullptr;
+    IDrawingSurface* surface = nullptr;
     int speed = 2;
     int dropY[128];
 };
 ```
 
 ### Paso 2: Implementar `src/engines/MatrixRainEngine.cpp`
+
 ```cpp
 #include "MatrixRainEngine.h"
 
@@ -277,9 +511,14 @@ MatrixRainEngine::MatrixRainEngine() {
     memset(dropY, 0, sizeof(dropY));
 }
 
+MatrixRainEngine::~MatrixRainEngine() {
+    // Barrera de seguridad del destructor: desacoplar superficie
+    surface = nullptr;
+}
+
 EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
-    matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
+    surface = context->getSurface();
     if (config) speed = config->getInt("speed", 2);
     return EngineError::OK;
 }
@@ -289,29 +528,38 @@ void MatrixRainEngine::activate() {
 }
 
 void MatrixRainEngine::update(EngineContext* context) {
-    if (!matrix) return;
-    for (int x = 0; x < matrix->width(); x += 4) {
+    if (!surface) return;
+    for (int x = 0; x < surface->width(); x += 4) {
         dropY[x] += speed;
-        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
+        if (dropY[x] > surface->height()) dropY[x] = random(-16, 0);
     }
 }
 
 void MatrixRainEngine::render(EngineContext* context) {
-    if (!matrix) return;
-    matrix->fillScreen(0);
-    for (int x = 0; x < matrix->width(); x += 4) {
-        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
+    if (!surface) return;
+    surface->fillScreen(0);
+    for (int x = 0; x < surface->width(); x += 4) {
+        surface->drawPixel(x, dropY[x], IDrawingSurface::color565(0, 255, 70));
     }
 }
 
-void MatrixRainEngine::deactivate() {}
+void MatrixRainEngine::deactivate() {
+    // Etapa 1 (Core 1): Quiescencia lógica no bloqueante. Desacoplar superficie inmediatamente.
+    surface = nullptr;
+}
+
+bool MatrixRainEngine::shutdownForDestruction() {
+    // Etapa 2 (Core 0): Quiescencia física.
+    // MatrixRain no tiene tareas en segundo plano ni sockets abiertos; destrucción inmediatamente segura.
+    return true;
+}
 
 void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
     if (config) speed = config->getInt("speed", 2);
 }
 ```
 
-### Paso 3: Implementar `IEngineDescriptorHandler` y registrar
+### Paso 3: Implementar `IEngineDescriptorHandler` con Requisitos Realistas
 
 En el archivo de su motor (ej. `src/engines/MatrixRainEngine.h` / `.cpp`):
 ```cpp
@@ -319,9 +567,26 @@ class MatrixRainEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
-        desc.metadata = { "matrix_rain", "Matrix Rain", "animations", FIRMWARE_VERSION };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
-        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.metadata = { "matrix_rain", "Matrix Digital Rain", "animations", FIRMWARE_VERSION };
+        desc.capabilities = {
+            .supports_128x32 = true,
+            .supports_256x64 = true,
+            .realtime = true,
+            .interruptible = true,
+            .allowsOverlay = true,
+            .allowRotation = true
+        };
+        // Modelado de memoria realista para predicción determinista de asignación
+        desc.requirements.needsPsram = false;
+        desc.requirements.needsAudio = false;
+        desc.requirements.needsNetwork = false;
+        desc.requirements.needsTls = false;
+        desc.requirements.targetFps = 60;
+        desc.requirements.supportsSingleBuffer = true;
+        desc.requirements.prefersDoubleBuffer = true;
+        desc.requirements.internalPersistentBytes = 1024;    // 128 enteros + estado
+        desc.requirements.internalContiguousBytes = 2048;    // Margen de trabajo
+
         desc.schema.fields = {
             ConfigField("speed", ConfigType::INTEGER, "Velocidad", "Velocidad de caída en píxeles por frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)
         };
@@ -331,7 +596,9 @@ public:
 };
 ```
 
-Luego en `src/engines/EngineRegistrar.cpp`, simplemente añada la instancia del handler:
+### Paso 4: Registrar en `EngineRegistrar.cpp` y `matrix_generator.cpp`
+
+1. **Registro en el Hardware de Destino (`src/engines/EngineRegistrar.cpp`):**
 ```cpp
 #include "MatrixRainEngine.h"
 
@@ -349,6 +616,142 @@ void EngineRegistrar::registerAll() {
     }
 }
 ```
+
+2. **Registro en la Herramienta de Calificación CI (`test/native/tools/matrix_generator.cpp`):**
+Para garantizar que la CI y la matriz de compatibilidad evalúen su nuevo motor en los 5 perfiles de hardware, añada su descriptor a `getCanonicalEngineDescriptors()`:
+```cpp
+    // Matrix Rain
+    {
+        EngineDescriptor d;
+        d.metadata = {"matrix_rain", "Matrix Digital Rain", "animations", FIRMWARE_VERSION};
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 1024;
+        d.requirements.internalContiguousBytes = 2048;
+        engines.push_back(d);
+    }
+```
+
+### Paso 5: Regenerar la Matriz de Compatibilidad y Validar la CI
+
+Tras registrar el descriptor, regenere la matriz documental y verifique la integridad:
+```bash
+# 1. Regenerar matriz Markdown
+rtk python3 scripts/generate_engine_matrix.py
+
+# 2. Ejecutar validaciones documentales y guardas arquitectónicas
+rtk python3 scripts/validate_docs.py
+```
+
+---
+
+### 10.1 Patrón Avanzado: Motor de Red con Tarea de Fondo (Worker) y TLS
+
+Los motores que realizan consultas de red y sondeos periódicos (cotizaciones bursátiles, meteorología) DEBEN implementar coordinación asíncrona, agrupamiento keep-alive y destrucción anti-UAF estricta:
+
+```cpp
+// --- Patrón de Cabecera (ej: MyNetworkEngine.h) ---
+class MyNetworkEngine : public IEngine {
+public:
+    MyNetworkEngine();
+    ~MyNetworkEngine() override;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;                 // Core 1 no bloqueante
+    bool shutdownForDestruction() override;     // Core 0 espera cooperativa <= 300ms
+
+private:
+    static void workerTaskEntry(void* arg);
+    void fetchQuotes();
+
+    TaskHandle_t m_workerTask = nullptr;
+    std::atomic<bool> m_stopWorker{false};
+    std::atomic<bool> m_workerExited{true};
+    IDrawingSurface* surface = nullptr;
+};
+```
+
+```cpp
+// --- Patrón de Implementación (ej: MyNetworkEngine.cpp) ---
+EngineError MyNetworkEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    surface = context ? context->getSurface() : nullptr;
+    if (!surface) return EngineError::InitializationFailed;
+
+    // Iniciar tarea de sondeo en segundo plano fijada al Core 0
+    m_stopWorker.store(false, std::memory_order_relaxed);
+    m_workerExited.store(false, std::memory_order_relaxed);
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        workerTaskEntry, "NetWorker", 4096, this, 1, &m_workerTask, 0 // Core 0
+    );
+    return (ret == pdPASS) ? EngineError::OK : EngineError::InitializationFailed;
+}
+
+void MyNetworkEngine::deactivate() {
+    // Etapa 1 (Core 1): ¡Estrictamente no bloqueante!
+    // 1. Señalar parada al worker
+    m_stopWorker.store(true, std::memory_order_release);
+    // 2. Abortar inmediatamente todas las sesiones TCP/TLS en curso (desbloquea recv/connect)
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+    // 3. Desacoplar superficie
+    surface = nullptr;
+}
+
+bool MyNetworkEngine::shutdownForDestruction() {
+    // Etapa 2 (Core 0): Espera cooperativa acotada a 300 ms
+    if (!m_workerTask) return true;
+
+    m_stopWorker.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+
+    for (int i = 0; i < 30 && !m_workerExited.load(std::memory_order_acquire); i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (m_workerExited.load(std::memory_order_acquire)) {
+        m_workerTask = nullptr;
+        return true; // ¡Salida limpia! Destrucción segura en Core 0.
+    }
+
+    // Tiempo agotado: ¡NUNCA invocar vTaskDelete()! Devolver false para cuarentena.
+    LOGW("MyNetworkEngine", "El worker no salió en 300ms; el motor pasará a cuarentena.");
+    return false;
+}
+
+MyNetworkEngine::~MyNetworkEngine() {
+    // Barrera de Seguridad del Destructor: asegurar que el worker esté muerto
+    if (m_workerTask && !m_workerExited.load(std::memory_order_acquire)) {
+        m_stopWorker.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+        while (!m_workerExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_workerTask = nullptr;
+    }
+}
+
+void MyNetworkEngine::workerTaskEntry(void* arg) {
+    auto* self = static_cast<MyNetworkEngine*>(arg);
+    while (!self->m_stopWorker.load(std::memory_order_acquire)) {
+        self->fetchQuotes();
+        // Dormir en fragmentos pequeños para detectar órdenes de parada al instante
+        for (int i = 0; i < 600 && !self->m_stopWorker.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    self->m_workerExited.store(true, std::memory_order_release);
+    vTaskDelete(NULL); // El worker termina limpiamente por sí mismo
+}
+```
+
+#### Reglas de Diseño para Motores de Red:
+1. **Declarar `needsTls = true`:** Adapta automáticamente a 4 bits de profundidad en ESP32 clásico, recuperando 18 KB de RAM DMA.
+2. **Reutilizar Sesiones Keep-Alive (Regla de Oro #19):** Utilizar `net::SecureHttpSession` para agrupar peticiones con **un solo handshake TLS**.
+3. **Usar `IconService` + `JPEGDEC` (Regla de Oro #20):** NUNCA instanciar `new PNG()` en ESP32 clásico (su huella de 34 KB colapsa el sistema). Usar `IconService` con transcodificación a JPEG decodificado en ~2,5 KB de RAM.
+4. **Diferir Sondeo durante Presentación Activa (Regla de Oro #21):** En hardware sin PSRAM, posponer peticiones de red mientras un panel de 4 bits presenta activamente si los datos iniciales están en caché.
 
 ---
 
@@ -380,10 +783,11 @@ Heredar de la clase abstracta `ClockFace` (`src/engines/ClockEngine.h`):
 // src/engines/clocks/SpaceInvadersClock.h
 #pragma once
 #include "../ClockEngine.h"
+#include "../../core/drawing/IDrawingSurface.h"
 
 class SpaceInvadersClock : public ClockFace {
 public:
-    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 
@@ -397,7 +801,7 @@ private:
 // src/engines/clocks/SpaceInvadersClock.cpp
 #include "SpaceInvadersClock.h"
 
-SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+SpaceInvadersClock::SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {}
 
 void SpaceInvadersClock::update() {
@@ -441,18 +845,18 @@ case THEME_SPACE_INVADERS:
     break;
 ```
 
-### Paso 4: Exponer en `/api/themes` (`src/api/WebServerAPI.cpp`)
+### Paso 4: Exponer el tema en `scripts/extract_engine_catalog.py`
 
-Añada el tema en la tabla `themes` para rellenar automáticamente el menú desplegable de la interfaz Web:
+Añada su tema en `CANONICAL_THEMES` en `scripts/extract_engine_catalog.py` para que se precompile automáticamente en la interfaz Web durante la compilación:
 
-```cpp
-static const ThemeItem themes[] = {
-    // ...
-    { 25, "Space Invaders Clock" }
-};
+```python
+CANONICAL_THEMES = [
+    # ...
+    {"id": 25, "name": "Space Invaders Clock"},
+]
 ```
 
-La interfaz Web mostrará automáticamente la nueva opción, la guardará en `config.json` y la recargará en caliente sin reiniciar.
+La interfaz Web mostrará automáticamente la nueva opción (con cero sobrecarga de RAM en el ESP32), la guardará en `config.json` y la recargará en caliente sin reiniciar.
 
 ---
 
@@ -520,11 +924,19 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Renderizado en la Matriz LED
 
+ArcadeMatrix v4 abstrae el renderizado detrás de la interfaz independiente del hardware `IDrawingSurface` (que hereda de `Adafruit_GFX`). Obtenga siempre la superficie mediante `context->getSurface()`:
+
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// O transferencia por bloques optimizada para animaciones continuas (GIFs, fighters):
+surface->blit565(canvasBuffer, width, height);
 ```
+*(Por compatibilidad hacia atrás, `context->getMatrix()` se mantiene como pasarela que devuelve `MatrixPanel_I2S_DMA*`).
 *Nunca llame a `flipDMABuffer()` en el motor — el bucle principal lo gestiona de forma centralizada.*
 
 ### 15.1 Vídeo en Movimiento Completo, Streaming de Canvas y FastBlit (`blitCanvas565`)
@@ -559,8 +971,39 @@ rtk pio run -e esp32s3_waveshare
 
 ## 17. Lista de Verificación del Desarrollador
 
-- [ ] `initialize()` realiza todas las asignaciones de memoria; el bucle activo (`update`/`render`) tiene **cero asignaciones dinámicas**.
-- [ ] `onConfigChanged()` actualiza el estado sin destruir la instancia.
-- [ ] Los requisitos de hardware (`needsPsram`, `needsAudio`, `needsTempSensor`) están declarados.
-- [ ] Las cadenas traducidas utilizan el módulo centralizado `I18n` (ningún campo `lang` redundante en el esquema).
-- [ ] La compilación se completa sin errores en `esp32dev` y `esp32s3_waveshare`.
+### Arquitectura y Hot-Path (Core 1)
+- [ ] `initialize()` realiza todas las asignaciones persistentes; el bucle activo (`update()` / `render()`) tiene **cero asignaciones dinámicas** (`malloc`, `new`, `String`, crecimiento de vectores).
+- [ ] El renderizado en Core 1 utiliza `IDrawingSurface` exclusivamente (cero acceso directo al hardware o a registros DMA).
+- [ ] Los diseños adaptativos multirresolución usan un `*LayoutCalculator` puro que devuelve `Rect`s acotados (sin bifurcaciones inline de resolución).
+- [ ] `onConfigChanged()` actualiza el estado en el lugar sin destruir ni recrear la instancia.
+- [ ] `deactivate()` es **estrictamente no bloqueante y en $O(1)$** en Core 1: desacopla la superficie, cancela sesiones de red, fija banderas atómicas de parada. Cero bloqueos mutex, cero `vTaskDelay()`, cero asignaciones.
+
+### Destrucción de Motores y Recuperación de Recursos (Core 0)
+- [ ] Los motores con tareas en segundo plano implementan `shutdownForDestruction()` ejecutándose cooperativamente en Core 0.
+- [ ] El apagado cooperativo espera en intervalos cortos (`vTaskDelay(pdMS_TO_TICKS(10))`) hasta 300 ms como máximo la finalización de los workers.
+- [ ] **Cero eliminación forzada de tareas:** `vTaskDelete(taskHandle)` NUNCA se invoca por la fuerza; los motores en timeout devuelven `false` para cuarentena anti-UAF.
+- [ ] El destructor `~MyEngine()` implementa la barrera de seguridad anti-UAF para asegurar la muerte definitiva de los workers antes de liberar los búferes miembros.
+- [ ] Los búferes de memoria se liberan limpiamente mediante RAII o modismo swap (`std::vector<T>().swap(vec)`).
+- [ ] `deactivate()` limpia todas las cadenas y vectores dinámicos (`std::vector<T>().swap(vec)` o `String()`), dejando **cero supervivientes** en la Zona de Sandbox Volátil.
+
+### Modelado de Memoria y Predicción de Asignación
+- [ ] `EngineRequirements` declara huellas realistas:
+  * `internalPersistentBytes`: DRAM interna conservada entre cuadros mientras el motor reside en memoria.
+  * `internalContiguousBytes`: Asignación contigua máxima necesaria (descompresión / área de trabajo / búfer de registro TLS).
+  * `shadowBytesPerFrame`: Debe ser `0` para motores de bucle activo.
+- [ ] `needsTls` se fija en `true` para cualquier motor que use HTTPS/TLS, activando la adaptación dinámica a 4 bits de profundidad en ESP32 clásico.
+- [ ] El descriptor del motor está registrado en `src/engines/EngineRegistrar.cpp` Y en `test/native/tools/matrix_generator.cpp`.
+
+### Optimizaciones de Red y Multimedia
+- [ ] Los motores de datos remotos y gráficos implementan `prefetchData()` vía `fetchCombined()` en keep-alive durante la ventana de transición antes de asignar el panel.
+- [ ] Los motores de red utilizan agrupamiento keep-alive `net::SecureHttpSession` para peticiones múltiples (un solo handshake TLS por lote).
+- [ ] Todos los iconos usan `IconService` + `JPEGDEC` en ~2,5 KB de RAM; la instanciación dinámica de `new PNG()` / `PNGdec` está **estrictamente prohibida** en ESP32 clásico.
+- [ ] El sondeo de red en segundo plano se pospone durante la presentación activa a 4 bits en hardware sin PSRAM.
+
+### Internacionalización y Validación
+- [ ] Las cadenas traducidas utilizan el módulo centralizado `I18n` (ninguna cadena en código duro ni campo `lang` redundante en el esquema).
+- [ ] `options_endpoint` está definido para listas de opciones dinámicas.
+- [ ] La compilación dual-target tiene éxito: `rtk pio run -e esp32dev -e esp32s3_waveshare`.
+- [ ] Las suites de pruebas unitarias pasan: `rtk pio test -e esp32dev --without-uploading --without-testing`.
+- [ ] La matriz de compatibilidad está regenerada: `rtk python3 scripts/generate_engine_matrix.py`.
+- [ ] La validación documental tiene éxito: `rtk python3 scripts/validate_docs.py`.

@@ -35,6 +35,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install PlatformIO library dependencies (${{ matrix.env }})
+        run: pio pkg install -e ${{ matrix.env }}
+
+      - name: Generate WebUI and BuildInfo
+        run: python3 scripts/build_webui.py
+
       - name: Validate documentation & SD configuration
         run: python3 scripts/validate_docs.py
 
@@ -83,9 +89,9 @@ jobs:
           if-no-files-found: error
 
   deploy-pages:
-    # Only publish the web flasher on releases (when a tag is pushed), and only once the repo is public - GitHub Pages
-    # for private repositories requires a paid plan.
-    if: startsWith(github.ref, 'refs/tags/') && !github.event.repository.private
+    # Only publish the web flasher on official stable releases (when a non-prerelease tag is pushed),
+    # and only once the repo is public - GitHub Pages for private repositories requires a paid plan.
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-') && !github.event.repository.private
     needs: build
     runs-on: ubuntu-latest
     permissions:

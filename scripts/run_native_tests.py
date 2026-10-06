@@ -25,6 +25,53 @@ def find_compiler():
             return path
     return None
 
+def ensure_arduinojson_include(include_dirs):
+    for aj_path in [
+        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32dev", "ArduinoJson", "src"),
+        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32s3_waveshare", "ArduinoJson", "src"),
+        os.path.join(PROJECT_ROOT, "build", "deps", "ArduinoJson", "src"),
+    ]:
+        if os.path.exists(os.path.join(aj_path, "ArduinoJson.h")):
+            include_dirs.append(aj_path)
+            return True
+
+    # Try pio pkg install if available
+    pio_bin = shutil.which("pio") or shutil.which("platformio")
+    if pio_bin:
+        try:
+            print("📦 Installing PlatformIO library dependencies (ArduinoJson)...")
+            subprocess.run(
+                [pio_bin, "pkg", "install", "-e", "esp32dev", "--library", "bblanchon/ArduinoJson@^6.21.5", "--skip-dependencies", "--no-save"],
+                cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+            )
+            for aj_path in [
+                os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32dev", "ArduinoJson", "src"),
+                os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32s3_waveshare", "ArduinoJson", "src"),
+            ]:
+                if os.path.exists(os.path.join(aj_path, "ArduinoJson.h")):
+                    include_dirs.append(aj_path)
+                    return True
+        except Exception:
+            pass
+
+    # Fallback: Download standalone header
+    try:
+        import urllib.request
+        fallback_dir = os.path.join(PROJECT_ROOT, "build", "deps", "ArduinoJson", "src")
+        os.makedirs(fallback_dir, exist_ok=True)
+        dest_file = os.path.join(fallback_dir, "ArduinoJson.h")
+        if not os.path.exists(dest_file):
+            print("🌐 Fetching standalone ArduinoJson.h for native host tools...")
+            url = "https://github.com/bblanchon/ArduinoJson/releases/download/v6.21.5/ArduinoJson-v6.21.5.h"
+            urllib.request.urlretrieve(url, dest_file)
+        if os.path.exists(dest_file):
+            include_dirs.append(fallback_dir)
+            return True
+    except Exception as e:
+        print(f"⚠️ Failed to fetch ArduinoJson fallback: {e}")
+
+    return False
+
 def main():
     compiler = find_compiler()
     if not compiler:
@@ -42,6 +89,9 @@ def main():
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "GraphPayload.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "FeedPayloads.cpp"),
         os.path.join(PROJECT_ROOT, "src", "engines", "mqttdata", "DataSession.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "CompatibilityEvaluator.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "core", "drawing", "PipelineSelectionPolicy.cpp"),
+        os.path.join(PROJECT_ROOT, "src", "services", "IconService.cpp"),
         os.path.join(PROJECT_ROOT, "test", "native", "test_native_core.cpp"),
     ]
 
@@ -57,13 +107,7 @@ def main():
         os.path.join(PROJECT_ROOT, "src"),
     ]
 
-    for aj_path in [
-        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32dev", "ArduinoJson", "src"),
-        os.path.join(PROJECT_ROOT, ".pio", "libdeps", "esp32s3_waveshare", "ArduinoJson", "src"),
-    ]:
-        if os.path.exists(aj_path):
-            include_dirs.append(aj_path)
-            break
+    ensure_arduinojson_include(include_dirs)
 
     cmd = [
         compiler,

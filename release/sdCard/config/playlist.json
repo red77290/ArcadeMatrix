@@ -1,0 +1,12 @@
+[
+  {
+    "instance_id": "clock_main",
+    "duration_sec": 15,
+    "fighter_overlay": false
+  },
+  {
+    "instance_id": "gifs_main",
+    "duration_sec": 20,
+    "fighter_overlay": false
+  }
+]

@@ -84,7 +84,7 @@ uint16_t VisualizerEngine::getSpectrumColor(int heightIndex, int maxHeight) {
 
 
 
-void VisualizerEngine::drawSpectrum(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawSpectrum(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -134,7 +134,7 @@ void VisualizerEngine::drawSpectrum(MatrixPanel_I2S_DMA* matrix) {
     }
 }
 
-void VisualizerEngine::drawWaveform(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawWaveform(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int midY = height / 2;
@@ -168,7 +168,7 @@ void VisualizerEngine::drawWaveform(MatrixPanel_I2S_DMA* matrix) {
     }
 }
 
-void VisualizerEngine::drawRadial(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawRadial(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
     int cx = width / 2;
@@ -191,7 +191,7 @@ void VisualizerEngine::drawRadial(MatrixPanel_I2S_DMA* matrix) {
     matrix->drawCircle(cx, cy, currentRadius / 2, matrix->color565(0, 200, 255));
 }
 
-void VisualizerEngine::drawNeonFire(MatrixPanel_I2S_DMA* matrix) {
+void VisualizerEngine::drawNeonFire(IDrawingSurface* matrix) {
     int width = matrix->width();
     int height = matrix->height();
 
@@ -223,7 +223,7 @@ void VisualizerEngine::update(EngineContext* context) {
 }
 
 void VisualizerEngine::render(EngineContext* context) {
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    auto* matrix = context ? context->getSurface() : nullptr;
     if (!matrix || !active) return;
 
     matrix->fillScreen(0);
@@ -243,6 +243,12 @@ EngineDescriptor VisualizerEngineDescriptorHandler::getDescriptor() const {
     desc_visualizer.capabilities.realtime = true;
     desc_visualizer.capabilities.allowRotation = false; // Priority override engine
     desc_visualizer.requirements.needsAudio = true;
+    desc_visualizer.requirements.needsAudioInput = true;
+    desc_visualizer.requirements.targetFps = 60;
+    desc_visualizer.requirements.requiresDoubleBuffer = true;
+    desc_visualizer.requirements.supportsSingleBuffer = false;
+    desc_visualizer.requirements.internalPersistentBytes = 10000;
+    desc_visualizer.requirements.internalContiguousBytes = 8000;
     desc_visualizer.schema.fields = {
         ConfigField("priority_mode", ConfigType::BOOLEAN, "Priority Mode (Continuous)", "Display Audio Visualizer continuously (overrides rotation loop)", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("style", ConfigType::ENUM, "Style", "FFT visualization style", "spectrum", false, "", "", "", "spectrum,waveform,radial,neon_fire", "", false, "", ValidationPolicy::FallbackDefault),

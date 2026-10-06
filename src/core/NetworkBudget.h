@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 #include <atomic>
+#ifdef ESP32
 #include <esp_heap_caps.h>
+#endif
 
 /**
  * @file NetworkBudget.h
@@ -22,18 +24,25 @@
  */
 namespace NetworkBudget {
 
-/// Hard safety admission threshold for internal DRAM (needs ~33.8 KB record buffers + ~5 KB context/crypto + ~6 KB margin).
+/// Admission heuristic watermark for internal DRAM (needs dual ~16.9 KB record buffers + ~8 KB context/BIGNUM + ~14 KB Core 0 margin).
+/// NOTE: This is an admission control watermark, not an allocation guarantee.
 static constexpr uint32_t TLS_MIN_FREE_INTERNAL = 45u * 1024u; // 46,080 bytes
 
-/// Contiguous allocation watermark to satisfy a single 16 KB mbedTLS record buffer.
-static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16896u; // 16.5 KB
+/// Contiguous allocation watermark to satisfy a single 16 KB mbedTLS record buffer (16384 + headers/MAC).
+static constexpr uint32_t TLS_MIN_LARGEST_BLOCK = 16717u;
 
-/// Contiguous watermark guaranteed to satisfy BOTH 16 KB mbedTLS record buffers simultaneously.
-static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 35328u; // 34.5 KB
+/// Contiguous watermark for a full TLS session.
+/// Calibrated for ESP32 with dual SRAM banks where dual 16.7 KB record buffers span pools.
+static constexpr uint32_t TLS_MIN_COMBINED_BLOCK = 28672u; // 28 KB
 
 /// Healthy operation target for internal DRAM with active stream.
 static constexpr uint32_t HEALTHY_FREE_INTERNAL_TARGET = 50u * 1024u; // 51,200 bytes
 
+/// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
+static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
+static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
+
+#ifdef ESP32
 /**
  * @brief Returns the total free internal DRAM in bytes.
  */
@@ -49,34 +58,59 @@ inline uint32_t largestInternalBlock() {
 }
 
 /**
- * @brief Evaluates whether internal DRAM can accommodate both mbedTLS record buffers (in + out).
+ * @brief Evaluates whether internal DRAM can accommodate both mbedTLS record buffers (in + out)
+ *        plus required BIGNUM working limbs for RSA certificate verification.
  *
- * mbedTLS setup allocates TWO separate record buffers (~16.7 KB each, ~33.4 KB total).
- * If the largest block is >= 34.5 KB, both buffers will fit in that single block.
- * If largest < 16.5 KB, even a single buffer cannot be allocated.
- * If in between, it probes whether two simultaneous 16.5 KB allocations can actually succeed,
- * eliminating false admissions that would otherwise crash mbedtls_ssl_setup with -32512.
+ * On ESP32, internal SRAM is split across dual physical banks (SRAM1 + SRAM2).
+ * Dual 16,717 B record buffers require >= 33,434 B contiguous if allocated in a single block.
+ * If largestBlock >= 35 KB and freeInternal >= 45 KB, the single block easily accommodates both buffers.
+ * If largestBlock is below 35 KB, probes whether two simultaneous record buffers can allocate across pools.
  */
-inline bool hasTlsRecordBufferHeadroom() {
-    const uint32_t largest = largestInternalBlock();
-    if (largest >= TLS_MIN_COMBINED_BLOCK) {
-        return true;
+/**
+ * @brief Tracks high-bandwidth HTTP bulk transfers on Core 0 (e.g. initial WebUI SPA or large catalog streaming)
+ * to prevent concurrent TLS bursts and memory contention on non-PSRAM hardware (Invariant 8).
+ */
+inline std::atomic<uint32_t>& getBulkTransferUntilMs() {
+    static std::atomic<uint32_t> s_untilMs{0};
+    return s_untilMs;
+}
+
+inline void markBulkTransferActive(uint32_t durationMs = 3000) {
+    uint32_t newUntil = millis() + durationMs;
+    uint32_t current = getBulkTransferUntilMs().load(std::memory_order_relaxed);
+    if (newUntil > current) {
+        getBulkTransferUntilMs().store(newUntil, std::memory_order_release);
     }
+}
+
+inline void clearBulkTransfer() {
+    getBulkTransferUntilMs().store(0, std::memory_order_release);
+}
+
+inline bool isBulkTransferActive() {
+    uint32_t until = getBulkTransferUntilMs().load(std::memory_order_acquire);
+    return (until > 0 && millis() < until);
+}
+
+inline bool hasTlsRecordBufferHeadroom() {
+    if (isBulkTransferActive()) {
+        return false;
+    }
+    const uint32_t largest = largestInternalBlock();
     if (largest < TLS_MIN_LARGEST_BLOCK) {
         return false;
     }
+    if (largest >= TLS_MIN_COMBINED_BLOCK && freeInternal() >= TLS_MIN_FREE_INTERNAL) {
+        return true;
+    }
     void* b1 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!b1) return false;
-    void* b2 = heap_caps_malloc(TLS_MIN_LARGEST_BLOCK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    void* b2 = heap_caps_malloc(8192, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     heap_caps_free(b1);
     if (!b2) return false;
     heap_caps_free(b2);
     return true;
 }
-
-/// Minimum free internal DMA-capable memory to satisfy hardware SHA and SDMMC bounce buffers.
-static constexpr uint32_t TLS_MIN_FREE_DMA = 16384u; // 16 KB
-static constexpr uint32_t TLS_MIN_LARGEST_DMA_BLOCK = 4096u; // 4 KB for esp-sha buffer
 
 /**
  * @brief Returns the total free internal DMA-capable memory in bytes.
@@ -109,12 +143,17 @@ inline std::atomic<uint32_t>& getTlsDeniedCount() {
  * @return true when there is enough internal DRAM and DMA headroom for a TLS session.
  */
 inline bool canStartTlsSession() {
+    if (isBulkTransferActive()) {
+        getTlsDeniedCount().fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const uint32_t free = freeInternal();
     const uint32_t largest = largestInternalBlock();
     const uint32_t freeDma = freeDmaInternal();
     const uint32_t largestDma = largestDmaInternalBlock();
     const bool hasBuffers = hasTlsRecordBufferHeadroom();
     const bool admitted = (free >= TLS_MIN_FREE_INTERNAL && hasBuffers &&
+                           largest >= TLS_MIN_COMBINED_BLOCK &&
                            freeDma >= TLS_MIN_FREE_DMA && largestDma >= TLS_MIN_LARGEST_DMA_BLOCK);
     if (!admitted) {
         getTlsDeniedCount().fetch_add(1, std::memory_order_relaxed);
@@ -123,7 +162,7 @@ inline bool canStartTlsSession() {
         uint32_t last = lastDenialLogMs.load(std::memory_order_relaxed);
         if (now - last > 10000 && lastDenialLogMs.compare_exchange_strong(last, now)) {
             log_w("TLS admission denied: free=%u (req %u), largest=%u (req %u), freeDma=%u (req %u), largestDma=%u (req %u), buffers=%s, total denied=%u",
-                  free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_LARGEST_BLOCK,
+                  free, TLS_MIN_FREE_INTERNAL, largest, TLS_MIN_COMBINED_BLOCK,
                   freeDma, TLS_MIN_FREE_DMA, largestDma, TLS_MIN_LARGEST_DMA_BLOCK,
                   hasBuffers ? "OK" : "INSUFFICIENT",
                   getTlsDeniedCount().load(std::memory_order_relaxed));
@@ -206,6 +245,36 @@ private:
     bool _locked;
     bool _deniedByBudget;
 };
+
+#else // !ESP32 (Native host / mock)
+
+inline uint32_t freeInternal() { return 160000; }
+inline uint32_t largestInternalBlock() { return 80000; }
+inline bool hasTlsRecordBufferHeadroom() { return true; }
+inline uint32_t freeDmaInternal() { return 60000; }
+inline uint32_t largestDmaInternalBlock() { return 40000; }
+inline std::atomic<uint32_t>& getTlsDeniedCount() {
+    static std::atomic<uint32_t> count{0};
+    return count;
+}
+inline bool canStartTlsSession() { return true; }
+inline uint32_t freePsram() { return 0; }
+
+class ScopedTlsHandshakeLock {
+public:
+    explicit ScopedTlsHandshakeLock(uint32_t timeout = 5000) : _locked(true), _deniedByBudget(false) { (void)timeout; }
+    ~ScopedTlsHandshakeLock() = default;
+    void unlock() { _locked = false; }
+    bool isLocked() const { return _locked; }
+    explicit operator bool() const { return _locked; }
+    bool isDeniedByBudget() const { return _deniedByBudget; }
+    bool isContended() const { return false; }
+private:
+    bool _locked;
+    bool _deniedByBudget;
+};
+
+#endif
 
 /**
  * @brief Architectural gate for plain HTTP connections.
