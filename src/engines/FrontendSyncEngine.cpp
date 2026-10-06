@@ -5,6 +5,7 @@
 #include "../core/Globals.h"
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/SecureHttpClient.h"
 #include <esp_task_wdt.h>
 
 FrontendSyncEngine* FrontendSyncEngine::instance = nullptr;
@@ -246,10 +247,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     if (exists && foundArtPath.length() > 0) {
         LOGI("RetroFrontend", "Playing cached Pixelcade art: %s", foundArtPath.c_str());
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            gif->playGif(foundArtPath.c_str());
-            xSemaphoreGive(sdMutex);
-        }
+        gif->playGif(foundArtPath.c_str());
         if (message) {
             message->deactivate();
         }
@@ -285,10 +283,7 @@ void FrontendSyncEngine::handleGameEvent(const String& jsonPayload, uint32_t req
 
     if (downloaded && downloadedPath.length() > 0) {
         LOGI("RetroFrontend", "Playing downloaded Pixelcade art: %s", downloadedPath.c_str());
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            gif->playGif(downloadedPath.c_str());
-            xSemaphoreGive(sdMutex);
-        }
+        gif->playGif(downloadedPath.c_str());
         if (message) {
             message->deactivate();
         }
@@ -336,10 +331,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
 
     if (exists && foundArtPath.length() > 0) {
         LOGI("RetroFrontend", "Playing cached Pixelcade system art: %s", foundArtPath.c_str());
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            gif->playGif(foundArtPath.c_str());
-            xSemaphoreGive(sdMutex);
-        }
+        gif->playGif(foundArtPath.c_str());
         if (message) {
             message->deactivate();
         }
@@ -376,10 +368,7 @@ void FrontendSyncEngine::handleSystemEvent(const String& systemId, uint32_t reqI
 
     if (downloaded && downloadedPath.length() > 0) {
         LOGI("RetroFrontend", "Playing downloaded Pixelcade system art: %s", downloadedPath.c_str());
-        if (xSemaphoreTake(sdMutex, portMAX_DELAY)) {
-            gif->playGif(downloadedPath.c_str());
-            xSemaphoreGive(sdMutex);
-        }
+        gif->playGif(downloadedPath.c_str());
         if (message) {
             message->deactivate();
         }
@@ -427,29 +416,6 @@ String FrontendSyncEngine::cleanSystemName(const String& rawSystem) {
 std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
     std::map<String, std::vector<String>> mappings;
 
-    // 1. Pre-populate with firmware embedded default mappings (290+ systems & manufacturers)
-    for (size_t i = 0; BUILTIN_SYSTEM_MAPS[i].key != nullptr; i++) {
-        String key = String(BUILTIN_SYSTEM_MAPS[i].key);
-        String targetsStr = String(BUILTIN_SYSTEM_MAPS[i].targets);
-        std::vector<String> targets;
-        while (targetsStr.length() > 0) {
-            int commaIdx = targetsStr.indexOf(',');
-            String t;
-            if (commaIdx != -1) {
-                t = targetsStr.substring(0, commaIdx);
-                targetsStr = targetsStr.substring(commaIdx + 1);
-            } else {
-                t = targetsStr;
-                targetsStr = "";
-            }
-            t.trim();
-            if (t.length() > 0) targets.push_back(t);
-        }
-        if (targets.size() > 0) {
-            mappings[key] = targets;
-        }
-    }
-
     const char* jsonPaths[] = { "/pixelcade/systems.json", "/systems.json" };
     bool loadedJson = false;
 
@@ -460,7 +426,7 @@ std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
         if (sd.exists(p)) {
             FsFile f = sd.open(p, FILE_OPEN_READ);
             if (f) {
-                DynamicJsonDocument doc(16384);
+                SpiRamJsonDocument doc(8192);
                 DeserializationError err = deserializeJson(doc, f);
                 f.close();
                 if (!err && doc.is<JsonObject>()) {
@@ -538,6 +504,53 @@ std::map<String, std::vector<String>> FrontendSyncEngine::loadMappingsFromSD() {
     return mappings;
 }
 
+static void appendTargetsFromMappingsOrBuiltin(
+    const std::map<String, std::vector<String>>& mappings,
+    const String& key,
+    std::vector<String>& out) {
+    if (key.length() == 0) return;
+
+    // 1. High priority: User / systems.json explicit mappings from SD
+    auto it = mappings.find(key);
+    if (it != mappings.end()) {
+        for (const auto& target : it->second) {
+            bool exists = false;
+            for (const auto& nv : out) {
+                if (nv == target) { exists = true; break; }
+            }
+            if (!exists) out.push_back(target);
+        }
+    }
+
+    // 2. Firmware built-in default mappings in flash (.rodata, zero heap allocation)
+    for (size_t i = 0; BUILTIN_SYSTEM_MAPS[i].key != nullptr; i++) {
+        if (key.equalsIgnoreCase(BUILTIN_SYSTEM_MAPS[i].key)) {
+            const char* targetsStr = BUILTIN_SYSTEM_MAPS[i].targets;
+            const char* cur = targetsStr;
+            while (*cur) {
+                const char* comma = strchr(cur, ',');
+                String t;
+                if (comma) {
+                    t = String(cur).substring(0, comma - cur);
+                    cur = comma + 1;
+                } else {
+                    t = String(cur);
+                    cur += strlen(cur);
+                }
+                t.trim();
+                if (t.length() > 0) {
+                    bool exists = false;
+                    for (const auto& nv : out) {
+                        if (nv == t) { exists = true; break; }
+                    }
+                    if (!exists) out.push_back(t);
+                }
+            }
+            break;
+        }
+    }
+}
+
 std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemNameVariants(const String& rawSystem) {
     std::map<String, std::vector<String>> emptyMap;
     return getSystemNameVariantsMapped(emptyMap, rawSystem);
@@ -560,19 +573,10 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     String sysUnderscore = sysLower;
     sysUnderscore.replace(" ", "_");
 
-    // 1. High priority: User / systems.json explicit mappings
+    // 1. High priority: User / systems.json explicit mappings & flash defaults
     String lookupKeys[] = { rawLower, sysLower, sysNospace, sysUnderscore };
     for (const auto& key : lookupKeys) {
-        auto it = mappings.find(key);
-        if (it != mappings.end()) {
-            for (const auto& target : it->second) {
-                bool exists = false;
-                for (const auto& nv : nameVariants) {
-                    if (nv == target) { exists = true; break; }
-                }
-                if (!exists) nameVariants.push_back(target);
-            }
-        }
+        appendTargetsFromMappingsOrBuiltin(mappings, key, nameVariants);
     }
 
     // Check embedded keywords in multi-word names (e.g., "Capcom cps1" -> "cps1", "capcom")
@@ -580,16 +584,7 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     for (const char* kw : embeddedKeywords) {
         if (sysNospace.indexOf(kw) != -1) {
             String kwStr = String(kw);
-            auto it = mappings.find(kwStr);
-            if (it != mappings.end()) {
-                for (const auto& target : it->second) {
-                    bool exists = false;
-                    for (const auto& nv : nameVariants) {
-                        if (nv == target) { exists = true; break; }
-                    }
-                    if (!exists) nameVariants.push_back(target);
-                }
-            }
+            appendTargetsFromMappingsOrBuiltin(mappings, kwStr, nameVariants);
             String defZ = "default-z" + kwStr;
             bool existsZ = false;
             for (const auto& nv : nameVariants) {
@@ -623,16 +618,7 @@ std::vector<FrontendSyncEngine::SystemVariant> FrontendSyncEngine::getSystemName
     }
     for (int i = (int)words.size() - 1; i >= 0; i--) {
         const String& w = words[i];
-        auto it = mappings.find(w);
-        if (it != mappings.end()) {
-            for (const auto& target : it->second) {
-                bool exists = false;
-                for (const auto& nv : nameVariants) {
-                    if (nv == target) { exists = true; break; }
-                }
-                if (!exists) nameVariants.push_back(target);
-            }
-        }
+        appendTargetsFromMappingsOrBuiltin(mappings, w, nameVariants);
         String defZ = "default-z" + w;
         bool existsZ = false;
         for (const auto& nv : nameVariants) {
@@ -874,142 +860,118 @@ bool FrontendSyncEngine::downloadPixelcadeArt(const String& folder, const String
     String dirPath = "/pixelcade/" + folder;
     String savePath = dirPath + "/" + filename;
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("RetroFrontend", "Skipping artwork download: insufficient internal DRAM for a TLS session.");
-        return false;
-    }
-    // Held across the whole download below (can take several seconds for large GIFs) --
-    // see HardwareHAL::begin() for why mbedTLS must stay internal-DRAM-only and all TLS
-    // handshakes must be serialized system-wide.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        LOGW("RetroFrontend", "Skipping artwork download: another TLS handshake is in progress.");
-        return false;
-    }
+    auto writeStreamToSd = [&](Stream& stream, int len, const String& dPath, const String& sPath) -> bool {
+        SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
+        if (!sdGuard) {
+            LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", sPath.c_str());
+            return false;
+        }
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
-    http.setTimeout(4000);
-    http.setUserAgent("ArcadeMatrix-ESP32");
-    
-    LOGI("RetroFrontend", "Downloading %s", url.c_str());
-    
-    // Disable Task Watchdog on Core 1 temporarily because HTTP GET or TLS decryption 
-    // can block for > 5 seconds on massive GIFs over a slow connection!
-    esp_task_wdt_delete(NULL);
-    
-    if (http.begin(client, url)) {
-        LOGI("RetroFrontend", "Starting HTTP GET...");
-        int httpCode = http.GET();
-        LOGI("RetroFrontend", "HTTP GET returned %d", httpCode);
-        
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-            int len = http.getSize();
-            WiFiClient* stream = http.getStreamPtr();
-            
-            String dirPath = "/pixelcade/" + folder;
-            String savePath = dirPath + "/" + filename;
-            
-            SdLockGuard sdGuard(pdMS_TO_TICKS(15000));
-            if (!sdGuard) {
-                LOGW("RetroFrontend", "Could not acquire sdMutex for artwork download: %s", savePath.c_str());
-                http.end();
-                client.stop();
-                esp_task_wdt_add(NULL);
-                return false;
-            }
+        if (!sd.exists("/pixelcade")) {
+            sd.mkdir("/pixelcade");
+        }
+        if (!sd.exists(dPath.c_str())) {
+            sd.mkdir(dPath.c_str());
+        }
 
-            if (!sd.exists("/pixelcade")) {
-                sd.mkdir("/pixelcade");
-            }
-            if (!sd.exists(dirPath.c_str())) {
-                sd.mkdir(dirPath.c_str());
-            }
-            
-            FsFile file = sd.open(savePath.c_str(), FILE_OPEN_WRITE);
-            if (file) {
-                WiFiClient* stream = http.getStreamPtr();
-                    int len = http.getSize();
-                    uint8_t buff[512] = { 0 };
-                    
-                    int bytesWrittenTotal = 0;
-                    unsigned long lastLog = millis();
-                    
-                    while (http.connected() && (len > 0 || len == -1)) {
-                        size_t size = stream->available();
-                        if (size) {
-                            // Use non-blocking read() instead of blocking readBytes()!
-                            // readBytes() can block for many seconds if Wi-Fi is slow, bypassing our watchdog reset.
-                            int c = stream->read(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-                            if (c > 0) {
-                                file.write(buff, c);
-                                bytesWrittenTotal += c;
-                                if (len > 0) len -= c;
-                            }
-                        } else {
-                            delay(1);
-                        }
-                        
-                        // THIS IS THE FIX: The Pixelcade GIFs can be 2MB and take 20s to download.
-                        // delay(1) does NOT feed the Task Watchdog for the loopTask, so we must
-                        // explicitly reset it here to prevent the ESP32 from panicking!
-                        esp_task_wdt_reset();
-                        
-                        if (millis() - lastLog > 2000) {
-                            LOGI("RetroFrontend", "Downloading... %d bytes written", bytesWrittenTotal);
-                            lastLog = millis();
-                        }
-                        
-                        // Keep processing MQTT messages while downloading!
-                        if (internalBroker) internalBroker->loop();
-                        if (mqttClient.connected()) mqttClient.loop();
-                        
-                        // If the user scrolled to a new game, abort this download!
-                        if (reqId != currentRequestId) {
-                            LOGI("RetroFrontend", "User scrolled to a new game, aborting download of %s", savePath.c_str());
-                            file.close();
-                            sd.remove(savePath.c_str());
-                            http.end();
-                            client.stop();
-                            esp_task_wdt_add(NULL);
-                            return false;
-                        }
-                    }
-                    
-                file.close();
-                
-                // Verify file was written
-                if (bytesWrittenTotal > 0) {
-                    bool validFile = false;
-                    if (sd.exists(savePath.c_str())) {
-                        FsFile checkFile = sd.open(savePath.c_str(), FILE_OPEN_READ);
-                        if (checkFile) {
-                            validFile = (checkFile.size() > 100);
-                            checkFile.close();
-                        }
-                    }
-                    if (validFile) {
-                        outPath = savePath;
-                        http.end();
-                        client.stop();
-                        LOGI("RetroFrontend", "Successfully downloaded and saved to %s", savePath.c_str());
-                        esp_task_wdt_add(NULL); // Re-enable watchdog
-                        return true;
-                    }
-                    // Delete corrupted/empty file
-                    sd.remove(savePath.c_str());
+        FsFile file = sd.open(sPath.c_str(), FILE_OPEN_WRITE);
+        if (!file) {
+            LOGE("RetroFrontend", "Failed to open file for writing: %s", sPath.c_str());
+            return false;
+        }
+
+        uint8_t buff[512] = { 0 };
+        int bytesWrittenTotal = 0;
+        unsigned long lastLog = millis();
+        uint32_t startMs = millis();
+
+        while (len > 0 || len == -1) {
+            size_t size = stream.available();
+            if (size) {
+                int toRead = (size > sizeof(buff)) ? sizeof(buff) : size;
+                if (len > 0 && toRead > len) toRead = len;
+                int c = stream.readBytes(reinterpret_cast<char*>(buff), toRead);
+                if (c > 0) {
+                    file.write(buff, c);
+                    bytesWrittenTotal += c;
+                    if (len > 0) len -= c;
+                    startMs = millis();
                 }
             } else {
-                LOGE("RetroFrontend", "Failed to open file for writing: %s", savePath.c_str());
+                if (millis() - startMs > 4000) break;
+                delay(1);
             }
-        } else {
-            LOGI("RetroFrontend", "HTTP GET failed for %s, error: %s", filename.c_str(), http.errorToString(httpCode).c_str());
+
+            esp_task_wdt_reset();
+
+            if (millis() - lastLog > 2000) {
+                LOGI("RetroFrontend", "Downloading... %d bytes written", bytesWrittenTotal);
+                lastLog = millis();
+            }
+
+            if (internalBroker) internalBroker->loop();
+            if (mqttClient.connected()) mqttClient.loop();
+
+            if (reqId != currentRequestId) {
+                LOGI("RetroFrontend", "User scrolled to a new game, aborting download of %s", sPath.c_str());
+                file.close();
+                sd.remove(sPath.c_str());
+                return false;
+            }
         }
-        http.end();
-        client.stop();
+
+        file.close();
+
+        if (bytesWrittenTotal > 0) {
+            bool validFile = false;
+            if (sd.exists(sPath.c_str())) {
+                FsFile checkFile = sd.open(sPath.c_str(), FILE_OPEN_READ);
+                if (checkFile) {
+                    validFile = (checkFile.size() > 100);
+                    checkFile.close();
+                }
+            }
+            if (validFile) {
+                outPath = sPath;
+                LOGI("RetroFrontend", "Successfully downloaded and saved to %s", sPath.c_str());
+                return true;
+            }
+            sd.remove(sPath.c_str());
+        }
+        return false;
+    };
+
+    bool isHttps = url.startsWith("https://");
+    bool downloaded = false;
+
+    if (isHttps) {
+        net::SecureHttpOptions options;
+        options.requestTimeoutMs = 6000;
+        options.handshakeTimeoutSec = 4;
+        options.userAgent = "ArcadeMatrix-ESP32";
+        options.followRedirects = true;
+
+        LOGI("RetroFrontend", "Downloading %s via SecureHttpClient", url.c_str());
+        auto response = net::SecureHttpClient::get(url, options);
+        if (response.ok()) {
+            downloaded = writeStreamToSd(response.stream(), response.contentLength(), dirPath, savePath);
+        } else {
+            LOGW("RetroFrontend", "HTTPS GET failed with code %d (%s)", response.statusCode(), response.errorMessage());
+        }
+    } else {
+        HTTPClient http;
+        http.setTimeout(4000);
+        http.setUserAgent("ArcadeMatrix-ESP32");
+        WiFiClient plainClient;
+        if (http.begin(plainClient, url)) {
+            int httpCode = http.GET();
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+                downloaded = writeStreamToSd(*http.getStreamPtr(), http.getSize(), dirPath, savePath);
+            }
+            http.end();
+            plainClient.stop();
+        }
     }
-    
-    esp_task_wdt_add(NULL); // Re-enable watchdog on failure paths!
-    return false;
+
+    return downloaded;
 }

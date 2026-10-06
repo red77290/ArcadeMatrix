@@ -110,8 +110,7 @@ jobs:
 
       - name: Zip sample SD card bundle
         run: |
-          rsync -a --exclude='venv' --exclude='__pycache__' tools/ release/sdCard/tools/
-          cd release/sdCard && zip -r ../../ArcadeMatrix-sdcard.zip . -x '*.DS_Store' && cd -
+          python3 scripts/package_sdcard.py
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

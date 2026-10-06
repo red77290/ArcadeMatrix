@@ -1,5 +1,4 @@
 #include "MusicEngine.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/Logger.h"
 #include "../core/BuildInfo.h"
 
@@ -24,7 +23,7 @@ void MusicEngine::applyConfig(const EngineConfig* config) {
 }
 
 EngineError MusicEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    _matrix = context ? context->getMatrix() : nullptr;
+    _matrix = context ? context->getSurface() : nullptr;
     _hasPsram = context ? context->hasPsram() : false;
     applyConfig(config);
 
@@ -77,7 +76,7 @@ void MusicEngine::update(EngineContext* context) {
     }
 }
 
-uint16_t MusicEngine::getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* display) {
+uint16_t MusicEngine::getSourceColor(AudioSource source, IDrawingSurface* display) {
     if (!display) return 0xFFFF;
     switch (source) {
         case AudioSource::BLUETOOTH: return display->color565(0, 122, 255);  // Bluetooth Blue
@@ -90,7 +89,7 @@ uint16_t MusicEngine::getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* di
 
 #include <glcdfont.c>
 
-static void drawClippedText(MatrixPanel_I2S_DMA* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
+static void drawClippedText(IDrawingSurface* display, const char* text, int x, int y, int clipMinX, int clipMaxX, uint16_t color) {
     if (!display || !text || text[0] == '\0') return;
     int curX = x;
     size_t len = strlen(text);
@@ -116,7 +115,7 @@ static void drawClippedText(MatrixPanel_I2S_DMA* display, const char* text, int 
     }
 }
 
-void MusicEngine::renderMarqueeText(MatrixPanel_I2S_DMA* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color) {
+void MusicEngine::renderMarqueeText(IDrawingSurface* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color) {
     if (!display || !text || text[0] == '\0') return;
     int availW = clipMaxX - clipMinX;
     int textW = (int)strlen(text) * 6;
@@ -142,7 +141,7 @@ void MusicEngine::renderMarqueeText(MatrixPanel_I2S_DMA* display, const char* te
 
 #include "../services/AudioAnalysisService.h"
 
-void MusicEngine::renderVisualizerBars(MatrixPanel_I2S_DMA* display, int x, int y, int width, int height, uint16_t color) {
+void MusicEngine::renderVisualizerBars(IDrawingSurface* display, int x, int y, int width, int height, uint16_t color) {
     if (!display || width <= 0 || height <= 0) return;
 
     AudioVisualizerState fftState = audioAnalysisService.getVisualizerStateSnapshot();
@@ -173,7 +172,7 @@ void MusicEngine::renderVisualizerBars(MatrixPanel_I2S_DMA* display, int x, int 
     }
 }
 
-void MusicEngine::renderIdle(MatrixPanel_I2S_DMA* display, int w, int h) {
+void MusicEngine::renderIdle(IDrawingSurface* display, int w, int h) {
     display->fillScreen(0);
     display->setFont(nullptr);
     display->setTextSize(1);
@@ -281,7 +280,7 @@ public:
     }
 };
 
-void MusicEngine::renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackStatePOD& state) {
+void MusicEngine::renderPlaying(IDrawingSurface* display, int w, int h, const AudioPlaybackStatePOD& state) {
     display->fillScreen(0);
     display->setFont(nullptr);
     display->setTextSize(1);
@@ -373,6 +372,9 @@ EngineDescriptor MusicEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
     desc.requirements.needsPsram = false;
     desc.requirements.needsAudio = false;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 5000;
     desc.schema.fields = {
         ConfigField("show_source", ConfigType::BOOLEAN, "Show Source Badge", "Display source logo (Bluetooth, Spotify, AirPlay, Radio)", "true"),
         ConfigField("show_title", ConfigType::BOOLEAN, "Show Title", "Display scrolling track title", "true"),

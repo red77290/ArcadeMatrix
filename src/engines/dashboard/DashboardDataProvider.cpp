@@ -4,108 +4,22 @@
 #include "../../core/I18n.h"
 #include "../../hal/HardwareHAL.h"
 #include "../../api/YahooFinanceProvider.h"
+#include "../../api/CoinGeckoProvider.h"
+#include "../../services/IconService.h"
+#include "../../core/net/SecureHttpClient.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include "../../core/NetworkBudget.h"
 #include <ArduinoJson.h>
-#include <PNGdec.h>
 #include "../../core/Globals.h"
 #include "../../core/SDUtils.h"
 #include "../../core/SdLockGuard.h"
-
-struct DashPngDecodeContext {
-    uint16_t* outPixels;
-    PNG* png;
-    int srcW;
-    int srcH;
-    uint16_t* lineBuf;
-};
-
-static DashPngDecodeContext s_dashPngContext;
-
-static int dashPngDrawCallback(PNGDRAW* pDraw) {
-    if (!s_dashPngContext.outPixels || !s_dashPngContext.png || !s_dashPngContext.lineBuf) return 0;
-    int y = pDraw->y;
-    int srcW = pDraw->iWidth;
-    int srcH = (s_dashPngContext.srcH > 0) ? s_dashPngContext.srcH : 8;
-
-    int targetY = (y * 8) / srcH;
-    if (targetY < 0 || targetY >= 8) return 1;
-
-    int rowBucketStart = (targetY * srcH) / 8;
-    if (y != rowBucketStart) return 1;
-
-    s_dashPngContext.png->getLineAsRGB565(pDraw, s_dashPngContext.lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
-
-    for (int tx = 0; tx < 8; tx++) {
-        int srcX = (tx * srcW) / 8;
-        if (srcX < srcW) {
-            uint16_t col = s_dashPngContext.lineBuf[srcX];
-            s_dashPngContext.outPixels[targetY * 8 + tx] = col;
-        }
-    }
-    return 1;
-}
-
-static bool decodePngTo8x8(const uint8_t* buf, size_t size, uint16_t outPixels[64]) {
-    if (!buf || size == 0 || !outPixels) return false;
-
-    memset(outPixels, 0, 64 * sizeof(uint16_t));
-
-    PNG* png = new PNG();
-    if (!png) return false;
-
-    s_dashPngContext.outPixels = outPixels;
-    s_dashPngContext.png = png;
-    s_dashPngContext.lineBuf = nullptr;
-
-    int rc = png->openRAM((uint8_t*)buf, size, dashPngDrawCallback);
-    if (rc != PNG_SUCCESS) {
-        s_dashPngContext.png = nullptr;
-        s_dashPngContext.outPixels = nullptr;
-        delete png;
-        return false;
-    }
-
-    s_dashPngContext.srcW = png->getWidth();
-    s_dashPngContext.srcH = png->getHeight();
-
-    // Reject degenerate or excessively large images (> 256x256) to protect memory and avoid crashes
-    if (s_dashPngContext.srcW <= 0 || s_dashPngContext.srcH <= 0 ||
-        s_dashPngContext.srcW > 256 || s_dashPngContext.srcH > 256) {
-        png->close();
-        s_dashPngContext.png = nullptr;
-        s_dashPngContext.outPixels = nullptr;
-        delete png;
-        return false;
-    }
-
-    uint16_t* lineBuf = (uint16_t*)malloc(s_dashPngContext.srcW * sizeof(uint16_t));
-    if (!lineBuf) {
-        png->close();
-        s_dashPngContext.png = nullptr;
-        s_dashPngContext.outPixels = nullptr;
-        delete png;
-        return false;
-    }
-    s_dashPngContext.lineBuf = lineBuf;
-
-    rc = png->decode(NULL, 0);
-    png->close();
-
-    free(lineBuf);
-    s_dashPngContext.lineBuf = nullptr;
-    s_dashPngContext.png = nullptr;
-    s_dashPngContext.outPixels = nullptr;
-    delete png;
-    return (rc == PNG_SUCCESS);
-}
 
 DashboardDataProvider::DashboardDataProvider()
     : m_weatherProvider(nullptr),
       m_fetchTaskHandle(nullptr),
       m_taskRunning(false),
+      m_taskExited(true),
       m_isActive(false),
       m_forceFetchWeather(false),
       m_forceFetchMarkets(false),
@@ -141,7 +55,19 @@ DashboardDataProvider::DashboardDataProvider()
 }
 
 DashboardDataProvider::~DashboardDataProvider() {
-    stop();
+    // Destructor safety barrier (Anti-UAF):
+    // In normal operation, shutdown() has already completed on Core 0
+    // and m_taskExited is true (0 ms wait). If called directly or quarantined destruction
+    // was bypassed, we must guarantee the worker is dead before deleting m_weatherProvider.
+    if (m_fetchTaskHandle && !m_taskExited.load(std::memory_order_acquire)) {
+        m_isActive.store(false, std::memory_order_release);
+        m_taskRunning.store(false, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+        while (!m_taskExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_fetchTaskHandle = nullptr;
+    }
     if (m_weatherProvider) {
         delete m_weatherProvider;
         m_weatherProvider = nullptr;
@@ -157,9 +83,10 @@ void DashboardDataProvider::initialize(IWeatherProvider* weatherProvider) {
 }
 
 void DashboardDataProvider::start() {
-    if (m_taskRunning) return;
-    m_taskRunning = true;
-    m_isActive = true;
+    if (m_taskRunning.load(std::memory_order_acquire)) return;
+    m_taskRunning.store(true, std::memory_order_release);
+    m_taskExited.store(false, std::memory_order_release);
+    m_isActive.store(true, std::memory_order_release);
 
     BaseType_t res = xTaskCreatePinnedToCore(
         fetchTaskStatic,
@@ -173,28 +100,42 @@ void DashboardDataProvider::start() {
 
     if (res != pdPASS) {
         LOGE("Dashboard", "Failed to create DashFetch background task!");
-        m_taskRunning = false;
+        m_taskRunning.store(false, std::memory_order_release);
+        m_taskExited.store(true, std::memory_order_release);
         m_fetchTaskHandle = nullptr;
     } else {
         LOGI("Dashboard", "DashFetch task spawned successfully on Core 0.");
     }
 }
 
-void DashboardDataProvider::stop() {
-    m_isActive = false;
-    m_taskRunning = false;
+void DashboardDataProvider::deactivate() {
+    // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
+    m_isActive.store(false, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
+}
+
+bool DashboardDataProvider::shutdown() {
+    m_isActive.store(false, std::memory_order_release);
+    m_taskRunning.store(false, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_DASHBOARD);
 
     if (m_fetchTaskHandle) {
-        int timeoutMs = 500;
-        while (m_fetchTaskHandle != nullptr && timeoutMs > 0) {
+        for (int i = 0; i < 30 && !m_taskExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            timeoutMs -= 10;
         }
-        if (m_fetchTaskHandle) {
-            vTaskDelete(m_fetchTaskHandle);
+        if (m_taskExited.load(std::memory_order_acquire)) {
             m_fetchTaskHandle = nullptr;
+            return true;
+        } else {
+            LOGW("Dashboard", "DashFetch task did not exit within 300ms cooperative window");
+            return false;
         }
     }
+    return true;
+}
+
+void DashboardDataProvider::stop() {
+    shutdown();
 }
 
 void DashboardDataProvider::updateConfig(const DashboardConfigParams& config, const String& weatherApiKey, const String& weatherCity, const String& weatherUnits) {
@@ -287,19 +228,70 @@ void DashboardDataProvider::fetchTaskStatic(void* param) {
     vTaskDelete(NULL);
 }
 
+void DashboardDataProvider::fetchSynchronousBurst() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    uint32_t now = millis();
+    uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
+    bool needsFetch = (m_lastBatchFetch == 0) || (now - m_lastBatchFetch >= intervalMs) || m_forceFetchWeather || m_forceFetchMarkets;
+    if (!needsFetch) {
+        LOGD("Dashboard", "Synchronous pre-fetch skipped: data is fresh (age=%u s, interval=%u s).",
+             (unsigned)((now - m_lastBatchFetch) / 1000), (unsigned)(intervalMs / 1000));
+        return;
+    }
+
+    LOGI("Dashboard", "Executing synchronous transition pre-fetch in DMA-released memory window...");
+    m_lastBatchFetch = now;
+    m_forceFetchWeather = false;
+    m_forceFetchMarkets = false;
+
+    // 1. Preload icons from SD if not already loaded
+    preloadIconsFromSd();
+
+    // 2. Fetch Weather
+    if (m_config.showWeather) {
+        fetchWeather();
+    }
+
+    // 3. Fetch Market items
+    if (m_config.showMarkets) {
+        fetchMarkets();
+    }
+
+    LOGI("Dashboard", "Synchronous transition pre-fetch completed.");
+}
+
 void DashboardDataProvider::fetchTaskLoop() {
     LOGI("Dashboard", "DashFetch background task started on Core 0.");
 
     // Core 0 background preload of any existing icons on SD card (zero impact on Core 1)
     preloadIconsFromSd();
 
-    vTaskDelay(pdMS_TO_TICKS(4000)); // Delay initial network queries so boot settles
+#if defined(ESP32)
+    // If data was already synchronously pre-fetched during DMA release window, do not wait 4 seconds
+    if (!psramFound() && m_lastBatchFetch > 0) {
+        // Skip boot delay: data was freshly acquired in DMA-released window
+    } else
+#endif
+    {
+        for (int i = 0; i < 40 && m_taskRunning.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // Delay initial network queries so boot settles
+        }
+    }
 
-    while (m_taskRunning) {
-        if (m_isActive && WiFi.status() == WL_CONNECTED) {
+    while (m_taskRunning.load(std::memory_order_acquire)) {
+        if (m_isActive.load(std::memory_order_acquire) && WiFi.status() == WL_CONNECTED) {
             uint32_t now = millis();
-            uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
+#if defined(ESP32)
+            // On classic ESP32 without PSRAM, once initial data is fetched (m_lastBatchFetch > 0),
+            // defer mid-rotation timer refreshes to next rotation/activation (when panel is released & 72 KB is free)
+            // unless explicitly forced via m_forceFetchWeather or m_forceFetchMarkets.
+            if (!psramFound() && m_lastBatchFetch > 0 && !m_forceFetchWeather && !m_forceFetchMarkets) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
+            }
+#endif
 
+            uint32_t intervalMs = (uint32_t)max(1, m_config.refreshIntervalMin) * 60000UL;
             bool shouldFetch = m_forceFetchWeather || m_forceFetchMarkets || (m_lastBatchFetch == 0) || (now - m_lastBatchFetch >= intervalMs);
 
             if (shouldFetch) {
@@ -309,15 +301,19 @@ void DashboardDataProvider::fetchTaskLoop() {
                 LOGI("Dashboard", "Executing sequential synchronized data fetch (interval=%d min)...", m_config.refreshIntervalMin);
 
                 // 1. Fetch Weather first
-                if (m_config.showWeather && m_isActive) {
+                if (m_config.showWeather && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchWeather();
-                    vTaskDelay(pdMS_TO_TICKS(500)); // Yield to let Core 0 network memory settle
+                    for (int i = 0; i < 5 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100)); // Yield to let Core 0 network memory settle
+                    }
                 }
 
                 // 2. Fetch Market items strictly one by one
-                if (m_config.showMarkets && m_isActive) {
+                if (m_config.showMarkets && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire)) {
                     fetchMarkets();
-                    vTaskDelay(pdMS_TO_TICKS(300));
+                    for (int i = 0; i < 3 && m_isActive.load(std::memory_order_acquire) && m_taskRunning.load(std::memory_order_acquire); i++) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
                 }
 
                 LOGI("Dashboard", "Sequential data fetch completed. Next refresh in %d min.", m_config.refreshIntervalMin);
@@ -332,10 +328,14 @@ void DashboardDataProvider::fetchTaskLoop() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Responsive sleep in slices to acknowledge cooperative shutdown promptly
+        for (int i = 0; i < 10 && m_taskRunning.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 
-    m_fetchTaskHandle = nullptr;
+    m_taskRunning.store(false, std::memory_order_release);
+    m_taskExited.store(true, std::memory_order_release);
 }
 
 void DashboardDataProvider::updateWorldTimes(const String& clocks) {
@@ -428,20 +428,6 @@ void DashboardDataProvider::updateWorldTimes(const String& clocks) {
 void DashboardDataProvider::fetchWeather() {
     if (WiFi.status() != WL_CONNECTED) return;
 
-    // Serialize the whole weather fetch (geocode + forecast, both TLS) against every other TLS
-    // user in the system. See BinanceProvider.cpp / HardwareHAL::begin() for why: mbedTLS's
-    // ~32KB combined record buffers must stay in internal DRAM only on this board (PSRAM would
-    // corrupt the HUB75 display), so overlapping handshakes compound peak internal DRAM demand.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        if (tlsLock.isDeniedByBudget()) {
-            LOGW("Dashboard", "Skipping weather fetch: internal DRAM budget denied TLS admission.");
-        } else {
-            LOGW("Dashboard", "Skipping weather fetch: another TLS handshake is in progress.");
-        }
-        return;
-    }
-
     String apiKey;
     String city;
     String lang;
@@ -479,48 +465,33 @@ void DashboardDataProvider::fetchWeather() {
     float lat = 48.8566f;
     float lon = 2.3522f;
 
-    if (!city.equalsIgnoreCase("Paris") && NetworkBudget::canStartTlsSession()) {
-        WiFiClientSecure geoClient;
-        geoClient.setInsecure();
-        HTTPClient geoHttp;
-        geoHttp.setTimeout(3000);
+    net::SecureHttpOptions options;
+    options.ownerId = net::OWNER_DASHBOARD;
+    options.requestTimeoutMs = 3000;
+    options.handshakeTimeoutSec = 4;
+
+    if (!city.equalsIgnoreCase("Paris")) {
         String encCity = city;
         encCity.trim();
         encCity.replace(" ", "%20");
         String geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" + encCity + "&count=1&language=" + lang + "&format=json";
-        if (geoHttp.begin(geoClient, geoUrl)) {
-            int code = geoHttp.GET();
-            if (code == 200) {
-                DynamicJsonDocument geoDoc(2048);
-                if (deserializeJson(geoDoc, geoHttp.getStream()) == DeserializationError::Ok) {
-                    if (geoDoc["results"].is<JsonArray>() && geoDoc["results"].size() > 0) {
-                        lat = geoDoc["results"][0]["latitude"].as<float>();
-                        lon = geoDoc["results"][0]["longitude"].as<float>();
-                    }
+        auto geoRes = net::SecureHttpClient::get(geoUrl, options);
+        if (geoRes.ok()) {
+            DynamicJsonDocument geoDoc(2048);
+            if (deserializeJson(geoDoc, geoRes.stream()) == DeserializationError::Ok) {
+                if (geoDoc["results"].is<JsonArray>() && geoDoc["results"].size() > 0) {
+                    lat = geoDoc["results"][0]["latitude"].as<float>();
+                    lon = geoDoc["results"][0]["longitude"].as<float>();
                 }
             }
-            geoHttp.end();
-            geoClient.stop();
         }
     }
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("Dashboard", "Skipping weather fetch: internal heap too low (free=%u, largest=%u).",
-             (unsigned)NetworkBudget::freeInternal(),
-             (unsigned)NetworkBudget::largestInternalBlock());
-        return;
-    }
-
-    WiFiClientSecure metClient;
-    metClient.setInsecure();
-    HTTPClient metHttp;
-    metHttp.setTimeout(3000);
     String metUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat, 4) + "&longitude=" + String(lon, 4) + "&current=temperature_2m,weather_code";
-    if (metHttp.begin(metClient, metUrl)) {
-        int code = metHttp.GET();
-        if (code == 200) {
-            DynamicJsonDocument metDoc(2048);
-            if (deserializeJson(metDoc, metHttp.getStream()) == DeserializationError::Ok) {
+    auto metRes = net::SecureHttpClient::get(metUrl, options);
+    if (metRes.ok()) {
+        DynamicJsonDocument metDoc(2048);
+        if (deserializeJson(metDoc, metRes.stream()) == DeserializationError::Ok) {
                 float temp = metDoc["current"]["temperature_2m"].as<float>();
                 int wCode = metDoc["current"]["weather_code"].as<int>();
 
@@ -550,174 +521,7 @@ void DashboardDataProvider::fetchWeather() {
                 LOGI("Dashboard", "Weather updated (Open-Meteo): %.1f°C (%s)", wd.temp, wd.description.c_str());
             }
         }
-        metHttp.end();
-        metClient.stop();
     }
-}
-
-bool DashboardDataProvider::loadIconFromSd(const String& path, uint16_t outPixels[64]) {
-    if (!outPixels) return false;
-
-    SdLockGuard guard(pdMS_TO_TICKS(1500));
-    if (!guard) {
-        LOGW("Dashboard", "Could not acquire SD lock to read icon: %s (timeout)", path.c_str());
-        return false;
-    }
-
-    FsFile f = sd.open(path, FILE_OPEN_READ);
-    if (!f) {
-        return false;
-    }
-
-    size_t size = f.size();
-    if (size == 0 || size > 16384) {
-        f.close();
-        return false;
-    }
-
-    uint8_t* buf = (uint8_t*)malloc(size);
-    if (!buf) {
-        f.close();
-        return false;
-    }
-
-    size_t bytesRead = f.read(buf, size);
-    f.close();
-    guard.unlock(); // Release SD card lock before PNG decoding!
-
-    if (bytesRead != size) {
-        free(buf);
-        return false;
-    }
-
-    bool ok = decodePngTo8x8(buf, size, outPixels);
-    free(buf);
-    return ok;
-}
-
-bool DashboardDataProvider::downloadIconViaProxy(const String& targetUrl, const String& destPath) {
-    if (WiFi.status() != WL_CONNECTED || targetUrl.isEmpty()) return false;
-
-    WiFiClient client;
-    HTTPClient http;
-    http.setTimeout(4000);
-    http.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.1");
-
-    // Try fast HTTP via wsrv.nl proxy (resizes directly to 16x16 PNG)
-    String proxyUrl = "http://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
-    bool success = false;
-    if (http.begin(client, proxyUrl)) {
-        int code = http.GET();
-        if (code == 200) {
-            int len = http.getSize();
-            if (len > 0 && len < 12000) {
-                std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
-                if (iconData) {
-                    WiFiClient* stream = http.getStreamPtr();
-                    size_t totalRead = 0;
-                    uint32_t startMs = millis();
-                    while (totalRead < (size_t)len && (millis() - startMs < 3000)) {
-                        size_t avail = stream->available();
-                        if (avail > 0) {
-                            size_t toRead = std::min(avail, (size_t)len - totalRead);
-                            int bytesRead = stream->read(iconData.get() + totalRead, toRead);
-                            if (bytesRead > 0) totalRead += bytesRead;
-                        } else {
-                            vTaskDelay(pdMS_TO_TICKS(10));
-                        }
-                    }
-                    if (totalRead == (size_t)len) {
-                        SdLockGuard guard(pdMS_TO_TICKS(2000));
-                        if (guard) {
-                            int lastSlash = destPath.lastIndexOf('/');
-                            if (lastSlash > 0) {
-                                String dir = destPath.substring(0, lastSlash);
-                                if (!sd.exists(dir)) sd.mkdir(dir);
-                            }
-                            FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
-                            if (f) {
-                                f.write(iconData.get(), totalRead);
-                                f.close();
-                                success = true;
-                                LOGI("Dashboard", "Saved icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
-                            }
-                        } else {
-                            LOGW("Dashboard", "Could not acquire SD lock to save icon: %s (timeout)", destPath.c_str());
-                        }
-                    }
-                }
-            }
-        }
-        http.end();
-        client.stop();
-    }
-
-    // If HTTP failed (e.g. proxy redirected or blocked), try https://wsrv.nl fallback
-    if (!success && NetworkBudget::canStartTlsSession()) {
-        NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-        if (!tlsLock) {
-            if (tlsLock.isDeniedByBudget()) {
-                LOGW("Dashboard", "Skipping HTTPS icon fallback: internal DRAM budget denied TLS admission.");
-            } else {
-                LOGW("Dashboard", "Skipping HTTPS icon fallback: another TLS handshake is in progress.");
-            }
-            return false;
-        }
-        WiFiClientSecure secureClient;
-        secureClient.setInsecure();
-        String secureProxyUrl = "https://wsrv.nl/?url=" + targetUrl + "&w=16&h=16&output=png";
-        HTTPClient secureHttp;
-        secureHttp.setTimeout(4000);
-        secureHttp.setUserAgent("Mozilla/5.0 ArcadeMatrix/3.1");
-        if (secureHttp.begin(secureClient, secureProxyUrl)) {
-            int code = secureHttp.GET();
-            if (code == 200) {
-                int len = secureHttp.getSize();
-                if (len > 0 && len < 12000) {
-                    std::unique_ptr<uint8_t[]> iconData(new (std::nothrow) uint8_t[len]);
-                    if (iconData) {
-                        WiFiClientSecure* stream = static_cast<WiFiClientSecure*>(secureHttp.getStreamPtr());
-                        size_t totalRead = 0;
-                        uint32_t startMs = millis();
-                        while (totalRead < (size_t)len && (millis() - startMs < 3000)) {
-                            size_t avail = stream->available();
-                            if (avail > 0) {
-                                size_t toRead = std::min(avail, (size_t)len - totalRead);
-                                int bytesRead = stream->read(iconData.get() + totalRead, toRead);
-                                if (bytesRead > 0) totalRead += bytesRead;
-                            } else {
-                                vTaskDelay(pdMS_TO_TICKS(10));
-                            }
-                        }
-                        if (totalRead == (size_t)len) {
-                            SdLockGuard guard(pdMS_TO_TICKS(2000));
-                            if (guard) {
-                                int lastSlash = destPath.lastIndexOf('/');
-                                if (lastSlash > 0) {
-                                    String dir = destPath.substring(0, lastSlash);
-                                    if (!sd.exists(dir)) sd.mkdir(dir);
-                                }
-                                FsFile f = sd.open(destPath, FILE_OPEN_WRITE);
-                                if (f) {
-                                    f.write(iconData.get(), totalRead);
-                                    f.close();
-                                    success = true;
-                                    LOGI("Dashboard", "Saved HTTPS icon to SD: %s (%u bytes)", destPath.c_str(), (unsigned)totalRead);
-                                }
-                            } else {
-                                LOGW("Dashboard", "Could not acquire SD lock to save HTTPS icon: %s (timeout)", destPath.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-            secureHttp.end();
-            secureClient.stop();
-        }
-    }
-
-    return success;
-}
 
 void DashboardDataProvider::preloadIconsFromSd() {
     std::vector<String> symbols;
@@ -739,52 +543,48 @@ void DashboardDataProvider::preloadIconsFromSd() {
 
     bool anyUpdated = false;
     for (const auto& sym : symbols) {
-        uint16_t pixels[64];
         String symUpper = sym;
         symUpper.toUpperCase();
-        String symLower = symUpper;
-        symLower.toLowerCase();
+        symUpper.trim();
 
         auto it = m_iconCache.find(symUpper);
         if (it != m_iconCache.end() && (it->second.valid || it->second.notFound)) {
             continue;
         }
 
-        String paths[] = {
-            "/crypto_icons/" + symLower + ".png",
-            "/stock_icons/" + symLower + ".png",
-            "/crypto_icons/" + symUpper + ".png",
-            "/stock_icons/" + symUpper + ".png"
-        };
+        uint16_t pixels[64];
+        bool loaded = false;
+        if (iconService.hasIconOnSd("crypto", symUpper) && iconService.decodeIconFromSd("crypto", symUpper, pixels, 8, 8)) {
+            loaded = true;
+        } else if (iconService.hasIconOnSd("stock", symUpper) && iconService.decodeIconFromSd("stock", symUpper, pixels, 8, 8)) {
+            loaded = true;
+        }
 
-        for (const auto& p : paths) {
-            if (loadIconFromSd(p, pixels)) {
-                CachedIcon entry;
-                entry.valid = true;
-                entry.notFound = false;
-                entry.lastAttemptMs = millis();
-                memcpy(entry.pixels, pixels, sizeof(entry.pixels));
-                m_iconCache[symUpper] = entry;
+        if (loaded) {
+            CachedIcon entry;
+            entry.valid = true;
+            entry.notFound = false;
+            entry.lastAttemptMs = millis();
+            memcpy(entry.pixels, pixels, sizeof(entry.pixels));
+            m_iconCache[symUpper] = entry;
 
-                uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
-                uint8_t writeIdx = 1 - pubIdx;
-                m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
-                for (uint8_t i = 0; i < m_netBuffers[writeIdx].marketCount; ++i) {
-                    if (m_netBuffers[writeIdx].marketItems[i].symbol == symUpper) {
-                        m_netBuffers[writeIdx].marketItems[i].hasIcon = true;
-                        memcpy(m_netBuffers[writeIdx].marketItems[i].iconPixels, pixels, sizeof(pixels));
-                        anyUpdated = true;
-                        break;
-                    }
+            uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+            uint8_t writeIdx = 1 - pubIdx;
+            m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+            for (uint8_t i = 0; i < m_netBuffers[writeIdx].marketCount; ++i) {
+                if (m_netBuffers[writeIdx].marketItems[i].symbol == symUpper) {
+                    m_netBuffers[writeIdx].marketItems[i].hasIcon = true;
+                    memcpy(m_netBuffers[writeIdx].marketItems[i].iconPixels, pixels, sizeof(pixels));
+                    anyUpdated = true;
+                    break;
                 }
-                m_netPublishedIdx.store(writeIdx, std::memory_order_release);
-                m_netHasNewData.store(true, std::memory_order_release);
-                break;
             }
+            m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+            m_netHasNewData.store(true, std::memory_order_release);
         }
     }
     if (anyUpdated) {
-        LOGI("Dashboard", "Preloaded market icons from SD card on Core 0.");
+        LOGI("Dashboard", "Preloaded market icons from SD card on Core 0 via IconService.");
     }
 }
 
@@ -792,8 +592,6 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
     String symUpper = symbol;
     symUpper.toUpperCase();
     symUpper.trim();
-    String symLower = symUpper;
-    symLower.toLowerCase();
 
     // Check memory cache first (including negative cache with 1-hour TTL)
     auto it = m_iconCache.find(symUpper);
@@ -807,59 +605,16 @@ bool DashboardDataProvider::resolveMarketIcon(const String& symbol, const String
         }
     }
 
-    // 1. Check SD card candidate paths:
-    String paths[] = {
-        "/crypto_icons/" + symLower + ".png",
-        "/stock_icons/" + symLower + ".png",
-        "/crypto_icons/" + symUpper + ".png",
-        "/stock_icons/" + symUpper + ".png"
-    };
-
-    for (const auto& path : paths) {
-        if (loadIconFromSd(path, outPixels)) {
-            CachedIcon entry;
-            entry.valid = true;
-            entry.notFound = false;
-            entry.lastAttemptMs = millis();
-            memcpy(entry.pixels, outPixels, 64 * sizeof(uint16_t));
-            m_iconCache[symUpper] = entry;
-            LOGI("Dashboard", "Loaded icon for %s from SD: %s", symUpper.c_str(), path.c_str());
-            return true;
-        }
-    }
-
-    // 2. If not found on SD, attempt download via proxy
-    if (WiFi.status() == WL_CONNECTED) {
-        std::vector<std::pair<String, String>> candidates;
-
-        // Crypto candidates
-        candidates.push_back({"https://assets.coincap.io/assets/icons/" + symLower + "%402x.png", "/crypto_icons/" + symLower + ".png"});
-        candidates.push_back({"https://coinicons-api.vercel.app/api/icon/" + symLower, "/crypto_icons/" + symLower + ".png"});
-
-        // Stock candidates
-        candidates.push_back({"https://financialmodelingprep.com/image-stock/" + symUpper + ".png", "/stock_icons/" + symLower + ".png"});
-        candidates.push_back({"https://eodhd.com/img/logos/US/" + symLower + ".png", "/stock_icons/" + symLower + ".png"});
-        if (yahooImgUrl.length() > 0) {
-            candidates.push_back({yahooImgUrl, "/stock_icons/" + symLower + ".png"});
-        }
-
-        for (const auto& cand : candidates) {
-            const String& imgUrl = cand.first;
-            const String& destPath = cand.second;
-
-            if (downloadIconViaProxy(imgUrl, destPath)) {
-                if (loadIconFromSd(destPath, outPixels)) {
-                    CachedIcon entry;
-                    entry.valid = true;
-                    entry.notFound = false;
-                    entry.lastAttemptMs = millis();
-                    memcpy(entry.pixels, outPixels, 64 * sizeof(uint16_t));
-                    m_iconCache[symUpper] = entry;
-                    LOGI("Dashboard", "Downloaded & cached icon for %s via proxy -> %s", symUpper.c_str(), destPath.c_str());
-                    return true;
-                }
-            }
-        }
+    // Delegate directly to centralized IconService (checks SD .jpg/.png, downloads via HTTP proxy, decodes via JPEGDEC/PNGdec)
+    if (iconService.loadOrFetchMarketIcon(symUpper, yahooImgUrl, outPixels, 8, 8)) {
+        CachedIcon entry;
+        entry.valid = true;
+        entry.notFound = false;
+        entry.lastAttemptMs = millis();
+        memcpy(entry.pixels, outPixels, 64 * sizeof(uint16_t));
+        m_iconCache[symUpper] = entry;
+        LOGI("Dashboard", "Loaded icon for %s via IconService", symUpper.c_str());
+        return true;
     }
 
     // Not found on SD or web: record negative cache entry (1 hour TTL)
@@ -893,102 +648,89 @@ void DashboardDataProvider::fetchMarkets() {
 
     if (symbols.empty()) return;
 
-    YahooFinanceProvider yahooProvider;
+    // Check TLS headroom before attempting any network requests
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGW("Dashboard", "Aborting market fetch: internal heap too low (free=%u, largest=%u). Retrying next cycle.",
+             (unsigned)NetworkBudget::freeInternal(),
+             (unsigned)NetworkBudget::largestInternalBlock());
+        return;
+    }
 
+    std::map<String, StockQuote> stockQuotes;
+    std::map<String, CryptoQuote> cryptoQuotes;
+
+    // Step 1: Batch-query Yahoo Finance for all symbols (stocks and cryptos with -USD mapping)
+    // in a single keepalive TLS session
+    YahooFinanceProvider yahooProvider;
+    yahooProvider.fetchQuotes(symbols, stockQuotes, net::OWNER_DASHBOARD);
+
+    // Step 2: For any symbols not resolved by Yahoo Finance, try CoinGecko as fallback
+    std::vector<String> remainingSymbols;
+    for (const auto& sym : symbols) {
+        if (stockQuotes.find(sym) == stockQuotes.end() || !stockQuotes[sym].valid) {
+            remainingSymbols.push_back(sym);
+        }
+    }
+
+    if (!remainingSymbols.empty() && m_isActive.load(std::memory_order_acquire)) {
+        CoinGeckoProvider cgProvider;
+        cgProvider.fetchQuotes(remainingSymbols, cryptoQuotes);
+    }
+
+    // Step 3: Populate the published double-buffered network items
+    uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
+    uint8_t writeIdx = 1 - pubIdx;
+    m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+
+    uint8_t validCount = 0;
     for (size_t s = 0; s < symbols.size() && s < 8; ++s) {
         const auto& sym = symbols[s];
-        if (!m_isActive) break;
-
-        // Abandon the whole round as soon as internal DRAM can no longer sustain a
-        // TLS handshake. Without this, every remaining symbol issued a handshake
-        // that was guaranteed to fail with MBEDTLS_ERR_SSL_ALLOC_FAILED, fragmenting
-        // the heap further and starving the SD/FATFS layer on the same core.
-        if (!NetworkBudget::canStartTlsSession()) {
-            LOGW("Dashboard", "Aborting market fetch: internal heap too low (free=%u, largest=%u). Retrying next cycle.",
-                 (unsigned)NetworkBudget::freeInternal(),
-                 (unsigned)NetworkBudget::largestInternalBlock());
-            break;
-        }
-
-        bool fetchSuccess = false;
         float fetchedPrice = 0.0f;
         float fetchedChange = 0.0f;
         String fetchedImgUrl = "";
+        bool fetchSuccess = false;
 
-        // 1. Check Binance (fast crypto API)
-        {
-            NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-            if (!tlsLock) {
-                if (tlsLock.isDeniedByBudget()) {
-                    LOGW("Dashboard", "Skipping Binance quote for %s: internal DRAM budget denied TLS admission.", sym.c_str());
-                } else {
-                    LOGW("Dashboard", "Skipping Binance quote for %s: another TLS handshake is in progress.", sym.c_str());
-                }
-            } else {
-                WiFiClientSecure binanceClient;
-                binanceClient.setInsecure();
-                HTTPClient http;
-                http.setTimeout(2500);
-                String url = "https://api.binance.com/api/v3/ticker/24hr?symbol=" + sym + "USDT";
-
-                if (http.begin(binanceClient, url)) {
-                    int code = http.GET();
-                    if (code == 200) {
-                        DynamicJsonDocument doc(1024);
-                        if (deserializeJson(doc, http.getStream()) == DeserializationError::Ok) {
-                            fetchedPrice = doc["lastPrice"].as<float>();
-                            fetchedChange = doc["priceChangePercent"].as<float>();
-                            fetchSuccess = true;
-                        }
-                    }
-                    http.end();
-                }
-                binanceClient.stop();
-            }
-        }
-
-        // 2. Check Yahoo Finance (Stocks & other Cryptos)
-        if (!fetchSuccess && m_isActive) {
-            if (yahooProvider.fetchQuote(sym, fetchedPrice, fetchedChange, fetchedImgUrl)) {
+        auto itS = stockQuotes.find(sym);
+        if (itS != stockQuotes.end() && itS->second.valid) {
+            fetchedPrice = itS->second.price;
+            fetchedChange = itS->second.change24h;
+            fetchedImgUrl = itS->second.imageUrl;
+            fetchSuccess = true;
+        } else {
+            auto itC = cryptoQuotes.find(sym);
+            if (itC != cryptoQuotes.end() && itC->second.valid) {
+                fetchedPrice = itC->second.price;
+                fetchedChange = itC->second.change24h;
+                fetchedImgUrl = itC->second.imageUrl;
                 fetchSuccess = true;
-            } else if (m_isActive) {
-                // Cooling-off pause before fallback query: allow mbedTLS and lwIP socket memory to coalesce
-                vTaskDelay(pdMS_TO_TICKS(50));
-                if (yahooProvider.fetchQuote(sym + "-USD", fetchedPrice, fetchedChange, fetchedImgUrl)) {
-                    fetchSuccess = true;
-                }
             }
         }
 
-        // 3. Patch quote in-place into double-buffered network payload matching exact configured symbol slot
-        if (fetchSuccess) {
-            uint16_t iconPixels[64];
-            bool hasIcon = resolveMarketIcon(sym, fetchedImgUrl, iconPixels);
-            uint8_t pubIdx = m_netPublishedIdx.load(std::memory_order_relaxed);
-            uint8_t writeIdx = 1 - pubIdx;
-            m_netBuffers[writeIdx] = m_netBuffers[pubIdx];
+        if (s >= m_netBuffers[writeIdx].marketCount) {
+            m_netBuffers[writeIdx].marketCount = (uint8_t)(s + 1);
+        }
+        auto& item = m_netBuffers[writeIdx].marketItems[s];
+        item.symbol = sym;
 
-            if (s >= m_netBuffers[writeIdx].marketCount) {
-                m_netBuffers[writeIdx].marketCount = (uint8_t)(s + 1);
-            }
-            auto& item = m_netBuffers[writeIdx].marketItems[s];
-            item.symbol = sym;
+        if (fetchSuccess) {
             item.price = fetchedPrice;
             item.change24h = fetchedChange;
             item.valid = true;
-            if (hasIcon) {
-                item.hasIcon = true;
+            uint16_t iconPixels[64];
+            item.hasIcon = resolveMarketIcon(sym, fetchedImgUrl, iconPixels);
+            if (item.hasIcon) {
                 memcpy(item.iconPixels, iconPixels, sizeof(iconPixels));
             }
-
-            m_netPublishedIdx.store(writeIdx, std::memory_order_release);
-            m_netHasNewData.store(true, std::memory_order_release);
-            LOGD("Dashboard", "Market ticker [%u] %s updated: price=%.2f, change=%.2f%%", (unsigned)s, sym.c_str(), fetchedPrice, fetchedChange);
+            validCount++;
+            LOGI("Dashboard", "Market [%u] %s: %.2f (%.2f%%) icon=%d", (unsigned)s, sym.c_str(), fetchedPrice, fetchedChange, (int)item.hasIcon);
         } else {
-            LOGW("Dashboard", "Failed to update market ticker %s; keeping previous cached quote.", sym.c_str());
+            LOGW("Dashboard", "No quote available for %s; preserving cache.", sym.c_str());
         }
+    }
 
-        vTaskDelay(pdMS_TO_TICKS(150));
+    if (validCount > 0) {
+        m_netPublishedIdx.store(writeIdx, std::memory_order_release);
+        m_netHasNewData.store(true, std::memory_order_release);
     }
 }
 

@@ -49,6 +49,20 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI or Web Installer.
 - **ESP32-S3 Waveshare Support:** Full support for high-end ESP32-S3 boards and 256x64 True Matrix panels via DMA.
 
+## 🚀 Universal Engine Compatibility: Auto Depth & Auto Buffer
+
+ArcadeMatrix features an advanced, memory-aware execution pipeline that allows all 17 engines (including heavy engines like `AnimatedGIF`, `Stock`, `Crypto`, and `MUGEN`) to run on **classic ESP32 DevKit boards with 0 KB PSRAM** as well as flagship **ESP32-S3 boards with 16 MB PSRAM**:
+
+- **🎨 Auto Color Depth (`dynamic_color_depth`)**:
+  - **Rich 8-Bit Visuals by Default**: Clocks, fighting game animations, visualizers, messages, and marquees render at maximum 8-bit color depth (up to 256 brightness levels per RGB channel).
+  - **Dynamic Sandbox Memory Reclamation**: When network engines (`stock`, `crypto`, `weather`, `gnews`) need to perform HTTPS requests, the HUB75 DMA engine temporarily downshifts to 4 bits under hardware blanking. This instantly frees **16 to 24 KB of contiguous DMA DRAM**, ensuring plenty of room for TLS handshakes and chunked JSON parsing without memory fragmentation.
+  - **0 ms Instant Transitions**: When stock quotes, crypto prices, and sparkline charts are fresh in cache (`needsTlsFetch() == false`), the downshift is skipped completely. Stock and Crypto activate immediately in **full 8 bits with 0 ms transition time (zero display blanking)**.
+
+- **⚡ Auto Buffering Pipeline (`render_pipeline: auto`)**:
+  - **PSRAM Acceleration**: On ESP32-S3 boards, allocates a 16-bit canvas in PSRAM with double DMA buffers (`canvas_double`) for buttery-smooth 60 FPS tear-free rendering.
+  - **SRAM1 Canvas Isolation**: On classic ESP32 chips, allocates the 8 KB off-screen canvas in **SRAM1** (non-DMA, CPU-only DRAM) during early boot before Wi-Fi and WebServer start. This preserves **8,192 bytes of contiguous DMA-capable memory in SRAM2**, preventing memory starvation.
+  - **Tear-Free Single DMA**: Uses `Hub75BulkEncoder` sequential row bursts to commit frames atomically, eliminating scanline tearing even on single-buffered displays.
+
 ## SD Card Structure
 Format your SD card to **FAT32** or **exFAT**. Your SD card should look like this:
 ```
@@ -127,29 +141,43 @@ The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from t
 
 For full details, check `tools/bdf_to_amfont/README.md`.
 
-## ⚡ Hardware Compatibility & Features
+## ⚡ Hardware Compatibility & Engine Matrix
 
-| Feature | ESP32-S3 (Waveshare Board) | ESP32 Classic (DevKit) |
-| :--- | :---: | :---: |
-| Matrix Support | Up to 256x64 (True Matrix) | Up to 128x32 |
-| Double Buffering | ✅ Yes (Smooth) | ✅ Yes (Smooth) |
-| Animations (GIFs) | ✅ Yes | ✅ Yes |
-| MUGEN Engine | ✅ Yes | ✅ Yes |
-| Web UI & Wi-Fi | ✅ Yes | ✅ Yes |
-| **Autonomous WebRadio (Wi-Fi MP3 Streaming)** | ✅ Yes (Built-in ES8311 DAC & Speaker PA) | ❌ No (Requires I2S DAC & PSRAM) |
-| **Bluetooth Audio Streaming (A2DP)** | ❌ No (ESP32-S3 is BLE 5.0 only; no BT Classic Audio) | ❌ No |
-| **Bluetooth 5 (BLE Control/Setup)** | ✅ Yes (Native ESP32-S3 BLE) | ✅ Yes |
-| **6-Axis Gyro Auto-Rotation (`QMI8658`)** | ✅ Yes (Built-in IMU & 1-Click Calibrate) | ❌ No (Requires external I2C sensor) |
-| **Real-Time Crypto** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
-| **Stock Market** | ✅ Yes | ❌ No (Not enough RAM for SSL) |
-| **Decibel Meter** | ✅ Yes (Built-in ES7210 Mic Array) | ❌ No (Requires external I2S Mic & custom code) |
-| **Indoor Temp & Humidity (SHTC3)** | ✅ Yes (Built-in Sensor) | ❌ No (Requires external I2C SHTC3 & custom code) |
+| Engine / Feature | Category | ESP32-S3 (Waveshare Board) | ESP32 Classic (DevKit / `esp32dev`) | Hardware / Network Requirement |
+| :--- | :--- | :---: | :---: | :--- |
+| **Clock Engine (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Dynamic fonts, arcade/retro watch faces |
+| **Animated GIFs (`gifs`)** | `media` | 🟢 30–50 FPS | 🟢 30–50 FPS | Micro-SD Card (Yoko / Tate orientations) |
+| **M.U.G.E.N Combat (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Micro-SD Card (RGB565 sprite streaming) |
+| **Desk Deck Dashboard (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Multi-widget clock, weather & market) |
+| **Real-Time Crypto (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits cached) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
+| **Stock Market & Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits cached) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
+| **Live Breaking News (`gnews`)** | `news` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS (GNews API) |
+| **Live Weather Forecasts (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
+| **Date & Calendar (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Local system time & optional sprite backdrop |
+| **Scrolling Text Ticker (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Sub-pixel 60 FPS text scroller |
+| **System Telemetry (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Real-time CPU, RAM, Temp & Uptime gauges |
+| **Retro Gameroom Marquee (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
+| **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, Spotify Web API |
+| **Google Cast Display (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, mDNS local discovery |
+| **Autonomous WebRadio (`music`)** | `media` | 🟢 30 FPS (I2S DAC) | ❌ Incompatible | Built-in ES8311 DAC & PSRAM required |
+| **Audio Spectrum Visualizer (`audiovisualizer`)** | `audio` | 🟢 60 FPS (I2S Mic) | ❌ Incompatible | Built-in ES7210 microphone array required |
+| **SPL Decibel Sound Meter (`decibel`)** | `audio` | 🟢 30 FPS (I2S Mic) | ❌ Incompatible | Built-in ES7210 microphone array required |
+| **Indoor Climate Sensor (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Built-in SHTC3 temperature/humidity sensor required |
+
+👉 *For the comprehensive technical breakdown (FPS, RAM, and DMA budgets), see the [Engine Compatibility Matrix](docs/ENGINE_COMPATIBILITY_MATRIX.md).*
+
+> [!NOTE]
+> ### 💡 ESP32 Classic (`esp32dev`) Full TLS Compatibility & Smart Transition Prefetch
+> The classic ESP32 (WROOM-32 without PSRAM) is now **fully compatible** with TLS/HTTPS engines (`crypto`, `stock`, `gnews`, `weather`) thanks to an advanced **DMA-released memory sandbox**:
+> 1. **Why the ~1s pause on the first rotation?** On classic ESP32, concurrent HUB75 DMA scanning and mbedTLS cryptographic handshakes cannot run simultaneously due to contiguous internal SRAM constraints. During the transition into a TLS engine, the firmware temporarily releases the DMA framebuffer, opening an **89 KB clean memory window** to prefetch all quotes, charts, and icons over HTTP/1.1 keep-alive in ~700 ms before reconfiguring the panel.
+> 2. **Instant Subsequent Rotations:** This brief transition fetch occurs **only once** on the initial rotation! For all subsequent rotations during the cache lifetime (configurable via UI, e.g. 10 to 15 minutes), the engine serves cached quotes and sparkline charts directly from RAM at **full 8-bit color depth with zero transition delay and zero network overhead**.
+> 3. **Automatic Refresh:** When the cache TTL expires, the engine cleanly performs a single background refresh on the next rotation and restarts the fresh cache cycle.
 
 > [!NOTE]
 > **Dynamic Hardware Probing & Graceful Degradation:** All hardware sensors (Gyroscope `QMI8658`, Microphone `ES7210`, DAC `ES8311`, Temperature `SHTC3`) are dynamically probed on the I2C/I2S bus at startup. If a sensor or peripheral is absent on your board, the feature is **automatically disabled safely without crashing**, falling back to manual settings in the Web UI.
 
-- **ESP32-S3 Waveshare RGB Matrix Board (`esp32s3_waveshare`)**: **100% Compatible with all features.** Highly recommended. Required for large **256x64 True Matrix panels**, autonomous WebRadio audio streaming, Gyroscope auto-rotation, RAM-heavy modules (Crypto, Stock), and leverages built-in hardware sensors (Decibel, Temp, Speaker DAC) out of the box.
-- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Supports core animations, Web UI, and MUGEN for **128x32 / 64x32 matrix panels**. Does not support RAM-heavy features like HTTPS/SSL (Crypto/Stock) or standalone audio streaming. Built-in sensors (Mic/Temp/Gyro/DAC) are also absent from standard DevKits.
+- **ESP32-S3 Waveshare RGB Matrix Board (`esp32s3_waveshare`)**: **100% Compatible with all features.** Highly recommended. Required for large **256x64 True Matrix panels**, autonomous WebRadio audio streaming, Gyroscope auto-rotation, and leverages built-in hardware sensors (Decibel, Temp, Speaker DAC) out of the box.
+- **Classic ESP32 (WROOM-32 / `esp32dev`)**: Dual-core Tensilica Xtensa LX6 @ 240MHz. Fully supports animations, Web UI, MUGEN, and now all HTTPS/TLS cloud engines (`crypto`, `stock`, `gnews`, `weather`) on **128x32 / 64x32 matrix panels**. Built-in physical audio/temp sensors are absent from standard DevKits unless wired externally.
 
 ## Compilation
 To compile the firmware yourself, you must use **PlatformIO**.

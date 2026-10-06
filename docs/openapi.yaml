@@ -41,14 +41,33 @@ paths:
                   uptime:
                     type: integer
                     description: Uptime in milliseconds
+                  cpu_mhz:
+                    type: integer
+                    description: CPU clock frequency in MHz
                   free_heap:
                     type: integer
+                    description: Total free heap in bytes
                   min_free_heap:
                     type: integer
+                    description: Lowest historical free heap recorded
                   max_alloc_heap:
                     type: integer
+                    description: Largest single allocatable block in bytes
+                  internal_free:
+                    type: integer
+                    description: Free internal DRAM in bytes (excluding external PSRAM)
+                  internal_largest:
+                    type: integer
+                    description: Largest contiguous internal DRAM block in bytes
                   psram_found:
                     type: boolean
+                    description: Whether external PSRAM is installed and detected
+                  free_psram:
+                    type: integer
+                    description: Free external PSRAM in bytes (present only if psram_found is true)
+                  async_tcp_hwm_bytes:
+                    type: integer
+                    description: AsyncTCP worker task FreeRTOS stack high-water mark in bytes
                   render:
                     type: object
                     description: >-
@@ -136,137 +155,20 @@ paths:
                     type: string
                     description: Last warning or error the engine logged
 
-  /api/settings:
-    get:
-      tags:
-        - Configuration
-      summary: Get all settings
-      description: Returns the entire device configuration (Matrix, Clock, Weather, WiFi, MQTT, Standby, etc).
-      responses:
-        '200':
-          description: Configuration object
-          content:
-            application/json:
-              schema:
-                type: object
-    post:
-      tags:
-        - Configuration
-      summary: Update settings
-      description: Partially update settings. Any omitted keys will remain unchanged. Will automatically save to SD card.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                matrix_rows:
-                  type: integer
-                  description: "Matrix height in pixels (16, 32, 64)"
-                  example: 32
-                matrix_cols:
-                  type: integer
-                  description: "Matrix width in pixels (32, 64, 128)"
-                  example: 64
-                matrix_chain:
-                  type: integer
-                  description: "Number of chained panels"
-                  example: 2
-                brightness_limit:
-                  type: integer
-                  description: "Global brightness power limit percent (10-100)"
-                  example: 50
-                color_depth:
-                  type: integer
-                  description: "Color depth per channel (3-8 bits, default 8)"
-                  example: 8
-                matrix_rgb_sequence:
-                  type: string
-                  enum: [RGB, RBG, GRB, GBR, BRG, BGR]
-                  description: "RGB color sequence order"
-                  example: "RGB"
-                matrix_driver_chip:
-                  type: string
-                  enum: [SHIFTREG, FM6124, FM6126A, ICN2038S, MBI5124, SM16208]
-                  description: "LED Panel Hardware Driver Chip"
-                  example: "SHIFTREG"
-                matrix_clk_phase:
-                  type: boolean
-                  description: "Clock Phase toggle for pixel alignment"
-                  example: false
-                matrix_latch_blanking:
-                  type: integer
-                  description: "Latch blanking timing (0-4 cycles)"
-                  example: 0
-                matrix_row_address_mode:
-                  type: integer
-                  description: "Row addressing mode (0=Default/Direct, 1=ShiftRegister, 2=Direct 16 lines)"
-                  example: 0
-                matrix_force_single_buffer:
-                  type: boolean
-                  description: "Forces single DMA buffer to reduce RAM usage"
-                  example: false
-                matrix_limit_refresh_rate_hz:
-                  type: integer
-                  description: "Refresh rate cap in Hz (default 90)"
-                  example: 90
-                crypto_symbols:
-                  type: string
-                  description: "Comma-separated crypto token symbols (e.g. BTC,ETH,SOL,DOGE)"
-                crypto_cache_ttl_min:
-                  type: integer
-                  description: "Crypto quote cache TTL in minutes (refresh rate, default 1)"
-                stock_symbols:
-                  type: string
-                  description: "Comma-separated stock ticker symbols (e.g. AAPL,NVDA,TSLA,MSFT)"
-                stock_cache_ttl_min:
-                  type: integer
-                  description: "Stock quote cache TTL in minutes (refresh rate, default 1)"
-                sprite_count:
-                  type: integer
-                  description: "Sprite/Fighter overlay toggle (0 = disabled/OFF, 2 = enabled/ON)"
-                fighter_interval_sec:
-                  type: integer
-                  description: "Interval in seconds between MUGEN fights"
-      responses:
-        '200':
-          description: Settings successfully updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  sd_saved:
-                    type: boolean
-                  warning:
-                    type: string
-        '503':
-          description: >-
-            The change was applied in memory but could not be written to the SD card (card busy with a
-            rescan or upload, or the write failed); it will be lost at reboot. Retry in a moment.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: false
-                  sd_saved:
-                    type: boolean
-                    example: false
-                  error:
-                    type: string
-
   /api/system:
     get:
       tags:
         - Configuration
       summary: Get system, matrix, mqtt, and wifi configuration
-      description: Returns the unified system configuration object with complete nested blocks.
+      description: Returns the unified system configuration object with complete nested blocks, or a single section when ?section= is specified.
+      parameters:
+        - name: section
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [system, matrix, mqtt, wifi, hardware]
+          description: Optional filter to retrieve only a specific configuration block
       responses:
         '200':
           description: Grouped configuration blocks
@@ -301,8 +203,17 @@ paths:
                       driver_chip: { type: string, example: "SHIFTREG" }
                       row_address_mode: { type: integer, example: 0 }
                       rgb_sequence: { type: string, example: "RGB" }
-                      pwm_bits: { type: integer, example: 8 }
+                      color_depth: { type: integer, example: 0, description: "Color depth per channel (0 = Auto adaptive TLS / hardware, 1–8 bits)" }
+                      dynamic_color_depth: { type: boolean, example: true, description: "Enable dynamic runtime color depth switching (8 <-> 7 ... 2) under complete OE blanking during engine transitions based on real-time DRAM and DMA headroom" }
+                      pwm_bits: { type: integer, example: 0, description: "Alias for color_depth" }
                       limit_refresh_rate_hz: { type: integer, example: 90 }
+                      clk_phase: { type: boolean, example: false }
+                      latch_blanking: { type: integer, example: 4 }
+                      render_pipeline: { type: string, example: "auto", enum: [auto, canvas_single, canvas_double, direct_double, direct_single] }
+                      rotation_offset: { type: integer, example: 0 }
+                      auto_rotate: { type: boolean, example: true }
+                      rotation_transition: { type: string, example: "vortex" }
+                      rotation_transition_duration_ms: { type: integer, example: 400 }
                   mqtt:
                     type: object
                     properties:
@@ -378,6 +289,21 @@ paths:
                   temperature_f: { type: number, example: 108.5 }
 
   /api/system/power:
+    get:
+      tags:
+        - System
+      summary: Get LED Matrix Power Status
+      description: Returns current matrix display power state.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "success" }
+                  matrix_power: { type: boolean, example: true }
     post:
       tags:
         - System
@@ -396,6 +322,53 @@ paths:
       responses:
         '200':
           description: Success
+
+  /api/system/brightness:
+    get:
+      tags:
+        - System
+      summary: Get LED Matrix Brightness
+      description: Returns current matrix brightness percentage (1-100%).
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "success" }
+                  brightness: { type: integer, example: 50 }
+    post:
+      tags:
+        - System
+      summary: Set LED Matrix Brightness
+      description: Update display brightness immediately and persist to configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                brightness:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  example: 50
+                  description: Brightness percentage between 1 and 100.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "success" }
+                  brightness: { type: integer, example: 50 }
+        '400':
+          description: Invalid JSON or brightness out of range
 
   /api/system/reboot:
     post:
@@ -545,46 +518,6 @@ paths:
         '404':
           description: Index not generated yet.
 
-  /api/playlists/selected:
-    get:
-      tags:
-        - Media
-      summary: Get active GIF playlists
-      description: Returns the user's currently selected playlists.
-      responses:
-        '200':
-          description: Selected playlists
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  playlists:
-                    type: array
-                    items:
-                      type: string
-
-  /api/playlists/save:
-    post:
-      tags:
-        - Media
-      summary: Save active GIF playlists
-      description: Updates the default selected playlists and saves them to SD card.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                playlists:
-                  type: array
-                  items:
-                    type: string
-      responses:
-        '200':
-          description: Success
-
   /api/playlists/play:
     post:
       tags:
@@ -602,26 +535,6 @@ paths:
                   type: array
                   items:
                     type: string
-      responses:
-        '200':
-          description: Success
-
-  /api/clock:
-    post:
-      tags:
-        - Engines
-      summary: Change Clock Theme
-      description: Dynamically change the current clock theme.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                clock_theme:
-                  type: integer
-                  description: The PublisherTheme Enum ID (0=NINTENDO, 1=CAPCOM, etc).
       responses:
         '200':
           description: Success
@@ -1021,29 +934,6 @@ paths:
                   status:
                     type: string
 
-  /api/visualizer:
-    post:
-      tags:
-        - Engines
-      summary: Control Priority Rhythmic Music Visualizer
-      description: Toggle the audio-reactive visualizer display override and select active visualizer mode or mic gain.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-                mode:
-                  type: string
-                gain:
-                  type: number
-      responses:
-        '200':
-          description: Success
-
   /api/hardware:
     get:
       tags:
@@ -1074,27 +964,19 @@ paths:
                     type: boolean
                   gyroscope:
                     type: boolean
-
-  /api/themes:
-    get:
-      tags:
-        - Configuration
-      summary: List available clock and date themes
-      description: Dynamic options endpoint returning all 30 built-in publisher pixel-art and animated themes.
-      responses:
-        '200':
-          description: List of themes
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id:
-                      type: integer
-                    name:
-                      type: string
+                  max_color_depth:
+                    type: integer
+                    example: 8
+                  capabilities:
+                    type: object
+                    properties:
+                      http:
+                        type: object
+                        properties:
+                          recommendedConcurrency:
+                            type: integer
+                            example: 3
+                            description: "Recommended maximum concurrent HTTP connections for client transport (1 on ESP32_STD, 3 on WAVESHARE_S3)"
 
   /api/instances:
     get:
@@ -1235,11 +1117,18 @@ paths:
     get:
       tags:
         - Engines
-      summary: List registered engines with schema, capabilities, and availability
-      description: Schema-driven engine discovery endpoint. UI consumes this to render configuration forms, dynamic options dropdowns, and hardware availability banners.
+      summary: List registered engines (compact discovery catalog)
+      description: Schema-driven engine discovery endpoint. By default returns a lightweight catalog with schema_url hypermedia links to eliminate lwIP socket pressure. Pass '?id={id}' or query '/api/engines/{id}' to receive the full schema for a single engine.
+      parameters:
+        - name: id
+          in: query
+          required: false
+          description: Optional engine identifier (e.g. 'clock'). When provided, returns full descriptor with complete schema fields for that specific engine.
+          schema:
+            type: string
       responses:
         '200':
-          description: List of engine descriptors
+          description: List of engine descriptors in compact format (or single engine descriptor if 'id' parameter is provided)
           content:
             application/json:
               schema:
@@ -1292,10 +1181,19 @@ paths:
                           type: boolean
                         needs_sd:
                           type: boolean
+                        needs_tls:
+                          type: boolean
+                          description: Whether this engine requires TLS secure sockets (HTTPS).
+                        target_fps:
+                          type: integer
                     available:
                       type: boolean
                     reason:
                       type: string
+                    schema_url:
+                      type: string
+                      example: "/api/engines?id=clock"
+                      description: Hypermedia link to retrieve the full ConfigField schema on demand.
                     schema:
                       type: array
                       items:
@@ -1319,6 +1217,81 @@ paths:
                             type: boolean
                           visible_when:
                             type: string
+
+  /api/engines/{id}:
+    get:
+      tags:
+        - Engines
+      summary: Get granular engine descriptor with full schema fields
+      description: Returns full schema fields, capabilities, and availability for a specific engine on demand.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Engine identifier (e.g. 'clock', 'weather', 'gifs')
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full engine descriptor including detailed schema fields
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  metadata:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                      category:
+                        type: string
+                      version:
+                        type: string
+                  capabilities:
+                    type: object
+                  requirements:
+                    type: object
+                  available:
+                    type: boolean
+                  reason:
+                    type: string
+                  schema_url:
+                    type: string
+                  schema:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        field_type:
+                          type: integer
+                        label:
+                          type: string
+                        description:
+                          type: string
+                        default_value:
+                          type: string
+                        options:
+                          type: string
+                        options_endpoint:
+                          type: string
+                        multiple:
+                          type: boolean
+                        visible_when:
+                          type: string
+        '404':
+          description: Engine not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
 
   /api/version:
     get:

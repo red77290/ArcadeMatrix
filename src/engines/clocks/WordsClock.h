@@ -18,7 +18,7 @@
 
 class WordsClockFace : public ClockFace {
 public:
-    WordsClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    WordsClockFace(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;

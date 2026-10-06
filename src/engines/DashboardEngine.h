@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-class MatrixPanel_I2S_DMA;
+class IDrawingSurface;
 #include "../../include/core/EngineContract.h"
 #include "../api/IWeatherProvider.h"
 #include "dashboard/DashboardData.h"
@@ -27,13 +27,16 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
+    void prefetchData() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
     bool isRealtime() const override { return true; }
+    bool needsClear() const override { return false; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     DashboardConfigParams m_config;
     DisplayGeometry m_geometry;
     DashboardLayout m_cachedLayout;

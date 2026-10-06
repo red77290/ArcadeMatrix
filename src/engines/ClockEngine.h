@@ -1,6 +1,5 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "core/EngineContract.h"
 
 // ClockType is removed since we use PublisherTheme from DateEngine.h for everything
@@ -8,12 +7,13 @@
 
 #include "TimeData.h"
 
+#include "core/drawing/IDrawingSurface.h"
 #include "DateEngine.h" // For PublisherTheme
 
 // Abstract base class for all clock faces
 class ClockFace {
 public:
-    ClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr) : matrix(display), engineConfig(config) {}
+    ClockFace(IDrawingSurface* disp, const EngineConfig* config = nullptr) : matrix(disp), display(disp), engineConfig(config) {}
     const EngineConfig* engineConfig;
     virtual ~ClockFace() = default;
 
@@ -32,7 +32,8 @@ public:
     virtual void onActivated() {}
 
 protected:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
+    IDrawingSurface* display;
 };
 
 enum class ClockFormatMode : uint8_t {
@@ -44,7 +45,7 @@ enum class ClockFormatMode : uint8_t {
 class ClockEngine : public IEngine {
 public:
     ClockEngine();
-    ClockEngine(MatrixPanel_I2S_DMA* display);
+    ClockEngine(IDrawingSurface* display);
     ~ClockEngine() override;
 
     void setTheme(PublisherTheme theme, bool forceReload = false, const EngineConfig* config = nullptr);
@@ -56,6 +57,9 @@ public:
     void activate() override;
     bool needsClear() const override;
     bool hasNewFrame() const override;
+    /// Matches the descriptor (capabilities.realtime, targetFps = 60): animated faces advance their
+    /// physics per frame, so the scheduler must use the 16 ms realtime interval, not the 50 ms static one.
+    bool isRealtime() const override { return true; }
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
@@ -68,10 +72,21 @@ private:
     TimeData currentTime;
     const EngineConfig* currentConfig = nullptr;
     volatile bool configDirty = false;
-    MatrixPanel_I2S_DMA* matrixDisplay;
+    IDrawingSurface* matrixDisplay;
     ClockFormatMode _formatMode = ClockFormatMode::SYSTEM;
 
+    // Persistent face storage. One block sized for the largest clock face is reserved when the
+    // engine activates and returned to the heap in deactivate() (so a TLS engine gets the whole
+    // contiguous space). Theme/font changes destroy and re-construct the face in place instead of
+    // delete+new, which is what used to fragment the heap on classic ESP32.
+    void* _faceArena = nullptr;
+    bool _faceInArena = false;
+
     void updateFormatMode(const EngineConfig* config);
+    bool reserveFaceArena();
+    void releaseFaceArena();
+    void destroyFace();
+    template <class Face, class... Args> ClockFace* makeFace(Args&&... args);
 };
 
 class ClockEngineDescriptorHandler : public IEngineDescriptorHandler {
