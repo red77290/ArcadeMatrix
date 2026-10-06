@@ -2,6 +2,7 @@
 #include "renderers/WeatherLayout.h"
 #include "../core/ConfigLoader.h"
 #include "../core/Logger.h"
+#include "../core/net/SecureHttpClient.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
@@ -17,27 +18,27 @@ WeatherEngine::WeatherEngine() : matrix(nullptr) {
 }
 
 WeatherEngine::~WeatherEngine() {
-    if (m_fetchTask) {          // stop the fetch before the providers it uses are freed
-        // Ask it to finish the round trip it is in and leave the loop itself. Deleting the task
-        // outright would strand its TLS socket and heap, and could cut it off mid-read of the
-        // providers deleted just below.
+    // Destructor safety barrier (Anti-UAF):
+    // In normal operation, shutdownForDestruction() has already succeeded on Core 0
+    // and m_fetchExited is true (0 ms wait). If called directly or quarantined destruction
+    // was bypassed, we must guarantee the worker is dead before deleting providers.
+    if (m_fetchTask && !m_fetchExited.load(std::memory_order_acquire)) {
         m_stopFetch.store(true, std::memory_order_release);
-        for (int i = 0; i < 500 && !m_fetchExited.load(std::memory_order_acquire); i++) {
-            vTaskDelay(pdMS_TO_TICKS(10));   // up to 5 s, which covers an HTTPS timeout
-        }
-        if (!m_fetchExited.load(std::memory_order_acquire)) {
-            LOGW("WeatherEngine", "fetch task did not stop in time; deleting it");
-            vTaskDelete(m_fetchTask);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+        while (!m_fetchExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         m_fetchTask = nullptr;
     }
     for (auto* provider : providers) {
         delete provider;
     }
+    providers.clear();
 }
 
 EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrix = context->getMatrix();
+    matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return EngineError::InitializationFailed;
     textColor = matrix->color565(255, 255, 255);
     shadowColor = matrix->color565(0, 0, 0);
     
@@ -62,6 +63,8 @@ EngineError WeatherEngine::initialize(EngineContext* context, const EngineConfig
 }
 
 void WeatherEngine::activate() {
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
     requestRedraw();
     startFetchTask();   // so the first forecast is already on its way before the slot comes round
     if (config_api_key.isEmpty() || config_city.isEmpty()) {
@@ -77,12 +80,69 @@ void WeatherEngine::activate() {
 }
 
 void WeatherEngine::update(EngineContext* context) {
-    m_presented = loop();
+    (void)context;
+    startFetchTask();
+    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
+    const int days = (int)m_forecastCount[buf];
+    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
+
+    if (m_newData.exchange(false, std::memory_order_acq_rel)) {
+        activeSlide = 0;                 // a fresh forecast starts again at today
+        lastSlideChange = millis();
+        requestRedraw();
+    }
+    if (!haveData) requestRedraw();   // keep the notice alive until the first forecast lands
+
+    if (haveData && days > 1 && millis() - lastSlideChange >= slideDurationMs) {
+        activeSlide = (activeSlide + 1) % days;
+        lastSlideChange = millis();
+        requestRedraw();
+    }
 }
 
-void WeatherEngine::render(EngineContext* context) {}
+void WeatherEngine::render(EngineContext* context) {
+    if (context && context->getSurface()) {
+        matrix = context->getSurface();
+    }
+    if (!matrix || m_redrawFrames == 0) {
+        m_presented = false;
+        return;
+    }
+    m_redrawFrames--;
 
-void WeatherEngine::deactivate() {}
+    matrix->fillScreen(0);
+    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
+    const int days = (int)m_forecastCount[buf];
+    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
+
+    if (haveData) {
+        drawForecast(m_forecastBuf[buf][activeSlide % days]);
+    } else {
+        matrix->setFont(nullptr);
+        matrix->setTextSize((matrix->width() >= 128) ? 2 : 1);
+        matrix->setTextColor(matrix->color565(120, 170, 255));
+        int16_t bx, by; uint16_t bw, bh;
+        const char* msg = "WEATHER...";
+        matrix->getTextBounds(msg, 0, 0, &bx, &by, &bw, &bh);
+        matrix->setCursor((matrix->width() - (int)bw) / 2 - bx, (matrix->height() - (int)bh) / 2 - by);
+        matrix->print(msg);
+    }
+    m_presented = true;
+}
+
+void WeatherEngine::deactivate() {
+    // Non-blocking state transition on Core 1: signal abort and cooperative cancellation
+    m_stopFetch.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+}
+
+bool WeatherEngine::shutdownForDestruction() {
+    if (!m_fetchTask) {
+        return true;
+    }
+    stopFetchTask();
+    return m_fetchExited.load(std::memory_order_acquire);
+}
 
 void WeatherEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
@@ -149,11 +209,32 @@ WeatherEngine::FetchState WeatherEngine::fetchState() {
 }
 
 void WeatherEngine::startFetchTask() {
-    if (m_fetchTask) return;
+    if (m_fetchTask) {
+        m_stopFetch.store(false, std::memory_order_release);
+        return;
+    }
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
     // Core 0 keeps the render loop on Core 1 free; 8 KB covers a TLS handshake and JSON parse.
     if (xTaskCreatePinnedToCore(fetchTaskEntry, "weather_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
         m_fetchTask = nullptr;
         LOGW("WeatherEngine", "fetch task did not start; falling back to no updates");
+    }
+}
+
+void WeatherEngine::stopFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_WEATHER);
+        for (int i = 0; i < 30 && !m_fetchExited.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (m_fetchExited.load(std::memory_order_acquire)) {
+            m_fetchTask = nullptr;
+        } else {
+            LOGW("WeatherEngine", "fetch task did not exit within 300ms cooperative window");
+            // Strict cooperative shutdown: ZERO forced vTaskDelete() fallback
+        }
     }
 }
 
@@ -248,49 +329,9 @@ void WeatherEngine::updateWeather(const String& apiKey, const String& city, cons
 
 
 bool WeatherEngine::loop() {
-    // Nothing here touches the network: the fetch task owns that, and a redraw is requested when
-    // fresh data lands. Weather therefore draws from cache the moment the rotation arrives.
-    startFetchTask();
-    // One acquire load pairs with the fetch task's release store: everything written into the
-    // buffer before it was published is visible here, and the buffer cannot change under us.
-    const uint8_t buf = m_activeBuf.load(std::memory_order_acquire);
-    const int days = (int)m_forecastCount[buf];
-    const bool haveData = m_validData.load(std::memory_order_acquire) && days > 0;
-
-    if (m_newData.exchange(false, std::memory_order_acq_rel)) {
-        activeSlide = 0;                 // a fresh forecast starts again at today
-        lastSlideChange = millis();
-        requestRedraw();
-    }
-    if (!haveData) requestRedraw();   // keep the notice alive until the first forecast lands
-
-    // Cycle through Today/Tomorrow/Day3 every slideDurationMs. Simplified vs. the RPi's eased
-    // horizontal-scroll transition (see WeatherEngine.h for rationale).
-    if (haveData && days > 1 && millis() - lastSlideChange >= slideDurationMs) {
-        activeSlide = (activeSlide + 1) % days;
-        lastSlideChange = millis();
-        requestRedraw();
-    }
-
-    if (m_redrawFrames == 0) return false;   // both DMA buffers already show this screen
-    m_redrawFrames--;
-
-    matrix->fillScreen(0);
-    if (haveData) {
-        drawForecast(m_forecastBuf[buf][activeSlide % days]);
-    } else {
-        // No forecast yet: say so rather than leaving the slot black for its whole duration, which
-        // is what it looked like after every restart until the first fetch landed.
-        matrix->setFont(nullptr);
-        matrix->setTextSize((matrix->width() >= 128) ? 2 : 1);
-        matrix->setTextColor(matrix->color565(120, 170, 255));
-        int16_t bx, by; uint16_t bw, bh;
-        const char* msg = "WEATHER...";
-        matrix->getTextBounds(msg, 0, 0, &bx, &by, &bw, &bh);
-        matrix->setCursor((matrix->width() - (int)bw) / 2 - bx, (matrix->height() - (int)bh) / 2 - by);
-        matrix->print(msg);
-    }
-    return true;
+    update(nullptr);
+    render(nullptr);
+    return m_presented;
 }
 
 void WeatherEngine::drawForecast(const WeatherData& data) {
@@ -314,6 +355,11 @@ EngineDescriptor WeatherEngineDescriptorHandler::getDescriptor() const {
     desc_weather.capabilities.realtime = false;
     desc_weather.requirements.needsAudio = false;
     desc_weather.requirements.needsNetwork = true;
+    desc_weather.requirements.needsTls = true;
+    desc_weather.requirements.targetFps = 30;
+    desc_weather.requirements.supportsSingleBuffer = true;
+    desc_weather.requirements.internalPersistentBytes = 8000;
+    desc_weather.requirements.internalContiguousBytes = 20000;
     desc_weather.schema.fields = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "OpenWeatherMap API Key", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("city", ConfigType::STRING, "City", "City (e.g. Paris,FR or for US: Tucson,AZ,US)", "Paris,FR", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),

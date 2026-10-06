@@ -87,6 +87,7 @@ public:
     }
 
     size_t length() const { return _str.length(); }
+    bool isEmpty() const { return _str.empty(); }
     const char* c_str() const { return _str.c_str(); }
     char charAt(size_t index) const { return index < _str.length() ? _str[index] : 0; }
     char operator[](size_t index) const { return charAt(index); }
@@ -210,15 +211,37 @@ inline String operator+(const char* a, const String& b) {
     return res;
 }
 
-class HardwareSerial {
+class Print {
 public:
-    void begin(unsigned long) {}
+    virtual ~Print() = default;
+    virtual size_t write(uint8_t c) = 0;
+    virtual size_t write(const uint8_t* buffer, size_t size) {
+        size_t n = 0;
+        while (size--) {
+            if (write(*buffer++)) n++;
+            else break;
+        }
+        return n;
+    }
+    size_t write(const char* str) {
+        if (str == nullptr) return 0;
+        return write((const uint8_t*)str, strlen(str));
+    }
     void print(const char* s) { if (s) ::printf("%s", s); }
-    void print(const String& s) { ::printf("%s", s.c_str()); }
+    void print(const String& s);
     void print(int val) { ::printf("%d", val); }
     void println(const char* s = "") { if (s) ::printf("%s\n", s); else ::printf("\n"); }
-    void println(const String& s) { ::printf("%s\n", s.c_str()); }
+    void println(const String& s);
     void println(int val) { ::printf("%d\n", val); }
+};
+
+class HardwareSerial : public Print {
+public:
+    void begin(unsigned long) {}
+    size_t write(uint8_t c) override { return ::putchar(c) != EOF ? 1 : 0; }
+    size_t write(const uint8_t* buffer, size_t size) override {
+        return ::fwrite(buffer, 1, size, stdout);
+    }
     
     template<typename... Args>
     void printf(const char* fmt, Args... args) {
@@ -227,6 +250,9 @@ public:
 };
 
 extern HardwareSerial Serial;
+
+inline void Print::print(const String& s) { print(s.c_str()); }
+inline void Print::println(const String& s) { println(s.c_str()); }
 
 // FreeRTOS stubs
 inline uint32_t xPortGetCoreID() { return 0; }

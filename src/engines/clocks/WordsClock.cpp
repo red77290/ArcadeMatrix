@@ -11,7 +11,7 @@ namespace {
 constexpr uint16_t ACCENT = 0x2589;   // the muted blue the original uses for the hour and the date
 }  // namespace
 
-WordsClockFace::WordsClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+WordsClockFace::WordsClockFace(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     storedTime = { 0, 0, 0 };
     glow = ClockFaceFont::resolveGlow(config);

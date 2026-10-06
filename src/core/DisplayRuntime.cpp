@@ -1,6 +1,20 @@
 #include "DisplayRuntime.h"
+#include "drawing/IDrawingSurface.h"
+#include "drawing/PipelineSelectionPolicy.h"
+#include "core/EngineRegistry.h"
+#include "core/NetworkBudget.h"
+#include "MemTrace.h"
+#include "hal/HardwareHAL.h"
 #include "Logger.h"
 #include "MatrixEngine.h"
+#include "memory/MemoryManager.h"
+#include "SystemWatchdog.h"
+
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
+#include <WiFi.h>
+#endif
 
 extern MatrixEngine matrixEngine;
 
@@ -72,11 +86,10 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
     }
     m_lastReconciledVersion = snapshot.version;
     
-    // Notify rotation manager of config change (reconciles without recreating instances)
-    if (m_rotationManager) {
-        for (const auto& inst : snapshot.instances) {
-            m_rotationManager->notifyConfigChanged(inst.instance_id);
-        }
+    // Only notify the currently active instance if present to avoid
+    // Core 1 allocation and mutex contention on hot-path (Invariant 1)
+    if (m_rotationManager && m_session.activeEngine && m_session.engineHandle.instanceId[0] != '\0') {
+        m_rotationManager->notifyConfigChanged(m_session.engineHandle.instanceId);
     }
     LOGI("DisplayRuntime", "Reconciled display runtime to config version %u", snapshot.version);
 }
@@ -92,11 +105,17 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
  * on each engine to defend itself.
  */
 void DisplayRuntime::resetSharedTextState() {
-    if (!m_matrixEngine || !m_matrixEngine->getDisplay()) return;
-    auto* display = m_matrixEngine->getDisplay();
-    display->setFont(nullptr);
-    display->setTextSize(1);
-    display->setTextWrap(false);
+    if (m_surface) {
+        m_surface->setFont(nullptr);
+        m_surface->setTextSize(1);
+        m_surface->setTextWrap(false);
+    }
+    if (m_matrixEngine && m_matrixEngine->getDisplay()) {
+        auto* display = m_matrixEngine->getDisplay();
+        display->setFont(nullptr);
+        display->setTextSize(1);
+        display->setTextWrap(false);
+    }
 }
 
 void DisplayRuntime::purgeEngineReferences(IEngine* engine, const char* instanceId) {
@@ -176,6 +195,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
             m_session.lifecycle
         };
         if (targetEngine && !sameEngine) {
+            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
             targetEngine->activate();
         }
         
@@ -227,6 +247,7 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         PreemptionEntry parent = m_preemptionStack[parentIdx];
         m_preemptionDepth = (uint8_t)parentIdx; // Secure unwinding
 
+        maybeReconfigurePipelineFor(resumeEngine, parent.handle, parent.sourceId);
         resumeEngine->resume();
 
         // Restore complete parent session snapshot
@@ -246,8 +267,12 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
     }
 
     // CASE 4: REPLACE
+    const bool isInternalRotationSwitch = (decision.sourceId == DisplaySourceId::ROTATION && m_session.sourceId == DisplaySourceId::ROTATION);
+
     if (oldEngine && !sameEngine) {
-        oldEngine->deactivate();
+        if (!isInternalRotationSwitch) {
+            oldEngine->deactivate();
+        }
     }
     // If replacing baseline without preemption, unwind any orphaned preemption entries safely
     if (!decision.preemptive && m_preemptionDepth > 0) {
@@ -260,7 +285,10 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
         m_preemptionDepth = 0;
     }
     if (targetEngine && !sameEngine) {
-        targetEngine->activate();
+        if (!isInternalRotationSwitch) {
+            maybeReconfigurePipelineFor(targetEngine, decision.engineHandle, decision.sourceId);
+            targetEngine->activate();
+        }
     }
     m_session.sessionId = ++m_sessionCounter;
     m_session.sourceId = decision.sourceId;
@@ -278,6 +306,12 @@ void DisplayRuntime::transitionSession(const DisplayDecision& decision) {    // 
 
 DisplayDecision DisplayRuntime::update(const ConfigSnapshot& snapshot) {
     reconcile(snapshot);
+
+    // Consume non-blocking memory pressure without locks (Sprint 3)
+    MemoryPressureLevel pressure = MemoryManager::instance().consumePendingPressure();
+    if (pressure != MemoryPressureLevel::Nominal && m_session.activeEngine) {
+        m_session.activeEngine->onMemoryPressure(static_cast<uint8_t>(pressure));
+    }
 
     if (m_orientationManager) {
         m_orientationManager->update(snapshot.matrix.auto_rotate, snapshot.matrix.rotation_offset);
@@ -311,8 +345,12 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
 
     if (decision.sourceId != DisplaySourceId::ROTATION && activeEngine != nullptr) {
         if (activeEngine->needsClear()) {
-            m_matrixEngine->getDisplay()->fillScreen(0);
-            matrixEngine.markExternalDraw();
+            if (m_surface) {
+                m_surface->clear(0);
+            } else if (m_matrixEngine && m_matrixEngine->getDisplay()) {
+                m_matrixEngine->getDisplay()->fillScreen(0);
+                matrixEngine.markExternalDraw();
+            }
         }
         activeEngine->update(appCtx);
         activeEngine->render(appCtx);
@@ -320,7 +358,7 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
         result.framebufferChanged = activeEngine->hasNewFrame();
     } else if (m_rotationManager) {
         result.rendered = m_rotationManager->loop();
-        result.framebufferChanged = true;
+        result.framebufferChanged = result.rendered;
         activeEngine = m_rotationManager->getCurrentActiveEngine();
     }
     if (activeEngine) {
@@ -345,4 +383,127 @@ FrameRenderResult DisplayRuntime::render(const DisplayDecision& decision, AppEng
     }
 
     return result;
+}
+
+void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const EngineHandle& handle, DisplaySourceId sourceId) {
+    if (!m_matrixEngine) return;
+
+    extern ConfigLoader config;
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    const auto& matrixCfg = guard->matrix;
+    if (!matrixCfg.dynamicColorDepth) return;
+
+    const char* descId = handle.descriptorId;
+    String engineIdStr;
+    if ((!descId || descId[0] == '\0') && sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
+        engineIdStr = m_rotationManager->getCurrentEngineId();
+        descId = engineIdStr.c_str();
+    }
+
+    EngineRequirements reqs;
+    if (descId && descId[0] != '\0') {
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(descId);
+        if (desc) {
+            reqs = desc->requirements;
+        }
+    }
+
+    // Dynamic TLS requirement refinement:
+    // If the engine descriptor declares needsTls, check if the target instance actually needs a TLS fetch
+    // or if its cache is still fresh (< TTL). If cache is fresh, no TLS burst is needed on this rotation!
+    if (reqs.needsTls && targetEngine) {
+        reqs.needsTls = targetEngine->needsTlsFetch();
+    }
+
+    const bool hasPsram = hardwareHAL.capabilities().hasPsram;
+
+    // Resource-aware TLS gating:
+    // If the engine requires TLS on non-PSRAM hardware, verify if NetworkBudget admits a TLS session.
+    // If memory/network conditions cannot accommodate TLS right now (e.g. bulk transfer or low DRAM),
+    // suppress reqs.needsTls to prevent futile panel teardown and blackout (Invariant 17, 20).
+    if (reqs.needsTls && !hasPsram && !NetworkBudget::canStartTlsSession()) {
+        LOGI("DisplayRuntime", "TLS session not admitted for '%s': suppressing clean-window teardown to maintain display.",
+             descId ? descId : "unknown");
+        reqs.needsTls = false;
+    }
+
+    size_t largestBlock = 0;
+    size_t freeInternal = 0;
+    size_t freeDma = 0;
+    auto measure = [&]() {
+        largestBlock = 0; freeInternal = 0; freeDma = 0;
+#if defined(ESP32)
+        largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        freeInternal = esp_get_free_internal_heap_size();
+        freeDma = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+#endif
+    };
+    measure();
+
+    uint16_t totalWidth = matrixCfg.width * (matrixCfg.chainLength > 0 ? matrixCfg.chainLength : 1);
+    uint8_t currentDepth = m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : 0;
+    bool isDbl = m_matrixEngine ? m_matrixEngine->isDoubleBuffered() : false;
+    bool hasCanvas = (m_surface != nullptr);
+
+    // Stage 1: cheap estimate with the current panel still allocated.
+    uint8_t stage1Target = PipelineSelectionPolicy::resolveTargetDepth(
+        matrixCfg.colorDepth, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+        hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas);
+
+    LOGI("DisplayRuntime", "Auto Depth Eval for '%s': cur=%u, target=%u (ceil=%u, free=%u, largestBlock=%u, tls=%d)",
+         descId ? descId : "unknown", currentDepth, stage1Target, matrixCfg.colorDepth, (unsigned)freeInternal, (unsigned)largestBlock, reqs.needsTls);
+
+    uint8_t targetDepth = stage1Target;
+    // Stage 2 (teardown-then-measure): a depth change, or a TLS engine on a zone whose largest block
+    // is too small, frees the whole DMA sandbox first. The depth is then decided on the emptied zone
+    // (exact measurement, no stale view of the outgoing panel) and the panel is rebuilt. Only the HUB75
+    // output goes dark (hundreds of ms); the system zone (Wi-Fi, web server, tasks) keeps running.
+    // On classic ESP32 without PSRAM, any TLS engine requires the clean DMA-released window for prefetchData()
+    // because mbedTLS cannot allocate its record/BIGNUM buffers while HUB75 DMA is active.
+    const bool tlsNeedsCleanWindow = reqs.needsTls && !hasPsram;
+    const bool needTeardown = m_matrixEngine && (targetDepth != currentDepth || tlsNeedsCleanWindow);
+    if (needTeardown) {
+        if (m_surface) {
+            m_surface->setPresentationBackend(nullptr);
+        }
+        m_matrixEngine->releasePanel();
+        measure();
+        MemTrace::dumpSurvivors("teardown");  // memtrace env only: who pins the emptied zone
+        // Invariant: Stage 2 re-evaluates admission on the emptied zone but must never escalate
+        // depth beyond stage1Target (which was already bounded by running baseline and engine requirements).
+        targetDepth = PipelineSelectionPolicy::resolveTargetDepth(
+            stage1Target, matrixCfg.dynamicColorDepth, totalWidth, matrixCfg.height,
+            hasPsram, reqs, currentDepth, largestBlock, freeInternal, freeDma, isDbl, hasCanvas,
+            /*panelReleased=*/true);
+        LOGI("DisplayRuntime", "Teardown-then-measure for '%s': cur=%u -> target=%u (free=%u, largestBlock=%u)",
+             descId ? descId : "unknown", currentDepth, targetDepth, (unsigned)freeInternal, (unsigned)largestBlock);
+
+        // Pre-fetch initial data in DMA-released memory window:
+        // Strictly gated to memory-constrained platforms (!hasPsram) running TLS engines when WiFi is connected.
+        // Boards with PSRAM (ESP32-S3) or unconstrained heap NEVER execute this hook.
+        bool wifiReady = false;
+#if defined(ESP32)
+        wifiReady = (WiFi.status() == WL_CONNECTED);
+#endif
+        if (targetEngine && reqs.needsTls && !hasPsram && wifiReady) {
+#if defined(ESP32)
+            esp_task_wdt_reset();
+#endif
+            targetEngine->prefetchData();
+#if defined(ESP32)
+            esp_task_wdt_reset();
+#endif
+            measure();
+        }
+
+        auto res = m_matrixEngine->reconfigurePresentationPipeline(targetDepth);
+        if (m_surface) {
+            m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());
+        }
+    }
+    SystemWatchdog::instance().recordEngineState(
+        descId,
+        m_matrixEngine ? m_matrixEngine->getActiveColorDepth() : targetDepth,
+        reqs.needsTls
+    );
 }

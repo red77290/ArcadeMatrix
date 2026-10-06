@@ -15,7 +15,7 @@ static const uint8_t digit5x7[10][5] = {
     {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
 };
 
-FlipClock::FlipClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config) {
+FlipClock::FlipClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
     storedTime = {0, 0, 0};
     for (int i = 0; i < 6; i++) {
         prevDigits[i] = -1;
@@ -68,7 +68,7 @@ void FlipClock::update() {
     drawTime();
 }
 
-static void drawFlapRegion(MatrixPanel_I2S_DMA* matrix, int x, int y, int w, int h, int digit, uint16_t cardBgColor, uint16_t textColor, int flapTop, int flapBot, int cropTop, int cropBot, bool isMoving, bool isTopHalf) {
+static void drawFlapRegion(IDrawingSurface* matrix, int x, int y, int w, int h, int digit, uint16_t cardBgColor, uint16_t textColor, int flapTop, int flapBot, int cropTop, int cropBot, bool isMoving, bool isTopHalf) {
     if (flapTop > flapBot) return;
 
     // 3D Bevel color palette for rich tactile mechanical relief

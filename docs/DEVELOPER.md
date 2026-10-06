@@ -92,6 +92,9 @@ public:
     virtual void render(EngineContext* context) = 0;
     virtual void deactivate() = 0;
 
+    // --- Core 0 physical destruction lifecycle ---
+    virtual bool shutdownForDestruction() { return true; }
+
     // --- Preemption lifecycle (optional hooks for temporary interruptions) ---
     virtual void pause() {}
     virtual void resume() {}
@@ -112,8 +115,9 @@ public:
 | `initialize()` | — | **Always.** Pre-allocate buffers, decode static bitmaps, load fonts. |
 | `activate()` | — | **Always.** Cheap reset of transient state (chronometers, frame index). |
 | `update()` | — | **Always.** Business and animation logic each frame. |
-| `render()` | — | **Always.** Draw pixels into `context->getMatrix()`. |
-| `deactivate()` | — | **Always.** Stop audio/network, close file handles when exiting rotation slot. |
+| `render()` | — | **Always.** Draw pixels into `context->getSurface()`. |
+| `deactivate()` | — | **Always.** Core 1 non-blocking logical quiescence: detach surface, abort sockets, set state flags. Zero waits, zero allocations. |
+| `shutdownForDestruction()` | `return true;` | **If engine has background tasks.** Core 0 physical quiescence: wait cooperatively for worker tasks to exit, release task stack and DMA buffers before instance deletion. |
 | `pause()` | no-op | **Optional.** Called when temporarily preempted by a high-priority alert or message. Preserves internal state. |
 | `resume()` | no-op | **Optional.** Called when returning from a temporary preemption without losing animation phase or timers. |
 | `onConfigChanged()` | no-op | **If engine has settings.** Re-read values in place without recreation. |
@@ -189,7 +193,7 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
 11. **Golden Rule #11 — mbedTLS Stays 100% Internal DRAM; Admit & Serialize, Never Route TLS to PSRAM:**
     - mbedTLS on this board MUST use the stock ESP-IDF/Arduino allocator (100% internal DRAM), matching `v3.1.0` behavior. **Do not** reintroduce a PSRAM-routing `mbedtls_platform_set_calloc_free()` hook (the previous `MbedTlsAllocator` has been deleted for this exact reason): live hardware testing proved that ANY mbedTLS allocation landing in PSRAM — even only the ~16 KB TLS record buffers — corrupts the HUB75 display within seconds, because the framebuffer is also PSRAM-resident and contends with mbedTLS over the shared PSRAM cache via the HUB75 GDMA engine. See `HardwareHAL::begin()` for the full root-cause comment.
     - Since internal DRAM must now serve TLS, DMA, and networking simultaneously, every TLS call site MUST construct a `NetworkBudget::ScopedTlsHandshakeLock` immediately before `WiFiClientSecure::connect()` and bail out (`if (!tlsLock) { ...; return; }`) if it fails to acquire it. This is a single global mutex: **only one TLS handshake may be in flight anywhere in the firmware at a time.**
-    - Hard admission boundary, re-validated **atomically inside the lock's constructor** (not just as a separate pre-check): `NetworkBudget::canStartTlsSession()` requires `freeInternal >= 45 KB` and verified dual-buffer headroom (either `largestInternalBlock >= 34.5 KB` or two independent 16.5 KB blocks) to satisfy mbedTLS's concurrent in/out record buffers (~33.4 KB total). A pre-check before even attempting the lock is allowed as a cheap optimization to avoid blocking on a contended mutex when the budget is already known-insufficient, but it is **never** authoritative by itself — mutex-contention wait time (up to 5s) is enough for a concurrent handshake to invalidate an earlier "OK" result. Only the post-acquire re-check inside the constructor is authoritative.
+    - Hard admission boundary, re-validated **atomically inside the lock's constructor** (not just as a separate pre-check): `NetworkBudget::canStartTlsSession()` requires `freeInternal >= 45 KB` and verified dual-buffer headroom (either `largestInternalBlock >= 35,000 B` or a successful live probe of two independent 16,717 B blocks) to satisfy mbedTLS's concurrent in/out record buffers (2 x 16,717 B = 33,434 B total). A pre-check before even attempting the lock is allowed as a cheap optimization to avoid blocking on a contended mutex when the budget is already known-insufficient, but it is **never** authoritative by itself — mutex-contention wait time (up to 5s) is enough for a concurrent handshake to invalidate an earlier "OK" result. Only the post-acquire re-check inside the constructor is authoritative.
     - *Security Note:* since mbedTLS is internal-DRAM-only again, there is no PSRAM-residency concern for TLS-sensitive material to document.
 12. **Golden Rule #12 — SD Access via `SdLockGuard`, Never Manual `xSemaphoreTake`/`Give`:**
     - Use `SdLockGuard guard(timeoutTicks); if (!guard) { ...; return; }` (`src/core/SdLockGuard.h`) for every `sdMutex` acquisition. It is a move-free RAII wrapper that guarantees the mutex is released on every return path (including early returns), eliminating the lock-leak risk of hand-written `xSemaphoreTake(...) ... xSemaphoreGive(...)` pairs that must otherwise be duplicated on every exit path.
@@ -201,12 +205,50 @@ The `DisplayArbiter` resolves display sources deterministically via a static pri
     - Large non-DMA graphical framebuffers (such as `GifEngine`'s 32 KB canvas) MUST prioritize PSRAM allocation (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) when PSRAM is available, reserving internal DRAM for mbedTLS and LwIP networking.
     - AsyncTCP background worker stack is sized to 8192 bytes and strictly pinned to Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`) to protect the Core 1 display rendering hot-path (Invariant 1).
     - Persistent network services (Google Cast) MUST implement exponential backoff (5s, 10s, 20s, 60s) initialized upon session drop, preventing reconnection storms during bursty HTTP/LwIP activity.
+15. **Golden Rule #15 — Pure Drawing via `IDrawingSurface` & DMA Isolation (Invariants 18 & 19):**
+    - An engine is a pure algorithm: it MUST NEVER call `context->getMatrix()->fillScreen(0)` or manipulate the physical DMA framebuffer directly.
+    - All drawing operations MUST target `context->getSurface()`. Mutating primitives (`drawPixel`, `blit565`, `fillRect`, `clear`) automatically mark the surface as dirty via `markModified()`.
+    - If an engine has no new frame or is static between updates, `present()` is a zero-cost no-op without DMA transfer, completely eliminating single-buffer DMA screen flickering.
+16. **Golden Rule #16 — Allocation-Free & Quiescent Deactivation (Invariants 15 & 16):**
+    - `deactivate()` MUST NOT perform any new dynamic memory allocation (`malloc`, `new`, container resize). Reclaim memory using `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
+    - `deactivate()` executes on Core 1 strictly non-blocking to guarantee **logical rendering quiescence** (immediately halting all draw commands and detaching the surface). Complete background task, timer, and network socket termination is performed on Core 0 via `shutdownForDestruction()` prior to releasing shared resources. The system returns to the reference idle baseline within the Quiescent Baseline Envelope ($|\Delta \text{heap}| \le 2\text{ KB}$).
+17. **Golden Rule #17 — Network Quiescence & Scoped Socket Abort (Invariant N8):**
+    - Network engines MUST support immediate cooperative cancellation (`session.abort()` / `_client.stop()`).
+    - `deactivate()` MUST stop Core-1 rendering interaction and signal session cancellation without waiting or blocking on network sockets.
+    - `shutdownForDestruction()` MUST abort/join engine-owned background workers and finalize network resource quiescence on Core 0 before shared resources are released.
+    - Once a session is aborted and its owner is physically quiescent, no further application processing, callbacks, JSON parsing, or allocation may occur on that session.
+18. **Golden Rule #18 — Dynamic Presentation Pipeline & Color Depth Adaptation (Invariant 21):**
+    - Engines must not assume permanent static color depth. When switching between rich graphical engines (up to 8 bits configured) and memory-intensive TLS engines (4 bits nominal), the presentation pipeline deterministically reconfigures under hardware OE blanking ($< 30\text{ ms}$).
+    - **P0 Guarantee:** Output Enable (OE) is released (LOW) strictly after Frame 0 is rendered and committed (`firstFrameCommitted == true`). If target and progressive fallback allocations fail, OE remains HIGH (`PresentationRecovery`).
+    - Telemetry distinguishes `requestedDepth` (policy), `effectiveDepth` (actual), and `fallbackUsed = (effectiveDepth != requestedDepth)`.
+    - `FastMatrixPanel::initLuts(depth)` dynamically recalculates per-channel gamma lookup tables to prevent color corruption at reduced bit depths (see [MEMORY_MODEL.md](MEMORY_MODEL.md) and [MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)).
+19. **Golden Rule #19 — Network Transaction Consolidation & Keep-Alive Batching:**
+    - Network engines querying multiple data points (e.g. market quotes, weather forecasts) MUST NOT make individual, sequential TLS connections.
+    - If multiple items are available on a single REST endpoint, use multi-symbol batch parameters (e.g. CoinGecko comma-separated GET).
+    - If multiple requests to the same host are required, reuse a persistent TLS session with HTTP/1.1 keep-alive (`net::SecureHttpSession session("host"); session.get(...)`), performing **one TLS handshake per successful keep-alive batch session**.
+    - Implement cache-miss consolidation: when one item is fetched, refresh all configured items in that single session so subsequent rotations hit RAM cache with zero network latency.
+20. **Golden Rule #20 — 3-Level Icon Cache & Proscription of PNGdec on Classic ESP32:**
+    - `PNGdec` embeds a 32 KB internal zlib window (`sizeof(PNG) = 34,288 B`). Calling `new PNG()` on classic ESP32 without PSRAM while a 4-bit panel is active is guaranteed to trigger `std::bad_alloc`. Dynamic `new PNG()` is **strictly prohibited** on classic ESP32.
+    - All market and UI icons MUST use `IconService`:
+      * **L1 (RAM Cache):** In-memory RGB565 bitmaps for instant rendering.
+      * **L2 (SD Cache):** Persistent local cache (`/crypto_icons/`, `/stock_icons/`).
+      * **L3 (Network Proxy):** Plain HTTP fetch via `images.weserv.nl` transcoded to JPEG, decoded via `JPEGDEC` in ~2.5 KB RAM.
+      * If proxy or network is unavailable, fall back to SD cache or render text gracefully without an icon.
+21. **Golden Rule #21 — Presentation-Aware Deferred Network Polling:**
+    - On non-PSRAM hardware (`!psramFound()`), background network polling MUST be deferred while a 4-bit panel is actively presenting if initial data is already cached. This eliminates transient heap contention and prevents visual micro-stuttering.
+22. **Golden Rule #22 — Boot Sequencing & Persistent System Zone Packing:**
+    - All permanent system allocations (Wi-Fi driver, STA association, DHCP negotiation, public DNS, mDNS with its 4 KB task stack, SNTP client, WebServerAPI route closures with its 8 KB `async_tcp` worker task, AudioHub, Core0LifecycleDispatcher "Lifecycle0" with 3 KB task stack) MUST be initialized in Step 3 *before* display matrix allocation (`matrixEngine.begin()`).
+    - This packs all permanent memory in lower DRAM (`0x3ffe0000..0x3ffee000`), ensuring that the Volatile Sandbox Zone (`0x3ffee000..0x3fffffff`) remains completely contiguous and can coalesce back to 50–65 KB upon panel release.
+23. **Golden Rule #23 — Transition-Window Prefetching & Mid-Presentation TLS Gating:**
+    - Engines requiring remote data and historical points (e.g. `StockEngine`, `CryptoEngine`) MUST implement `prefetchData()` to retrieve quotes and charts in the clean transition window with DMA released (where 70 to 90 KB is free), before the target display panel is allocated.
+    - Presentation loops (`update()`) MUST render strictly from cache without executing blocking TLS handshakes. Mid-presentation TLS is gated by `NetworkBudget::canStartTlsSession()` enforcing `largest >= TLS_MIN_COMBINED_BLOCK` (40 KB).
+    - `deactivate()` must leave **zero survivor strings or buffers** (e.g. `GifEngine` clearing `lastPlayedGif` and swapping vectors) to preserve the contiguous sandbox block.
 
 ---
 
-## 4. Capabilities & Hardware Requirements
+## 4. Capabilities, Granular Memory Footprint & Allocation Prediction
 
-Declared in the descriptor, these static hints tell the runtime and UI what the engine can do and what physical hardware it requires:
+Declared in the engine descriptor, static capabilities and requirements inform the runtime, WebUI, and `CompatibilityEvaluator` about hardware dependencies, presentation budgets, and precise memory footprints:
 
 ```cpp
 struct EngineCapabilities {
@@ -215,19 +257,183 @@ struct EngineCapabilities {
     bool realtime = true;
     bool interruptible = true;
     bool selfPaced = false;
+    bool allowsOverlay = true;          // Permits transverse overlays (e.g. Fighter)
+    bool allowRotation = true;          // Appears in WebUI rotation sequence
 };
 
 struct EngineRequirements {
-    bool needsPsram = false;      // e.g. Crypto/Stock quote history caches
-    bool needsAudio = false;      // e.g. Visualizer requiring ES7210/I2S mic
-    bool needsTempSensor = false; // e.g. Indoor environment sensor
-    bool needsGyroscope = false;  // Reserved for orientation
-    bool needsNetwork = false;    // Weather, NTP, MQTT
-    bool needsSd = false;         // GIF playback, MUGEN sprites
+    // --- Hardware Peripheral Dependencies (Hard Constraints) ---
+    bool needsPsram = false;            // External SPIRAM strictly required
+    bool needsPsramDma = false;         // DMA-capable SPIRAM required (ESP32-S3)
+    bool needsAudio = false;            // Audio hardware required (alias)
+    bool needsAudioInput = false;       // I2S Microphone required (Decibel, Spectrum)
+    bool needsAudioOutput = false;      // I2S DAC/Speaker required
+    bool needsI2s = false;              // General I2S bus required
+    bool needsTempSensor = false;       // SHTC3 temperature sensor required
+    bool needsGyroscope = false;        // QMI8658 IMU required
+    bool needsNetwork = false;          // Active Wi-Fi network connection required
+    bool needsTls = false;              // TLS/HTTPS cryptographic handshake required
+    bool needsSd = false;               // MicroSD card storage required
+
+    // --- Presentation & Pipeline Constraints ---
+    bool requiresDoubleBuffer = false;  // Cannot tolerate transient blanking or tearing
+    bool prefersDoubleBuffer = false;   // Prefers tear-free double buffer, runs degraded in single buffer
+    bool supportsSingleBuffer = true;   // Allows running under single buffer
+    uint16_t targetFps = 60;            // Target presentation framerate (60, 30, 10, 1)
+
+    // --- Granular Memory Footprint Modeling ---
+    uint32_t internalPersistentBytes = 0;   // Static heap retained across frames
+    uint32_t internalContiguousBytes = 0;   // Largest single contiguous allocation needed
+    uint32_t psramBytes = 0;                // Dedicated working buffer in SPIRAM
+    uint32_t shadowBytesPerFrame = 0;       // Dynamic canvas/shadow memory (must be 0 on hot loop)
+    uint32_t minFreeInternalHeapBytes = 0;  // Conservative heap headroom floor
+    uint32_t minLargestInternalBlockBytes = 0;
+    uint32_t minFreeDmaBytes = 0;
+    uint32_t minFreePsramBytes = 0;
+
+    // --- Geometry Limits ---
+    uint16_t minWidth = 0;
+    uint16_t minHeight = 0;
+    uint16_t maxWidth = 0;              // 0 = unlimited
+    uint16_t maxHeight = 0;             // 0 = unlimited
 };
 ```
 
-`EngineRegistrar::registerAll()` evaluates `HardwareHAL::capabilities()` at boot. If a requirement is not met, the engine is cleanly skipped with an explanatory reason (`reason = "Requires PSRAM"`), preventing Out-Of-Memory panics.
+---
+
+### 4.1 Granular Memory Footprint Modeling (`EngineRequirements`)
+
+ArcadeMatrix V4 replaces heuristic memory checks with **deterministic memory modeling**. Every engine descriptor MUST declare realistic values in `EngineRequirements`:
+
+1. **`internalPersistentBytes` (Static Heap Retention):**
+   - The total DRAM allocated during `initialize()` and retained across frames while the engine is in memory (e.g. data structures, caches, state objects, font descriptors).
+   - *Example:* `MatrixRainEngine` retains ~1 KB of drop state arrays; `WeatherEngine` retains ~6 KB of weather model data and provider instances.
+2. **`internalContiguousBytes` (Peak Contiguous Allocation):**
+   - The largest single contiguous memory block required by the engine during runtime or initialization (e.g. decompression buffers, scratch arrays, TLS record payload).
+   - *Example:* An engine decoding JPEG icons needs `~4 KB` contiguous RAM for decoder state; TLS engines require at least `16,000 B` to satisfy the mbedTLS incoming record buffer.
+3. **`psramBytes` (Dedicated Working Buffer in SPIRAM):**
+   - External RAM required for high-resolution offscreen canvases, sound effect samples, or large sprite sheets.
+4. **`shadowBytesPerFrame` (Transient Allocations):**
+   - Must be `0` for all standard engines. Any non-zero value represents transient heap allocations per frame, which are strictly prohibited on the Core 1 hot-path (Invariant 1).
+5. **The Critical Role of `needsTls` in Memory Allocation:**
+   - Setting `needsTls = true` informs `PipelineSelectionPolicy` that the engine will execute HTTPS handshakes. On classic ESP32 without PSRAM, this flag instructs the runtime to dynamically downgrade the HUB75 DMA presentation depth from **8-bit to 4-bit**, reclaiming **18 KB of DMA RAM** and exposing **50–64 KB of contiguous DRAM** (`NetworkBudget::TLS_MIN_LARGEST_BLOCK = 16,717 B`). This guarantees 100% reliable TLS handshakes without out-of-memory crashes.
+
+---
+
+### 4.2 Allocation Prediction & Teardown-Then-Measure Sandbox Model
+
+ArcadeMatrix V4 relies on `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`) as the **sole, centralized authority** for determining whether an engine is feasible on the active device:
+
+- **Two Distinct Evaluation Modes:**
+  * `EvaluationMode::ReferenceCapability`: Static qualification against the hardware profile under reference budget baseline (`ReferenceMemoryProfile`). Powers the WebUI Catalog (`/api/engines`) and safety gating in `POST /api/rotation` and `POST /api/instances`, completely decoupled from transient Core 1 memory pressure (such as GIF playback). Evaluates against the *requested pipeline* (`targetPipeline`).
+  * `EvaluationMode::RuntimeAdmission`: Dynamic pre-allocation validation checking live volatile heap state before allocating heavy resources.
+- **Adaptive Color Depth (`COLOR_DEPTH_AUTO = 0`):** `PipelineSelectionPolicy` dynamically evaluates the optimal HUB75 DMA color depth based on geometry, PSRAM availability, and incoming engine requirements (`EngineRequirements`). Candidates are evaluated from the highest quality (8-bit) downward ($8 \dots 2$) across all platforms, including classic ESP32 without PSRAM. For graphics engines (e.g. Clock, Date, Temp, Marquee, GIFs), classic ESP32 on 128×32 and 64×32 panels achieves full **8-bit color depth**. When an incoming engine requires TLS (`needsTls = true`), the pipeline mathematically scales down to **4-bit depth** (2 bits only when the admission math proves 4 bits cannot fit), freeing up to 16–24 KB of contiguous DRAM and ensuring 100% reliable TLS handshakes.
+- **Teardown-Then-Measure Sandbox Model in `RotationManager`:** Transitions execute in a deterministic sequence:
+  1. `oldEngine->deactivate()`: Triggers Core 1 non-blocking logical quiescence and scoped socket abort.
+  2. `maybeReconfigurePipelineFor(newEngine)`: Evaluates available headroom under complete Output Enable (OE) hardware blanking ($< 30\text{ ms}$). When switching pipelines on classic ESP32 without PSRAM, tearing down the previous engine deallocates canvas and DMA buffers (`panelReleased == true`), exposing the clean ~72 KB baseline sandbox memory pool (0-byte leak across rotations).
+  3. Dynamic bit-depth selection ($8 \dots 2$) ensures TLS engines check `NetworkBudget::TLS_MIN_LARGEST_BLOCK` (16,717 B) on this clean released zone, achieving deterministic 4-bit admission and eliminating depth flapping.
+  4. `newEngine->activate()`: Instantiates with maximum available memory.
+  5. Output Enable (OE) is released (LOW) strictly after Frame 0 is rendered and committed (`firstFrameCommitted == true`). If target and progressive fallback allocations fail, OE remains HIGH (`PresentationRecovery`).
+- **Early Boot Heap Consolidation (Step 3c):** `WebServerAPI` and its background `async_tcp` task (8 KB stack) are pre-initialized immediately following WiFi driver pre-init on Core 0, anchoring the stack down at the heap baseline (`0x3ffe4d20`) before HUB75 DMA allocations. This permanently eliminates the SRAM 1 "concrete pillar" (`0x3fff3d70`) that previously bisected contiguous memory.
+- **Declarative HTTP Concurrency:** The firmware advertises `capabilities.http.recommendedConcurrency` (1 on `ESP32_STD`, 3 on `WAVESHARE_S3`). The frontend `HttpRequestQueue` bounds transport `fetch()` calls to this limit, preventing LwIP socket starvation while GIF or canvas operations run.
+- **Statically Qualified Safe Fallback:** If dynamic memory allocation fails during transition `initialize(new)`, the runtime falls back to a statically qualified Safe Fallback engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
+
+---
+
+### 4.3 Engine Retirement & Destruction Pipeline (Core 1 vs Core 0)
+
+To guarantee 60 FPS presentation without micro-stuttering while preventing Use-After-Free (UAF) crashes and memory leaks, ArcadeMatrix enforces a strict **Two-Stage Lifecycle Separation** (Invariants 15 & 16):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Core1 as Core 1 (Render Hot-Path)
+    participant RM as RotationManager
+    participant Queue as EngineRetirementQueue (SPSC)
+    participant Core0 as Core 0 (Lifecycle0 Task)
+    participant Engine as Engine Instance
+
+    Note over Core1,RM: Stage 1: Logical Quiescence (Core 1)
+    RM->>Engine: deactivate() [Non-blocking, O(1), abort sockets]
+    RM->>RM: Clear currentActiveInstanceId
+    RM->>RM: DisplayRuntime::purgeEngineReferences()
+    RM->>Engine: setResourceState(CORE1_RELEASED)
+    RM->>Queue: retire(std::move(engineUniquePtr))
+
+    Note over Queue,Core0: Stage 2: Physical Quiescence & Destruction (Core 0)
+    Queue-->>Core0: Pop engineUniquePtr
+    Core0->>Engine: shutdownForDestruction() [Cooperative wait <= 300ms]
+    alt Succeeded (Workers exited cleanly)
+        Core0->>Engine: setResourceState(RETIRED)
+        Core0->>Engine: delete engine (Reclaim DRAM / DMA)
+    else Timeout (> 300ms)
+        Core0->>Engine: setResourceState(QUARANTINED)
+        Note over Core0: Quarantine pool retains pointer (Safe bounded leak > UAF crash)
+    end
+```
+
+#### 1. Stage 1: Logical Quiescence on Core 1 (`deactivate()`)
+- **Execution Context:** Core 1 render thread.
+- **Contract:** Must be $O(1)$, non-blocking, zero task delays (`vTaskDelay`), zero mutex acquisition, zero dynamic allocations.
+- **Actions Required:**
+  * Set internal running flags to `false` (`m_running.store(false)`).
+  * Detach surface pointer (`surface = nullptr`).
+  * Trigger immediate scoped socket abort: `net::SecureHttpClient::abortSessionsOwnedBy(ownerId)` (or `session.abort()`).
+  * **Strict Prohibition:** NEVER block Core 1 waiting for FreeRTOS tasks to terminate or network sockets to close!
+
+#### 2. Stage 2: Physical Quiescence & Destruction on Core 0 (`shutdownForDestruction()`)
+- **Execution Context:** Core 0 background `Lifecycle0` task (`Core0LifecycleDispatcher`).
+- **Contract:** Executes asynchronously after the engine has been retired from Core 1.
+- **Actions Required:**
+  * Request background worker tasks to exit cooperatively (`m_stopWorker.store(true)`).
+  * Wait cooperatively in short slices (`vTaskDelay(pdMS_TO_TICKS(10))`) up to a strict timeout (e.g. 300 ms).
+  * Close open file handles, release DMA ring buffers, delete FreeRTOS queues.
+  * Return `true` if all worker tasks exited cleanly and resources are quiescent.
+  * Return `false` if cooperative exit timed out.
+- **Strict Prohibition on Forced Kill:** DO NOT call `vTaskDelete(taskHandle)` forcibly on a running task! If a task is forcibly killed while executing inside mbedTLS or lwIP, internal locks remain held, memory structures corrupt, and the system crashes.
+
+#### 3. The 6-Step Anti-UAF Release Barrier in `RotationManager::retireEngineSlot()`
+When an engine slot is replaced or removed during rotation, `RotationManager` executes the formal 6-step release barrier:
+1. `eng->deactivate()`: Signals logical quiescence and socket abort.
+2. Clear `currentActiveInstanceId` if matching.
+3. `DisplayRuntime::purgeEngineReferences(eng, instId)`: Purges any dangling pointers from runtime session and the preemption stack.
+4. `eng->setResourceState(EngineResourceState::CORE1_RELEASED)`: Atomic state transition.
+5. Sever local slot `instanceId`: Engine can never be looked up again by `findActiveEngine()`.
+6. Move `std::unique_ptr<IEngine>` into `EngineRetirementQueue` for Core 0 dispatch.
+
+#### 4. The Quarantine Mechanism (Safe Leak > Use-After-Free)
+If `shutdownForDestruction()` returns `false` (worker task stuck or unresponsive within 300 ms):
+- The engine enters `EngineResourceState::QUARANTINED`.
+- It is placed into a bounded quarantine array on Core 0. The dispatcher periodically retries `shutdownForDestruction()`.
+- If the quarantine capacity (8 engines) is reached, the pointer is preserved (`engine.release()`).
+- **Architectural Guarantee:** A bounded, controlled memory leak is infinitely preferable to memory corruption or a Use-After-Free crash.
+
+#### 5. Destructor Safety Barrier (`~MyEngine()`)
+The C++ destructor MUST provide a final safety barrier:
+```cpp
+MyEngine::~MyEngine() {
+    // Anti-UAF Safety Barrier:
+    // In normal operation, shutdownForDestruction() on Core 0 has already stopped workers.
+    // If deleted directly or quarantined destruction was bypassed, guarantee worker exit.
+    if (m_workerTask && !m_workerExited.load(std::memory_order_acquire)) {
+        m_stopWorker.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(OWNER_MY_ENGINE);
+        while (!m_workerExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_workerTask = nullptr;
+    }
+    // Free dynamic buffers via swap or delete
+    std::vector<MyItem>().swap(m_items);
+}
+```
+
+> [!IMPORTANT]
+> **Mandatory Workflow When Adding a New Engine:**
+> 1. Declare all resource constraints accurately in `EngineRequirements` in your engine descriptor.
+> 2. Add your engine's descriptor to `getCanonicalEngineDescriptors()` in `test/native/tools/matrix_generator.cpp`.
+> 3. Run `rtk python3 scripts/generate_engine_matrix.py` to regenerate [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md).
+> 4. Verify CI pass with `rtk python3 scripts/validate_docs.py` (which runs `generate_engine_matrix.py --check`).
 
 ---
 
@@ -326,24 +532,31 @@ Hide or show fields depending on another field's value:
 
 ```cpp
 #pragma once
-#include "../../include/core/EngineContract.h"
 #include <Arduino.h>
+#include "core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 class MatrixRainEngine : public IEngine {
 public:
     MatrixRainEngine();
-    ~MatrixRainEngine() override = default;
+    ~MatrixRainEngine() override;
 
+    // --- Core 1 Lifecycle Hooks ---
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
-    void deactivate() override;
+    void deactivate() override; // Non-blocking logical quiescence on Core 1
+
+    // --- Core 0 Lifecycle Destruction Hook ---
+    bool shutdownForDestruction() override; // Physical quiescence on Core 0
+
+    // --- Dynamic Configuration & Framerate ---
     void onConfigChanged(const EngineConfig* config) override;
     bool isRealtime() const override { return true; }
 
 private:
-    MatrixPanel_I2S_DMA* matrix = nullptr;
+    IDrawingSurface* surface = nullptr;
     int speed = 2;
     int dropY[128];
 };
@@ -358,9 +571,14 @@ MatrixRainEngine::MatrixRainEngine() {
     memset(dropY, 0, sizeof(dropY));
 }
 
+MatrixRainEngine::~MatrixRainEngine() {
+    // Destructor safety barrier: ensure surface detached and state clean
+    surface = nullptr;
+}
+
 EngineError MatrixRainEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
-    matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
+    surface = context->getSurface();
     if (config) speed = config->getInt("speed", 2);
     return EngineError::OK;
 }
@@ -370,29 +588,38 @@ void MatrixRainEngine::activate() {
 }
 
 void MatrixRainEngine::update(EngineContext* context) {
-    if (!matrix) return;
-    for (int x = 0; x < matrix->width(); x += 4) {
+    if (!surface) return;
+    for (int x = 0; x < surface->width(); x += 4) {
         dropY[x] += speed;
-        if (dropY[x] > matrix->height()) dropY[x] = random(-16, 0);
+        if (dropY[x] > surface->height()) dropY[x] = random(-16, 0);
     }
 }
 
 void MatrixRainEngine::render(EngineContext* context) {
-    if (!matrix) return;
-    matrix->fillScreen(0);
-    for (int x = 0; x < matrix->width(); x += 4) {
-        matrix->drawPixel(x, dropY[x], matrix->color565(0, 255, 70));
+    if (!surface) return;
+    surface->fillScreen(0);
+    for (int x = 0; x < surface->width(); x += 4) {
+        surface->drawPixel(x, dropY[x], IDrawingSurface::color565(0, 255, 70));
     }
 }
 
-void MatrixRainEngine::deactivate() {}
+void MatrixRainEngine::deactivate() {
+    // Stage 1 (Core 1): Non-blocking logical quiescence. Detach surface immediately.
+    surface = nullptr;
+}
+
+bool MatrixRainEngine::shutdownForDestruction() {
+    // Stage 2 (Core 0): Physical quiescence.
+    // MatrixRain has no background worker tasks or open sockets, so destruction is immediately safe.
+    return true;
+}
 
 void MatrixRainEngine::onConfigChanged(const EngineConfig* config) {
     if (config) speed = config->getInt("speed", 2);
 }
 ```
 
-### Step 3: Implement `IEngineDescriptorHandler` in your Engine & Register
+### Step 3: Implement `IEngineDescriptorHandler` with Accurate Requirements
 
 In your engine file (e.g. `src/engines/MatrixRainEngine.h` / `.cpp`):
 ```cpp
@@ -401,8 +628,25 @@ public:
     EngineDescriptor getDescriptor() const override {
         EngineDescriptor desc;
         desc.metadata = { "matrix_rain", "Matrix Digital Rain", "animations", FIRMWARE_VERSION };
-        desc.capabilities = { .supports_128x32 = true, .supports_256x64 = true, .realtime = true };
-        desc.requirements = { .needsPsram = false, .needsAudio = false };
+        desc.capabilities = {
+            .supports_128x32 = true,
+            .supports_256x64 = true,
+            .realtime = true,
+            .interruptible = true,
+            .allowsOverlay = true,
+            .allowRotation = true
+        };
+        // Realistic memory modeling for deterministic allocation prediction
+        desc.requirements.needsPsram = false;
+        desc.requirements.needsAudio = false;
+        desc.requirements.needsNetwork = false;
+        desc.requirements.needsTls = false;
+        desc.requirements.targetFps = 60;
+        desc.requirements.supportsSingleBuffer = true;
+        desc.requirements.prefersDoubleBuffer = true;
+        desc.requirements.internalPersistentBytes = 1024;    // 128 ints + state
+        desc.requirements.internalContiguousBytes = 2048;    // Scratch headroom
+
         desc.schema.fields = {
             ConfigField("speed", ConfigType::INTEGER, "Fall Speed", "Falling speed in pixels per frame", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp)
         };
@@ -412,7 +656,9 @@ public:
 };
 ```
 
-Then in `src/engines/EngineRegistrar.cpp`, simply add your handler instance:
+### Step 4: Register in `EngineRegistrar.cpp` and `matrix_generator.cpp`
+
+1. **Register on Target Hardware (`src/engines/EngineRegistrar.cpp`):**
 ```cpp
 #include "MatrixRainEngine.h"
 
@@ -430,6 +676,142 @@ void EngineRegistrar::registerAll() {
     }
 }
 ```
+
+2. **Register in Native Verification Suite (`test/native/tools/matrix_generator.cpp`):**
+To ensure CI and matrix generation validate your new engine against all 5 reference profiles, add its descriptor to `getCanonicalEngineDescriptors()`:
+```cpp
+    // Matrix Rain
+    {
+        EngineDescriptor d;
+        d.metadata = {"matrix_rain", "Matrix Digital Rain", "animations", FIRMWARE_VERSION};
+        d.requirements.targetFps = 60;
+        d.requirements.prefersDoubleBuffer = true;
+        d.requirements.supportsSingleBuffer = true;
+        d.requirements.internalPersistentBytes = 1024;
+        d.requirements.internalContiguousBytes = 2048;
+        engines.push_back(d);
+    }
+```
+
+### Step 5: Regenerate Engine Compatibility Matrix & Validate CI
+
+After registering the descriptor, regenerate the documentation matrix and run validation:
+```bash
+# 1. Regenerate Markdown compatibility matrix
+rtk python3 scripts/generate_engine_matrix.py
+
+# 2. Run documentation and architecture guard checks
+rtk python3 scripts/validate_docs.py
+```
+
+---
+
+### 10.1 Advanced Pattern: Network Engine with Background Worker & TLS
+
+Engines performing network requests and background polling (e.g. market data, weather forecasts) MUST implement asynchronous task coordination, keep-alive batching, and strict anti-UAF destruction:
+
+```cpp
+// --- Header Pattern (e.g. MyNetworkEngine.h) ---
+class MyNetworkEngine : public IEngine {
+public:
+    MyNetworkEngine();
+    ~MyNetworkEngine() override;
+
+    EngineError initialize(EngineContext* context, const EngineConfig* config) override;
+    void activate() override;
+    void update(EngineContext* context) override;
+    void render(EngineContext* context) override;
+    void deactivate() override;                 // Core 1 non-blocking abort
+    bool shutdownForDestruction() override;     // Core 0 cooperative wait <= 300ms
+
+private:
+    static void workerTaskEntry(void* arg);
+    void fetchQuotes();
+
+    TaskHandle_t m_workerTask = nullptr;
+    std::atomic<bool> m_stopWorker{false};
+    std::atomic<bool> m_workerExited{true};
+    IDrawingSurface* surface = nullptr;
+};
+```
+
+```cpp
+// --- Implementation Pattern (e.g. MyNetworkEngine.cpp) ---
+EngineError MyNetworkEngine::initialize(EngineContext* context, const EngineConfig* config) {
+    surface = context ? context->getSurface() : nullptr;
+    if (!surface) return EngineError::InitializationFailed;
+
+    // Start background polling worker pinned to Core 0
+    m_stopWorker.store(false, std::memory_order_relaxed);
+    m_workerExited.store(false, std::memory_order_relaxed);
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        workerTaskEntry, "NetWorker", 4096, this, 1, &m_workerTask, 0 // Core 0
+    );
+    return (ret == pdPASS) ? EngineError::OK : EngineError::InitializationFailed;
+}
+
+void MyNetworkEngine::deactivate() {
+    // Stage 1 (Core 1): Strictly non-blocking!
+    // 1. Signal worker to stop
+    m_stopWorker.store(true, std::memory_order_release);
+    // 2. Abort all in-flight TLS/TCP sockets immediately (unblocks recv/connect)
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+    // 3. Detach surface
+    surface = nullptr;
+}
+
+bool MyNetworkEngine::shutdownForDestruction() {
+    // Stage 2 (Core 0): Cooperative wait up to 300 ms
+    if (!m_workerTask) return true;
+
+    m_stopWorker.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+
+    for (int i = 0; i < 30 && !m_workerExited.load(std::memory_order_acquire); i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (m_workerExited.load(std::memory_order_acquire)) {
+        m_workerTask = nullptr;
+        return true; // Clean exit! Safe to delete on Core 0.
+    }
+
+    // Task timed out: NEVER call vTaskDelete()! Return false to trigger quarantine.
+    LOGW("MyNetworkEngine", "Worker did not exit in 300ms; engine will be quarantined.");
+    return false;
+}
+
+MyNetworkEngine::~MyNetworkEngine() {
+    // Destructor Safety Barrier: guarantee worker is dead before freeing buffers
+    if (m_workerTask && !m_workerExited.load(std::memory_order_acquire)) {
+        m_stopWorker.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_MY_NETWORK);
+        while (!m_workerExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_workerTask = nullptr;
+    }
+}
+
+void MyNetworkEngine::workerTaskEntry(void* arg) {
+    auto* self = static_cast<MyNetworkEngine*>(arg);
+    while (!self->m_stopWorker.load(std::memory_order_acquire)) {
+        self->fetchQuotes();
+        // Sleep in small slices to detect stop signal immediately
+        for (int i = 0; i < 600 && !self->m_stopWorker.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    self->m_workerExited.store(true, std::memory_order_release);
+    vTaskDelete(NULL); // Worker exits cleanly on its own
+}
+```
+
+#### Network Engine Design Rules:
+1. **Declare `needsTls = true`:** Automatically enables 4-bit presentation depth on classic ESP32, reclaiming 18 KB of DMA RAM.
+2. **Reuse Keep-Alive Sessions (Golden Rule #19):** Use `net::SecureHttpSession` to execute multi-request batches with **one TLS handshake**.
+3. **Use `IconService` + `JPEGDEC` (Golden Rule #20):** NEVER instantiate `new PNG()` on classic ESP32 (34 KB memory footprint triggers crash). Use `IconService` with proxy transcoding to JPEG decoded in ~2.5 KB RAM.
+4. **Defer Polling During Active Presentation (Golden Rule #21):** On non-PSRAM devices, avoid network polling during active 4-bit presentation if cached data is present.
 
 ---
 
@@ -470,10 +852,11 @@ Inherit from the `ClockFace` base class (`src/engines/ClockEngine.h`):
 // src/engines/clocks/SpaceInvadersClock.h
 #pragma once
 #include "../ClockEngine.h"
+#include "../../core/drawing/IDrawingSurface.h"
 
 class SpaceInvadersClock : public ClockFace {
 public:
-    SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
 
@@ -487,7 +870,7 @@ private:
 // src/engines/clocks/SpaceInvadersClock.cpp
 #include "SpaceInvadersClock.h"
 
-SpaceInvadersClock::SpaceInvadersClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+SpaceInvadersClock::SpaceInvadersClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {}
 
 void SpaceInvadersClock::update() {
@@ -532,18 +915,18 @@ case THEME_SPACE_INVADERS:
     break;
 ```
 
-### Step 4: Expose in `/api/themes` in `src/api/WebServerAPI.cpp`
+### Step 4: Expose Theme in `scripts/extract_engine_catalog.py`
 
-Add your theme to the `themes` table so it automatically populates the WebUI dropdown:
+Add your theme to `CANONICAL_THEMES` in `scripts/extract_engine_catalog.py` so it is automatically pre-compiled into the WebUI at build time:
 
-```cpp
-static const ThemeItem themes[] = {
-    // ...
-    { 25, "Space Invaders Clock" }
-};
+```python
+CANONICAL_THEMES = [
+    # ...
+    {"id": 25, "name": "Space Invaders Clock"},
+]
 ```
 
-The WebUI will automatically show "Space Invaders Clock" in the theme dropdown, persist it in `config.json`, and apply it live via hot reload.
+The WebUI will automatically embed "Space Invaders Clock" in the theme dropdown at compile time (with zero RAM overhead on the ESP32), persist it in `config.json`, and apply it live via hot reload.
 
 ---
 
@@ -613,16 +996,20 @@ float offset = config->getFloat("temp_offset", 0.0f);
 
 ## 15. Rendering into the LED Matrix & Responsive Geometry
 
-Always obtain the matrix pointer via `context->getMatrix()`:
+ArcadeMatrix v4 abstracts display rendering behind the hardware-agnostic `IDrawingSurface` interface (which extends `Adafruit_GFX`). Always obtain the drawing surface pointer via `context->getSurface()`:
 
 ```cpp
-MatrixPanel_I2S_DMA* matrix = context->getMatrix();
-matrix->drawPixel(x, y, matrix->color565(r, g, b));
-matrix->fillRect(x, y, w, h, color);
-matrix->setCursor(x, y);
-matrix->print("TEXT");
+IDrawingSurface* surface = context->getSurface();
+surface->drawPixel(x, y, surface->color565(r, g, b));
+surface->fillRect(x, y, w, h, color);
+surface->setCursor(x, y);
+surface->print("TEXT");
+
+// Or high-performance block blit for streaming animations (GIFs, fighters):
+surface->blit565(canvasBuffer, width, height);
 ```
-*Never call `flipDMABuffer()` inside an engine — the main display loop handles flipping centrally.*
+*(For backwards compatibility, `context->getMatrix()` is preserved as a shim returning `MatrixPanel_I2S_DMA*`).
+*Never call `flipDMABuffer()` inside an engine — the main display loop handles presentation centrally.*
 
 ### 15.1 The Golden Rule for Multi-Resolution & TATE Responsive Layouts
 
@@ -716,7 +1103,7 @@ rtk pio run -e esp32s3_waveshare
 Compile and validate test suites locally via PlatformIO:
 
 ```bash
-# Compile all 7 unit test suites without physical board attached
+# Compile all 8 unit test suites without physical board attached
 rtk pio test -e esp32dev --without-uploading --without-testing
 
 # Compile a specific test suite (e.g. test_core)
@@ -796,11 +1183,39 @@ rtk python3 scripts/validate_webinstaller.py
 
 ## 17. Developer Checklist
 
-- [ ] `initialize()` allocates all memory; hot loop (`update`/`render`) has **zero dynamic allocations**.
-- [ ] `onConfigChanged()` updates state in place without destroying the instance.
-- [ ] Hardware requirements (`needsPsram`, `needsAudio`, `needsTempSensor`, `needsNetwork`, `needsSd`) are correctly declared.
+### Architecture & Hot-Path (Core 1)
+- [ ] `initialize()` allocates all persistent memory; hot loop (`update()` / `render()`) has **zero dynamic allocations** (`malloc`, `new`, `String`, vector growth).
+- [ ] Core 1 rendering uses `IDrawingSurface` exclusively (zero direct hardware / DMA register access).
+- [ ] Responsive multi-resolution layouts use pure `*LayoutCalculator` returning bounded `Rect`s (no inline resolution branching).
+- [ ] `onConfigChanged()` updates state in place without destroying or recreating the instance.
+- [ ] `deactivate()` is **strictly non-blocking and $O(1)$** on Core 1: detaches surface, aborts network sessions, sets atomic stop flags. Zero mutex locks, zero `vTaskDelay()`, zero memory allocations.
+
+### Engine Destruction & Resource Reclamation (Core 0)
+- [ ] Engines with background tasks implement `shutdownForDestruction()` executing cooperatively on Core 0.
+- [ ] Cooperative shutdown waits in slices (`vTaskDelay(pdMS_TO_TICKS(10))`) up to 300 ms for tasks to exit.
+- [ ] **Zero forced task kills:** `vTaskDelete(taskHandle)` is NEVER called forcibly; timed-out engines return `false` for quarantine.
+- [ ] Destructor `~MyEngine()` implements the anti-UAF safety barrier to guarantee background tasks are dead before deleting member buffers.
+- [ ] Memory buffers are released cleanly using RAII or swap idiom (`std::vector<T>().swap(vec)`).
+- [ ] `deactivate()` clears all dynamic strings/buffers (`std::vector<T>().swap(vec)` or `String()`), leaving **zero survivors** in the Volatile Sandbox Zone.
+
+### Memory Modeling & Allocation Prediction
+- [ ] `EngineRequirements` declares realistic footprints:
+  * `internalPersistentBytes`: DRAM retained across frames while in memory.
+  * `internalContiguousBytes`: Peak contiguous allocation needed (scratch / decoding / TLS record buffer).
+  * `shadowBytesPerFrame`: Must be `0` for hot-path engines.
+- [ ] `needsTls` is set to `true` for any engine using HTTPS/TLS, signaling the runtime to adapt to 4-bit presentation depth on classic ESP32.
+- [ ] Engine descriptor is registered in `src/engines/EngineRegistrar.cpp` AND in `test/native/tools/matrix_generator.cpp`.
+
+### Network & Asset Optimization
+- [ ] Remote data and chart engines implement `prefetchData()` using `fetchCombined()` keep-alive batching during the transition window before panel allocation.
+- [ ] Network engines use `net::SecureHttpSession` keep-alive batching for multi-item requests (one TLS handshake per batch).
+- [ ] All icons use `IconService` + `JPEGDEC` in ~2.5 KB RAM; dynamic `new PNG()` / `PNGdec` is **strictly avoided** on classic ESP32.
+- [ ] Background network polling is deferred during active 4-bit presentation on non-PSRAM hardware.
+
+### Localization & Validation
+- [ ] Localized strings use the centralized `I18n` module (no hardcoded localized strings or redundant `lang` field in schema).
 - [ ] `options_endpoint` is provided for dynamic options.
-- [ ] Localized strings use the centralized `I18n` module (no redundant `lang` field in schema).
-- [ ] Code compiles cleanly on both `esp32dev` and `esp32s3_waveshare`.
-- [ ] All 7 unit test suites pass (`rtk pio test -e esp32dev --without-uploading --without-testing`).
-- [ ] Documentation scripts pass (`rtk python3 scripts/validate_docs.py`).
+- [ ] Code compiles cleanly on both targets: `rtk pio run -e esp32dev -e esp32s3_waveshare`.
+- [ ] Unit test suites pass: `rtk pio test -e esp32dev --without-uploading --without-testing`.
+- [ ] Compatibility matrix regenerated: `rtk python3 scripts/generate_engine_matrix.py`.
+- [ ] Documentation validation passes: `rtk python3 scripts/validate_docs.py`.

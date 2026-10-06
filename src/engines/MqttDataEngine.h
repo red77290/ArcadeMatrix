@@ -3,9 +3,10 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include "mqttdata/DataSession.h"
+
+class IDrawingSurface;
 
 /**
  * @class MqttDataEngine
@@ -51,7 +52,7 @@ private:
     enum class Link : uint8_t { Idle, Connecting, Connected, Failed };
     enum class Notice : uint8_t { None, Connecting, NoConnection, NoData, Unsupported };
 
-    MatrixPanel_I2S_DMA* m_matrix = nullptr;
+    IDrawingSurface* m_surface = nullptr;
     bool m_hasPsram = false;
 
     // Settings. The topic list is double-buffered: written on a config change, read by the task.

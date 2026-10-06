@@ -1,4 +1,5 @@
 #include "MqttDataEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <esp_heap_caps.h>
@@ -42,8 +43,8 @@ MqttDataEngine::~MqttDataEngine() {
 }
 
 EngineError MqttDataEngine::initialize(EngineContext* context, const EngineConfig* cfg) {
-    if (!context || !context->getMatrix()) return EngineError::InitializationFailed;
-    m_matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
+    m_surface = context->getSurface();
     m_hasPsram = context->hasPsram();   // HardwareHAL's answer; sizes every activation (mqd::limitsFor)
     onConfigChanged(cfg);
     return EngineError::OK;
@@ -215,7 +216,8 @@ void MqttDataEngine::runSession() {
 
 void MqttDataEngine::update(EngineContext* context) {
     m_presented = false;
-    if (!m_matrix) return;
+    if (!m_surface && context) m_surface = context->getSurface();
+    if (!m_surface) return;
     m_readers.fetch_add(1, std::memory_order_seq_cst);
     mqd::Session* s = m_live.load(std::memory_order_seq_cst);
     if (s) {
@@ -225,7 +227,7 @@ void MqttDataEngine::update(EngineContext* context) {
         if (n != m_notice) { m_notice = n; requestRedraw(); }
         if (m_redrawFrames) {
             m_redrawFrames--;
-            m_matrix->fillScreen(0);
+            m_surface->fillScreen(0);
             drawNotice(m_notice);
             m_presented = true;
         }
@@ -275,22 +277,22 @@ void MqttDataEngine::draw(mqd::Session& s) {
 
     if (m_redrawFrames == 0) return;   // both DMA buffers already show this page
     m_redrawFrames--;
-    m_matrix->fillScreen(0);
+    m_surface->fillScreen(0);
     switch (v.kind) {
-        case feed::Kind::Graph:   graph_renderer::drawGraph(m_matrix, v.graph, v.graph.showHeader); break;
+        case feed::Kind::Graph:   graph_renderer::drawGraph(m_surface, v.graph, v.graph.showHeader); break;
         case feed::Kind::Value:
-        case feed::Kind::Table:   values_renderer::drawValues(m_matrix, v.values, v.values.showTitle); break;
-        case feed::Kind::Weather: weather_page::draw(m_matrix, v.weather, m_cycle.sub); break;
+        case feed::Kind::Table:   values_renderer::drawValues(m_surface, v.values, v.values.showTitle); break;
+        case feed::Kind::Weather: weather_page::draw(m_surface, v.weather, m_cycle.sub); break;
         default: drawNotice(m_notice); break;
     }
     m_presented = true;
 }
 
 void MqttDataEngine::drawNotice(Notice n) {
-    if (n == Notice::NoData) { panel_text::drawNoData(m_matrix); return; }
-    if (n == Notice::Connecting) { panel_text::drawNotice(m_matrix, panel_text::Message::Connecting); return; }
-    if (n == Notice::NoConnection) { panel_text::drawNotice(m_matrix, panel_text::Message::NoConnection); return; }
-    if (n == Notice::Unsupported) { panel_text::drawNotice(m_matrix, panel_text::Message::Unsupported); return; }
+    if (n == Notice::NoData) { panel_text::drawNoData(m_surface); return; }
+    if (n == Notice::Connecting) { panel_text::drawNotice(m_surface, panel_text::Message::Connecting); return; }
+    if (n == Notice::NoConnection) { panel_text::drawNotice(m_surface, panel_text::Message::NoConnection); return; }
+    if (n == Notice::Unsupported) { panel_text::drawNotice(m_surface, panel_text::Message::Unsupported); return; }
 }
 
 EngineDescriptor MqttDataEngineDescriptorHandler::getDescriptor() const {
@@ -299,6 +301,10 @@ EngineDescriptor MqttDataEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = false;
     desc.capabilities.selfPaced = true;   // time on screen = one cycle of its pages (payload "seconds")
     desc.requirements.needsNetwork = true;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 4000;
+    desc.requirements.internalContiguousBytes = 8000;
     // Only the subscriptions are configured here; everything else comes from the payloads.
     desc.schema.fields = {
         ConfigField("topics", ConfigType::STRING, "MQTT Topics", "Comma-separated full topics, one page each (up to 6 with PSRAM, 4 without)", "", true, "", "", "", "", "", false, "", ValidationPolicy::Accept)

@@ -1,11 +1,11 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <Adafruit_GFX.h>
 
 class SparklineRenderer {
 public:
     static void drawSparkline(
-        MatrixPanel_I2S_DMA* matrix,
+        Adafruit_GFX* matrix,
         const float* points,
         size_t count,
         float minVal,

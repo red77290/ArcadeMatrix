@@ -1,7 +1,8 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+
+class IDrawingSurface;
 
 /**
  * The weather page layout, shared by every screen that shows a forecast page so they look the same
@@ -34,6 +35,6 @@ struct Page {
 void setRange(Page& page, float low, float high, bool fahrenheit);
 
 /// Draws the page. `offsetX`/`offsetY` shift it; `shadow` is the text shadow colour.
-void draw(MatrixPanel_I2S_DMA* matrix, const Page& page, int offsetX = 0, int offsetY = 0, uint16_t shadow = 0);
+void draw(IDrawingSurface* matrix, const Page& page, int offsetX = 0, int offsetY = 0, uint16_t shadow = 0);
 
 }  // namespace weather_layout

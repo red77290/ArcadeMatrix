@@ -3,35 +3,44 @@
 
 #include "../ClockEngine.h"
 #include "ClockFaceFont.h"
-#include <list>
+#include <Adafruit_GFX.h>
 
+// 20 bytes per block (512 of them live in one contiguous allocation inside TetrisClock, which has to
+// fit in the largest free heap block on a fragmented classic ESP32). Colour is derived from charIndex,
+// and the IN-only landing fields share storage with the OUT-only fall speed: a block never needs both.
 struct TetrisBlock {
-    int charIndex;
-    float x, y;
-    float tx, ty;
-    float dy;              // OUT: fall speed (px per 60 fps frame)
-    float startY;          // IN: where the block spawned above its target
+    float y;
     uint32_t spawnMs;      // IN: when it spawned
-    uint32_t durationMs;   // IN: how long it takes to land, whatever the frame rate
-    uint16_t color;
-    int state; // 0=in, 1=fixed, 2=out
-    /// Which sides of this cell face open space in the finished digit: 1 left, 2 right, 4 top,
-    /// 8 bottom. Worked out while the glyph is rasterised, so tracing the outline costs nothing
-    /// at draw time. 0 for a cell buried inside the shape.
+    union {
+        float dy;          // OUT: fall speed (px per 60 fps frame)
+        struct {
+            int16_t startY;      // IN: where the block spawned above its target
+            uint16_t durationMs; // IN: how long it takes to land, whatever the frame rate
+        };
+    };
+    int16_t x;             // X position (fixed to tx)
+    int16_t ty;            // target Y
+    int8_t charIndex;
+    int8_t state; // 0=in, 1=fixed, 2=out
     uint8_t edges;
 };
 
 class TetrisClock : public ClockFace {
 public:
-    TetrisClock(MatrixPanel_I2S_DMA* display, bool gameboyMode = false, const EngineConfig* config = nullptr);
+    TetrisClock(IDrawingSurface* display, bool gameboyMode = false, const EngineConfig* config = nullptr);
+    ~TetrisClock() override;
+
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 
 private:
+    static constexpr size_t MAX_BLOCKS = 512;
+
     bool isGameboy;
     TimeData storedTime;
-    std::list<TetrisBlock> blocks;
+    TetrisBlock blocks[MAX_BLOCKS];
+    size_t numBlocks;
     char lastTimeStr[12];
     uint32_t lastFrameTime;
     int blockSize;
@@ -40,10 +49,14 @@ private:
 
     /// Trace the outline of the digits the blocks are falling into, one pixel outside their cells.
     void drawOutline();
+    GFXcanvas1* canvas;       ///< Pre-allocated 1-bit raster canvas
 
+    void addBlock(const TetrisBlock& b);
+    uint16_t blockColor(int8_t charIndex) const;
     void buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount);
     void emitBlocksFor(const char* str, int charIdx, int labelIdx, const GFXfont* font, int16_t bx, int16_t by,
                        uint16_t bw, uint16_t bh, int originX, int originY, int fallFrom, int fallJitter, uint32_t landMs);
 };
 
 #endif
+

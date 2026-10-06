@@ -13,7 +13,7 @@ constexpr float HOUR_OFFSET = -30.0f;
 constexpr float MIN_OFFSET = -6.0f;
 }  // namespace
 
-CastleClock::CastleClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+CastleClock::CastleClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     storedTime = { 0, 0, 0 };
 }

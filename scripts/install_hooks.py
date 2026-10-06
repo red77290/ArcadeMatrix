@@ -34,7 +34,10 @@ def main():
     print("\n🎉 Git hooks installation complete! Pre-commit checks will now run on every commit:")
     print("  - Web Installer Manifest Validation (scripts/validate_webinstaller.py)")
     print("  - Documentation Drift & Config Key Guarding (scripts/validate_docs.py)")
+    print("  - UI & I18n Contract Verification (scripts/validate_ui_and_i18n.py)")
+    print("  - Host Native Unit Tests (scripts/run_native_tests.py)")
     print("  - Unit Test Compilation (pio test -e esp32dev --without-uploading --without-testing)")
+    print("  - Auto-Staging Build Artifacts with Commit (scripts/sync_build_info.py)")
 
 if __name__ == "__main__":
     main()

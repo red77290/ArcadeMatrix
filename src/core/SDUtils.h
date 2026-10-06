@@ -47,6 +47,20 @@ inline String getFileName(FsFile& f) {
 #endif
 }
 
+inline bool getFileNameBuffer(FsFile& f, char* outBuf, size_t outSize) {
+    if (!outBuf || outSize == 0) return false;
+    outBuf[0] = '\0';
+#if USE_SD_MMC
+    const char* n = f.name();
+    if (!n) return false;
+    strncpy(outBuf, n, outSize - 1);
+    outBuf[outSize - 1] = '\0';
+    return true;
+#else
+    return f.getName(outBuf, outSize);
+#endif
+}
+
 
 /**
  * Returns true if the filename is a macOS system file that should be ignored:
@@ -65,15 +79,14 @@ inline bool getNextFile(FsFile& dir, FsFile& file) {
 #endif
 }
 
-inline bool isMacJunk(const String& name) {
-    if (name.length() == 0) return true;
-    // Get just the filename part (after last '/')
-    int lastSlash = name.lastIndexOf('/');
-    String basename = (lastSlash >= 0) ? name.substring(lastSlash + 1) : name;
-    if (basename.startsWith("._")) return true;
-    if (basename == ".DS_Store") return true;
-    if (basename.startsWith(".Spotlight")) return true;
-    if (basename == ".Trashes") return true;
-    if (basename.startsWith(".")) return true; // catch-all for hidden files
+inline bool isMacJunk(const char* name) {
+    if (!name || name[0] == '\0') return true;
+    const char* lastSlash = strrchr(name, '/');
+    const char* basename = lastSlash ? (lastSlash + 1) : name;
+    if (basename[0] == '.') return true; // covers ._, .DS_Store, .Spotlight, .Trashes, hidden files
     return false;
+}
+
+inline bool isMacJunk(const String& name) {
+    return isMacJunk(name.c_str());
 }

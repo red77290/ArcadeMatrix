@@ -1,6 +1,5 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../../include/core/EngineContract.h"
 #include "../services/GNewsService.h"
 
@@ -27,6 +26,7 @@ public:
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
     bool isRealtime() const override { return true; }
+    bool needsClear() const override { return false; }
 
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
         _geometry = geometry;

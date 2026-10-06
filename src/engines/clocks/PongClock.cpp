@@ -3,7 +3,7 @@
 #include "../../core/ConfigLoader.h"
 #include <stdlib.h>
 
-PongClock::PongClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) { faceFont.load(config); glow = ClockFaceFont::resolveGlow(config);
+PongClock::PongClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config), lastMinute(-1), lastHour(-1), forceMissLeft(false), forceMissRight(false), lastFrameTime(0) { faceFont.load(config); glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     ball_size = max(2, (int)(matrix->height() / 16));
     pad_w = max(2, (int)(matrix->width() / 32));
@@ -70,11 +70,20 @@ void PongClock::update() {
         }
     }
 
-    // No internal throttle, rely on main loop 60 FPS
-        
+    // Physics constants (ball_dx, ball_dy, ai_speed) are expressed in pixels per REFERENCE_FRAME_MS.
+    // Scaling by elapsed time keeps the same on-screen speed at 20 or 60 FPS.
+    static constexpr float REFERENCE_FRAME_MS = 50.0f;
+    uint32_t nowMs = millis();
+    float step = 1.0f;
+    if (lastFrameTime != 0) {
+        step = (float)(nowMs - lastFrameTime) / REFERENCE_FRAME_MS;
+        if (step > 2.0f) step = 2.0f;   // never skip more than two reference frames after a stall
+    }
+    lastFrameTime = nowMs;
+
     // Physics update
-    ball_x += ball_dx;
-    ball_y += ball_dy;
+    ball_x += ball_dx * step;
+    ball_y += ball_dy * step;
     
     // Top/Bottom bounce
     if (ball_y <= 0) {
@@ -85,7 +94,7 @@ void PongClock::update() {
         ball_dy *= -1;
     }
     
-    float ai_speed = matrix->height() / 20.0f;
+    float ai_speed = (matrix->height() / 20.0f) * step;
     // P1 AI (Left)
     float target_p1 = ball_y - (pad_h / 2);
     if (ball_dx < 0) {
@@ -155,7 +164,23 @@ void PongClock::update() {
     matrix->fillRect(matrix->width() - pad_w, (int)p2_y, pad_w, pad_h, white);
     
     // Draw ball
-    matrix->fillRect((int)ball_x, (int)ball_y, ball_size, ball_size, white);
+    // Sub-pixel anti-aliased ball: area coverage over a (ball_size + 1)^2 footprint.
+    {
+        const int bx = (int)floorf(ball_x);
+        const int by = (int)floorf(ball_y);
+        const float fx = ball_x - (float)bx;
+        const float fy = ball_y - (float)by;
+        for (int j = 0; j <= ball_size; j++) {
+            float wy = (j == 0) ? (1.0f - fy) : (j == ball_size ? fy : 1.0f);
+            for (int i = 0; i <= ball_size; i++) {
+                float wx = (i == 0) ? (1.0f - fx) : (i == ball_size ? fx : 1.0f);
+                float cov = wx * wy;
+                if (cov < 0.04f) continue;
+                uint8_t v = (uint8_t)(cov * 255.0f);
+                matrix->drawPixel(bx + i, by + j, matrix->color565(v, v, v));
+            }
+        }
+    }
 }
 
 void PongClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {

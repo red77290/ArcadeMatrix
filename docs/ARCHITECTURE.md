@@ -61,7 +61,8 @@ flowchart TD
         WS["AsyncWebServer (Port 80)"]
         WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Atomic LittleFS/SD Save)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (RAM Flyweight Cache)"]
         MDNS["mDNS Responder"]
         AH["AudioHub (Background Audio Arbiter)"]
         AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
@@ -71,10 +72,11 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["Active IEngine (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer to HUB75 LEDs"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["DMA Output to HUB75 LEDs"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
@@ -191,28 +193,64 @@ classDiagram
 Instead of hardcoding engine instantiations in `main.cpp`:
 
 1. Each engine provides a descriptor handler (`IEngineDescriptorHandler`) returning its `EngineDescriptor`.
-2. At boot, `EngineRegistrar::registerAll()` inspects `hardwareHAL.capabilities()` against each descriptor's `EngineRequirements` (e.g. `needsPsram`, `needsAudio`, `needsMicrophone`).
-3. Only engines meeting hardware requirements are registered as active in `EngineRegistry`. Unsupported engines are flagged with `available: false` and a human-readable `unavailable_reason`.
+2. At boot, `EngineRegistrar::registerAll()` delegates capability gating to `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), which inspects `hardwareHAL.capabilities()` against each descriptor's `EngineRequirements` (e.g. `needsPsram`, `needsAudioInput`, `needsTempSensor`, `needsNetwork`).
+3. Only engines meeting hardware and panel geometry requirements are registered as active in `EngineRegistry`. Unsupported engines are flagged with `available: false` and an explanatory `unavailable_reason`.
 
 ```mermaid
 sequenceDiagram
     participant Boot as Setup (Core 1)
     participant Registrar as EngineRegistrar
     participant Handler as IEngineDescriptorHandler
+    participant Evaluator as CompatibilityEvaluator
     participant HAL as HardwareHAL
     participant Registry as EngineRegistry
 
     Boot->>Registrar: registerAll()
     loop For each handler
         Registrar->>Handler: getDescriptor()
-        Registrar->>HAL: capabilities()
+        Registrar->>Evaluator: evaluate(descriptor, context)
+        Evaluator->>HAL: capabilities()
         alt Requirements met (e.g. PSRAM, Audio)
             Registrar->>Registry: registerEngine(descriptor, available=true)
-        else Missing Hardware
+        else Missing Hardware / Incompatible
             Registrar->>Registry: registerEngine(descriptor, available=false, reason)
         end
     end
 ```
+
+### Canonical Engine Compatibility Model (Single Source of Truth)
+
+ArcadeMatrix V4 strictly forbids divergent compatibility logic across languages. The C++ `CompatibilityEvaluator` is the **sole source of truth**:
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Sole Canonical Authority)"]
+    EVAL -->|"Dynamic Runtime Evaluation (Core 0)"| ESP["ESP32 WebServerAPI (/api/engines)"]
+    EVAL -->|"Native Host Execution (macOS / Linux)"| CLI["Native matrix_generator Binary"]
+    ESP -->|"Two-Level Gating"| UI["WebUI Engine Catalog (data/index.html)"]
+    CLI -->|"JSON Artifact"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Generate & CI Validate (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Level 1 Gating (WebUI Catalog & ReferenceCapability):** The catalog (`/api/engines`) evaluates descriptors in `EvaluationMode::ReferenceCapability` against the static `ReferenceMemoryProfile` (idle baseline qualification). This ensures the catalog remains 100% invariant and immune to transient Core 1 memory pressure (such as GIF decoding). Incompatible engines are grayed out with a disabled button `🚫 Incompatible: <reason>` and rich tooltip diagnostics.
+- **Level 2 Gating (Runtime Safety on Target Pipeline):** `POST /api/rotation` and `POST /api/instances` evaluate submitted engines against the *target pipeline* requested (`targetPipeline`), not the currently active pipeline. Admission uses `ReferenceCapability` to prevent deadlock when transitioning from heavy engines to baseline engines.
+- **Continuous Documentation Validation:** Any addition or modification of an engine requires updating `test/native/tools/matrix_generator.cpp` and executing `scripts/generate_engine_matrix.py`. CI validates this via `scripts/validate_docs.py` using `--check`.
+
+### Declarative HTTP Concurrency & Socket Starvation Prevention
+
+The ESP32 network stack (LwIP on Core 0) shares internal DRAM with hardware peripherals. To prevent socket buffer starvation during intensive render cycles (e.g. GIF playback):
+1. **Firmware Advertisement (`/api/hardware`):** The firmware exposes `capabilities.http.recommendedConcurrency` (1 for `ESP32_STD`, 3 for `WAVESHARE_S3`).
+2. **Frontend `HttpRequestQueue` (`data/index.html`):** The WebUI boots with concurrency 1 and updates dynamically to the advertised limit. The queue encapsulates strictly the network transport call (`fetch()`), while JSON parsing, UI callbacks, and DOM rendering execute asynchronously outside the transport queue.
+
+### Transition Lifecycle & Statically Qualified Safe Fallback
+
+Transitions follow an atomic lifecycle:
+`deactivate(old) -> reclaim transient RAM -> initialize(new) -> activate(new)`
+
+If dynamic memory allocation fails during `initialize(new)`:
+- The system activates a **statically qualified Safe Fallback** engine requiring 0 PSRAM, 0 audio, 0 network, and $\le 2$ KB bounded RAM.
+- The system never attempts an uncertain re-allocation of the discarded heavy engine, ensuring unbroken display operation.
+- Persistent configuration (`config.json`) is committed only after activation success.
 
 ---
 
@@ -420,7 +458,14 @@ An earlier iteration of this codebase attempted to solve this by routing mbedTLS
 Display integrity takes strict priority over TLS reliability: a TLS fetch that fails due to internal DRAM pressure degrades gracefully (cached values are kept — see `DashboardDataProvider`, `YahooFinanceProvider`, `BinanceProvider`), whereas a corrupted display cannot recover without a reboot. Since internal DRAM is now the sole home for both TLS and DMA/networking, the actual fix is **admission control + serialization**, not allocator routing:
 1. **Capabilities Gating on Classic ESP32:** Heavy network engines (`CryptoEngine`, `StockEngine`) declare `EngineRequirements::needsPsram = true`. On boards without PSRAM, `ConfigSanitizer` automatically gates them off safely without crashing.
 2. **System-Wide TLS Serialization (`NetworkBudget::ScopedTlsHandshakeLock`):** Every TLS call site in the codebase (Dashboard weather/markets, Crypto, Stock, Spotify, Google Cast, Artwork, Marquee HTTPS fallback, GNews, Pixelcade sync) constructs a `ScopedTlsHandshakeLock` immediately before `WiFiClientSecure::connect()`. This is a single global FreeRTOS mutex: only one TLS handshake may be in flight anywhere in the firmware at any time, bounding peak internal-DRAM demand from concurrent handshakes to a single ~32 KB reservation instead of N-way overlap. **Atomicity fix (this round):** the constructor re-validates `NetworkBudget::canStartTlsSession()` *while already holding the mutex*, immediately before reporting success — closing a TOCTOU race where the budget could have been checked, found sufficient, and then invalidated by another handshake/allocation while this task was still waiting (up to 5s) to acquire the contended mutex. A cheap, non-authoritative `canStartTlsSession()` pre-check is still allowed at call sites purely to avoid blocking on an already-known-insufficient budget; only the lock's internal post-acquire re-check is authoritative.
-3. **Known open limitation:** the serialization above prevents crashes/display corruption, but does **not** solve underlying internal-DRAM fragmentation. On live hardware, with `Dashboard` active, free internal DRAM has been observed to drop from ~65 KB to a fragmented plateau of ~11-12 KB (largest block ~3 KB) within about 3 minutes of uptime. Since `canStartTlsSession()` requires `largestInternalBlock >= 16896 bytes`, **once this plateau is reached, `GoogleCastEngine` (and any other TLS consumer) can be denied admission indefinitely** — this currently manifests as **Google Cast never successfully connecting / rendering anything** once the system has been up for a few minutes with Dashboard or other engines active, even though mDNS discovery of the Cast device itself succeeds. This is an accepted degradation path (no crash, no corruption) but is **not yet solved** — see the Fragmentation / Future Work note below.
+3. **Known open limitation:** the serialization above prevents crashes/display corruption, but does **not** solve underlying internal-DRAM fragmentation. On live hardware, with `Dashboard` active, free internal DRAM has been observed to drop from ~65 KB to a fragmented plateau of ~11-12 KB (largest block ~3 KB) within about 3 minutes of uptime. Since `canStartTlsSession()` requires `largestInternalBlock >= 16717 bytes`, **once this plateau is reached, `GoogleCastEngine` (and any other TLS consumer) can be denied admission indefinitely** — this currently manifests as **Google Cast never successfully connecting / rendering anything** once the system has been up for a few minutes with Dashboard or other engines active, even though mDNS discovery of the Cast device itself succeeds. This is an accepted degradation path (no crash, no corruption) but is **not yet solved** — see the Fragmentation / Future Work note below.
+4. **Hardware-verified update (classic ESP32, no PSRAM, 128x32; `logBoot7`-`logBoot12`):**
+   - **Persistent System Zone Consolidation (Step 3):** Wi-Fi driver, STA association, DHCP negotiation, DNS resolvers, mDNS responder (4 KB task), SNTP time client, `WebServerAPI` routes (~70 closures with 8 KB `async_tcp` task), `AudioHub`, and `Core0LifecycleDispatcher` ("Lifecycle0", 3 KB task) are strictly initialized *before* `matrixEngine.begin()`. This packs all permanent system allocations in lower DRAM (`0x3ffe0000..0x3ffee000`), permanently eliminating middle-DRAM survivor islands that previously trapped DMA buffers upon release.
+   - **Volatile Sandbox Zone & Teardown-Then-Measure:** Matrix DMA bitplanes and active engine working buffers operate exclusively in upper DRAM (`0x3ffee000..0x3fffffff`). When switching engines under `RotationManager`, the outgoing engine deactivates with zero survivors (`GifEngine` clearing `lastPlayedGif` and swapping `m_configuredFolders`) and releases its panel (`releasePanel()`). The Sandbox Zone completely empties and coalesces into an unbroken block of **50,000 B to 65,000 B** (zero byte leak verified across rotation cycles: ~72 KB free DRAM recovered identically).
+   - **Deterministic Admission & Bitplane Stability:** `PipelineSelectionPolicy` qualifies incoming engines against this coalesced sandbox using `NetworkBudget::TLS_MIN_LARGEST_BLOCK` (16,717 B). `DashboardEngine` and `CryptoEngine` are admitted reliably in native 4-bit color depth (`requested=4, effective=4 bits`), completely eliminating bit-depth flapping (8 -> 4 -> 2 bits), while `AnimatedGIF` (24,172 B contiguous) and 8-bit double-buffered modes allocate reliably without starvation.
+   - **Exact admission math:** `hasTlsRecordBufferHeadroom()` trusts a single block only at `largest >= 35,000 B` and otherwise probes two 16,717 B allocations. Connect carries an explicit timeout (`WiFiClientSecure::connect(host, port, timeoutMs)`), removing 28-30 s stalls on unreachable hosts.
+5. **Allocation-failure hardening (Invariant 13 corollary):** a throwing `operator new` aborts the firmware (`__cxa_throw` → `terminate`), so exhaustion must never reach one. Handlers that mutate configuration (`POST /api/instances`, `POST /api/rotation`) reject with `503 + Retry-After` when `largest < 12 KB` or `free < 20 KB`; `sendJsonResponse` answers a body-less `503` instead of closing the client from inside the handler; `ConfigLoader::saveToSD` streams JSON directly without throwaway instances.
+6. **Transition-Window Prefetching & Presentation Decoupling:** Core 1 synchronous TLS stalls during display loops are eliminated. In `DisplayRuntime::maybeReconfigurePipelineFor()`, before allocating the new display panel, `targetEngine->prefetchData()` runs inside the clean transition window with DMA released (where 70 to 90 KB is free). `StockEngine` and `CryptoEngine` invoke `fetchCombined()` to retrieve both quote and historical candle points in a single keep-alive TLS session. During active presentation, `update()` renders strictly from local RAM cache without executing blocking TLS calls, and mid-presentation TLS is gated by `NetworkBudget::canStartTlsSession()` enforcing `largest >= TLS_MIN_COMBINED_BLOCK` (40 KB).
 
 #### Resource Hierarchy & Opportunistic Service Tiering
 
@@ -523,7 +568,8 @@ flowchart TD
         WS["AsyncWebServer (Port 80)"]
         WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Atomic LittleFS/SD Save)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (RAM Flyweight Cache)"]
         MDNS["mDNS Responder"]
         AH["AudioHub (Background Audio Arbiter)"]
         AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
@@ -533,20 +579,21 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["Active IEngine (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer to HUB75 LEDs"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["DMA Output to HUB75 LEDs"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
-```
+```,StartLine:522,TargetContent:
 
 ---
 
 ## 3. The Engine Contract (`IEngine`)
 
-Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](file:///Users/red1l/Documents/work/git/perso/ArcadeMatrix/include/core/EngineContract.h):
+Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](../include/core/EngineContract.h):
 
 ```cpp
 class IDisplayGeometryAware {
@@ -757,3 +804,95 @@ In ArcadeMatrix, `ValidationPolicy` defines the deterministic recovery action ex
 - `FallbackDefault`: Restores the field value to `field.default_value` upon constraint violation.
 - `Accept`: Accepts custom/unconstrained user values as-is (used for freeform text or unconstrained URLs).
 - `Reject`: Discards the invalid configuration and restores the documented default.
+
+---
+
+## 23. Drawing Surface Architecture, Dirty-State Tracking & Memory Invariants
+
+To achieve flicker-free rendering on single-buffer DMA panels (e.g. classic ESP32 with Canvas SRAM + Single DMA) while maintaining deterministic real-time memory behavior, ArcadeMatrix strictly isolates display engines from physical hardware buffering via `IDrawingSurface`.
+
+```text
+                         IEngine (Pure Algorithm)
+                                    │
+                            update() / render()
+                                    │
+                                    ▼
+                             IDrawingSurface
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                    SRAM Canvas           Dirty State
+                         │             unpresented changes
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                                 present()
+                                    │
+                           PresentationOutcome
+                                    │
+                        ┌───────────┴───────────┐
+                        │                       │
+                     success                 failure
+                        │                       │
+                  dirty = false             dirty = true
+                        │                       │
+                        └───────────┬───────────┘
+                                    ▼
+                         Hub75PresentationBackend
+                                    │
+                               Safe Window
+                                    │
+                                DMA commit
+```
+
+### 23.1 Dirty-State Semantics & Presentation Lifecycle
+
+1. **Automatic Dirty-Tracking via `markModified()`**: All mutating drawing operations on `CanvasBufferedSurface` (`drawPixel`, `drawFastHLine`, `drawFastVLine`, `fillRect`, `fillScreen`, `blit565`, `acquireCanvas`) converge on an inline `markModified()` method setting `_dirty = true`. Because `Adafruit_GFX` implements all higher-level drawing primitives on top of these virtuals, 100% of canvas modifications are captured with zero engine overhead.
+2. **Presentation Gating**: When `present()` is evaluated, if `!_dirty`, no DMA transfer or bitplane burst encoding takes place. The hardware DMA continues scanning the active buffer without CPU intervention, eliminating frame-to-frame jitter.
+3. **Commit Atomicity**: `_dirty` is reset to `false` **only if** `backend->presentCanvas()` returns `PresentationResult::Ok`. If presentation fails (e.g. `SafeWindowTimeout` or DMA bus contention), `_dirty` remains `true` (Invariant 20), ensuring that the uncommitted frame is retried on the next tick without dropping visual state.
+
+### 23.2 Formal Architectural Invariants 15 through 20
+
+- **🔴 Invariant 15 — Allocation-Free Deactivation:**
+  Once deactivation begins, the outgoing engine MUST NOT perform any new dynamic allocation. Deactivation may only release, close, stop, or detach resources owned by the engine. All internal container deallocations use `std::vector<T>().swap(vec)` or `{}` rather than non-binding `shrink_to_fit()`.
+- **🔴 Invariant 16 — Quiescent Deactivation (Two-Stage Rendering & Resource Quiescence):**
+  Deactivation strictly enforces two-stage quiescence:
+  1. `deactivate()` on Core 1 MUST execute without blocking or waiting on network sockets, establishing immediate **logical rendering quiescence** (detaching drawing surface, immediately stopping all draw calls, and signaling cooperative cancellation to background tasks).
+  2. `shutdownForDestruction()` on Core 0 cooperatively halts and joins all engine-owned background tasks (`FgtLoader`, `DashFetch`, `CastPoll`), terminates timers, aborts network sockets, and closes open file descriptors before shared hardware or memory resources are released.
+- **🔴 Invariant 17 — Dirty State Represents Unpresented Changes:**
+  `IDrawingSurface::isDirty()` MUST remain true until the corresponding canvas state has been successfully committed to the display hardware (`PresentationResult::Ok`).
+- **🔴 Invariant 18 — Canvas-Only Clear:**
+  A surface clear operation (`clear()` / `fillScreen(0)`) MUST modify exclusively the surface-owned drawing storage (canvas RAM). It MUST NOT write directly into an actively scanned HUB75 DMA buffer.
+- **🔴 Invariant 19 — DMA Isolation:**
+  Display engines and rotation managers MUST NOT directly access, clear, or modify hardware presentation/DMA storage (`FastMatrixPanel`). All rendering must pass exclusively through `IDrawingSurface`.
+- **🔴 Invariant 20 — Failed Presentation Preservation:**
+  A failed presentation attempt MUST NOT clear the dirty state, preserving the unpresented changes for retry on the subsequent frame.
+- **🔴 Invariant 21 — HUB75 Output Isolation & Hardware Presentation Transaction:**
+  During presentation pipeline reconfiguration, OE (Output Enable) remains asserted (HIGH / display physically blanked) from the beginning of teardown until the new DMA pipeline has been initialized and the first valid frame (Frame 0) is committed (`firstFrameCommitted == true`). If target and fallback allocations fail, OE remains asserted (HIGH) in `PresentationRecovery` state: no inconsistent GPIO states, transient scan patterns, or unhandled corrupted outputs may reach the HUB75 panel. Outgoing engine `deactivate()` strictly guarantees logical rendering quiescence on Core 1 (zero further draw commands or surface access), while background worker and network resource quiescence is finalized by `shutdownForDestruction()` prior to presentation teardown.
+- **🔴 Invariant N8 — Post-Quiescence Application Isolation:**
+  Once a network session has been aborted and its owning engine has completed quiescent deactivation, no further application processing, JSON parsing, callback invocation, or buffer allocation may occur on that session.
+
+### 23.3 Quiescent Baseline Envelope
+
+Rather than an unrealistic promise of exact byte-for-byte heap equality across dynamic network operations, ArcadeMatrix defines a formal **Quiescent Baseline Envelope**:
+- Upon `deactivate(old)`, the system returns to the reference idle baseline within a bounded envelope: $|\text{baseline}_{\text{final}} - \text{baseline}_{\text{initial}}| \le 2\text{ KB}$.
+- Zero cumulative memory drift across 100 consecutive rotation cycles (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
+- Zero active engine-owned background tasks, zero leaked file descriptors, and zero dangling network sockets post-deactivation.
+
+---
+
+## 24. Dynamic Presentation Pipeline & Memory Optimization Architecture
+
+For constrained hardware (such as ESP32 classic driving 128×32 matrix geometries), ArcadeMatrix implements a **Dynamic Presentation Pipeline** coupled with extensive memory reclamation systems:
+1. **Dynamic Color Depth ($8 \leftrightarrow 7 \dots 2$):** Commutes dynamically between preferred unconstrained graphics depth (up to 8 bits across all platforms including classic ESP32) and a memory-safe presentation depth (typically 4 bits or 2 bits) during TLS network engine execution, evaluating multi-dimensional free DRAM, largest contiguous block, and DMA headroom.
+2. **Hardware Presentation Transactions:** Atomic pipeline rebuild executed in $< 30\text{ ms}$ under complete OE hardware blanking.
+3. **Single DMA + Canvas Pipeline (`canvas_single`):** Reclaims up to 32 KB DRAM over legacy double-buffered DMA architectures.
+4. **Comprehensive Memory Reclamation:** Ephemeral background tasks (`SdSpace`), zero-allocation HTTP streaming stack buffers, lazy buffer allocations (`MarqueeEngine`), SoftAP/mDNS teardown, and tuned task stacks.
+5. **Teardown-Then-Measure Sandbox Model:** Deallocating outgoing engine and panel buffers before measuring available heap restores a clean 50–64 KB contiguous block, eliminating color depth flapping and guaranteeing deterministic 4-bit depth for TLS engines.
+6. **Boot Heap Layout Consolidation:** Pre-allocating route closures below `0x3ffee000` leaves upper DRAM unbroken for volatile display and network buffers.
+7. **Two-Stage Lifecycle Separation (Invariants 15 & 16):** Non-blocking `deactivate()` on Core 1 for immediate logical rendering quiescence and scoped socket abort vs Core 0 `shutdownForDestruction()` for physical task join and stack reclamation.
+8. **Network Transaction Consolidation:** Multi-symbol quote batching and HTTP/1.1 keep-alive sessions (`net::SecureHttpSession`) consolidating N separate handshakes into a single TLS handshake per batch.
+9. **3-Level Icon Cache Architecture:** In-memory RGB565 bitmaps (L1), persistent SD storage (L2), and lightweight HTTP proxying via `images.weserv.nl` + `JPEGDEC` (L3) consuming only ~2.5 KB RAM (a >92% reduction over legacy PNGdec).
+
+Detailed architectural analysis, benchmarks, and quantitative baseline comparisons are documented in [docs/MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md).
+
