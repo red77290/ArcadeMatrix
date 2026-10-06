@@ -1,4 +1,5 @@
 #include "PanelText.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include "../../../include/core/I18n.h"
 
 namespace panel_text {
@@ -37,14 +38,14 @@ bool tinyBits(char c, uint16_t& bits) {
     return false;
 }
 
-inline void px(MatrixPanel_I2S_DMA* m, int x, int y, int s, uint16_t color, int clipX) {
+inline void px(IDrawingSurface* m, int x, int y, int s, uint16_t color, int clipX) {
     if (x >= clipX) return;
     int w = (x + s > clipX) ? clipX - x : s;
     m->fillRect(x, y, w, s, color);
 }
 
 // The built-in font's degree glyph (CP437 0xF8): columns 1..4 of the 5x7 cell, rows 0..3.
-void drawDegreeG(MatrixPanel_I2S_DMA* m, int x, int y, int s, uint16_t color, int clipX) {
+void drawDegreeG(IDrawingSurface* m, int x, int y, int s, uint16_t color, int clipX) {
     static const uint8_t kRing[4] = {0x06, 0x09, 0x09, 0x06};   // bit 3 = column 1
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
@@ -55,7 +56,7 @@ void drawDegreeG(MatrixPanel_I2S_DMA* m, int x, int y, int s, uint16_t color, in
 
 }  // namespace
 
-void print(MatrixPanel_I2S_DMA* m, int x, int y, const char* text, int font, uint16_t color, int clipX) {
+void print(IDrawingSurface* m, int x, int y, const char* text, int font, uint16_t color, int clipX) {
     if (!m || !text) return;
     if (font == TINY) {
         int cx = x;
@@ -86,19 +87,19 @@ void print(MatrixPanel_I2S_DMA* m, int x, int y, const char* text, int font, uin
 }
 
 namespace {
-void drawCentred(MatrixPanel_I2S_DMA* m, const char* msg, uint16_t color) {
+void drawCentred(IDrawingSurface* m, const char* msg, uint16_t color) {
     print(m, (m->width() - width(msg, 1)) / 2, (m->height() - 7) / 2, msg, 1, color);
 }
 }  // namespace
 
-void drawNoData(MatrixPanel_I2S_DMA* m) {
+void drawNoData(IDrawingSurface* m) {
     if (!m) return;
     const Lang l = I18n::getLang();
     const char* msg = (l == Lang::FR) ? "PAS DE DONNEES" : (l == Lang::ES) ? "SIN DATOS" : "NO DATA";
     drawCentred(m, msg, m->color565(0x78, 0x78, 0x78));
 }
 
-void drawNotice(MatrixPanel_I2S_DMA* m, Message msg) {
+void drawNotice(IDrawingSurface* m, Message msg) {
     if (!m) return;
     const Lang l = I18n::getLang();
     if (msg == Message::Connecting) {

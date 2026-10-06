@@ -1,73 +1,65 @@
 #include "YahooFinanceProvider.h"
 #include "../core/Logger.h"
-#include "../core/NetworkBudget.h"
-#include <WiFiClientSecure.h>
+#include "../core/net/SecureHttpClient.h"
+#if defined(ESP32)
+#include <esp_task_wdt.h>
+#endif
+
+static bool isCryptoSymbol(const String& sym) {
+    if (sym.endsWith("-USD") || sym.endsWith("USDT")) return true;
+    static const char* const CRYPTO_LIST[] = {
+        "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "DOT", "LINK",
+        "TRX", "MATIC", "POL", "SHIB", "LTC", "BCH", "UNI", "NEAR", "APT", "ATOM",
+        "XLM", "XMR", "FIL", "ICP", "HBAR", "VET", "ALGO", "PEPE", "SUI", "RENDER"
+    };
+    for (const char* c : CRYPTO_LIST) {
+        if (sym.equalsIgnoreCase(c)) return true;
+    }
+    return false;
+}
 
 bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
-    // See BinanceProvider::fetchQuote: attempting a handshake without the required
-    // internal DRAM only fragments the heap and starves the SD/FATFS layer.
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("Yahoo", "Skipping quote for %s: insufficient internal DRAM for TLS (free=%u, largest=%u).",
-             symbol.c_str(), (unsigned)NetworkBudget::freeInternal(), (unsigned)NetworkBudget::largestInternalBlock());
-        return false;
+    return fetchQuote(symbol, outPrice, outChange, outImageUrl, net::OWNER_ANY);
+}
+
+bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl, uint8_t ownerId) {
+    net::SecureHttpOptions options;
+    options.ownerId = ownerId;
+    options.requestTimeoutMs = 3000;
+    options.handshakeTimeoutSec = 4;
+
+    String cleanSym = symbol;
+    cleanSym.trim();
+    cleanSym.toUpperCase();
+    String querySym = cleanSym;
+    if (isCryptoSymbol(cleanSym) && !cleanSym.endsWith("-USD") && cleanSym.indexOf('-') == -1) {
+        querySym = cleanSym + "-USD";
     }
 
-    // Serialize this handshake against every other TLS user in the system (Dashboard weather,
-    // Cast, artwork, etc.). mbedTLS's ~32KB combined record buffers must come from internal DRAM
-    // only on this board (see HardwareHAL::begin() comment); overlapping handshakes compound peak
-    // internal DRAM demand and are the main reason isolated MBEDTLS_ERR_SSL_ALLOC_FAILED failures
-    // happen even when canStartTlsSession() was satisfied moments earlier.
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        if (tlsLock.isDeniedByBudget()) {
-            LOGW("Yahoo", "Skipping quote for %s: internal DRAM budget denied TLS admission.", symbol.c_str());
-        } else {
-            LOGW("Yahoo", "Skipping quote for %s: another TLS handshake is in progress.", symbol.c_str());
-        }
-        return false;
+    String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + querySym + "?interval=1d&range=1d";
+    auto res = net::SecureHttpClient::get(url, options);
+    if (!res.ok()) {
+        String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + querySym + "?interval=1d&range=1d";
+        res = net::SecureHttpClient::get(fallbackUrl, options);
     }
 
-    String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
-    
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.setTimeout(3000);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-    
-    int code = -1;
-    if (http.begin(client, url)) {
-        code = http.GET();
-        if (code != 200) {
-            http.end();
-            String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=1d&range=1d";
-            if (http.begin(client, fallbackUrl)) {
-                code = http.GET();
-            }
-        }
-        
-        if (code == 200) {
-            WiFiClient* stream = http.getStreamPtr();
-            if (stream && parsePayload(*stream, outPrice, outChange)) {
-                String lowerSymbol = symbol;
-                lowerSymbol.toLowerCase();
-                outImageUrl = "https://eodhd.com/img/logos/US/" + lowerSymbol + ".png";
-                http.end();
-                client.stop();
-                return true;
-            }
-        }
-        http.end();
-        client.stop();
+    if (res.ok() && parsePayload(res.stream(), outPrice, outChange)) {
+        String lowerSymbol = cleanSym;
+        lowerSymbol.toLowerCase();
+        outImageUrl = isCryptoSymbol(cleanSym) ? "" : ("https://eodhd.com/img/logos/US/" + lowerSymbol + ".png");
+        return true;
     }
-    
     return false;
 }
 
 bool YahooFinanceProvider::parsePayload(Stream& stream, float& outPrice, float& outChange) {
+    StaticJsonDocument<256> filter;
+    filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+    filter["chart"]["result"][0]["meta"]["previousClose"] = true;
+    filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+
     DynamicJsonDocument doc(2048);
-    DeserializationError err = deserializeJson(doc, stream);
+    DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
     if (!err) {
         JsonObject meta = doc["chart"]["result"][0]["meta"];
         if (!meta.isNull()) {
@@ -85,8 +77,13 @@ bool YahooFinanceProvider::parsePayload(Stream& stream, float& outPrice, float& 
 }
 
 bool YahooFinanceProvider::parsePayload(const String& payload, float& outPrice, float& outChange) {
+    StaticJsonDocument<256> filter;
+    filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+    filter["chart"]["result"][0]["meta"]["previousClose"] = true;
+    filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+
     DynamicJsonDocument doc(2048);
-    DeserializationError err = deserializeJson(doc, payload);
+    DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
     if (!err) {
         JsonObject meta = doc["chart"]["result"][0]["meta"];
         if (!meta.isNull()) {
@@ -106,81 +103,49 @@ bool YahooFinanceProvider::parsePayload(const String& payload, float& outPrice, 
 bool YahooFinanceProvider::fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
 
-    if (!NetworkBudget::canStartTlsSession()) {
-        LOGW("Yahoo", "Skipping history for %s: insufficient internal DRAM for TLS.", symbol.c_str());
-        return false;
-    }
+    String cleanSym = symbol;
+    cleanSym.trim();
+    cleanSym.toUpperCase();
+    if (cleanSym.isEmpty()) return false;
 
-    NetworkBudget::ScopedTlsHandshakeLock tlsLock;
-    if (!tlsLock) {
-        if (tlsLock.isDeniedByBudget()) {
-            LOGW("Yahoo", "Skipping history for %s: internal DRAM budget denied TLS admission.", symbol.c_str());
-        } else {
-            LOGW("Yahoo", "Skipping history for %s: another TLS handshake is in progress.", symbol.c_str());
-        }
-        return false;
+    String querySym = cleanSym;
+    if (isCryptoSymbol(cleanSym) && !cleanSym.endsWith("-USD") && cleanSym.indexOf('-') == -1) {
+        querySym = cleanSym + "-USD";
     }
 
     const char* range = "1d";
     const char* interval = "5m";
     switch (tf) {
-        case Timeframe::Hourly:
-            range = "1d";
-            interval = "2m";
-            break;
-        case Timeframe::Daily:
-            range = "1d";
-            interval = "5m";
-            break;
-        case Timeframe::Weekly:
-            range = "5d";
-            interval = "15m";
-            break;
-        case Timeframe::Monthly:
-            range = "1mo";
-            interval = "1d";
-            break;
+        case Timeframe::Hourly:  range = "1d";  interval = "2m";  break;
+        case Timeframe::Daily:   range = "1d";  interval = "5m";  break;
+        case Timeframe::Weekly:  range = "5d";  interval = "15m"; break;
+        case Timeframe::Monthly: range = "1mo"; interval = "1d";  break;
     }
 
-    String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
+    esp_task_wdt_reset();
+    String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + querySym + "?interval=" + String(interval) + "&range=" + String(range);
+    auto res = net::SecureHttpClient::get(url);
+    if (!res.ok()) {
+        esp_task_wdt_reset();
+        String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + querySym + "?interval=" + String(interval) + "&range=" + String(range);
+        res = net::SecureHttpClient::get(fallbackUrl);
+    }
+    esp_task_wdt_reset();
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.setTimeout(3000);
-    http.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-
-    int code = -1;
-    if (http.begin(client, url)) {
-        code = http.GET();
-        if (code != 200) {
-            http.end();
-            String fallbackUrl = "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol + "?interval=" + String(interval) + "&range=" + String(range);
-            if (http.begin(client, fallbackUrl)) {
-                code = http.GET();
-            }
-        }
-
-        if (code == 200) {
-            String payload = http.getString();
-            if (parseChart(payload, outPoints, maxPoints, outCount, outMin, outMax)) {
-                http.end();
-                client.stop();
-                return true;
-            }
-        }
-        http.end();
-        client.stop();
+    if (res.ok() && parseChart(res.stream(), outPoints, maxPoints, outCount, outMin, outMax)) {
+        return true;
     }
     return false;
 }
 
-bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
+bool YahooFinanceProvider::parseChart(Stream& stream, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
 
-    DynamicJsonDocument doc(16384);
-    DeserializationError err = deserializeJson(doc, payload);
+    StaticJsonDocument<256> filter;
+    filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
     if (!err) {
         JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
         if (closes.isNull()) return false;
@@ -192,7 +157,6 @@ bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, s
         size_t n = closes.size();
         if (n == 0) return false;
 
-        // Downsample or take step if n > maxPoints
         size_t step = (n > maxPoints) ? (n / maxPoints) : 1;
         if (step == 0) step = 1;
 
@@ -210,3 +174,181 @@ bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, s
     }
     return false;
 }
+
+bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
+    if (!outPoints || maxPoints == 0) return false;
+
+    StaticJsonDocument<256> filter;
+    filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+    if (!err) {
+        JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
+        if (closes.isNull()) return false;
+
+        outCount = 0;
+        outMin = 1e9f;
+        outMax = -1e9f;
+
+        size_t n = closes.size();
+        if (n == 0) return false;
+
+        size_t step = (n > maxPoints) ? (n / maxPoints) : 1;
+        if (step == 0) step = 1;
+
+        for (size_t i = 0; i < n && outCount < maxPoints; i += step) {
+            if (!closes[i].isNull()) {
+                float val = closes[i].as<float>();
+                if (val > 0.0f) {
+                    outPoints[outCount++] = val;
+                    if (val < outMin) outMin = val;
+                    if (val > outMax) outMax = val;
+                }
+            }
+        }
+        return (outCount > 0 && outMin <= outMax);
+    }
+    return false;
+}
+
+bool YahooFinanceProvider::fetchQuoteAndHistory(const String& symbol,
+    float& outPrice, float& outChange, String& outImageUrl,
+    Timeframe tf, float* outPoints, size_t maxPoints,
+    size_t& outCount, float& outMin, float& outMax)
+{
+    String cleanSym = symbol;
+    cleanSym.trim();
+    cleanSym.toUpperCase();
+    String querySym = cleanSym;
+    if (isCryptoSymbol(cleanSym) && !cleanSym.endsWith("-USD") && cleanSym.indexOf('-') == -1) {
+        querySym = cleanSym + "-USD";
+    }
+
+    net::SecureHttpSession session("query1.finance.yahoo.com");
+
+    // ── Request 1: Quote ──
+    String quotePath = "/v8/finance/chart/" + querySym + "?interval=1d&range=1d";
+    auto quoteRes = session.get(quotePath);
+    bool quoteOk = quoteRes.ok() && parsePayload(quoteRes.stream(), outPrice, outChange);
+    if (quoteOk) {
+        String lowerSymbol = cleanSym;
+        lowerSymbol.toLowerCase();
+        outImageUrl = isCryptoSymbol(cleanSym) ? "" : ("https://eodhd.com/img/logos/US/" + lowerSymbol + ".png");
+        LOGI("Yahoo", "[Combined] Quote for %s: %.2f (%.2f%%)", cleanSym.c_str(), outPrice, outChange);
+    }
+    quoteRes.consume();
+
+    // ── Request 2: History (chart) on SAME TLS session ──
+    if (quoteOk && outPoints && maxPoints > 0) {
+        const char* range = "1d";
+        const char* interval = "5m";
+        switch (tf) {
+            case Timeframe::Hourly:  range = "1d";  interval = "2m";  break;
+            case Timeframe::Daily:   range = "1d";  interval = "5m";  break;
+            case Timeframe::Weekly:  range = "5d";  interval = "15m"; break;
+            case Timeframe::Monthly: range = "1mo"; interval = "1d";  break;
+        }
+
+        String histPath = "/v8/finance/chart/" + querySym + "?interval=" + String(interval) + "&range=" + String(range);
+        auto histRes = session.get(histPath);
+        if (histRes.ok()) {
+            if (parseChart(histRes.stream(), outPoints, maxPoints, outCount, outMin, outMax)) {
+                LOGI("Yahoo", "[Combined] History for %s: %d points (%s/%s)", cleanSym.c_str(), (int)outCount, range, interval);
+            }
+        }
+        histRes.consume();
+    }
+
+    return quoteOk;
+}
+
+bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes) {
+    return fetchQuotes(symbols, outQuotes, net::OWNER_ANY);
+}
+
+bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes, uint8_t ownerId) {
+    (void)ownerId;
+    if (symbols.empty()) return false;
+
+    net::SecureHttpSession session("query1.finance.yahoo.com");
+    bool anyOk = false;
+
+    for (const auto& sym : symbols) {
+        String cleanSym = sym;
+        cleanSym.trim();
+        cleanSym.toUpperCase();
+        if (cleanSym.isEmpty()) continue;
+
+        String querySym = cleanSym;
+        if (isCryptoSymbol(cleanSym) && !cleanSym.endsWith("-USD") && cleanSym.indexOf('-') == -1) {
+            querySym = cleanSym + "-USD";
+        }
+
+        String path = "/v8/finance/chart/" + querySym + "?interval=1d&range=1d";
+        auto res = session.get(path);
+        
+        if (!res.ok()) {
+            session.close(); // Cleanly close session 1 to avoid dual TLS sessions concurrently
+            net::SecureHttpSession session2("query2.finance.yahoo.com");
+            auto res2 = session2.get(path);
+            if (res2.ok()) {
+                float price = 0.0f, change = 0.0f;
+                if (parsePayload(res2.stream(), price, change)) {
+                    StockQuote q;
+                    q.price = price;
+                    q.change24h = change;
+                    String lowerSymbol = cleanSym;
+                    lowerSymbol.toLowerCase();
+                    q.imageUrl = isCryptoSymbol(cleanSym) ? "" : ("https://eodhd.com/img/logos/US/" + lowerSymbol + ".png");
+                    q.valid = true;
+                    outQuotes[cleanSym] = q;
+                    anyOk = true;
+                    LOGI("Yahoo", "[Batch] Quote for %s (%s): %.2f (%.2f%%)", cleanSym.c_str(), querySym.c_str(), price, change);
+                }
+                res2.consume();
+            }
+            continue;
+        }
+
+        float price = 0.0f, change = 0.0f;
+        if (parsePayload(res.stream(), price, change)) {
+            StockQuote q;
+            q.price = price;
+            q.change24h = change;
+            String lowerSymbol = cleanSym;
+            lowerSymbol.toLowerCase();
+            q.imageUrl = isCryptoSymbol(cleanSym) ? "" : ("https://eodhd.com/img/logos/US/" + lowerSymbol + ".png");
+            q.valid = true;
+            outQuotes[cleanSym] = q;
+            anyOk = true;
+            LOGI("Yahoo", "[Batch] Quote for %s (%s): %.2f (%.2f%%)", cleanSym.c_str(), querySym.c_str(), price, change);
+        }
+        res.consume();
+    }
+
+    return anyOk;
+}
+
+bool YahooFinanceProvider::fetchHistories(const std::vector<String>& symbols, Timeframe tf, std::map<String, StockHistoryData>& outHistories) {
+    if (symbols.empty()) return false;
+    bool anyOk = false;
+
+    for (const auto& sym : symbols) {
+        String cleanSym = sym;
+        cleanSym.trim();
+        cleanSym.toUpperCase();
+        if (cleanSym.isEmpty()) continue;
+
+        StockHistoryData h;
+        if (fetchHistory(cleanSym, tf, h.points, 64, h.count, h.minPrice, h.maxPrice)) {
+            h.valid = true;
+            outHistories[cleanSym] = h;
+            anyOk = true;
+            LOGI("Yahoo", "[Batch History] Fetched %d points for %s", (int)h.count, cleanSym.c_str());
+        }
+    }
+
+    return anyOk;
+}
+

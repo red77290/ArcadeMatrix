@@ -16,7 +16,7 @@ constexpr int MARIO_JUMP_W = 17;
 constexpr int SCENE = 64;          ///< the original scene is 64 px square
 }  // namespace
 
-MarioClock::MarioClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+MarioClock::MarioClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     faceFont.load(config);
     storedTime = { 0, 0, 0 };

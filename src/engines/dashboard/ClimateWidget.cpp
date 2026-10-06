@@ -1,7 +1,7 @@
 #include "ClimateWidget.h"
 #include "DashboardCommon.h"
 #include "../../core/I18n.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../../core/drawing/IDrawingSurface.h"
 
 namespace {
 // Core 1 render() runs every frame; localizing/uppercasing the weather description on every
@@ -30,7 +30,7 @@ const char* getCachedOutdoorLabel(const String& rawDescription, Lang lang) {
 }
 } // namespace
 
-void ClimateWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
+void ClimateWidget::render(IDrawingSurface* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
     if (!matrix || rect.width < 14 || rect.height < 8) return;
 
     Lang l = I18n::parseLang(lang);

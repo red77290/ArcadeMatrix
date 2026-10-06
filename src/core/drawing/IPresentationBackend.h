@@ -1,0 +1,130 @@
+/**
+ * @file IPresentationBackend.h
+ * @brief Abstract interface governing DMA presentation and timing policies.
+ */
+#pragma once
+#include <Arduino.h>
+#include "Hub75DmaTarget.h"
+#include "IDrawingSurface.h"
+
+struct PresentationPolicy {
+    uint32_t maxBlankUs = 400;              ///< Maximum allowable transient OE blanking duration (default 400µs)
+    uint32_t maxFrameUs = 16667;            ///< Maximum frame period budget (16.6ms for 60 FPS)
+    uint32_t safeWindowTimeoutUs = 1000;    ///< Maximum deadline to wait for safe scanline window
+    bool allowBlanking = false;             ///< Whether transient blanking is permitted (default false: eliminates strobing/flicker)
+    bool degradedBlankingPermitted = false; ///< Set when hardware constraints require exceeding 400µs blanking
+};
+
+struct SafeWindowResult {
+    bool acquired = true;
+    uint32_t waitUs = 0;
+    uint32_t availableWindowUs = 0;
+
+    SafeWindowResult() : acquired(true), waitUs(0), availableWindowUs(0) {}
+    SafeWindowResult(bool acq, uint32_t wait, uint32_t avail)
+        : acquired(acq), waitUs(wait), availableWindowUs(avail) {}
+};
+
+class IPresentationSynchronizer {
+public:
+    virtual ~IPresentationSynchronizer() = default;
+
+    /**
+     * @brief Waits for a safe presentation window (e.g. V-Blank or scanline pause).
+     * @param requiredTransferUs Estimated duration of data transfer
+     * @param timeoutUs Maximum time in microseconds to wait
+     * @return SafeWindowResult Result descriptor containing status, wait time, and available window
+     */
+    virtual SafeWindowResult waitForSafeWindow(uint32_t requiredTransferUs, uint32_t timeoutUs) {
+        (void)requiredTransferUs;
+        (void)timeoutUs;
+        return SafeWindowResult{true, 0, 1000};
+    }
+
+    /**
+     * @brief Backward-compatible single-parameter overload.
+     */
+    virtual bool waitForSafeWindow(uint32_t timeoutUs) {
+        return waitForSafeWindow(0, timeoutUs).acquired;
+    }
+};
+
+class IPresentationBackend {
+public:
+    virtual ~IPresentationBackend() = default;
+
+    /**
+     * @brief Prepares and returns the physical DMA target descriptor for encoding.
+     */
+    virtual Hub75DmaTarget acquireDmaTarget() = 0;
+
+    /**
+     * @brief Commits the packed buffer to the display hardware adhering to timing policy.
+     * @param policy Timing constraints (blanking limits, frame deadline)
+     * @return PresentationTiming Live performance telemetry
+     */
+    virtual PresentationTiming commit(const PresentationPolicy& policy) = 0;
+
+    /**
+     * @brief Commits Frame 0 (initial deterministic black frame) to initialize and prime
+     * the DMA pipeline during a presentation reconfiguration before hardware OE unblanking.
+     *
+     * Semantics:
+     * Represents a successful presentation pipeline commit operation (Frame 0 successfully
+     * submitted to the active DMA presentation pipeline). As unidirectional HUB75 shift registers
+     * provide no hardware bus readback acknowledgement, this verifies that the backend resources
+     * are fully allocated, cache writeback has completed, and the DMA swap operation has executed.
+     *
+     * Timing / Safe-Window:
+     * commitFirstFrame() is a reconfiguration-only initialization commit performed while OE is
+     * asserted (hardware blanked); it does not use the normal frame safe-window path because
+     * presentation output is physically blanked and tearing cannot be visually observed.
+     *
+     * @return PresentationTiming Live performance telemetry with status Ok on successful submission
+     */
+    virtual PresentationTiming commitFirstFrame() {
+        PresentationTiming pt;
+        pt.result = PresentationResult::BackendUnavailable;
+        return pt;
+    }
+
+    /**
+     * @brief High-level presentation entry point orchestrating encoding and commit.
+     * Enforces pipeline-specific ordering:
+     * - Double Buffer: Encode -> Cache Writeback -> Safe Window -> (Optional Blank) -> Swap -> Unblank
+     * - Single Buffer: Safe Window -> (Optional Blank) -> Encode -> Cache Writeback -> Commit -> Unblank
+     * @param canvas Pointer to linear 16-bit RGB565 intermediate canvas
+     * @param canvasWidth Physical width of canvas
+     * @param canvasHeight Physical height of canvas
+     * @param strategy Active presentation strategy (CANVAS_BURST_SINGLE vs CANVAS_BURST_DOUBLE)
+     * @param policy Timing constraints and blanking budget
+     * @return PresentationTiming Live performance telemetry
+     */
+    virtual PresentationTiming presentCanvas(
+        const uint16_t* canvas,
+        uint16_t canvasWidth,
+        uint16_t canvasHeight,
+        PresentationStrategy strategy,
+        const PresentationPolicy& policy
+    ) = 0;
+
+    /**
+     * @brief Calculates exact DMA RAM bytes required for the active configuration.
+     */
+    virtual size_t calculateDmaBytes() const = 0;
+
+    /**
+     * @brief Signals external draw notification to underlying engine.
+     */
+    virtual void markExternalDraw() {}
+
+    /**
+     * @brief Returns active synchronizer implementation (or nullptr if unavailable).
+     */
+    virtual IPresentationSynchronizer* getSynchronizer() { return nullptr; }
+
+    /**
+     * @brief Attaches a hardware presentation synchronizer (e.g. V-Blank or scanline pause).
+     */
+    virtual void setSynchronizer(IPresentationSynchronizer* synchronizer) { (void)synchronizer; }
+};

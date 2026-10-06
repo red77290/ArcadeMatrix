@@ -39,18 +39,43 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 | `chain_length` | `int` | Number of panels chained horizontally. |
 | `driver_chip` | `String` | Controller chip (`SHIFTREG`, `FM6126A`, `ICN2038S`, `MBI5124`, `SM16208`). |
 | `rgb_sequence` | `String` | Color order (`RGB`, `RBG`, `BGR`, ...). Fix swapped colors here. |
-| `color_depth` | `int` | Color depth (`1`–`8` bits). Default `8`. Lower to save DMA RAM. |
+| `color_depth` | `int` | Color depth (`0` = Auto, `1`–`8` bits across all platforms including ESP32 Classic). Default `0` (Auto). In Auto mode or when dynamic pipeline is active, adapts mathematically to panel geometry and incoming engine requirements. In the WebUI, this setting is disabled (grayed out) when Dynamic Presentation Pipeline is enabled. |
+| `dynamic_color_depth` | `bool` | Enable dynamic runtime color depth switching ($8 \leftrightarrow 7 \leftrightarrow 6 \leftrightarrow 5 \leftrightarrow 4 \leftrightarrow 3 \leftrightarrow 2$) under complete OE hardware blanking during engine transitions (`true` default on ESP32, Recommended for ESP32). Evaluates incoming engine memory requirements dynamically: graphical engines (`clock`, `fighter`, `gif`, `visualizer`, `message`, `marquee`) run at full configured quality (8 bits), while network TLS engines (`crypto`, `stock`, `weather`, `gnews`) automatically downshift to 4 bits during TLS handshakes and large JSON fetches to release 16–24 KB of contiguous DMA RAM into the memory sandbox. Crucially, when quotes and charts are already cached within their TTL (`needsTlsFetch() == false`), the engine skips the 4-bit downshift and activates immediately in **8 bits with 0 ms instant transitions**. In the WebUI, checking this setting grays out the manual color depth selector. See [MEMORY_MODEL.md](MEMORY_MODEL.md). |
 | `limit_refresh_rate_hz` | `int` | Cap the refresh rate (`0` = uncapped). |
 | `row_address_mode` | `int` | Row addressing mode (`0`: Direct Binary, `1`: ShiftReg, `2`: Direct 16, `3`: Direct 32, `4`: Direct 64). |
 | `clk_phase` | `bool` | Invert CLK clock phase (`false` default; set `true` if panel requires inverted clock latching). |
 | `latch_blanking` | `int` | Latch blanking cycles (`0`–`8`) for ghosting/phantom line reduction. |
-| `force_single_buffer` | `bool` | Force single DMA buffer to save internal SRAM (`false` default). |
+| `render_pipeline` | `String` | Drawing and presentation pipeline (`auto`, `canvas_single`, `canvas_double`, `direct_double`, `direct_single`). Default `auto`. Automatically resolves optimal buffer layout, intermediate canvas placement, and DMA synchronization. |
 | `rotation_offset` | `int` | Mounting orientation offset (`0`=0°, `1`=90°, `2`=180°, `3`=270°). |
 | `auto_rotate` | `bool` | Enable automatic display orientation via onboard Gyroscope/IMU (`true` default). |
 | `rotation_transition` | `String` | Visual transition effect (`vortex`, `glitch`, `slide`, `zoom`, `matrix`, `random`, `none`). |
 | `rotation_transition_duration_ms` | `int` | Transition effect duration in milliseconds (default `400`). |
 | `slot_transition` | `String` | Effect played when the rotation moves to the next slot (`wipe`, `curtain`, `shutter`, `dissolve`, `checker`, `matrix`, `vortex`, `glitch`, `slide`, `zoom`, `random`, `none`). Default `none`. |
 | `slot_transition_duration_ms` | `int` | Slot transition duration in milliseconds (`100`-`3000`, default `500`). |
+
+### 2.1 Rendering & Buffering Pipeline Options (`render_pipeline: auto`)
+
+ArcadeMatrix v4 introduces the Hardware-Agnostic Drawing SPI (`IDrawingSurface`), decoupling engine pixel rasterization from physical DMA controllers. You can configure the pipeline directly in `config.json` or interactively from the **System Settings → Hardware** tab in the Web UI:
+
+- **`auto`** *(Recommended)*: Automatically resolves the optimal pipeline based on your hardware profile and memory tier:
+  - **ESP32-S3 / PSRAM Boards**: Allocates an intermediate 16-bit RGB565 canvas in external PSRAM with Double DMA buffering (`canvas_double`) for maximal throughput and tear-free 60 FPS animation.
+  - **Classic ESP32 (No PSRAM)**: Resolves to `canvas_single` with **Early SRAM1 Canvas Pre-allocation**. The 8 KB off-screen canvas is pre-allocated during early boot (Step 2, before Wi-Fi and WebServer consume SRAM1 `0x3ffb...`). By placing the canvas in CPU-only internal RAM, exactly **8,192 bytes of contiguous DMA-capable memory in SRAM2 (`0x3ffe...`) are permanently preserved**. This provides sufficient contiguous headroom for the HUB75 DMA buffer and TLS handshakes, preventing memory starvation while eliminating screen tearing via `Hub75BulkEncoder` synchronized burst transfers.
+- **`canvas_single`**: 16-bit RGB565 canvas buffer + single DMA back-buffer. Halves DMA RAM requirements while using `Hub75BulkEncoder` sequential burst packing to prevent scanline tearing.
+- **`canvas_double`**: 16-bit RGB565 canvas buffer + double DMA buffers. Best for multi-panel displays (e.g. 128×64, 256×64) with PSRAM.
+- **`direct_double`**: Legacy direct rendering into HUB75 DMA double-buffers without an intermediate canvas.
+- **`direct_single`**: Legacy direct rendering into a single DMA buffer (minimal memory footprint; may cause visible scanline tearing during redraws).
+
+> [!NOTE]
+> **Why Auto Depth & Auto Buffer Enable 100% Engine Compatibility:**
+> Classic ESP32 chips have only ~320 KB of RAM, split between CPU-only SRAM1 (~72 KB) and DMA-capable SRAM2 (~128 KB). Heavy features like `AnimatedGIF` (24 KB contiguous decoder buffer), TLS network calls (~33 KB buffer for HTTPS certificates and handshakes), and 128×32 8-bit matrices (32 KB DMA buffer) would normally be mathematically impossible to run together without crashing.
+> 
+> The combination of **Auto Buffer** (shifting the 8 KB canvas to SRAM1) and **Auto Depth** (dynamic $8 \leftrightarrow 4$ bit adaptation with cache awareness) creates a flexible DMA sandbox. When an engine needs to fetch market or weather data over HTTPS, the DMA buffer shrinks or frees up, providing over **46 KB of contiguous headroom**. As soon as the data is fetched and cached, the display snaps back to **8 bits full quality (0 ms instant transitions)**!
+
+### 2.2 Web UI Hardware Tab Integration
+
+The Web UI (System Settings → Hardware) directly controls these parameters:
+1. **Rendering & Buffering Pipeline Dropdown (`hw-render-pipeline`)**: Select between `auto`, `canvas_single`, `canvas_double`, `direct_double`, or `direct_single`.
+2. **Saving**: Clicking **Save Hardware Settings** (`btn-save-hw`) posts the parameters to `POST /api/system`, then cleanly restarts the display panel with the new pipeline.
 
 > Live daytime brightness is **not** stored in this block; it is controlled at runtime from the Web UI (Dashboard slider → `POST /api/system { "brightness_limit": 0-100 }`). Night brightness lives in the `system` block (§4).
 
@@ -60,13 +85,13 @@ This block configures the DMA parameters for the `ESP32-HUB75-MatrixPanel-I2S-DM
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `ssid` | `String` | The name of your Wi-Fi network. |
+| `ssid` | `String` | The name of your Wi-Fi network (2.4 GHz). |
 | `password` | `String` | The WPA2 key. |
-| `hostname` | `String` | Device hostname advertised on the network. |
-| `configured` | `bool` | Set to `false` to force a (re)connection attempt on next boot. Set back to `true` automatically on success. |
-| `disable_internal` | `bool` | If using an external USB dongle, disable the Pi's internal Wi-Fi (changing this triggers a restart). |
+| `hostname` | `String` | Device hostname advertised via mDNS / DHCP (`arcadematrix` by default). |
 
-You can also push credentials at runtime with `POST /api/wifi { "ssid": "...", "password": "..." }`, which sets `configured=false` and restarts the network provisioning.
+If `ssid` is empty or credentials fail to connect, ArcadeMatrix automatically spawns an onboard Captive Portal SoftAP named `ArcadeMatrix-Setup` (IP: `192.168.4.1`) allowing immediate provisioning from a phone or laptop.
+
+You can also push new Wi-Fi credentials at runtime via `POST /api/wifi { "ssid": "...", "password": "..." }`, which saves them to persistent storage and reconnects.
 
 ---
 
@@ -191,7 +216,7 @@ When API security is enabled (`api_auth_enabled: true`), a new user or a fresh b
      `http://arcadematrix.local/?token=my_super_secret_token_123`
      Upon loading, the Web UI automatically extracts the `token` parameter and saves it to `localStorage`. The user is immediately authenticated with zero popup dialogs.
 
-* **Write-Only Security**: The ESP32 never transmits the secret token back over `GET /api/system` or `GET /api/settings` (it returns `"api_token_configured": true`), completely protecting the secret from local network inspection.
+* **Write-Only Security**: The ESP32 never transmits the secret token back over `GET /api/system` (it returns `"api_token_configured": true`), completely protecting the secret from local network inspection.
 * **Updating or Clearing the Token**: Entering a new valid token in the prompt or Settings tab overrides the old value. Clearing the token and saving turns off authentication.
 
 ### 6.4 Calling the REST API from External Scripts & Home Assistant
@@ -401,7 +426,7 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
    - You can enter multiple GNews API keys separated by commas (`api_key: "key1,key2,key3"`).
    - If an active key is invalid (`HTTP 401/403`) or exhausts its 100 requests/day quota (`HTTP 429/403`), the engine automatically fails over to the next key in the pool and immediately retries.
    - 2 accounts = 200 requests/day; 3 accounts = 300 requests/day.
-2. **Persistent File Caching (`/gnews_cache.json` on ESP32 SD, `gnews_cache.json` on RPi):**
+2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS):**
    - Articles and request telemetry are persisted to storage. On reboot, headlines display immediately without burning API quota or stalling for network.
    - If offline or when the daily quota is reached, cached articles are preserved indefinitely and continue scrolling 24/7.
 3. **Daily Quota Budgeting (Default: 10 reqs/day) & Shared-Key Protection:**
@@ -524,4 +549,30 @@ Instance example: `{"instance_id":"home_data","engine_id":"mqttdata","config":{"
 
 ---
 
-*Note: All schemas can also be queried dynamically in JSON format from the running system at `GET /api/engines`.*
+## 10. Modular Storage Architecture & Working-Set Cache
+
+ArcadeMatrix v4 decouples configuration persistence from physical SD card hardware through the `IConfigStorage` abstraction layer:
+
+```text
+ ┌─────────────────────────────────────────────────────────────┐
+ │                      ConfigLoader                           │
+ └──────────────┬───────────────────────────────┬──────────────┘
+                │                               │
+                ▼                               ▼
+ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+ │      WorkingSetCache        │ │       IConfigStorage        │
+ │                             │ │                             │
+ │ • Dirty bit tracking        │ │ • SdConfigStorage (Hardware)│
+ │ • In-RAM atomic mutations   │ │ • MemoryConfigStorage (Mock)│
+ │ • Zero Core 1 FS blocking   │ │ • Atomic rename semantics   │
+ └─────────────────────────────┘ └─────────────────────────────┘
+```
+
+1. **`IConfigStorage` Interface**: Abstract filesystem backend supporting atomic string write (`writeStringAtomic`), streaming read, file existence checks, and recursive directory listing.
+2. **`SdConfigStorage`**: Production hardware backend managing SdFat with hardware SPI locking (`SdLockGuard`), writing to temporary files (`.tmp`) followed by atomic rename to eliminate file corruption during abrupt power cuts.
+3. **`MemoryConfigStorage`**: In-memory heap/RAM backend used for hermetic off-target unit testing (`test_core`), simulation, and diskless operation.
+4. **`WorkingSetCache`**: Core 0 memory-backed dirty state tracker. Mutations (such as Web UI saves or MQTT updates) immediately update the working-set cache in RAM and publish atomic snapshots to Core 1 without waiting on slow SD card I/O. Asynchronous sync flushes dirty files to permanent storage in the background.
+
+---
+
+*Note: All schemas can also be queried dynamically in JSON format from the running system at `GET /api/engines` (lightweight discovery catalog) or granularly per engine with full schema fields at `GET /api/engines/{id}`.*

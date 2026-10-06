@@ -30,6 +30,7 @@ public:
      * @brief Initializes display orientation manager with matrix display instance.
      */
     void begin(Adafruit_GFX* display);
+    void setSurface(IDrawingSurface* surface) { _surface = surface; }
 
     /**
      * @brief Polls gyro/config and updates display rotation if orientation changed.
@@ -111,6 +112,7 @@ public:
 
 private:
     Adafruit_GFX* _display;
+    IDrawingSurface* _surface = nullptr;
     uint8_t _currentRotation;
     uint8_t _rotationOffset;
     RotationEffect _transitionEffect;

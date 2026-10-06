@@ -18,7 +18,7 @@ const uint16_t* const CREATURES[] = { pokemon1, pokemon2, pokemon3, pokemon4,
 constexpr int CREATURE_COUNT = 7;
 }  // namespace
 
-PokedexClock::PokedexClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+PokedexClock::PokedexClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     storedTime = { 0, 0, 0 };
 }

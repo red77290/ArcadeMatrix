@@ -1,4 +1,5 @@
 #include "ValuesRenderer.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <string.h>
 #include "PanelText.h"
 
@@ -68,7 +69,7 @@ ValueChoice chooseValue(const feed::Tile& t, const Chain& chain, int iw, int vb)
     return {chain.fonts[chain.n - 1], false};   // drawn in full, centred, clipped only by the panel
 }
 
-void drawTile(MatrixPanel_I2S_DMA* matrix, const feed::Tile& t, int ix, int iw, int cellTop, int ch, bool large, const Chain& chain) {
+void drawTile(IDrawingSurface* matrix, const feed::Tile& t, int ix, int iw, int cellTop, int ch, bool large, const Chain& chain) {
     const int lg = large ? 2 : 1;
     const LabelChoice label = chooseLabel(t, large, iw);
     const int labelH = label.present ? panel_text::height(label.font) : 0;
@@ -96,7 +97,7 @@ void drawTile(MatrixPanel_I2S_DMA* matrix, const feed::Tile& t, int ix, int iw, 
 
 }  // namespace
 
-void drawValues(MatrixPanel_I2S_DMA* matrix, const feed::ValuesData& v, bool showTitle) {
+void drawValues(IDrawingSurface* matrix, const feed::ValuesData& v, bool showTitle) {
     const int W = matrix->width(), H = matrix->height();
     const bool large = H >= 64;
     const int n = v.count > feed::MAX_TILES ? feed::MAX_TILES : v.count;

@@ -3,15 +3,23 @@
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
 This folder is a ready-to-use starting point for your SD card: copy its contents to the root of
-a **FAT32**-formatted SD card, edit `config.json` for your Wi-Fi/hardware, and you're ready to boot.
+a **FAT32**-formatted SD card, edit the modular domain files in `config/` (or legacy `config.json`), and you're ready to boot.
 
 ```
 sdCard/
-  ├─ config.json            <- your settings, see docs/CONFIGURATION.md for the full reference
-  ├─ gifs/                <- sample GIF playlist manifest (see docs/... or gif_indexation/ below)
-  ├─ gifs_tate/           <- vertical (Tate) library, same layout; ships one 32x128 sample so a rotated panel shows something
-  ├─ fighters_32/         <- sample MUGEN sprite export for 32px-tall matrices
-  └─ gif_indexation/      <- PC-side tool, NOT required on the SD card itself (see below)
+  ├─ config/                <- modular domain settings (v4.0+)
+  │    ├─ hardware.json     <- panel dimensions, color depth, driver chip, pin settings
+  │    ├─ system.json       <- timezone, night mode, brightness, language
+  │    ├─ network.json      <- Wi-Fi credentials and MQTT settings
+  │    ├─ playlist.json     <- engine rotation sequence and intervals
+  │    └─ instances/        <- individual engine configurations (*.json)
+  ├─ config.json            <- legacy monolithic fallback (auto-migrated to config/ if present)
+  ├─ gifs/                  <- sample GIF playlist manifest (see docs/... or gif_indexation/ below)
+  ├─ gifs_tate/             <- vertical (Tate) library (e.g. 32x128 sample for rotated panels)
+  ├─ fighters_32/           <- sample MUGEN sprite export for 32px-tall matrices
+  ├─ fighters_64/           <- sample MUGEN sprite export for 64px-tall matrices
+  ├─ fonts/                 <- custom bitmap fonts
+  └─ gif_indexation/        <- PC-side tool, NOT required on the SD card itself (see below)
 ```
 
 ## About `gif_indexation/`

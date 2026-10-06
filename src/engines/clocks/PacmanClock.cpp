@@ -4,7 +4,7 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-PacmanClock::PacmanClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config, bool ms) : ClockFace(display, config) {
+PacmanClock::PacmanClock(IDrawingSurface* display, const EngineConfig* config, bool ms) : ClockFace(display, config) {
     msVariant = ms;
     faceFont.load(config);
     glow = ClockFaceFont::resolveGlow(config);

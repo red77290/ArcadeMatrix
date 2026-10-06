@@ -15,6 +15,8 @@ namespace SdSpace {
     void start();
     /// Ask for a new measurement soon (rate-limited to one per minute).
     void requestRefresh();
+    /// Periodic check called from Core 0 lifecycle dispatcher to spawn ephemeral task if due.
+    void poll();
     /// Cached figures. Returns false until the first measurement has completed.
     bool get(uint64_t& totalBytes, uint64_t& freeBytes, uint32_t& ageMs);
 }

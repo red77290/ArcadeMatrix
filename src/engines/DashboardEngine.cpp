@@ -1,5 +1,5 @@
 #include "DashboardEngine.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/ConfigLoader.h"
 #include "../api/OpenWeatherMapProvider.h"
@@ -10,16 +10,16 @@ DashboardEngine::DashboardEngine()
 }
 
 DashboardEngine::~DashboardEngine() {
-    m_dataProvider.stop();
+    m_dataProvider.shutdown();
 }
 
 EngineError DashboardEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
     LOGI("Dashboard", "DashboardEngine::initialize called.");
-    if (!context || !context->getMatrix()) {
-        LOGE("Dashboard", "DashboardEngine::initialize: Invalid context or matrix!");
+    if (!context || !context->getSurface()) {
+        LOGE("Dashboard", "DashboardEngine::initialize: Invalid context or surface!");
         return EngineError::InvalidConfig;
     }
-    matrix = context->getMatrix();
+    matrix = context->getSurface();
     m_geometry = context->getGeometry();
 
     onConfigChanged(engineConfig);
@@ -32,14 +32,25 @@ EngineError DashboardEngine::initialize(EngineContext* context, const EngineConf
 void DashboardEngine::activate() {
     LOGI("Dashboard", "DashboardEngine::activate called.");
     m_dataProvider.start();
-    m_dataProvider.forceFetchWeather();
-    m_dataProvider.forceFetchMarkets();
+    if (m_dataProvider.getLastBatchFetch() == 0) {
+        m_dataProvider.forceFetchWeather();
+        m_dataProvider.forceFetchMarkets();
+    }
     LOGI("Dashboard", "DashboardEngine::activate complete.");
 }
 
 void DashboardEngine::deactivate() {
     LOGI("Dashboard", "DashboardEngine::deactivate called.");
-    m_dataProvider.stop();
+    m_dataProvider.deactivate();
+}
+
+bool DashboardEngine::shutdownForDestruction() {
+    LOGI("Dashboard", "DashboardEngine::shutdownForDestruction called on Core 0.");
+    return m_dataProvider.shutdown();
+}
+
+void DashboardEngine::prefetchData() {
+    m_dataProvider.fetchSynchronousBurst();
 }
 
 void DashboardEngine::update(EngineContext* context) {
@@ -47,6 +58,9 @@ void DashboardEngine::update(EngineContext* context) {
 }
 
 void DashboardEngine::render(EngineContext* context) {
+    if (context && context->getSurface()) {
+        matrix = context->getSurface();
+    }
     if (!matrix) return;
 
     if (m_layoutDirty) {
@@ -179,6 +193,12 @@ EngineDescriptor DashboardEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsAudio = false;
     desc.requirements.needsTempSensor = false;
     desc.requirements.needsGyroscope = false;
+    desc.requirements.targetFps = 10;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 6000;
+    desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = true;
+    desc.requirements.internalContiguousBytes = 8192;
 
     desc.schema.fields = {
         ConfigField("clock_mode", ConfigType::ENUM, "Clock Style", "Display as Digital or Analog Hands", "1", false, "", "", "", "0:Digital Modern,1:Pixel-Art Watch Dial,2:Minimal", "", false, "", ValidationPolicy::FallbackDefault),

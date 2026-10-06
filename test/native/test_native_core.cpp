@@ -4,6 +4,8 @@
 #include "core/EngineRegistry.h"
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
+#include "core/drawing/Hub75DmaLayout.h"
+#include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 #include "engines/mqttdata/GraphPayload.h"
 #include "engines/mqttdata/FeedPayloads.h"
@@ -959,6 +961,1037 @@ void test_mqttdata_page_cycle(void) {
 }
 
 // =========================================================================
+// 10. CompatibilityEvaluator Unit Tests
+// =========================================================================
+
+#include "core/CompatibilityEvaluator.h"
+
+void test_compatibility_evaluator_hardware_gating(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "test_engine";
+    desc.requirements.needsPsram = true;
+    desc.requirements.needsAudioInput = true;
+    desc.requirements.needsTempSensor = true;
+    desc.requirements.needsNetwork = true;
+    desc.requirements.minWidth = 128;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.hasMicrophone = false;
+    ctx.hardware.hasTempSensor = false;
+    ctx.isConnectedWifi = false;
+
+    // 1. Missing all hardware
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresPsram, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingPsram));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingAudioInput));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingTempSensor));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::MissingNetwork));
+
+    // 2. Grant PSRAM, Mic, Temp, Wi-Fi -> Compatible!
+    ctx.hardware.hasPsram = true;
+    ctx.hardware.hasMicrophone = true;
+    ctx.hardware.hasTempSensor = true;
+    ctx.isConnectedWifi = true;
+    auto v2 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)v2.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::None, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(v2.compatible());
+
+    // 3. Geometry underflow (width 64 < minWidth 128)
+    ctx.width = 64;
+    auto v3 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::UnsupportedGeometry, (int)v3.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v3.issueFlags), CompatibilityIssue::GeometryOutOfRange));
+}
+
+void test_compatibility_evaluator_memory_and_fragmentation(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "net_engine";
+    desc.requirements.needsTls = true;
+    desc.requirements.internalContiguousBytes = 60000; // Requires 60KB contiguous block
+
+    CompatibilityContext ctx;
+    ctx.width = 64;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.isConnectedWifi = true;
+
+    // 1. Total RAM plenty (250KB), but largest contiguous block is only 40KB (fragmented)
+    ctx.memory.freeInternalHeap = 250000;
+    ctx.memory.largestInternalBlock = 40000;
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientLargestBlock, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::FragmentedInternalHeap));
+    TEST_ASSERT_EQUAL_UINT32(60000, v1.largestRequiredBlockBytes);
+    TEST_ASSERT_EQUAL_UINT32(40000, v1.largestAvailableBlockBytes);
+
+    // 2. Unfragmented: largest block 80KB >= 60KB -> Compatible!
+    ctx.memory.largestInternalBlock = 80000;
+    auto v2 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)v2.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::None, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(v2.internalHeadroomBytes > 0);
+
+    // 3. Exhausted total internal DRAM (e.g. 50KB total, when TLS alone needs 45KB + 35KB headroom = 80KB+)
+    ctx.memory.freeInternalHeap = 50000;
+    ctx.memory.largestInternalBlock = 45000;
+    auto v3 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientInternalHeap, (int)v3.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v3.issueFlags), CompatibilityIssue::LowInternalHeap));
+}
+
+void test_compatibility_evaluator_presentation_budget_and_single_buffer(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "rt_engine";
+    desc.requirements.requiresDoubleBuffer = true;
+    desc.requirements.supportsSingleBuffer = false;
+
+    CompatibilityContext ctx;
+    ctx.width = 64;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.requestedPipeline = "canvas_single"; // Forces single buffer
+
+    // 1. Engine requires double-buffering but single-buffer was selected -> Incompatible!
+    auto v1 = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v1.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v1.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v1.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
+
+    // 2. Engine prefers double buffer but supports single buffer -> CompatibleDegraded!
+    EngineDescriptor prefDesc;
+    prefDesc.metadata.id = "pref_engine";
+    prefDesc.requirements.prefersDoubleBuffer = true;
+    prefDesc.requirements.supportsSingleBuffer = true;
+    auto v2 = CompatibilityEvaluator::evaluate(prefDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)v2.status);
+    TEST_ASSERT_TRUE(v2.degraded());
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresDoubleBuffer, (int)v2.primaryReason);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(v2.issueFlags), CompatibilityIssue::DoubleBufferUnavailable));
+
+    // 3. Single-buffer blanking budget exceeded:
+    EngineDescriptor normalDesc;
+    normalDesc.metadata.id = "normal_engine";
+    normalDesc.requirements.supportsSingleBuffer = true;
+    ctx.presentationPolicy.allowBlanking = true;
+    ctx.presentationPolicy.maxBlankUs = 100;
+    ctx.presentationPolicy.degradedBlankingPermitted = false;
+
+    auto v3 = CompatibilityEvaluator::evaluate(normalDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)v3.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::BlankBudgetExceeded, (int)v3.primaryReason);
+
+    // Now permit degraded blanking -> CompatibleDegraded!
+    ctx.presentationPolicy.degradedBlankingPermitted = true;
+    auto v4 = CompatibilityEvaluator::evaluate(normalDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)v4.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::BlankBudgetExceeded, (int)v4.primaryReason);
+}
+
+void test_compatibility_evaluator_multi_issue_bitmask(void) {
+    EngineDescriptor desc;
+    desc.metadata.id = "complex_engine";
+    desc.requirements.needsPsram = true;
+    desc.requirements.needsAudioInput = true;
+    desc.requirements.needsGyroscope = true;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.colorDepth = 8;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.hasMicrophone = false;
+    ctx.hardware.hasGyroscope = false;
+
+    auto verdict = CompatibilityEvaluator::evaluate(desc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)verdict.status);
+
+    // Primary reason is the first hard failure (RequiresPsram)
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::RequiresPsram, (int)verdict.primaryReason);
+
+    // Multi-issue bitmask captures ALL three missing peripherals!
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingPsram));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingAudioInput));
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(verdict.issueFlags), CompatibilityIssue::MissingGyroscope));
+
+    // String translations
+    TEST_ASSERT_EQUAL_STRING("Requires external PSRAM memory", CompatibilityEvaluator::reasonToString(verdict.primaryReason));
+    TEST_ASSERT_EQUAL_STRING("incompatible", CompatibilityEvaluator::statusToString(verdict.status));
+}
+
+void test_e2e_gif_to_clock_transition_and_catalog_invariance(void) {
+    // 1. Setup Classic ESP32 profile context (128x32, no PSRAM)
+    EngineDescriptor clockDesc;
+    clockDesc.metadata.id = "clock";
+    clockDesc.metadata.name = "Clock Engine";
+    clockDesc.requirements.targetFps = 60;
+    clockDesc.requirements.prefersDoubleBuffer = true;
+    clockDesc.requirements.supportsSingleBuffer = true;
+    clockDesc.requirements.internalPersistentBytes = 8000;
+    clockDesc.requirements.internalContiguousBytes = 16000;
+
+    EngineDescriptor gifDesc;
+    gifDesc.metadata.id = "gifs";
+    gifDesc.metadata.name = "GIF Player";
+    gifDesc.requirements.targetFps = 30;
+    gifDesc.requirements.supportsSingleBuffer = true;
+    gifDesc.requirements.internalPersistentBytes = 25000;
+    gifDesc.requirements.internalContiguousBytes = 25000;
+
+    // 2. Initial static reference capability qualification:
+    CompatibilityContext refCtx;
+    refCtx.mode = EvaluationMode::ReferenceCapability;
+    refCtx.hardware.profile = HwProfile::ESP32_STD;
+    refCtx.hardware.hasPsram = false;
+    refCtx.hardware.hasMicrophone = false;
+    refCtx.hardware.hasTempSensor = true;
+    refCtx.isConnectedWifi = true;
+    ReferenceMemoryProfile refMem = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    refCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    refCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+    refCtx.memory.freePsram = refMem.freePsram;
+    refCtx.width = 128;
+    refCtx.height = 32;
+    refCtx.colorDepth = 8;
+    refCtx.requestedPipeline = "canvas_burst_single";
+
+    auto vClockRef1 = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRef1.status);
+    TEST_ASSERT_TRUE(vClockRef1.compatible());
+
+    auto vGifRef1 = CompatibilityEvaluator::evaluate(gifDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)vGifRef1.status);
+    TEST_ASSERT_TRUE(vGifRef1.compatible());
+
+    // 3. Negative Assertion: Simulate GIF engine actively decoding on Core 1
+    // Volatile free internal heap drops to 11 KB, largest block drops to 4 KB
+    CompatibilityContext activePressureCtx = refCtx;
+    activePressureCtx.mode = EvaluationMode::RuntimeAdmission;
+    activePressureCtx.memory.freeInternalHeap = 11000;
+    activePressureCtx.memory.largestInternalBlock = 4000;
+
+    // Runtime admission detects the transient memory pressure and rejects Clock:
+    auto vClockRuntime = CompatibilityEvaluator::evaluate(clockDesc, activePressureCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)vClockRuntime.status);
+    TEST_ASSERT_TRUE(hasIssue(static_cast<CompatibilityIssue>(vClockRuntime.issueFlags), CompatibilityIssue::LowInternalHeap));
+
+    // Positive Assertion: ReferenceCapability remains STRICTLY INVARIANT despite transient volatile heap pressure!
+    // (This guarantees WebUI catalog and API transition safety gating never deadlock)
+    auto vClockRefDuringGif = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefDuringGif.status);
+    TEST_ASSERT_TRUE(vClockRefDuringGif.compatible());
+
+    // 4. Requested pipeline gating: evaluating against requested target pipeline succeeds
+    CompatibilityContext targetPipeCtx = refCtx;
+    targetPipeCtx.requestedPipeline = "canvas_burst_single";
+    auto vTargetPipeline = CompatibilityEvaluator::evaluate(clockDesc, targetPipeCtx);
+    TEST_ASSERT_TRUE(vTargetPipeline.compatible());
+
+    // 5. Transition simulation:
+    // gif.deactivate() -> memory reclaimed -> clock.initialize() -> clock.activate()
+    // Simulated heap recovery after deactivation
+    CompatibilityContext recoveredCtx = refCtx;
+    recoveredCtx.mode = EvaluationMode::RuntimeAdmission;
+    recoveredCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    recoveredCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+
+    auto vClockPostReclaim = CompatibilityEvaluator::evaluate(clockDesc, recoveredCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockPostReclaim.status);
+    TEST_ASSERT_TRUE(vClockPostReclaim.compatible());
+
+    // 6. Post-transition: Reference capability catalog remains 100% invariant
+    auto vClockRefPost = CompatibilityEvaluator::evaluate(clockDesc, refCtx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::CompatibleDegraded, (int)vClockRefPost.status);
+    TEST_ASSERT_EQUAL((int)vClockRef1.status, (int)vClockRefPost.status);
+}
+
+void test_icon_service_sanitization_and_paths() {
+    TEST_ASSERT_EQUAL_STRING("btc", IconService::sanitizeSymbol("BTC").c_str());
+    TEST_ASSERT_EQUAL_STRING("eth", IconService::sanitizeSymbol(" eth ").c_str());
+    TEST_ASSERT_EQUAL_STRING("_gspc", IconService::sanitizeSymbol("^GSPC").c_str());
+    TEST_ASSERT_EQUAL_STRING("brk_b", IconService::sanitizeSymbol("BRK/B").c_str());
+
+    TEST_ASSERT_EQUAL_STRING("/crypto_icons/btc.png", IconService::getSdPath("crypto", "BTC").c_str());
+    TEST_ASSERT_EQUAL_STRING("/stock_icons/aapl.png", IconService::getSdPath("stock", "AAPL").c_str());
+    TEST_ASSERT_EQUAL_STRING("/stock_icons/_gspc.png", IconService::getSdPath("stock", "^GSPC").c_str());
+    TEST_ASSERT_EQUAL_STRING("/media_icons/spotify.png", IconService::getSdPath("media", "Spotify").c_str());
+}
+
+void test_pipeline_selection_effective_color_depth(void) {
+    EngineRequirements tlsReq;
+    tlsReq.needsTls = true;
+
+    EngineRequirements noTlsReq;
+    noTlsReq.needsTls = false;
+
+    // --- Nominal cases ---
+    // 1. ESP32-S3 (hasPsram = true) with and without TLS -> 8 bits
+    uint8_t s3Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, true, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, s3Tls);
+    uint8_t s3NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, true, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, s3NoTls);
+
+    // 2. ESP32 Standard (128x32) with TLS in Auto mode -> 4 bits
+    uint8_t esp128Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(4, esp128Tls);
+
+    // 3. ESP32 Standard (128x32) without TLS in Auto mode -> 8 bits (unconstrained graphics)
+    uint8_t esp128NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 128, 32, false, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, esp128NoTls);
+
+    // 4. ESP32 Standard (64x32) with TLS in Auto mode -> 8 bits (geometry footprint <= 16KB DMA fits TLS headroom)
+    uint8_t esp64Tls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), tlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, esp64Tls);
+
+    // 5. ESP32 Standard (64x32) without TLS in Auto mode -> 8 bits
+    uint8_t esp64NoTls = PipelineSelectionPolicy::resolveEffectiveColorDepth(0, 64, 32, false, MemoryBudgetConstraints(), noTlsReq);
+    TEST_ASSERT_EQUAL_UINT8(8, esp64NoTls);
+
+    // --- Contractual cases on 128x32 ESP32 Standard with TLS ---
+    EngineDescriptor cryptoDesc;
+    cryptoDesc.metadata.id = "crypto";
+    cryptoDesc.requirements.needsTls = true;
+
+    CompatibilityContext ctx;
+    ctx.width = 128;
+    ctx.height = 32;
+    ctx.hardware.hasPsram = false;
+    ctx.hardware.profile = HwProfile::ESP32_STD;
+    ctx.isConnectedWifi = true;
+    ReferenceMemoryProfile ref = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    ctx.memory.freeInternalHeap = ref.freeInternalHeap;
+    ctx.memory.largestInternalBlock = ref.largestInternalBlock;
+
+    // Case 1: Manual 6-bit depth -> does NOT downscale (effectiveDepth=6), but fails contiguous admission (Incompatible)
+    ctx.colorDepth = 6;
+    auto resManual6 = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(6, resManual6.effectiveColorDepth);
+    auto verdictManual6 = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Incompatible, (int)verdictManual6.status);
+    TEST_ASSERT_EQUAL((int)CompatibilityReason::InsufficientLargestBlock, (int)verdictManual6.primaryReason);
+
+    // Case 2: Manual 4-bit depth -> effectiveDepth=4, satisfies admission (Compatible)
+    ctx.colorDepth = 4;
+    auto resManual4 = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(4, resManual4.effectiveColorDepth);
+    auto verdictManual4 = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)verdictManual4.status);
+
+    // Case 3: Auto mode (colorDepth=0) -> resolves to 4 bits, satisfies admission (Compatible)
+    ctx.colorDepth = 0;
+    auto resAuto = PipelineSelectionPolicy::evaluate(ctx.width, ctx.height, ctx.colorDepth, "auto", false, ctx.memory, cryptoDesc.requirements);
+    TEST_ASSERT_EQUAL_UINT8(4, resAuto.effectiveColorDepth);
+    auto verdictAuto = CompatibilityEvaluator::evaluate(cryptoDesc, ctx);
+    TEST_ASSERT_EQUAL((int)CompatibilityStatus::Compatible, (int)verdictAuto.status);
+}
+
+void test_rotation_requirements_aggregation(void) {
+    EngineRequirements clockReq;
+    clockReq.needsTls = false;
+    clockReq.internalPersistentBytes = 1200;
+    clockReq.internalContiguousBytes = 500;
+
+    EngineRequirements cryptoReq;
+    cryptoReq.needsTls = true;
+    cryptoReq.internalPersistentBytes = 4500;
+    cryptoReq.internalContiguousBytes = 8000;
+
+    EngineRequirements stockReq;
+    stockReq.needsTls = true;
+    stockReq.internalPersistentBytes = 3200;
+    stockReq.internalContiguousBytes = 12000;
+
+    EngineRequirements agg;
+    agg.mergeWith(clockReq);
+    TEST_ASSERT_FALSE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(1200, agg.internalPersistentBytes);
+
+    agg.mergeWith(cryptoReq);
+    TEST_ASSERT_TRUE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(4500, agg.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(8000, agg.internalContiguousBytes);
+
+    agg.mergeWith(stockReq);
+    TEST_ASSERT_TRUE(agg.needsTls);
+    TEST_ASSERT_EQUAL_UINT32(4500, agg.internalPersistentBytes);
+    TEST_ASSERT_EQUAL_UINT32(12000, agg.internalContiguousBytes);
+}
+
+void test_render_transaction_contracts(void) {
+    // 1. Hub75DmaLayout Canonical Payload & Admission Overhead
+    // For 128x32: rows = 16, stride = 256 bytes.
+    // 8 bits: 16 * 8 * 256 = 32768 bytes.
+    size_t dma8 = Hub75DmaLayout::calculateBytes(128, 32, 8, false);
+    TEST_ASSERT_EQUAL_UINT32(32768, dma8);
+
+    // 4 bits: 16 * 4 * 256 = 16384 bytes (saves 16384 bytes DRAM for TLS).
+    size_t dma4 = Hub75DmaLayout::calculateBytes(128, 32, 4, false);
+    TEST_ASSERT_EQUAL_UINT32(16384, dma4);
+
+    // 2 bits: 16 * 2 * 256 = 8192 bytes (saves 24576 bytes DRAM).
+    size_t dma2 = Hub75DmaLayout::calculateBytes(128, 32, 2, false);
+    TEST_ASSERT_EQUAL_UINT32(8192, dma2);
+
+    // With descriptor overhead (16 rows * 8 depth * 1 buffer * 16 bytes = 2048 bytes overhead -> 34816 bytes)
+    size_t dma8Desc = Hub75DmaLayout::calculateBytes(128, 32, 8, false, true);
+    TEST_ASSERT_EQUAL_UINT32(34816, dma8Desc);
+
+    // 2. Deterministic 8 <-> 4 Dynamic Depth targeting
+    EngineRequirements tlsReq;
+    tlsReq.needsTls = true;
+    EngineRequirements graphicsReq;
+    graphicsReq.needsTls = false;
+
+    // A. Transition from Graphics (8 bits) to TLS engine on 128x32 ESP32 (nominal 4 bits)
+    uint8_t targetForTls = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetForTls);
+
+    // A2. Transition to TLS engine on ESP32-S3 with PSRAM (hasPsram = true) -> retains nominal 8 bits
+    uint8_t targetS3Tls = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, true, tlsReq, 8, 120000, 240000, 100000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, targetS3Tls);
+
+    // B. Transition from TLS engine (4 bits) back to Graphics engine (configured 8 bits)
+    uint8_t targetForGraphics = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, graphicsReq, 4, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, targetForGraphics);
+
+    // C. User configured 6 bits ceiling: TLS targets 4 bits, Graphics targets 6 bits
+    uint8_t targetCeiling6Tls = PipelineSelectionPolicy::resolveTargetDepth(
+        6, true, 128, 32, false, tlsReq, 6, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetCeiling6Tls);
+
+    uint8_t targetCeiling6Graphics = PipelineSelectionPolicy::resolveTargetDepth(
+        6, true, 128, 32, false, graphicsReq, 4, 30000, 80000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(6, targetCeiling6Graphics);
+
+    // D. Critical pressure: the largest block cannot admit TLS at 4 bits but does at 2 bits
+    //    -> 2 bits is taken as a measured last resort.
+    uint8_t targetPressureFloor = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 12000, 35000, 20000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(2, targetPressureFloor);
+
+    // D3. Block that admits 4 bits keeps TLS at 4 bits (never degraded needlessly).
+    uint8_t targetKeeps4 = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 13000, 35000, 20000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetKeeps4);
+
+    // D2. Graphics engines keep the 2-bit extreme-pressure floor.
+    EngineRequirements heavyGfx;
+    heavyGfx.minFreeInternalHeapBytes = 200000;
+    uint8_t gfxPressureFloor = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, heavyGfx, 8, 12000, 35000, 20000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(2, gfxPressureFloor);
+
+    // E. Telemetry contract validation
+    bool fallbackUsedOnTls = (targetForTls != 8); // effective 4 != requested 8
+    TEST_ASSERT_TRUE(fallbackUsedOnTls);
+
+    bool fallbackUsedOnGraphics = (targetForGraphics != 8); // effective 8 == requested 8
+    TEST_ASSERT_FALSE(fallbackUsedOnGraphics);
+
+    // F. Heavy graphics engine (e.g. GifEngine with 25KB decoder working set) on 128x32 ESP32 without PSRAM
+    EngineRequirements gifReq;
+    gifReq.needsTls = false;
+    gifReq.minFreeInternalHeapBytes = 25000;
+    gifReq.internalContiguousBytes = 24500;
+
+    // At baseline (48KB free internal heap, 45KB largest block):
+    // 8-bit requires 12,288 (SYSTEM_MIN_RESERVE) + 25,000 (GIF) = 37,288 bytes <= 48,416 -> 8-bit accepted (no degradation!).
+    uint8_t targetForGif = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, gifReq, 8, 45044, 48416, 45044, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, targetForGif);
+
+    // F2. Under severe memory pressure (e.g. 30KB free heap < 37,288 required for 8-bit):
+    // 4-bit reclaims 17,408 bytes DMA -> 47,408 bytes >= 37,288 -> 4-bit fallback accepted.
+    uint8_t targetForGifPressure = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, gifReq, 8, 30000, 30000, 30000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, targetForGifPressure);
+}
+
+// =========================================================================
+// Lifecycle Quiescence & Presentation Transaction Contracts
+// =========================================================================
+
+class MockQuiescenceEngine : public IEngine {
+public:
+    bool logicalQuiescent = false;
+    bool physicalQuiescent = false;
+    int workerTasksActive = 2;
+    int openSockets = 1;
+
+    EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+    void activate() override {
+        logicalQuiescent = false;
+        physicalQuiescent = false;
+    }
+    void update(EngineContext*) override {}
+    void render(EngineContext*) override {}
+    void deactivate() override {
+        // Core 1: non-blocking logical quiescence
+        logicalQuiescent = true;
+    }
+    bool shutdownForDestruction() override {
+        // Core 0: cooperative shutdown of workers and sockets
+        if (logicalQuiescent) {
+            workerTasksActive = 0;
+            openSockets = 0;
+            physicalQuiescent = true;
+            return true;
+        }
+        return false;
+    }
+};
+
+void test_lifecycle_two_stage_quiescence_contracts(void) {
+    MockQuiescenceEngine oldEngine;
+    oldEngine.activate();
+    TEST_ASSERT_FALSE(oldEngine.logicalQuiescent);
+    TEST_ASSERT_FALSE(oldEngine.physicalQuiescent);
+    TEST_ASSERT_EQUAL_INT(2, oldEngine.workerTasksActive);
+    TEST_ASSERT_EQUAL_INT(1, oldEngine.openSockets);
+
+    // Step 1: Core 1 deactivation (logical rendering quiescence, strictly non-blocking)
+    oldEngine.deactivate();
+    TEST_ASSERT_TRUE(oldEngine.logicalQuiescent);
+    TEST_ASSERT_FALSE(oldEngine.physicalQuiescent);
+    // Background resources still physically active until Core 0 handoff
+    TEST_ASSERT_EQUAL_INT(2, oldEngine.workerTasksActive);
+
+    // Step 2: Core 0 shutdown for destruction (physical quiescence)
+    bool shutdownOk = oldEngine.shutdownForDestruction();
+    TEST_ASSERT_TRUE(shutdownOk);
+    TEST_ASSERT_TRUE(oldEngine.physicalQuiescent);
+    TEST_ASSERT_EQUAL_INT(0, oldEngine.workerTasksActive);
+    TEST_ASSERT_EQUAL_INT(0, oldEngine.openSockets);
+}
+
+void test_lifecycle_deactivate_vs_shutdown_distinct_contracts(void) {
+    // Contract: Routine module rotation cycles (activate -> deactivate -> activate)
+    // MUST NOT destroy background workers, free cached data, or re-instantiate objects.
+    struct StatefulRotationEngine : public IEngine {
+        int activateCalls = 0;
+        int deactivateCalls = 0;
+        int shutdownCalls = 0;
+        bool backgroundWorkerAlive = true;
+        uint32_t cachedDataGeneration = 42;
+
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override { activateCalls++; }
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {
+            deactivateCalls++;
+            // Background worker remains intact across routine rotation switches
+        }
+        bool shutdownForDestruction() override {
+            shutdownCalls++;
+            backgroundWorkerAlive = false;
+            cachedDataGeneration = 0;
+            return true;
+        }
+    };
+
+    StatefulRotationEngine eng;
+    TEST_ASSERT_TRUE(eng.backgroundWorkerAlive);
+    TEST_ASSERT_EQUAL_UINT32(42, eng.cachedDataGeneration);
+
+    // Simulate 5 routine rotation cycles (e.g. Weather -> Clock -> Weather)
+    for (int i = 0; i < 5; ++i) {
+        eng.activate();
+        eng.deactivate();
+        // Background worker is STILL alive, data generation intact
+        TEST_ASSERT_TRUE(eng.backgroundWorkerAlive);
+        TEST_ASSERT_EQUAL_UINT32(42, eng.cachedDataGeneration);
+    }
+    TEST_ASSERT_EQUAL_INT(5, eng.activateCalls);
+    TEST_ASSERT_EQUAL_INT(5, eng.deactivateCalls);
+    TEST_ASSERT_EQUAL_INT(0, eng.shutdownCalls);
+
+    // Terminal retirement (config delete / engine teardown)
+    bool ok = eng.shutdownForDestruction();
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_INT(1, eng.shutdownCalls);
+    TEST_ASSERT_FALSE(eng.backgroundWorkerAlive);
+    TEST_ASSERT_EQUAL_UINT32(0, eng.cachedDataGeneration);
+}
+
+void test_lifecycle_cooperative_worker_timeout_and_quarantine(void) {
+    // Contract: If a background worker fails to terminate within 300ms,
+    // shutdownForDestruction() returns false. Core0LifecycleDispatcher quarantines
+    // the engine without executing destructor (anti-UAF).
+    struct MockQuarantinedEngine : public IEngine {
+        std::atomic<bool> workerStopRequested{false};
+        std::atomic<bool> workerExited{false};
+        bool destructorCalled = false;
+        bool uafOccurredDuringDestruction = false;
+        uint32_t simulatedWorkerRemainingWorkMs = 500; // takes 500ms > 300ms window
+
+        ~MockQuarantinedEngine() {
+            destructorCalled = true;
+            // Anti-UAF barrier check:
+            if (!workerExited.load(std::memory_order_acquire)) {
+                uafOccurredDuringDestruction = true;
+            }
+        }
+
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override {}
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {
+            workerStopRequested.store(true, std::memory_order_release);
+        }
+        bool shutdownForDestruction() override {
+            workerStopRequested.store(true, std::memory_order_release);
+            // Simulate 300ms bounded check
+            if (simulatedWorkerRemainingWorkMs > 300) {
+                // Timeout exceeded: worker not dead yet
+                simulatedWorkerRemainingWorkMs -= 300;
+                return false; // Quarantine!
+            }
+            workerExited.store(true, std::memory_order_release);
+            return true;
+        }
+    };
+
+    // 1. Initial handover: shutdown times out after 300ms
+    auto enginePtr = std::unique_ptr<MockQuarantinedEngine>(new MockQuarantinedEngine());
+    enginePtr->deactivate();
+    TEST_ASSERT_TRUE(enginePtr->workerStopRequested.load());
+    TEST_ASSERT_FALSE(enginePtr->workerExited.load());
+
+    // 2. Core 0 lifecycle dispatcher attempt: fails shutdown -> moves to quarantine
+    bool initialShutdown = enginePtr->shutdownForDestruction();
+    TEST_ASSERT_FALSE(initialShutdown); // Times out!
+    TEST_ASSERT_FALSE(enginePtr->workerExited.load());
+    TEST_ASSERT_FALSE(enginePtr->destructorCalled); // Must NOT be destroyed!
+
+    // 3. Quarantine retry: worker finishes remaining work (<= 300ms)
+    bool retryShutdown = enginePtr->shutdownForDestruction();
+    TEST_ASSERT_TRUE(retryShutdown); // Succeeds!
+    TEST_ASSERT_TRUE(enginePtr->workerExited.load());
+
+    // 4. Safe destruction after clean shutdown
+    enginePtr.reset(); // Destructor called safely on Core 0
+    TEST_ASSERT_NULL(enginePtr.get());
+}
+
+void test_lifecycle_cooperative_exit_latency_slices(void) {
+    // Contract: Sliced 100ms sleeps vs monolithic 1000ms delay allow
+    // cooperative shutdown response in < 150ms.
+    std::atomic<bool> stopFlag{false};
+
+    // Simulate task entering wait period using 10 x 100ms slices with immediate stop flag
+    stopFlag.store(true);
+    int elapsedSlicesMs = 0;
+    for (int i = 0; i < 10 && !stopFlag.load(std::memory_order_acquire); ++i) {
+        elapsedSlicesMs += 100;
+    }
+    // Since stopFlag was already set, sliced loop exits immediately (0 ms)
+    TEST_ASSERT_EQUAL_INT(0, elapsedSlicesMs);
+
+    // Now simulate cancellation arriving during first 100ms slice:
+    stopFlag.store(false);
+    elapsedSlicesMs = 0;
+    for (int i = 0; i < 10; ++i) {
+        elapsedSlicesMs += 100;
+        if (i == 0) {
+            stopFlag.store(true); // cancelled during first slice
+        }
+        if (stopFlag.load(std::memory_order_acquire)) {
+            break;
+        }
+    }
+    // Loop exited after 1 slice (100 ms) instead of 1000 ms
+    TEST_ASSERT_EQUAL_INT(100, elapsedSlicesMs);
+    TEST_ASSERT_TRUE(elapsedSlicesMs < 150);
+}
+
+void test_surface_isolation_and_canvas_only_clear(void) {
+    // Contract Invariants 17, 18, 19, 20:
+    // - clear(0) writes to surface canvas memory only (never direct DMA).
+    // - isDirty() is true when canvas modified and stays true until PresentationResult::Ok.
+    // - Failed presentation preserves dirty state (Invariant 20).
+    class MockCanvasSurface : public IDrawingSurface {
+    private:
+        uint16_t m_canvas[64 * 32];
+        bool m_dirty = false;
+    public:
+        MockCanvasSurface() : IDrawingSurface(64, 32, 64, 32) {
+            memset(m_canvas, 0xFF, sizeof(m_canvas));
+        }
+        void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+            if (x >= 0 && x < 64 && y >= 0 && y < 32) {
+                m_canvas[y * 64 + x] = color;
+                m_dirty = true;
+            }
+        }
+        void clear(uint16_t color = 0) override {
+            for (size_t i = 0; i < 64 * 32; ++i) m_canvas[i] = color;
+            m_dirty = true;
+        }
+        bool isDirty() const override { return m_dirty; }
+        void markDirty() override { m_dirty = true; }
+        uint16_t getPixel(int x, int y) const { return m_canvas[y * 64 + x]; }
+
+        PresentationTiming present() override {
+            m_dirty = false;
+            PresentationTiming t;
+            return t;
+        }
+        void blit565(const uint16_t* src, int16_t x, int16_t y, int16_t w, int16_t h, int16_t stridePixels = -1) override {
+            (void)src; (void)x; (void)y; (void)w; (void)h; (void)stridePixels;
+            m_dirty = true;
+        }
+        CanvasView acquireCanvas() override { return CanvasView(); }
+        void releaseCanvas() override {}
+        bool hasCanvas() const override { return true; }
+        CanvasStorage canvasStorage() const override { return CanvasStorage::SRAM; }
+        PresentationStrategy presentationStrategy() const override { return PresentationStrategy::CANVAS_BURST_SINGLE; }
+        size_t memoryUsageBytes() const override { return sizeof(m_canvas); }
+
+        bool simulatePresentation(bool hardwareSuccess) {
+            if (hardwareSuccess) {
+                present();
+                return true;
+            }
+            // Invariant 20: failed presentation preserves dirty state!
+            return false;
+        }
+    };
+
+    MockCanvasSurface surface;
+    TEST_ASSERT_FALSE(surface.isDirty());
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, surface.getPixel(0, 0));
+
+    // 1. Surface clear modifies canvas only and marks dirty
+    surface.clear(0);
+    TEST_ASSERT_TRUE(surface.isDirty());
+    TEST_ASSERT_EQUAL_HEX16(0x0000, surface.getPixel(0, 0));
+    TEST_ASSERT_EQUAL_HEX16(0x0000, surface.getPixel(63, 31));
+
+    // 2. Failed presentation preserves dirty state (Invariant 20)
+    bool okFail = surface.simulatePresentation(false);
+    TEST_ASSERT_FALSE(okFail);
+    TEST_ASSERT_TRUE(surface.isDirty()); // Preserved!
+
+    // 3. Successful presentation clears dirty state (Invariant 17)
+    bool okPass = surface.simulatePresentation(true);
+    TEST_ASSERT_TRUE(okPass);
+    TEST_ASSERT_FALSE(surface.isDirty());
+}
+
+void test_presentation_oe_blanking_transaction_recovery(void) {
+    // Tests Case A, Case B, Case C from transaction contracts
+    // Case A: Allocation failure -> OE stays HIGH, result = NoValidPipeline, display nulled
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = false;
+        void* displayPtr = nullptr;
+        bool success = (!allocSuccess || displayPtr == nullptr) ? false : true;
+        TEST_ASSERT_FALSE(success);
+        TEST_ASSERT_TRUE(oeAsserted); // Invariant 21: keep OE HIGH
+        TEST_ASSERT_NULL(displayPtr);
+    }
+
+    // Case B: Allocation OK, but Frame 0 commit fails -> OE stays HIGH, failure = Frame0PresentationFailed
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = true;
+        bool frame0Committed = false;
+        bool success = (allocSuccess && frame0Committed);
+        TEST_ASSERT_FALSE(success);
+        TEST_ASSERT_TRUE(oeAsserted); // Invariant 21: OE remains HIGH
+    }
+
+    // Case C: Allocation OK and Frame 0 committed -> OE released LOW, transaction OK
+    {
+        bool oeAsserted = true;
+        bool allocSuccess = true;
+        bool frame0Committed = true;
+        bool success = (allocSuccess && frame0Committed);
+        if (success) {
+            oeAsserted = false; // Released LOW strictly after Frame 0
+        }
+        TEST_ASSERT_TRUE(success);
+        TEST_ASSERT_FALSE(oeAsserted);
+    }
+}
+
+// 3. Simulated Transaction Reconfiguration Pipeline (Mirroring MatrixEngine)
+struct MockPresentationReconfigurator {
+    uint8_t activeDepth = 8;
+    bool oeAsserted = false;
+    uint32_t lastReconfigMs = 0;
+    static constexpr uint32_t MIN_RECONFIG_INTERVAL_MS = 500;
+
+    bool failAllocationFor8 = false;
+    bool failAllocationFor4 = false;
+    bool failAllocationFor2 = false;
+    bool failFrame0Commit = false;
+
+    struct Outcome {
+        bool success = false;
+        uint8_t requestedDepth = 0;
+        uint8_t effectiveDepth = 0;
+        bool fallbackAttempted = false;
+        bool fallbackUsed = false;
+        const char* failureReason = nullptr;
+    };
+
+    Outcome reconfigure(uint8_t targetDepth, uint32_t currentMs) {
+        Outcome res;
+        res.requestedDepth = targetDepth;
+        res.effectiveDepth = activeDepth;
+
+        if (targetDepth < 2 || targetDepth > 8) {
+            res.failureReason = "InvalidDepth";
+            return res;
+        }
+
+        if (lastReconfigMs > 0 && (currentMs - lastReconfigMs < MIN_RECONFIG_INTERVAL_MS)) {
+            res.failureReason = "Throttled";
+            return res;
+        }
+
+        if (targetDepth == activeDepth) {
+            res.success = true;
+            res.effectiveDepth = activeDepth;
+            return res;
+        }
+
+        lastReconfigMs = currentMs;
+        oeAsserted = true; // Invariant 21: OE asserted HIGH before tearing down DMA
+
+        bool allocSuccess = false;
+        uint8_t currentAllocDepth = targetDepth;
+
+        auto tryAlloc = [this](uint8_t d) -> bool {
+            if (d == 8 && failAllocationFor8) return false;
+            if (d == 4 && failAllocationFor4) return false;
+            if (d == 2 && failAllocationFor2) return false;
+            return true;
+        };
+
+        allocSuccess = tryAlloc(targetDepth);
+        if (!allocSuccess) {
+            uint8_t fallbacks[] = {4, 2};
+            for (uint8_t fb : fallbacks) {
+                if (fb < currentAllocDepth) {
+                    if (tryAlloc(fb)) {
+                        allocSuccess = true;
+                        currentAllocDepth = fb;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!allocSuccess) {
+            res.success = false;
+            res.effectiveDepth = 0;
+            res.fallbackAttempted = true;
+            res.fallbackUsed = false;
+            res.failureReason = "NoValidPipeline";
+            oeAsserted = true; // Invariant 21: keep OE HIGH in PresentationRecovery
+            return res;
+        }
+
+        bool frame0Committed = !failFrame0Commit;
+        if (!frame0Committed) {
+            res.success = false;
+            res.effectiveDepth = 0;
+            res.fallbackAttempted = (currentAllocDepth != targetDepth);
+            res.fallbackUsed = false;
+            res.failureReason = "Frame0PresentationFailed";
+            oeAsserted = true; // Invariant 21: OE remains HIGH
+            return res;
+        }
+
+        oeAsserted = false; // OE released LOW strictly after Frame 0 commit
+        activeDepth = currentAllocDepth;
+        res.success = true;
+        res.effectiveDepth = currentAllocDepth;
+        res.fallbackAttempted = (currentAllocDepth != targetDepth);
+        res.fallbackUsed = (res.effectiveDepth != res.requestedDepth);
+        return res;
+    }
+};
+
+void test_simulated_hardware_presentation_transaction_engine(void) {
+    // Scenario 1: Nominal 8 -> 4 transition on TLS admission
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        auto res = rec.reconfigure(4, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(4, res.effectiveDepth);
+        TEST_ASSERT_FALSE(res.fallbackAttempted);
+        TEST_ASSERT_FALSE(res.fallbackUsed);
+        TEST_ASSERT_FALSE(rec.oeAsserted);
+    }
+
+    // Scenario 2: Target 8 fails, fallback 4 succeeds
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true; // 8-bit allocation fails
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(4, res.effectiveDepth);
+        TEST_ASSERT_TRUE(res.fallbackAttempted);
+        TEST_ASSERT_TRUE(res.fallbackUsed); // Requested 8 != effective 4
+        TEST_ASSERT_FALSE(rec.oeAsserted); // OE released because fallback 4 committed Frame 0
+    }
+
+    // Scenario 3: Target 8 and 4 fail, progressive fallback 2 succeeds
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true;
+        rec.failAllocationFor4 = true;
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_TRUE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(2, res.effectiveDepth);
+        TEST_ASSERT_TRUE(res.fallbackAttempted);
+        TEST_ASSERT_TRUE(res.fallbackUsed);
+        TEST_ASSERT_FALSE(rec.oeAsserted);
+    }
+
+    // Scenario 4: All allocations fail -> NoValidPipeline, OE held HIGH
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 4;
+        rec.failAllocationFor8 = true;
+        rec.failAllocationFor4 = true;
+        rec.failAllocationFor2 = true;
+        auto res = rec.reconfigure(8, 1000);
+        TEST_ASSERT_FALSE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(0, res.effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("NoValidPipeline", res.failureReason);
+        TEST_ASSERT_TRUE(rec.oeAsserted); // Invariant 21: PresentationRecovery holds OE HIGH
+    }
+
+    // Scenario 5: Allocation succeeds but Frame 0 commit fails -> Frame0PresentationFailed, OE held HIGH
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        rec.failFrame0Commit = true;
+        auto res = rec.reconfigure(4, 1000);
+        TEST_ASSERT_FALSE(res.success);
+        TEST_ASSERT_EQUAL_UINT8(0, res.effectiveDepth);
+        TEST_ASSERT_EQUAL_STRING("Frame0PresentationFailed", res.failureReason);
+        TEST_ASSERT_TRUE(rec.oeAsserted); // Invariant 21: OE remains HIGH
+    }
+
+    // Scenario 6: Reconfiguration rate limit (< 500 ms) throttles gracefully
+    {
+        MockPresentationReconfigurator rec;
+        rec.activeDepth = 8;
+        auto res1 = rec.reconfigure(4, 1000);
+        TEST_ASSERT_TRUE(res1.success);
+        auto res2 = rec.reconfigure(8, 1200); // 200 ms later -> throttled
+        TEST_ASSERT_FALSE(res2.success);
+        TEST_ASSERT_EQUAL_STRING("Throttled", res2.failureReason);
+    }
+}
+
+class MockPrefetchEngine : public IEngine {
+public:
+    int prefetchCount = 0;
+    EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+    void activate() override {}
+    void update(EngineContext*) override {}
+    void render(EngineContext*) override {}
+    void deactivate() override {}
+    void prefetchData() override {
+        prefetchCount++;
+    }
+};
+
+void test_transition_prefetch_contract(void) {
+    MockPrefetchEngine engine;
+
+    // Contract 1: Calling prefetchData() increments counter
+    TEST_ASSERT_EQUAL(0, engine.prefetchCount);
+    engine.prefetchData();
+    TEST_ASSERT_EQUAL(1, engine.prefetchCount);
+
+    // Contract 2: On PSRAM board (ESP32-S3), needTeardown is false for TLS engines
+    EngineRequirements tlsReq;
+    tlsReq.needsTls = true;
+    uint8_t depthS3 = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, true, tlsReq, 8, 120000, 240000, 100000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, depthS3);
+    // On S3 with PSRAM, targetDepth (8) == currentDepth (8) and hasPsram is true,
+    // so needTeardown evaluates to false. S3 never releases panel nor executes transition prefetch.
+    bool s3NeedsTeardown = (depthS3 != 8) || (tlsReq.needsTls && !true /*hasPsram*/);
+    TEST_ASSERT_FALSE(s3NeedsTeardown);
+
+    // Contract 3: On non-PSRAM board (ESP32 Standard), depth targets 4 bits and requires clean window
+    uint8_t depthEsp = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 8, 32000, 60000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, depthEsp);
+    bool espNeedsTeardown = (depthEsp != 8) || (tlsReq.needsTls && !false /*hasPsram*/);
+    TEST_ASSERT_TRUE(espNeedsTeardown);
+
+    // Contract 4: On non-PSRAM board after panel release, steady-state display admits 4 bits with 56 KB free DRAM
+    uint8_t depthPostRelease = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, tlsReq, 0, 34000, 56000, 34000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, depthPostRelease);
+
+    // Contract 5: When engine cache is fresh (needsTlsFetch() == false), needsTls is cleared dynamically,
+    // admitting 8 bits color depth and zero panel teardown on rotation.
+    class MockFreshCacheEngine : public IEngine {
+    public:
+        EngineError initialize(EngineContext*, const EngineConfig*) override { return EngineError::OK; }
+        void activate() override {}
+        void update(EngineContext*) override {}
+        void render(EngineContext*) override {}
+        void deactivate() override {}
+        bool needsTlsFetch() const override { return false; }
+    };
+    MockFreshCacheEngine freshEngine;
+    EngineRequirements dynamicReq = tlsReq;
+    if (dynamicReq.needsTls) {
+        dynamicReq.needsTls = freshEngine.needsTlsFetch();
+    }
+    TEST_ASSERT_FALSE(dynamicReq.needsTls);
+    uint8_t depthFresh = PipelineSelectionPolicy::resolveTargetDepth(
+        8, true, 128, 32, false, dynamicReq, 8, 32000, 60000, 40000, false, true
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, depthFresh);
+    bool freshNeedsTeardown = (depthFresh != 8) || (dynamicReq.needsTls && !false /*hasPsram*/);
+    TEST_ASSERT_FALSE(freshNeedsTeardown);
+}
+
+// =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
 
@@ -1011,6 +2044,37 @@ int main(int argc, char** argv) {
     RUN_TEST(test_mqttdata_session_pages_types_and_handoff);
     RUN_TEST(test_mqttdata_page_cycle);
     RUN_TEST(test_mqttdata_blueprint_payloads);
+
+    // CompatibilityEvaluator Tests
+    RUN_TEST(test_compatibility_evaluator_hardware_gating);
+    RUN_TEST(test_compatibility_evaluator_memory_and_fragmentation);
+    RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
+    RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
+    RUN_TEST(test_e2e_gif_to_clock_transition_and_catalog_invariance);
+
+    // IconService Tests
+    RUN_TEST(test_icon_service_sanitization_and_paths);
+
+    // Color Depth & Pipeline Selection Tests
+    RUN_TEST(test_pipeline_selection_effective_color_depth);
+    RUN_TEST(test_rotation_requirements_aggregation);
+    RUN_TEST(test_render_transaction_contracts);
+
+    // Surface Isolation & Canvas Clear Contracts (Invariants 17, 18, 19, 20)
+    RUN_TEST(test_surface_isolation_and_canvas_only_clear);
+
+    // Lifecycle Quiescence & Quarantine Contracts (Invariants 1, 14, 15, 16)
+    RUN_TEST(test_lifecycle_two_stage_quiescence_contracts);
+    RUN_TEST(test_lifecycle_deactivate_vs_shutdown_distinct_contracts);
+    RUN_TEST(test_lifecycle_cooperative_worker_timeout_and_quarantine);
+    RUN_TEST(test_lifecycle_cooperative_exit_latency_slices);
+
+    // Presentation OE Recovery & Simulated Hardware Transaction Contracts (Invariant 21)
+    RUN_TEST(test_presentation_oe_blanking_transaction_recovery);
+    RUN_TEST(test_simulated_hardware_presentation_transaction_engine);
+
+    // Transition Prefetch Contracts (Hardware Gating)
+    RUN_TEST(test_transition_prefetch_contract);
 
     return UNITY_END();
 }

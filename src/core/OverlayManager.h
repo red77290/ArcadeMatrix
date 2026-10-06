@@ -44,9 +44,11 @@ public:
         }
 
         // Global master switch + per-rotation entry tri-state switch
+        // Fighter overlay strictly requires PSRAM to store sprite frames without exhausting internal DRAM.
         ConfigSnapshotGuard guard = _config->acquireSnapshot();
         bool globalEnabled = guard->system.idle_fighter_enabled;
-        bool shouldBeActive = globalEnabled && (overlays.fighter != FighterOverride::Disabled);
+        bool hasPsram = _context ? _context->hasPsram() : false;
+        bool shouldBeActive = globalEnabled && hasPsram && (overlays.fighter != FighterOverride::Disabled);
 
         if (shouldBeActive) {
             if (!_fighterOverlay) {
