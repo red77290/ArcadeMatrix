@@ -29,7 +29,7 @@ void MarioClock::draw(const TimeData& t) {
 
 // Straight bitmap blits: the artwork is RGB565 already, and SKY_COLOR doubles as the mask.
 void MarioClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent) {
-    if (!matrix) return;
+    if (!matrix || !data) return;
     const int panelW = matrix->width(), panelH = matrix->height();
     for (int row = 0; row < h; row++) {
         int py = y + row;
@@ -57,11 +57,8 @@ void MarioClock::drawBlockAt(int x, int y, const char* text) {
 }
 
 // The scene: the square original in the middle, with the ground and clouds carried out to both
-// edges so a wide panel looks like more of the same level rather than a stretched one. The hill and
-// the bush are each cut down one side to sit against a frame edge, so there is one of each, at the
-// edge it was drawn for.
+// edges so a wide panel looks like more of the same level rather than a stretched one.
 void MarioClock::drawScene(int w, int h) {
-    const int sceneLeft = (w - SCENE) / 2;
     matrix->fillRect(0, 0, w, h, SKY_COLOR);
 
     int groundTop = h - GROUND_H;
@@ -69,58 +66,46 @@ void MarioClock::drawScene(int w, int h) {
         blitSprite(GROUND, GROUND_W, GROUND_H, x, groundTop, false);
     }
 
-    // The hill is half a hill: its left side is a sheer vertical cut, drawn to sit flush against the
-    // frame edge so it reads as a slope running on past it. Tiled across a wide panel that cut lands
-    // in open sky and looks like a hill sliced off, so there is one, against the left edge, as in
-    // the original.
-    blitSprite(HILL, HILL_W, HILL_H, 0, groundTop - HILL_H + 2, true);
+    if (h >= 48) {
+        blitSprite(HILL, HILL_W, HILL_H, 0, groundTop - HILL_H + 2, true);
+        blitSprite(BUSH, BUSH_W, BUSH_H, w - BUSH_W, groundTop - BUSH_H, true);
+    }
 
-    // The bush is the hill's mirror: cut down its right side, drawn to sit flush against the other
-    // frame edge (x 43 of 64, so its right edge lands exactly on it). One, against the right edge.
-    blitSprite(BUSH, BUSH_W, BUSH_H, w - BUSH_W, groundTop - BUSH_H, true);
+    blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 0, (h >= 48 ? 14 : 2), true);
+    blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W, (h >= 48 ? 6 : 2), true);
 
-    // Edge clouds: CLOUD1 has a sheer vertical cut on its left edge and CLOUD2 on its right edge.
-    // Like HILL and BUSH, they are drawn flush against the panel edges so they read as clouds
-    // entering and leaving the visible area.
-    blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 0, 14, true);
-    blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W, 6, true);
-
-    // Complete seamless 19x12 clouds distributed across the sky, positioned to leave the central clock blocks clear.
-    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 40, 6, true);
-    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 72, 14, true);
-    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 165, 6, true);
-    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 198, 14, true);
+    if (w >= 128 && h >= 48) {
+        blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 40, 6, true);
+        blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 72, 14, true);
+    }
+    if (w >= 256 && h >= 48) {
+        blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 165, 6, true);
+        blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 198, 14, true);
+    }
 }
 
 void MarioClock::update() {
     if (!matrix) return;
     const int w = matrix->width();
     const int h = matrix->height();
-    if (w < 192 || h < 64) {     // laid out for a wide panel; see the theme name
-        if (m_dirty == 0) { m_hasFrame = false; return; }
-        m_dirty--;
-        m_hasFrame = true;
-        matrix->fillRect(0, 0, w, h, 0x0000);
-        matrix->setFont(nullptr);
-        matrix->setTextSize(1);
-        matrix->setTextColor(matrix->color565(255, 160, 0));
-        matrix->setCursor(2, h / 2 - 7);
-        matrix->print("NEEDS");
-        matrix->setCursor(2, h / 2 + 1);
-        matrix->print("256x64");
-        return;
+
+    const bool isWideTall = (h >= 48);
+    const int groundTop = h - GROUND_H;
+    int hourX, minuteX, blockY;
+
+    if (isWideTall) {
+        const int sceneLeft = (w - SCENE) / 2;
+        hourX = sceneLeft + 13;
+        minuteX = sceneLeft + 32;
+        blockY = 8;
+    } else {
+        // 128x32 compact layout: blocks placed side-by-side at the right edge
+        hourX = w - 46;
+        minuteX = w - 24;
+        blockY = 3;
     }
 
-    const int sceneLeft = (w - SCENE) / 2;
-    const int groundTop = h - GROUND_H;
-    // Original block positions inside the 64 px scene, kept so the pair sits where it should.
-    const int hourX = sceneLeft + 13;
-    const int minuteX = sceneLeft + 32;
-    const int blockY = (h >= 64) ? 8 : 2;
-
     char hh[4], mm[4];
-    // The original prints the hour unpadded, and the block centres one digit differently from two,
-    // so 12-hour time reads "1" rather than "01".
     snprintf(hh, sizeof(hh), "%d", storedTime.hours);
     snprintf(mm, sizeof(mm), "%02d", storedTime.minutes);
 
@@ -140,63 +125,93 @@ void MarioClock::update() {
         phase = Phase::Waiting;
         pendingDigits = false;
         blockBounce[0] = blockBounce[1] = 0.0f;
+        shellActive = false;
+        coinPop = false;
         m_dirty = 2;
     }
+
     if (lastMinute != storedTime.minutes) {
         bool newHour = (lastMinute >= 0 && storedTime.minutes == 0);
         lastMinute = storedTime.minutes;
         jumpTarget = newHour ? 0 : 1;
-        if (phase == Phase::Waiting) {
-            phase = Phase::RunIn;
-            runnerX = -(float)MARIO_JUMP_W;
-            pendingDigits = true;
+        if (isWideTall) {
+            if (phase == Phase::Waiting) {
+                phase = Phase::RunIn;
+                runnerX = -(float)MARIO_JUMP_W;
+                pendingDigits = true;
+            } else {
+                pendingDigits = true;
+            }
         } else {
+            // 128x32 compact mode: trigger green Koopa shell kick
+            shellActive = true;
+            shellX = 26.0f;
             pendingDigits = true;
+            phase = Phase::RunIn;
         }
         m_dirty = 2;
     }
     if (shownHH[0] == '-') { strcpy(shownHH, hh); strcpy(shownMM, mm); m_dirty = 2; }
 
-    const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
-    // 100 % = Super Mario Bros walking pace (about 85 px/s; the NES screen is 256 px wide, like the 256x64 panel).
-    const float pace = 85.0f * (speedPct / 100.0f);
+    if (isWideTall) {
+        const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
+        const float pace = 85.0f * (speedPct / 100.0f);
 
-    switch (phase) {
-        case Phase::Waiting:
-            break;
-        case Phase::RunIn:
-            runnerX += pace * dt;
-            if (runnerX >= targetX) {
-                runnerX = (float)targetX;
-                phase = Phase::Jump;
-                jumpT = 0.0f;
-            }
-            break;
-        case Phase::Jump:
-            jumpT += dt * 4.0f * (speedPct / 100.0f);   // jump timed to match the walking pace
-            if (jumpT >= 0.5f && pendingDigits) {     // struck at the top of the arc
-                pendingDigits = false;
+        switch (phase) {
+            case Phase::Waiting:
+                break;
+            case Phase::RunIn:
+                runnerX += pace * dt;
+                if (runnerX >= targetX) {
+                    runnerX = (float)targetX;
+                    phase = Phase::Jump;
+                    jumpT = 0.0f;
+                }
+                break;
+            case Phase::Jump:
+                jumpT += dt * 4.0f * (speedPct / 100.0f);
+                if (jumpT >= 0.5f && pendingDigits) {
+                    pendingDigits = false;
+                    blockBounce[jumpTarget] = 0.001f;
+                    strcpy(shownHH, hh);
+                    strcpy(shownMM, mm);
+                }
+                if (jumpT >= 1.0f) { jumpT = 0.0f; phase = Phase::RunOut; }
+                break;
+            case Phase::RunOut:
+                runnerX += pace * dt;
+                if (runnerX > w) { phase = Phase::Waiting; }
+                break;
+        }
+    } else {
+        // 128x32 compact mode shell physics
+        if (shellActive) {
+            float shellSpeed = 280.0f * (speedPct / 100.0f);
+            shellX += shellSpeed * dt;
+            int targetX = (jumpTarget == 0) ? hourX : minuteX;
+            if (shellX >= targetX - 6) {
+                shellActive = false;
                 blockBounce[jumpTarget] = 0.001f;
                 strcpy(shownHH, hh);
                 strcpy(shownMM, mm);
+                pendingDigits = false;
+                coinPop = true;
+                phase = Phase::Waiting;
             }
-            if (jumpT >= 1.0f) { jumpT = 0.0f; phase = Phase::RunOut; }
-            break;
-        case Phase::RunOut:
-            runnerX += pace * dt;
-            if (runnerX > w) { phase = Phase::Waiting; }
-            break;
-    }
-    for (int i = 0; i < 2; i++) {
-        if (blockBounce[i] > 0.0f) {
-            blockBounce[i] += dt * 3.2f;
-            if (blockBounce[i] >= 1.0f) blockBounce[i] = 0.0f;
         }
     }
 
-    // A full repaint costs a screenful of pixels, so it happens only when something changed: on
-    // arrival (both DMA buffers), on a minute, and while Mario is on screen.
-    bool animating = (phase != Phase::Waiting) || blockBounce[0] > 0.0f || blockBounce[1] > 0.0f;
+    for (int i = 0; i < 2; i++) {
+        if (blockBounce[i] > 0.0f) {
+            blockBounce[i] += dt * 3.2f;
+            if (blockBounce[i] >= 1.0f) {
+                blockBounce[i] = 0.0f;
+                if (!isWideTall) coinPop = false;
+            }
+        }
+    }
+
+    bool animating = (phase != Phase::Waiting) || blockBounce[0] > 0.0f || blockBounce[1] > 0.0f || shellActive;
     if (!animating && m_dirty == 0) {
         m_hasFrame = false;
         return;
@@ -212,17 +227,29 @@ void MarioClock::update() {
         drawBlockAt(i == 0 ? hourX : minuteX, blockY - lift, i == 0 ? shownHH : shownMM);
     }
 
-    if (phase != Phase::Waiting) {
-        bool airborne = (phase == Phase::Jump);
-        int lift = airborne ? (int)(sinf(jumpT * 3.14159f) * (groundTop - blockY - BLOCK_H - 2)) : 0;
-        int y = groundTop - MARIO_H - lift;
-        if (airborne) {
-            blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, y, true);
-        } else {
-            // Running in or out: the NES walk cycle, one frame per 6 px travelled so the legs keep pace with
-            // the speed setting. The run frames sit in a 16 px cell whose column 2 lines up with the idle sprite.
-            const int f = (((int)runnerX + 1200) / 6) % 3;
-            blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], y, true);
+    if (isWideTall) {
+        if (phase != Phase::Waiting) {
+            bool airborne = (phase == Phase::Jump);
+            int lift = airborne ? (int)(sinf(jumpT * 3.14159f) * (groundTop - blockY - BLOCK_H - 2)) : 0;
+            int y = groundTop - MARIO_H - lift;
+            if (airborne) {
+                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, y, true);
+            } else {
+                const int f = (((int)runnerX + 1200) / 6) % 3;
+                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], y, true);
+            }
+        }
+    } else {
+        // 128x32: Mario stands at x=14
+        blitSprite(MARIO_IDLE, MARIO_W, MARIO_H, 14, groundTop - MARIO_H, true);
+        if (shellActive) {
+            blitSprite(KOOPA_SHELL, 12, 12, (int)shellX, groundTop - 12, true);
+        }
+        if (coinPop && blockBounce[jumpTarget] > 0.0f) {
+            int targetX = (jumpTarget == 0) ? hourX : minuteX;
+            float b = blockBounce[jumpTarget];
+            int coinLift = (int)(sinf(b * 3.14159f) * 6.0f);
+            blitSprite(GOLD_COIN, 8, 8, targetX + 5, blockY - 4 - coinLift, true);
         }
     }
 }
@@ -231,4 +258,6 @@ void MarioClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     phase = Phase::Waiting;
     lastMinute = -1;
+    shellActive = false;
+    coinPop = false;
 }
