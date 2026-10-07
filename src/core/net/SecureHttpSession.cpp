@@ -22,6 +22,7 @@ struct SessionTransport {
     virtual int sendRequest(const char* method, const char* body = nullptr, const char* contentType = nullptr) = 0;
     virtual Stream* getStream() = 0;
     virtual int getSize() = 0;
+    virtual String getString() = 0;
     virtual void end() = 0;
 };
 
@@ -88,6 +89,10 @@ public:
 
     int getSize() override {
         return _http.getSize();
+    }
+
+    String getString() override {
+        return _http.getString();
     }
 
     void end() override {
@@ -335,6 +340,15 @@ SecureHttpResponse SecureHttpSession::post(const String& path, const String& con
     size_t len = (size_t)max(0, _transport->getSize());
 
     return SecureHttpResponse(this, statusCode, streamPtr, len, durationMs, err);
+}
+
+String SecureHttpSession::readResponseBodyString() {
+    if (_aborted || !_transport || !_hasActiveResponse) {
+        return "";
+    }
+    String result = _transport->getString();
+    finalizeCurrentResponse();
+    return result;
 }
 
 void SecureHttpSession::finalizeCurrentResponse() {

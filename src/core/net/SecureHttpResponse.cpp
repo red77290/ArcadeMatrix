@@ -66,6 +66,21 @@ Stream& SecureHttpResponse::stream() {
     return *_stream;
 }
 
+String SecureHttpResponse::body() {
+    if (_consumed || (_owner && _owner->isAborted())) {
+        return "";
+    }
+    _consumed = true;
+    String res;
+    if (_owner) {
+        res = _owner->readResponseBodyString();
+    } else if (_stream) {
+        res = _stream->readString();
+    }
+    _stream = &s_nullStream;
+    return res;
+}
+
 void SecureHttpResponse::consume() {
     if (_consumed) return;
     _consumed = true;

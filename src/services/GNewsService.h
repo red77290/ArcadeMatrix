@@ -69,6 +69,9 @@ private:
     std::vector<String> _apiKeys;
     std::vector<uint32_t> _keyUsages;
     int _lastFetchDay = -1;
+    uint32_t _lastAttemptTime = 0;
+    uint32_t _lastAttemptEpoch = 0;
+    uint32_t _consecutiveFailures = 0;
     bool _loadedFromSd = false;
 
     bool parseGNewsJson(Stream& stream, const char* defaultCategory);

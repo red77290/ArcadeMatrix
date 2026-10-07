@@ -67,6 +67,10 @@ void GNewsService::purgeArticles() {
     _snapshot.hasData = false;
     _snapshot.fetchSuccess = false;
     _snapshot.lastFetchTime = 0;
+    _snapshot.lastFetchEpoch = 0;
+    _lastAttemptTime = 0;
+    _lastAttemptEpoch = 0;
+    _consecutiveFailures = 0;
 }
 
 uint16_t GNewsService::getCategoryColor(const char* category) {
@@ -148,6 +152,8 @@ void GNewsService::saveToSd() {
     doc["last_fetch_time"] = _snapshot.lastFetchTime;
     doc["last_fetch_epoch"] = _snapshot.lastFetchEpoch;
     doc["last_fetch_day"] = _lastFetchDay;
+    doc["last_attempt_epoch"] = _lastAttemptEpoch;
+    doc["consecutive_failures"] = _consecutiveFailures;
     doc["active_key_idx"] = _activeKeyIdx;
     doc["last_cat_idx"] = _catRoundRobinIdx;
     doc["cat_round_robin_idx"] = _catRoundRobinIdx;
@@ -195,6 +201,8 @@ void GNewsService::loadFromSd() {
     _snapshot.lastFetchTime = millis();
     _snapshot.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
     _lastFetchDay = doc["last_fetch_day"] | -1;
+    _lastAttemptEpoch = doc["last_attempt_epoch"] | 0;
+    _consecutiveFailures = doc["consecutive_failures"] | 0;
     _activeKeyIdx = doc["active_key_idx"] | 0;
     _catRoundRobinIdx = doc["last_cat_idx"] | doc["cat_round_robin_idx"] | 0;
     _snapshot.status = doc["status"] | 0;
@@ -349,95 +357,7 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
 }
 
 bool GNewsService::parseGNewsJson(Stream& stream, const char* defaultCategory) {
-    DynamicJsonDocument doc(16384);
-    DeserializationError error = deserializeJson(doc, stream);
-    if (error) {
-        LOGE("GNewsService", "JSON deserialize error: %s", error.c_str());
-        return false;
-    }
-
-    JsonArray articles = doc["articles"].as<JsonArray>();
-    if (articles.isNull() || articles.size() == 0) {
-        LOGW("GNewsService", "No articles returned in JSON payload");
-        return false;
-    }
-
-    const char* defCat = (defaultCategory && strlen(defaultCategory) > 0) ? defaultCategory : "News";
-    uint16_t catColor = getCategoryColor(defCat);
-
-    std::vector<GNewsArticle> incoming;
-    for (JsonObject obj : articles) {
-        const char* rawTitle = obj["title"] | "";
-        if (!rawTitle || strlen(rawTitle) == 0) continue;
-
-        String cleanTitle = cleanNewsText(rawTitle);
-        if (cleanTitle.length() == 0) continue;
-
-        GNewsArticle art;
-        strncpy(art.title, cleanTitle.c_str(), sizeof(art.title) - 1);
-        art.title[sizeof(art.title) - 1] = '\0';
-
-        const char* rawDesc = obj["description"] | obj["content"] | "";
-        String cleanDesc = cleanNewsText(rawDesc);
-        int bracketPos = cleanDesc.lastIndexOf("[+");
-        if (bracketPos > 0) {
-            cleanDesc = cleanDesc.substring(0, bracketPos);
-            cleanDesc.trim();
-        }
-        strncpy(art.description, cleanDesc.c_str(), sizeof(art.description) - 1);
-        art.description[sizeof(art.description) - 1] = '\0';
-
-        const char* sourceName = obj["source"]["name"] | "News";
-        String cleanSource = cleanNewsText(sourceName);
-        strncpy(art.source, cleanSource.c_str(), sizeof(art.source) - 1);
-        art.source[sizeof(art.source) - 1] = '\0';
-
-        strncpy(art.category, defCat, sizeof(art.category) - 1);
-        art.category[sizeof(art.category) - 1] = '\0';
-
-        art.publishedEpoch = 0;
-        art.badgeColor = catColor;
-        incoming.push_back(art);
-    }
-
-    if (incoming.empty()) return false;
-
-    // Merge incoming into the snapshot articles with title deduplication
-    std::vector<GNewsArticle> merged;
-    for (const auto& inc : incoming) {
-        merged.push_back(inc);
-    }
-    for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
-        bool dup = false;
-        for (const auto& m : merged) {
-            if (strcmp(m.title, _snapshot.articles[i].title) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup && merged.size() < GNEWS_MAX_ARTICLES) {
-            merged.push_back(_snapshot.articles[i]);
-        }
-    }
-
-    if (!ensureArticleStorage()) {
-        _snapshot.count = 0;
-        _snapshot.hasData = false;
-        return false;
-    }
-
-    _snapshot.count = min((size_t)GNEWS_MAX_ARTICLES, merged.size());
-    for (size_t i = 0; i < _snapshot.count; i++) {
-        _snapshot.articles[i] = merged[i];
-    }
-
-    _snapshot.hasData = (_snapshot.count > 0);
-    _snapshot.fetchSuccess = true;
-    _snapshot.lastFetchTime = millis();
-    time_t curEp = 0;
-    time(&curEp);
-    _snapshot.lastFetchEpoch = (curEp > 1600000000) ? (uint32_t)curEp : 0;
-    return true;
+    return parseGNewsJson(stream.readString(), defaultCategory);
 }
 
 void GNewsService::fetchNews(const String& apiKey, const String& category, const String& keywords,
@@ -448,50 +368,18 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     }
 
     uint32_t now = millis();
-    _lastRequestsPerDay = requestsPerDay > 0 ? requestsPerDay : 10;
-    uint32_t intervalMs = (86400000UL) / (uint32_t)_lastRequestsPerDay;
-    uint32_t intervalSec = 86400UL / (uint32_t)_lastRequestsPerDay;
+    _lastRequestsPerDay = (requestsPerDay > 0) ? std::min(requestsPerDay, 100) : 10;
+    uint32_t intervalFromBudgetSec = 86400UL / (uint32_t)_lastRequestsPerDay;
+    uint32_t intervalFromTtlSec = (cacheTtlMin > 0) ? ((uint32_t)cacheTtlMin * 60UL) : 1800UL;
+    uint32_t intervalSec = std::max(intervalFromBudgetSec, intervalFromTtlSec);
+    uint32_t intervalMs = intervalSec * 1000UL;
 
-    String reqLang = lang;
-    if (reqLang.length() == 0 || reqLang == "auto" || reqLang == "system") {
-        reqLang = String(I18n::getLangCode(I18n::getLang()));
-        if (reqLang.length() == 0) reqLang = "fr";
-    }
-
-    // UTC Midnight rollover check (GNews daily quota resets precisely at 00:00 UTC / 12:00 AM UTC)
-    time_t epochTime = 0;
-    time(&epochTime);
-    int curUtcDay = 0;
-    if (epochTime > 1600000000) {
-        curUtcDay = (int)(epochTime / 86400);
-    } else {
-        curUtcDay = (int)(now / 86400000UL); // Fallback before NTP sync
-    }
-
-    if (_lastFetchDay != -1 && curUtcDay != _lastFetchDay) {
-        LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
-        for (size_t i = 0; i < _keyUsages.size(); i++) {
-            _keyUsages[i] = 0;
+    if (_lastApiKey != apiKey) {
+        _lastApiKey = apiKey;
+        _consecutiveFailures = 0;
+        if (_snapshot.status == 1 || _snapshot.status == 2 || _snapshot.status == 3) {
+            _snapshot.status = 0;
         }
-        if (_snapshot.status == 3) { // RATE_LIMITED
-            _snapshot.status = 0; // OK
-        }
-    }
-    _lastFetchDay = curUtcDay;
-
-    bool intervalElapsed = false;
-    if (epochTime > 1600000000 && _snapshot.lastFetchEpoch > 1600000000) {
-        if ((uint32_t)epochTime >= _snapshot.lastFetchEpoch) {
-            intervalElapsed = (((uint32_t)epochTime - _snapshot.lastFetchEpoch) >= intervalSec);
-        } else {
-            intervalElapsed = true; // Clock jumped backwards
-        }
-    } else {
-        intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
-    }
-
-    if (!forceRefresh && _snapshot.hasData && !intervalElapsed) {
-        return; // Scheduled interval not elapsed
     }
 
     // Parse comma-separated keys
@@ -519,6 +407,86 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         return;
     }
 
+    // UTC Midnight rollover check (GNews daily quota resets precisely at 00:00 UTC / 12:00 AM UTC)
+    time_t epochTime = 0;
+    time(&epochTime);
+    int curUtcDay = 0;
+    if (epochTime > 1600000000) {
+        curUtcDay = (int)(epochTime / 86400);
+    } else {
+        curUtcDay = (int)(now / 86400000UL); // Fallback before NTP sync
+    }
+
+    if (_lastFetchDay != -1 && curUtcDay != _lastFetchDay) {
+        LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
+        for (size_t i = 0; i < _keyUsages.size(); i++) {
+            _keyUsages[i] = 0;
+        }
+        _consecutiveFailures = 0;
+        if (_snapshot.status == 3) { // RATE_LIMITED
+            _snapshot.status = 0; // OK
+        }
+        saveToSd();
+    }
+    _lastFetchDay = curUtcDay;
+
+    // Check if daily quota is reached for all keys (strict hard cap: requests_per_day per key)
+    bool hasAvailableKey = false;
+    for (size_t i = 0; i < _apiKeys.size(); i++) {
+        if (_keyUsages[i] < (uint32_t)_lastRequestsPerDay) {
+            hasAvailableKey = true;
+            break;
+        }
+    }
+    if (!hasAvailableKey) {
+        _snapshot.status = 3; // RATE_LIMITED / QUOTA_EXHAUSTED
+        return; // Absolute hard stop: do NOT perform any network calls until midnight UTC!
+    }
+
+    // If currently rate limited (429 received from server), stay locked out until midnight UTC unless forced
+    if (_snapshot.status == 3 && !forceRefresh) {
+        return;
+    }
+
+    // Failure backoff guard (anti-hammering):
+    // If a previous attempt failed (network error, timeout, 429), wait at least 5 minutes before retrying.
+    // This applies REGARDLESS of whether _snapshot.hasData is true or false.
+    uint32_t failureBackoffSec = 300; // 5 minutes minimum
+    if (_consecutiveFailures > 1) {
+        failureBackoffSec = std::min((uint32_t)300 * _consecutiveFailures, (uint32_t)1800); // Up to 30 min
+    }
+    uint32_t failureBackoffMs = failureBackoffSec * 1000UL;
+
+    if (!forceRefresh && _lastAttemptTime != 0) {
+        bool inFailureBackoff = false;
+        if (epochTime > 1600000000 && _lastAttemptEpoch > 1600000000) {
+            if ((uint32_t)epochTime >= _lastAttemptEpoch) {
+                inFailureBackoff = (((uint32_t)epochTime - _lastAttemptEpoch) < failureBackoffSec);
+            }
+        } else {
+            inFailureBackoff = ((now - _lastAttemptTime) < failureBackoffMs);
+        }
+        if (inFailureBackoff && (_consecutiveFailures > 0 || !_snapshot.hasData)) {
+            return; // Waiting for failure backoff window to expire
+        }
+    }
+
+    // Normal scheduled interval check (based on requests_per_day AND cache_ttl_min)
+    bool intervalElapsed = false;
+    if (epochTime > 1600000000 && _snapshot.lastFetchEpoch > 1600000000) {
+        if ((uint32_t)epochTime >= _snapshot.lastFetchEpoch) {
+            intervalElapsed = (((uint32_t)epochTime - _snapshot.lastFetchEpoch) >= intervalSec);
+        } else {
+            intervalElapsed = true; // Clock jumped backwards
+        }
+    } else {
+        intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
+    }
+
+    if (!forceRefresh && _snapshot.hasData && _snapshot.articles != nullptr && !intervalElapsed) {
+        return; // Scheduled interval not elapsed
+    }
+
     if (WiFi.status() != WL_CONNECTED) {
         _snapshot.status = 4; // NETWORK_ERROR
         return;
@@ -526,6 +494,16 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
 
     if (!_snapshot.hasData) {
         _snapshot.status = 5; // LOADING
+    }
+
+    // Record attempt timestamp immediately to enforce backoff if network or parsing fails
+    _lastAttemptTime = now;
+    _lastAttemptEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
+
+    String reqLang = lang;
+    if (reqLang.length() == 0 || reqLang == "auto" || reqLang == "system") {
+        reqLang = String(I18n::getLangCode(I18n::getLang()));
+        if (reqLang.length() == 0) reqLang = "fr";
     }
 
     // Split category list if comma-separated
@@ -554,6 +532,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     net::SecureHttpOptions options;
     options.requestTimeoutMs = 4500;
     options.handshakeTimeoutSec = 4;
+    options.ownerId = net::OWNER_GNEWS;
     auto session = net::SecureHttpClient::session("gnews.io", 443, options);
 
     size_t startKeyIdx = _activeKeyIdx % _apiKeys.size();
@@ -561,6 +540,12 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
 
     for (size_t attempt = 0; attempt < _apiKeys.size(); attempt++) {
         size_t curKeyIdx = (startKeyIdx + attempt) % _apiKeys.size();
+        if (_keyUsages[curKeyIdx] >= (uint32_t)_lastRequestsPerDay) {
+            LOGI("GNewsService", "Skipping key %d/%d (quota exhausted: %u/%d)",
+                 (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx], _lastRequestsPerDay);
+            continue;
+        }
+
         String currentKey = _apiKeys[curKeyIdx];
 
         String path = "/api/v4/";
@@ -577,26 +562,39 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         path += "&max=" + String(count);
         path += "&apikey=" + currentKey;
 
-        LOGI("GNewsService", "Fetching live news with key %d/%d for '%s'", (int)curKeyIdx + 1, (int)_apiKeys.size(), targetCat.c_str());
+        LOGI("GNewsService", "Fetching live news with key %d/%d (usage %u/%d) for '%s'",
+             (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx] + 1, _lastRequestsPerDay, targetCat.c_str());
+
+        // Increment key usage because the HTTP request is dispatched and counted by GNews API
+        _keyUsages[curKeyIdx]++;
+        saveToSd();
 
         auto response = session.get(path);
         int httpCode = response.statusCode();
 
         if (response.ok()) {
-            if (parseGNewsJson(response.stream(), targetCat.c_str())) {
+            String payload = response.body();
+            if (parseGNewsJson(payload, targetCat.c_str())) {
                 _activeKeyIdx = curKeyIdx;
-                if (curKeyIdx < _keyUsages.size()) _keyUsages[curKeyIdx]++;
                 _snapshot.status = 0; // OK
+                _snapshot.lastFetchTime = millis();
+                _snapshot.lastFetchEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
+                _consecutiveFailures = 0;
                 saveToSd();
                 querySucceeded = true;
                 break;
+            } else {
+                _consecutiveFailures++;
             }
         } else {
-            String errBody = response.stream().readString();
+            _consecutiveFailures++;
+            String errBody = response.body();
             errBody.toLowerCase();
             if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
-                LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Locking out until midnight UTC.", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                _keyUsages[curKeyIdx] = _lastRequestsPerDay; // Mark key as fully consumed
                 _snapshot.status = 3; // RATE_LIMITED
+                saveToSd();
             } else if (httpCode == 401 || errBody.indexOf("invalid") >= 0 || errBody.indexOf("forbidden") >= 0) {
                 LOGW("GNewsService", "Key %d/%d invalid (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
                 _snapshot.status = 2; // INVALID_KEY
@@ -609,6 +607,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     esp_task_wdt_reset();
 
     if (!querySucceeded) {
+        if (_consecutiveFailures == 0) _consecutiveFailures = 1;
         saveToSd(); // Persist error state without erasing existing cached articles
     }
 }

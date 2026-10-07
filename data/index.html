@@ -4813,18 +4813,16 @@ window.switchToScreenTab = function(instanceId) {
     window.switchToPage('display');
   }
   
-  document.querySelectorAll('#page-display .tab-btn').forEach(btn => {
-    btn.classList.remove('active');
-    if (btn.getAttribute('data-tab-target') === tabId) {
-      btn.classList.add('active');
-      btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
-  });
+  const targetBtn = document.querySelector(`#page-display .tab-btn[data-tab-target="${tabId}"]`);
+  if (targetBtn) {
+    targetBtn.click();
+    targetBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  } else if (typeof window.renderDynamicDisplay === 'function') {
+    window.renderDynamicDisplay(instanceId);
+  }
   
-  document.querySelectorAll('#page-display .tab-pane').forEach(pane => pane.classList.remove('active'));
   const targetPane = document.getElementById(tabId);
   if (targetPane) {
-    targetPane.classList.add('active');
     targetPane.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 };

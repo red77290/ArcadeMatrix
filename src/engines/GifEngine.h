@@ -8,6 +8,7 @@
  */
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <AnimatedGIF.h>
 #ifdef INTELSHORT
 #undef INTELSHORT
@@ -197,6 +198,28 @@ private:
     uint8_t* psramBuffer = nullptr;
     size_t psramBufferSize = 0;
     void freePsramBuffer();
+
+    // Core 0 background GIF preloader (seamless <1ms transition)
+    struct PreloadItem {
+        char path[128] = {0};
+        uint8_t* buffer = nullptr;
+        size_t size = 0;
+        bool isPng = false;
+        bool isRaw = false;
+        std::atomic<bool> ready{false};
+    };
+    PreloadItem m_preloaded;
+    TaskHandle_t m_preloadTask = nullptr;
+    std::atomic<bool> m_stopPreload{false};
+    std::atomic<bool> m_preloadExited{true};
+    std::atomic<bool> m_preloadTrigger{false};
+
+    void startPreloadTask();
+    void stopPreloadTask();
+    static void preloadTaskEntry(void* arg);
+    void preloadWorker();
+    void freePreloadBuffer();
+    bool pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPng, bool& outIsRaw);
 
     /**
      * Dirty-pixel presentation. Pushing a whole 256x64 frame through drawPixel costs 8 PSRAM
