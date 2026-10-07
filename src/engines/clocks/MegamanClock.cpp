@@ -213,6 +213,24 @@ void MegamanClock::update() {
         }
     }
 
+    // Running cycle timer (runs in place for 1.5s every 4.5s)
+    if (phase == Phase::Waiting) {
+        runTimer += dt;
+        if (runTimer >= 4.5f) {
+            isRunning = true;
+            m_dirty = 2;
+            runFrame = ((int)((runTimer - 4.5f) * 7.0f)) % 2;
+            if (runTimer >= 6.0f) {
+                isRunning = false;
+                runTimer = 0.0f;
+                m_dirty = 2;
+            }
+        }
+    } else {
+        isRunning = false;
+        runTimer = 0.0f;
+    }
+
     // State machine updates
     const bool isWideTall = (h >= 48);
     const int groundTop = h - (isWideTall ? GROUND_TILE_H : 6);
@@ -317,7 +335,8 @@ void MegamanClock::update() {
         drawEnergyGauge(3, 6, storedTime.seconds);
         if (w >= 128) {
             int metoolX = w - METOOL_W - 4;
-            blitSprite(METOOL_SLEEP, METOOL_W, METOOL_H, metoolX, groundTop - METOOL_H, true);
+            const uint16_t* metSprite = isMetoolPeeking ? METOOL_PEEK : METOOL_SLEEP;
+            blitSprite(metSprite, METOOL_W, METOOL_H, metoolX, groundTop - METOOL_H, true);
         }
     } else {
         drawMiniEnergyGauge(6, 2, storedTime.seconds);
@@ -333,17 +352,42 @@ void MegamanClock::update() {
         int jx = mmX + (int)(jumpProgress * 12.0f);
         int jy = groundTop - MEGAMAN_JUMP_SHOOT_H - lift;
         blitSprite(MEGAMAN_JUMP_SHOOT, MEGAMAN_JUMP_SHOOT_W, MEGAMAN_JUMP_SHOOT_H, jx, jy, true);
+        if (phase == Phase::ShootPrep) {
+            uint16_t auraCol = ((int)(phaseTimer * 25.0f) % 2 == 0) ? matrix->color565(0, 232, 216) : matrix->color565(252, 224, 0);
+            matrix->drawCircle(jx + MEGAMAN_JUMP_SHOOT_W - 2, jy + 9, 3, auraCol);
+        }
         if (phase == Phase::BulletFlying) {
-            blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);
+            if (isChargeShot) {
+                matrix->fillCircle((int)bulletX + 4, (int)bulletY + 3, 5, matrix->color565(0, 232, 216));
+                matrix->fillCircle((int)bulletX + 4, (int)bulletY + 3, 3, 0xFFFF);
+            } else {
+                blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);
+            }
         }
     } else if (phase == Phase::ShootPrep || phase == Phase::BulletFlying) {
         blitSprite(MEGAMAN_SHOOT, MEGAMAN_SHOOT_W, MEGAMAN_SHOOT_H, mmX, mmY, true);
+        if (phase == Phase::ShootPrep) {
+            uint16_t auraCol = ((int)(phaseTimer * 25.0f) % 2 == 0) ? matrix->color565(0, 232, 216) : matrix->color565(252, 224, 0);
+            matrix->drawCircle(mmX + MEGAMAN_SHOOT_W - 2, mmY + 7, 3, auraCol);
+        }
         if (phase == Phase::BulletFlying) {
-            blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);
+            if (isChargeShot) {
+                matrix->fillCircle((int)bulletX + 4, (int)bulletY + 3, 5, matrix->color565(0, 232, 216));
+                matrix->fillCircle((int)bulletX + 4, (int)bulletY + 3, 3, 0xFFFF);
+            } else {
+                blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);
+            }
         }
     } else {
-        const uint16_t* mmSprite = isBlinking ? MEGAMAN_BLINK : MEGAMAN_IDLE;
-        blitSprite(mmSprite, MEGAMAN_IDLE_W, MEGAMAN_IDLE_H, mmX, mmY, true);
+        if (isRunning) {
+            const uint16_t* runSprite = (runFrame == 0) ? MEGAMAN_RUN1 : MEGAMAN_RUN2;
+            int rw = (runFrame == 0) ? MEGAMAN_RUN1_W : MEGAMAN_RUN2_W;
+            int rh = (runFrame == 0) ? MEGAMAN_RUN1_H : MEGAMAN_RUN2_H;
+            blitSprite(runSprite, rw, rh, mmX, groundTop - rh, true);
+        } else {
+            const uint16_t* mmSprite = isBlinking ? MEGAMAN_BLINK : MEGAMAN_IDLE;
+            blitSprite(mmSprite, MEGAMAN_IDLE_W, MEGAMAN_IDLE_H, mmX, mmY, true);
+        }
     }
 
     // Hit Spark

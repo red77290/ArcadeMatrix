@@ -18,6 +18,8 @@
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 #include "clocks/MegamanClock.h"
+#include "clocks/StreetFighterClock.h"
+#include "clocks/SonicClock.h"
 #include <esp_heap_caps.h>
 
 ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), currentTheme(THEME_NONE) {
@@ -37,7 +39,7 @@ constexpr size_t faceArenaBytes() {
     return maxOf<CyberpunkClock>(maxOf<FlipClock>(maxOf<PongClock>(maxOf<TetrisClock>(maxOf<WordClock>(
            maxOf<BinaryClock>(maxOf<PacmanClock>(maxOf<VersusClock>(maxOf<MatrixRainClock>(maxOf<SlotMachineClock>(
            maxOf<MarioClock>(maxOf<CastleClock>(maxOf<PokedexClock>(maxOf<WorldMapClock>(maxOf<WordsClockFace>(
-           maxOf<MegamanClock>(maxOf<ArcadeClock>(0)))))))))))))))));
+           maxOf<MegamanClock>(maxOf<StreetFighterClock>(maxOf<SonicClock>(maxOf<ArcadeClock>(0)))))))))))))))))));
 }
 constexpr size_t kFaceArenaBytes = (faceArenaBytes() + 7u) & ~size_t(7);
 }
@@ -135,6 +137,10 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
         activeFace = makeFace<PacmanClock>(matrixDisplay, config, true);   // Ms Pac-Man
     } else if (theme == 35) {
         activeFace = makeFace<MegamanClock>(matrixDisplay, config);
+    } else if (theme == 38 || theme == THEME_STREET_FIGHTER) {
+        activeFace = makeFace<StreetFighterClock>(matrixDisplay, config);
+    } else if (theme == 39 || theme == THEME_SONIC) {
+        activeFace = makeFace<SonicClock>(matrixDisplay, config);
     } else {
         ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
         if (arcade) {
@@ -303,13 +309,13 @@ EngineDescriptor ClockEngineDescriptorHandler::getDescriptor() const {
     clockDesc.schema.fields = {
         ConfigField("clock_theme", ConfigType::ENUM, "Clock Theme", "Visual theme / clockface", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_format", ConfigType::ENUM, "Time Format", "POSIX strftime format", "system", false, "", "", "", "system:System (General),%H:%M:%S:24 Hours with seconds (%H:%M:%S),%H:%M:24 Hours without seconds (%H:%M),%I:%M:%S %p:12 Hours with seconds (%I:%M:%S %p),%I:%M %p:12 Hours without seconds (%I:%M %p)", "", false, "", ValidationPolicy::Accept),
-        ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "clock_theme!=30,31,32,33,35,37", ValidationPolicy::FallbackDefault),
+        ConfigField("clock_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "clock_theme!=30,31,32,33,35,37,38,39", ValidationPolicy::FallbackDefault),
         ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("clock_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "2", false, "1", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_speed", ConfigType::INTEGER, "Animation Speed", "Animation speed in percent (Tetris block fall, Pac-Man sweep); lower is slower", "100", false, "25", "300", "25", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
         ConfigField("clock_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#ff00ff", false, "", "", "", "", "", false, "clock_theme=20", ValidationPolicy::Accept),
-        ConfigField("clock_glow", ConfigType::ENUM, "Glow Outline", "Halo around the digits, the effect the Matrix face uses", "0", false, "", "", "", "0:Off,1:Neon (Matrix style),2:Custom outline color", "", false, "clock_theme!=30,31,32,33,35", ValidationPolicy::FallbackDefault),
+        ConfigField("clock_glow", ConfigType::ENUM, "Glow Outline", "Halo around the digits, the effect the Matrix face uses", "0", false, "", "", "", "0:Off,1:Neon (Matrix style),2:Custom outline color", "", false, "clock_theme!=30,31,32,33,35,38,39", ValidationPolicy::FallbackDefault),
         ConfigField("clock_glow_color", ConfigType::COLOR, "Outline Color", "Color of the outline drawn around the digits", "#00ff41", false, "", "", "", "", "", false, "clock_glow=2", ValidationPolicy::Accept),
         ConfigField("clock_offset_x", ConfigType::INTEGER, "Offset X", "Horizontal pixel shift", "0", false, "-64", "64", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("clock_offset_y", ConfigType::INTEGER, "Offset Y", "Vertical pixel shift", "0", false, "-32", "32", "1", "", "", false, "", ValidationPolicy::Clamp)
