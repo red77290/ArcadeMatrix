@@ -48,6 +48,11 @@ private:
     char shownHH[4] = "--";
     char shownMM[4] = "--";
 
+    // 128x32 compact shell-kick animation
+    float shellX = -100.0f;
+    bool shellActive = false;
+    bool coinPop = false;
+
     uint8_t m_dirty = 2;        ///< full repaints still owed (both DMA buffers)
     bool m_hasFrame = true;
     bool m_snapToNow = true;   ///< next update shows the current time without the run-in

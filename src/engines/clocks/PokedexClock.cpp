@@ -80,22 +80,6 @@ void PokedexClock::update() {
     const int w = matrix->width();
     const int h = matrix->height();
 
-    // This face is laid out for a wide panel; on a small one it would overlap itself, so it says so
-    // rather than drawing a mess. See the theme name, which carries the same warning.
-    if (w < 192 || h < 64) {
-        if (m_dirty == 0) { m_hasFrame = false; return; }
-        m_dirty--;
-        m_hasFrame = true;
-        matrix->fillRect(0, 0, w, h, 0x0000);
-        matrix->setFont(nullptr);
-        matrix->setTextSize(1);
-        matrix->setTextColor(matrix->color565(255, 160, 0));
-        matrix->setCursor(2, h / 2 - 7);
-        matrix->print("NEEDS");
-        matrix->setCursor(2, h / 2 + 1);
-        matrix->print("256x64");
-        return;
-    }
 
     if (lastMinute != storedTime.minutes) {
         lastMinute = storedTime.minutes;
