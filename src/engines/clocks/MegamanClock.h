@@ -57,8 +57,11 @@ private:
     float phaseTimer = 0.0f;
     float blinkTimer = 0.0f;
     float metoolTimer = 0.0f;
+    float runTimer = 0.0f;
     bool isBlinking = false;
     bool isMetoolPeeking = false;
+    bool isRunning = false;
+    uint8_t runFrame = 0;
 
     // Bullet physics
     float bulletX = 0.0f;
