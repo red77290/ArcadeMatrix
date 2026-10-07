@@ -244,8 +244,15 @@ void MegamanClock::update() {
             if (phaseTimer >= 0.15f) {
                 phase = Phase::BulletFlying;
                 phaseTimer = 0.0f;
-                bulletX = mmX + MEGAMAN_SHOOT_W - 4;
-                bulletY = mmY + 7;
+                if (isWideTall) {
+                    int lift = (int)(sinf(0.35f * 3.14159f) * 16.0f);
+                    int currentY = groundTop - MEGAMAN_JUMP_SHOOT_H - lift;
+                    bulletX = mmX + 4 + MEGAMAN_JUMP_SHOOT_W - 4;
+                    bulletY = currentY + 9;
+                } else {
+                    bulletX = mmX + MEGAMAN_SHOOT_W - 4;
+                    bulletY = mmY + 7;
+                }
                 bulletTargetX = minX + 4;
                 bulletTargetY = podY + 7;
             }
@@ -317,7 +324,19 @@ void MegamanClock::update() {
     }
 
     // Mega Man rendering
-    if (phase == Phase::ShootPrep || phase == Phase::BulletFlying) {
+    if (isWideTall && (phase == Phase::ShootPrep || phase == Phase::BulletFlying || phase == Phase::HitSpark)) {
+        float jumpProgress = (phase == Phase::ShootPrep) ? (phaseTimer / 0.15f * 0.35f) :
+                             (phase == Phase::BulletFlying) ? (0.35f + (bulletX - mmX) / (bulletTargetX > mmX ? (bulletTargetX - mmX) : 1.0f) * 0.35f) :
+                             (0.70f + (phaseTimer / 0.20f) * 0.30f);
+        if (jumpProgress > 1.0f) jumpProgress = 1.0f;
+        int lift = (int)(sinf(jumpProgress * 3.14159f) * 16.0f);
+        int jx = mmX + (int)(jumpProgress * 12.0f);
+        int jy = groundTop - MEGAMAN_JUMP_SHOOT_H - lift;
+        blitSprite(MEGAMAN_JUMP_SHOOT, MEGAMAN_JUMP_SHOOT_W, MEGAMAN_JUMP_SHOOT_H, jx, jy, true);
+        if (phase == Phase::BulletFlying) {
+            blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);
+        }
+    } else if (phase == Phase::ShootPrep || phase == Phase::BulletFlying) {
         blitSprite(MEGAMAN_SHOOT, MEGAMAN_SHOOT_W, MEGAMAN_SHOOT_H, mmX, mmY, true);
         if (phase == Phase::BulletFlying) {
             blitSprite(BUSTER_BULLET, BULLET_W, BULLET_H, (int)bulletX, (int)bulletY, true);

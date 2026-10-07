@@ -243,7 +243,7 @@ void MarioClock::update() {
         // 128x32: Mario stands at x=14
         blitSprite(MARIO_IDLE, MARIO_W, MARIO_H, 14, groundTop - MARIO_H, true);
         if (shellActive) {
-            blitSprite(KOOPA_SHELL, 12, 12, (int)shellX, groundTop - 12, true);
+            blitSprite(KOOPA_SHELL, KOOPA_SHELL_W, KOOPA_SHELL_H, (int)shellX, groundTop - KOOPA_SHELL_H, true);
         }
         if (coinPop && blockBounce[jumpTarget] > 0.0f) {
             int targetX = (jumpTarget == 0) ? hourX : minuteX;
