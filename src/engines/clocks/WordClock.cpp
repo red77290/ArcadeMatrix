@@ -25,17 +25,24 @@ WordClock::WordClock(IDrawingSurface* display, const EngineConfig* config) : Clo
 void WordClock::draw(const TimeData& t) {
     if (storedTime.hours != t.hours || storedTime.minutes != t.minutes) {
         storedTime = t;
-        _dirty = true;
+        _dirty = 2;
     }
 }
 
 void WordClock::update() {
+    if (!matrix) return;
+    if (_dirty == 0) {
+        m_hasFrame = false;
+        return;
+    }
+    _dirty--;
+    m_hasFrame = true;
+
     matrix->fillScreen(0);
     
-    if (_dirty || storedTime.hours != _lastHours || storedTime.minutes != _lastMinutes) {
+    if (storedTime.hours != _lastHours || storedTime.minutes != _lastMinutes) {
         _lastHours = storedTime.hours;
         _lastMinutes = storedTime.minutes;
-        _dirty = false;
         recomputeLines();
     }
 
