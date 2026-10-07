@@ -11,6 +11,7 @@ constexpr int GROUND_W = 8, GROUND_H = 8;
 constexpr int HILL_W = 20, HILL_H = 22;
 constexpr int BUSH_W = 21, BUSH_H = 9;
 constexpr int CLOUD_W = 13, CLOUD_H = 12;
+constexpr int CLOUD_FULL_W = 19, CLOUD_FULL_H = 12;
 constexpr int MARIO_W = 13, MARIO_H = 16;
 constexpr int MARIO_JUMP_W = 17;
 constexpr int SCENE = 64;          ///< the original scene is 64 px square
@@ -78,11 +79,17 @@ void MarioClock::drawScene(int w, int h) {
     // frame edge (x 43 of 64, so its right edge lands exactly on it). One, against the right edge.
     blitSprite(BUSH, BUSH_W, BUSH_H, w - BUSH_W, groundTop - BUSH_H, true);
 
-    // Clouds are whole sprites, so they carry on across the extra width.
-    for (int x = sceneLeft % 64 - 64; x < w; x += 51) {
-        blitSprite(CLOUD1, CLOUD_W, CLOUD_H, x, 8, true);
-        blitSprite(CLOUD2, CLOUD_W, CLOUD_H, x + 25, 2, true);
-    }
+    // Edge clouds: CLOUD1 has a sheer vertical cut on its left edge and CLOUD2 on its right edge.
+    // Like HILL and BUSH, they are drawn flush against the panel edges so they read as clouds
+    // entering and leaving the visible area.
+    blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 0, 14, true);
+    blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W, 6, true);
+
+    // Complete seamless 19x12 clouds distributed across the sky, positioned to leave the central clock blocks clear.
+    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 40, 6, true);
+    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 72, 14, true);
+    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 165, 6, true);
+    blitSprite(CLOUD_FULL, CLOUD_FULL_W, CLOUD_FULL_H, 198, 14, true);
 }
 
 void MarioClock::update() {
