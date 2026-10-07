@@ -72,6 +72,14 @@ public:
     Stream& stream();
 
     /**
+     * @brief Reads and decodes the entire response body into a String.
+     * Automatically handles HTTP chunked transfer encoding (Transfer-Encoding: chunked).
+     * Consumes and finalizes the response.
+     */
+    String body();
+    String getString() { return body(); }
+
+    /**
      * @brief Explicitly consumes and drains the remaining response body,
      * resetting the underlying session for subsequent requests.
      */

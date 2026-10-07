@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include "../../include/core/EngineContract.h"
 #include "../services/GNewsService.h"
 
@@ -16,7 +17,9 @@ public:
     };
 
     GNewsEngine();
-    ~GNewsEngine() override = default;
+    ~GNewsEngine() override {
+        stopFetchTask();
+    }
 
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
@@ -98,6 +101,17 @@ private:
     void renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount);
     void renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount);
     void renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount);
+
+    // Background fetch task on Core 0 (keeps Core 1 60 FPS lock-free)
+    TaskHandle_t m_fetchTask = nullptr;
+    std::atomic<bool> m_stopFetch{false};
+    std::atomic<bool> m_fetchExited{true};
+    std::atomic<bool> m_fetchRequested{false};
+
+    void startFetchTask();
+    void stopFetchTask();
+    static void fetchTaskEntry(void* arg);
+    void fetchWorker();
 };
 
 class GNewsEngineDescriptorHandler : public IEngineDescriptorHandler {

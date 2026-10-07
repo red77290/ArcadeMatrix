@@ -84,6 +84,11 @@ public:
                             const std::vector<std::pair<String, String>>& headers = {});
 
     /**
+     * @brief Reads and decodes the entire response body string via transport (handling chunked encoding).
+     */
+    String readResponseBodyString();
+
+    /**
      * @brief Finalizes the active response transaction, draining unread bytes and
      * recycling the connection for subsequent requests.
      */

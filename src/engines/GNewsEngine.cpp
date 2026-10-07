@@ -375,6 +375,57 @@ void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, in
     }
 }
 
+void GNewsEngine::startFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(false, std::memory_order_release);
+        return;
+    }
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
+    if (xTaskCreatePinnedToCore(fetchTaskEntry, "gnews_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
+        m_fetchTask = nullptr;
+        m_fetchExited.store(true, std::memory_order_release);
+        LOGW("GNewsEngine", "Failed to start gnews_fetch task on Core 0");
+    }
+}
+
+void GNewsEngine::stopFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
+        for (int i = 0; i < 30 && !m_fetchExited.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (m_fetchExited.load(std::memory_order_acquire)) {
+            m_fetchTask = nullptr;
+        } else {
+            LOGW("GNewsEngine", "gnews_fetch task did not exit within 300ms cooperative window");
+        }
+    }
+}
+
+void GNewsEngine::fetchTaskEntry(void* arg) {
+    auto* self = static_cast<GNewsEngine*>(arg);
+    self->fetchWorker();
+    self->m_fetchExited.store(true, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
+void GNewsEngine::fetchWorker() {
+    while (!m_stopFetch.load(std::memory_order_acquire)) {
+        bool force = config_force_refresh || m_fetchRequested.exchange(false);
+        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
+                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
+                               config_requests_per_day, force);
+
+        // Sleep in 100ms slices up to 10 seconds (or until stopped/requested)
+        for (int i = 0; i < 100 && !m_stopFetch.load(std::memory_order_acquire); i++) {
+            if (m_fetchRequested.load(std::memory_order_acquire)) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+}
+
 void GNewsEngine::activate() {
     currentArticleIndex = 0;
     currentPageIndex = 0;
@@ -391,6 +442,7 @@ void GNewsEngine::activate() {
     lastScrollTick = millis();
     lastSourceTick = millis();
     lastArticleSwitchTime = millis();
+    startFetchTask();
 }
 
 void GNewsEngine::onConfigChanged(const EngineConfig* config) {
@@ -399,20 +451,12 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     cachedArticleIndex = -1;
     if (config_force_refresh && !prevForce) {
         gnewsService.purgeArticles();
-        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                               config_requests_per_day, true);
-    } else {
-        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                               config_requests_per_day, false);
     }
+    m_fetchRequested.store(true, std::memory_order_release);
 }
 
 void GNewsEngine::deactivate() {
-    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
-    // Invariant 15 & 16: release article storage buffer from DRAM when deactivated
-    gnewsService.releaseArticleStorage();
+    stopFetchTask();
 }
 
 bool GNewsEngine::isFinished() const {
@@ -422,11 +466,6 @@ bool GNewsEngine::isFinished() const {
 void GNewsEngine::update(EngineContext* context) {
     uint32_t now = millis();
     lastUpdateTime = now;
-
-    // Periodic scheduled check
-    gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                           config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                           config_requests_per_day, false);
 
     // Smooth sinusoidal pulsing beacon (0.0 to 1.0)
     beaconPulse = (sinf((float)sourceMarqueeOffset * 0.1f) + 1.0f) * 0.5f;
