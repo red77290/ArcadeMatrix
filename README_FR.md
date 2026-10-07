@@ -50,6 +50,38 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
 - **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
 
+## 🎮 Horloges Rétro-Gaming Légendaires (Posters & Simulations HUB75)
+
+ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et consoles synchronisées au matériel, rendues avec des sprites d'origine 100 % fidèles au pixel près à 60 FPS constants, avec zéro allocation dynamique sur la boucle chaude Core 1 :
+
+### 1. The Legend of Zelda (NES) — Thème 40
+*Canyon Overworld d'Hyrule en 8-bit authentique, Link animé en marche, obtention de la Triforce dorée au sommet et HUD NES complet avec cœurs et rubis.*
+![Horloge The Legend of Zelda](docs/assets/clocks/poster_zelda.png)
+
+### 2. Metal Slug (SNK Neo Geo) — Thème 41
+*Mission 2 en zone de guerre arabe avec progression de combat en 3 phases : fusillade à la mitrailleuse lourde par Marco Rossi, assaut à la grenade avec boules de feu explosives ébranlant le champ de bataille, et cri de victoire pouce levé devant l'épave calcinée du char Di-Cokka ! Format panoramique natif 256x64 exclusif pour Waveshare S3 et configurations double dalle.*
+![Horloge Metal Slug](docs/assets/clocks/poster_metal_slug.png)
+
+### 3. Castlevania (Konami NES) — Thème 31
+*Beffroi gothique avec Simon Belmont gravissant le grand escalier de pierre vers la chambre de Dracula, torche sur piédestal vacillante, chauve-souris vampire traversant la lune de sang, et HUD gothique avec jauges de vie et cœurs.*
+![Horloge Castlevania](docs/assets/clocks/poster_castlevania.png)
+
+### 4. Super Mario Bros (NES) — Thème 30
+*Overworld du Royaume Champignon avec briques et blocs '?' 16x16 originaux, Mario sautant pour frapper les blocs et faire jaillir des pièces, et Goombas animés.*
+![Horloge Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
+
+### 5. Mega Man (Capcom NES) — Thème 35
+*Forteresse du Dr. Wily avec blocs bleus Capcom emblématiques, échelle jaune et le robot bleu en pleine action.*
+![Horloge Mega Man](docs/assets/clocks/poster_megaman.png)
+
+### 6. Sonic The Hedgehog (Sega Genesis) — Thème 39
+*Plateformes à damier de Green Hill Zone, anneaux dorés tournoyants, ressort rouge et animations d'attente et de spin-dash de Sonic.*
+![Horloge Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
+
+### 7. Puzzle Bobble / Bust-A-Move (Taito Arcade) — Thème 17
+*Casse-tête arcade Taito avec plafond d'acier authentique, grappes alvéolées denses de bulles brillantes 16x16, flèche de visée et Bub & Bob actionnant le canon à engrenages.*
+![Horloge Puzzle Bobble](docs/assets/clocks/poster_puzzle_bobble.png)
+
 ## 🚀 Compatibilité Universelle des Moteurs : Auto Depth & Auto Buffer
 
 ArcadeMatrix intègre un pipeline d'exécution ultra-optimisé avec gestion intelligente de la mémoire vive, permettant aux 18 moteurs (y compris les plus gourmands comme `AnimatedGIF`, `Stock`, `Crypto` et `MUGEN`) de tourner sans compromis sur **ESP32 classique (sans PSRAM)** comme sur **ESP32-S3 (16 Mo de PSRAM)** :

@@ -49,6 +49,38 @@
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
 - **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
 
+## 🎮 Relojes Retro Legendarios (Posters & Simulaciones HUB75)
+
+ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y consolas sincronizados por hardware, renderizados con sprites originales 100 % fieles al píxel a 60 FPS estables, con cero asignaciones dinámicas en el bucle caliente Core 1:
+
+### 1. The Legend of Zelda (NES) — Tema 40
+*Cañón Overworld de Hyrule en 8 bits auténtico, Link animado caminando, obtención de la Trifuerza dorada en la cima y HUD de NES completo con corazones y rupias.*
+![Reloj The Legend of Zelda](docs/assets/clocks/poster_zelda.png)
+
+### 2. Metal Slug (SNK Neo Geo) — Tema 41
+*Misión 2 en zona de guerra árabe con progresión de combate en 3 fases: tiroteo con ametralladora pesada por Marco Rossi, asalto con granadas y bolas de fuego explosivas sacudiendo el campo de batalla, y grito de victoria con el pulgar hacia arriba ante los restos humeantes del tanque Di-Cokka. Formato panorámico nativo 256x64 exclusivo para Waveshare S3 y configuraciones de doble panel.*
+![Reloj Metal Slug](docs/assets/clocks/poster_metal_slug.png)
+
+### 3. Castlevania (Konami NES) — Tema 31
+*Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y HUD gótico con barras de salud y corazones.*
+![Reloj Castlevania](docs/assets/clocks/poster_castlevania.png)
+
+### 4. Super Mario Bros (NES) — Tema 30
+*Overworld del Reino Champiñón con bloques de ladrillo y de interrogación 16x16 originales, Mario saltando para golpear bloques y liberar monedas, y Goombas animados.*
+![Reloj Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
+
+### 5. Mega Man (Capcom NES) — Tema 35
+*Fortaleza de Wily con los bloques azules clásicos de Capcom, escalera amarilla y el bombardero azul en acción.*
+![Reloj Mega Man](docs/assets/clocks/poster_megaman.png)
+
+### 6. Sonic The Hedgehog (Sega Genesis) — Tema 39
+*Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo y animaciones de espera y spin-dash de Sonic.*
+![Reloj Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
+
+### 7. Puzzle Bobble / Bust-A-Move (Taito Arcade) — Tema 17
+*Rompecabezas arcade de burbujas de Taito con techo de acero auténtico, densos racimos de burbujas brillantes 16x16, flecha de puntería y Bub & Bob operando el cañón de engranajes.*
+![Reloj Puzzle Bobble](docs/assets/clocks/poster_puzzle_bobble.png)
+
 ## 🚀 Compatibilidad Universal de Motores: Auto Depth & Auto Buffer
 
 ArcadeMatrix integra un canal de ejecución avanzado y consciente de la memoria que permite que los 18 motores (incluidos los más exigentes como `AnimatedGIF`, `Stock`, `Crypto` y `MUGEN`) funcionen sin problemas tanto en placas **ESP32 clásicas con 0 KB de PSRAM** como en potentes **ESP32-S3 con 16 MB de PSRAM**:
