@@ -18,8 +18,8 @@
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 #include "clocks/MegamanClock.h"
-#include "clocks/StreetFighterClock.h"
 #include "clocks/SonicClock.h"
+#include "clocks/MetalSlugClock.h"
 #include <esp_heap_caps.h>
 
 ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), currentTheme(THEME_NONE) {
@@ -39,7 +39,7 @@ constexpr size_t faceArenaBytes() {
     return maxOf<CyberpunkClock>(maxOf<FlipClock>(maxOf<PongClock>(maxOf<TetrisClock>(maxOf<WordClock>(
            maxOf<BinaryClock>(maxOf<PacmanClock>(maxOf<VersusClock>(maxOf<MatrixRainClock>(maxOf<SlotMachineClock>(
            maxOf<MarioClock>(maxOf<CastleClock>(maxOf<PokedexClock>(maxOf<WorldMapClock>(maxOf<WordsClockFace>(
-           maxOf<MegamanClock>(maxOf<StreetFighterClock>(maxOf<SonicClock>(maxOf<ArcadeClock>(0)))))))))))))))))));
+           maxOf<MegamanClock>(maxOf<SonicClock>(maxOf<MetalSlugClock>(maxOf<ArcadeClock>(0)))))))))))))))))));
 }
 constexpr size_t kFaceArenaBytes = (faceArenaBytes() + 7u) & ~size_t(7);
 }
@@ -135,12 +135,12 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
         activeFace = makeFace<WordsClockFace>(matrixDisplay, config);
     } else if (theme == 34) {
         activeFace = makeFace<PacmanClock>(matrixDisplay, config, true);   // Ms Pac-Man
-    } else if (theme == 35) {
+    } else if (theme == 35 || theme == THEME_MEGAMAN_CLOCK) {
         activeFace = makeFace<MegamanClock>(matrixDisplay, config);
-    } else if (theme == 38 || theme == THEME_STREET_FIGHTER) {
-        activeFace = makeFace<StreetFighterClock>(matrixDisplay, config);
     } else if (theme == 39 || theme == THEME_SONIC) {
         activeFace = makeFace<SonicClock>(matrixDisplay, config);
+    } else if (theme == 41 || theme == THEME_METAL_SLUG) {
+        activeFace = makeFace<MetalSlugClock>(matrixDisplay, config);
     } else {
         ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
         if (arcade) {

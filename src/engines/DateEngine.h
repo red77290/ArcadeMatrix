@@ -40,8 +40,8 @@ enum PublisherTheme {
     THEME_MS_PACMAN = 34,
     THEME_MEGAMAN_CLOCK = 35,
     THEME_WORDS_CLOCK = 37,
-    THEME_STREET_FIGHTER = 38,
-    THEME_SONIC = 39
+    THEME_SONIC = 39,
+    THEME_METAL_SLUG = 41
 };
 
 struct DateConfig {
