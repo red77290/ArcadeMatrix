@@ -28,38 +28,49 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 - **SD Card Starter Kit (`ArcadeMatrix-sdcard.zip`)**: Ready-to-copy root folder structure containing `config.json`, GIF/MUGEN asset folders, and playlist indexing scripts.
 
 
-- **🎛️ Master Desk Deck & Multi-Widget Dashboard (`dashboard`):** Complete horizontal desk clock & dashboard with handcrafted pixel-art watch dials, smooth sweeping second hand, multiple global timezones, outdoor weather (OpenWeatherMap + free Open-Meteo fallback), calibrated SHTC3 indoor climate, live Binance cryptos & Yahoo Finance stocks/ETFs banner, and a 100% responsive auto-scaling dynamic layout!
-- **Massive Animated Clock Selection (`clock`):** Interactive clocks including classic Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)**, and **Versus (Mugen)**!
-- **📻 Autonomous WebRadio & Music Engine (`music`):** Background streaming audio with real-time linear MP3 frame decoding (`minimp3`), high-fidelity Everest ES8311 I2S DAC output (WebRadio streaming over Wi-Fi — *note: Bluetooth is BLE 5.0 only for control/setup, no Bluetooth Classic A2DP music streaming*), full-color PNG album artwork, scrolling artist/title, and dynamic 64-point Cooley-Tukey FFT audio visualizer!
-- **🧭 6-Axis Gyroscope Auto-Rotation (`QMI8658` / `GyroHAL`):** Automatic screen orientation ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) detecting physical gravity vector, 500ms anti-vibration hysteresis, custom mounting offset, and 1-click zero calibration from the Web UI!
-- **🎵 Spotify Now Playing (`spotify`):** Real-time track display with full-color album artwork, scrolling artist/title, progress bar, and animated audio equalizer.
-- **📡 Google Cast & Nest (`google_cast`):** Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, progress, and volume display.
-- **🖥️ System Monitor (`sysinfo`):** Real-time monitoring of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars and visual themes.
-- **🥊 M.U.G.E.N Combat Engine (`fighter`):** Authentic retro sprite battles (Street Fighter, KOF, DBZ, Marvel...) directly extracted in RGB565 format without stutter, playable standalone or as background overlay on clocks.
-- **📈 Real-Time Crypto & Stock Market Tickers (`crypto`, `stock`):** Live price quotes, 24h % badges, and historical sparkline charts from CoinGecko, Binance, and Yahoo Finance with smart TTL caching.
-- **📰 Live Breaking News & GNews Ticker (`gnews`):** Real-time top headlines and curated breaking news with topic categories (Tech, World, Business, Science, Sports...), live pulsing broadcast beacon, customizable sub-pixel 60 FPS scrolling ticker, and multi-language/localization filtering!
-- **🌦️ Dynamic Weather Forecasts (`weather`):** Live weather conditions, temperature, 3-day forecasts, and retro animated icons via OpenWeatherMap.
-- **🌡️ Indoor Temperature & Humidity (SHTC3):** Responsive display (°C/°F toggle), custom thermometer & water drop pixel art, and REST endpoint for Home Assistant integration!
-- **📊 Home Assistant & MQTT Data Engine (`mqttdata`):** Stream live Home Assistant dashboards, sensor values, multi-entity tables, 24-hour historical graphs, and local weather forecasts over MQTT! Features zero templates needed thanks to ready-to-import [Home Assistant Blueprints](https://github.com/red77290/ArcadeMatrix/tree/main/tools/home_assistant/blueprints) and the comprehensive [Home Assistant Guide](docs/HOME_ASSISTANT.md) — implemented by [@TooncesToo](https://github.com/TooncesToo)!
-- **🔊 Decibel & Sound Level Meter (Arcade / Gaming Room):** Real-time SPL noise monitoring with 6 reactive Pixel Art smileys (<45dB 😊 to >88dB 🚨) and an Audio Visualizer. ([🎥 Watch the Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
-- **🎵 Rhythmic Music Visualizer:** 4 priority display modes (Spectrum Equalizer with peak hold, Oscilloscope Waveform, Radial Circles, and Neon Fire).
-- **Wi-Fi Web UI:** Access `http://arcadematrix.local` to manage playlists, calibrate screen orientation, and change settings live!
-- **🗂️ Network GIF Library & Web File Manager (`gifs`):** Built-in file manager card in the Web UI allowing you to browse playlist folders, upload animated GIFs over Wi-Fi without removing the SD card, create/delete folders, rename items, and trigger automatic background re-indexing. Features native dual-orientation support (`?orientation=yoko|tate`) for both Horizontal (Yoko) and Vertical (Tate) display layouts — implemented by [@TooncesToo](https://github.com/TooncesToo)!
-- **GIF Engine (`gifs`):** Smooth playback of GIFs and auto-discovered playlists stored on the SD card.
-- **MQTT Support (`marquee`):** Integrates seamlessly with Batocera, Recalbox, and RetroPie to display official scraped game marquees via your Pixelcade fork.
-- **OTA Updates:** Flash firmware updates wirelessly directly through the Web UI or Web Installer.
-- **ESP32-S3 Waveshare Support:** Full support for high-end ESP32-S3 boards and 256x64 True Matrix panels via DMA.
+## 🕹️ Built-in Engines & Hardware Simulations
+
+Every engine in ArcadeMatrix is engineered with **zero dynamic allocations and zero mutex contention** on the Core 1 hot-path, guaranteeing a rock-solid 60 FPS refresh rate. Below are hardware-accurate simulations of each engine running on physical HUB75 displays:
+
+| Engine / ID | Hardware Simulation | Description & Key Features |
+| :--- | :---: | :--- |
+| **Desk Master Dashboard**<br>`dashboard` | <img src="docs/assets/engines/engine_dashboard.png" width="240" alt="Dashboard Engine"> | Complete horizontal desk deck with handcrafted analog watch dial, smooth sweeping second hand, world clocks, SHTC3 indoor climate, and live Binance cryptos & Yahoo Finance stocks ticker. |
+| **Retro Game Clock**<br>`clock` | <img src="docs/assets/engines/engine_clock.png" width="240" alt="Retro Clock"><br><br>[👉 **View 10+ Retro Clocks Showcase ➔**](#-legendary-retro-game-clocks-showcase--hardware-simulations) | Signature animated retro arcade and console clocks (Metal Slug, Castlevania, Mario, Mega Man, Sonic, Pokédex, Pac-Man, Tetris, World Clock, Matrix Rain...) with 100% bit-perfect sprites. |
+| **WebRadio & Music Player**<br>`music` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Music Engine"> | Autonomous streaming audio with linear real-time MP3 decoding (`minimp3`), Everest ES8311 I2S DAC output, album artwork, and dynamic 64-band audio visualizer. |
+| **Spotify Now Playing**<br>`spotify` | <img src="docs/assets/engines/engine_spotify.png" width="240" alt="Spotify Engine"> | Real-time track display with full-color album artwork, scrolling artist/title, animated mini equalizer bars, and track progress. |
+| **Google Cast & Nest**<br>`googlecast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Google Cast Engine"> | Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, volume, and playback progress. |
+| **Crypto Ticker & Chart**<br>`crypto` | <img src="docs/assets/engines/engine_crypto.png" width="240" alt="Crypto Engine"> | Live Binance / CoinGecko prices, 24h change badge, and real-time historical sparkline charts with smart TTL caching. |
+| **Stock Market Ticker**<br>`stock` | <img src="docs/assets/engines/engine_stock.png" width="240" alt="Stock Engine"> | Real-time quotes from Yahoo Finance, 1D % badges, and intraday sparkline area charts for NASDAQ/S&P stocks and ETFs. |
+| **Weather Forecast**<br>`weather` | <img src="docs/assets/engines/engine_weather.png" width="240" alt="Weather Engine"> | Live outdoor conditions, high/low temperatures, humidity, wind, and animated retro icons via OpenWeatherMap & Open-Meteo. |
+| **Climate Sensor**<br>`temp` | <img src="docs/assets/engines/engine_temp.png" width="240" alt="Temp Engine"> | Real-time indoor temperature (°C/°F) and relative humidity via on-board SHTC3 I2C sensor with dynamic comfort indicators. |
+| **SPL Decibel Meter**<br>`decibel` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Decibel Engine"> | Calibrated SPL ambient noise monitoring with reactive arcade smileys, top VS fighting healthbar gauge, and segmented VU meter. |
+| **System Telemetry HUD**<br>`sysinfo` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="SysInfo Engine"> | Real-time dual-column monitor of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars. |
+| **Live News Ticker**<br>`gnews` | <img src="docs/assets/engines/engine_gnews.png" width="240" alt="GNews Engine"> | Real-time breaking headlines with topic pills (`[TECH]`, `[WORLD]`, `[BIZ]`), live pulsing red beacon, and smooth sub-pixel scrolling ticker. |
+| **Home Assistant & MQTT**<br>`mqttdata` | <img src="docs/assets/engines/engine_mqttdata.png" width="240" alt="MQTT Data Engine"> | Stream Home Assistant dashboards, sensor values, 24h historical charts, and local weather via MQTT with ready-to-use blueprints. |
+| **Audio Visualizer**<br>`visualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Visualizer Engine"> | Real-time 32-band rainbow spectrum bars with peak hold dots, oscilloscope waveforms, and radial audio reactive modes. |
+| **Animated GIF Player**<br>`gif` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="GIF Engine"> | Smooth 60 FPS playback of retro animations and SD card playlists with zero-copy DMA canvas acceleration. |
+| **Scrolling Text Banner**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Message Engine"> | Customizable dot-matrix marquee signs with glowing amber typography, multiple scroll directions, and REST API triggers. |
+| **Arcade Cabinet Marquee**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Marquee Engine"> | Displays official illuminated arcade marquees via Pixelcade integration for Batocera, Recalbox, and RetroPie gaming setups. |
+| **Calendar & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Date Engine"> | Large arcade-styled date with 3D Capcom/Nintendo drop shadows, multi-language support (EN, FR, ES), and NTP/RTC DS3231 synchronization. |
+
+> [!NOTE]
+> **Hardware Rendering Notice:** The engine preview displays and clock showcase posters shown in this documentation are high-fidelity software simulations designed to illustrate visual layouts, animations, and telemetry widgets. Actual hardware rendering on a physical HUB75 LED matrix panel may differ depending on LED pitch, optical acrylic diffusion, viewing distance, and ambient brightness.
+
+---
 
 ## 🎮 Legendary Retro Game Clocks (Showcase & Hardware Simulations)
+
+> [!NOTE]
+> All clock screen previews below are software simulations. Real-life hardware rendering on physical RGB LED panels may have subtle differences in color temperature, brightness, and optical diffusion.
 
 ArcadeMatrix includes a signature collection of handcrafted, hardware-synchronized retro arcade and console clocks rendered with 100% bit-perfect original sprites in full 60 FPS, with zero dynamic allocations on the Core 1 hot-path:
 
 ### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41
-*Authentic SNK Neo Geo pixel art with 4 rotating Arabian desert stages (Market Bazaar, Mosque Domes, Fortress Bunker, Golden Dome Watchtower), Marco Rossi combat animations, Rebel Di-Cokka tank, patrol helicopter, and heavy machine gun firefights.*
-![Metal Slug Clock](docs/assets/clocks/poster_metalslug.png)
+*Authentic SNK Neo Geo pixel art with Arabian desert bazaar backdrop, Marco Rossi combat animations, Rebel Di-Cokka tank, patrol helicopter, and heavy machine gun firefights.*
+![Metal Slug Clock](docs/assets/clocks/poster_metal_slug.png)
 
 ### 2. Castlevania (Konami NES) — Theme 31
-*Gothic clock tower Belfry with Simon Belmont climbing the grand stone staircase toward Dracula's chamber, authentic flickering pedestal torch, flapping vampire bat across the blood moon, and gothic HUD with lifebar pips & heart counters.*
+*Gothic clock tower Belfry with Simon Belmont climbing the grand stone staircase toward Dracula's chamber, authentic pedestal torch, flapping vampire bat across the blood moon, and high-legibility ivory digits.*
 ![Castlevania Clock](docs/assets/clocks/poster_castlevania.png)
 
 ### 3. Super Mario Bros (NES) — Theme 30
@@ -67,12 +78,34 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 ![Super Mario Bros Clock](docs/assets/clocks/poster_super_mario.png)
 
 ### 4. Mega Man (Capcom NES) — Theme 35
-*Wily Castle fortress with classic Capcom blue Wily blocks, yellow ladder, and the Blue Bomber in action.*
+*Capcom Wily Castle fortress with separated technical platforms, life gauge, sleeping Metool, and Mega Man firing his Buster shot at the minute pod.*
 ![Mega Man Clock](docs/assets/clocks/poster_megaman.png)
 
 ### 5. Sonic The Hedgehog (Sega Genesis) — Theme 39
-*Green Hill Zone checkered platforms, spinning gold rings, red spring, and Sonic idle/spin-dash animations.*
+*Green Hill Zone checkered platforms, spinning gold rings, red spring, Motobug badnik, and Sonic idle/spin-dash jumping animations.*
 ![Sonic The Hedgehog Clock](docs/assets/clocks/poster_sonic.png)
+
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Theme 32
+*Authentic dual-screen Pokédex (Pocket Index) interface with creature inspection viewport, animated Pikachu sprite, PKMN font digital clock, live seconds telemetry bar, and blinking LED status sensor.*
+![Pokédex Clock](docs/assets/clocks/poster_pokedex.png)
+
+### 7. Pac-Man Arcade (Namco 1980) — Theme 26
+*Original Namco arcade maze with blue neon corridors, energizers, dots, animated Pac-Man, and 4 chasing ghosts (Blinky, Pinky, Inky, Clyde).*
+![Pac-Man Clock](docs/assets/clocks/poster_pacman.png)
+
+### 8. Russian Tetris (Alexey Pajitnov / Game Boy) — Theme 23
+*Legendary falling block puzzle with dynamic 3D-beveled mino bricks (I, J, L, O, S, T, Z) cascading down to assemble the hours and minutes in real-time.*
+![Tetris Clock](docs/assets/clocks/poster_tetris.png)
+
+### 9. World Clock & Solar Terminator — Theme 33
+*High-resolution continental world map with dynamic day/night solar terminator calculating real-time solar declination, local meridian marker, and dual UTC/local time.*
+![World Map Clock](docs/assets/clocks/poster_worldmap.png)
+
+### 10. True Matrix Rain (The Wachowskis 1999) — Theme 21
+*Iconic digital rain with phosphor green glyph cascades, randomized drop speeds, blazing white lead heads, fading persistence trails, and glowing neon clock digits.*
+![Matrix Rain Clock](docs/assets/clocks/poster_matrix_rain.png)
+
+---
 
 ## 🚀 Universal Engine Compatibility: Auto Depth & Auto Buffer
 
