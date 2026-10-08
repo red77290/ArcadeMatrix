@@ -138,12 +138,8 @@ void MetalSlugClock::drawScene(int w, int h) {
     // 5. Marco Rossi animation
     int marcoY = 64 - 38; // Ground level for player
     if (phase == Phase::Idle || phase == Phase::Explosion) {
-        // Idle breathing pose (ambient calm)
-        if (animFrame % 2 == 0) {
-            blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
-        } else {
-            blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
-        }
+        // Steady alert commando stance holding rifle forward
+        blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
     } else if (phase == Phase::Firefight) {
         if (animFrame % 2 == 0) {
             blitSprite(MARCO_SHOOT_0_PAL, MARCO_SHOOT_0_PIXELS, MARCO_SHOOT_0_W, MARCO_SHOOT_0_H, (int)marcoX, marcoY + 1, false);
@@ -246,14 +242,37 @@ void MetalSlugClock::drawScene(int w, int h) {
 
 void MetalSlugClock::update() {
     uint32_t now = millis();
-    if (m_snapToNow || lastFrameMs == 0) {
-        lastFrameMs = now;
-        m_snapToNow = false;
-    }
-    float dt = (now - lastFrameMs) / 1000.0f;
+    float dt = (lastFrameMs == 0) ? 0.033f : (now - lastFrameMs) / 1000.0f;
+    if (dt <= 0.0f || dt > 0.5f) dt = 0.033f;
     lastFrameMs = now;
 
-    if (dt <= 0.0f || dt > 0.5f) dt = 0.033f;
+    char hh[4], mm[4];
+    snprintf(hh, sizeof(hh), "%02d", storedTime.hours);
+    snprintf(mm, sizeof(mm), "%02d", storedTime.minutes);
+
+    if (m_snapToNow) {
+        m_snapToNow = false;
+        strcpy(shownHH, hh);
+        strcpy(shownMM, mm);
+        lastMinute = storedTime.minutes;
+        lastSecond = storedTime.seconds;
+        phase = Phase::Idle;
+        phaseTimer = 0.0f;
+        animTimer = 0.0f;
+        animFrame = 0;
+        tankX = 185.0f;
+        marcoX = 36.0f;
+        heliX = -60.0f;
+        tankBulletActive = false;
+        grenadeActive = false;
+        m_dirty = 2;
+    }
+
+    // Second tick
+    if (lastSecond != storedTime.seconds) {
+        lastSecond = storedTime.seconds;
+        m_dirty = 2;
+    }
 
     phaseTimer += dt;
     animTimer += dt;
@@ -281,6 +300,8 @@ void MetalSlugClock::update() {
             if (minuteChanged) {
                 phase = Phase::Firefight;
                 phaseTimer = 0.0f;
+                animTimer = 0.0f;
+                animFrame = 0;
             }
             break;
 
@@ -304,7 +325,7 @@ void MetalSlugClock::update() {
                 grenadeVy += 220.0f * dt; // gravity
                 grenadeY += grenadeVy * dt;
 
-                if (grenadeX >= tankX + 15.0f || grenadeY >= 48.0f) {
+                if (grenadeX >= tankX + 15.0f || grenadeY >= 48.0f || phaseTimer >= 1.2f) {
                     grenadeActive = false;
                     phase = Phase::Explosion;
                     phaseTimer = 0.0f;

@@ -54,9 +54,6 @@ public:
         marcoX = 36.0f;
         tankBulletActive = false;
         grenadeActive = false;
-        snprintf(shownHH, sizeof(shownHH), "%02d", storedTime.hours);
-        snprintf(shownMM, sizeof(shownMM), "%02d", storedTime.minutes);
-        lastMinute = storedTime.minutes;
         // Guaranteed different random backdrop on each rotation
         uint8_t nextIdx;
         do {
