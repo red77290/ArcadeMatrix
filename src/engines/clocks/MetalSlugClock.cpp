@@ -111,26 +111,11 @@ void MetalSlugClock::drawArcadeTime(int startX, int startY, const char* str, uin
 
 void MetalSlugClock::drawScene(int w, int h) {
     const bool isPortrait = (h > w);
-    const int groundTop = isPortrait ? (h - 36) : 64;
+    const int groundTop = isPortrait ? (h - 26) : 64;
 
     if (isPortrait) {
-        // Clear entire portrait screen with night warzone sky (zero leftover pixels)
-        uint16_t nightSky = matrix->color565(12, 16, 28);
-        matrix->fillRect(0, 0, w, h, nightSky);
-
-        // Distant dunes
-        uint16_t duneFar = matrix->color565(36, 28, 48);
-        matrix->fillTriangle(0, 110, 32, 90, 64, 110, duneFar);
-        matrix->fillTriangle(16, 120, 48, 100, 64, 120, duneFar);
-
-        // Ground desert warzone from groundTop to h
-        uint16_t sandDark = matrix->color565(120, 80, 32);
-        uint16_t sandLight = matrix->color565(190, 140, 60);
-        matrix->fillRect(0, groundTop, w, h - groundTop, sandDark);
-        matrix->drawFastHLine(0, groundTop, w, sandLight);
-        for (int x = 4; x < w; x += 16) {
-            matrix->drawFastHLine(x, groundTop + 4, 8, sandLight);
-        }
+        // 1. Authentic SNK Neo Geo Arabian Bazaar & Mosque Vertical Backdrop (64x256)
+        blitBackdrop(BG_STAGE_VERTICAL_PAL, BG_STAGE_VERTICAL_PACKED, BG_VERTICAL_W, BG_VERTICAL_H);
     } else {
         // 1. Draw 256x64 Night Desert Warzone Backdrop (randomized per rotation)
         const auto& bg = BG_BACKDROPS[currentBackdropIdx % NUM_BACKDROPS];
@@ -140,7 +125,7 @@ void MetalSlugClock::drawScene(int w, int h) {
     // 2. Flying Helicopter in upper sky
     float heliMax = isPortrait ? ((float)w + 50.0f) : 270.0f;
     if (heliX > -50.0f && heliX < heliMax) {
-        int hy = isPortrait ? (52 + (int)(sinf(phaseTimer * 3.0f) * 3.0f)) : (8 + (int)(sinf(phaseTimer * 3.0f) * 3.0f));
+        int hy = isPortrait ? (46 + (int)(sinf(phaseTimer * 3.0f) * 3.0f)) : (8 + (int)(sinf(phaseTimer * 3.0f) * 3.0f));
         blitSprite(ENEMY_HELI_PAL, ENEMY_HELI_PIXELS, ENEMY_HELI_W, ENEMY_HELI_H, (int)heliX, hy, false);
     }
 

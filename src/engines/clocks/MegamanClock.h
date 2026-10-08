@@ -47,6 +47,8 @@ public:
         bulletActive = false;
         sparkActive = false;
         podBounce = 0.0f;
+        climbStage = 0;
+        jumpT = 0.0f;
     }
 
 private:
@@ -86,8 +88,12 @@ private:
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
 
+    int climbStage = 0;
+    float jumpT = 0.0f;
+
     void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true);
     void drawScene(int w, int h);
+    void drawTechPlatform(int startX, int startY, int tileCount);
     void drawCapcomDigit(int x, int y, char c, uint16_t color);
     void drawTimePod(int x, int y, const char* text, int bounce = 0, bool highlight = false);
     void drawEnergyGauge(int x, int y, int seconds);

@@ -110,7 +110,15 @@ void MegamanClock::drawMiniEnergyGauge(int x, int y, int seconds) {
     }
 }
 
+void MegamanClock::drawTechPlatform(int startX, int startY, int tileCount) {
+    for (int i = 0; i < tileCount; i++) {
+        blitSprite(GROUND_TILE, GROUND_TILE_W, GROUND_TILE_H, startX + i * GROUND_TILE_W, startY, false);
+    }
+}
+
 void MegamanClock::drawScene(int w, int h) {
+    const bool isPortrait = (h > w);
+
     // Night sky vertical gradient
     for (int y = 0; y < h; y++) {
         uint8_t grad = (uint8_t)(10 + (y * 22) / (h > 0 ? h : 1));
@@ -142,10 +150,28 @@ void MegamanClock::drawScene(int w, int h) {
         }
     }
 
-    // Tech ground tiles across bottom
-    int groundTop = h - GROUND_TILE_H;
-    for (int gx = 0; gx < w; gx += GROUND_TILE_W) {
-        blitSprite(GROUND_TILE, GROUND_TILE_W, GROUND_TILE_H, gx, groundTop, false);
+    if (isPortrait) {
+        // 3 Solid NES metallic tech platforms leading up to the minute pod
+        // Platform 3 (bottom): y=190, x=16..64 (3 tiles)
+        drawTechPlatform(16, 190, 3);
+        // Platform 2 (middle): y=130, x=8..56 (3 tiles)
+        drawTechPlatform(8, 130, 3);
+        // Sleeping Metool on Platform 2
+        blitSprite(METOOL_SLEEP, METOOL_W, METOOL_H, 38, 130 - METOOL_H, true);
+        // Platform 1 (top): y=70, x=8..56 (3 tiles)
+        drawTechPlatform(8, 70, 3);
+
+        // Tech ground tiles across bottom
+        int groundTop = h - GROUND_TILE_H;
+        for (int gx = 0; gx < w; gx += GROUND_TILE_W) {
+            blitSprite(GROUND_TILE, GROUND_TILE_W, GROUND_TILE_H, gx, groundTop, false);
+        }
+    } else {
+        // Tech ground tiles across bottom
+        int groundTop = h - GROUND_TILE_H;
+        for (int gx = 0; gx < w; gx += GROUND_TILE_W) {
+            blitSprite(GROUND_TILE, GROUND_TILE_W, GROUND_TILE_H, gx, groundTop, false);
+        }
     }
 }
 
@@ -192,7 +218,14 @@ void MegamanClock::update() {
         phaseTimer = 0.0f;
         runTimer = 0.0f;
         runFrame = 0;
-        megamanX = -30.0f;
+        climbStage = 0;
+        jumpT = 0.0f;
+        if (h > w) {
+            megamanX = -20.0f;
+            megamanY = (float)(h - GROUND_TILE_H - MEGAMAN_RUN1_H);
+        } else {
+            megamanX = -30.0f;
+        }
         isChargeShot = (storedTime.minutes == 0);
         bulletActive = false;
         sparkActive = false;
@@ -210,11 +243,18 @@ void MegamanClock::update() {
     }
 
     // State machine updates
+    const bool isPortrait = (h > w);
     const bool isWideTall = (h >= 48);
     const int groundTop = h - (isWideTall ? GROUND_TILE_H : 6);
     int hourX, minX, podY;
 
-    if (isWideTall) {
+    if (isPortrait) {
+        // In portrait mode (64x256 / 64x128):
+        // Shift pods right so the Life Gauge (x=3..8, y=8..38) never overlaps with Hour Pod (x=12..35)!
+        podY = 10;
+        hourX = 12; // x = 12..35 (width 24)
+        minX = 38;  // x = 38..61 (width 24)
+    } else if (isWideTall) {
         int midX = w / 2;
         podY = 10;
         hourX = midX - 28;
@@ -235,48 +275,147 @@ void MegamanClock::update() {
 
         case Phase::HeroEnter:
             m_dirty = 2;
-            megamanX += 85.0f * dt;
-            megamanY = groundTop - MEGAMAN_RUN1_H;
-            if (megamanX >= jumpStartX) {
-                phase = Phase::HeroJump;
-                phaseTimer = 0.0f;
+            if (isPortrait) {
+                const float floorY = (float)(h - GROUND_TILE_H - MEGAMAN_RUN1_H);
+                if (climbStage == 0) {
+                    // Stage 0: Run in on ground floor
+                    megamanX += 60.0f * dt;
+                    megamanY = floorY;
+                    if (megamanX >= 12.0f) {
+                        climbStage = 1;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 1) {
+                    // Stage 1: Jump from floor up to Platform 3 (y=190)
+                    jumpT += dt * 2.6f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    megamanX = 12.0f + (36.0f - 12.0f) * t;
+                    float baseY = floorY + ((190.0f - MEGAMAN_RUN1_H) - floorY) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    megamanY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        megamanY = 190.0f - MEGAMAN_RUN1_H;
+                        climbStage = 2;
+                    }
+                } else if (climbStage == 2) {
+                    // Stage 2: Run left on Platform 3
+                    megamanX -= 50.0f * dt;
+                    megamanY = 190.0f - MEGAMAN_RUN1_H;
+                    if (megamanX <= 30.0f) {
+                        climbStage = 3;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 3) {
+                    // Stage 3: Jump from Platform 3 up to Platform 2 (y=130)
+                    jumpT += dt * 2.8f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    megamanX = 30.0f + (18.0f - 30.0f) * t;
+                    float baseY = (190.0f - MEGAMAN_RUN1_H) + ((130.0f - MEGAMAN_RUN1_H) - (190.0f - MEGAMAN_RUN1_H)) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    megamanY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        megamanY = 130.0f - MEGAMAN_RUN1_H;
+                        climbStage = 4;
+                    }
+                } else if (climbStage == 4) {
+                    // Stage 4: Run right on Platform 2
+                    megamanX += 50.0f * dt;
+                    megamanY = 130.0f - MEGAMAN_RUN1_H;
+                    if (megamanX >= 24.0f) {
+                        climbStage = 5;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 5) {
+                    // Stage 5: Jump from Platform 2 up to Platform 1 (y=70)
+                    jumpT += dt * 2.8f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    megamanX = 24.0f + (16.0f - 24.0f) * t;
+                    float baseY = (130.0f - MEGAMAN_RUN1_H) + ((70.0f - MEGAMAN_RUN1_H) - (130.0f - MEGAMAN_RUN1_H)) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    megamanY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        megamanY = 70.0f - MEGAMAN_RUN1_H;
+                        climbStage = 6;
+                    }
+                } else if (climbStage == 6) {
+                    // Stage 6: Run on Platform 1 into shooting spot
+                    megamanX += 50.0f * dt;
+                    megamanY = 70.0f - MEGAMAN_RUN1_H;
+                    if (megamanX >= 18.0f) {
+                        megamanX = 18.0f;
+                        phase = Phase::HeroJump;
+                        phaseTimer = 0.0f;
+                    }
+                }
+            } else {
+                megamanX += 85.0f * dt;
+                megamanY = groundTop - MEGAMAN_RUN1_H;
+                if (megamanX >= jumpStartX) {
+                    phase = Phase::HeroJump;
+                    phaseTimer = 0.0f;
+                }
             }
             break;
 
         case Phase::HeroJump: {
             m_dirty = 2;
             phaseTimer += dt;
-            const float jumpDuration = 0.75f;
+            const float jumpDuration = isPortrait ? 0.85f : 0.75f;
             float p = phaseTimer / jumpDuration;
             if (p > 1.0f) p = 1.0f;
 
-            megamanX += 80.0f * dt;
-            float maxLift = isWideTall ? 24.0f : 13.0f;
-            float lift = sinf(p * 3.14159f) * maxLift;
-            megamanY = (groundTop - MEGAMAN_JUMP_H) - lift;
+            if (isPortrait) {
+                megamanX = 18.0f + 10.0f * p;
+                float maxLift = 22.0f;
+                float lift = sinf(p * 3.14159f) * maxLift;
+                megamanY = (70.0f - MEGAMAN_JUMP_H) - lift;
 
-            // At jump peak, fire Buster lemon towards minute pod
-            if (p >= 0.32f && !bulletActive && !sparkActive) {
-                bulletActive = true;
-                bulletX = megamanX + MEGAMAN_JUMP_SHOOT_W - 2;
-                bulletY = megamanY + 8;
-                bulletTargetX = minX + 6;
-                bulletTargetY = podY + 7;
-            }
+                // At jump peak, fire Buster lemon towards minute pod
+                if (p >= 0.32f && !bulletActive && !sparkActive) {
+                    bulletActive = true;
+                    bulletX = megamanX + MEGAMAN_JUMP_SHOOT_W - 2;
+                    bulletY = megamanY + 8;
+                    bulletTargetX = minX + 6;
+                    bulletTargetY = podY + 7;
+                }
 
-            if (p >= 1.0f) {
-                // Landed on ground
-                phase = Phase::HeroExit;
-                phaseTimer = 0.0f;
+                if (p >= 1.0f) {
+                    // Landed back on Platform 1
+                    phase = Phase::HeroExit;
+                    phaseTimer = 0.0f;
+                }
+            } else {
+                megamanX += 80.0f * dt;
+                float maxLift = isWideTall ? 24.0f : 13.0f;
+                float lift = sinf(p * 3.14159f) * maxLift;
+                megamanY = (groundTop - MEGAMAN_JUMP_H) - lift;
+
+                // At jump peak, fire Buster lemon towards minute pod
+                if (p >= 0.32f && !bulletActive && !sparkActive) {
+                    bulletActive = true;
+                    bulletX = megamanX + MEGAMAN_JUMP_SHOOT_W - 2;
+                    bulletY = megamanY + 8;
+                    bulletTargetX = minX + 6;
+                    bulletTargetY = podY + 7;
+                }
+
+                if (p >= 1.0f) {
+                    // Landed on ground
+                    phase = Phase::HeroExit;
+                    phaseTimer = 0.0f;
+                }
             }
             break;
         }
 
         case Phase::HeroExit:
             m_dirty = 2;
-            megamanX += 95.0f * dt;
-            megamanY = groundTop - MEGAMAN_RUN1_H;
-            if (megamanX > (float)w + 10.0f) {
+            megamanX += (isPortrait ? 85.0f : 95.0f) * dt;
+            megamanY = isPortrait ? (70.0f - MEGAMAN_RUN1_H) : (groundTop - MEGAMAN_RUN1_H);
+            if (megamanX > (float)w + 24.0f) {
                 phase = Phase::Idle;
                 phaseTimer = 0.0f;
                 megamanX = -50.0f;
@@ -328,7 +467,10 @@ void MegamanClock::update() {
     drawTimePod(minX, podY, shownMM, bounceInt, sparkActive);
 
     // Energy gauge
-    if (isWideTall) {
+    if (isPortrait) {
+        // Vertical Life Gauge on left at x=3, y=8 without overlapping the hour pod (at x=12..35)
+        drawEnergyGauge(3, 8, storedTime.seconds);
+    } else if (isWideTall) {
         drawEnergyGauge(3, 6, storedTime.seconds);
         if (w >= 128) {
             int metoolX = w - METOOL_W - 4;
@@ -340,33 +482,40 @@ void MegamanClock::update() {
 
     // Mega Man rendering (appears only during minute sequence)
     if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
-        const uint16_t* runSprite;
-        int rw, rh;
-        switch (runFrame % 4) {
-            case 0:
-                runSprite = MEGAMAN_RUN1;
-                rw = MEGAMAN_RUN1_W;
-                rh = MEGAMAN_RUN1_H;
-                break;
-            case 1:
-                runSprite = MEGAMAN_RUN_PASS1;
-                rw = MEGAMAN_RUN_PASS_W;
-                rh = MEGAMAN_RUN_PASS_H;
-                break;
-            case 2:
-                runSprite = MEGAMAN_RUN2;
-                rw = MEGAMAN_RUN2_W;
-                rh = MEGAMAN_RUN2_H;
-                break;
-            default:
-                runSprite = MEGAMAN_RUN_PASS2;
-                rw = MEGAMAN_RUN_PASS_W;
-                rh = MEGAMAN_RUN_PASS_H;
-                break;
+        bool isJumping = (isPortrait && phase == Phase::HeroEnter &&
+                         (climbStage == 1 || climbStage == 3 || climbStage == 5));
+        if (isJumping) {
+            blitSprite(MEGAMAN_JUMP, MEGAMAN_JUMP_W, MEGAMAN_JUMP_H, (int)megamanX, (int)megamanY, true);
+        } else {
+            const uint16_t* runSprite;
+            int rw, rh;
+            switch (runFrame % 4) {
+                case 0:
+                    runSprite = MEGAMAN_RUN1;
+                    rw = MEGAMAN_RUN1_W;
+                    rh = MEGAMAN_RUN1_H;
+                    break;
+                case 1:
+                    runSprite = MEGAMAN_RUN_PASS1;
+                    rw = MEGAMAN_RUN_PASS_W;
+                    rh = MEGAMAN_RUN_PASS_H;
+                    break;
+                case 2:
+                    runSprite = MEGAMAN_RUN2;
+                    rw = MEGAMAN_RUN2_W;
+                    rh = MEGAMAN_RUN2_H;
+                    break;
+                default:
+                    runSprite = MEGAMAN_RUN_PASS2;
+                    rw = MEGAMAN_RUN_PASS_W;
+                    rh = MEGAMAN_RUN_PASS_H;
+                    break;
+            }
+            blitSprite(runSprite, rw, rh, (int)megamanX, (int)megamanY, true);
         }
-        blitSprite(runSprite, rw, rh, (int)megamanX, groundTop - rh, true);
     } else if (phase == Phase::HeroJump) {
-        float p = phaseTimer / 0.75f;
+        float jumpDur = isPortrait ? 0.85f : 0.75f;
+        float p = phaseTimer / jumpDur;
         if (p < 0.28f || p >= 0.65f) {
             blitSprite(MEGAMAN_JUMP, MEGAMAN_JUMP_W, MEGAMAN_JUMP_H, (int)megamanX, (int)megamanY, true);
         } else {
@@ -401,4 +550,7 @@ void MegamanClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     m_snapToNow = true;
     lastFrameMs = 0;
+    climbStage = 0;
+    jumpT = 0.0f;
+    phase = Phase::Idle;
 }
