@@ -16,9 +16,12 @@ struct WordClockLine {
 
 class WordClock : public ClockFace {
 public:
-    WordClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    WordClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
+    bool wantsClear() const override { return false; }
+    bool hasNewFrame() const override { return m_hasFrame; }
+    void onActivated() override { _dirty = 2; m_hasFrame = true; }
 
 private:
     ClockFaceFont::Glow glow;   ///< resolved once at build time, never on the draw path
@@ -32,7 +35,8 @@ private:
     int _cachedGfxSize = 1;
     int _lastHours = -1;
     int _lastMinutes = -1;
-    bool _dirty = true;
+    uint8_t _dirty = 2;
+    bool m_hasFrame = true;
 
     void recomputeLines();
 };

@@ -3,17 +3,18 @@
 #include "../core/Logger.h"
 #include "../core/SDUtils.h"
 #include "../core/SdLockGuard.h"
+#include "../core/net/SecureHttpClient.h"
+#include "../core/NetworkBudget.h"
 #include "../api/YahooFinanceProvider.h"
 #include <HTTPClient.h>
 #include <WiFiClient.h>
-
-StockEngine* StockEngine::instance = nullptr;
+#include <esp_task_wdt.h>
 
 StockEngine::StockEngine() 
     : currentSymbolIndex(0), lastItemSwitchTime(0),
-      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false), currentDecodeBuffer(nullptr) {
-    instance = this;
-    addProvider(new YahooFinanceProvider());
+      currentPrice(0.0f), changePercent24h(0.0f), fetchSuccess(false) {
+    m_yahoo = new YahooFinanceProvider();
+    addProvider(m_yahoo);
 }
 
 EngineError StockEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
@@ -40,11 +41,9 @@ void StockEngine::onConfigChanged(const EngineConfig* engineConfig) {
     parseSymbols(syms);
 
     if (config_chart_timeframe != prevTf && !symbolList.empty()) {
-        LOGI("StockEngine", "Timeframe changed to %s. Triggering immediate history fetch.", timeframeLabel(config_chart_timeframe));
-        if (config_show_chart) {
-            String sym = symbolList[currentSymbolIndex % symbolList.size()];
-            fetchHistory(sym, config_chart_timeframe);
-        }
+        LOGI("StockEngine", "Timeframe changed to %s. Invalidating history cache.", timeframeLabel(config_chart_timeframe));
+        historyCache.clear();
+        requestRedraw();
     }
 }
 
@@ -75,16 +74,148 @@ void StockEngine::parseSymbols(const String& syms) {
 void StockEngine::activate() {
     lastItemSwitchTime = millis();
     symbolsShownThisCycle = 0;
+    m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
-        String sym = symbolList[currentSymbolIndex % symbolList.size()];
-        fetchQuote(sym);
-        if (config_show_chart) {
-            fetchHistory(sym, config_chart_timeframe);
+        activeSymbol = symbolList[currentSymbolIndex % symbolList.size()];
+        AssetQuoteCache& cache = quoteCache[activeSymbol];
+        if (cache.hasData) {
+            currentPrice = cache.price;
+            changePercent24h = cache.changePercent24h;
+            fetchSuccess = true;
+        } else {
+            currentPrice = 0.0f;
+            changePercent24h = 0.0f;
+            fetchSuccess = false;
         }
     }
+    // Preload icons for active symbols while DRAM is clean (before TLS fragments the heap)
+    for (const auto& sym : symbolList) {
+        if (!sym.isEmpty()) {
+            AssetQuoteCache& c = quoteCache[sym];
+            if (!c.hasIcon && !c.iconAttempted) {
+                loadOrDownloadIcon(sym, c.imageUrl, c);
+            }
+        }
+    }
+
+    requestRedraw();
+}
+
+void StockEngine::loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache) {
+    if (cache.hasIcon || cache.iconAttempted) return;
+    cache.iconAttempted = true;
+    cache.hasIcon = iconService.loadOrFetchIcon("stock", symbol, newImgUrl, cache.iconPixels, 16, 16);
 }
 
 void StockEngine::deactivate() {
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_STOCK);
+    // Note: quoteCache and historyCache persist across rotations for the duration of config_cache_ttl_min.
+    currentPrice = 0.0f;
+    changePercent24h = 0.0f;
+    fetchSuccess = false;
+    m_redrawFrames = 0;
+    m_renderedFirstFrame = false;
+}
+
+bool StockEngine::needsTlsFetch() const {
+    if (symbolList.empty() || !config_enabled) return false;
+    uint32_t now = millis();
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+
+    for (const auto& sym : symbolList) {
+        auto it = quoteCache.find(sym);
+        if (it == quoteCache.end() || !it->second.hasData || (now - it->second.lastFetchTime >= ttlMs)) {
+            return true;
+        }
+    }
+
+    if (config_show_chart) {
+        String activeSym = symbolList[currentSymbolIndex % symbolList.size()];
+        const char* tfLabel = timeframeLabel(config_chart_timeframe);
+        String histKey = activeSym + "_" + tfLabel;
+        auto it = historyCache.find(histKey);
+        if (it == historyCache.end() || !it->second.hasData || (now - it->second.lastFetchTime >= ttlMs)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void StockEngine::prefetchData() {
+    if (symbolList.empty() || !config_enabled || WiFi.status() != WL_CONNECTED) return;
+    if (!NetworkBudget::canStartTlsSession()) {
+        LOGD("Stock", "Skipping transition pre-fetch: insufficient DRAM or bulk transfer active.");
+        return;
+    }
+    uint32_t now = millis();
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+    String sym = symbolList[currentSymbolIndex % symbolList.size()];
+    AssetQuoteCache& cache = quoteCache[sym];
+
+    bool needQuoteFetch = false;
+    for (const auto& s : symbolList) {
+        auto it = quoteCache.find(s);
+        if (it == quoteCache.end() || !it->second.hasData || (now - it->second.lastFetchTime >= ttlMs)) {
+            needQuoteFetch = true;
+            break;
+        }
+    }
+
+    if (needQuoteFetch) {
+        LOGI("Stock", "Executing transition pre-fetch for '%s' in DMA-released memory window...", sym.c_str());
+        // Batch-fetch quotes for all symbols in symbolList in a single keep-alive session
+        fetchQuote(sym);
+        if (fetchSuccess) {
+            currentPrice = cache.price;
+            changePercent24h = cache.changePercent24h;
+        } else {
+            LOGW("Stock", "Pre-fetch quote failed for '%s', aborting sequence to prevent display stall.", sym.c_str());
+            return;
+        }
+    }
+
+    if (config_show_chart) {
+        std::vector<String> symbolsNeedingHistory;
+        uint32_t now = millis();
+        uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+        const char* tfLabel = timeframeLabel(config_chart_timeframe);
+
+        for (const auto& s : symbolList) {
+            String histKey = s + "_" + tfLabel;
+            auto it = historyCache.find(histKey);
+            if (it == historyCache.end() || !it->second.hasData || (now - it->second.lastFetchTime >= ttlMs)) {
+                symbolsNeedingHistory.push_back(s);
+            }
+        }
+
+        if (!symbolsNeedingHistory.empty()) {
+            LOGI("Stock", "Executing transition pre-fetch charts for %d symbols in DMA-released memory window...", (int)symbolsNeedingHistory.size());
+            std::map<String, StockHistoryData> batchHist;
+            bool fetched = false;
+            for (IStockProvider* provider : providers) {
+                if (provider->fetchHistories(symbolsNeedingHistory, config_chart_timeframe, batchHist)) {
+                    fetched = true;
+                    break;
+                }
+            }
+            if (fetched && !batchHist.empty()) {
+                for (const auto& kv : batchHist) {
+                    if (kv.second.valid) {
+                        String histKey = kv.first + "_" + tfLabel;
+                        AssetHistoryCache& h = historyCache[histKey];
+                        memcpy(h.points, kv.second.points, kv.second.count * sizeof(float));
+                        h.count = kv.second.count;
+                        h.minPrice = kv.second.minPrice;
+                        h.maxPrice = kv.second.maxPrice;
+                        h.lastFetchTime = now;
+                        h.hasData = true;
+                        LOGI("StockEngine", "[History Success] Cached %d points for %s (%s)", (int)h.count, kv.first.c_str(), tfLabel);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void StockEngine::fetchQuote(const String& symbol) {
@@ -101,146 +232,69 @@ void StockEngine::fetchQuote(const String& symbol) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
+        requestRedraw();
         LOGI("StockEngine", "[Cache Hit] Using cached stock quote for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
         return;
     }
     
-    float newPrice = 0.0f;
-    float newChange = 0.0f;
-    String newImgUrl = "";
+    esp_task_wdt_reset();
+
+    // Collect all configured symbols that need refreshing to batch them in a single TLS session
+    std::vector<String> symbolsToFetch;
+    symbolsToFetch.push_back(symbol);
+    for (const auto& s : symbolList) {
+        if (s != symbol) {
+            auto it = quoteCache.find(s);
+            if (it == quoteCache.end() || !it->second.hasData || (now - it->second.lastFetchTime >= ttlMs)) {
+                symbolsToFetch.push_back(s);
+            }
+        }
+    }
+
+    std::map<String, StockQuote> batchQuotes;
     bool fetched = false;
-    
+
     // Try each provider until one succeeds
     for (IStockProvider* provider : providers) {
-        if (provider->fetchQuote(symbol, newPrice, newChange, newImgUrl)) {
+        if (provider->fetchQuotes(symbolsToFetch, batchQuotes)) {
             fetched = true;
             break;
         }
     }
-    
-    // Download and Cache Icon
-    if (fetched && newImgUrl.length() > 0 && !cache.hasIcon) {
-        String safeName = symbol;
-        safeName.toLowerCase();
-        String sdPath = "/stock_icons/" + safeName + ".png";
-        
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && !sd.exists(sdPath)) {
-                guard.unlock();
-                HTTPClient httpImg;
-                WiFiClient imgClient;
-                String proxyUrl = "http://images.weserv.nl/?url=" + newImgUrl + "&w=16&h=16&output=png";
-                httpImg.setTimeout(5000);
-                if (httpImg.begin(imgClient, proxyUrl)) {
-                    int code = httpImg.GET();
-                    if (code == 200) {
-                        SdLockGuard writeGuard(pdMS_TO_TICKS(1500));
-                        if (writeGuard) {
-                            if (!sd.exists("/stock_icons")) sd.mkdir("/stock_icons");
-                            FsFile f = sd.open(sdPath, FILE_OPEN_WRITE);
-                            if (f) {
-                                httpImg.writeToStream(&f);
-                                f.close();
-                            }
-                        }
-                    }
-                    httpImg.end();
-                }
-            }
-        }
-        
-        // Load into RAM
-        size_t size = 0;
-        uint8_t* buf = nullptr;
-        {
-            SdLockGuard guard(pdMS_TO_TICKS(1500));
-            if (guard && sd.exists(sdPath)) {
-                FsFile f = sd.open(sdPath, FILE_OPEN_READ);
-                if (f) {
-                    size = f.size();
-                    if (size > 0 && size <= 16384) {
-                        buf = (uint8_t*)malloc(size);
-                        if (buf) {
-                            f.read(buf, size);
-                        }
-                    }
-                    f.close();
-                }
-            }
-        }
+    esp_task_wdt_reset();
 
-        if (buf && size > 0) {
-            memset(cache.iconPixels, 0, sizeof(cache.iconPixels));
-            currentDecodeBuffer = cache.iconPixels;
-            
-            PNG* png = new PNG();
-            pngPtr = png;
-            int rc = png->openRAM(buf, size, pngDraw);
-            if (rc == PNG_SUCCESS) {
-                png->decode((void*)this, 0);
-                cache.hasIcon = true;
+    if (fetched && !batchQuotes.empty()) {
+        for (const auto& kv : batchQuotes) {
+            if (kv.second.valid) {
+                AssetQuoteCache& c = quoteCache[kv.first];
+                c.price = kv.second.price;
+                c.changePercent24h = kv.second.change24h;
+                c.imageUrl = kv.second.imageUrl;
+                c.lastFetchTime = now;
+                c.hasData = true;
+                if (!c.hasIcon && !c.iconAttempted) {
+                    loadOrDownloadIcon(kv.first, kv.second.imageUrl, c);
+                }
             }
-            png->close();
-            delete png;
-            pngPtr = nullptr;
-            free(buf);
-            currentDecodeBuffer = nullptr;
         }
     }
-    
-    // Update cache if successful
-    if (fetched && newPrice > 0.0f) {
-        cache.price = newPrice;
-        cache.changePercent24h = newChange;
-        cache.imageUrl = newImgUrl;
-        cache.lastFetchTime = now;
-        cache.hasData = true;
-        
-        currentPrice = newPrice;
-        changePercent24h = newChange;
-        fetchSuccess = true;
-        LOGI("StockEngine", "[Fetch Success] Updated cache for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
-    } else if (cache.hasData) {
-        // Fallback to last known cached price for THIS symbol if HTTP failed (e.g. Rate Limit 429)
+
+    if (cache.hasData) {
         currentPrice = cache.price;
         changePercent24h = cache.changePercent24h;
         fetchSuccess = true;
-        LOGW("StockEngine", "[HTTP Failed/429] Reusing last known cached price for %s: $%.2f", symbol.c_str(), currentPrice);
+        requestRedraw();
+        LOGI("StockEngine", "[Fetch Success] Updated quote for %s: $%.2f (%.2f%%)", symbol.c_str(), currentPrice, changePercent24h);
     } else {
         currentPrice = 0.0f;
         changePercent24h = 0.0f;
         fetchSuccess = false;
+        cache.lastFetchTime = now; // Guard against instant re-fetch loop
+        requestRedraw();
         LOGW("StockEngine", "No quote available for %s", symbol.c_str());
     }
 }
 
-int StockEngine::pngDraw(PNGDRAW *pDraw) {
-    StockEngine* self = static_cast<StockEngine*>(pDraw->pUser);
-    if (!self) self = instance;
-    if (!self || !self->currentDecodeBuffer || !self->pngPtr) return 0;
-    
-    int iWidth = pDraw->iWidth;
-    if (iWidth > 16) iWidth = 16;
-    
-    int y = pDraw->y;
-    if (y >= 16) return 0;
-    
-    uint16_t lineBuffer[16];
-    // We decode to RGB565. Transparency will be handled by drawing only non-black or by PNG library.
-    self->pngPtr->getLineAsRGB565(pDraw, lineBuffer, PNG_RGB565_LITTLE_ENDIAN, 0x00000000); // Using black as transparent background
-    
-    for (int x = 0; x < iWidth; x++) {
-        uint16_t color = lineBuffer[x];
-        // Only save non-black pixels (assuming black is background/transparent)
-        if (color != 0) {
-            self->currentDecodeBuffer[y * 16 + x] = color;
-        } else {
-            self->currentDecodeBuffer[y * 16 + x] = 0x0000; // Transparent indicator
-        }
-    }
-    return 1;
-}
 
 void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
     uint32_t now = millis();
@@ -259,6 +313,7 @@ void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
     float minP = 0.0f;
     float maxP = 0.0f;
 
+    esp_task_wdt_reset();
     for (IStockProvider* provider : providers) {
         if (provider->fetchHistory(symbol, tf, points, 64, count, minP, maxP)) {
             memcpy(cache.points, points, count * sizeof(float));
@@ -268,17 +323,108 @@ void StockEngine::fetchHistory(const String& symbol, Timeframe tf) {
             cache.lastFetchTime = now;
             cache.hasData = true;
             LOGI("StockEngine", "[History Success] Fetched %d points for %s (%s)", (int)count, symbol.c_str(), timeframeLabel(tf));
-            return;
+            break;
         }
     }
+    cache.lastFetchTime = now; // Guard against instant re-fetch loop on failure or fallback
+    esp_task_wdt_reset();
+}
+
+bool StockEngine::fetchCombined(const String& symbol) {
+    if (!m_yahoo) return false;
+    uint32_t now = millis();
+    AssetQuoteCache& qCache = quoteCache[symbol];
+    String histKey = symbol + "_" + timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hCache = historyCache[histKey];
+
+    float newPrice = 0.0f;
+    float newChange = 0.0f;
+    String newImgUrl = "";
+    float points[64];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+
+    bool ok = m_yahoo->fetchQuoteAndHistory(symbol, newPrice, newChange, newImgUrl,
+                                            config_chart_timeframe, points, 64, count, minP, maxP);
+    if (ok && newPrice > 0.0f) {
+        qCache.price = newPrice;
+        qCache.changePercent24h = newChange;
+        qCache.imageUrl = newImgUrl;
+        qCache.lastFetchTime = now;
+        qCache.hasData = true;
+
+        currentPrice = newPrice;
+        changePercent24h = newChange;
+        fetchSuccess = true;
+
+        if (count > 0) {
+            memcpy(hCache.points, points, count * sizeof(float));
+            hCache.count = count;
+            hCache.minPrice = minP;
+            hCache.maxPrice = maxP;
+            hCache.lastFetchTime = now;
+            hCache.hasData = true;
+            LOGI("StockEngine", "[Combined Success] Fetched quote + %d history points for %s", (int)count, symbol.c_str());
+        } else {
+            hCache.lastFetchTime = now;
+        }
+        requestRedraw();
+        return true;
+    }
+    return false;
 }
 
 void StockEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    
+    // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
+    if (!m_renderedFirstFrame) return;
+
+    auto* matrix = context ? context->getSurface() : nullptr;
     int mH = matrix ? matrix->height() : 32;
     
     uint32_t now = millis();
+
+    // Check if initial quote for active symbol is missing or expired
+    AssetQuoteCache& cache = quoteCache[activeSymbol];
+    if (!cache.hasIcon && !cache.iconAttempted) {
+        loadOrDownloadIcon(activeSymbol, cache.imageUrl, cache);
+    }
+    uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
+    String histKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hCache = historyCache[histKey];
+
+    bool needsQuoteFetch = false;
+    if (!cache.hasData) {
+        if (cache.lastFetchTime == 0 || (now - cache.lastFetchTime >= 30000UL)) {
+            needsQuoteFetch = true;
+        }
+    } else if (now - cache.lastFetchTime >= ttlMs) {
+        needsQuoteFetch = true;
+    }
+
+    bool needsHistFetch = config_show_chart && (!hCache.hasData || (now - hCache.lastFetchTime >= ttlMs));
+    bool needsFetch = needsQuoteFetch || needsHistFetch;
+
+    bool networkReady = needsFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+    if (needsFetch && networkReady && psramFound()) {
+        bool combined = false;
+        if (config_show_chart) {
+            combined = fetchCombined(activeSymbol);
+        }
+        if (!combined) {
+            if (needsQuoteFetch) {
+                fetchQuote(activeSymbol);
+            }
+            if (config_show_chart && needsHistFetch) {
+                fetchHistory(activeSymbol, config_chart_timeframe);
+            }
+        }
+        requestRedraw();
+    }
+
     uint32_t durationMs = (config_duration_sec > 0 ? config_duration_sec : 5) * 1000;
     if (now - lastItemSwitchTime > durationMs) {
         lastItemSwitchTime = now;
@@ -288,23 +434,133 @@ void StockEngine::update(EngineContext* context) {
             symbolsShownThisCycle++;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             activeSymbol = symbolList[currentSymbolIndex];
-            fetchQuote(activeSymbol);
-            if (config_show_chart) {
-                fetchHistory(activeSymbol, config_chart_timeframe);
+            AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+            String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+            AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+            bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                             (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+            bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+            bool needAnyFetch = needQuoteFetch || needHistFetch;
+            bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+            if (needAnyFetch && netOk && psramFound()) {
+                bool combined = false;
+                if (config_show_chart) {
+                    combined = fetchCombined(activeSymbol);
+                }
+                if (!combined) {
+                    if (needQuoteFetch) {
+                        fetchQuote(activeSymbol);
+                    }
+                    if (config_show_chart && needHistFetch) {
+                        fetchHistory(activeSymbol, config_chart_timeframe);
+                    }
+                }
+            } else if (nextCache.hasData) {
+                currentPrice = nextCache.price;
+                changePercent24h = nextCache.changePercent24h;
+                fetchSuccess = true;
+                if (!nextCache.hasIcon) {
+                    loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                }
+            } else {
+                currentPrice = 0.0f;
+                changePercent24h = 0.0f;
+                fetchSuccess = false;
             }
         } else {
             // Compact 32px split mode: Alternate between Info and Chart
             if (currentPage == DisplayPage::Info) {
-                currentPage = DisplayPage::Chart;
-                fetchHistory(symbolList[currentSymbolIndex % symbolList.size()], config_chart_timeframe);
+                String histKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+                AssetHistoryCache& hCache = historyCache[histKey];
+                // Only switch to Chart page if chart data is actually valid in cache
+                if (hCache.hasData && hCache.count > 1) {
+                    currentPage = DisplayPage::Chart;
+                } else {
+                    // No chart data in cache: advance directly to next symbol's Info page
+                    symbolsShownThisCycle++;
+                    currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
+                    activeSymbol = symbolList[currentSymbolIndex];
+                    AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+                    String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+                    AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+                    bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                                     (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+                    bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+                    bool needAnyFetch = needQuoteFetch || needHistFetch;
+                    bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+                    if (needAnyFetch && netOk && psramFound()) {
+                        bool combined = false;
+                        if (config_show_chart) {
+                            combined = fetchCombined(activeSymbol);
+                        }
+                        if (!combined) {
+                            if (needQuoteFetch) {
+                                fetchQuote(activeSymbol);
+                            }
+                            if (config_show_chart && needHistFetch) {
+                                fetchHistory(activeSymbol, config_chart_timeframe);
+                            }
+                        }
+                    } else if (nextCache.hasData) {
+                        currentPrice = nextCache.price;
+                        changePercent24h = nextCache.changePercent24h;
+                        fetchSuccess = true;
+                        if (!nextCache.hasIcon) {
+                            loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                        }
+                    } else {
+                        currentPrice = 0.0f;
+                        changePercent24h = 0.0f;
+                        fetchSuccess = false;
+                    }
+                }
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 activeSymbol = symbolList[currentSymbolIndex];
-                fetchQuote(activeSymbol);
+                AssetQuoteCache& nextCache = quoteCache[activeSymbol];
+                String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+                AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+                bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                                 (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
+                bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+                bool needAnyFetch = needQuoteFetch || needHistFetch;
+                bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+                if (needAnyFetch && netOk && psramFound()) {
+                    bool combined = false;
+                    if (config_show_chart) {
+                        combined = fetchCombined(activeSymbol);
+                    }
+                    if (!combined) {
+                        if (needQuoteFetch) {
+                            fetchQuote(activeSymbol);
+                        }
+                        if (config_show_chart && needHistFetch) {
+                            fetchHistory(activeSymbol, config_chart_timeframe);
+                        }
+                    }
+                } else if (nextCache.hasData) {
+                    currentPrice = nextCache.price;
+                    changePercent24h = nextCache.changePercent24h;
+                    fetchSuccess = true;
+                    if (!nextCache.hasIcon) {
+                        loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                    }
+                } else {
+                    currentPrice = 0.0f;
+                    changePercent24h = 0.0f;
+                    fetchSuccess = false;
+                }
             }
         }
+        requestRedraw();
     }
 }
 
@@ -315,7 +571,13 @@ bool StockEngine::isFinished() const {
 
 void StockEngine::render(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
-    auto* matrix = context->getMatrix();
+    if (m_redrawFrames == 0) return;
+    m_redrawFrames--;
+
+    m_renderedFirstFrame = true;
+
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -343,7 +605,8 @@ void StockEngine::render(EngineContext* context) {
 }
 
 void StockEngine::renderUnifiedVertical(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -492,7 +755,8 @@ void StockEngine::renderUnifiedVertical(EngineContext* context) {
 }
 
 void StockEngine::renderUnifiedWide(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -582,7 +846,8 @@ void StockEngine::renderUnifiedWide(EngineContext* context) {
 }
 
 void StockEngine::renderChart(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -627,7 +892,8 @@ void StockEngine::renderChart(EngineContext* context) {
 }
 
 void StockEngine::renderQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -706,7 +972,8 @@ void StockEngine::renderQuote(EngineContext* context) {
 }
 
 void StockEngine::renderFullScreenQuote(EngineContext* context) {
-    auto* matrix = context->getMatrix();
+    auto* matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return;
     matrix->fillScreen(0);
     int mW = matrix->width();
     int mH = matrix->height();
@@ -891,8 +1158,14 @@ EngineDescriptor StockEngineDescriptorHandler::getDescriptor() const {
     EngineDescriptor desc_stock;
     desc_stock.metadata = {"stock", "Stock Ticker", "finance", FIRMWARE_VERSION};
     desc_stock.capabilities.realtime = false;
-    desc_stock.requirements.needsPsram = true;
+    desc_stock.requirements.needsPsram = false;
     desc_stock.requirements.needsNetwork = true;
+    desc_stock.requirements.needsTls = true;
+    desc_stock.requirements.targetFps = 30;
+    desc_stock.requirements.supportsSingleBuffer = true;
+    desc_stock.requirements.internalPersistentBytes = 2048;
+    desc_stock.requirements.internalContiguousBytes = 8192;
+    desc_stock.requirements.psramBytes = 0;
     desc_stock.schema.fields = {
         ConfigField("symbols", ConfigType::STRING, "Symbols", "Comma-separated stock symbols", "AAPL,TSLA,NVDA", true, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("show_chart", ConfigType::BOOLEAN, "Show Chart", "Display historical price sparkline chart", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),

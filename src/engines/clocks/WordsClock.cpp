@@ -1,4 +1,7 @@
 #include "WordsClock.h"
+
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "ClockFaceFont.h"
 #include "WordsHourFont.h"
 #include "WordsMinuteFont.h"
@@ -11,7 +14,7 @@ namespace {
 constexpr uint16_t ACCENT = 0x2589;   // the muted blue the original uses for the hour and the date
 }  // namespace
 
-WordsClockFace::WordsClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+WordsClockFace::WordsClockFace(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     storedTime = { 0, 0, 0 };
     glow = ClockFaceFont::resolveGlow(config);
@@ -107,3 +110,6 @@ void WordsClockFace::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     lastMinute = -1;
 }
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+

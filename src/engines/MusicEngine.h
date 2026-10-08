@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/AppEngineContext.h"
 #include "../../include/core/EngineContract.h"
 #include "../core/AudioHub.h"
@@ -24,7 +25,7 @@ public:
     bool isRealtime() const override { return true; }
 
 private:
-    MatrixPanel_I2S_DMA* _matrix;
+    IDrawingSurface* _matrix;
     bool _hasPsram;
 
     // Config options
@@ -46,11 +47,11 @@ private:
     uint8_t _animFrame;
 
     void applyConfig(const EngineConfig* config);
-    void renderIdle(MatrixPanel_I2S_DMA* display, int w, int h);
-    void renderPlaying(MatrixPanel_I2S_DMA* display, int w, int h, const AudioPlaybackStatePOD& state);
-    void renderMarqueeText(MatrixPanel_I2S_DMA* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color);
-    void renderVisualizerBars(MatrixPanel_I2S_DMA* display, int x, int y, int width, int height, uint16_t color);
-    uint16_t getSourceColor(AudioSource source, MatrixPanel_I2S_DMA* display);
+    void renderIdle(IDrawingSurface* display, int w, int h);
+    void renderPlaying(IDrawingSurface* display, int w, int h, const AudioPlaybackStatePOD& state);
+    void renderMarqueeText(IDrawingSurface* display, const char* text, int y, int clipMinX, int clipMaxX, uint16_t color);
+    void renderVisualizerBars(IDrawingSurface* display, int x, int y, int width, int height, uint16_t color);
+    uint16_t getSourceColor(AudioSource source, IDrawingSurface* display);
 };
 
 /**

@@ -1,8 +1,9 @@
 #pragma once
 #include <Arduino.h>
 #include <limits.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "GraphPayload.h"
+
+class IDrawingSurface;
 
 /**
  * Text helpers for the MQTT Data engine's pages (value, table, graph, weather), matching the RPi firmware's
@@ -30,16 +31,16 @@ inline int width(const char* text, int font) {
  * that straddles it is drawn and the overflow blanked, so draw left to right before anything
  * that sits beyond the clip).
  */
-void print(MatrixPanel_I2S_DMA* m, int x, int y, const char* text, int font, uint16_t color, int clipX = INT_MAX);
+void print(IDrawingSurface* m, int x, int y, const char* text, int font, uint16_t color, int clipX = INT_MAX);
 
 /// The localized "NO DATA" notice, centered, G1 #787878 (EN NO DATA / FR PAS DE DONNEES / ES SIN DATOS).
-void drawNoData(MatrixPanel_I2S_DMA* m);
+void drawNoData(IDrawingSurface* m);
 
 enum class Message : uint8_t { Connecting, NoConnection, Unsupported };
 
 /// The MQTT Data engine's notices, placed like NO DATA: CONNECTING / CONNEXION / CONECTANDO in
 /// #787878, NO CONNECTION / PAS DE CONNEXION / SIN CONEXION in #B45050, UNSUPPORTED /
 /// NON PRIS EN CHARGE / NO COMPATIBLE in #C08000.
-void drawNotice(MatrixPanel_I2S_DMA* m, Message msg);
+void drawNotice(IDrawingSurface* m, Message msg);
 
 }  // namespace panel_text

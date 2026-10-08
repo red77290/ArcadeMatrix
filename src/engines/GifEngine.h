@@ -8,6 +8,7 @@
  */
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include <AnimatedGIF.h>
 #ifdef INTELSHORT
 #undef INTELSHORT
@@ -16,7 +17,7 @@
 #undef INTELLONG
 #endif
 #include <PNGdec.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+class IDrawingSurface;
 #ifdef FILE_READ
 #undef FILE_READ
 #endif
@@ -57,9 +58,15 @@ public:
     ~GifEngine();
 
     /**
+     * @brief Pre-allocate shared AnimatedGIF decoder and canvas buffer at boot time
+     *        before heap fragmentation can prevent large contiguous allocations.
+     */
+    static void preallocateSharedBuffers(size_t matrixPixels);
+
+    /**
      * @brief Initialize the engine with the matrix display pointer.
      */
-    bool begin(MatrixPanel_I2S_DMA* display);
+    bool begin(IDrawingSurface* display);
     
     /**
      * @brief Play a single GIF file repeatedly.
@@ -111,7 +118,12 @@ public:
     float getSpeedMultiplier() const { return m_speedMultiplier; }
 
 private:
-    AnimatedGIF gif;                 ///< The AnimatedGIF decoder instance
+    AnimatedGIF* gif = nullptr;      ///< The AnimatedGIF decoder instance, allocated dynamically (or in PSRAM)
+    bool m_gifAllocatedInPsram = false;
+    bool ensureGifDecoder();
+    void freeGifDecoder();
+    bool ensureCanvasBuffer();
+    void freeCanvasBuffer();
     // The PNGdec PNGIMAGE struct embeds ~38KB of fixed-size buffers (32KB zlib window, palette,
     // pixel buffer, file buffer) directly as class members - NOT heap-allocated. Embedding a
     // `PNG png;` value member here would permanently reserve that ~38KB of static RAM for the
@@ -122,7 +134,7 @@ private:
     // task" troubleshooting entry in docs/GETTING_STARTED.md for why this matters on a
     // non-PSRAM classic ESP32 (only ~320KB total internal RAM).
     PNG* png = nullptr;              ///< The PNGdec decoder instance, lazily allocated on first PNG decode
-    MatrixPanel_I2S_DMA* matrix;     ///< Matrix hardware reference
+    IDrawingSurface* matrix = nullptr; ///< Drawing surface hardware abstraction reference
     bool isPlaying;                  ///< State flag for active playback
     bool playlistMode;               ///< State flag for playlist rotation
     
@@ -140,7 +152,9 @@ private:
      */
     // A folder is chosen in proportion to its size; within it, a file that has come up recently is
     // passed over, so a long evening walks the library instead of circling a handful of files.
-    static constexpr uint16_t RECENT_MAX = 4096;   ///< Files remembered (PSRAM ring, 16 KB)
+    static constexpr uint16_t RECENT_MAX = 4096;   ///< Files remembered in EXPANDED tier (PSRAM ring, 16 KB)
+    static constexpr uint16_t STATIC_RECENT_CAP = 64; ///< Fixed preallocated member buffer for CONSTRAINED tier (zero malloc)
+    uint32_t m_staticHashes[STATIC_RECENT_CAP] = {0};
     uint32_t* recentHashes = nullptr;
     uint16_t recentCap = 0, recentCount = 0, recentHead = 0;
     static uint32_t pathHash(const char* s);
@@ -185,6 +199,28 @@ private:
     size_t psramBufferSize = 0;
     void freePsramBuffer();
 
+    // Core 0 background GIF preloader (seamless <1ms transition)
+    struct PreloadItem {
+        char path[128] = {0};
+        uint8_t* buffer = nullptr;
+        size_t size = 0;
+        bool isPng = false;
+        bool isRaw = false;
+        std::atomic<bool> ready{false};
+    };
+    PreloadItem m_preloaded;
+    TaskHandle_t m_preloadTask = nullptr;
+    std::atomic<bool> m_stopPreload{false};
+    std::atomic<bool> m_preloadExited{true};
+    std::atomic<bool> m_preloadTrigger{false};
+
+    void startPreloadTask();
+    void stopPreloadTask();
+    static void preloadTaskEntry(void* arg);
+    void preloadWorker();
+    void freePreloadBuffer();
+    bool pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPng, bool& outIsRaw);
+
     /**
      * Dirty-pixel presentation. Pushing a whole 256x64 frame through drawPixel costs 8 PSRAM
      * read-modify-writes plus 8 cache write-backs per pixel (the HUB75 DMA buffer lives in PSRAM),
@@ -192,7 +228,7 @@ private:
      * what was last drawn into each DMA buffer and write only the pixels that differ; a typical
      * animation changes a small fraction of the panel per frame. The shadows are invalidated whenever
      * something else may have drawn into the buffers (activation, resume, overlays, notices,
-     * transitions: see MatrixEngine::markExternalDraw), which falls back to a full repaint.
+     * transitions: see IDrawingSurface::markExternalDraw), which falls back to a full repaint.
      */
     uint16_t* m_shadow[2] = { nullptr, nullptr };
     bool m_shadowValid[2] = { false, false };
@@ -229,7 +265,7 @@ private:
      * @brief Allocate the scanline canvas in internal SRAM (mandatory: it is accessed pixel-by-pixel
      * on the Core 1 hot path), falling back to PSRAM only if internal allocation fails.
      */
-    uint16_t* allocateCanvasBuffer(size_t matrixPixels);
+    static uint16_t* allocateCanvasBuffer(size_t matrixPixels);
 
     // Static instance pointer for C-style callbacks in AnimatedGIF
     static GifEngine* instance;
@@ -250,6 +286,7 @@ private:
 
     bool m_hasPsram = false;
     bool m_lastFrameDrew = true;
+    bool m_borrowedSurfaceCanvas = false;
     String m_fitMode = "fit";
     float m_speedMultiplier = 1.0f;
 };

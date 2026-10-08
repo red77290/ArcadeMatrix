@@ -1,8 +1,8 @@
 #pragma once
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include "../core/BitmapFontLoader.h"
 #include "../../include/core/EngineContract.h"
+#include "core/drawing/IDrawingSurface.h"
 
 #include "TimeData.h"
 
@@ -32,7 +32,16 @@ enum PublisherTheme {
     THEME_FLIP = 19,
     THEME_CUSTOM_GRADIENT = 20,
     THEME_MATRIX_RAIN = 21,
-    THEME_TETRIS_GB = 29
+    THEME_TETRIS_GB = 29,
+    THEME_MARIO_CLOCK = 30,
+    THEME_CASTLE_CLOCK = 31,
+    THEME_POKEDEX_CLOCK = 32,
+    THEME_WORLD_CLOCK = 33,
+    THEME_MS_PACMAN = 34,
+    THEME_MEGAMAN_CLOCK = 35,
+    THEME_WORDS_CLOCK = 37,
+    THEME_SONIC = 39,
+    THEME_METAL_SLUG = 41
 };
 
 struct DateConfig {
@@ -79,7 +88,7 @@ public:
 
 private:
     bool loop();
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     DateConfig m_config;
     char currentDate[32];
     uint16_t textColor;

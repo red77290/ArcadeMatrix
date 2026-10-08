@@ -3,11 +3,11 @@
 #include <freertos/task.h>
 #include <Arduino.h>
 #include <atomic>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <vector>
 #include "../api/IWeatherProvider.h"
 
 #include "../../include/core/EngineContract.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/AppEngineContext.h"
 
 class WeatherEngine : public IEngine {
@@ -22,6 +22,7 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override { requestRedraw(); }
     void resume() override { requestRedraw(); }   // back from a preemption or a slot transition
@@ -54,7 +55,7 @@ public:
     static FetchState fetchState();
 
 private:
-    MatrixPanel_I2S_DMA* matrix;
+    IDrawingSurface* matrix;
     std::vector<IWeatherProvider*> providers;
     // The forecast is fetched on a task of its own. Doing it from loop() meant the render path
     // stopped for the length of an HTTPS round trip, which showed as a black panel for a second or
@@ -65,8 +66,9 @@ private:
     // where it stands: vTaskDelete on a task inside an HTTPS round trip drops the socket and the
     // buffers it holds, and could land while it is still reading the providers this object owns.
     std::atomic<bool> m_stopFetch{false};
-    std::atomic<bool> m_fetchExited{false};
+    std::atomic<bool> m_fetchExited{true};
     void startFetchTask();
+    void stopFetchTask();
     static void fetchTaskEntry(void* arg);
     void fetchOnce();
     // Two forecast buffers with an atomic index instead of a mutex: Core 0 fills the buffer that is

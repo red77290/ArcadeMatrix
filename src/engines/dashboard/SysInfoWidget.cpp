@@ -1,8 +1,8 @@
 #include "SysInfoWidget.h"
 #include "DashboardCommon.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../../core/drawing/IDrawingSurface.h"
 
-void SysInfoWidget::render(MatrixPanel_I2S_DMA* matrix, const Rect& rect, const SystemData& sys, const DashboardTheme& theme) {
+void SysInfoWidget::render(IDrawingSurface* matrix, const Rect& rect, const SystemData& sys, const DashboardTheme& theme) {
     if (!matrix || rect.width < 14 || rect.height < 8) return;
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);

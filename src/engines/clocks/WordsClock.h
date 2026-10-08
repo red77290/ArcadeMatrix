@@ -1,6 +1,8 @@
 #ifndef WORDSCLOCKFACE_H
 #define WORDSCLOCKFACE_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -18,7 +20,7 @@
 
 class WordsClockFace : public ClockFace {
 public:
-    WordsClockFace(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    WordsClockFace(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
@@ -37,4 +39,7 @@ private:
     void drawCentred(const char* text, int centreY, const GFXfont* font, uint16_t color, int panelW);
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+

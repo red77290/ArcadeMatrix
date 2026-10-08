@@ -1,0 +1,8 @@
+{
+  "instance_id": "gifs_main",
+  "engine_id": "gifs",
+  "config": {
+    "playlist": "all",
+    "speed": "100"
+  }
+}

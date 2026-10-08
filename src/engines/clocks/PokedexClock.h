@@ -1,6 +1,8 @@
 #ifndef POKEDEXCLOCK_H
 #define POKEDEXCLOCK_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -13,7 +15,7 @@
  */
 class PokedexClock : public ClockFace {
 public:
-    PokedexClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    PokedexClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
@@ -32,4 +34,7 @@ private:
     void drawFace(int w, int h);
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+
