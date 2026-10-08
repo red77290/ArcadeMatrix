@@ -63,6 +63,8 @@ private:
     float phaseTimer = 0.0f;
     float simonX = -30.0f;
     float simonY = 0.0f;
+    uint8_t climbStage = 0;
+    float jumpT = 0.0f;
 
     // Animation timers
     float walkTimer = 0.0f;

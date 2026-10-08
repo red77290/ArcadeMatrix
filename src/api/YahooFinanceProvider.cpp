@@ -144,7 +144,7 @@ bool YahooFinanceProvider::parseChart(Stream& stream, float* outPoints, size_t m
     StaticJsonDocument<256> filter;
     filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
 
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
     if (!err) {
         JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
@@ -181,7 +181,7 @@ bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, s
     StaticJsonDocument<256> filter;
     filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
 
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
     if (!err) {
         JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
@@ -212,6 +212,110 @@ bool YahooFinanceProvider::parseChart(const String& payload, float* outPoints, s
     return false;
 }
 
+bool YahooFinanceProvider::parseQuoteAndChart(Stream& stream, float& outPrice, float& outChange,
+                                              float* outPoints, size_t maxPoints, size_t& outCount,
+                                              float& outMin, float& outMax) {
+    StaticJsonDocument<384> filter;
+    filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+    filter["chart"]["result"][0]["meta"]["previousClose"] = true;
+    filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+    filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
+
+    DynamicJsonDocument doc(8192);
+    DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
+    if (err) {
+        LOGW("Yahoo", "parseQuoteAndChart JSON deserialize failed: %s", err.c_str());
+        return false;
+    }
+
+    JsonObject meta = doc["chart"]["result"][0]["meta"];
+    if (meta.isNull()) return false;
+
+    outPrice = meta["regularMarketPrice"] | 0.0f;
+    float prevClose = meta["previousClose"] | meta["chartPreviousClose"] | outPrice;
+    if (prevClose > 0.0f && outPrice > 0.0f) {
+        outChange = ((outPrice - prevClose) / prevClose) * 100.0f;
+    } else {
+        outChange = 0.0f;
+    }
+
+    if (outPoints && maxPoints > 0) {
+        JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
+        outCount = 0;
+        outMin = 1e9f;
+        outMax = -1e9f;
+        if (!closes.isNull()) {
+            size_t n = closes.size();
+            size_t step = (n > maxPoints) ? (n / maxPoints) : 1;
+            if (step == 0) step = 1;
+            for (size_t i = 0; i < n && outCount < maxPoints; i += step) {
+                if (!closes[i].isNull()) {
+                    float val = closes[i].as<float>();
+                    if (val > 0.0f) {
+                        outPoints[outCount++] = val;
+                        if (val < outMin) outMin = val;
+                        if (val > outMax) outMax = val;
+                    }
+                }
+            }
+        }
+    }
+
+    return (outPrice > 0.0f);
+}
+
+bool YahooFinanceProvider::parseQuoteAndChart(const String& payload, float& outPrice, float& outChange,
+                                              float* outPoints, size_t maxPoints, size_t& outCount,
+                                              float& outMin, float& outMax) {
+    StaticJsonDocument<384> filter;
+    filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+    filter["chart"]["result"][0]["meta"]["previousClose"] = true;
+    filter["chart"]["result"][0]["meta"]["chartPreviousClose"] = true;
+    filter["chart"]["result"][0]["indicators"]["quote"][0]["close"] = true;
+
+    DynamicJsonDocument doc(8192);
+    DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+    if (err) {
+        LOGW("Yahoo", "parseQuoteAndChart JSON deserialize failed: %s", err.c_str());
+        return false;
+    }
+
+    JsonObject meta = doc["chart"]["result"][0]["meta"];
+    if (meta.isNull()) return false;
+
+    outPrice = meta["regularMarketPrice"] | 0.0f;
+    float prevClose = meta["previousClose"] | meta["chartPreviousClose"] | outPrice;
+    if (prevClose > 0.0f && outPrice > 0.0f) {
+        outChange = ((outPrice - prevClose) / prevClose) * 100.0f;
+    } else {
+        outChange = 0.0f;
+    }
+
+    if (outPoints && maxPoints > 0) {
+        JsonArray closes = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"].as<JsonArray>();
+        outCount = 0;
+        outMin = 1e9f;
+        outMax = -1e9f;
+        if (!closes.isNull()) {
+            size_t n = closes.size();
+            size_t step = (n > maxPoints) ? (n / maxPoints) : 1;
+            if (step == 0) step = 1;
+            for (size_t i = 0; i < n && outCount < maxPoints; i += step) {
+                if (!closes[i].isNull()) {
+                    float val = closes[i].as<float>();
+                    if (val > 0.0f) {
+                        outPoints[outCount++] = val;
+                        if (val < outMin) outMin = val;
+                        if (val > outMax) outMax = val;
+                    }
+                }
+            }
+        }
+    }
+
+    return (outPrice > 0.0f);
+}
+
 bool YahooFinanceProvider::fetchQuoteAndHistory(const String& symbol,
     float& outPrice, float& outChange, String& outImageUrl,
     Timeframe tf, float* outPoints, size_t maxPoints,
@@ -220,47 +324,45 @@ bool YahooFinanceProvider::fetchQuoteAndHistory(const String& symbol,
     String cleanSym = symbol;
     cleanSym.trim();
     cleanSym.toUpperCase();
+    if (cleanSym.isEmpty()) return false;
+
     String querySym = cleanSym;
     if (isCryptoSymbol(cleanSym) && !cleanSym.endsWith("-USD") && cleanSym.indexOf('-') == -1) {
         querySym = cleanSym + "-USD";
     }
 
-    net::SecureHttpSession session("query1.finance.yahoo.com");
+    const char* range = "1d";
+    const char* interval = "5m";
+    switch (tf) {
+        case Timeframe::Hourly:  range = "1d";  interval = "2m";  break;
+        case Timeframe::Daily:   range = "1d";  interval = "5m";  break;
+        case Timeframe::Weekly:  range = "5d";  interval = "15m"; break;
+        case Timeframe::Monthly: range = "1mo"; interval = "1d";  break;
+    }
 
-    // ── Request 1: Quote ──
-    String quotePath = "/v8/finance/chart/" + querySym + "?interval=1d&range=1d";
-    auto quoteRes = session.get(quotePath);
-    bool quoteOk = quoteRes.ok() && parsePayload(quoteRes.stream(), outPrice, outChange);
-    if (quoteOk) {
+    String path = "/v8/finance/chart/" + querySym + "?interval=" + String(interval) + "&range=" + String(range);
+    String url = "https://query1.finance.yahoo.com" + path;
+
+    esp_task_wdt_reset();
+    auto res = net::SecureHttpClient::get(url);
+    if (!res.ok()) {
+        esp_task_wdt_reset();
+        String fallbackUrl = "https://query2.finance.yahoo.com" + path;
+        res = net::SecureHttpClient::get(fallbackUrl);
+    }
+    esp_task_wdt_reset();
+
+    if (res.ok() && parseQuoteAndChart(res.stream(), outPrice, outChange, outPoints, maxPoints, outCount, outMin, outMax)) {
         String lowerSymbol = cleanSym;
         lowerSymbol.toLowerCase();
         outImageUrl = isCryptoSymbol(cleanSym) ? "" : ("https://eodhd.com/img/logos/US/" + lowerSymbol + ".png");
-        LOGI("Yahoo", "[Combined] Quote for %s: %.2f (%.2f%%)", cleanSym.c_str(), outPrice, outChange);
-    }
-    quoteRes.consume();
-
-    // ── Request 2: History (chart) on SAME TLS session ──
-    if (quoteOk && outPoints && maxPoints > 0) {
-        const char* range = "1d";
-        const char* interval = "5m";
-        switch (tf) {
-            case Timeframe::Hourly:  range = "1d";  interval = "2m";  break;
-            case Timeframe::Daily:   range = "1d";  interval = "5m";  break;
-            case Timeframe::Weekly:  range = "5d";  interval = "15m"; break;
-            case Timeframe::Monthly: range = "1mo"; interval = "1d";  break;
-        }
-
-        String histPath = "/v8/finance/chart/" + querySym + "?interval=" + String(interval) + "&range=" + String(range);
-        auto histRes = session.get(histPath);
-        if (histRes.ok()) {
-            if (parseChart(histRes.stream(), outPoints, maxPoints, outCount, outMin, outMax)) {
-                LOGI("Yahoo", "[Combined] History for %s: %d points (%s/%s)", cleanSym.c_str(), (int)outCount, range, interval);
-            }
-        }
-        histRes.consume();
+        LOGI("Yahoo", "[Combined] Quote for %s: %.2f (%.2f%%) + %d history points (%s/%s)",
+             cleanSym.c_str(), outPrice, outChange, (int)outCount, range, interval);
+        return true;
     }
 
-    return quoteOk;
+    LOGW("Yahoo", "[Combined] Fetch failed for %s", cleanSym.c_str());
+    return false;
 }
 
 bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes) {

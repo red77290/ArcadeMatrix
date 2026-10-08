@@ -445,16 +445,10 @@ void ArcadeClock::update() {
     }
 
     if (isAnimating) {
-        if (currentTheme == THEME_RYU) updateRyuAnimation();
-        else if (currentTheme == THEME_MARIO) updateMarioAnimation();
-        else updateMarioAnimation(); // Fallback generic jump animation
+        updateMarioAnimation();
     } else {
         drawStaticTime();
     }
-}
-
-void ArcadeClock::updateRyuAnimation() {
-    drawStaticTime();
 }
 
 void ArcadeClock::updateMarioAnimation() {

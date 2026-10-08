@@ -32,7 +32,7 @@ ArcadeMatrix introduced the `canvas_single` pipeline:
 ### 2.2 Dynamic Presentation Pipeline & Full Auto Color Maximizer ($8 \leftrightarrow 7 \dots 2$ Adaptive Depth)
 
 #### The Problem
-High-contrast graphics (GIFs, Street Fighter sprites, marquee banners, clock faces) look significantly richer in 8-bit color depth (16.7 million colors), but their DMA footprint starves mbedTLS on memory-constrained hardware (e.g. ESP32 classic 128×32 without PSRAM). Conversely, fixing color depth to 4 bits permanently degrades graphical fidelity 100% of the time, while setting a static 6-bit clamp unnecessarily limits capable graphics engines. Furthermore, a naive runtime upscale (e.g. jumping blindly from 4 bits back to 8 bits) risks an immediate Out-Of-Memory (OOM) panic if internal DRAM has fragmented during network operations.
+High-contrast graphics (GIFs, arcade fighter sprites, marquee banners, clock faces) look significantly richer in 8-bit color depth (16.7 million colors), but their DMA footprint starves mbedTLS on memory-constrained hardware (e.g. ESP32 classic 128×32 without PSRAM). Conversely, fixing color depth to 4 bits permanently degrades graphical fidelity 100% of the time, while setting a static 6-bit clamp unnecessarily limits capable graphics engines. Furthermore, a naive runtime upscale (e.g. jumping blindly from 4 bits back to 8 bits) risks an immediate Out-Of-Memory (OOM) panic if internal DRAM has fragmented during network operations.
 
 #### The Architectural Solution
 Rather than enforcing a static compromise at boot or a blind toggle, the **Dynamic Presentation Pipeline** combines hardware quiescence with a rigorous multi-dimensional predictive memory model in `PipelineSelectionPolicy::resolveTargetDepth`:

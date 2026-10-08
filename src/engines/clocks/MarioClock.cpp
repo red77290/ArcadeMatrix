@@ -161,6 +161,8 @@ void MarioClock::update() {
             if (phase == Phase::Waiting) {
                 phase = Phase::RunIn;
                 runnerX = -(float)MARIO_JUMP_W;
+                climbStage = 0;
+                runnerY = isPortrait ? (float)(h - GROUND_H - MARIO_H) : (float)(groundTop - MARIO_H);
                 pendingDigits = true;
             } else {
                 pendingDigits = true;
@@ -176,7 +178,123 @@ void MarioClock::update() {
     }
     if (shownHH[0] == '-') { strcpy(shownHH, hh); strcpy(shownMM, mm); m_dirty = 2; }
 
-    if (isWideTall || isPortrait) {
+    if (isPortrait) {
+        const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
+        const float pace = 75.0f * (speedPct / 100.0f);
+
+        switch (phase) {
+            case Phase::Waiting:
+                break;
+            case Phase::RunIn:
+                {
+                    const float groundY = (float)(h - GROUND_H - MARIO_H);
+                    if (climbStage == 0) {
+                        // Stage 0: Running on bottom ground
+                        runnerX += pace * dt;
+                        runnerY = groundY;
+                        if (runnerX >= 14.0f) {
+                            climbStage = 1;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 1) {
+                        // Stage 1: Jump from Ground to Platform 3 (y=190)
+                        jumpT += dt * 2.6f * (speedPct / 100.0f);
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        runnerX = 14.0f + 22.0f * t;
+                        float baseY = groundY + (190.0f - MARIO_H - groundY) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        runnerY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            runnerY = 190.0f - MARIO_H;
+                            climbStage = 2;
+                        }
+                    } else if (climbStage == 2) {
+                        // Stage 2: Run left on Platform 3
+                        runnerX -= pace * dt;
+                        runnerY = 190.0f - MARIO_H;
+                        if (runnerX <= 30.0f) {
+                            climbStage = 3;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 3) {
+                        // Stage 3: Jump from Platform 3 to Platform 2 (y=130)
+                        jumpT += dt * 2.8f * (speedPct / 100.0f);
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        runnerX = 30.0f + (18.0f - 30.0f) * t;
+                        float baseY = (190.0f - MARIO_H) + ((130.0f - MARIO_H) - (190.0f - MARIO_H)) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        runnerY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            runnerY = 130.0f - MARIO_H;
+                            climbStage = 4;
+                        }
+                    } else if (climbStage == 4) {
+                        // Stage 4: Run right on Platform 2
+                        runnerX += pace * dt;
+                        runnerY = 130.0f - MARIO_H;
+                        if (runnerX >= 24.0f) {
+                            climbStage = 5;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 5) {
+                        // Stage 5: Jump from Platform 2 to Platform 1 (y=70)
+                        jumpT += dt * 2.8f * (speedPct / 100.0f);
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        runnerX = 24.0f + (32.0f - 24.0f) * t;
+                        float baseY = (130.0f - MARIO_H) + ((70.0f - MARIO_H) - (130.0f - MARIO_H)) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        runnerY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            runnerY = 70.0f - MARIO_H;
+                            climbStage = 6;
+                        }
+                    } else if (climbStage == 6) {
+                        // Stage 6: Running along Platform 1 (y=70) towards target block
+                        if (runnerX < (float)targetX) {
+                            runnerX += pace * dt;
+                            if (runnerX >= (float)targetX) {
+                                runnerX = (float)targetX;
+                                phase = Phase::Jump;
+                                jumpT = 0.0f;
+                            }
+                        } else {
+                            runnerX -= pace * dt;
+                            if (runnerX <= (float)targetX) {
+                                runnerX = (float)targetX;
+                                phase = Phase::Jump;
+                                jumpT = 0.0f;
+                            }
+                        }
+                        runnerY = 70.0f - MARIO_H;
+                    }
+                }
+                break;
+            case Phase::Jump:
+                jumpT += dt * 4.0f * (speedPct / 100.0f);
+                if (jumpT >= 0.5f && pendingDigits) {
+                    pendingDigits = false;
+                    blockBounce[jumpTarget] = 0.001f;
+                    strcpy(shownHH, hh);
+                    strcpy(shownMM, mm);
+                }
+                if (jumpT >= 1.0f) {
+                    jumpT = 0.0f;
+                    phase = Phase::RunOut;
+                }
+                break;
+            case Phase::RunOut:
+                runnerX += pace * dt;
+                runnerY = 70.0f - MARIO_H;
+                if (runnerX > (float)w + (float)MARIO_JUMP_W + 16.0f) {
+                    phase = Phase::Waiting;
+                    m_dirty = 3;
+                }
+                break;
+        }
+    } else if (isWideTall) {
         const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
         const float pace = 85.0f * (speedPct / 100.0f);
 
@@ -203,7 +321,10 @@ void MarioClock::update() {
                 break;
             case Phase::RunOut:
                 runnerX += pace * dt;
-                if (runnerX > w) { phase = Phase::Waiting; }
+                if (runnerX > (float)w + (float)MARIO_JUMP_W + 16.0f) {
+                    phase = Phase::Waiting;
+                    m_dirty = 3;
+                }
                 break;
         }
     } else {
@@ -252,14 +373,31 @@ void MarioClock::update() {
 
     if (isWideTall || isPortrait) {
         if (phase != Phase::Waiting) {
-            bool airborne = (phase == Phase::Jump);
-            int lift = airborne ? (int)(sinf(jumpT * 3.14159f) * (groundTop - blockY - BLOCK_H - 2)) : 0;
-            int y = groundTop - MARIO_H - lift;
+            bool airborne = false;
+            int drawY = 0;
+            if (isPortrait) {
+                if (phase == Phase::Jump) {
+                    airborne = true;
+                    int lift = (int)(sinf(jumpT * 3.14159f) * (70 - blockY - BLOCK_H - 2));
+                    drawY = (70 - MARIO_H) - lift;
+                } else if (phase == Phase::RunIn && (climbStage == 1 || climbStage == 3 || climbStage == 5)) {
+                    airborne = true;
+                    drawY = (int)runnerY;
+                } else {
+                    airborne = false;
+                    drawY = (int)runnerY;
+                }
+            } else {
+                airborne = (phase == Phase::Jump);
+                int lift = airborne ? (int)(sinf(jumpT * 3.14159f) * (groundTop - blockY - BLOCK_H - 2)) : 0;
+                drawY = groundTop - MARIO_H - lift;
+            }
+
             if (airborne) {
-                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, y, true);
+                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, drawY, true);
             } else {
                 const int f = (((int)runnerX + 1200) / 6) % 3;
-                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], y, true);
+                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], drawY, true);
             }
         }
     } else {

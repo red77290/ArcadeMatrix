@@ -110,21 +110,45 @@ void MetalSlugClock::drawArcadeTime(int startX, int startY, const char* str, uin
 }
 
 void MetalSlugClock::drawScene(int w, int h) {
-    // 1. Draw 256x64 Night Desert Warzone Backdrop (randomized per rotation)
-    const auto& bg = BG_BACKDROPS[currentBackdropIdx % NUM_BACKDROPS];
-    blitBackdrop(bg.palette, bg.packedPixels, BG_BACKDROP_W, BG_BACKDROP_H);
+    const bool isPortrait = (h > w);
+    const int groundTop = isPortrait ? (h - 36) : 64;
+
+    if (isPortrait) {
+        // Clear entire portrait screen with night warzone sky (zero leftover pixels)
+        uint16_t nightSky = matrix->color565(12, 16, 28);
+        matrix->fillRect(0, 0, w, h, nightSky);
+
+        // Distant dunes
+        uint16_t duneFar = matrix->color565(36, 28, 48);
+        matrix->fillTriangle(0, 110, 32, 90, 64, 110, duneFar);
+        matrix->fillTriangle(16, 120, 48, 100, 64, 120, duneFar);
+
+        // Ground desert warzone from groundTop to h
+        uint16_t sandDark = matrix->color565(120, 80, 32);
+        uint16_t sandLight = matrix->color565(190, 140, 60);
+        matrix->fillRect(0, groundTop, w, h - groundTop, sandDark);
+        matrix->drawFastHLine(0, groundTop, w, sandLight);
+        for (int x = 4; x < w; x += 16) {
+            matrix->drawFastHLine(x, groundTop + 4, 8, sandLight);
+        }
+    } else {
+        // 1. Draw 256x64 Night Desert Warzone Backdrop (randomized per rotation)
+        const auto& bg = BG_BACKDROPS[currentBackdropIdx % NUM_BACKDROPS];
+        blitBackdrop(bg.palette, bg.packedPixels, BG_BACKDROP_W, BG_BACKDROP_H);
+    }
 
     // 2. Flying Helicopter in upper sky
-    if (heliX > -50.0f && heliX < 270.0f) {
-        int hy = 8 + (int)(sinf(phaseTimer * 3.0f) * 3.0f);
+    float heliMax = isPortrait ? ((float)w + 50.0f) : 270.0f;
+    if (heliX > -50.0f && heliX < heliMax) {
+        int hy = isPortrait ? (52 + (int)(sinf(phaseTimer * 3.0f) * 3.0f)) : (8 + (int)(sinf(phaseTimer * 3.0f) * 3.0f));
         blitSprite(ENEMY_HELI_PAL, ENEMY_HELI_PIXELS, ENEMY_HELI_W, ENEMY_HELI_H, (int)heliX, hy, false);
     }
 
     // 3. Rebel Army Di-Cokka Tank
-    int tankY = 64 - TANK_ALIVE_H; // Ground level (y=8..63)
-    if ((phase == Phase::Explosion && explosionFrame >= 2) || phase == Phase::Victory) {
+    int tankY = groundTop - TANK_ALIVE_H;
+    if (phase == Phase::Explosion || phase == Phase::HeroExit) {
         // Charred smoking wreck
-        blitSprite(TANK_DEAD_PAL, TANK_DEAD_PIXELS, TANK_DEAD_W, TANK_DEAD_H, (int)tankX, tankY + 2, false);
+        blitSprite(TANK_DEAD_PAL, TANK_DEAD_PIXELS, TANK_DEAD_W, TANK_DEAD_H, (int)tankX, groundTop - TANK_DEAD_H, false);
     } else {
         // Active battle tank
         blitSprite(TANK_ALIVE_PAL, TANK_ALIVE_PIXELS, TANK_ALIVE_W, TANK_ALIVE_H, (int)tankX, tankY, false);
@@ -132,19 +156,22 @@ void MetalSlugClock::drawScene(int w, int h) {
 
     // 4. Tank Cannon Shell
     if (tankBulletActive && tankBulletX > marcoX) {
-        blitSprite(TANK_BULLET_PAL, TANK_BULLET_PIXELS, TANK_BULLET_W, TANK_BULLET_H, (int)tankBulletX, 42, false);
+        blitSprite(TANK_BULLET_PAL, TANK_BULLET_PIXELS, TANK_BULLET_W, TANK_BULLET_H, (int)tankBulletX, groundTop - 22, false);
     }
 
-    // 5. Marco Rossi animation
-    int marcoY = 64 - 38; // Ground level for player
-    if (phase == Phase::Idle || phase == Phase::Explosion) {
-        // Steady alert commando stance holding rifle forward
-        blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
-    } else if (phase == Phase::Firefight) {
-        if (animFrame % 2 == 0) {
-            blitSprite(MARCO_SHOOT_0_PAL, MARCO_SHOOT_0_PIXELS, MARCO_SHOOT_0_W, MARCO_SHOOT_0_H, (int)marcoX, marcoY + 1, false);
+    // 5. Marco Rossi animation (appears only during minute sequence, hidden in Idle)
+    if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
+        if (walkFrame % 2 == 0) {
+            blitSprite(MARCO_WALK_0_PAL, MARCO_WALK_0_PIXELS, MARCO_WALK_0_W, MARCO_WALK_0_H, (int)marcoX, groundTop - MARCO_WALK_0_H, false);
         } else {
-            blitSprite(MARCO_SHOOT_1_PAL, MARCO_SHOOT_1_PIXELS, MARCO_SHOOT_1_W, MARCO_SHOOT_1_H, (int)marcoX, marcoY + 1, false);
+            blitSprite(MARCO_WALK_1_PAL, MARCO_WALK_1_PIXELS, MARCO_WALK_1_W, MARCO_WALK_1_H, (int)marcoX, groundTop - MARCO_WALK_1_H, false);
+        }
+    } else if (phase == Phase::Firefight) {
+        int marcoY = groundTop - MARCO_SHOOT_0_H;
+        if (animFrame % 2 == 0) {
+            blitSprite(MARCO_SHOOT_0_PAL, MARCO_SHOOT_0_PIXELS, MARCO_SHOOT_0_W, MARCO_SHOOT_0_H, (int)marcoX, marcoY, false);
+        } else {
+            blitSprite(MARCO_SHOOT_1_PAL, MARCO_SHOOT_1_PIXELS, MARCO_SHOOT_1_W, MARCO_SHOOT_1_H, (int)marcoX, marcoY, false);
         }
 
         // Blazing bullet tracers from muzzle to tank
@@ -153,14 +180,14 @@ void MetalSlugClock::drawScene(int w, int h) {
         int muzzleX = (int)marcoX + MARCO_SHOOT_0_W;
         int muzzleY = marcoY + 10;
         if (animFrame % 2 == 1) {
-            matrix->drawFastHLine(muzzleX + 4, muzzleY, 40, tracerColor);
-            matrix->drawFastHLine(muzzleX + 10, muzzleY + 1, 30, orangeCore);
-            matrix->drawFastHLine(muzzleX + 70, muzzleY - 2, 45, tracerColor);
+            int tracerLen = isPortrait ? 18 : 40;
+            matrix->drawFastHLine(muzzleX + 2, muzzleY, tracerLen, tracerColor);
+            matrix->drawFastHLine(muzzleX + 4, muzzleY + 1, tracerLen - 6, orangeCore);
         }
     } else if (phase == Phase::GrenadeAssault) {
-        blitSprite(MARCO_GRENADE_PAL, MARCO_GRENADE_PIXELS, MARCO_GRENADE_W, MARCO_GRENADE_H, (int)marcoX, marcoY, false);
-    } else if (phase == Phase::Victory) {
-        blitSprite(MARCO_VICTORY_PAL, MARCO_VICTORY_PIXELS, MARCO_VICTORY_W, MARCO_VICTORY_H, (int)marcoX, marcoY - 5, false);
+        blitSprite(MARCO_GRENADE_PAL, MARCO_GRENADE_PIXELS, MARCO_GRENADE_W, MARCO_GRENADE_H, (int)marcoX, groundTop - MARCO_GRENADE_H, false);
+    } else if (phase == Phase::Explosion) {
+        blitSprite(MARCO_VICTORY_PAL, MARCO_VICTORY_PIXELS, MARCO_VICTORY_W, MARCO_VICTORY_H, (int)marcoX, groundTop - MARCO_VICTORY_H, false);
     }
 
     // 6. Flying Grenade Arc
@@ -175,72 +202,102 @@ void MetalSlugClock::drawScene(int w, int h) {
     if (phase == Phase::Explosion) {
         int ef = explosionFrame % 4;
         const auto& exp = EXPLOSION_SPRITES[ef];
-        blitSprite(exp.palette, exp.pixels, exp.w, exp.h, (int)tankX + 15, 64 - exp.h - 4, false);
+        int expX = isPortrait ? ((int)tankX + 4) : ((int)tankX + 15);
+        blitSprite(exp.palette, exp.pixels, exp.w, exp.h, expX, groundTop - exp.h - 4, false);
     }
 
     // 8. Authentic SNK Neo Geo Arcade HUD
-    // Top banner scanline shade (semi-transparent feel)
     uint16_t hudBg = matrix->color565(8, 8, 16);
-    matrix->fillRect(0, 0, w, 12, hudBg);
-    matrix->drawFastHLine(0, 12, w, matrix->color565(40, 40, 70));
-
-    // Player 1 Score: 1UP 001042
     uint16_t hudYellow = matrix->color565(248, 208, 0);
     uint16_t hudWhite = matrix->color565(255, 255, 255);
     uint16_t hudRed = matrix->color565(230, 40, 30);
     uint16_t hudCyan = matrix->color565(40, 220, 240);
 
-    // "1UP" text
-    drawArcadeDigit(6, 3, '1', hudRed, 1);
-    // Draw 'U' and 'P' in 3x5
-    matrix->fillRect(11, 3, 1, 5, hudRed);
-    matrix->fillRect(13, 3, 1, 5, hudRed);
-    matrix->fillRect(11, 7, 3, 1, hudRed);
-    matrix->fillRect(16, 3, 1, 5, hudRed);
-    matrix->fillRect(16, 3, 3, 1, hudRed);
-    matrix->fillRect(18, 3, 1, 3, hudRed);
-    matrix->fillRect(16, 5, 3, 1, hudRed);
-
-    // Score based on shown clock time (e.g. 001042)
-    char scoreStr[16];
-    snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
-    int sx = 22;
-    for (int i = 0; scoreStr[i] != '\0'; i++) {
-        drawArcadeDigit(sx, 3, scoreStr[i], hudWhite, 1);
-        sx += 4;
-    }
-
-    // Main Big Glowing Arcade Time in Center (e.g. 10:42)
     char timeStr[16];
     snprintf(timeStr, sizeof(timeStr), "%s:%s", shownHH, shownMM);
-    drawArcadeTime(106, 1, timeStr, hudYellow, 2);
 
-    // Ammo / Arms indicator: ARMS: [H] 1042
-    // "ARMS"
-    drawArcadeDigit(185, 3, '4', hudCyan, 1); // placeholder icon
-    // [H] badge
-    matrix->fillRect(195, 2, 7, 7, matrix->color565(220, 160, 20));
-    matrix->drawRect(195, 2, 7, 7, matrix->color565(255, 240, 80));
-    matrix->fillRect(197, 4, 1, 3, matrix->color565(0, 0, 0));
-    matrix->fillRect(199, 4, 1, 3, matrix->color565(0, 0, 0));
-    matrix->fillRect(197, 5, 3, 1, matrix->color565(0, 0, 0));
+    if (isPortrait) {
+        // --- Portrait (64x256 / 64x128) HUD ---
+        matrix->fillRect(0, 0, w, 10, hudBg);
+        matrix->drawFastHLine(0, 10, w, matrix->color565(40, 40, 70));
 
-    // Ammo count: shown minute
-    int ax = 205;
-    for (int i = 0; shownMM[i] != '\0'; i++) {
-        drawArcadeDigit(ax, 3, shownMM[i], hudYellow, 1);
-        ax += 4;
+        // "1UP" and score at top
+        drawArcadeDigit(4, 2, '1', hudRed, 1);
+        matrix->fillRect(9, 2, 1, 5, hudRed);
+        matrix->fillRect(11, 2, 1, 5, hudRed);
+        matrix->fillRect(9, 6, 3, 1, hudRed);
+        matrix->fillRect(14, 2, 1, 5, hudRed);
+        matrix->fillRect(14, 2, 3, 1, hudRed);
+        matrix->fillRect(16, 2, 1, 3, hudRed);
+        matrix->fillRect(14, 4, 3, 1, hudRed);
+
+        char scoreStr[16];
+        snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
+        int sx = 20;
+        for (int i = 0; scoreStr[i] != '\0' && sx < w - 4; i++) {
+            drawArcadeDigit(sx, 2, scoreStr[i], hudWhite, 1);
+            sx += 4;
+        }
+
+        // Centered Big Glowing Arcade Time (scale 2 = 44px wide, centered at 10)
+        drawArcadeTime(10, 14, timeStr, hudYellow, 2);
+    } else {
+        // --- Landscape 256x64 HUD ---
+        matrix->fillRect(0, 0, w, 12, hudBg);
+        matrix->drawFastHLine(0, 12, w, matrix->color565(40, 40, 70));
+
+        // Player 1 Score: 1UP 001042
+        drawArcadeDigit(6, 3, '1', hudRed, 1);
+        matrix->fillRect(11, 3, 1, 5, hudRed);
+        matrix->fillRect(13, 3, 1, 5, hudRed);
+        matrix->fillRect(11, 7, 3, 1, hudRed);
+        matrix->fillRect(16, 3, 1, 5, hudRed);
+        matrix->fillRect(16, 3, 3, 1, hudRed);
+        matrix->fillRect(18, 3, 1, 3, hudRed);
+        matrix->fillRect(16, 5, 3, 1, hudRed);
+
+        char scoreStr[16];
+        snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
+        int sx = 22;
+        for (int i = 0; scoreStr[i] != '\0'; i++) {
+            drawArcadeDigit(sx, 3, scoreStr[i], hudWhite, 1);
+            sx += 4;
+        }
+
+        // Main Big Glowing Arcade Time in Center
+        drawArcadeTime(106, 1, timeStr, hudYellow, 2);
+
+        // Ammo / Arms indicator: ARMS: [H] 1042
+        drawArcadeDigit(185, 3, '4', hudCyan, 1);
+        matrix->fillRect(195, 2, 7, 7, matrix->color565(220, 160, 20));
+        matrix->drawRect(195, 2, 7, 7, matrix->color565(255, 240, 80));
+        matrix->fillRect(197, 4, 1, 3, matrix->color565(0, 0, 0));
+        matrix->fillRect(199, 4, 1, 3, matrix->color565(0, 0, 0));
+        matrix->fillRect(197, 5, 3, 1, matrix->color565(0, 0, 0));
+
+        int ax = 205;
+        for (int i = 0; shownMM[i] != '\0'; i++) {
+            drawArcadeDigit(ax, 3, shownMM[i], hudYellow, 1);
+            ax += 4;
+        }
+
+        uint16_t bombCol = matrix->color565(240, 80, 20);
+        matrix->fillCircle(235, 5, 2, bombCol);
+        matrix->drawPixel(236, 3, matrix->color565(255, 255, 0));
+        drawArcadeDigit(241, 3, '1', hudWhite, 1);
+        drawArcadeDigit(246, 3, '0', hudWhite, 1);
     }
-
-    // Bomb icon and count: BOMB 10
-    uint16_t bombCol = matrix->color565(240, 80, 20);
-    matrix->fillCircle(235, 5, 2, bombCol);
-    matrix->drawPixel(236, 3, matrix->color565(255, 255, 0));
-    drawArcadeDigit(241, 3, '1', hudWhite, 1);
-    drawArcadeDigit(246, 3, '0', hudWhite, 1);
 }
 
 void MetalSlugClock::update() {
+    if (!matrix) return;
+    const int w = matrix->width();
+    const int h = matrix->height();
+    const bool isPortrait = (h > w);
+    const int groundTop = isPortrait ? (h - 36) : 64;
+    const float targetTankX = isPortrait ? ((float)w - 34.0f) : 185.0f;
+    const float targetFireX = isPortrait ? 2.0f : 42.0f;
+
     uint32_t now = millis();
     float dt = (lastFrameMs == 0) ? 0.033f : (now - lastFrameMs) / 1000.0f;
     if (dt <= 0.0f || dt > 0.5f) dt = 0.033f;
@@ -250,7 +307,7 @@ void MetalSlugClock::update() {
     snprintf(hh, sizeof(hh), "%02d", storedTime.hours);
     snprintf(mm, sizeof(mm), "%02d", storedTime.minutes);
 
-    if (m_snapToNow) {
+    if (m_snapToNow || lastMinute == -1) {
         m_snapToNow = false;
         strcpy(shownHH, hh);
         strcpy(shownMM, mm);
@@ -260,8 +317,10 @@ void MetalSlugClock::update() {
         phaseTimer = 0.0f;
         animTimer = 0.0f;
         animFrame = 0;
-        tankX = 185.0f;
-        marcoX = 36.0f;
+        walkTimer = 0.0f;
+        walkFrame = 0;
+        tankX = targetTankX;
+        marcoX = -50.0f;
         heliX = -60.0f;
         tankBulletActive = false;
         grenadeActive = false;
@@ -282,22 +341,46 @@ void MetalSlugClock::update() {
         animFrame++;
     }
 
+    if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
+        walkTimer += dt;
+        if (walkTimer >= 0.10f) {
+            walkTimer -= 0.10f;
+            walkFrame++;
+            m_dirty = 2;
+        }
+    }
+
     int currentMin = storedTime.minutes;
 
     // Helicopter cruises steadily across the sky
+    float heliMax = isPortrait ? ((float)w + 50.0f) : 280.0f;
     heliX += 22.0f * dt;
-    if (heliX > 280.0f) heliX = -60.0f;
+    if (heliX > heliMax) heliX = -60.0f;
 
-    // Detect minute change for special victory blast sequence
+    // Detect minute change for special combat sequence
     bool minuteChanged = (lastMinute != -1 && currentMin != lastMinute);
 
     switch (phase) {
         case Phase::Idle:
             tankBulletActive = false;
             grenadeActive = false;
-            tankX = 185.0f;
-            marcoX = 36.0f;
+            tankX = targetTankX;
+            marcoX = -50.0f;
             if (minuteChanged) {
+                phase = Phase::HeroEnter;
+                phaseTimer = 0.0f;
+                walkTimer = 0.0f;
+                walkFrame = 0;
+                marcoX = -40.0f;
+                m_dirty = 2;
+            }
+            break;
+
+        case Phase::HeroEnter:
+            m_dirty = 2;
+            marcoX += 85.0f * dt;
+            if (marcoX >= targetFireX) {
+                marcoX = targetFireX;
                 phase = Phase::Firefight;
                 phaseTimer = 0.0f;
                 animTimer = 0.0f;
@@ -306,26 +389,26 @@ void MetalSlugClock::update() {
             break;
 
         case Phase::Firefight:
-            phaseTimer += dt;
-            if (phaseTimer >= 0.8f) {
+            m_dirty = 2;
+            if (phaseTimer >= 0.65f) {
                 phase = Phase::GrenadeAssault;
                 phaseTimer = 0.0f;
                 grenadeActive = true;
-                grenadeX = marcoX + 24.0f;
-                grenadeY = 64.0f - 35.0f;
-                grenadeVx = (tankX + 15.0f - grenadeX) / 0.7f;
-                grenadeVy = -85.0f;
+                grenadeX = marcoX + 18.0f;
+                grenadeY = (float)groundTop - 28.0f;
+                grenadeVx = (tankX + 10.0f - grenadeX) / (isPortrait ? 0.5f : 0.7f);
+                grenadeVy = isPortrait ? -70.0f : -95.0f;
             }
             break;
 
         case Phase::GrenadeAssault:
-            phaseTimer += dt;
+            m_dirty = 2;
             if (grenadeActive) {
                 grenadeX += grenadeVx * dt;
                 grenadeVy += 220.0f * dt; // gravity
                 grenadeY += grenadeVy * dt;
 
-                if (grenadeX >= tankX + 15.0f || grenadeY >= 48.0f || phaseTimer >= 1.2f) {
+                if (grenadeX >= tankX + 8.0f || grenadeY >= (float)groundTop - 16.0f || phaseTimer >= 0.9f) {
                     grenadeActive = false;
                     phase = Phase::Explosion;
                     phaseTimer = 0.0f;
@@ -339,7 +422,7 @@ void MetalSlugClock::update() {
             break;
 
         case Phase::Explosion:
-            phaseTimer += dt;
+            m_dirty = 2;
             explosionTimer += dt;
             if (explosionTimer >= 0.12f) {
                 explosionTimer -= 0.12f;
@@ -347,25 +430,28 @@ void MetalSlugClock::update() {
                     explosionFrame++;
                 }
             }
-            if (phaseTimer >= 0.65f) {
-                phase = Phase::Victory;
+            if (phaseTimer >= 0.70f) {
+                phase = Phase::HeroExit;
                 phaseTimer = 0.0f;
+                walkTimer = 0.0f;
+                walkFrame = 0;
             }
             break;
 
-        case Phase::Victory:
-            phaseTimer += dt;
-            if (phaseTimer >= 1.4f) {
+        case Phase::HeroExit:
+            m_dirty = 2;
+            marcoX += 95.0f * dt;
+            if (marcoX > (float)w + 26.0f) {
                 phase = Phase::Idle;
                 phaseTimer = 0.0f;
+                marcoX = -50.0f;
+                tankX = targetTankX;
+                m_dirty = 3;
             }
             break;
     }
 
-    if (matrix) {
-        drawScene(matrix->width(), matrix->height());
-    }
-
+    drawScene(w, h);
     m_dirty = 2;
     m_hasFrame = true;
 }

@@ -253,6 +253,31 @@ void test_market_item_valid_flag_and_in_place_preservation(void) {
     TEST_ASSERT_EQUAL_FLOAT(3600.0f, items[1].price);
 }
 
+/**
+ * @brief Tests Yahoo Finance combined quote and chart parsing from a single chart response.
+ */
+void test_parse_yahoo_quote_and_chart(void) {
+    String payload = "{\"chart\":{\"result\":[{\"meta\":{\"regularMarketPrice\":150.25,\"previousClose\":148.00},"
+                     "\"indicators\":{\"quote\":[{\"close\":[148.5, 149.0, null, 150.25]}]}}]}}";
+    float price = 0.0f;
+    float change = 0.0f;
+    float points[10];
+    size_t count = 0;
+    float minP = 0.0f;
+    float maxP = 0.0f;
+    YahooFinanceProvider provider;
+    bool success = provider.parseQuoteAndChart(payload, price, change, points, 10, count, minP, maxP);
+    TEST_ASSERT_TRUE(success);
+    TEST_ASSERT_EQUAL_FLOAT(150.25f, price);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.52f, change);
+    TEST_ASSERT_EQUAL(3, count);
+    TEST_ASSERT_EQUAL_FLOAT(148.5f, points[0]);
+    TEST_ASSERT_EQUAL_FLOAT(149.0f, points[1]);
+    TEST_ASSERT_EQUAL_FLOAT(150.25f, points[2]);
+    TEST_ASSERT_EQUAL_FLOAT(148.5f, minP);
+    TEST_ASSERT_EQUAL_FLOAT(150.25f, maxP);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -267,6 +292,7 @@ void setup() {
     RUN_TEST(test_parse_yahoo_finance);
     RUN_TEST(test_parse_yahoo_malformed);
     RUN_TEST(test_parse_yahoo_chart);
+    RUN_TEST(test_parse_yahoo_quote_and_chart);
     RUN_TEST(test_parse_openweathermap);
     RUN_TEST(test_market_item_valid_flag_and_in_place_preservation);
     UNITY_END();

@@ -34,6 +34,5 @@ private:
     
     // Animations
     void triggerAnimation();
-    void updateRyuAnimation();
     void updateMarioAnimation();
 };

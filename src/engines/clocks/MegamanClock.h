@@ -38,33 +38,44 @@ public:
         m_hasFrame = true;
         m_snapToNow = true;
         lastFrameMs = 0;
+        lastMinute = -1;
+        phase = Phase::Idle;
+        phaseTimer = 0.0f;
+        runTimer = 0.0f;
+        runFrame = 0;
+        megamanX = -50.0f;
+        bulletActive = false;
+        sparkActive = false;
+        podBounce = 0.0f;
     }
 
 private:
     enum class Phase : uint8_t {
-        Waiting,
-        ShootPrep,
-        BulletFlying,
-        HitSpark,
-        Cooldown
+        Idle,
+        HeroEnter,
+        HeroJump,
+        HeroExit
     };
 
     TimeData storedTime;
     int lastMinute = -1;
     int lastSecond = -1;
     uint32_t lastFrameMs = 0;
-    Phase phase = Phase::Waiting;
+    Phase phase = Phase::Idle;
     float phaseTimer = 0.0f;
-    float blinkTimer = 0.0f;
-    float metoolTimer = 0.0f;
-    bool isBlinking = false;
-    bool isMetoolPeeking = false;
+    float runTimer = 0.0f;
+    int runFrame = 0;
+    float megamanX = -50.0f;
+    float megamanY = 0.0f;
 
-    // Bullet physics
+    // Bullet & hit spark physics
+    bool bulletActive = false;
     float bulletX = 0.0f;
     float bulletY = 0.0f;
     float bulletTargetX = 0.0f;
     float bulletTargetY = 0.0f;
+    bool sparkActive = false;
+    float sparkTimer = 0.0f;
     float podBounce = 0.0f;
     bool isChargeShot = false;
 
