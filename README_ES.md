@@ -53,27 +53,23 @@
 
 ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y consolas sincronizados por hardware, renderizados con sprites originales 100 % fieles al píxel a 60 FPS estables, con cero asignaciones dinámicas en el bucle caliente Core 1:
 
-### 1. Street Fighter (Capcom) — Tema 38
-*Duelo en el tejado del castillo Suzaku bajo la luna con respiración de Ryu y Ken, lanzamiento de Hadouken a cada minuto con retroceso y chispas de impacto, y HUD arcade dorado.*
-![Reloj Street Fighter](docs/assets/clocks/poster_puzzle_bobble.png)
-
-### 2. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Tema 41
+### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Tema 41
 *Pixel art auténtico de SNK Neo Geo con 4 escenarios desérticos giratorios (Bazar del Mercado, Cúpulas de la Mezquita, Búnker de la Fortaleza, Torre de Vigilancia con Cúpula Dorada), animaciones de combate de Marco Rossi, tanque rebelde Di-Cokka, helicóptero patrulla y tiroteos con ametralladora pesada.*
 ![Reloj Metal Slug](docs/assets/clocks/poster_metalslug.png)
 
-### 3. Castlevania (Konami NES) — Tema 31
+### 2. Castlevania (Konami NES) — Tema 31
 *Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y HUD gótico con barras de salud y corazones.*
 ![Reloj Castlevania](docs/assets/clocks/poster_castlevania.png)
 
-### 4. Super Mario Bros (NES) — Tema 30
+### 3. Super Mario Bros (NES) — Tema 30
 *Overworld del Reino Champiñón con bloques de ladrillo y de interrogación 16x16 originales, Mario saltando para golpear bloques y liberar monedas, y Goombas animados.*
 ![Reloj Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
 
-### 5. Mega Man (Capcom NES) — Tema 35
+### 4. Mega Man (Capcom NES) — Tema 35
 *Fortaleza de Wily con los bloques azules clásicos de Capcom, escalera amarilla y el bombardero azul en acción.*
 ![Reloj Mega Man](docs/assets/clocks/poster_megaman.png)
 
-### 6. Sonic The Hedgehog (Sega Genesis) — Tema 39
+### 5. Sonic The Hedgehog (Sega Genesis) — Tema 39
 *Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo y animaciones de espera y spin-dash de Sonic.*
 ![Reloj Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
 

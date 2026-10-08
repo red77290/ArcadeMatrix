@@ -749,7 +749,7 @@ void WebServerAPI::setupRoutes() {
             {0, "Nintendo"}, {1, "Capcom"}, {2, "Taito"}, {3, "Sega"},
             {4, "Cave"}, {5, "Konami"}, {6, "SNK"}, {7, "Technos"},
             {8, "IGS"}, {9, "Hudson"}, {10, "Banpresto"}, {11, "Namco"},
-            {12, "Street Fighter (Ryu)"}, {13, "Super Mario"}, {14, "Metal Slug (Marco)"},
+            {12, "Ryu (Arcade)"}, {13, "Super Mario"}, {14, "Metal Slug (Marco)"},
             {15, "Mega Man"}, {16, "Space Invaders"}, {17, "Bubble Bobble (Bub)"},
             {18, "Cyberpunk"}, {19, "Flip Clock"}, {20, "Custom Gradient"},
             {21, "True Matrix"}, {22, "Pong Clock"}, {23, "Tetris Clock"},
@@ -764,7 +764,7 @@ void WebServerAPI::setupRoutes() {
 #if !defined(HARDWARE_PROFILE_ESP32_DEV)
             {37, "Words Clock"},
 #endif
-            {38, "Street Fighter Clock"}, {39, "Sonic Clock"}
+            {39, "Sonic Clock"}
 #if !defined(HARDWARE_PROFILE_ESP32_DEV)
             , {41, "Metal Slug Clock"}
 #endif

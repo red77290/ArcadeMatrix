@@ -45,13 +45,16 @@ public:
         m_hasFrame = true;
         m_snapToNow = true;
         lastFrameMs = 0;
+        lastMinute = -1;
         phase = Phase::Idle;
         phaseTimer = 0.0f;
         animTimer = 0.0f;
         animFrame = 0;
+        walkTimer = 0.0f;
+        walkFrame = 0;
         heliX = -60.0f;
         tankX = 185.0f;
-        marcoX = 36.0f;
+        marcoX = -50.0f;
         tankBulletActive = false;
         grenadeActive = false;
         // Guaranteed different random backdrop on each rotation
@@ -64,11 +67,12 @@ public:
 
 private:
     enum class Phase : uint8_t {
-        Idle,            // Ambient calm during normal seconds: Marco idles, Tank stations, Heli cruises
-        Firefight,       // Minute reward 1: Marco opens fire with Heavy Machine Gun burst
-        GrenadeAssault,  // Minute reward 2: Marco hurls stick grenade in high parabolic arc
-        Explosion,       // Minute reward 3: Fireball blast destroys tank, minute flips!
-        Victory          // Minute reward 4: Marco thumbs-up victory pose
+        Idle,            // Ambient calm: Marco hidden, tank stations, heli cruises
+        HeroEnter,       // Minute rollover: Marco enters running from left
+        Firefight,       // Marco opens fire with Heavy Machine Gun burst
+        GrenadeAssault,  // Marco hurls stick grenade in high parabolic arc
+        Explosion,       // Fireball blast destroys tank, minute flips, thumbs-up pose
+        HeroExit         // Marco runs forward past wreckage and exits screen right
     };
 
     TimeData storedTime;
@@ -80,9 +84,11 @@ private:
     float phaseTimer = 0.0f;
     float animTimer = 0.0f;
     int animFrame = 0;
+    float walkTimer = 0.0f;
+    int walkFrame = 0;
 
     // Entity positions
-    float marcoX = 36.0f;
+    float marcoX = -50.0f;
     float tankX = 185.0f;
     float heliX = -60.0f;
 

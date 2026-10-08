@@ -233,7 +233,7 @@ En cas d'échec d'allocation dynamique lors de `initialize(new)` :
     { "instance_id": "music_main", "duration": 20, "overlays": { "fighter": true } }
   ],
   "instances": [
-    { "id": "clock_main", "engine_id": "clock", "config": { "theme": "street_fighter" } },
+    { "id": "clock_main", "engine_id": "clock", "config": { "theme": "sonic" } },
     { "id": "weather_paris", "engine_id": "weather", "config": { "city": "Paris" } },
     { "id": "music_main", "engine_id": "music_player", "config": { "show_progress": true } }
   ]

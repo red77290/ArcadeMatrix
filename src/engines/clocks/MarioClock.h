@@ -41,6 +41,8 @@ private:
     uint32_t lastFrameMs = 0;
     Phase phase = Phase::Waiting;
     float runnerX = -40.0f;     ///< runner centre, pixels; starts off the left edge
+    float runnerY = 0.0f;
+    uint8_t climbStage = 0;     ///< multi-stage platform ascent in portrait mode
     float jumpT = 0.0f;         ///< 0..1 through the jump arc
     int jumpTarget = 1;         ///< block the jump is aimed at: 0 hours, 1 minutes
     float blockBounce[2] = { 0.0f, 0.0f };

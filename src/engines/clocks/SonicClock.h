@@ -82,10 +82,14 @@ private:
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
 
+    uint8_t climbStage = 0;
+    float jumpT = 0.0f;
+
     void blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH = false);
     void drawArcadeDigit(int x, int y, char c, uint16_t color, int scale);
     void drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale);
     void drawGreenHillGround(int w, int h, int gHeight);
+    void drawCheckeredPlatform(int x, int y, int w, int h);
     void drawScene(int w, int h);
 };
 

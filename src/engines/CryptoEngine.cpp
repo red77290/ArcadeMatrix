@@ -288,18 +288,24 @@ void CryptoEngine::update(EngineContext* context) {
         loadOrDownloadIcon(activeSymbol, cache.imageUrl, cache);
     }
     uint32_t ttlMs = (config_cache_ttl_min > 0 ? config_cache_ttl_min : 1) * 60 * 1000;
-    bool needsFetch = false;
+    String histKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+    AssetHistoryCache& hCache = historyCache[histKey];
+
+    bool needsQuoteFetch = false;
     if (!cache.hasData) {
         if (cache.lastFetchTime == 0 || (now - cache.lastFetchTime >= 30000UL)) {
-            needsFetch = true;
+            needsQuoteFetch = true;
         }
     } else if (now - cache.lastFetchTime >= ttlMs) {
-        needsFetch = true;
+        needsQuoteFetch = true;
     }
+
+    bool needsHistFetch = config_show_chart && (!hCache.hasData || (now - hCache.lastFetchTime >= ttlMs));
+    bool needsFetch = needsQuoteFetch || needsHistFetch;
 
     // Evaluate TLS admission only when a fetch is actually due: the admission probe allocates
     // two record-sized buffers, which must not run on every frame of the Core 1 hot path.
-    bool networkReady = needsFetch && WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession();
+    bool networkReady = needsFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
 
     if (needsFetch && networkReady && psramFound()) {
         bool combined = false;
@@ -307,8 +313,10 @@ void CryptoEngine::update(EngineContext* context) {
             combined = fetchCombined(activeSymbol);
         }
         if (!combined) {
-            fetchQuote(activeSymbol);
-            if (fetchSuccess && config_show_chart) {
+            if (needsQuoteFetch) {
+                fetchQuote(activeSymbol);
+            }
+            if (config_show_chart && needsHistFetch) {
                 fetchHistory(activeSymbol, config_chart_timeframe);
             }
         }
@@ -324,31 +332,39 @@ void CryptoEngine::update(EngineContext* context) {
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             activeSymbol = symbolList[currentSymbolIndex];
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
-            if (nextCache.hasData) {
-                currentPrice = nextCache.price;
-                changePercent24h = nextCache.changePercent24h;
-                fetchSuccess = true;
-            } else {
-                currentPrice = 0.0f;
-                changePercent24h = 0.0f;
-                fetchSuccess = false;
-            }
-            if (!nextCache.hasIcon && !nextCache.iconAttempted) {
-                loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
-            }
-            bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+            String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+            AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+            bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
                              (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
-            if (needFetch && networkReady && psramFound()) {
+            bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+            bool needAnyFetch = needQuoteFetch || needHistFetch;
+            bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+            if (needAnyFetch && netOk && psramFound()) {
                 bool combined = false;
                 if (config_provider == "binance" && config_show_chart) {
                     combined = fetchCombined(activeSymbol);
                 }
                 if (!combined) {
-                    fetchQuote(activeSymbol);
-                    if (fetchSuccess && config_show_chart) {
+                    if (needQuoteFetch) {
+                        fetchQuote(activeSymbol);
+                    }
+                    if (config_show_chart && needHistFetch) {
                         fetchHistory(activeSymbol, config_chart_timeframe);
                     }
                 }
+            } else if (nextCache.hasData) {
+                currentPrice = nextCache.price;
+                changePercent24h = nextCache.changePercent24h;
+                fetchSuccess = true;
+                if (!nextCache.hasIcon && !nextCache.iconAttempted) {
+                    loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                }
+            } else {
+                currentPrice = 0.0f;
+                changePercent24h = 0.0f;
+                fetchSuccess = false;
             }
         } else {
             if (currentPage == DisplayPage::Info) {
@@ -362,28 +378,39 @@ void CryptoEngine::update(EngineContext* context) {
                     currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                     activeSymbol = symbolList[currentSymbolIndex];
                     AssetQuoteCache& nextCache = quoteCache[activeSymbol];
-                    if (nextCache.hasData) {
-                        currentPrice = nextCache.price;
-                        changePercent24h = nextCache.changePercent24h;
-                        fetchSuccess = true;
-                    } else {
-                        currentPrice = 0.0f;
-                        changePercent24h = 0.0f;
-                        fetchSuccess = false;
-                    }
-                    if (!nextCache.hasIcon && !nextCache.iconAttempted) {
-                        loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
-                    }
-                    bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                    String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+                    AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+                    bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
                                      (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
-                    if (needFetch && networkReady && psramFound()) {
+                    bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+                    bool needAnyFetch = needQuoteFetch || needHistFetch;
+                    bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+                    if (needAnyFetch && netOk && psramFound()) {
                         bool combined = false;
                         if (config_provider == "binance" && config_show_chart) {
                             combined = fetchCombined(activeSymbol);
                         }
                         if (!combined) {
-                            fetchQuote(activeSymbol);
+                            if (needQuoteFetch) {
+                                fetchQuote(activeSymbol);
+                            }
+                            if (config_show_chart && needHistFetch) {
+                                fetchHistory(activeSymbol, config_chart_timeframe);
+                            }
                         }
+                    } else if (nextCache.hasData) {
+                        currentPrice = nextCache.price;
+                        changePercent24h = nextCache.changePercent24h;
+                        fetchSuccess = true;
+                        if (!nextCache.hasIcon && !nextCache.iconAttempted) {
+                            loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                        }
+                    } else {
+                        currentPrice = 0.0f;
+                        changePercent24h = 0.0f;
+                        fetchSuccess = false;
                     }
                 }
             } else {
@@ -392,28 +419,39 @@ void CryptoEngine::update(EngineContext* context) {
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 activeSymbol = symbolList[currentSymbolIndex];
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
-                if (nextCache.hasData) {
-                    currentPrice = nextCache.price;
-                    changePercent24h = nextCache.changePercent24h;
-                    fetchSuccess = true;
-                } else {
-                    currentPrice = 0.0f;
-                    changePercent24h = 0.0f;
-                    fetchSuccess = false;
-                }
-                if (!nextCache.hasIcon && !nextCache.iconAttempted) {
-                    loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
-                }
-                bool needFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
+                String nextHistKey = activeSymbol + "_" + timeframeLabel(config_chart_timeframe);
+                AssetHistoryCache& nextHCache = historyCache[nextHistKey];
+
+                bool needQuoteFetch = (!nextCache.hasData && (nextCache.lastFetchTime == 0 || now - nextCache.lastFetchTime >= 30000UL)) ||
                                  (nextCache.hasData && (now - nextCache.lastFetchTime >= ttlMs));
-                if (needFetch && networkReady && psramFound()) {
+                bool needHistFetch = config_show_chart && (!nextHCache.hasData || (now - nextHCache.lastFetchTime >= ttlMs));
+                bool needAnyFetch = needQuoteFetch || needHistFetch;
+                bool netOk = needAnyFetch && (WiFi.status() == WL_CONNECTED && NetworkBudget::canStartTlsSession());
+
+                if (needAnyFetch && netOk && psramFound()) {
                     bool combined = false;
                     if (config_provider == "binance" && config_show_chart) {
                         combined = fetchCombined(activeSymbol);
                     }
                     if (!combined) {
-                        fetchQuote(activeSymbol);
+                        if (needQuoteFetch) {
+                            fetchQuote(activeSymbol);
+                        }
+                        if (config_show_chart && needHistFetch) {
+                            fetchHistory(activeSymbol, config_chart_timeframe);
+                        }
                     }
+                } else if (nextCache.hasData) {
+                    currentPrice = nextCache.price;
+                    changePercent24h = nextCache.changePercent24h;
+                    fetchSuccess = true;
+                    if (!nextCache.hasIcon && !nextCache.iconAttempted) {
+                        loadOrDownloadIcon(activeSymbol, nextCache.imageUrl, nextCache);
+                    }
+                } else {
+                    currentPrice = 0.0f;
+                    changePercent24h = 0.0f;
+                    fetchSuccess = false;
                 }
             }
         }

@@ -100,25 +100,30 @@ void CastleClock::drawScene(int w, int h) {
             matrix->drawFastVLine(x, 57, 4, stoneDark);
         }
 
-        // Stepped stone staircase leading up towards candle
-        for (int i = 0; i < 7; i++) {
-            int stepX = i * 8;
-            int stepY = 160 - i * 10;
-            if (stepY + 4 < h) {
-                matrix->fillRect(stepX, stepY, 16, 4, stoneBase);
-                matrix->drawFastHLine(stepX, stepY, 16, stoneLight);
-            }
-        }
+        // Bottom dungeon floor (8px high)
+        matrix->fillRect(0, h - 8, w, 8, stoneDark);
+        matrix->drawFastHLine(0, h - 8, w, stoneLight);
 
-        // Candle torch on right platform (x=46, y=86)
+        // 3 Solid stone platforms in portrait mode leading up to the candle torch
+        // Platform 3 (bottom): y=190, from x=16 to x=56 (width 40)
+        matrix->fillRect(16, 190, 40, 5, stoneBase);
+        matrix->drawFastHLine(16, 190, 40, stoneLight);
+        // Platform 2 (middle): y=130, from x=8 to x=48 (width 40)
+        matrix->fillRect(8, 130, 40, 5, stoneBase);
+        matrix->drawFastHLine(8, 130, 40, stoneLight);
+        // Platform 1 (top): y=70, from x=8 to x=56 (width 48)
+        matrix->fillRect(8, 70, 48, 5, stoneBase);
+        matrix->drawFastHLine(8, 70, 48, stoneLight);
+
+        // Candle torch stand on Platform 1 (x=46, y=56..69)
         uint16_t torchMetal = matrix->color565(140, 100, 50);
-        matrix->fillRect(46, 86, 4, 10, torchMetal);
-        matrix->fillRect(44, 82, 8, 4, torchMetal);
+        matrix->fillRect(46, 56, 4, 14, torchMetal);
+        matrix->fillRect(44, 52, 8, 4, torchMetal);
 
         // Animated candle flame
         const uint16_t* flamePal = FLAME_PALS[flameFrame % 3];
         const uint8_t* flamePix = FLAME_PIXELS[flameFrame % 3];
-        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 44, 72, false);
+        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 44, 42, false);
     } else if (h >= 48) {
         // --- 256x64 Dracula's Castle Parapets ---
         uint16_t nightSky = matrix->color565(16, 0, 24);
@@ -229,8 +234,10 @@ void CastleClock::update() {
         phase = Phase::HeroEnter;
         phaseTimer = 0.0f;
         if (isPortrait) {
-            simonX = 4.0f;
-            simonY = 160.0f;
+            simonX = -16.0f;
+            simonY = (float)(h - 8 - 30);
+            climbStage = 0;
+            jumpT = 0.0f;
         } else {
             simonX = -20.0f;
             simonY = (h >= 48) ? (48.0f - 30.0f) : 0.0f;
@@ -274,12 +281,79 @@ void CastleClock::update() {
         case Phase::HeroEnter:
             m_dirty = 2;
             if (isPortrait) {
-                // Simon climbs stairs upwards from behind
-                simonX += 12.0f * dt;
-                simonY -= 15.0f * dt;
-                if (simonY <= 96.0f) {
-                    phase = Phase::WhipWindup;
-                    phaseTimer = 0.0f;
+                const float floorY = (float)(h - 8 - 30);
+                if (climbStage == 0) {
+                    // Stage 0: Simon walks onto Dungeon Floor
+                    simonX += 50.0f * dt;
+                    simonY = floorY;
+                    if (simonX >= 12.0f) {
+                        climbStage = 1;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 1) {
+                    // Stage 1: Simon jumps from Floor up to Platform 3 (y=190)
+                    jumpT += dt * 2.6f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    simonX = 12.0f + (36.0f - 12.0f) * t;
+                    float baseY = floorY + (160.0f - floorY) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    simonY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        simonY = 160.0f;
+                        climbStage = 2;
+                    }
+                } else if (climbStage == 2) {
+                    // Stage 2: Simon walks left on Platform 3
+                    simonX -= 45.0f * dt;
+                    simonY = 160.0f;
+                    if (simonX <= 30.0f) {
+                        climbStage = 3;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 3) {
+                    // Stage 3: Simon jumps from Platform 3 up to Platform 2 (y=130)
+                    jumpT += dt * 2.8f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    simonX = 30.0f + (18.0f - 30.0f) * t;
+                    float baseY = 160.0f + (100.0f - 160.0f) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    simonY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        simonY = 100.0f;
+                        climbStage = 4;
+                    }
+                } else if (climbStage == 4) {
+                    // Stage 4: Simon walks right on Platform 2
+                    simonX += 45.0f * dt;
+                    simonY = 100.0f;
+                    if (simonX >= 24.0f) {
+                        climbStage = 5;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 5) {
+                    // Stage 5: Simon jumps from Platform 2 up to Platform 1 (y=70)
+                    jumpT += dt * 2.8f;
+                    float t = jumpT < 1.0f ? jumpT : 1.0f;
+                    simonX = 24.0f + (16.0f - 24.0f) * t;
+                    float baseY = 100.0f + (40.0f - 100.0f) * t;
+                    float arc = 4.0f * 14.0f * t * (1.0f - t);
+                    simonY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        simonY = 40.0f;
+                        climbStage = 6;
+                    }
+                } else if (climbStage == 6) {
+                    // Stage 6: Simon walks forward on Platform 1 towards the candle torch
+                    simonX += 45.0f * dt;
+                    simonY = 40.0f;
+                    if (simonX >= 14.0f) {
+                        simonX = 14.0f;
+                        phase = Phase::WhipWindup;
+                        phaseTimer = 0.0f;
+                    }
                 }
             } else {
                 // Simon advances forward into striking position
@@ -326,19 +400,21 @@ void CastleClock::update() {
         case Phase::HeroExit:
             m_dirty = 2;
             if (isPortrait) {
-                // Simon continues climbing upwards and exits
-                simonX += 14.0f * dt;
-                simonY -= 18.0f * dt;
-                if (simonY < -35.0f || simonX > w) {
+                // Simon walks forward on Platform 1 and cleanly exits offscreen
+                simonX += 60.0f * dt;
+                simonY = 70.0f - 30.0f;
+                if (simonX > (float)w + 24.0f) {
                     phase = Phase::Idle;
                     phaseTimer = 0.0f;
+                    m_dirty = 3;
                 }
             } else {
                 // Simon walks forward past the clock
                 simonX += 75.0f * dt;
-                if (simonX > (float)w) {
+                if (simonX > (float)w + 24.0f) {
                     phase = Phase::Idle;
                     phaseTimer = 0.0f;
+                    m_dirty = 3;
                 }
             }
             break;
@@ -366,7 +442,7 @@ void CastleClock::update() {
 
     if (isPortrait) {
         // --- Portrait (64x256 / 64x128): Blood Red Gothic Digits Centered (scale 2 = 44px wide) ---
-        drawGothicTime(10, 38, timeBuf, crimson, 2);
+        drawGothicTime(10, 18, timeBuf, crimson, 2);
 
         // Simon Belmont rendered during minute reward sequence
         if (phase != Phase::Idle) {
@@ -376,15 +452,12 @@ void CastleClock::update() {
                 blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
                 blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + SIMON_WHIP_STRIKE_W, (int)simonY + 11, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 38, (int)simonY + 12, 3, 0xFFFF);
+                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 16, (int)simonY + 12, 3, 0xFFFF);
                 }
             } else {
-                // Ascending stairs seen from behind
-                int sf = walkFrame % 2;
-                const uint16_t* pal = SIMON_STAIR_BACK_PALS[sf];
-                const uint8_t* pix = SIMON_STAIR_BACK_PIXELS[sf];
-                int sw = (sf == 0) ? SIMON_STAIR_BACK_0_W : SIMON_STAIR_BACK_1_W;
-                blitSprite(pal, pix, sw, 32, (int)simonX, (int)simonY, false);
+                bool isJumping = (phase == Phase::HeroEnter && (climbStage == 1 || climbStage == 3 || climbStage == 5));
+                const uint8_t* pPix = isJumping ? SIMON_WALK_PIXELS[1] : walkPix;
+                blitSprite(walkPal, pPix, 16, 30, (int)simonX, (int)simonY, false);
             }
         }
     } else if (h >= 48) {

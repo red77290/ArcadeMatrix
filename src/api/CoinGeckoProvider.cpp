@@ -3,6 +3,58 @@
 #include "../core/NetworkBudget.h"
 #include "../core/net/SecureHttpClient.h"
 
+static const char* getCoinGeckoId(const String& symbol) {
+    struct SymId { const char* sym; const char* id; };
+    static const SymId TABLE[] = {
+        {"BTC", "bitcoin"},
+        {"ETH", "ethereum"},
+        {"SOL", "solana"},
+        {"BNB", "binancecoin"},
+        {"XRP", "ripple"},
+        {"DOGE", "dogecoin"},
+        {"ADA", "cardano"},
+        {"AVAX", "avalanche-2"},
+        {"DOT", "polkadot"},
+        {"LINK", "chainlink"},
+        {"TRX", "tron"},
+        {"MATIC", "matic-network"},
+        {"POL", "polygon-ecosystem-token"},
+        {"SHIB", "shiba-inu"},
+        {"LTC", "litecoin"},
+        {"BCH", "bitcoin-cash"},
+        {"UNI", "uniswap"},
+        {"NEAR", "near"},
+        {"APT", "aptos"},
+        {"ATOM", "cosmos"},
+        {"XLM", "stellar"},
+        {"XMR", "monero"},
+        {"FIL", "filecoin"},
+        {"ICP", "internet-computer"},
+        {"HBAR", "hedera-hashgraph"},
+        {"VET", "vechain"},
+        {"ALGO", "algorand"},
+        {"PEPE", "pepe"},
+        {"SUI", "sui"},
+        {"RENDER", "render-token"},
+        {"KAS", "kaspa"},
+        {"FET", "artificial-superintelligence-alliance"},
+        {"TAO", "bittensor"},
+        {"INJ", "injective-protocol"},
+        {"STX", "blockstack"},
+        {"OP", "optimism"},
+        {"ARB", "arbitrum"},
+        {"RNDR", "render-token"},
+        {"MKR", "maker"},
+        {"AAVE", "aave"}
+    };
+    for (const auto& item : TABLE) {
+        if (symbol.equalsIgnoreCase(item.sym)) {
+            return item.id;
+        }
+    }
+    return nullptr;
+}
+
 bool CoinGeckoProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) {
     String upperSymbol = symbol;
     upperSymbol.toUpperCase();
@@ -105,7 +157,7 @@ bool CoinGeckoProvider::parsePrimaryBatch(Stream& stream, std::map<String, Crypt
     filter[0]["image"] = true;
     filter[0]["id"] = true;
 
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     DeserializationError err = deserializeJson(doc, stream, DeserializationOption::Filter(filter));
     if (!err && doc.is<JsonArray>()) {
         for (JsonObject coin : doc.as<JsonArray>()) {
@@ -136,7 +188,7 @@ bool CoinGeckoProvider::parsePrimaryBatch(const String& payload, std::map<String
     filter[0]["image"] = true;
     filter[0]["id"] = true;
 
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     DeserializationError err = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
     if (!err && doc.is<JsonArray>()) {
         for (JsonObject coin : doc.as<JsonArray>()) {
@@ -227,9 +279,15 @@ bool CoinGeckoProvider::fetchHistory(const String& symbol, Timeframe tf, float* 
 
     String upper = symbol;
     upper.toUpperCase();
-    auto it = m_symbolToId.find(upper);
-    String coinId = (it != m_symbolToId.end()) ? it->second : symbol;
-    coinId.toLowerCase();
+    const char* knownId = getCoinGeckoId(upper);
+    String coinId;
+    if (knownId) {
+        coinId = knownId;
+    } else {
+        auto it = m_symbolToId.find(upper);
+        coinId = (it != m_symbolToId.end()) ? it->second : symbol;
+        coinId.toLowerCase();
+    }
 
     const char* days = "1";
     switch (tf) {

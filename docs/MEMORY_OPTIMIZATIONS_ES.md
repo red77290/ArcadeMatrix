@@ -32,7 +32,7 @@ ArcadeMatrix introdujo el pipeline `canvas_single`:
 ### 2.2 Pipeline de Presentación Dinámica y Optimizador Automático de Color ($8 \leftrightarrow 7 \dots 2$ Profundidad Adaptativa)
 
 #### El Problema
-Los gráficos de alto contraste (GIFs, sprites de Street Fighter, marquesinas, esferas de reloj) se benefician notablemente de 8 bits de color (16,7 millones de colores), pero su huella DMA agota la memoria de mbedTLS en hardware sin PSRAM. Por otro lado, limitar permanentemente a 4 bits degrada la estética visual de forma continua, mientras que un límite estático a 6 bits restringe innecesariamente motores gráficos capaces. Además, un aumento de profundidad ingenuo en caliente corre el riesgo de inducir un fallo inmediato por falta de memoria si la DRAM se fragmentó durante tareas de red.
+Los gráficos de alto contraste (GIFs, sprites de combate arcade, marquesinas, esferas de reloj) se benefician notablemente de 8 bits de color (16,7 millones de colores), pero su huella DMA agota la memoria de mbedTLS en hardware sin PSRAM. Por otro lado, limitar permanentemente a 4 bits degrada la estética visual de forma continua, mientras que un límite estático a 6 bits restringe innecesariamente motores gráficos capaces. Además, un aumento de profundidad ingenuo en caliente corre el riesgo de inducir un fallo inmediato por falta de memoria si la DRAM se fragmentó durante tareas de red.
 
 #### La Solución Arquitectónica
 El **Dynamic Presentation Pipeline** combina la quiescencia de hardware con un modelo predictivo riguroso en `PipelineSelectionPolicy::resolveTargetDepth`:

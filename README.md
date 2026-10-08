@@ -54,27 +54,23 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 ArcadeMatrix includes a signature collection of handcrafted, hardware-synchronized retro arcade and console clocks rendered with 100% bit-perfect original sprites in full 60 FPS, with zero dynamic allocations on the Core 1 hot-path:
 
-### 1. Street Fighter (Capcom) — Theme 38
-*Suzaku Castle rooftop duel under crescent moon night sky with authentic Ryu and Ken idle breathing, Hadouken blast on minute change with hit recoil and spark effects, and golden arcade HUD.*
-![Street Fighter Clock](docs/assets/clocks/poster_puzzle_bobble.png)
-
-### 2. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41
+### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41
 *Authentic SNK Neo Geo pixel art with 4 rotating Arabian desert stages (Market Bazaar, Mosque Domes, Fortress Bunker, Golden Dome Watchtower), Marco Rossi combat animations, Rebel Di-Cokka tank, patrol helicopter, and heavy machine gun firefights.*
 ![Metal Slug Clock](docs/assets/clocks/poster_metalslug.png)
 
-### 3. Castlevania (Konami NES) — Theme 31
+### 2. Castlevania (Konami NES) — Theme 31
 *Gothic clock tower Belfry with Simon Belmont climbing the grand stone staircase toward Dracula's chamber, authentic flickering pedestal torch, flapping vampire bat across the blood moon, and gothic HUD with lifebar pips & heart counters.*
 ![Castlevania Clock](docs/assets/clocks/poster_castlevania.png)
 
-### 4. Super Mario Bros (NES) — Theme 30
+### 3. Super Mario Bros (NES) — Theme 30
 *Mushroom Kingdom Overworld with 100% authentic 16x16 SMB1 brick & question mark blocks, jumping Mario hitting blocks to reveal coins, and animated Goombas.*
 ![Super Mario Bros Clock](docs/assets/clocks/poster_super_mario.png)
 
-### 5. Mega Man (Capcom NES) — Theme 35
+### 4. Mega Man (Capcom NES) — Theme 35
 *Wily Castle fortress with classic Capcom blue Wily blocks, yellow ladder, and the Blue Bomber in action.*
 ![Mega Man Clock](docs/assets/clocks/poster_megaman.png)
 
-### 6. Sonic The Hedgehog (Sega Genesis) — Theme 39
+### 5. Sonic The Hedgehog (Sega Genesis) — Theme 39
 *Green Hill Zone checkered platforms, spinning gold rings, red spring, and Sonic idle/spin-dash animations.*
 ![Sonic The Hedgehog Clock](docs/assets/clocks/poster_sonic.png)
 
