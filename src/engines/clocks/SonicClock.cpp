@@ -208,6 +208,26 @@ void SonicClock::update() {
     float motoOffset = sinf(motobugTimer * 1.5f) * (isPortrait ? 8.0f : 14.0f);
     bool motoFlip = (cosf(motobugTimer * 1.5f) < 0.0f);
 
+    // Running cycle timer (animates fast when moving)
+    if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
+        runTimer += dt;
+        if (runTimer >= 0.07f) {
+            runTimer = 0.0f;
+            runFrame = (runFrame + 1) % 4;
+            m_dirty = 2;
+        }
+    }
+
+    // Spin ball animation timer
+    if (phase == Phase::JumpStrike || phase == Phase::Impact) {
+        ballTimer += dt;
+        if (ballTimer >= 0.05f) {
+            ballTimer = 0.0f;
+            ballFrame = (ballFrame + 1) % 4;
+            m_dirty = 2;
+        }
+    }
+
     // State machine updates
     switch (phase) {
         case Phase::Idle:
@@ -308,9 +328,13 @@ void SonicClock::update() {
 
         // Sonic during minute reward sequence
         if (phase != Phase::Idle) {
-            blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_IDLE_PIXELS, SONIC_SMS_IDLE_W, SONIC_SMS_IDLE_H, (int)sonicX, (int)sonicY, false);
-            if (phase == Phase::Impact) {
-                matrix->fillCircle(32, 60, 4, 0xFFFF);
+            if (phase == Phase::JumpStrike || phase == Phase::Impact) {
+                blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_BALL_PIXELS[ballFrame], SONIC_MD_BALL_0_W, SONIC_MD_BALL_0_H, (int)sonicX, (int)sonicY, false);
+                if (phase == Phase::Impact) {
+                    matrix->fillCircle(32, 60, 4, 0xFFFF);
+                }
+            } else {
+                blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_RUN_PIXELS[runFrame], SONIC_SMS_RUN_0_W, SONIC_SMS_RUN_0_H, (int)sonicX, (int)sonicY, false);
             }
         }
     } else if (h >= 48) {
@@ -330,10 +354,16 @@ void SonicClock::update() {
 
         // Sonic enters only on minute change to smash monitor
         if (phase != Phase::Idle) {
-            blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_IDLE_PIXELS, SONIC_MD_IDLE_W, SONIC_MD_IDLE_H, (int)sonicX, (int)sonicY, false);
-            if (phase == Phase::Impact) {
-                // Spark on monitor
-                matrix->fillCircle(52 + 16, 16 + 16, 5, 0xFFFF);
+            if (phase == Phase::JumpStrike || phase == Phase::Impact) {
+                // Curled into high-speed spin ball
+                blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_BALL_PIXELS[ballFrame], SONIC_MD_BALL_0_W, SONIC_MD_BALL_0_H, (int)sonicX + 4, (int)sonicY + 12, false);
+                if (phase == Phase::Impact) {
+                    // Spark on monitor
+                    matrix->fillCircle(52 + 16, 16 + 16, 5, 0xFFFF);
+                }
+            } else {
+                // Running sprint cycle
+                blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_RUN_PIXELS[runFrame], SONIC_MD_RUN_0_W, SONIC_MD_RUN_0_H, (int)sonicX, (int)sonicY, false);
             }
         }
     } else {
@@ -346,9 +376,13 @@ void SonicClock::update() {
 
         // Sonic enters only on minute change
         if (phase != Phase::Idle) {
-            blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_IDLE_PIXELS, SONIC_SMS_IDLE_W, SONIC_SMS_IDLE_H, (int)sonicX, (int)sonicY, false);
-            if (phase == Phase::Impact) {
-                matrix->fillCircle(20, 14, 3, 0xFFFF);
+            if (phase == Phase::JumpStrike || phase == Phase::Impact) {
+                blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_BALL_PIXELS[ballFrame], SONIC_MD_BALL_0_W, SONIC_MD_BALL_0_H, (int)sonicX, (int)sonicY, false);
+                if (phase == Phase::Impact) {
+                    matrix->fillCircle(20, 14, 3, 0xFFFF);
+                }
+            } else {
+                blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_RUN_PIXELS[runFrame], SONIC_SMS_RUN_0_W, SONIC_SMS_RUN_0_H, (int)sonicX, (int)sonicY, false);
             }
         }
     }

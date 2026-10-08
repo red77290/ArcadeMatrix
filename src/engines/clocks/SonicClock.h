@@ -38,7 +38,10 @@ public:
         lastFrameMs = 0;
         ringFrame = 0;
         ringTimer = 0.0f;
-        motobugTimer = 0.0f;
+        runFrame = 0;
+        runTimer = 0.0f;
+        ballFrame = 0;
+        ballTimer = 0.0f;
         phase = Phase::Idle;
         phaseTimer = 0.0f;
         sonicX = -40.0f;
@@ -67,6 +70,10 @@ private:
     uint8_t ringFrame = 0;
     float ringTimer = 0.0f;
     float motobugTimer = 0.0f;
+    uint8_t runFrame = 0;
+    float runTimer = 0.0f;
+    uint8_t ballFrame = 0;
+    float ballTimer = 0.0f;
 
     // Display state
     char shownHH[4] = "00";

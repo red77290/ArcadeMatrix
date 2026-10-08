@@ -259,7 +259,7 @@ void CastleClock::update() {
     // Walk frame step cycle (only animates when actually moving)
     if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
         walkTimer += dt;
-        if (walkTimer >= 0.18f) {
+        if (walkTimer >= 0.12f) {
             walkTimer = 0.0f;
             walkFrame++;
             m_dirty = 2;
@@ -359,6 +359,11 @@ void CastleClock::update() {
     snprintf(timeBuf, sizeof(timeBuf), "%s:%s", shownHH, shownMM);
     uint16_t crimson = matrix->color565(248, 56, 0);
 
+    int stepCycle = (walkFrame % 4);
+    int wf = (stepCycle == 3) ? 1 : stepCycle; // 0, 1, 2, 1 authentic walk loop
+    const uint16_t* walkPal = SIMON_WALK_PALS[wf];
+    const uint8_t* walkPix = SIMON_WALK_PIXELS[wf];
+
     if (isPortrait) {
         // --- Portrait (64x256 / 64x128): Blood Red Gothic Digits Centered (scale 2 = 44px wide) ---
         drawGothicTime(10, 38, timeBuf, crimson, 2);
@@ -366,12 +371,12 @@ void CastleClock::update() {
         // Simon Belmont rendered during minute reward sequence
         if (phase != Phase::Idle) {
             if (phase == Phase::WhipWindup) {
-                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX, (int)simonY, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX - 8, (int)simonY, false);
             } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
-                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
-                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + SIMON_WHIP_STRIKE_W, (int)simonY + 11, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 3, 0xFFFF);
+                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 38, (int)simonY + 12, 3, 0xFFFF);
                 }
             } else {
                 // Ascending stairs seen from behind
@@ -388,18 +393,15 @@ void CastleClock::update() {
 
         if (phase != Phase::Idle) {
             if (phase == Phase::WhipWindup) {
-                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX - 8, (int)simonY, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX - 8, (int)simonY, false);
             } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
-                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
-                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + SIMON_WHIP_STRIKE_W, (int)simonY + 11, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 3, 0xFFFF);
+                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 38, (int)simonY + 12, 3, 0xFFFF);
                 }
             } else {
-                int wf = walkFrame % 3;
-                const uint16_t* pal = SIMON_WALK_PALS[wf];
-                const uint8_t* pix = SIMON_WALK_PIXELS[wf];
-                blitSprite(pal, pix, 16, 30, (int)simonX, (int)simonY, false);
+                blitSprite(walkPal, walkPix, 16, 30, (int)simonX, (int)simonY, false);
             }
         }
     } else {
@@ -408,18 +410,15 @@ void CastleClock::update() {
 
         if (phase != Phase::Idle) {
             if (phase == Phase::WhipWindup) {
-                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX, (int)simonY, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX - 8, (int)simonY, false);
             } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
-                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
-                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + SIMON_WHIP_STRIKE_W, (int)simonY + 11, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 2, 0xFFFF);
+                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 38, (int)simonY + 12, 2, 0xFFFF);
                 }
             } else {
-                int wf = walkFrame % 3;
-                const uint16_t* pal = SIMON_WALK_PALS[wf];
-                const uint8_t* pix = SIMON_WALK_PIXELS[wf];
-                blitSprite(pal, pix, 16, 30, (int)simonX, (int)simonY, false);
+                blitSprite(walkPal, walkPix, 16, 30, (int)simonX, (int)simonY, false);
             }
         }
     }
