@@ -45,14 +45,18 @@ public:
         m_hasFrame = true;
         m_snapToNow = true;
         lastFrameMs = 0;
-        phase = Phase::Patrol;
+        phase = Phase::Idle;
         phaseTimer = 0.0f;
         animTimer = 0.0f;
         animFrame = 0;
         heliX = -60.0f;
-        tankX = 260.0f;
-        marcoX = 16.0f;
+        tankX = 185.0f;
+        marcoX = 36.0f;
+        tankBulletActive = false;
         grenadeActive = false;
+        snprintf(shownHH, sizeof(shownHH), "%02d", storedTime.hours);
+        snprintf(shownMM, sizeof(shownMM), "%02d", storedTime.minutes);
+        lastMinute = storedTime.minutes;
         // Guaranteed different random backdrop on each rotation
         uint8_t nextIdx;
         do {
@@ -63,11 +67,11 @@ public:
 
 private:
     enum class Phase : uint8_t {
-        Patrol,          // Seconds 00..15: Marco walks, Heli patrols, Tank rolls in
-        Firefight,       // Seconds 15..45: Heavy Machine Gun burst, tank shoots shells
-        GrenadeAssault,  // Seconds 45..59: Marco tosses grenade in high arc
-        ExplosionVictory,// Seconds 59..03: Massive fireball blast, tank wreck, victory pose
-        Respawn          // Seconds 03..05: Reset battlefield for next sequence
+        Idle,            // Ambient calm during normal seconds: Marco idles, Tank stations, Heli cruises
+        Firefight,       // Minute reward 1: Marco opens fire with Heavy Machine Gun burst
+        GrenadeAssault,  // Minute reward 2: Marco hurls stick grenade in high parabolic arc
+        Explosion,       // Minute reward 3: Fireball blast destroys tank, minute flips!
+        Victory          // Minute reward 4: Marco thumbs-up victory pose
     };
 
     TimeData storedTime;
@@ -75,14 +79,14 @@ private:
     int lastSecond = -1;
     uint32_t lastFrameMs = 0;
 
-    Phase phase = Phase::Patrol;
+    Phase phase = Phase::Idle;
     float phaseTimer = 0.0f;
     float animTimer = 0.0f;
     int animFrame = 0;
 
     // Entity positions
-    float marcoX = 16.0f;
-    float tankX = 260.0f;
+    float marcoX = 36.0f;
+    float tankX = 185.0f;
     float heliX = -60.0f;
 
     // Projectiles
@@ -98,6 +102,8 @@ private:
     int explosionFrame = 0;
     float explosionTimer = 0.0f;
 
+    char shownHH[4] = "00";
+    char shownMM[4] = "00";
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
     bool m_snapToNow = true;

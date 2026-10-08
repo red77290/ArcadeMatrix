@@ -122,7 +122,7 @@ void MetalSlugClock::drawScene(int w, int h) {
 
     // 3. Rebel Army Di-Cokka Tank
     int tankY = 64 - TANK_ALIVE_H; // Ground level (y=8..63)
-    if (phase == Phase::ExplosionVictory && explosionFrame >= 2) {
+    if ((phase == Phase::Explosion && explosionFrame >= 2) || phase == Phase::Victory) {
         // Charred smoking wreck
         blitSprite(TANK_DEAD_PAL, TANK_DEAD_PIXELS, TANK_DEAD_W, TANK_DEAD_H, (int)tankX, tankY + 2, false);
     } else {
@@ -137,21 +137,12 @@ void MetalSlugClock::drawScene(int w, int h) {
 
     // 5. Marco Rossi animation
     int marcoY = 64 - 38; // Ground level for player
-    if (phase == Phase::Patrol) {
-        if (marcoX < 50.0f) {
-            // Actually advancing forward -> play walk frames
-            if (animFrame % 2 == 0) {
-                blitSprite(MARCO_WALK_0_PAL, MARCO_WALK_0_PIXELS, MARCO_WALK_0_W, MARCO_WALK_0_H, (int)marcoX, marcoY - 1, false);
-            } else {
-                blitSprite(MARCO_WALK_1_PAL, MARCO_WALK_1_PIXELS, MARCO_WALK_1_W, MARCO_WALK_1_H, (int)marcoX, marcoY - 1, false);
-            }
+    if (phase == Phase::Idle || phase == Phase::Explosion) {
+        // Idle breathing pose (ambient calm)
+        if (animFrame % 2 == 0) {
+            blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
         } else {
-            // Reached guard post -> Idle breathing pose (zero running on spot)
-            if (animFrame % 2 == 0) {
-                blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
-            } else {
-                blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
-            }
+            blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
         }
     } else if (phase == Phase::Firefight) {
         if (animFrame % 2 == 0) {
@@ -172,15 +163,8 @@ void MetalSlugClock::drawScene(int w, int h) {
         }
     } else if (phase == Phase::GrenadeAssault) {
         blitSprite(MARCO_GRENADE_PAL, MARCO_GRENADE_PIXELS, MARCO_GRENADE_W, MARCO_GRENADE_H, (int)marcoX, marcoY, false);
-    } else if (phase == Phase::ExplosionVictory) {
+    } else if (phase == Phase::Victory) {
         blitSprite(MARCO_VICTORY_PAL, MARCO_VICTORY_PIXELS, MARCO_VICTORY_W, MARCO_VICTORY_H, (int)marcoX, marcoY - 5, false);
-    } else {
-        // Idle breathing
-        if (animFrame % 2 == 0) {
-            blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
-        } else {
-            blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
-        }
     }
 
     // 6. Flying Grenade Arc
@@ -192,7 +176,7 @@ void MetalSlugClock::drawScene(int w, int h) {
     }
 
     // 7. Fiery Explosive Fireballs
-    if (phase == Phase::ExplosionVictory) {
+    if (phase == Phase::Explosion) {
         int ef = explosionFrame % 4;
         const auto& exp = EXPLOSION_SPRITES[ef];
         blitSprite(exp.palette, exp.pixels, exp.w, exp.h, (int)tankX + 15, 64 - exp.h - 4, false);
@@ -221,9 +205,9 @@ void MetalSlugClock::drawScene(int w, int h) {
     matrix->fillRect(18, 3, 1, 3, hudRed);
     matrix->fillRect(16, 5, 3, 1, hudRed);
 
-    // Score based on clock time (e.g. 001042)
+    // Score based on shown clock time (e.g. 001042)
     char scoreStr[16];
-    snprintf(scoreStr, sizeof(scoreStr), "00%02d%02d", storedTime.hours, storedTime.minutes);
+    snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
     int sx = 22;
     for (int i = 0; scoreStr[i] != '\0'; i++) {
         drawArcadeDigit(sx, 3, scoreStr[i], hudWhite, 1);
@@ -232,7 +216,7 @@ void MetalSlugClock::drawScene(int w, int h) {
 
     // Main Big Glowing Arcade Time in Center (e.g. 10:42)
     char timeStr[16];
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d", storedTime.hours, storedTime.minutes);
+    snprintf(timeStr, sizeof(timeStr), "%s:%s", shownHH, shownMM);
     drawArcadeTime(106, 1, timeStr, hudYellow, 2);
 
     // Ammo / Arms indicator: ARMS: [H] 1042
@@ -245,12 +229,10 @@ void MetalSlugClock::drawScene(int w, int h) {
     matrix->fillRect(199, 4, 1, 3, matrix->color565(0, 0, 0));
     matrix->fillRect(197, 5, 3, 1, matrix->color565(0, 0, 0));
 
-    // Ammo count: current minute or 1042
-    char ammoStr[8];
-    snprintf(ammoStr, sizeof(ammoStr), "%02d%02d", storedTime.hours, storedTime.minutes);
+    // Ammo count: shown minute
     int ax = 205;
-    for (int i = 0; ammoStr[i] != '\0'; i++) {
-        drawArcadeDigit(ax, 3, ammoStr[i], hudYellow, 1);
+    for (int i = 0; shownMM[i] != '\0'; i++) {
+        drawArcadeDigit(ax, 3, shownMM[i], hudYellow, 1);
         ax += 4;
     }
 
@@ -281,90 +263,82 @@ void MetalSlugClock::update() {
         animFrame++;
     }
 
-    int currentSec = storedTime.seconds;
     int currentMin = storedTime.minutes;
+
+    // Helicopter cruises steadily across the sky
+    heliX += 22.0f * dt;
+    if (heliX > 280.0f) heliX = -60.0f;
 
     // Detect minute change for special victory blast sequence
     bool minuteChanged = (lastMinute != -1 && currentMin != lastMinute);
-    lastMinute = currentMin;
 
-    // State machine driving battle progression across 60 seconds
-    if (minuteChanged || (currentSec >= 59 || currentSec <= 2)) {
-        if (phase != Phase::ExplosionVictory) {
-            phase = Phase::ExplosionVictory;
-            explosionFrame = 0;
-            explosionTimer = 0.0f;
+    switch (phase) {
+        case Phase::Idle:
+            tankBulletActive = false;
             grenadeActive = false;
-        }
-    } else if (currentSec >= 48) {
-        phase = Phase::GrenadeAssault;
-    } else if (currentSec >= 15) {
-        phase = Phase::Firefight;
-    } else {
-        phase = Phase::Patrol;
-    }
-
-    // Phase-specific entity physics and motion
-    if (phase == Phase::Patrol) {
-        // Marco walks forward towards battle position
-        if (marcoX < 50.0f) {
-            marcoX += 15.0f * dt;
-        }
-        // Tank rolls in from right
-        if (tankX > 180.0f) {
-            tankX -= 25.0f * dt;
-        }
-        // Helicopter patrols across sky
-        heliX += 35.0f * dt;
-        if (heliX > 270.0f) heliX = -60.0f;
-        tankBulletActive = false;
-        grenadeActive = false;
-    } else if (phase == Phase::Firefight) {
-        // Marco stands ground firing
-        tankX = 180.0f;
-        // Helicopter hovers and strafes
-        heliX = 100.0f + sinf(phaseTimer * 2.0f) * 30.0f;
-
-        // Tank fires cannon shells periodically
-        if (!tankBulletActive && fmodf(phaseTimer, 2.5f) < 0.1f) {
-            tankBulletActive = true;
-            tankBulletX = tankX - 4.0f;
-        }
-        if (tankBulletActive) {
-            tankBulletX -= 80.0f * dt;
-            if (tankBulletX <= marcoX + 20.0f) {
-                tankBulletActive = false;
+            tankX = 185.0f;
+            marcoX = 36.0f;
+            if (minuteChanged) {
+                phase = Phase::Firefight;
+                phaseTimer = 0.0f;
             }
-        }
-    } else if (phase == Phase::GrenadeAssault) {
-        tankBulletActive = false;
-        // Toss grenade in high arc
-        if (!grenadeActive && phaseTimer > 0.3f) {
-            grenadeActive = true;
-            grenadeX = marcoX + 24.0f;
-            grenadeY = 64.0f - 35.0f;
-            grenadeVx = (tankX + 20.0f - grenadeX) / 1.2f;
-            grenadeVy = -80.0f;
-        }
-        if (grenadeActive) {
-            grenadeX += grenadeVx * dt;
-            grenadeVy += 130.0f * dt; // gravity
-            grenadeY += grenadeVy * dt;
+            break;
 
-            if (grenadeX >= tankX + 20.0f || grenadeY >= 50.0f) {
-                grenadeActive = false;
+        case Phase::Firefight:
+            phaseTimer += dt;
+            if (phaseTimer >= 0.8f) {
+                phase = Phase::GrenadeAssault;
+                phaseTimer = 0.0f;
+                grenadeActive = true;
+                grenadeX = marcoX + 24.0f;
+                grenadeY = 64.0f - 35.0f;
+                grenadeVx = (tankX + 15.0f - grenadeX) / 0.7f;
+                grenadeVy = -85.0f;
             }
-        }
-    } else if (phase == Phase::ExplosionVictory) {
-        explosionTimer += dt;
-        if (explosionTimer >= 0.10f) {
-            explosionTimer -= 0.10f;
-            if (explosionFrame < 3) {
-                explosionFrame++;
+            break;
+
+        case Phase::GrenadeAssault:
+            phaseTimer += dt;
+            if (grenadeActive) {
+                grenadeX += grenadeVx * dt;
+                grenadeVy += 220.0f * dt; // gravity
+                grenadeY += grenadeVy * dt;
+
+                if (grenadeX >= tankX + 15.0f || grenadeY >= 48.0f) {
+                    grenadeActive = false;
+                    phase = Phase::Explosion;
+                    phaseTimer = 0.0f;
+                    explosionFrame = 0;
+                    explosionTimer = 0.0f;
+                    snprintf(shownHH, sizeof(shownHH), "%02d", storedTime.hours);
+                    snprintf(shownMM, sizeof(shownMM), "%02d", storedTime.minutes);
+                    lastMinute = currentMin; // Minute flips upon explosion impact!
+                }
             }
-        }
-        tankBulletActive = false;
-        grenadeActive = false;
+            break;
+
+        case Phase::Explosion:
+            phaseTimer += dt;
+            explosionTimer += dt;
+            if (explosionTimer >= 0.12f) {
+                explosionTimer -= 0.12f;
+                if (explosionFrame < 3) {
+                    explosionFrame++;
+                }
+            }
+            if (phaseTimer >= 0.65f) {
+                phase = Phase::Victory;
+                phaseTimer = 0.0f;
+            }
+            break;
+
+        case Phase::Victory:
+            phaseTimer += dt;
+            if (phaseTimer >= 1.4f) {
+                phase = Phase::Idle;
+                phaseTimer = 0.0f;
+            }
+            break;
     }
 
     if (matrix) {
