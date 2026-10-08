@@ -63,11 +63,11 @@ header_code.append("""#ifndef METALSLUGASSETS_H
 
 /**
  * Authentic SNK Neo Geo Metal Slug Artwork & Sprites:
- * - Mission 2 Arabian Desert / Warzone 256x64 Night Backdrop
+ * - Mission 2 Arabian Desert Terrain Band (y=38..64)
  * - Marco Rossi: Idle breathing, Walking, Shooting with muzzle flash, Grenade, Victory
  * - Rebel Army Di-Cokka Tank: Active combat stance, Shell projectile, Wrecked stance
  * - Rebel Flying Helicopter: Aerial patrol with rotor
- * - Fiery Explosive Fireballs (4 blast stages)
+ * - Fiery Explosive Fireballs (2 blast stages)
  * Stored in Flash PROGMEM (RGB565, MASK = 0x000E).
  */
 
@@ -91,9 +91,26 @@ static const uint8_t ARCADE_FONT_3x5[11][5] = {
 };
 """)
 
-# 1. Background
-bg = Image.open(f'{scratch}/ground_x500.png').convert('RGB')
-header_code.append(bg_to_cpp(bg, "BG_DESERT_256x64"))
+# 1. Four Impeccable 256x64 Backdrops with Ground
+bg_files = [
+    ('BG_STAGE_MARKET', 'ground_cand1_market_y600.png'),
+    ('BG_STAGE_DOMES', 'ground_cand2_domes_y600.png'),
+    ('BG_STAGE_BUNKER', 'ground_cand5_fortress_y600.png'),
+    ('BG_STAGE_FORTRESS', 'ground_cand6_goldendome_y600.png'),
+]
+
+header_code.append('constexpr int BG_BACKDROP_W = 256;')
+header_code.append('constexpr int BG_BACKDROP_H = 64;')
+header_code.append(f'constexpr int NUM_BACKDROPS = {len(bg_files)};\\n')
+
+for name, fname in bg_files:
+    img = Image.open(f'{scratch}/{fname}').convert('RGB')
+    header_code.append(bg_to_cpp(img, name))
+
+header_code.append('static const uint16_t* const BG_BACKDROPS[NUM_BACKDROPS] = {')
+for name, _ in bg_files:
+    header_code.append(f'    {name},')
+header_code.append('};\\n')
 
 # 2. Marco Rossi
 header_code.append(image_to_cpp(Image.open(f'{base}/PlayerIdle/0.png'), "MARCO_IDLE_0", "Marco Idle Frame 0"))
@@ -121,18 +138,24 @@ heli_raw = Image.open(f'{base}/EnemyHelicopter/EnemyHelicopter.png')
 heli = heli_raw.resize((45, 33), Image.NEAREST)
 header_code.append(image_to_cpp(heli, "ENEMY_HELI", "Rebel Patrol Helicopter"))
 
-# 5. Explosions
-exp0 = Image.open(f'{base}/ProjectileGrenadeExplosion/1.png').resize((36, 48), Image.NEAREST)
-exp1 = Image.open(f'{base}/ProjectileGrenadeExplosion/4.png').resize((36, 48), Image.NEAREST)
-exp2 = Image.open(f'{base}/ProjectileGrenadeExplosion/8.png').resize((36, 48), Image.NEAREST)
-exp3 = Image.open(f'{base}/ProjectileGrenadeExplosion/14.png').resize((36, 48), Image.NEAREST)
+# 5. Explosions (4 distinct punchy blast frames)
+exp0 = Image.open(f'{base}/ProjectileGrenadeExplosion/4.png').resize((36, 48), Image.NEAREST)
+exp1 = Image.open(f'{base}/ProjectileGrenadeExplosion/8.png').resize((36, 48), Image.NEAREST)
+exp2 = Image.open(f'{base}/ProjectileGrenadeExplosion/11.png').resize((36, 48), Image.NEAREST)
+exp3 = Image.open(f'{base}/ProjectileGrenadeExplosion/15.png').resize((36, 48), Image.NEAREST)
 
 header_code.append(image_to_cpp(exp0, "EXPLOSION_0", "Fireball Explosion Blast Frame 0"))
 header_code.append(image_to_cpp(exp1, "EXPLOSION_1", "Fireball Explosion Blast Frame 1"))
 header_code.append(image_to_cpp(exp2, "EXPLOSION_2", "Fireball Explosion Blast Frame 2"))
 header_code.append(image_to_cpp(exp3, "EXPLOSION_3", "Fireball Explosion Blast Frame 3"))
 
-header_code.append("""} // namespace MetalSlugAssets
+header_code.append("""
+// Backward compatibility aliases if needed
+constexpr int BG_DESERT_256x64_W = BG_BACKDROP_W;
+constexpr int BG_DESERT_256x64_H = BG_BACKDROP_H;
+#define BG_DESERT_256x64 (BG_BACKDROPS[0])
+
+} // namespace MetalSlugAssets
 
 #endif // METALSLUGASSETS_H
 """)

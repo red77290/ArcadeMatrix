@@ -54,13 +54,13 @@ Welcome to the open-source ESP32 firmware for HUB75 LED matrix displays! This pr
 
 ArcadeMatrix includes a signature collection of handcrafted, hardware-synchronized retro arcade and console clocks rendered with 100% bit-perfect original sprites in full 60 FPS, with zero dynamic allocations on the Core 1 hot-path:
 
-### 1. The Legend of Zelda (NES) — Theme 40
-*Authentic 8-bit Hyrule Overworld Canyon, animated walking Link, summit Triforce pickup, and full NES HUD.*
-![The Legend of Zelda Clock](docs/assets/clocks/poster_zelda.png)
+### 1. Street Fighter (Capcom) — Theme 38
+*Suzaku Castle rooftop duel under crescent moon night sky with authentic Ryu and Ken idle breathing, Hadouken blast on minute change with hit recoil and spark effects, and golden arcade HUD.*
+![Street Fighter Clock](docs/assets/clocks/poster_puzzle_bobble.png)
 
-### 2. Metal Slug (SNK Neo Geo) — Theme 41
-*Mission 2 Arabian Warzone with 3-phase battle progression: Marco Rossi heavy machine gun firefight, pineapple grenade assault with fiery fireball explosions rocking the battlefield, and thumbs-up victory yell with wrecked smoking Di-Cokka tank! Native 256x64 widescreen exclusive for Waveshare S3 and dual-panel setups.*
-![Metal Slug Clock](docs/assets/clocks/poster_metal_slug.png)
+### 2. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41
+*Authentic SNK Neo Geo pixel art with 4 rotating Arabian desert stages (Market Bazaar, Mosque Domes, Fortress Bunker, Golden Dome Watchtower), Marco Rossi combat animations, Rebel Di-Cokka tank, patrol helicopter, and heavy machine gun firefights.*
+![Metal Slug Clock](docs/assets/clocks/poster_metalslug.png)
 
 ### 3. Castlevania (Konami NES) — Theme 31
 *Gothic clock tower Belfry with Simon Belmont climbing the grand stone staircase toward Dracula's chamber, authentic flickering pedestal torch, flapping vampire bat across the blood moon, and gothic HUD with lifebar pips & heart counters.*
@@ -77,10 +77,6 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 ### 6. Sonic The Hedgehog (Sega Genesis) — Theme 39
 *Green Hill Zone checkered platforms, spinning gold rings, red spring, and Sonic idle/spin-dash animations.*
 ![Sonic The Hedgehog Clock](docs/assets/clocks/poster_sonic.png)
-
-### 7. Puzzle Bobble / Bust-A-Move (Taito Arcade) — Theme 17
-*Taito arcade bubble puzzle with authentic steel ceiling, dense 16x16 glossy bubble honeycomb clusters, aiming arrow, and Bub & Bob operating the gear cannon.*
-![Puzzle Bobble Clock](docs/assets/clocks/poster_puzzle_bobble.png)
 
 ## 🚀 Universal Engine Compatibility: Auto Depth & Auto Buffer
 

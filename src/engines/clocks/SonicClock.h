@@ -11,13 +11,15 @@
  * - 128x32: Authentic 8-bit Master System Sonic, Green Hill grass & checkered soil,
  *   palm tree, rotating golden ring, and arcade time digits.
  * - 256x64: Authentic 16-bit Megadrive textures (LuckyLuke repository), Green Hill
- *   mountains and ground, 28x39 idle Sonic with procedural foot tapping cycle (36x42),
- *   32x32 Item Monitor box, spinning golden ring (4 rotation frames), and Badnik Motobug patrol.
+ *   mountains and ground, Item Monitor box, spinning golden ring (4 rotation frames),
+ *   and Badnik Motobug patrol.
+ * - Minute reward: Motobug and golden rings animate in idle. At minute rollover,
+ *   Sonic enters, spin-dashes/leaps into the monitor box to flip the minute, and exits.
  *
  * Performance:
  * - Zero dynamic allocation on Core 1 hot path.
  * - Double-buffer dirty tracking with sleep optimization (m_dirty = 2).
- * - PROGMEM RGB565 sprites (zero DRAM consumption).
+ * - PROGMEM paletted sprites (saves Flash and zero DRAM consumption).
  */
 class SonicClock : public ClockFace {
 public:
@@ -36,22 +38,34 @@ public:
         lastFrameMs = 0;
         ringFrame = 0;
         ringTimer = 0.0f;
-        tapTimer = 0.0f;
-        isTapping = false;
         motobugTimer = 0.0f;
+        phase = Phase::Idle;
+        phaseTimer = 0.0f;
+        sonicX = -40.0f;
     }
 
 private:
+    enum class Phase : uint8_t {
+        Idle,
+        HeroEnter,
+        JumpStrike,
+        Impact,
+        HeroExit
+    };
+
     TimeData storedTime;
     int lastMinute = -1;
     int lastSecond = -1;
     uint32_t lastFrameMs = 0;
 
+    Phase phase = Phase::Idle;
+    float phaseTimer = 0.0f;
+    float sonicX = -40.0f;
+    float sonicY = 0.0f;
+
     // Animation timers
     uint8_t ringFrame = 0;
     float ringTimer = 0.0f;
-    float tapTimer = 0.0f;
-    bool isTapping = false;
     float motobugTimer = 0.0f;
 
     // Display state
@@ -61,7 +75,7 @@ private:
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
 
-    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true, bool flipH = false);
+    void blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH = false);
     void drawArcadeDigit(int x, int y, char c, uint16_t color, int scale);
     void drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale);
     void drawGreenHillGround(int w, int h, int gHeight);

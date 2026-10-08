@@ -1,7 +1,10 @@
 #ifndef METALSLUGCLOCK_H
 #define METALSLUGCLOCK_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
+#include "MetalSlugAssets.h"
 #include <stdint.h>
 
 /**
@@ -50,6 +53,12 @@ public:
         tankX = 260.0f;
         marcoX = 16.0f;
         grenadeActive = false;
+        // Guaranteed different random backdrop on each rotation
+        uint8_t nextIdx;
+        do {
+            nextIdx = (uint8_t)(esp_random() % MetalSlugAssets::NUM_BACKDROPS);
+        } while (nextIdx == currentBackdropIdx && MetalSlugAssets::NUM_BACKDROPS > 1);
+        currentBackdropIdx = nextIdx;
     }
 
 private:
@@ -92,12 +101,15 @@ private:
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
     bool m_snapToNow = true;
+    uint8_t currentBackdropIdx = 0;
 
-    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true, bool flipH = false);
-    void blitBackdrop(const uint16_t* data, int w, int h);
+    void blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH = false);
+    void blitBackdrop(const uint16_t* palette, const uint8_t* packedPixels, int w, int h);
     void drawArcadeDigit(int x, int y, char c, uint16_t color, int scale);
     void drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale);
     void drawScene(int w, int h);
 };
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV
 
 #endif // METALSLUGCLOCK_H

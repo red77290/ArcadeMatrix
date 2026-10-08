@@ -756,9 +756,18 @@ void WebServerAPI::setupRoutes() {
             {24, "Word Clock"}, {25, "Binary Clock"}, {26, "Pac-Man Clock"},
             {27, "Versus Clock"}, {28, "Slot Machine Clock"}, {29, "Tetris Game Boy"},
             // Animated retro platform and specialty clock faces.
-            {30, "Mario Clock"}, {31, "Castlevania Clock"}, {32, "Pocket Index"},
-            {33, "World Clock"}, {34, "Ms. Pac-Man Clock"}, {35, "Mega Man Clock"},
-            {37, "Words Clock"}, {38, "Street Fighter Clock"}, {39, "Sonic Clock"}
+            {30, "Mario Clock"}, {31, "Castlevania Clock"},
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+            {32, "Pocket Index"}, {33, "World Clock"},
+#endif
+            {34, "Ms. Pac-Man Clock"}, {35, "Mega Man Clock"},
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+            {37, "Words Clock"},
+#endif
+            {38, "Street Fighter Clock"}, {39, "Sonic Clock"}
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+            , {41, "Metal Slug Clock"}
+#endif
         };
         for (const auto& t : themes) {
             JsonObject obj = arr.createNestedObject();

@@ -47,10 +47,11 @@ public:
 private:
     enum class Phase : uint8_t {
         Idle,
+        HeroEnter,
         WhipWindup,
         WhipStrike,
         Impact,
-        Cooldown
+        HeroExit
     };
 
     TimeData storedTime;
@@ -60,6 +61,8 @@ private:
 
     Phase phase = Phase::Idle;
     float phaseTimer = 0.0f;
+    float simonX = -30.0f;
+    float simonY = 0.0f;
 
     // Animation timers
     float walkTimer = 0.0f;
@@ -77,7 +80,7 @@ private:
     uint8_t m_dirty = 2;
     bool m_hasFrame = true;
 
-    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true, bool flipH = false);
+    void blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH = false);
     void drawGothicDigit(int x, int y, char c, uint16_t color, int scale);
     void drawGothicTime(int startX, int startY, const char* str, uint16_t color, int scale);
     void drawScene(int w, int h);

@@ -11,15 +11,18 @@
 #include "clocks/PacmanClock.h"
 #include "clocks/MarioClock.h"
 #include "clocks/CastleClock.h"
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
 #include "clocks/PokedexClock.h"
 #include "clocks/WorldMapClock.h"
 #include "clocks/WordsClock.h"
+#include "clocks/MetalSlugClock.h"
+#endif
 #include "clocks/VersusClock.h"
 #include "clocks/SlotMachineClock.h"
 #include "clocks/MatrixRainClock.h"
 #include "clocks/MegamanClock.h"
 #include "clocks/SonicClock.h"
-#include "clocks/MetalSlugClock.h"
+#include "clocks/StreetFighterClock.h"
 #include <esp_heap_caps.h>
 
 ClockEngine::ClockEngine() : matrixDisplay(nullptr), activeFace(nullptr), currentTheme(THEME_NONE) {
@@ -35,12 +38,20 @@ template <class T> constexpr size_t maxOf(size_t a) { return a > sizeof(T) ? a :
 
 /// Size of the largest clock face object. The arena is sized from this single source of truth, so a new
 /// (bigger) face automatically grows the reservation and the declared descriptor requirement.
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
 constexpr size_t faceArenaBytes() {
     return maxOf<CyberpunkClock>(maxOf<FlipClock>(maxOf<PongClock>(maxOf<TetrisClock>(maxOf<WordClock>(
            maxOf<BinaryClock>(maxOf<PacmanClock>(maxOf<VersusClock>(maxOf<MatrixRainClock>(maxOf<SlotMachineClock>(
            maxOf<MarioClock>(maxOf<CastleClock>(maxOf<PokedexClock>(maxOf<WorldMapClock>(maxOf<WordsClockFace>(
-           maxOf<MegamanClock>(maxOf<SonicClock>(maxOf<MetalSlugClock>(maxOf<ArcadeClock>(0)))))))))))))))))));
+           maxOf<MegamanClock>(maxOf<SonicClock>(maxOf<MetalSlugClock>(maxOf<StreetFighterClock>(maxOf<ArcadeClock>(0))))))))))))))))))));
 }
+#else
+constexpr size_t faceArenaBytes() {
+    return maxOf<CyberpunkClock>(maxOf<FlipClock>(maxOf<PongClock>(maxOf<TetrisClock>(maxOf<WordClock>(
+           maxOf<BinaryClock>(maxOf<PacmanClock>(maxOf<VersusClock>(maxOf<MatrixRainClock>(maxOf<SlotMachineClock>(
+           maxOf<MarioClock>(maxOf<CastleClock>(maxOf<MegamanClock>(maxOf<SonicClock>(maxOf<StreetFighterClock>(maxOf<ArcadeClock>(0))))))))))))))));
+}
+#endif
 constexpr size_t kFaceArenaBytes = (faceArenaBytes() + 7u) & ~size_t(7);
 }
 
@@ -127,20 +138,24 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
         activeFace = makeFace<MarioClock>(matrixDisplay, config);
     } else if (theme == 31) {
         activeFace = makeFace<CastleClock>(matrixDisplay, config);
+    } else if (theme == 34) {
+        activeFace = makeFace<PacmanClock>(matrixDisplay, config, true);   // Ms Pac-Man
+    } else if (theme == 35 || theme == THEME_MEGAMAN_CLOCK) {
+        activeFace = makeFace<MegamanClock>(matrixDisplay, config);
+    } else if (theme == 12 || theme == 38 || theme == THEME_STREET_FIGHTER || theme == THEME_RYU) {
+        activeFace = makeFace<StreetFighterClock>(matrixDisplay, config);
+    } else if (theme == 39 || theme == THEME_SONIC) {
+        activeFace = makeFace<SonicClock>(matrixDisplay, config);
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
     } else if (theme == 32) {
         activeFace = makeFace<PokedexClock>(matrixDisplay, config);
     } else if (theme == 33) {
         activeFace = makeFace<WorldMapClock>(matrixDisplay, config);
     } else if (theme == 37) {
         activeFace = makeFace<WordsClockFace>(matrixDisplay, config);
-    } else if (theme == 34) {
-        activeFace = makeFace<PacmanClock>(matrixDisplay, config, true);   // Ms Pac-Man
-    } else if (theme == 35 || theme == THEME_MEGAMAN_CLOCK) {
-        activeFace = makeFace<MegamanClock>(matrixDisplay, config);
-    } else if (theme == 39 || theme == THEME_SONIC) {
-        activeFace = makeFace<SonicClock>(matrixDisplay, config);
     } else if (theme == 41 || theme == THEME_METAL_SLUG) {
         activeFace = makeFace<MetalSlugClock>(matrixDisplay, config);
+#endif
     } else {
         ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
         if (arcade) {
