@@ -49,16 +49,24 @@
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
 - **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
 
+> [!NOTE]
+> **Aviso sobre el renderizado de hardware:** Las capturas de pantalla, vistas previas de motores y posters de relojes presentados en esta documentación son simulaciones de software de alta fidelidad diseñadas para ilustrar el diseño, las animaciones y la telemetría. El aspecto visual real en un panel físico de matriz LED HUB75 puede variar según el paso de píxel (pitch), el filtro difusor acrílico, el brillo de los LEDs y la iluminación ambiental.
+
+---
+
 ## 🎮 Relojes Retro Legendarios (Posters & Simulaciones HUB75)
+
+> [!NOTE]
+> Las vistas previas a continuación son simulaciones de software de alta fidelidad. El renderizado visual real en una matriz LED HUB75 física puede presentar ligeras diferencias (difusión óptica, colorimetría y brillo percibido).
 
 ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y consolas sincronizados por hardware, renderizados con sprites originales 100 % fieles al píxel a 60 FPS estables, con cero asignaciones dinámicas en el bucle caliente Core 1:
 
 ### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Tema 41
-*Pixel art auténtico de SNK Neo Geo con 4 escenarios desérticos giratorios (Bazar del Mercado, Cúpulas de la Mezquita, Búnker de la Fortaleza, Torre de Vigilancia con Cúpula Dorada), animaciones de combate de Marco Rossi, tanque rebelde Di-Cokka, helicóptero patrulla y tiroteos con ametralladora pesada.*
-![Reloj Metal Slug](docs/assets/clocks/poster_metalslug.png)
+*Pixel art auténtico de SNK Neo Geo con escenario de bazar en el desierto árabe, animaciones de combate de Marco Rossi, tanque rebelde Di-Cokka, helicóptero patrulla y tiroteos con ametralladora pesada.*
+![Reloj Metal Slug](docs/assets/clocks/poster_metal_slug.png)
 
 ### 2. Castlevania (Konami NES) — Tema 31
-*Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y HUD gótico con barras de salud y corazones.*
+*Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y dígitos góticos en marfil de alta legibilidad.*
 ![Reloj Castlevania](docs/assets/clocks/poster_castlevania.png)
 
 ### 3. Super Mario Bros (NES) — Tema 30
@@ -66,12 +74,34 @@ ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y conso
 ![Reloj Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
 
 ### 4. Mega Man (Capcom NES) — Tema 35
-*Fortaleza de Wily con los bloques azules clásicos de Capcom, escalera amarilla y el bombardero azul en acción.*
+*Fortaleza Wily de Capcom con plataformas técnicas separadas, barra de energía vital, Metool dormido y Mega Man disparando con su Buster al pod de minutos.*
 ![Reloj Mega Man](docs/assets/clocks/poster_megaman.png)
 
 ### 5. Sonic The Hedgehog (Sega Genesis) — Tema 39
-*Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo y animaciones de espera y spin-dash de Sonic.*
+*Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo, badnik Motobug y animaciones de espera y salto spin-dash de Sonic.*
 ![Reloj Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
+
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Tema 32
+*Interfaz Pokédex (Pocket Index) auténtica de doble pantalla con visor de inspección, sprite animado de Pikachu, reloj digital en fuente PKMN, barra de telemetría de segundos y sensor LED de estado parpadeante.*
+![Reloj Pokédex](docs/assets/clocks/poster_pokedex.png)
+
+### 7. Pac-Man Arcade (Namco 1980) — Tema 26
+*Laberinto arcade Namco original con pasillos de neón azul, puntos, Pac-Man animado y los 4 fantasmas perseguidores (Blinky, Pinky, Inky, Clyde).*
+![Reloj Pac-Man](docs/assets/clocks/poster_pacman.png)
+
+### 8. Russian Tetris (Alexey Pajitnov / Game Boy) — Tema 23
+*Legendario rompecabezas de bloques con minos 3D biselados dinámicos (I, J, L, O, S, T, Z) cayendo en cascada para construir las horas y minutos en tiempo real.*
+![Reloj Tetris](docs/assets/clocks/poster_tetris.png)
+
+### 9. World Clock & Terminador Solar — Tema 33
+*Mapa mundial continental de alta resolución con terminador solar día/noche dinámico que calcula la declinación solar en tiempo real, marcador de meridiano local y hora dual UTC/local.*
+![Reloj World Map](docs/assets/clocks/poster_worldmap.png)
+
+### 10. True Matrix Rain (Hermanas Wachowski 1999) — Tema 21
+*Lluvia digital icónica con cascadas de glifos verde fósforo, velocidades de caída aleatorias, cabezas blancas luminosas, estelas de persistencia y dígitos de neón brillantes.*
+![Reloj Matrix Rain](docs/assets/clocks/poster_matrix_rain.png)
+
+---
 
 ## 🚀 Compatibilidad Universal de Motores: Auto Depth & Auto Buffer
 

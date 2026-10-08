@@ -50,16 +50,24 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
 - **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
 
+> [!NOTE]
+> **Avertissement sur le rendu matériel :** Les captures d'écran, visuels d'aperçu des moteurs et posters d'horloges présentés dans cette documentation sont des simulations logicielles haute fidélité destinées à illustrer la mise en page, les animations et la disposition des éléments. Le rendu visuel réel sur un panneau LED HUB75 physique peut légèrement différer selon le pas de masque (pitch), le filtre diffuseur acrylique, la luminosité des LEDs et l'éclairage ambiant.
+
+---
+
 ## 🎮 Horloges Rétro-Gaming Légendaires (Posters & Simulations HUB75)
+
+> [!NOTE]
+> Les visuels ci-dessous sont des simulations logicielles haute fidélité. Le rendu réel sur dalle LED HUB75 physique peut présenter de légères variations d'affichage (diffusion optique, colorimétrie et luminosité perçue).
 
 ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et consoles synchronisées au matériel, rendues avec des sprites d'origine 100 % fidèles au pixel près à 60 FPS constants, avec zéro allocation dynamique sur la boucle chaude Core 1 :
 
 ### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Thème 41
-*Pixel art authentique SNK Neo Geo avec 4 décors désertiques rotatifs (Grand Bazar, Mosquée aux coupoles vertes, Bunker de forteresse, Mirador au dôme doré), soldat Marco Rossi en combat, char Rebel Di-Cokka, hélicoptère de patrouille et fusillades à la mitrailleuse lourde.*
-![Horloge Metal Slug](docs/assets/clocks/poster_metalslug.png)
+*Pixel art authentique SNK Neo Geo avec décor de bazar arabe désertique, soldat Marco Rossi en combat, char Rebel Di-Cokka, hélicoptère de patrouille et fusillades à la mitrailleuse lourde.*
+![Horloge Metal Slug](docs/assets/clocks/poster_metal_slug.png)
 
 ### 2. Castlevania (Konami NES) — Thème 31
-*Beffroi gothique avec Simon Belmont gravissant le grand escalier de pierre vers la chambre de Dracula, torche sur piédestal vacillante, chauve-souris vampire traversant la lune de sang, et HUD gothique avec jauges de vie et cœurs.*
+*Beffroi gothique avec Simon Belmont gravissant le grand escalier de pierre vers la chambre de Dracula, torche sur piédestal vacillante, chauve-souris vampire traversant la lune de sang, et chiffres gothiques ivoire haute lisibilité.*
 ![Horloge Castlevania](docs/assets/clocks/poster_castlevania.png)
 
 ### 3. Super Mario Bros (NES) — Thème 30
@@ -67,12 +75,34 @@ ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et conso
 ![Horloge Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
 
 ### 4. Mega Man (Capcom NES) — Thème 35
-*Forteresse du Dr. Wily avec blocs bleus Capcom emblématiques, échelle jaune et le robot bleu en pleine action.*
+*Forteresse Wily de Capcom avec plateformes techniques séparées, jauge d'énergie vitale, Metool endormi et Mega Man tirant au Buster sur le pod des minutes.*
 ![Horloge Mega Man](docs/assets/clocks/poster_megaman.png)
 
 ### 5. Sonic The Hedgehog (Sega Genesis) — Thème 39
-*Plateformes à damier de Green Hill Zone, anneaux dorés tournoyants, ressort rouge et animations d'attente et de spin-dash de Sonic.*
+*Plateformes à damier de Green Hill Zone, anneaux dorés tournoyants, ressort rouge, badnik Motobug et animations d'attente et de saut spin-dash de Sonic.*
 ![Horloge Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
+
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Thème 32
+*Interface Pokédex (Pocket Index) authentique à double écran avec hublot d'inspection, sprite animé de Pikachu, horloge numérique en police PKMN, barre de télémétrie des secondes et témoin LED clignotant.*
+![Horloge Pokédex](docs/assets/clocks/poster_pokedex.png)
+
+### 7. Pac-Man Arcade (Namco 1980) — Thème 26
+*Labyrinthe arcade Namco original avec couloirs néon bleu, pastilles, Pac-Man animé et les 4 fantômes poursuivants (Blinky, Pinky, Inky, Clyde).*
+![Horloge Pac-Man](docs/assets/clocks/poster_pacman.png)
+
+### 8. Tetris Arcade (Alexey Pajitnov 1984) — Thème 23
+*Casse-tête légendaire de briques tombantes avec minos 3D biseautés dynamiques (I, J, L, O, S, T, Z) descendant en cascade pour assembler les heures et les minutes en temps réel.*
+![Horloge Tetris](docs/assets/clocks/poster_tetris.png)
+
+### 9. World Clock & Terminateur Solaire — Thème 33
+*Carte du monde continentale haute résolution avec terminateur solaire jour/nuit dynamique calculant la déclinaison solaire en temps réel, méridien local et double heure UTC/locale.*
+![Horloge World Map](docs/assets/clocks/poster_worldmap.png)
+
+### 10. True Matrix Rain (Les Wachowski 1999) — Thème 21
+*Pluie numérique emblématique avec cascades de glyphes vert phosphore, vitesses de chute aléatoires, têtes blanches lumineuses, traînées de rémanence et chiffres néon éclatants.*
+![Horloge Matrix Rain](docs/assets/clocks/poster_matrix_rain.png)
+
+---
 
 ## 🚀 Compatibilité Universelle des Moteurs : Auto Depth & Auto Buffer
 
