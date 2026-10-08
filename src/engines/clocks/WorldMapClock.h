@@ -1,6 +1,8 @@
 #ifndef WORLDMAPCLOCK_H
 #define WORLDMAPCLOCK_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -28,4 +30,7 @@ private:
     bool m_hasFrame = true;
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+

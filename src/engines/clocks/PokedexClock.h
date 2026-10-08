@@ -1,6 +1,8 @@
 #ifndef POKEDEXCLOCK_H
 #define POKEDEXCLOCK_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -32,4 +34,7 @@ private:
     void drawFace(int w, int h);
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+

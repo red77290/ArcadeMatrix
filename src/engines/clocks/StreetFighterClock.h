@@ -1,29 +1,29 @@
-#ifndef SONICCLOCK_H
-#define SONICCLOCK_H
+#ifndef STREETFIGHTERCLOCK_H
+#define STREETFIGHTERCLOCK_H
 
 #include "../ClockEngine.h"
 #include <stdint.h>
 
 /**
- * Animated Sonic the Hedgehog Clock Face.
+ * Animated Street Fighter Clock Face.
  *
  * Visuals:
- * - 128x32: Authentic 8-bit Master System Sonic, Green Hill grass & checkered soil,
- *   palm tree, rotating golden ring, and arcade time digits.
- * - 256x64: Authentic 16-bit Megadrive textures (LuckyLuke repository), Green Hill
- *   mountains and ground, Item Monitor box, spinning golden ring (4 rotation frames),
- *   and Badnik Motobug patrol.
- * - Minute reward: Motobug and golden rings animate in idle. At minute rollover,
- *   Sonic enters, spin-dashes/leaps into the monitor box to flip the minute, and exits.
+ * - 128x32: Authentic 8-bit Ryu & Ken from Street Fighter X Mega Man (SFxMM),
+ *   tatami dojo floor, arcade lifebars, central K.O. badge, Hadouken blast,
+ *   punch & hit recoil frames, and golden arcade digits.
+ * - 256x64: Suzaku Castle rooftop stage under crescent moon night sky,
+ *   authentic 4-frame idle breathing cycle for Ryu and Ken (phase-offset),
+ *   Ryu Hadouken windup & thrust attack pose, 12x10 Hadouken plasma projectile,
+ *   Ken hit impact recoil, 12x12 hit spark, central K.O. flash, and arcade time digits.
  *
  * Performance:
  * - Zero dynamic allocation on Core 1 hot path.
  * - Double-buffer dirty tracking with sleep optimization (m_dirty = 2).
- * - PROGMEM paletted sprites (saves Flash and zero DRAM consumption).
+ * - Fast blitting with inline horizontal flip (zero memory copies).
  */
-class SonicClock : public ClockFace {
+class StreetFighterClock : public ClockFace {
 public:
-    SonicClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
+    StreetFighterClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
 
     void draw(const TimeData& t) override;
     void update() override;
@@ -36,21 +36,19 @@ public:
         m_hasFrame = true;
         m_snapToNow = true;
         lastFrameMs = 0;
-        ringFrame = 0;
-        ringTimer = 0.0f;
-        motobugTimer = 0.0f;
         phase = Phase::Idle;
         phaseTimer = 0.0f;
-        sonicX = -40.0f;
+        breathTimer = 0.0f;
+        breathFrame = 0;
     }
 
 private:
     enum class Phase : uint8_t {
         Idle,
-        HeroEnter,
-        JumpStrike,
-        Impact,
-        HeroExit
+        HadoukenWindup,
+        HadoukenFlying,
+        HadoukenImpact,
+        Cooldown
     };
 
     TimeData storedTime;
@@ -60,13 +58,14 @@ private:
 
     Phase phase = Phase::Idle;
     float phaseTimer = 0.0f;
-    float sonicX = -40.0f;
-    float sonicY = 0.0f;
+    float breathTimer = 0.0f;
+    uint8_t breathFrame = 0;
 
-    // Animation timers
-    uint8_t ringFrame = 0;
-    float ringTimer = 0.0f;
-    float motobugTimer = 0.0f;
+    // Hadouken projectile state
+    float hadoukenX = 0.0f;
+    float hadoukenY = 0.0f;
+    float hadoukenTargetX = 0.0f;
+    float koFlashTimer = 0.0f;
 
     // Display state
     char shownHH[4] = "00";
@@ -78,8 +77,8 @@ private:
     void blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH = false);
     void drawArcadeDigit(int x, int y, char c, uint16_t color, int scale);
     void drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale);
-    void drawGreenHillGround(int w, int h, int gHeight);
     void drawScene(int w, int h);
+    void drawHealthBars(int w, int h);
 };
 
-#endif // SONICCLOCK_H
+#endif // STREETFIGHTERCLOCK_H

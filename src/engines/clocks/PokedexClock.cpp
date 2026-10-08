@@ -1,4 +1,7 @@
 #include "PokedexClock.h"
+
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "PokedexAssets.h"
 #include "PokedexFont.h"
 #include "ClockwiseScene.h"
@@ -102,3 +105,6 @@ void PokedexClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     lastMinute = -1;
     lastSecond = -1;
 }
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+

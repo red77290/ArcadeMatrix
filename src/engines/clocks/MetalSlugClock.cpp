@@ -1,4 +1,7 @@
 #include "MetalSlugClock.h"
+
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "MetalSlugAssets.h"
 #include <string.h>
 #include <stdio.h>
@@ -15,8 +18,8 @@ void MetalSlugClock::draw(const TimeData& t) {
     storedTime = t;
 }
 
-void MetalSlugClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent, bool flipH) {
-    if (!matrix || !data) return;
+void MetalSlugClock::blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH) {
+    if (!matrix || !palette || !pixels) return;
     const int panelW = matrix->width();
     const int panelH = matrix->height();
     for (int row = 0; row < h; row++) {
@@ -26,23 +29,36 @@ void MetalSlugClock::blitSprite(const uint16_t* data, int w, int h, int x, int y
             int px = x + col;
             if (px < 0 || px >= panelW) continue;
             int srcCol = flipH ? (w - 1 - col) : col;
-            uint16_t c = data[row * w + srcCol];
-            if (transparent && c == MASK) continue;
-            matrix->drawPixel(px, py, c);
+            uint8_t idx = pixels[row * w + srcCol];
+            if (idx == 0) continue;
+            matrix->drawPixel(px, py, palette[idx]);
         }
     }
 }
 
-void MetalSlugClock::blitBackdrop(const uint16_t* data, int w, int h) {
-    if (!matrix || !data) return;
+void MetalSlugClock::blitBackdrop(const uint16_t* palette, const uint8_t* packedPixels, int w, int h) {
+    if (!matrix || !palette || !packedPixels) return;
     const int panelW = matrix->width();
     const int panelH = matrix->height();
     int drawW = w < panelW ? w : panelW;
     int drawH = h < panelH ? h : panelH;
 
     for (int row = 0; row < drawH; row++) {
-        for (int col = 0; col < drawW; col++) {
-            matrix->drawPixel(col, row, data[row * w + col]);
+        int src = row * (w * 3 / 4);
+        for (int col = 0; col < drawW; col += 4) {
+            uint8_t b0 = pgm_read_byte(&packedPixels[src++]);
+            uint8_t b1 = pgm_read_byte(&packedPixels[src++]);
+            uint8_t b2 = pgm_read_byte(&packedPixels[src++]);
+
+            uint8_t p0 = b0 & 0x3F;
+            uint8_t p1 = ((b0 >> 6) & 0x03) | ((b1 & 0x0F) << 2);
+            uint8_t p2 = ((b1 >> 4) & 0x0F) | ((b2 & 0x03) << 4);
+            uint8_t p3 = (b2 >> 2) & 0x3F;
+
+            matrix->drawPixel(col + 0, row, pgm_read_word(&palette[p0]));
+            if (col + 1 < drawW) matrix->drawPixel(col + 1, row, pgm_read_word(&palette[p1]));
+            if (col + 2 < drawW) matrix->drawPixel(col + 2, row, pgm_read_word(&palette[p2]));
+            if (col + 3 < drawW) matrix->drawPixel(col + 3, row, pgm_read_word(&palette[p3]));
         }
     }
 }
@@ -66,61 +82,83 @@ void MetalSlugClock::drawArcadeDigit(int x, int y, char c, uint16_t color, int s
 }
 
 void MetalSlugClock::drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale) {
-    // Draw subtle drop shadow first
+    if (strlen(str) < 5) return;
+    int digitW = 3 * scale;
+    int digitGap = 1 * scale;
+    int S = 2 * scale; // Symmetric space on both sides of colon dot
+
+    int xH1 = startX;
+    int xH2 = xH1 + digitW + digitGap;
+    int xColon = xH2 + 2 * scale + S;
+    int xM1 = xColon + 2 * scale + S;
+    int xM2 = xM1 + digitW + digitGap;
+
     uint16_t shadowColor = matrix->color565(20, 10, 10);
-    int x = startX + 1;
-    int y = startY + 1;
-    for (int i = 0; str[i] != '\0'; i++) {
-        char ch = str[i];
-        drawArcadeDigit(x, y, ch, shadowColor, scale);
-        int gw = (ch == ':') ? 1 : 3;
-        x += (gw + 1) * scale;
-    }
+    // Draw subtle drop shadow first
+    drawArcadeDigit(xH1 + 1, startY + 1, str[0], shadowColor, scale);
+    drawArcadeDigit(xH2 + 1, startY + 1, str[1], shadowColor, scale);
+    drawArcadeDigit(xColon + 1, startY + 1, str[2], shadowColor, scale);
+    drawArcadeDigit(xM1 + 1, startY + 1, str[3], shadowColor, scale);
+    drawArcadeDigit(xM2 + 1, startY + 1, str[4], shadowColor, scale);
 
     // Draw main bright font
-    x = startX;
-    y = startY;
-    for (int i = 0; str[i] != '\0'; i++) {
-        char ch = str[i];
-        drawArcadeDigit(x, y, ch, color, scale);
-        int gw = (ch == ':') ? 1 : 3;
-        x += (gw + 1) * scale;
-    }
+    drawArcadeDigit(xH1, startY, str[0], color, scale);
+    drawArcadeDigit(xH2, startY, str[1], color, scale);
+    drawArcadeDigit(xColon, startY, str[2], color, scale);
+    drawArcadeDigit(xM1, startY, str[3], color, scale);
+    drawArcadeDigit(xM2, startY, str[4], color, scale);
 }
 
 void MetalSlugClock::drawScene(int w, int h) {
-    // 1. Draw 256x64 Night Desert Warzone Backdrop
-    blitBackdrop(BG_DESERT_256x64, BG_DESERT_256x64_W, BG_DESERT_256x64_H);
+    // 1. Draw 256x64 Night Desert Warzone Backdrop (randomized per rotation)
+    const auto& bg = BG_BACKDROPS[currentBackdropIdx % NUM_BACKDROPS];
+    blitBackdrop(bg.palette, bg.packedPixels, BG_BACKDROP_W, BG_BACKDROP_H);
 
     // 2. Flying Helicopter in upper sky
     if (heliX > -50.0f && heliX < 270.0f) {
         int hy = 8 + (int)(sinf(phaseTimer * 3.0f) * 3.0f);
-        blitSprite(ENEMY_HELI, ENEMY_HELI_W, ENEMY_HELI_H, (int)heliX, hy, true, false);
+        blitSprite(ENEMY_HELI_PAL, ENEMY_HELI_PIXELS, ENEMY_HELI_W, ENEMY_HELI_H, (int)heliX, hy, false);
     }
 
     // 3. Rebel Army Di-Cokka Tank
     int tankY = 64 - TANK_ALIVE_H; // Ground level (y=8..63)
     if (phase == Phase::ExplosionVictory && explosionFrame >= 2) {
         // Charred smoking wreck
-        blitSprite(TANK_DEAD, TANK_DEAD_W, TANK_DEAD_H, (int)tankX, tankY + 2, true, false);
+        blitSprite(TANK_DEAD_PAL, TANK_DEAD_PIXELS, TANK_DEAD_W, TANK_DEAD_H, (int)tankX, tankY + 2, false);
     } else {
         // Active battle tank
-        blitSprite(TANK_ALIVE, TANK_ALIVE_W, TANK_ALIVE_H, (int)tankX, tankY, true, false);
+        blitSprite(TANK_ALIVE_PAL, TANK_ALIVE_PIXELS, TANK_ALIVE_W, TANK_ALIVE_H, (int)tankX, tankY, false);
     }
 
     // 4. Tank Cannon Shell
     if (tankBulletActive && tankBulletX > marcoX) {
-        blitSprite(TANK_BULLET, TANK_BULLET_W, TANK_BULLET_H, (int)tankBulletX, 42, true, false);
+        blitSprite(TANK_BULLET_PAL, TANK_BULLET_PIXELS, TANK_BULLET_W, TANK_BULLET_H, (int)tankBulletX, 42, false);
     }
 
     // 5. Marco Rossi animation
     int marcoY = 64 - 38; // Ground level for player
     if (phase == Phase::Patrol) {
-        const uint16_t* walk = (animFrame % 2 == 0) ? MARCO_WALK_0 : MARCO_WALK_1;
-        blitSprite(walk, MARCO_WALK_0_W, MARCO_WALK_0_H, (int)marcoX, marcoY - 1, true, false);
+        if (marcoX < 50.0f) {
+            // Actually advancing forward -> play walk frames
+            if (animFrame % 2 == 0) {
+                blitSprite(MARCO_WALK_0_PAL, MARCO_WALK_0_PIXELS, MARCO_WALK_0_W, MARCO_WALK_0_H, (int)marcoX, marcoY - 1, false);
+            } else {
+                blitSprite(MARCO_WALK_1_PAL, MARCO_WALK_1_PIXELS, MARCO_WALK_1_W, MARCO_WALK_1_H, (int)marcoX, marcoY - 1, false);
+            }
+        } else {
+            // Reached guard post -> Idle breathing pose (zero running on spot)
+            if (animFrame % 2 == 0) {
+                blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
+            } else {
+                blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
+            }
+        }
     } else if (phase == Phase::Firefight) {
-        const uint16_t* shoot = (animFrame % 2 == 0) ? MARCO_SHOOT_0 : MARCO_SHOOT_1;
-        blitSprite(shoot, MARCO_SHOOT_0_W, MARCO_SHOOT_0_H, (int)marcoX, marcoY + 1, true, false);
+        if (animFrame % 2 == 0) {
+            blitSprite(MARCO_SHOOT_0_PAL, MARCO_SHOOT_0_PIXELS, MARCO_SHOOT_0_W, MARCO_SHOOT_0_H, (int)marcoX, marcoY + 1, false);
+        } else {
+            blitSprite(MARCO_SHOOT_1_PAL, MARCO_SHOOT_1_PIXELS, MARCO_SHOOT_1_W, MARCO_SHOOT_1_H, (int)marcoX, marcoY + 1, false);
+        }
 
         // Blazing bullet tracers from muzzle to tank
         uint16_t tracerColor = matrix->color565(255, 240, 60);
@@ -133,13 +171,16 @@ void MetalSlugClock::drawScene(int w, int h) {
             matrix->drawFastHLine(muzzleX + 70, muzzleY - 2, 45, tracerColor);
         }
     } else if (phase == Phase::GrenadeAssault) {
-        blitSprite(MARCO_GRENADE, MARCO_GRENADE_W, MARCO_GRENADE_H, (int)marcoX, marcoY, true, false);
+        blitSprite(MARCO_GRENADE_PAL, MARCO_GRENADE_PIXELS, MARCO_GRENADE_W, MARCO_GRENADE_H, (int)marcoX, marcoY, false);
     } else if (phase == Phase::ExplosionVictory) {
-        blitSprite(MARCO_VICTORY, MARCO_VICTORY_W, MARCO_VICTORY_H, (int)marcoX, marcoY - 5, true, false);
+        blitSprite(MARCO_VICTORY_PAL, MARCO_VICTORY_PIXELS, MARCO_VICTORY_W, MARCO_VICTORY_H, (int)marcoX, marcoY - 5, false);
     } else {
         // Idle breathing
-        const uint16_t* idle = (animFrame % 2 == 0) ? MARCO_IDLE_0 : MARCO_IDLE_1;
-        blitSprite(idle, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, true, false);
+        if (animFrame % 2 == 0) {
+            blitSprite(MARCO_IDLE_0_PAL, MARCO_IDLE_0_PIXELS, MARCO_IDLE_0_W, MARCO_IDLE_0_H, (int)marcoX, marcoY, false);
+        } else {
+            blitSprite(MARCO_IDLE_1_PAL, MARCO_IDLE_1_PIXELS, MARCO_IDLE_1_W, MARCO_IDLE_1_H, (int)marcoX, marcoY, false);
+        }
     }
 
     // 6. Flying Grenade Arc
@@ -152,9 +193,9 @@ void MetalSlugClock::drawScene(int w, int h) {
 
     // 7. Fiery Explosive Fireballs
     if (phase == Phase::ExplosionVictory) {
-        const uint16_t* expSprites[4] = { EXPLOSION_0, EXPLOSION_1, EXPLOSION_2, EXPLOSION_3 };
         int ef = explosionFrame % 4;
-        blitSprite(expSprites[ef], EXPLOSION_0_W, EXPLOSION_0_H, (int)tankX + 15, 64 - EXPLOSION_0_H - 4, true, false);
+        const auto& exp = EXPLOSION_SPRITES[ef];
+        blitSprite(exp.palette, exp.pixels, exp.w, exp.h, (int)tankX + 15, 64 - exp.h - 4, false);
     }
 
     // 8. Authentic SNK Neo Geo Arcade HUD
@@ -192,7 +233,7 @@ void MetalSlugClock::drawScene(int w, int h) {
     // Main Big Glowing Arcade Time in Center (e.g. 10:42)
     char timeStr[16];
     snprintf(timeStr, sizeof(timeStr), "%02d:%02d", storedTime.hours, storedTime.minutes);
-    drawArcadeTime(108, 1, timeStr, hudYellow, 2);
+    drawArcadeTime(106, 1, timeStr, hudYellow, 2);
 
     // Ammo / Arms indicator: ARMS: [H] 1042
     // "ARMS"
@@ -339,3 +380,5 @@ void MetalSlugClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_hasFrame = true;
     m_snapToNow = true;
 }
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV

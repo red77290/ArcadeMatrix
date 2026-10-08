@@ -53,13 +53,13 @@
 
 ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y consolas sincronizados por hardware, renderizados con sprites originales 100 % fieles al píxel a 60 FPS estables, con cero asignaciones dinámicas en el bucle caliente Core 1:
 
-### 1. The Legend of Zelda (NES) — Tema 40
-*Cañón Overworld de Hyrule en 8 bits auténtico, Link animado caminando, obtención de la Trifuerza dorada en la cima y HUD de NES completo con corazones y rupias.*
-![Reloj The Legend of Zelda](docs/assets/clocks/poster_zelda.png)
+### 1. Street Fighter (Capcom) — Tema 38
+*Duelo en el tejado del castillo Suzaku bajo la luna con respiración de Ryu y Ken, lanzamiento de Hadouken a cada minuto con retroceso y chispas de impacto, y HUD arcade dorado.*
+![Reloj Street Fighter](docs/assets/clocks/poster_puzzle_bobble.png)
 
-### 2. Metal Slug (SNK Neo Geo) — Tema 41
-*Misión 2 en zona de guerra árabe con progresión de combate en 3 fases: tiroteo con ametralladora pesada por Marco Rossi, asalto con granadas y bolas de fuego explosivas sacudiendo el campo de batalla, y grito de victoria con el pulgar hacia arriba ante los restos humeantes del tanque Di-Cokka. Formato panorámico nativo 256x64 exclusivo para Waveshare S3 y configuraciones de doble panel.*
-![Reloj Metal Slug](docs/assets/clocks/poster_metal_slug.png)
+### 2. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Tema 41
+*Pixel art auténtico de SNK Neo Geo con 4 escenarios desérticos giratorios (Bazar del Mercado, Cúpulas de la Mezquita, Búnker de la Fortaleza, Torre de Vigilancia con Cúpula Dorada), animaciones de combate de Marco Rossi, tanque rebelde Di-Cokka, helicóptero patrulla y tiroteos con ametralladora pesada.*
+![Reloj Metal Slug](docs/assets/clocks/poster_metalslug.png)
 
 ### 3. Castlevania (Konami NES) — Tema 31
 *Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y HUD gótico con barras de salud y corazones.*
@@ -76,10 +76,6 @@ ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y conso
 ### 6. Sonic The Hedgehog (Sega Genesis) — Tema 39
 *Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo y animaciones de espera y spin-dash de Sonic.*
 ![Reloj Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
-
-### 7. Puzzle Bobble / Bust-A-Move (Taito Arcade) — Tema 17
-*Rompecabezas arcade de burbujas de Taito con techo de acero auténtico, densos racimos de burbujas brillantes 16x16, flecha de puntería y Bub & Bob operando el cañón de engranajes.*
-![Reloj Puzzle Bobble](docs/assets/clocks/poster_puzzle_bobble.png)
 
 ## 🚀 Compatibilidad Universal de Motores: Auto Depth & Auto Buffer
 

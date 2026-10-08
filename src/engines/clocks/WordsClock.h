@@ -1,6 +1,8 @@
 #ifndef WORDSCLOCKFACE_H
 #define WORDSCLOCKFACE_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -37,4 +39,7 @@ private:
     void drawCentred(const char* text, int centreY, const GFXfont* font, uint16_t color, int panelW);
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+

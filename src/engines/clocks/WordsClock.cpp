@@ -1,4 +1,7 @@
 #include "WordsClock.h"
+
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "ClockFaceFont.h"
 #include "WordsHourFont.h"
 #include "WordsMinuteFont.h"
@@ -107,3 +110,6 @@ void WordsClockFace::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     lastMinute = -1;
 }
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+

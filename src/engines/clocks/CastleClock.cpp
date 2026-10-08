@@ -15,8 +15,8 @@ void CastleClock::draw(const TimeData& t) {
     storedTime = t;
 }
 
-void CastleClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent, bool flipH) {
-    if (!matrix || !data) return;
+void CastleClock::blitSprite(const uint16_t* palette, const uint8_t* pixels, int w, int h, int x, int y, bool flipH) {
+    if (!matrix || !palette || !pixels) return;
     const int panelW = matrix->width();
     const int panelH = matrix->height();
     for (int row = 0; row < h; row++) {
@@ -26,9 +26,9 @@ void CastleClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, b
             int px = x + col;
             if (px < 0 || px >= panelW) continue;
             int srcCol = flipH ? (w - 1 - col) : col;
-            uint16_t c = data[row * w + srcCol];
-            if (transparent && c == MASK) continue;
-            matrix->drawPixel(px, py, c);
+            uint8_t idx = pgm_read_byte(&pixels[row * w + srcCol]);
+            if (idx == 0) continue;
+            matrix->drawPixel(px, py, pgm_read_word(&palette[idx]));
         }
     }
 }
@@ -52,28 +52,85 @@ void CastleClock::drawGothicDigit(int x, int y, char c, uint16_t color, int scal
 }
 
 void CastleClock::drawGothicTime(int startX, int startY, const char* str, uint16_t color, int scale) {
-    int x = startX;
-    for (int i = 0; str[i] != '\0'; i++) {
-        char ch = str[i];
-        drawGothicDigit(x, startY, ch, color, scale);
-        int gw = (ch == ':') ? 1 : 3;
-        x += (gw + 1) * scale;
-    }
+    if (strlen(str) < 5) return;
+    int digitW = 3 * scale;
+    int digitGap = 1 * scale;
+    int S = 2 * scale; // Exact symmetric spacing on both sides of colon
+
+    int xH1 = startX;
+    int xH2 = xH1 + digitW + digitGap;
+    int xColon = xH2 + 2 * scale + S;
+    int xM1 = xColon + 2 * scale + S;
+    int xM2 = xM1 + digitW + digitGap;
+
+    drawGothicDigit(xH1, startY, str[0], color, scale);
+    drawGothicDigit(xH2, startY, str[1], color, scale);
+    drawGothicDigit(xColon, startY, str[2], color, scale);
+    drawGothicDigit(xM1, startY, str[3], color, scale);
+    drawGothicDigit(xM2, startY, str[4], color, scale);
 }
 
 void CastleClock::drawScene(int w, int h) {
-    if (h >= 48) {
-        // --- 256x64 Dracula's Castle ---
+    const bool isPortrait = (h > w);
+
+    if (isPortrait) {
+        // --- Portrait (64x256 / 64x128) Dracula Castle Tower ---
+        uint16_t nightSky = matrix->color565(16, 0, 24);
+        matrix->fillRect(0, 0, w, h, nightSky);
+
+        // Blood Moon top center (x=32, y=22)
+        uint16_t moonOuter = matrix->color565(220, 40, 20);
+        uint16_t moonInner = matrix->color565(240, 80, 40);
+        matrix->fillCircle(32, 22, 14, moonOuter);
+        matrix->fillCircle(30, 20, 11, moonInner);
+
+        // Flying Vampire Bat across moon
+        const uint16_t* batPal = BAT_PALS[batFrame % 2];
+        const uint8_t* batPix = BAT_PIXELS[batFrame % 2];
+        blitSprite(batPal, batPix, BAT_F0_W, BAT_F0_H, (int)batX, 14, false);
+
+        // Stone battlement / cornice at y=56
+        uint16_t stoneBase = matrix->color565(80, 80, 96);
+        uint16_t stoneLight = matrix->color565(140, 140, 160);
+        uint16_t stoneDark = matrix->color565(36, 36, 48);
+
+        matrix->drawFastHLine(0, 56, w, stoneLight);
+        matrix->fillRect(0, 57, w, 4, stoneBase);
+        for (int x = 0; x < w; x += 16) {
+            matrix->drawFastVLine(x, 57, 4, stoneDark);
+        }
+
+        // Stepped stone staircase leading up towards candle
+        for (int i = 0; i < 7; i++) {
+            int stepX = i * 8;
+            int stepY = 160 - i * 10;
+            if (stepY + 4 < h) {
+                matrix->fillRect(stepX, stepY, 16, 4, stoneBase);
+                matrix->drawFastHLine(stepX, stepY, 16, stoneLight);
+            }
+        }
+
+        // Candle torch on right platform (x=46, y=86)
+        uint16_t torchMetal = matrix->color565(140, 100, 50);
+        matrix->fillRect(46, 86, 4, 10, torchMetal);
+        matrix->fillRect(44, 82, 8, 4, torchMetal);
+
+        // Animated candle flame
+        const uint16_t* flamePal = FLAME_PALS[flameFrame % 3];
+        const uint8_t* flamePix = FLAME_PIXELS[flameFrame % 3];
+        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 44, 72, false);
+    } else if (h >= 48) {
+        // --- 256x64 Dracula's Castle Parapets ---
         uint16_t nightSky = matrix->color565(16, 0, 24);
         matrix->fillRect(0, 0, w, 48, nightSky);
 
-        // Blood Moon
+        // Blood Moon on right
         uint16_t moonOuter = matrix->color565(220, 40, 20);
         uint16_t moonInner = matrix->color565(240, 80, 40);
         matrix->fillCircle(216, 22, 18, moonOuter);
         matrix->fillCircle(214, 20, 15, moonInner);
 
-        // Gothic castle battlements & parapets at y=48..63
+        // Parapets at y=48..63
         uint16_t stoneBase = matrix->color565(80, 80, 96);
         uint16_t stoneLight = matrix->color565(140, 140, 160);
         uint16_t stoneDark = matrix->color565(36, 36, 48);
@@ -92,12 +149,14 @@ void CastleClock::drawScene(int w, int h) {
         matrix->fillRect(238, 30, 8, 4, torchMetal);
 
         // Torch flame
-        const uint16_t* flame = FLAME_FRAMES[flameFrame % 3];
-        blitSprite(flame, FLAME_F0_W, FLAME_F0_H, 238, 20, true, false);
+        const uint16_t* flamePal = FLAME_PALS[flameFrame % 3];
+        const uint8_t* flamePix = FLAME_PIXELS[flameFrame % 3];
+        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 238, 20, false);
 
         // Flying Vampire Bat flapping across blood moon
-        const uint16_t* bat = BAT_FRAMES[batFrame % 2];
-        blitSprite(bat, BAT_F0_W, BAT_F0_H, (int)batX, 10, true, false);
+        const uint16_t* batPal = BAT_PALS[batFrame % 2];
+        const uint8_t* batPix = BAT_PIXELS[batFrame % 2];
+        blitSprite(batPal, batPix, BAT_F0_W, BAT_F0_H, (int)batX, 10, false);
     } else {
         // --- 128x32 Dungeon Floor ---
         matrix->fillRect(0, 0, w, 26, 0x0000);
@@ -114,8 +173,14 @@ void CastleClock::drawScene(int w, int h) {
 
         // Candle Torch on right
         matrix->fillRect(116, 20, 2, 6, matrix->color565(140, 100, 50));
-        const uint16_t* flame = FLAME_FRAMES[flameFrame % 3];
-        blitSprite(flame, FLAME_F0_W, FLAME_F0_H, 113, 10, true, false);
+        const uint16_t* flamePal = FLAME_PALS[flameFrame % 3];
+        const uint8_t* flamePix = FLAME_PIXELS[flameFrame % 3];
+        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 113, 10, false);
+
+        // Flying Bat
+        const uint16_t* batPal = BAT_PALS[batFrame % 2];
+        const uint8_t* batPix = BAT_PIXELS[batFrame % 2];
+        blitSprite(batPal, batPix, BAT_F0_W, BAT_F0_H, (int)batX, 4, false);
     }
 }
 
@@ -123,6 +188,7 @@ void CastleClock::update() {
     if (!matrix) return;
     const int w = matrix->width();
     const int h = matrix->height();
+    const bool isPortrait = (h > w);
 
     uint32_t now = millis();
     float dt = (lastFrameMs == 0) ? 0.016f : (now - lastFrameMs) / 1000.0f;
@@ -147,7 +213,8 @@ void CastleClock::update() {
         flameFrame = 0;
         batTimer = 0.0f;
         batFrame = 0;
-        batX = 140.0f;
+        batX = (float)w;
+        simonX = -40.0f;
         m_dirty = 2;
     }
 
@@ -157,10 +224,17 @@ void CastleClock::update() {
         m_dirty = 2;
     }
 
-    // Minute transition -> Crack whip!
+    // Minute transition -> Simon enters to strike!
     if (lastMinute != storedTime.minutes && phase == Phase::Idle) {
-        phase = Phase::WhipWindup;
+        phase = Phase::HeroEnter;
         phaseTimer = 0.0f;
+        if (isPortrait) {
+            simonX = 4.0f;
+            simonY = 160.0f;
+        } else {
+            simonX = -20.0f;
+            simonY = (h >= 48) ? (48.0f - 30.0f) : 0.0f;
+        }
         m_dirty = 2;
     }
 
@@ -172,29 +246,51 @@ void CastleClock::update() {
         m_dirty = 2;
     }
 
-    // Bat flap and glide
+    // Bat flap and glide across sky
     batTimer += dt;
     if (batTimer >= 0.18f) {
         batTimer = 0.0f;
         batFrame = (batFrame + 1) % 2;
         m_dirty = 2;
     }
-    batX -= 25.0f * dt;
+    batX -= (isPortrait ? 18.0f : 25.0f) * dt;
     if (batX < -20.0f) batX = (float)w + 10.0f;
 
-    // Idle step cycle (every 300ms)
-    if (phase == Phase::Idle) {
+    // Walk frame step cycle (only animates when actually moving)
+    if (phase == Phase::HeroEnter || phase == Phase::HeroExit) {
         walkTimer += dt;
-        if (walkTimer >= 0.30f) {
+        if (walkTimer >= 0.18f) {
             walkTimer = 0.0f;
-            walkFrame = (walkFrame + 1) % 3;
+            walkFrame++;
             m_dirty = 2;
         }
     }
 
-    // Attack state machine
+    // Minute reward state machine
     switch (phase) {
         case Phase::Idle:
+            break;
+
+        case Phase::HeroEnter:
+            m_dirty = 2;
+            if (isPortrait) {
+                // Simon climbs stairs upwards from behind
+                simonX += 12.0f * dt;
+                simonY -= 15.0f * dt;
+                if (simonY <= 96.0f) {
+                    phase = Phase::WhipWindup;
+                    phaseTimer = 0.0f;
+                }
+            } else {
+                // Simon advances forward into striking position
+                float targetX = (h >= 48) ? 20.0f : 6.0f;
+                simonX += 65.0f * dt;
+                if (simonX >= targetX) {
+                    simonX = targetX;
+                    phase = Phase::WhipWindup;
+                    phaseTimer = 0.0f;
+                }
+            }
             break;
 
         case Phase::WhipWindup:
@@ -221,18 +317,29 @@ void CastleClock::update() {
         case Phase::Impact:
             phaseTimer += dt;
             m_dirty = 2;
-            if (phaseTimer >= 0.15f) {
-                phase = Phase::Cooldown;
+            if (phaseTimer >= 0.18f) {
+                phase = Phase::HeroExit;
                 phaseTimer = 0.0f;
             }
             break;
 
-        case Phase::Cooldown:
-            phaseTimer += dt;
+        case Phase::HeroExit:
             m_dirty = 2;
-            if (phaseTimer >= 0.12f) {
-                phase = Phase::Idle;
-                phaseTimer = 0.0f;
+            if (isPortrait) {
+                // Simon continues climbing upwards and exits
+                simonX += 14.0f * dt;
+                simonY -= 18.0f * dt;
+                if (simonY < -35.0f || simonX > w) {
+                    phase = Phase::Idle;
+                    phaseTimer = 0.0f;
+                }
+            } else {
+                // Simon walks forward past the clock
+                simonX += 75.0f * dt;
+                if (simonX > (float)w) {
+                    phase = Phase::Idle;
+                    phaseTimer = 0.0f;
+                }
             }
             break;
     }
@@ -252,48 +359,69 @@ void CastleClock::update() {
     snprintf(timeBuf, sizeof(timeBuf), "%s:%s", shownHH, shownMM);
     uint16_t crimson = matrix->color565(248, 56, 0);
 
-    if (h >= 48) {
-        // --- 256x64 Layout ---
-        int simonX = 20;
-        int simonY = 48 - 30; // on parapet floor
+    if (isPortrait) {
+        // --- Portrait (64x256 / 64x128): Blood Red Gothic Digits Centered (scale 2 = 44px wide) ---
+        drawGothicTime(10, 38, timeBuf, crimson, 2);
 
-        if (phase == Phase::WhipWindup) {
-            blitSprite(SIMON_WHIP_WINDUP, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, simonX - 8, simonY, true, false);
-        } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
-            blitSprite(SIMON_WHIP_STRIKE, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, simonX, simonY, true, false);
-            // Whip cracks forward across the screen!
-            blitSprite(WHIP_EXTENDED, WHIP_EXTENDED_W, WHIP_EXTENDED_H, simonX + 16, simonY + 12, true, false);
-            if (phase == Phase::Impact) {
-                // Spark at whip tip
-                matrix->fillCircle(simonX + 16 + 40, simonY + 14, 3, 0xFFFF);
+        // Simon Belmont rendered during minute reward sequence
+        if (phase != Phase::Idle) {
+            if (phase == Phase::WhipWindup) {
+                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX, (int)simonY, false);
+            } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
+                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                if (phase == Phase::Impact) {
+                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 3, 0xFFFF);
+                }
+            } else {
+                // Ascending stairs seen from behind
+                int sf = walkFrame % 2;
+                const uint16_t* pal = SIMON_STAIR_BACK_PALS[sf];
+                const uint8_t* pix = SIMON_STAIR_BACK_PIXELS[sf];
+                int sw = (sf == 0) ? SIMON_STAIR_BACK_0_W : SIMON_STAIR_BACK_1_W;
+                blitSprite(pal, pix, sw, 32, (int)simonX, (int)simonY, false);
             }
-        } else {
-            const uint16_t* simonSprite = SIMON_WALK_FRAMES[walkFrame % 3];
-            blitSprite(simonSprite, 16, 30, simonX, simonY, true, false);
         }
+    } else if (h >= 48) {
+        // --- 256x64 Layout: Blood Red Gothic Digits Centered (scale 4 = 88px wide) ---
+        drawGothicTime(84, 16, timeBuf, crimson, 4);
 
-        // Blood Red Gothic Time Digits in Center
-        drawGothicTime(88, 16, timeBuf, crimson, 5);
+        if (phase != Phase::Idle) {
+            if (phase == Phase::WhipWindup) {
+                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX - 8, (int)simonY, false);
+            } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
+                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                if (phase == Phase::Impact) {
+                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 3, 0xFFFF);
+                }
+            } else {
+                int wf = walkFrame % 3;
+                const uint16_t* pal = SIMON_WALK_PALS[wf];
+                const uint8_t* pix = SIMON_WALK_PIXELS[wf];
+                blitSprite(pal, pix, 16, 30, (int)simonX, (int)simonY, false);
+            }
+        }
     } else {
-        // --- 128x32 Layout ---
-        int simonX = 6;
-        int simonY = 0; // on brick floor (y=26-30 clamped to 0)
+        // --- 128x32 Layout: Blood Red Gothic Digits Centered (scale 3 = 66px wide) ---
+        drawGothicTime(31, 8, timeBuf, crimson, 3);
 
-        if (phase == Phase::WhipWindup) {
-            blitSprite(SIMON_WHIP_WINDUP, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, simonX, simonY, true, false);
-        } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
-            blitSprite(SIMON_WHIP_STRIKE, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, simonX, simonY, true, false);
-            blitSprite(WHIP_EXTENDED, WHIP_EXTENDED_W, WHIP_EXTENDED_H, simonX + 16, simonY + 12, true, false);
-            if (phase == Phase::Impact) {
-                matrix->fillCircle(simonX + 16 + 40, simonY + 14, 2, 0xFFFF);
+        if (phase != Phase::Idle) {
+            if (phase == Phase::WhipWindup) {
+                blitSprite(SIMON_WHIP_WINDUP_PAL, SIMON_WHIP_WINDUP_PIXELS, SIMON_WHIP_WINDUP_W, SIMON_WHIP_WINDUP_H, (int)simonX, (int)simonY, false);
+            } else if (phase == Phase::WhipStrike || phase == Phase::Impact) {
+                blitSprite(SIMON_WHIP_STRIKE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
+                blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + 16, (int)simonY + 12, false);
+                if (phase == Phase::Impact) {
+                    matrix->fillCircle((int)simonX + 16 + 40, (int)simonY + 14, 2, 0xFFFF);
+                }
+            } else {
+                int wf = walkFrame % 3;
+                const uint16_t* pal = SIMON_WALK_PALS[wf];
+                const uint8_t* pix = SIMON_WALK_PIXELS[wf];
+                blitSprite(pal, pix, 16, 30, (int)simonX, (int)simonY, false);
             }
-        } else {
-            const uint16_t* simonSprite = SIMON_WALK_FRAMES[walkFrame % 3];
-            blitSprite(simonSprite, 16, 30, simonX, simonY, true, false);
         }
-
-        // Blood Red Gothic Digits in Center
-        drawGothicTime(42, 8, timeBuf, crimson, 3);
     }
 }
 
@@ -304,4 +432,5 @@ void CastleClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     phase = Phase::Idle;
     phaseTimer = 0.0f;
     batX = 140.0f;
+    simonX = -40.0f;
 }

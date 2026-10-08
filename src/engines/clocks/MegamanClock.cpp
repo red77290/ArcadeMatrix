@@ -213,23 +213,7 @@ void MegamanClock::update() {
         }
     }
 
-    // Running cycle timer (runs in place for 1.5s every 4.5s)
-    if (phase == Phase::Waiting) {
-        runTimer += dt;
-        if (runTimer >= 4.5f) {
-            isRunning = true;
-            m_dirty = 2;
-            runFrame = ((int)((runTimer - 4.5f) * 7.0f)) % 2;
-            if (runTimer >= 6.0f) {
-                isRunning = false;
-                runTimer = 0.0f;
-                m_dirty = 2;
-            }
-        }
-    } else {
-        isRunning = false;
-        runTimer = 0.0f;
-    }
+
 
     // State machine updates
     const bool isWideTall = (h >= 48);
@@ -379,15 +363,8 @@ void MegamanClock::update() {
             }
         }
     } else {
-        if (isRunning) {
-            const uint16_t* runSprite = (runFrame == 0) ? MEGAMAN_RUN1 : MEGAMAN_RUN2;
-            int rw = (runFrame == 0) ? MEGAMAN_RUN1_W : MEGAMAN_RUN2_W;
-            int rh = (runFrame == 0) ? MEGAMAN_RUN1_H : MEGAMAN_RUN2_H;
-            blitSprite(runSprite, rw, rh, mmX, groundTop - rh, true);
-        } else {
-            const uint16_t* mmSprite = isBlinking ? MEGAMAN_BLINK : MEGAMAN_IDLE;
-            blitSprite(mmSprite, MEGAMAN_IDLE_W, MEGAMAN_IDLE_H, mmX, mmY, true);
-        }
+        const uint16_t* mmSprite = isBlinking ? MEGAMAN_BLINK : MEGAMAN_IDLE;
+        blitSprite(mmSprite, MEGAMAN_IDLE_W, MEGAMAN_IDLE_H, mmX, mmY, true);
     }
 
     // Hit Spark

@@ -61,9 +61,26 @@ void MarioClock::drawBlockAt(int x, int y, const char* text) {
 void MarioClock::drawScene(int w, int h) {
     matrix->fillRect(0, 0, w, h, SKY_COLOR);
 
+    const bool isPortrait = (h > w);
     int groundTop = h - GROUND_H;
     for (int x = 0; x < w; x += GROUND_W) {
         blitSprite(GROUND, GROUND_W, GROUND_H, x, groundTop, false);
+    }
+
+    if (isPortrait) {
+        // Stepped brick platforms in vertical mode
+        for (int px = 8; px < 56; px += GROUND_W) {
+            blitSprite(GROUND, GROUND_W, GROUND_H, px, 70, false);
+        }
+        for (int px = 16; px < 48; px += GROUND_W) {
+            blitSprite(GROUND, GROUND_W, GROUND_H, px, 130, false);
+        }
+        for (int px = 8; px < 56; px += GROUND_W) {
+            blitSprite(GROUND, GROUND_W, GROUND_H, px, 190, false);
+        }
+        blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 4, 4, true);
+        blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W - 4, 10, true);
+        return;
     }
 
     if (h >= 48) {
@@ -89,11 +106,17 @@ void MarioClock::update() {
     const int w = matrix->width();
     const int h = matrix->height();
 
-    const bool isWideTall = (h >= 48);
-    const int groundTop = h - GROUND_H;
+    const bool isPortrait = (h > w);
+    const bool isWideTall = (h >= 48 && !isPortrait);
+    const int groundTop = isPortrait ? 70 : (h - GROUND_H);
     int hourX, minuteX, blockY;
 
-    if (isWideTall) {
+    if (isPortrait) {
+        // 64x256 / 64x128 vertical layout: blocks over Platform 1 (y=70)
+        hourX = 10;
+        minuteX = 35;
+        blockY = 24;
+    } else if (isWideTall) {
         const int sceneLeft = (w - SCENE) / 2;
         hourX = sceneLeft + 13;
         minuteX = sceneLeft + 32;
@@ -134,7 +157,7 @@ void MarioClock::update() {
         bool newHour = (lastMinute >= 0 && storedTime.minutes == 0);
         lastMinute = storedTime.minutes;
         jumpTarget = newHour ? 0 : 1;
-        if (isWideTall) {
+        if (isWideTall || isPortrait) {
             if (phase == Phase::Waiting) {
                 phase = Phase::RunIn;
                 runnerX = -(float)MARIO_JUMP_W;
@@ -153,7 +176,7 @@ void MarioClock::update() {
     }
     if (shownHH[0] == '-') { strcpy(shownHH, hh); strcpy(shownMM, mm); m_dirty = 2; }
 
-    if (isWideTall) {
+    if (isWideTall || isPortrait) {
         const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
         const float pace = 85.0f * (speedPct / 100.0f);
 
@@ -206,7 +229,7 @@ void MarioClock::update() {
             blockBounce[i] += dt * 3.2f;
             if (blockBounce[i] >= 1.0f) {
                 blockBounce[i] = 0.0f;
-                if (!isWideTall) coinPop = false;
+                if (!isWideTall && !isPortrait) coinPop = false;
             }
         }
     }
@@ -227,7 +250,7 @@ void MarioClock::update() {
         drawBlockAt(i == 0 ? hourX : minuteX, blockY - lift, i == 0 ? shownHH : shownMM);
     }
 
-    if (isWideTall) {
+    if (isWideTall || isPortrait) {
         if (phase != Phase::Waiting) {
             bool airborne = (phase == Phase::Jump);
             int lift = airborne ? (int)(sinf(jumpT * 3.14159f) * (groundTop - blockY - BLOCK_H - 2)) : 0;
