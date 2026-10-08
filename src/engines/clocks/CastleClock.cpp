@@ -78,16 +78,16 @@ void CastleClock::drawScene(int w, int h) {
         uint16_t nightSky = matrix->color565(16, 0, 24);
         matrix->fillRect(0, 0, w, h, nightSky);
 
-        // Blood Moon top center (x=32, y=22)
+        // Blood Moon top center (x=32, y=14, radius 11) - separated from clock time below
         uint16_t moonOuter = matrix->color565(220, 40, 20);
         uint16_t moonInner = matrix->color565(240, 80, 40);
-        matrix->fillCircle(32, 22, 14, moonOuter);
-        matrix->fillCircle(30, 20, 11, moonInner);
+        matrix->fillCircle(32, 14, 11, moonOuter);
+        matrix->fillCircle(31, 13, 8, moonInner);
 
         // Flying Vampire Bat across moon
         const uint16_t* batPal = BAT_PALS[batFrame % 2];
         const uint8_t* batPix = BAT_PIXELS[batFrame % 2];
-        blitSprite(batPal, batPix, BAT_F0_W, BAT_F0_H, (int)batX, 14, false);
+        blitSprite(batPal, batPix, BAT_F0_W, BAT_F0_H, (int)batX, 8, false);
 
         // Stone battlement / cornice at y=56
         uint16_t stoneBase = matrix->color565(80, 80, 96);
@@ -441,8 +441,12 @@ void CastleClock::update() {
     const uint8_t* walkPix = SIMON_WALK_PIXELS[wf];
 
     if (isPortrait) {
-        // --- Portrait (64x256 / 64x128): Blood Red Gothic Digits Centered (scale 2 = 44px wide) ---
-        drawGothicTime(10, 18, timeBuf, crimson, 2);
+        // --- Portrait (64x256 / 64x128): Antique Gothic Ivory Digits with Crimson Drop Shadow at y=34 ---
+        // (Positioned cleanly below the blood moon and above the stone cornice for 100% legibility)
+        uint16_t timeShadow = matrix->color565(120, 10, 10);
+        uint16_t timeIvory = matrix->color565(255, 245, 220);
+        drawGothicTime(11, 35, timeBuf, timeShadow, 2);
+        drawGothicTime(10, 34, timeBuf, timeIvory, 2);
 
         // Simon Belmont rendered during minute reward sequence
         if (phase != Phase::Idle) {
