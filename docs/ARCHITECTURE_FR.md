@@ -29,6 +29,9 @@ Ce document est la référence **exhaustive et approfondie** de l'architecture A
 17. [Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)](#17-orientation-gyroscopique-gyrohal--displayorientationmanager)
 18. [Surface API REST HTTP](#18-surface-api-rest-http)
 19. [Métadonnées de Build & Télémétrie](#19-métadonnées-de-build--télémétrie)
+20. [Contrat de Propriété & Frontières du Plan de Contrôle](#20-contrat-de-propriété--frontières-du-plan-de-contrôle)
+21. [Architecture de Validation & Framework de Test](#21-architecture-de-validation--framework-de-test)
+22. [Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire](#22-surface-de-rendu-suivi-détat-dirty--invariants-mémoire)
 
 ---
 
@@ -60,7 +63,8 @@ flowchart TD
         WS["AsyncWebServer (Port 80)"]
         WS --> API["API REST (/api/v1/*, /api/engines, /api/instances)"]
         API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["config.json (Sauvegarde Atomique)"]
+        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
+        SAVE --> WSC["WorkingSetCache (Cache RAM Flyweight)"]
         MDNS["Répondeur mDNS"]
         AH["AudioHub (Arbitre Audio Arrière-Plan)"]
         AH --> AHAL["AudioOutputHAL (DAC I2S TX)"]
@@ -70,10 +74,11 @@ flowchart TD
         LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
         ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
         RM_LOOP --> ENG["IEngine Actif (update + render)"]
-        ENG --> MATRIX["MatrixPanel_I2S_DMA (Framebuffer)"]
+        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
         RM_LOOP --> OV["OverlayManager::render() (Passe Fighter)"]
-        OV --> MATRIX
-        MATRIX --> DMA["DMA Flip Buffer vers LEDs HUB75"]
+        OV --> SURFACE
+        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
+        PRESENT --> DMA["Sortie DMA vers LEDs HUB75"]
     end
 
     API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
@@ -168,8 +173,42 @@ classDiagram
 ## 4. Auto-Découverte : Registry, Registrar, Handlers & Gating
 
 1. Chaque moteur encapsule ses métadonnées, son schéma `ConfigSchema`, ses prérequis matériels `EngineRequirements` et sa factory dans un `IEngineDescriptorHandler`.
-2. Au démarrage, `EngineRegistrar::registerAll()` compare les exigences avec `hardwareHAL.capabilities()`.
-3. Seuls les moteurs supportés sont activés dans `EngineRegistry`. Les moteurs non compatibles sont enregistrés avec `available: false` et un message explicatif pour la WebUI.
+2. Au démarrage, `EngineRegistrar::registerAll()` délègue le filtrage de faisabilité à `CompatibilityEvaluator` (`src/core/CompatibilityEvaluator.h`), qui évalue `hardwareHAL.capabilities()` et la géométrie active.
+3. Seuls les moteurs supportés sont activés dans `EngineRegistry`. Les moteurs non compatibles sont enregistrés avec `available: false` et un motif explicatif pour l'interface WebUI.
+
+### Modèle Canonique de Compatibilité (Source Unique de Vérité)
+
+ArcadeMatrix V4 interdit formellement la duplication d'algorithmes de compatibilité entre langages. Le module C++ `CompatibilityEvaluator` constitue l'**unique autorité source de vérité** :
+
+```mermaid
+flowchart TD
+    EVAL["C++ CompatibilityEvaluator (Autorité Canonique Unique)"]
+    EVAL -->|"Évaluation Dynamique Core 0"| ESP["WebServerAPI ESP32 (/api/engines)"]
+    EVAL -->|"Exécution Native Hôte (macOS / Linux)"| CLI["Binaire matrix_generator"]
+    ESP -->|"Double Filtrage (UI + Gating)"| UI["Catalogue WebUI (data/index.html)"]
+    CLI -->|"Artefact JSON"| PY["scripts/generate_engine_matrix.py"]
+    PY -->|"Génération & Validation CI (--check)"| DOC["docs/ENGINE_COMPATIBILITY_MATRIX.md"]
+```
+
+- **Filtrage Niveau 1 (Catalogue WebUI & ReferenceCapability) :** Le catalogue (`/api/engines`) évalue les moteurs en `EvaluationMode::ReferenceCapability` contre le profil de référence statique `ReferenceMemoryProfile` (qualification au repos). Cela garantit l'invariance totale du catalogue, immunisé contre la pression mémoire volatile du Core 1 (ex. décodage de GIFs). Les moteurs incompatibles apparaissent grisés avec un badge inactif `🚫 Incompatible : <motif>` et des infobulles détaillées.
+- **Filtrage Niveau 2 (Sécurité Runtime sur Pipeline Demandé) :** Les endpoints `POST /api/rotation` et `POST /api/instances` évaluent les moteurs contre le *pipeline cible demandé* (`targetPipeline`) et non le pipeline actif, en mode `ReferenceCapability` pour éliminer tout verrou mortel lors des transitions depuis des moteurs lourds vers les moteurs de base.
+- **Validation CI Continue :** Tout ajout ou modification de moteur impose la mise à jour de `test/native/tools/matrix_generator.cpp` et l'exécution de `scripts/generate_engine_matrix.py`. La conformité de [docs/ENGINE_COMPATIBILITY_MATRIX.md](ENGINE_COMPATIBILITY_MATRIX.md) est vérifiée en CI par `scripts/validate_docs.py`.
+
+### Concurrence HTTP Déclarative & Protection contre la Famine de Sockets LwIP
+
+La pile réseau (LwIP sur Core 0) partage la DRAM interne avec les périphériques matériels. Afin d'éviter toute famine réseau lors de cycles graphiques intensifs (ex: lecture de GIFs) :
+1. **Déclaration Firmware (`/api/hardware`) :** Le firmware annonce `capabilities.http.recommendedConcurrency` (1 sur `ESP32_STD`, 3 sur `WAVESHARE_S3`).
+2. **File d'Attente Frontend `HttpRequestQueue` (`data/index.html`) :** La WebUI démarre avec une concurrence de 1 et s'ajuste dynamiquement. La file d'attente n'englobe **strictement que l'opération réseau `fetch()`** ; le parsing JSON, les callbacks et le rendu s'exécutent de façon asynchrone hors de la file.
+
+### Cycle de Transition & Safe Fallback Statique
+
+Les transitions obéissent à un cycle de vie transactionnel :
+`deactivate(old) -> libération RAM transitoire -> initialize(new) -> activate(new)`
+
+En cas d'échec d'allocation dynamique lors de `initialize(new)` :
+- Le système bascule automatiquement sur un **Safe Fallback statiquement qualifié** (0 PSRAM, 0 audio, 0 réseau, mémoire bornée $\le 2$ Ko).
+- Le système ne tente jamais une réallocation aléatoire de l'ancien moteur lourd déchargé, garantissant la permanence de l'affichage.
+- La configuration persistée (`config.json`) n'est enregistrée qu'après confirmation du succès d'activation.
 
 ---
 
@@ -194,7 +233,7 @@ classDiagram
     { "instance_id": "music_main", "duration": 20, "overlays": { "fighter": true } }
   ],
   "instances": [
-    { "id": "clock_main", "engine_id": "clock", "config": { "theme": "street_fighter" } },
+    { "id": "clock_main", "engine_id": "clock", "config": { "theme": "sonic" } },
     { "id": "weather_paris", "engine_id": "weather", "config": { "city": "Paris" } },
     { "id": "music_main", "engine_id": "music_player", "config": { "show_progress": true } }
   ]
@@ -358,6 +397,13 @@ L'intégrité de l'affichage prime strictement sur la fiabilité TLS : un échec
 1. **Filtrage via capacités sur ESP32 Classic :** Les moteurs réseau lourds (`CryptoEngine`, `StockEngine`) déclarent `EngineRequirements::needsPsram = true`. Sur les cartes sans PSRAM, `ConfigSanitizer` les désactive automatiquement sans crash.
 2. **Sérialisation TLS Système (`NetworkBudget::ScopedTlsHandshakeLock`) :** Chaque point d'appel TLS du code (météo/marchés du Dashboard, Crypto, Bourse, Spotify, Google Cast, Artwork, repli HTTPS Marquee, GNews, synchronisation Pixelcade) construit un `ScopedTlsHandshakeLock` immédiatement avant `WiFiClientSecure::connect()`. Il s'agit d'un unique mutex FreeRTOS global : une seule poignée de main TLS peut être en cours n'importe où dans le firmware à un instant donné, bornant la demande de pointe en SRAM interne à une seule réservation d'environ 32 Ko au lieu d'un chevauchement à N voies. **Correction d'atomicité (ce tour) :** le constructeur revalide `NetworkBudget::canStartTlsSession()` *alors qu'il détient déjà le mutex*, juste avant de signaler le succès — fermant une fenêtre de compétition TOCTOU où le budget aurait pu être vérifié suffisant puis invalidé par une autre poignée de main/allocation pendant que la tâche attendait (jusqu'à 5s) le mutex contesté. Une pré-vérification bon marché et non-autoritative de `canStartTlsSession()` reste autorisée aux points d'appel, uniquement pour éviter de bloquer sur un budget déjà connu insuffisant ; seule la revérification interne du verrou, après acquisition, fait autorité.
 3. **Limite connue et fiabilisation de l'admission :** cette sérialisation évite les crashs/corruptions d'affichage. Comme `canStartTlsSession()` exige désormais `freeInternal >= 45 Ko` et une marge de double buffer vérifiée (soit `largestInternalBlock >= 34.5 Ko` soit deux blocs indépendants de 16.5 Ko) pour allouer simultanément les tampons d'entrée et de sortie de mbedTLS (~33.4 Ko au total), **les tentatives de poignée de main vouées à l'échec sont rejetées proprement (`result=REJECTED_BY_BUDGET`) sans crash `MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512)`**. Si la SRAM interne est fragmentée par d'autres moteurs, `GoogleCastEngine` temporise avec un backoff exponentiel sans déstabiliser le système.
+4. **Mise à jour validée sur matériel (ESP32 classique sans PSRAM, 128x32 ; `logBoot7`-`logBoot12`) :**
+   - **Consolidation de la Zone Système Persistante (Étape 3) :** Le pilote Wi-Fi, l'association STA, la négociation DHCP, les résolveurs DNS, le répondeur mDNS (tâche de 4 Ko), le client SNTP, les routes de `WebServerAPI` (~70 fermetures avec tâche worker `async_tcp` de 8 Ko), `AudioHub`, et `Core0LifecycleDispatcher` ("Lifecycle0", tâche de 3 Ko) sont strictement initialisés *avant* `matrixEngine.begin()`. Cela rassemble toutes les allocations système permanentes dans la SRAM basse (`0x3ffe0000..0x3ffee000`), éliminant définitivement les îlots survivants en milieu de DRAM qui piégeaient les buffers DMA lors de leur libération.
+   - **Zone Sandbox Volatile & Teardown-Then-Measure :** Les plans de bits DMA HUB75 et les buffers de travail des moteurs actifs résident exclusivement dans la DRAM haute (`0x3ffee000..0x3fffffff`). Lors de la rotation sous `RotationManager`, le moteur sortant se désactive sans aucun survivant (`GifEngine` réinitialisant `lastPlayedGif` et échangeant `m_configuredFolders`) et libère son panneau (`releasePanel()`). La Zone Sandbox se vide intégralement et fusionne en un bloc ininterrompu de **50 000 à 65 000 octets** (fuite de 0 octet vérifiée sur plusieurs rotations : ~72 Ko de tas interne libre récupérés à l'identique).
+   - **Admission Déterministe & Stabilité des Bitplanes :** `PipelineSelectionPolicy` qualifie les moteurs entrants sur ce sandbox fusionné à l'aide de `NetworkBudget::TLS_MIN_LARGEST_BLOCK` (16 717 o). `DashboardEngine` et `CryptoEngine` sont admis avec certitude en 4 bits natifs (`requested=4, effective=4 bits`), supprimant tout basculement intempestif de profondeur (8 -> 4 -> 2 bits), tandis qu'`AnimatedGIF` (24 172 o contigus) et les modes double buffer 8 bits s'allouent de manière parfaitement fiable.
+   - **Calcul d'admission exact :** `hasTlsRecordBufferHeadroom()` ne se fie à un bloc unique qu'à partir de `largest >= 35 000 o`, et teste sinon deux allocations réelles de 16 717 o. Les connexions disposent d'un timeout explicite (`WiFiClientSecure::connect(host, port, timeoutMs)`), éliminant les gels de 28-30 s.
+5. **Durcissement face aux échecs d'allocation (corollaire Invariant 13) :** aucun `new` ne doit lever d'exception en cas de saturation ; les handlers rejetant en `503 + Retry-After` protègent les mutations de configuration ; `ConfigLoader::saveToSD` sérialise directement en flux continu sans instances temporaires.
+6. **Préchangement en Fenêtre de Transition & Découplage de la Présentation :** Les gels synchrones TLS sur le Core 1 pendant la boucle d'affichage sont éliminés. Dans `DisplayRuntime::maybeReconfigurePipelineFor()`, avant d'allouer le nouveau panneau d'affichage, `targetEngine->prefetchData()` s'exécute dans la fenêtre de transition propre avec DMA libéré (où 70 à 90 Ko sont disponibles). `StockEngine` et `CryptoEngine` appellent `fetchCombined()` pour récupérer à la fois le cours et les points du graphique historique en une seule session TLS keep-alive. Pendant la présentation active, `update()` effectue le rendu strictement depuis le cache RAM local sans exécuter aucun appel TLS bloquant, et tout TLS en cours de présentation est verrouillé par `NetworkBudget::canStartTlsSession()` exigeant `largest >= TLS_MIN_COMBINED_BLOCK` (40 Ko).
 
 #### Concurrence : Audio Simultané & Rendu 60 FPS
 - **Core 0 :** Décodage MP3 (`minimp3`), gestion des flux audio, Wi-Fi et requêtes réseau.
@@ -515,4 +561,177 @@ reconstruites ; le créneau de rescan est réservé de façon atomique et une se
 
 ## 19. Métadonnées de Build & Télémétrie
 
-L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_commit`, `build_timestamp`, `firmware_version`).
+L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_commit`, `build_timestamp`, `firmware_version`), garantissant la traçabilité entre le code source et le firmware actif.
+
+---
+
+## 20. Contrat de Propriété & Frontières du Plan de Contrôle
+
+ArcadeMatrix applique une séparation multi-cœur stricte entre les plans de contrôle asynchrones et le hot-path de rendu temps réel :
+
+```text
+DisplayArbiter
+    └── calcule l'intention dominante uniquement (moteur de décision pur sans état)
+
+DisplayRuntime
+    ├── possède l'état de session active
+    ├── possède les transitions de cycle de vie (activate, pause, resume, deactivate)
+    ├── possède la pile de préemption (PreemptionStack<PreemptionEntry, 4>)
+    └── classifie REFRESH interne vs PREEMPT / RESUME / REPLACE externe
+
+RotationManager
+    ├── possède les instances de moteurs sélectionnables (MAX_ACTIVE_ENGINES = 32)
+    ├── crée les instances sur le chemin froid (API REST / configuration)
+    └── expose une recherche sans allocation sur le chemin chaud (findActiveEngine())
+
+AppRuntime
+    └── possède les instances de moteurs événementiels (Pixelcade, Audio, handlers MQTT)
+```
+
+### 20.1 Matrice de Transition FSM d'Affichage
+
+| Séquence de Transition | Classification | Effets de Cycle de Vie | État de Pile & Profondeur |
+| :--- | :--- | :--- | :--- |
+| **A $\to$ A (même requête/source)** | `REFRESH` interne | `0` (ni pause, ni activate, mise à jour in-place des métadonnées) | Profondeur inchangée |
+| **A $\to$ B (rotation normale)** | `REPLACE` | `deactivate(A) → activate(B)` | Profondeur = 0 |
+| **A $\to$ B (alerte préemptive)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Profondeur incrémentée |
+| **A $\to$ B $\to$ B rafraîchissement** | `REFRESH` interne | `0` (mise à jour de `requestId` in-place) | Profondeur inchangée |
+| **A $\to$ B $\to$ C (alerte empilée)**| `PREEMPT` | `pause(B) → push(B) → activate(C)` | Profondeur = 2 |
+| **A $\to$ B $\to$ C $\to$ C rafraîchissement**| `REFRESH` interne | `0` (mise à jour de `requestId` in-place) | Profondeur = 2 |
+| **A $\to$ B $\to$ C $\to$ C expiration**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Profondeur = 1 |
+| **A $\to$ B $\to$ annulation B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Profondeur = 0 |
+| **A $\to$ B $\to$ annulation A** | Aucun | `0` (A submergé retiré de la pile si expiré) | B reste actif |
+| **A $\to$ cible non résoluble** | Rejet transactionnel | `0` (transition rejetée silencieusement, A intact) | Profondeur inchangée |
+| **Cible ROTATION non liée** | Liaison différée | `0` (session liée à ROTATION, moteur rattaché lors d'un `update()` ultérieur) | Profondeur inchangée |
+| **Pile saturée (depth=4) $\to$ alerte** | Rejet transactionnel | `0` (préemption rejetée proprement, session de sommet intacte)| Profondeur = 4 |
+| **Parent non résoluble $\to$ RESUME** | Rejet transactionnel | `0` (RESUME rejeté sans corrompre l'enfant actif)| L'enfant reste actif |
+| **REPLACE indépendant sur pile active** | `REPLACE` | `deactivate(All) → activate(New)` | Profondeur remise à 0 |
+| **Priorité A(10) vs B(5)** | A domine | `0` (A reste actif) | Profondeur inchangée |
+| **Priorité A(5) vs B(10)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Profondeur incrémentée |
+
+---
+
+## 21. Architecture de Validation & Framework de Test
+
+ArcadeMatrix intègre un pipeline de validation à 3 niveaux garantissant une couverture de test complète et zéro régression :
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Pipeline de Validation à 3 Niveaux                     │
+├──────────────────────┬───────────────────────────────┬──────────────────────┤
+│ Niveau 1: PIO Local  │ Niveau 2: Émulation QEMU CI   │ Niveau 3: Dual-Target│
+│ Suites de Tests Uni. │ Exécution Matérielle Émulée   │ Compilation          │
+├──────────────────────┼───────────────────────────────┼──────────────────────┤
+│ • test_api           │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_core          │ • Bootloader double cœur ESP32│ • esp32s3_waveshare  │
+│ • test_engines       │ • Runner de tests UART Unity  │ • Check statique     │
+│ • test_hardware      │ • Zéro dépendance carte réelle│ • Check taille binaire│
+│ • test_providers     │ • CI GitHub Actions auto      │                      │
+│ • test_retrofrontend │                               │                      │
+│ • test_utils         │                               │                      │
+└──────────────────────┴───────────────────────────────┴──────────────────────┘
+```
+
+1. **Niveau 1 — Compilation PlatformIO Locale (`pio test`) :** 7 suites de tests compilant des firmwares avec assertions `Unity` pour valider les types et contrats sans nécessiter de matériel physique connecté.
+2. **Niveau 2 — Exécution Émulée Matérielle QEMU (`scripts/run_qemu_tests.py`) :** Démarrage automatisé de chaque firmware de test dans un CPU ESP32 émulé (QEMU Espressif), capturant et évaluant la sortie série UART pour les codes de succès `UNITY_END()`.
+3. **Niveau 3 — Compilation Dual-Target :** Garantit la compatibilité du build sur ESP32 classique Dual-Core (I2S DMA) et ESP32-S3 (LCD DMA).
+
+### 21.1 Contrat ValidationPolicy comme Gestionnaire de Violation
+
+`ValidationPolicy` définit l'action déterministe de récupération lorsqu'un champ de configuration enfreint ses contraintes :
+- `Clamp` : Restreint les valeurs numériques hors limites à `[min_val, max_val]`.
+- `FallbackDefault` : Restaure la valeur du champ à `field.default_value`.
+- `Accept` : Accepte les valeurs utilisateur libres (texte libre, URLs).
+- `Reject` : Rejette la configuration invalide et restaure la valeur par défaut documentée.
+
+---
+
+## 22. Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire
+
+Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux DMA à simple buffer (ex. ESP32 classique avec Canvas SRAM + DMA unique) tout en garantissant un comportement mémoire temps réel déterministe, ArcadeMatrix isole strictement les moteurs de rendu du buffer physique via `IDrawingSurface`.
+
+```text
+                         IEngine (Algorithme Pur)
+                                    │
+                            update() / render()
+                                    │
+                                    ▼
+                             IDrawingSurface
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                    SRAM Canvas            État Dirty
+                         │             modifications non
+                         │                 présentées
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                                 present()
+                                    │
+                            Résultat Présentation
+                                    │
+                         ┌──────────┴──────────┐
+                         │                     │
+                       Succès                Échec
+                         │                     │
+                   dirty = false         dirty = true
+                         │                     │
+                         └──────────┬──────────┘
+                                    ▼
+                         Hub75PresentationBackend
+                                    │
+                               Fenêtre Sûre
+                                    │
+                               Commit DMA
+```
+
+### 22.1 Sémantique de l'État Dirty & Cycle de Vie de Présentation
+
+1. **Suivi Dirty Automatique via `markModified()`** : Toutes les opérations mutantes sur `CanvasBufferedSurface` (`drawPixel`, `drawFastHLine`, `drawFastVLine`, `fillRect`, `fillScreen`, `blit565`, `acquireCanvas`) convergent vers `markModified()` qui positionne `_dirty = true`. `Adafruit_GFX` implémentant ses primitives de haut niveau sur ces virtuelles, 100 % des modifications du canvas sont capturées sans charge additionnelle pour les moteurs.
+2. **Gating de Présentation** : Lors de l'évaluation de `present()`, si `!_dirty`, aucun transfert DMA ni encodage en salve de bitplanes n'a lieu. Le DMA matériel continue de balayer le buffer actif sans intervention CPU, éliminant les sauts de trame.
+3. **Atomicité du Commit** : `_dirty` est réinitialisé à `false` **uniquement si** `backend->presentCanvas()` retourne `PresentationResult::Ok`. En cas d'échec (ex. timeout de fenêtre de sécurité `SafeWindowTimeout` ou contention de bus DMA), `_dirty` reste `true` (Invariant 20), garantissant que l'image non validée est re-tentée à la trame suivante sans perte visuelle.
+
+### 22.2 Invariants Architecturaux Formels 15 à 20
+
+- **🔴 Invariant 15 — Désactivation Sans Allocation :**
+  Dès que la désactivation débute, le moteur sortant NE DOIT effectuer aucune nouvelle allocation dynamique. La désactivation peut uniquement libérer, fermer, stopper ou détacher les ressources détenues par le moteur. Toutes les désallocations internes de conteneurs utilisent `std::vector<T>().swap(vec)` ou `{}` plutôt qu'un appel non contraignant à `shrink_to_fit()`.
+- **🔴 Invariant 16 — Désactivation Quiescente (Quiescence en Deux Étapes : Rendu et Ressources) :**
+  La désactivation applique strictement une quiescence en deux étapes :
+  1. `deactivate()` sur Core 1 S'EXÉCUTE de manière strictement non bloquante sans attente sur des sockets, garantissant la **quiescence logique de rendu** immédiate (détachement de la surface de tracé, cessation de tout ordre de tracé, signalement d'annulation coopérative aux tâches).
+  2. `shutdownForDestruction()` sur Core 0 interrompt et joint de façon coopérative l'ensemble des tâches d'arrière-plan du moteur (`FgtLoader`, `DashFetch`, `CastPoll`), stoppe les timers, interrompt les sockets réseau et ferme les descripteurs de fichiers avant toute libération des ressources partagées.
+- **🔴 Invariant 17 — L'État Dirty Représente les Changements Non Présentés :**
+  `IDrawingSurface::isDirty()` DOIT rester vrai jusqu'à ce que l'état du canvas correspondant ait été validé avec succès sur le matériel d'affichage (`PresentationResult::Ok`).
+- **🔴 Invariant 18 — Effacement Limité au Canvas :**
+  Une opération d'effacement de surface (`clear()` / `fillScreen(0)`) DOIT modifier exclusivement la mémoire de dessin appartenant à la surface (SRAM canvas). Elle NE DOIT PAS écrire directement dans un buffer DMA HUB75 en cours de balayage actif.
+- **🔴 Invariant 19 — Isolation DMA :**
+  Les moteurs d'affichage et les gestionnaires de rotation NE DOIVENT PAS accéder directement, effacer ou modifier la mémoire de présentation/DMA matérielle (`FastMatrixPanel`). Tout rendu passe obligatoirement et exclusivement par `IDrawingSurface`.
+- **🔴 Invariant 20 — Préservation lors d'Échec de Présentation :**
+  Une tentative de présentation échouée NE DOIT PAS réinitialiser l'état dirty, préservant ainsi les modifications non présentées pour une nouvelle tentative à la trame suivante.
+- **🔴 Invariant 21 — Isolation de Sortie HUB75 & Transaction de Présentation Matérielle :**
+  Pendant toute la durée de reconfiguration du pipeline de présentation, le signal OE (Output Enable) reste fermement asservi à l'état inactif (HIGH / écran physiquement éteint) du début du démontage jusqu'à ce que le nouveau pipeline DMA soit initialisé et que la première frame valide (Frame 0) soit commitée (`firstFrameCommitted == true`). En cas d'échec de la cible et des replis progressifs, OE reste à HIGH dans l'état `PresentationRecovery` : aucun état GPIO parasite, motif de balayage transitoire ou signal corrompu ne peut atteindre le panneau HUB75. `deactivate()` garantit strictement la quiescence logique de rendu sur Core 1 (zéro commande de tracé résiduelle ou accès surface), tandis que la quiescence physique des workers d'arrière-plan et sockets réseau est finalisée par `shutdownForDestruction()` avant le démontage de la présentation.
+- **🔴 Invariant N8 — Isolation Applicative Post-Quiescence :**
+  Une fois qu'une session réseau a été interrompue et que son moteur propriétaire a achevé sa désactivation quiescente, aucun nouveau traitement applicatif, parsing JSON, callback ou allocation de buffer ne peut être effectué sur cette session.
+
+### 22.3 Enveloppe de Référence Quiescente (Quiescent Baseline Envelope)
+
+Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas face aux opérations réseau dynamiques, ArcadeMatrix définit formellement une **Enveloppe de Référence Quiescente** :
+- Lors de `deactivate(old)`, le système retourne à l'empreinte de repos de référence dans une enveloppe bornée : $|\text{baseline}_{\text{finale}} - \text{baseline}_{\text{initiale}}| \le 2\text{ Ko}$.
+- Dérive mémoire cumulée nulle sur 100 cycles consécutifs de rotation (`Clock` $\to$ `GIF` $\to$ `Crypto` $\to$ `Stock` $\to$ `Weather` $\to$ `Clock`).
+- Zéro tâche d'arrière-plan résiduelle, zéro descripteur de fichier orphelin, zéro socket réseau en suspens post-désactivation.
+
+---
+
+## 23. Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire
+
+Pour les cibles matérielles contraintes (telles que l'ESP32 classique pilotant des géométries 128×32), ArcadeMatrix met en œuvre un **Dynamic Presentation Pipeline** adossé à un ensemble de sous-systèmes de réclamation mémoire :
+1. **Profondeur de Couleur Dynamique ($8 \leftrightarrow 7 \dots 2$) :** Commute dynamiquement entre la profondeur non bridée préférée pour les graphismes (jusqu'à 8 bits sur toutes les cartes, y compris ESP32 classique) et une profondeur allégée sécurisée pour TLS (typiquement 4 bits ou 2 bits) pendant l'exécution des moteurs réseau, en évaluant mathématiquement la DRAM libre, le bloc contigu et la mémoire DMA.
+2. **Transactions de Présentation Matérielle :** Reconstruction atomique du pipeline exécutée en $< 30\text{ ms}$ sous extinction matérielle complète via OE.
+3. **Pipeline Single DMA + Canevas (`canvas_single`) :** Économise jusqu'à 32 Ko de DRAM par rapport aux architectures DMA double-buffer traditionnelles.
+4. **Réclamation Mémoire Exhaustive :** Tâches de fond éphémères (`SdSpace`), streaming HTTP zéro-allocation avec buffers sur pile, allocations paresseuses de buffers (`MarqueeEngine`), arrêt SoftAP/mDNS et calibrage fin des piles FreeRTOS.
+5. **Modèle Sandbox Teardown-Then-Measure :** Le démontage de l'ancien moteur et du panneau DMA avant la mesure du tas disponible rétablit un bloc contigu sain de 50 à 64 Ko, éliminant tout battement de profondeur et garantissant une profondeur 4 bits déterministe pour les moteurs TLS.
+6. **Consolidation de la Disposition du Tas au Démarrage :** Le pré-positionnement des closures de routes sous `0x3ffee000` préserve le haut de la DRAM pour les buffers d'affichage et réseau.
+7. **Cycle de Vie en Deux Étapes (Invariants 15 & 16) :** `deactivate()` non-bloquant sur Core 1 pour la quiescence logique et l'abort de sockets vs `shutdownForDestruction()` sur Core 0 pour la terminaison des tâches et la libération de leur pile.
+8. **Consolidation des Transactions Réseau :** Regroupement des cotations en lot et sessions persistantes HTTP/1.1 keep-alive (`net::SecureHttpSession`), ramenant N handshakes isolés à un seul handshake TLS par session.
+9. **Architecture de Cache d'Icônes à 3 Niveaux :** Bitmaps RGB565 en RAM (L1), stockage persistant sur SD (L2) et proxy HTTP léger `images.weserv.nl` + `JPEGDEC` (L3) ne consommant que ~2,5 Ko de RAM (réduction de plus de 92 % par rapport à l'ancien décodeur PNG).
+
+L'analyse architecturale détaillée, les benchmarks et les comparaisons quantitatives de référence sont documentés dans [docs/MEMORY_OPTIMIZATIONS_FR.md](MEMORY_OPTIMIZATIONS_FR.md).

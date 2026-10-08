@@ -2,7 +2,7 @@
 #define CLOCKWISESCENE_H
 
 #include <Arduino.h>
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include "../../core/drawing/IDrawingSurface.h"
 
 /**
  * Helpers shared by the faces adapted from the 64x64 "Clockwise" clockfaces.
@@ -35,12 +35,60 @@ inline int mapY(int y, int panelH) { return originY(panelH) + y / divisor(panelH
  * smeared out to the panel edges, and its top and bottom rows filled likewise when the panel is
  * taller than the scene.
  */
-inline void drawBackground(MatrixPanel_I2S_DMA* m, const uint16_t* bg, int panelW, int panelH) {
+inline void drawBackground(IDrawingSurface* m, const uint16_t* bg, int panelW, int panelH) {
     if (!m || !bg) return;
     const int d = divisor(panelH);
     const int size = SIZE / d;
     const int ox = originX(panelW, panelH);
     const int oy = originY(panelH);
+
+    // Fast path: direct linear canvas access eliminates 16K virtual drawPixel calls per frame
+    if (m->hasCanvas() && m->getRotation() == 0) {
+        CanvasView cv = m->acquireCanvas();
+        if (cv.isValid() && cv.stridePixels >= (size_t)panelW) {
+            for (int py = 0; py < panelH; py++) {
+                int sy = (py - oy) * d;
+                if (sy < 0) sy = 0;
+                if (sy > SIZE - 1) sy = SIZE - 1;
+                const uint16_t* row = bg + sy * SIZE;
+                uint16_t* dst = cv.data + (size_t)py * cv.stridePixels;
+
+                // Left span: repeat first column
+                uint16_t leftCol = row[0];
+                int leftEnd = (ox < panelW) ? ox : panelW;
+                for (int px = 0; px < leftEnd; px++) {
+                    dst[px] = leftCol;
+                }
+
+                // Middle span: blit scene row
+                if (d == 1) {
+                    int midStart = (ox < 0) ? 0 : ox;
+                    int midEnd = (ox + SIZE < panelW) ? (ox + SIZE) : panelW;
+                    if (midEnd > midStart) {
+                        int srcOffset = (ox < 0) ? -ox : 0;
+                        memcpy(dst + midStart, row + srcOffset, (midEnd - midStart) * sizeof(uint16_t));
+                    }
+                } else {
+                    int midStart = (ox < 0) ? 0 : ox;
+                    int midEnd = (ox + size < panelW) ? (ox + size) : panelW;
+                    for (int px = midStart; px < midEnd; px++) {
+                        dst[px] = row[(px - ox) * d];
+                    }
+                }
+
+                // Right span: repeat last column
+                int rightStart = ox + size;
+                if (rightStart < 0) rightStart = 0;
+                uint16_t rightCol = row[SIZE - 1];
+                for (int px = rightStart; px < panelW; px++) {
+                    dst[px] = rightCol;
+                }
+            }
+            m->releaseCanvas();
+            return;
+        }
+        m->releaseCanvas();
+    }
 
     for (int py = 0; py < panelH; py++) {
         int sy = (py - oy) * d;
@@ -58,7 +106,7 @@ inline void drawBackground(MatrixPanel_I2S_DMA* m, const uint16_t* bg, int panel
 }
 
 /// Blit a sprite at scene coordinates, skipping `maskColor` (pass 0xFFFF for an opaque blit).
-inline void drawSprite(MatrixPanel_I2S_DMA* m, const uint16_t* data, int w, int h, int sceneX,
+inline void drawSprite(IDrawingSurface* m, const uint16_t* data, int w, int h, int sceneX,
                        int sceneY, int panelW, int panelH, uint16_t maskColor) {
     if (!m || !data) return;
     const int d = divisor(panelH);

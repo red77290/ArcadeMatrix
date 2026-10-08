@@ -1,6 +1,8 @@
 #include "GNewsEngine.h"
+#include "../core/drawing/IDrawingSurface.h"
 #include "../core/Logger.h"
 #include "../core/I18n.h"
+#include "../core/net/SecureHttpClient.h"
 #include <cmath>
 
 GNewsEngine::GNewsEngine() {
@@ -36,9 +38,9 @@ void GNewsEngine::applyConfig(const EngineConfig* config) {
 EngineError GNewsEngine::initialize(EngineContext* context, const EngineConfig* config) {
     if (context) {
         _geometry = context->getGeometry();
-        if (context->getMatrix()) {
-            lastMatrixW = context->getMatrix()->width();
-            lastMatrixH = context->getMatrix()->height();
+        if (context->getSurface()) {
+            lastMatrixW = context->getSurface()->width();
+            lastMatrixH = context->getSurface()->height();
         }
     }
     if (config) applyConfig(config);
@@ -333,8 +335,8 @@ void GNewsEngine::prepareHeadlineText(const GNewsArticle& article) {
 }
 
 void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, int bodyY, int clipMinX, int clipMaxX, int clipMinY, int clipMaxY, int lineSpacing, int numRows) {
-    if (!context || !context->getMatrix() || !title || *title == '\0') return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface() || !title || *title == '\0') return;
+    auto* matrix = context->getSurface();
 
     int tLen = strlen(title);
     if (tLen == 0) return;
@@ -373,10 +375,58 @@ void GNewsEngine::renderSerpentine(EngineContext* context, const char* title, in
     }
 }
 
+void GNewsEngine::startFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(false, std::memory_order_release);
+        return;
+    }
+    m_stopFetch.store(false, std::memory_order_release);
+    m_fetchExited.store(false, std::memory_order_release);
+    if (xTaskCreatePinnedToCore(fetchTaskEntry, "gnews_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
+        m_fetchTask = nullptr;
+        m_fetchExited.store(true, std::memory_order_release);
+        LOGW("GNewsEngine", "Failed to start gnews_fetch task on Core 0");
+    }
+}
+
+void GNewsEngine::stopFetchTask() {
+    if (m_fetchTask) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
+        for (int i = 0; i < 30 && !m_fetchExited.load(std::memory_order_acquire); i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (m_fetchExited.load(std::memory_order_acquire)) {
+            m_fetchTask = nullptr;
+        } else {
+            LOGW("GNewsEngine", "gnews_fetch task did not exit within 300ms cooperative window");
+        }
+    }
+}
+
+void GNewsEngine::fetchTaskEntry(void* arg) {
+    auto* self = static_cast<GNewsEngine*>(arg);
+    self->fetchWorker();
+    self->m_fetchExited.store(true, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
+void GNewsEngine::fetchWorker() {
+    while (!m_stopFetch.load(std::memory_order_acquire)) {
+        bool force = config_force_refresh || m_fetchRequested.exchange(false);
+        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
+                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
+                               config_requests_per_day, force);
+
+        // Sleep in 100ms slices up to 10 seconds (or until stopped/requested)
+        for (int i = 0; i < 100 && !m_stopFetch.load(std::memory_order_acquire); i++) {
+            if (m_fetchRequested.load(std::memory_order_acquire)) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+}
+
 void GNewsEngine::activate() {
-    gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                           config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                           config_requests_per_day, false);
     currentArticleIndex = 0;
     currentPageIndex = 0;
     totalPages = 1;
@@ -392,6 +442,7 @@ void GNewsEngine::activate() {
     lastScrollTick = millis();
     lastSourceTick = millis();
     lastArticleSwitchTime = millis();
+    startFetchTask();
 }
 
 void GNewsEngine::onConfigChanged(const EngineConfig* config) {
@@ -400,17 +451,13 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     cachedArticleIndex = -1;
     if (config_force_refresh && !prevForce) {
         gnewsService.purgeArticles();
-        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                               config_requests_per_day, true);
-    } else {
-        gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                               config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                               config_requests_per_day, false);
     }
+    m_fetchRequested.store(true, std::memory_order_release);
 }
 
-void GNewsEngine::deactivate() {}
+void GNewsEngine::deactivate() {
+    stopFetchTask();
+}
 
 bool GNewsEngine::isFinished() const {
     return false;
@@ -419,11 +466,6 @@ bool GNewsEngine::isFinished() const {
 void GNewsEngine::update(EngineContext* context) {
     uint32_t now = millis();
     lastUpdateTime = now;
-
-    // Periodic scheduled check
-    gnewsService.fetchNews(config_api_key, config_category, config_keywords,
-                           config_lang, config_country, config_max_articles, config_cache_ttl_min,
-                           config_requests_per_day, false);
 
     // Smooth sinusoidal pulsing beacon (0.0 to 1.0)
     beaconPulse = (sinf((float)sourceMarqueeOffset * 0.1f) + 1.0f) * 0.5f;
@@ -443,7 +485,7 @@ void GNewsEngine::update(EngineContext* context) {
         lastSourceTick += steps * 35;
     }
 
-    auto* matrix = context ? context->getMatrix() : nullptr;
+    auto* matrix = context ? context->getSurface() : nullptr;
     int mW = matrix ? matrix->width() : (_geometry.width > 0 ? _geometry.width : 64);
     int mH = matrix ? matrix->height() : (_geometry.height > 0 ? _geometry.height : 32);
 
@@ -581,8 +623,8 @@ void GNewsEngine::update(EngineContext* context) {
 }
 
 void GNewsEngine::render(EngineContext* context) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -635,8 +677,8 @@ void GNewsEngine::render(EngineContext* context) {
 }
 
 void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -791,8 +833,8 @@ void GNewsEngine::renderWide(EngineContext* context, const GNewsArticle& article
 }
 
 void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -868,8 +910,8 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
 }
 
 void GNewsEngine::renderVertical(EngineContext* context, const GNewsArticle& article, size_t totalCount) {
-    if (!context || !context->getMatrix()) return;
-    auto* matrix = context->getMatrix();
+    if (!context || !context->getSurface()) return;
+    auto* matrix = context->getSurface();
     int mW = matrix->width();
     int mH = matrix->height();
 
@@ -968,8 +1010,14 @@ EngineDescriptor GNewsEngineDescriptorHandler::getDescriptor() const {
     desc.capabilities.supports_256x64 = true;
     desc.capabilities.allowsOverlay = true;
     desc.capabilities.allowRotation = true;
-    desc.requirements.needsPsram = true;
+    desc.requirements.needsPsram = false;
     desc.requirements.needsNetwork = true;
+    desc.requirements.needsTls = true;
+    desc.requirements.targetFps = 30;
+    desc.requirements.supportsSingleBuffer = true;
+    desc.requirements.internalPersistentBytes = 12000;
+    desc.requirements.internalContiguousBytes = 16000;
+    desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
         ConfigField("api_key", ConfigType::STRING, "API Key", "GNews.io API key (comma-separated for multi-key pool)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

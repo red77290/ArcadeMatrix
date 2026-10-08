@@ -1,9 +1,10 @@
 #include "WeatherIcon.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <string.h>
 
 namespace WeatherIcon {
 
-void draw(MatrixPanel_I2S_DMA* matrix, const char* icon, int x, int y, int scale) {
+void draw(IDrawingSurface* matrix, const char* icon, int x, int y, int scale) {
     if (!matrix || !icon) return;
     // 24x24 pixel design, scaled by an integer factor for larger panels.
     const int s = max(1, scale);

@@ -4,6 +4,11 @@
 #include <ArduinoJson.h>
 #include "SDUtils.h"
 #include "Core0Lifecycle.h"
+#include "SdLockGuard.h"
+#include "storage/SdConfigStorage.h"
+#include "storage/ModularConfigManager.h"
+#include <memory>
+#include <new>
 
 extern SemaphoreHandle_t sdMutex;
 
@@ -87,6 +92,7 @@ void ConfigLoader::publishSnapshot_locked() {
     uint32_t newVer = _configVersion.fetch_add(1, std::memory_order_relaxed) + 1;
     snap.magic_start = ConfigSnapshot::MAGIC_START;
     snap.version = newVer;
+    snap.schema_version = schema_version;
     snap.matrix = matrix;
     snap.wifi = wifi;
     snap.mqtt = mqtt;
@@ -126,26 +132,9 @@ void ConfigLoader::setDefaults() {
     };
     
     addInstance("clock_main", "clock");
-    addInstance("date_main", "date");
-    addInstance("weather_main", "weather");
-    addInstance("temp_main", "temp");
-    addInstance("decibel_main", "decibelMeter");
-    addInstance("crypto_main", "crypto");
-    addInstance("stock_main", "stock");
-    addInstance("visualizer_main", "audiovisualizer");
-    addInstance("gifs_main", "gifs");
-    addInstance("message_main", "message");
 
     RotationEntry re;
     re.instance_id = "clock_main"; re.duration_sec = 15; rotation.push_back(re);
-    re.instance_id = "date_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "weather_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "crypto_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "stock_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "gifs_main"; re.duration_sec = 30; rotation.push_back(re);
-    re.instance_id = "temp_main"; re.duration_sec = 10; rotation.push_back(re);
-    re.instance_id = "decibel_main"; re.duration_sec = 15; rotation.push_back(re);
-    re.instance_id = "message_main"; re.duration_sec = 15; rotation.push_back(re);
 
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
     matrix.width = 256;
@@ -154,12 +143,12 @@ void ConfigLoader::setDefaults() {
 #else
     matrix.width = 64;
     matrix.height = 32;
-    matrix.chainLength = 1;
+    matrix.chainLength = 2;
 #endif
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
-    matrix.forceSingleBuffer = false;
-    matrix.colorDepth = 8;
+    matrix.colorDepth = 0; // 0 = Auto (Adaptive TLS / Hardware)
+    matrix.dynamicColorDepth = true; // Auto adaptive presentation pipeline enabled by default
     matrix.rgbSequence = "RGB";
     matrix.limitRefreshRateHz = 90;
     matrix.driverChip = "SHIFTREG";
@@ -171,6 +160,7 @@ void ConfigLoader::setDefaults() {
     matrix.auto_rotate = true;
     matrix.rotation_transition = "vortex";
     matrix.rotation_transition_duration_ms = 400;
+    matrix.render_pipeline = "auto";
     matrix.slot_transition = "none";
     matrix.slot_transition_duration_ms = 500;
 
@@ -217,6 +207,12 @@ bool ConfigLoader::parseFromJson(const char* jsonContent) {
 }
 
 bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
+    if (doc.containsKey("schema_version")) {
+        schema_version = doc["schema_version"].as<uint32_t>();
+    } else {
+        schema_version = 1;
+    }
+
     if (doc.containsKey("system")) {
         JsonObjectConst sys = doc["system"];
         system.timezone = sys["timezone"] | system.timezone;
@@ -256,12 +252,17 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (disp.containsKey("power_limit_percent")) matrix.powerLimitPercent = disp["power_limit_percent"].as<int>();
         else if (disp.containsKey("powerLimitPercent")) matrix.powerLimitPercent = disp["powerLimitPercent"].as<int>();
         
-        if (disp.containsKey("force_single_buffer")) matrix.forceSingleBuffer = disp["force_single_buffer"].as<bool>();
-        else if (disp.containsKey("forceSingleBuffer")) matrix.forceSingleBuffer = disp["forceSingleBuffer"].as<bool>();
+        bool legacySingle = false;
+        if (disp.containsKey("force_single_buffer")) legacySingle = disp["force_single_buffer"].as<bool>();
+        else if (disp.containsKey("forceSingleBuffer")) legacySingle = disp["forceSingleBuffer"].as<bool>();
         
         if (disp.containsKey("color_depth")) matrix.colorDepth = disp["color_depth"].as<int>();
         else if (disp.containsKey("colorDepth")) matrix.colorDepth = disp["colorDepth"].as<int>();
         else if (disp.containsKey("pwm_bits")) matrix.colorDepth = disp["pwm_bits"].as<int>();
+        
+        if (disp.containsKey("dynamic_color_depth")) matrix.dynamicColorDepth = disp["dynamic_color_depth"].as<bool>();
+        else if (disp.containsKey("dynamicColorDepth")) matrix.dynamicColorDepth = disp["dynamicColorDepth"].as<bool>();
+        else if (matrix.colorDepth == 0) matrix.dynamicColorDepth = true;
         
         if (disp.containsKey("rgb_sequence")) matrix.rgbSequence = disp["rgb_sequence"].as<String>();
         else if (disp.containsKey("rgbSequence")) matrix.rgbSequence = disp["rgbSequence"].as<String>();
@@ -297,6 +298,10 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
 
         if (disp.containsKey("matrix_power")) matrix.matrix_power = disp["matrix_power"].as<bool>();
         else if (disp.containsKey("matrixPower")) matrix.matrix_power = disp["matrixPower"].as<bool>();
+
+        if (disp.containsKey("render_pipeline")) matrix.render_pipeline = disp["render_pipeline"].as<String>();
+        else if (disp.containsKey("renderPipeline")) matrix.render_pipeline = disp["renderPipeline"].as<String>();
+        else if (legacySingle) matrix.render_pipeline = "canvas_single";
     }
 
     if (doc.containsKey("wifi")) {
@@ -415,12 +420,10 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
     return true;
 }
 
-String ConfigLoader::serializeToJson(bool pretty) const {
-    // Reuse the persistent scratch document instead of allocating a fresh 32KB
-    // DynamicJsonDocument on every save (see ConfigLoader.h for the fragmentation
-    // rationale). clear() resets content but keeps the already-allocated pool.
-    _jsonScratch.clear();
-    auto& doc = _jsonScratch;
+void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
+    doc.clear();
+
+    doc["schema_version"] = schema_version;
 
     JsonObject sysObj = doc.createNestedObject("system");
     sysObj["timezone"] = system.timezone;
@@ -444,8 +447,10 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["panelType"] = matrix.panelType;
     dispObj["chainLength"] = matrix.chainLength;
     dispObj["powerLimitPercent"] = matrix.powerLimitPercent;
-    dispObj["forceSingleBuffer"] = matrix.forceSingleBuffer;
+    dispObj["render_pipeline"] = matrix.render_pipeline;
     dispObj["colorDepth"] = matrix.colorDepth;
+    dispObj["dynamicColorDepth"] = matrix.dynamicColorDepth;
+    dispObj["dynamic_color_depth"] = matrix.dynamicColorDepth;
     dispObj["rgbSequence"] = matrix.rgbSequence;
     dispObj["limitRefreshRateHz"] = matrix.limitRefreshRateHz;
     dispObj["driverChip"] = matrix.driverChip;
@@ -459,6 +464,7 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     dispObj["slot_transition"] = matrix.slot_transition;
     dispObj["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     dispObj["matrix_power"] = matrix.matrix_power;
+    dispObj["render_pipeline"] = matrix.render_pipeline;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;
@@ -503,6 +509,11 @@ String ConfigLoader::serializeToJson(bool pretty) const {
         }
     }
 
+}
+
+String ConfigLoader::serializeToJson(bool pretty) const {
+    SpiRamJsonDocument doc(kJsonScratchCapacity);
+    buildJsonScratch(doc);
     String output;
     if (pretty) {
         serializeJsonPretty(doc, output);
@@ -512,29 +523,208 @@ String ConfigLoader::serializeToJson(bool pretty) const {
     return output;
 }
 
+static bool repairTruncatedJson(std::vector<char>& buf) {
+    while (!buf.empty() && (buf.back() == '\0' || isspace((unsigned char)buf.back()))) {
+        buf.pop_back();
+    }
+    if (buf.empty()) return false;
+
+    // 1. Check if truncated inside an open string (odd count of unescaped quotes)
+    bool inString = false;
+    bool escaped = false;
+    for (size_t i = 0; i < buf.size(); i++) {
+        char c = buf[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\' && inString) { escaped = true; continue; }
+        if (c == '"') { inString = !inString; continue; }
+    }
+    if (inString) {
+        // Discard the unclosed string back to its opening quote
+        int openQuote = -1;
+        for (int i = (int)buf.size() - 1; i >= 0; i--) {
+            if (buf[i] == '"' && (i == 0 || buf[i - 1] != '\\')) {
+                openQuote = i;
+                break;
+            }
+        }
+        if (openQuote >= 0) {
+            buf.resize(openQuote);
+        }
+    }
+
+    // 2. Strip trailing whitespace, commas, colons
+    while (!buf.empty()) {
+        char c = buf.back();
+        if (c == '\0' || isspace((unsigned char)c) || c == ',' || c == ':') {
+            buf.pop_back();
+        } else {
+            break;
+        }
+    }
+    if (buf.empty()) return false;
+
+    // 3. Ensure the last element in an object isn't a dangling key without a value
+    if (!buf.empty() && buf.back() == '"') {
+        int quoteStart = -1;
+        for (int i = (int)buf.size() - 2; i >= 0; i--) {
+            if (buf[i] == '"' && (i == 0 || buf[i - 1] != '\\')) {
+                quoteStart = i;
+                break;
+            }
+        }
+        if (quoteStart >= 0) {
+            int prev = quoteStart - 1;
+            while (prev >= 0 && isspace((unsigned char)buf[prev])) prev--;
+            if (prev >= 0 && (buf[prev] == ',' || buf[prev] == '{')) {
+                buf.resize(prev >= 0 && buf[prev] == ',' ? prev : quoteStart);
+                while (!buf.empty() && (buf.back() == '\0' || isspace((unsigned char)buf.back()) || buf.back() == ',')) {
+                    buf.pop_back();
+                }
+            }
+        }
+    }
+    if (buf.empty()) return false;
+
+    // 4. Balance open structures up to this point
+    std::vector<char> stack;
+    inString = false;
+    escaped = false;
+    for (size_t i = 0; i < buf.size(); i++) {
+        char c = buf[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\' && inString) { escaped = true; continue; }
+        if (c == '"') { inString = !inString; continue; }
+        if (!inString) {
+            if (c == '{' || c == '[') stack.push_back(c);
+            else if (c == '}' && !stack.empty() && stack.back() == '{') stack.pop_back();
+            else if (c == ']' && !stack.empty() && stack.back() == '[') stack.pop_back();
+        }
+    }
+
+    // 5. Close any unclosed parent arrays and root object
+    while (!stack.empty()) {
+        char open = stack.back();
+        stack.pop_back();
+        buf.push_back(open == '{' ? '}' : ']');
+    }
+    buf.push_back('\0');
+    return true;
+}
+
 bool ConfigLoader::loadFromSD(const char* filepath) {
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+    SdLockGuard lock(pdMS_TO_TICKS(3000));
+    if (!lock) {
         LOGE("ConfigLoader", "Cannot load %s: SD busy (mutex timeout)", filepath);
         return false;
+    }
+
+    // 1. Check for modular configuration or legacy migration
+    SdConfigStorage sdStorage;
+    ModularConfigManager mgr(sdStorage);
+
+    // If /config/hardware.json already exists, load modularly (micro-buffers, fast, low DRAM)
+    if (sdStorage.exists("/config/hardware.json") && sdStorage.exists("/config/system.json")) {
+        LOGI("ConfigLoader", "Loading modular configuration from /config/...");
+        if (mgr.loadAll(*this)) {
+            publishSnapshot_locked();
+            LOGI("ConfigLoader", "Modular configuration loaded successfully from /config/.");
+            return true;
+        }
+    }
+
+    // Otherwise, check for legacy /config.json and migrate to /config/
+    if (mgr.checkAndMigrateLegacy(*this, filepath)) {
+        publishSnapshot_locked();
+        LOGI("ConfigLoader", "Legacy configuration migrated and loaded successfully.");
+        return true;
     }
 
     auto tryLoad = [this](const char* path) -> bool {
         if (!sd.exists(path)) return false;
         FsFile f = sd.open(path, FILE_OPEN_READ);
         if (!f) return false;
-        // Reuse the persistent scratch document (see ConfigLoader.h) instead of a fresh
-        // 32KB allocation. loadFromSD() only ever runs once at boot before any other task
-        // touches config, so there is no concurrency concern with serializeToJson()'s use
-        // of the same buffer.
-        _jsonScratch.clear();
-        auto& doc = _jsonScratch;
-        DeserializationError error = deserializeJson(doc, f);
-        f.close();
-        if (error) {
-            LOGE("ConfigLoader", "JSON parse error in %s: %s", path, error.c_str());
+        size_t fsize = f.size();
+        LOGI("ConfigLoader", "Reading %s (%u bytes)...", path, (unsigned)fsize);
+        if (fsize == 0 || fsize > 65536) {
+            LOGW("ConfigLoader", "File %s invalid size: %u bytes", path, (unsigned)fsize);
+            f.close();
             return false;
         }
-        return this->parseFromJsonDoc(doc);
+
+        std::vector<char> buffer(fsize + 1);
+        size_t bytesRead = f.read((uint8_t*)buffer.data(), fsize);
+        f.close();
+
+        if (bytesRead != fsize) {
+            LOGE("ConfigLoader", "Short read on %s: expected %u, got %u", path, (unsigned)fsize, (unsigned)bytesRead);
+            return false;
+        }
+        buffer[fsize] = '\0';
+
+        // Skip BOM or leading garbage until '{'
+        size_t start = 0;
+        if (fsize >= 3 && (uint8_t)buffer[0] == 0xEF && (uint8_t)buffer[1] == 0xBB && (uint8_t)buffer[2] == 0xBF) {
+            start = 3;
+            LOGI("ConfigLoader", "Skipped UTF-8 BOM (3 bytes)");
+        }
+        while (start < fsize && isspace((unsigned char)buffer[start])) {
+            start++;
+        }
+
+        // If file starts directly with key like "system": or "matrix": without opening '{', insert it
+        if (start < fsize && buffer[start] != '{') {
+            size_t firstBrace = start;
+            while (firstBrace < fsize && buffer[firstBrace] != '{') firstBrace++;
+            if (firstBrace < fsize) {
+                LOGW("ConfigLoader", "Skipped %u bytes before opening '{'", (unsigned)(firstBrace - start));
+                start = firstBrace;
+            } else if (buffer[start] == '"') {
+                LOGW("ConfigLoader", "Detected missing opening '{', wrapping root object...");
+                buffer.insert(buffer.begin() + start, '{');
+                buffer.push_back('}');
+                buffer.push_back('\0');
+                fsize = buffer.size() - 1;
+            }
+        }
+
+        if (start > 0) {
+            buffer.erase(buffer.begin(), buffer.begin() + start);
+            fsize = buffer.size() - 1;
+        }
+
+        // Keep a pristine backup of buffer before any parsing
+        // (deserializeJson on non-const char* mutates the buffer in Zero-Copy mode!)
+        std::vector<char> repairBuffer = buffer;
+
+        // Transient scratch document, released when tryLoad() returns.
+        SpiRamJsonDocument doc(kJsonScratchCapacity);
+        // Pass const char* to prevent zero-copy in-place mutation of buffer
+        DeserializationError error = deserializeJson(doc, static_cast<const char*>(buffer.data()));
+        bool wasRepaired = false;
+
+        if (error == DeserializationError::IncompleteInput || error == DeserializationError::InvalidInput) {
+            LOGW("ConfigLoader", "Attempting auto-repair on %s (%s)...", path, error.c_str());
+            if (repairTruncatedJson(repairBuffer)) {
+                doc.clear();
+                error = deserializeJson(doc, static_cast<const char*>(repairBuffer.data()));
+                if (!error) {
+                    LOGI("ConfigLoader", "REPAIR SUCCESS: Recovered config from %s!", path);
+                    wasRepaired = true;
+                }
+            }
+        }
+
+        if (error) {
+            LOGE("ConfigLoader", "JSON parse error in %s (%u bytes, doc cap %u): %s",
+                 path, (unsigned)fsize, (unsigned)doc.capacity(), error.c_str());
+            return false;
+        }
+        bool parsed = this->parseFromJsonDoc(doc);
+        if (parsed && wasRepaired) {
+            LOGI("ConfigLoader", "Rewriting cleanly repaired configuration to SD card (%s)...", path);
+            this->saveToSD(path);
+        }
+        return parsed;
     };
 
     bool loaded = tryLoad(filepath);
@@ -549,8 +739,6 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         }
     }
 
-    if (sdMutex) xSemaphoreGive(sdMutex);
-
     if (loaded) {
         LOGI("ConfigLoader", "Configuration loaded successfully from %s", filepath);
         return true;
@@ -561,21 +749,60 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 }
 
 bool ConfigLoader::saveToSD(const char* filepath) {
-    publishSnapshot();
-    if (sdMutex && xSemaphoreTake(sdMutex, pdMS_TO_TICKS(3000)) != pdTRUE) {
+    SdLockGuard lock(pdMS_TO_TICKS(5000));
+    if (!lock) {
         LOGE("ConfigLoader", "Cannot save %s: SD busy (mutex timeout)", filepath);
         return false;
     }
 
-    String jsonStr = serializeToJson(true);
-    if (jsonStr.length() < 30) {
-        LOGE("ConfigLoader", "Refusing to save truncated JSON to %s", filepath);
-        if (sdMutex) xSemaphoreGive(sdMutex);
+    const bool isMainConfig = (strcmp(filepath, "/config.json") == 0);
+    SdConfigStorage sdStorage;
+    // One manager per save; saveAll() persists the instances without copying them into a cache.
+    std::unique_ptr<ModularConfigManager> mgr;
+    if (isMainConfig) {
+        mgr.reset(new (std::nothrow) ModularConfigManager(sdStorage));
+    }
+    publishSnapshot();
+
+    bool modularOk = false;
+    if (isMainConfig && mgr) {
+        modularOk = mgr->saveAll(*this);
+        if (modularOk) {
+            LOGI("ConfigLoader", "Modular configuration saved successfully to /config/.");
+        } else {
+            LOGW("ConfigLoader", "Modular configuration save encountered an error.");
+        }
+    }
+
+    // Build the document in a transient scratch and measure it; the text itself is streamed
+    // straight into the file below, so no transient String is allocated during a save.
+    size_t jsonLen = 0;
+    size_t written = 0;
+    String bakPath = String(filepath) + ".bak";
+    {
+    size_t neededCap = 2048 + instances.size() * 384 + rotation.size() * 128;
+    if (neededCap > kJsonScratchCapacity) neededCap = kJsonScratchCapacity;
+    if (neededCap < 3072) neededCap = 3072;
+    SpiRamJsonDocument doc(neededCap);
+    buildJsonScratch(doc);
+    if (doc.overflowed() || doc.capacity() == 0) {
+        if (modularOk) {
+            LOGW("ConfigLoader", "Transient scratch overflowed capacity (%u bytes) for legacy monolithic file, but modular config in /config/ was saved successfully.",
+                 (unsigned)doc.capacity());
+            return true;
+        }
+        LOGE("ConfigLoader", "CRITICAL: JSON document overflowed capacity (%u bytes)! Refusing to write truncated config to %s",
+             (unsigned)doc.capacity(), filepath);
+        return false;
+    }
+    jsonLen = measureJsonPretty(doc);
+    if (jsonLen < 30) {
+        if (modularOk) return true;
+        LOGE("ConfigLoader", "Refusing to save truncated JSON to %s (len=%u)", filepath, (unsigned)jsonLen);
         return false;
     }
 
     // 1. Remove previous backup if exists
-    String bakPath = String(filepath) + ".bak";
     if (sd.exists(bakPath.c_str())) {
         sd.remove(bakPath.c_str());
     }
@@ -592,17 +819,22 @@ bool ConfigLoader::saveToSD(const char* filepath) {
         if (sd.exists(bakPath.c_str())) {
             sd.rename(bakPath.c_str(), filepath);
         }
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        return false;
+        return modularOk;
     }
 
-    size_t written = f.print(jsonStr);
+    written = serializeJsonPretty(doc, f);
     f.flush();
     f.close();
+    }
 
-    if (written >= jsonStr.length()) {
-        if (sdMutex) xSemaphoreGive(sdMutex);
-        LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, written);
+    if (written >= jsonLen) {
+        LOGI("ConfigLoader", "Configuration saved successfully to %s (%d bytes)", filepath, (int)written);
+        return true;
+    }
+
+    if (modularOk) {
+        LOGW("ConfigLoader", "Legacy monolithic write incomplete (%d/%d bytes), but modular config is valid.",
+             (int)written, (int)jsonLen);
         return true;
     }
 
@@ -611,11 +843,10 @@ bool ConfigLoader::saveToSD(const char* filepath) {
     // corrupted one: SD writes do fail under memory pressure, and losing the whole
     // configuration on a transient failure is not acceptable.
     LOGE("ConfigLoader", "Incomplete write to %s (%d/%d bytes), restoring backup...",
-         filepath, written, jsonStr.length());
+         filepath, (int)written, (int)jsonLen);
     sd.remove(filepath);
     if (sd.exists(bakPath.c_str())) {
         sd.rename(bakPath.c_str(), filepath);
     }
-    if (sdMutex) xSemaphoreGive(sdMutex);
     return false;
 }

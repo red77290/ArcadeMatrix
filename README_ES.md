@@ -39,6 +39,7 @@
 - **📰 Noticias y Ticker GNews en Vivo (`gnews`):** titulares y noticias destacadas en tiempo real por temas (Tecnología, Mundo, Economía, Ciencia, Deportes...), baliza luminosa de directo, desplazamiento subpíxel fluido a 60 FPS y filtrado multiidioma/regional.
 - **🌦️ Pronóstico del Clima Dinámico (`weather`):** clima actual, temperatura, pronósticos para 3 días e iconos retro animados mediante OpenWeatherMap.
 - **🌡️ Temperatura y Humedad Interior (SHTC3):** Pantalla adaptativa (°C/°F), iconos Pixel Art de termómetro y agua, y endpoint REST  para integración con Home Assistant.
+- **📊 Motor Home Assistant y Datos MQTT (`mqttdata`):** ¡Muestra en tiempo real tus paneles de Home Assistant, valores de sensores, tablas multi-entidad, gráficos históricos de 24 horas y pronósticos meteorológicos locales mediante MQTT! Cero plantillas complejas necesarias gracias a los [Blueprints de Home Assistant](https://github.com/red77290/ArcadeMatrix/tree/main/tools/home_assistant/blueprints) listos para importar y a la [Guía de integración de Home Assistant](docs/HOME_ASSISTANT_ES.md) — implementado por [@TooncesToo](https://github.com/TooncesToo).
 - **🔊 Sonómetro y Medidor de Decibelios (Uso para Salón de Arcade / Gaming Room :) :** Medición en tiempo real del nivel de ruido con 6 smileys en Pixel Art (<45dB 😊 a >88dB 🚨) y Visualizador de Audio. **¡Ideal para controlar el nivel sonoro en una sala de arcade ruidosa, gaming room o fiesta retro!** ([🎥 Ver la Demo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
 - **🎵 Visualizador de Música Rítmica:** 4 modos de visualización prioritaria (Spectrum Equalizer con retención de picos, Oscilloscope Waveform, Radial Circles y Neon Fire).
 - **Interfaz web Wi-Fi:** accede a `http://arcadematrix.local` para gestionar playlists, calibrar la orientación de la pantalla y cambiar la configuración en vivo.
@@ -47,6 +48,74 @@
 - **Soporte MQTT (`marquee`):** Se integra perfectamente con Batocera y Recalbox para mostrar marquesinas de juegos.
 - **Actualizaciones OTA:** Flashea actualizaciones de firmware de forma inalámbrica directamente a través de la Web UI.
 - **Soporte ESP32-S3 Waveshare:** Soporte completo para placas ESP32-S3 de gama alta y paneles 256x64 True Matrix mediante DMA.
+
+> [!NOTE]
+> **Aviso sobre el renderizado de hardware:** Las capturas de pantalla, vistas previas de motores y posters de relojes presentados en esta documentación son simulaciones de software de alta fidelidad diseñadas para ilustrar el diseño, las animaciones y la telemetría. El aspecto visual real en un panel físico de matriz LED HUB75 puede variar según el paso de píxel (pitch), el filtro difusor acrílico, el brillo de los LEDs y la iluminación ambiental.
+
+---
+
+## 🎮 Relojes Retro Legendarios (Posters & Simulaciones HUB75)
+
+> [!NOTE]
+> Las vistas previas a continuación son simulaciones de software de alta fidelidad. El renderizado visual real en una matriz LED HUB75 física puede presentar ligeras diferencias (difusión óptica, colorimetría y brillo percibido).
+
+ArcadeMatrix incluye una colección exclusiva de relojes retro de arcade y consolas sincronizados por hardware, renderizados con sprites originales 100 % fieles al píxel a 60 FPS estables, con cero asignaciones dinámicas en el bucle caliente Core 1:
+
+### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Tema 41
+*Pixel art auténtico de SNK Neo Geo con escenario de bazar en el desierto árabe, animaciones de combate de Marco Rossi, tanque rebelde Di-Cokka, helicóptero patrulla y tiroteos con ametralladora pesada.*
+![Reloj Metal Slug](docs/assets/clocks/poster_metal_slug.png)
+
+### 2. Castlevania (Konami NES) — Tema 31
+*Campanario gótico con Simon Belmont subiendo la gran escalera de piedra hacia los aposentos de Drácula, antorcha parpadeante en pedestal, murciélago vampiro cruzando la luna de sangre y dígitos góticos en marfil de alta legibilidad.*
+![Reloj Castlevania](docs/assets/clocks/poster_castlevania.png)
+
+### 3. Super Mario Bros (NES) — Tema 30
+*Overworld del Reino Champiñón con bloques de ladrillo y de interrogación 16x16 originales, Mario saltando para golpear bloques y liberar monedas, y Goombas animados.*
+![Reloj Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
+
+### 4. Mega Man (Capcom NES) — Tema 35
+*Fortaleza Wily de Capcom con plataformas técnicas separadas, barra de energía vital, Metool dormido y Mega Man disparando con su Buster al pod de minutos.*
+![Reloj Mega Man](docs/assets/clocks/poster_megaman.png)
+
+### 5. Sonic The Hedgehog (Sega Genesis) — Tema 39
+*Plataformas ajedrezadas de Green Hill Zone, anillos dorados giratorios, muelle rojo, badnik Motobug y animaciones de espera y salto spin-dash de Sonic.*
+![Reloj Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
+
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Tema 32
+*Interfaz Pokédex (Pocket Index) auténtica de doble pantalla con visor de inspección, sprite animado de Pikachu, reloj digital en fuente PKMN, barra de telemetría de segundos y sensor LED de estado parpadeante.*
+![Reloj Pokédex](docs/assets/clocks/poster_pokedex.png)
+
+### 7. Pac-Man Arcade (Namco 1980) — Tema 26
+*Laberinto arcade Namco original con pasillos de neón azul, puntos, Pac-Man animado y los 4 fantasmas perseguidores (Blinky, Pinky, Inky, Clyde).*
+![Reloj Pac-Man](docs/assets/clocks/poster_pacman.png)
+
+### 8. Russian Tetris (Alexey Pajitnov / Game Boy) — Tema 23
+*Legendario rompecabezas de bloques con minos 3D biselados dinámicos (I, J, L, O, S, T, Z) cayendo en cascada para construir las horas y minutos en tiempo real.*
+![Reloj Tetris](docs/assets/clocks/poster_tetris.png)
+
+### 9. World Clock & Terminador Solar — Tema 33
+*Mapa mundial continental de alta resolución con terminador solar día/noche dinámico que calcula la declinación solar en tiempo real, marcador de meridiano local y hora dual UTC/local.*
+![Reloj World Map](docs/assets/clocks/poster_worldmap.png)
+
+### 10. True Matrix Rain (Hermanas Wachowski 1999) — Tema 21
+*Lluvia digital icónica con cascadas de glifos verde fósforo, velocidades de caída aleatorias, cabezas blancas luminosas, estelas de persistencia y dígitos de neón brillantes.*
+![Reloj Matrix Rain](docs/assets/clocks/poster_matrix_rain.png)
+
+---
+
+## 🚀 Compatibilidad Universal de Motores: Auto Depth & Auto Buffer
+
+ArcadeMatrix integra un canal de ejecución avanzado y consciente de la memoria que permite que los 18 motores (incluidos los más exigentes como `AnimatedGIF`, `Stock`, `Crypto` y `MUGEN`) funcionen sin problemas tanto en placas **ESP32 clásicas con 0 KB de PSRAM** como en potentes **ESP32-S3 con 16 MB de PSRAM**:
+
+- **🎨 Auto Color Depth (`dynamic_color_depth`)**:
+  - **Gráficos Ricos en 8 Bits por Defecto**: Relojes, animaciones de lucha MUGEN, visualizadores, mensajes y marquesinas se procesan con una profundidad de color máxima de 8 bits (hasta 256 niveles de brillo por canal RGB).
+  - **Recuperación Dinámica de Sandbox de Memoria**: Cuando los motores de red (`stock`, `crypto`, `weather`, `gnews`) necesitan realizar peticiones HTTPS, el controlador HUB75 DMA pasa temporalmente a 4 bits bajo apagado de hardware (blanking OE). Esto libera al instante entre **16 y 24 KB de RAM DMA contigua**, garantizando margen holgado para las conexiones TLS y el procesamiento JSON sin fragmentar la memoria dinámica.
+  - **Transiciones Instantáneas de 0 ms**: Tan pronto como los datos de mercado y gráficos están en caché (`needsTlsFetch() == false`), la reducción a 4 bits se omite. Stock y Crypto se activan de inmediato en **calidad total de 8 bits con 0 ms de retardo (cero cortes en pantalla)**.
+
+- **⚡ Canalización de Búfer Automática (`render_pipeline: auto`)**:
+  - **Aceleración PSRAM**: En placas ESP32-S3, asigna un canvas de 16 bits en PSRAM con búfer doble DMA (`canvas_double`) para una fluidez absoluta a 60 FPS sin desgarro de pantalla.
+  - **Aislamiento DMA en SRAM1**: En chips ESP32 estándar, el canvas fuera de pantalla de 8 KB se pre-asigna en **SRAM1** (DRAM interna exclusiva de CPU) en el arranque temprano antes de iniciar Wi-Fi y el servidor Web. Esto salvaguarda **8.192 bytes de memoria contigua apta para DMA en la SRAM2**, evitando la inanición del heap.
+  - **Búfer Simple sin Desgarro**: Utiliza ráfagas secuenciales con `Hub75BulkEncoder` para sincronizar las tramas, eliminando el tearing incluso en configuraciones con un solo búfer DMA.
 
 ## Estructura de la tarjeta SD
 Formatea tu tarjeta SD en **FAT32** o **exFAT**. Tu tarjeta SD debería verse así:
@@ -126,29 +195,44 @@ El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personali
 
 Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 
-## ⚡ Compatibilidad de Hardware y Funcionalidades
+## ⚡ Compatibilidad de Hardware y Motores
 
-| Funcionalidad | ESP32-S3 (Placa Waveshare) | ESP32 Clásico (DevKit) |
-| :--- | :---: | :---: |
-| Tamaño de matriz | Hasta 256x64 (True Matrix) | Hasta 128x32 |
-| Double Buffering | ✅ Sí (Fluido) | ✅ Sí (Fluido) |
-| Animaciones (GIFs) | ✅ Sí | ✅ Sí |
-| Motor MUGEN | ✅ Sí | ✅ Sí |
-| Interfaz Web & Wi-Fi | ✅ Sí | ✅ Sí |
-| **WebRadio Autónoma (Streaming MP3 Wi-Fi)** | ✅ Sí (DAC ES8311 y Altavoz Integrados) | ❌ No (Requiere DAC I2S y PSRAM) |
-| **Streaming de Audio Bluetooth (A2DP)** | ❌ No (El ESP32-S3 es solo BLE 5.0; sin A2DP audio) | ❌ No |
-| **Bluetooth 5 (BLE Control/Config)** | ✅ Sí (Nativo ESP32-S3 BLE) | ✅ Sí |
-| **Auto-Rotación Giroscópica 6 Ejes (`QMI8658`)** | ✅ Sí (IMU integrado y Calibrate 1-clic) | ❌ No (Requiere sensor I2C externo) |
-| **Criptomonedas en Tiempo Real** | ✅ Sí | ❌ No (Falta RAM para SSL) |
-| **Bolsa de Valores** | ✅ Sí | ❌ No (Falta RAM para SSL) |
-| **Medidor de Decibelios** | ✅ Sí (Micrófono Doble ES7210 Integrado) | ❌ No (Requiere micro I2S externo y código personalizado) |
-| **Temperatura y Humedad (SHTC3)** | ✅ Sí (Sensor Integrado) | ❌ No (Requiere SHTC3 I2C externo y código personalizado) |
+| Motor / Funcionalidad | Categoría | ESP32-S3 (Placa Waveshare) | ESP32 Clásico (DevKit / `esp32dev`) | Requisito de Hardware / Red |
+| :--- | :--- | :---: | :---: | :--- |
+| **Reloj y Watch Faces (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Fuentes bitmap dinámicas, temas retro/arcade |
+| **Animaciones GIFs (`gifs`)** | `media` | 🟢 Fullspeed 60 FPS | 🟢 Fullspeed 60 FPS | Tarjeta Micro-SD (orientaciones Yoko / Tate) |
+| **Combate M.U.G.E.N (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Tarjeta Micro-SD (streaming sprites RGB565) |
+| **Panel Desk Deck (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Reloj multi-widget, clima y mercados) |
+| **Criptomonedas en Tiempo Real (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en caché) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
+| **Bolsa de Valores y Gráficos Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en caché) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
+| **Noticias en Directo (`gnews`)** | `news` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS (API GNews) |
+| **Tiempo en Directo (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
+| **Fecha y Calendario (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Hora del sistema local y fondo sprite opcional |
+| **Texto Desplazable (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Desplazador de texto sub-píxel a 60 FPS |
+| **Telemetría del Sistema (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Indicadores en tiempo real CPU, RAM, Temp y Uptime |
+| **Marquesina Retro Arcade (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
+| **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, API Web de Spotify |
+| **Pantalla Google Cast (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, descubrimiento local mDNS |
+| **WebRadio Autónoma (`music`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | Requiere DAC ES8311 y PSRAM |
+| **Visualizador de Espectro Audio FFT (`audiovisualizer`)** | `audio` | 🟢 60 FPS (Micro I2S) | ❌ Incompatible | Requiere conjunto de doble micro ES7210 |
+| **Medidor de Decibelios SPL (`decibel`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Requiere conjunto de doble micro ES7210 |
+| **Sensor de Clima Interior (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Requiere sensor de temperatura/humedad SHTC3 |
+| **Home Assistant y Datos MQTT (`mqttdata`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Broker MQTT / Blueprints de Home Assistant |
+
+👉 *Para el desglose técnico exhaustivo (presupuestos de FPS, RAM interna y DMA), consulta la [Matriz de Compatibilidad de Motores](docs/ENGINE_COMPATIBILITY_MATRIX.md).*
+
+> [!NOTE]
+> ### 💡 Compatibilidad Total TLS en ESP32 Clásico (`esp32dev`) y Prefetch Inteligente de Transición
+> El ESP32 estándar (WROOM-32 sin PSRAM) ahora es **totalmente compatible** con los motores conectados HTTPS/TLS (`crypto`, `stock`, `gnews`, `weather`) gracias a un **espacio de memoria seguro con liberación de DMA**:
+> 1. **¿Por qué una pausa de ~1 segundo en la primera rotación?** En el ESP32 clásico, el escaneo físico HUB75 DMA y el protocolo criptográfico mbedTLS no pueden coexistir a la vez debido a los límites de SRAM interna contigua (~45 KB requeridos por mbedTLS). Durante la transición hacia un motor TLS, el firmware libera temporalmente el framebuffer DMA, abriendo una **ventana de memoria limpia de 89 KB** para descargar por lotes todas las cotizaciones, gráficos e iconos en keep-alive HTTP/1.1 en ~700 ms antes de reconfigurar la pantalla.
+> 2. **Rotaciones Siguientes Instantáneas:** ¡Este prefetch de transición ocurre **solo una vez** en la rotación inicial! Para todas las rotaciones siguientes mientras la caché esté vigente (configurable desde la UI, ej. de 10 a 15 minutos), el motor muestra instantáneamente los datos desde la RAM a **profundidad completa de 8 bits, sin retraso de transición ni tráfico de red**.
+> 3. **Actualización Automática:** Cuando expira el tiempo de vida (TTL) de la caché, el motor realiza limpiamente una actualización en la siguiente rotación y reinicia el ciclo.
 
 > [!NOTE]
 > **Detección de Hardware Dinámica y Degradación Suave:** Todos los sensores de hardware (Giroscopio `QMI8658`, Micrófono `ES7210`, DAC `ES8311`, Sensor de temperatura `SHTC3`) se sondean dinámicamente en el bus I2C/I2S durante el arranque. Si un periférico o sensor no está presente, la funcionalidad se **desactiva automáticamente de forma segura sin bloqueos**, recurriendo al control manual a través de la Web UI.
 
-- **Placa ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)**: **100% Compatible con todas las características.** Altamente recomendada. Necesaria para paneles grandes **256x64 True Matrix**, streaming de WebRadio, rotación giroscópica, módulos que consumen mucha RAM (Criptomonedas, Bolsa) y utiliza los sensores integrados (Decibelios, Temperatura, DAC) directamente de fábrica.
-- **ESP32 Clásico (WROOM-32 / `esp32dev`)**: Procesador de doble núcleo Tensilica Xtensa LX6 @ 240MHz. Soporta animaciones principales, interfaz web y MUGEN para paneles **128x32 / 64x32**. No soporta funciones pesadas en RAM como HTTPS/SSL (Cripto/Bolsa) o streaming de audio autónomo. Los sensores integrados tampoco están presentes en un DevKit estándar.
+- **Placa ESP32-S3 Waveshare RGB Matrix (`esp32s3_waveshare`)**: **100% Compatible con todas las características.** Altamente recomendada. Necesaria para paneles grandes **256x64 True Matrix**, streaming de WebRadio, rotación giroscópica y utiliza los sensores integrados (Decibelios, Temperatura, DAC) directamente de fábrica.
+- **ESP32 Clásico (WROOM-32 / `esp32dev`)**: Procesador de doble núcleo Tensilica Xtensa LX6 @ 240MHz. Soporta animaciones principales, interfaz web, MUGEN y ahora todos los motores en la nube HTTPS/TLS (`crypto`, `stock`, `gnews`, `weather`) para paneles **128x32 / 64x32**. Los sensores físicos de audio/temperatura están ausentes en los DevKits estándar a menos que se conecten externamente.
 
 ## Compilación
 Para compilar el firmware por tu cuenta, debes usar **PlatformIO**.
@@ -167,6 +251,8 @@ pio run -e esp32dev
 - [Guía de cableado](docs/WIRING_ES.md)
 - [Guía de configuración](docs/CONFIGURATION_ES.md)
 - [Guía para desarrolladores](docs/DEVELOPER_ES.md)
+- [Guía de integración con Home Assistant](docs/HOME_ASSISTANT_ES.md)
+- [Blueprints de Home Assistant](tools/home_assistant/blueprints/)
 - [Arquitectura](docs/ARCHITECTURE_ES.md)
 
 ## 🙏 Agradecimientos
@@ -180,7 +266,7 @@ Un enorme agradecimiento a la comunidad de código abierto y a los creadores de 
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** por mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** por Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** por greiman
-- **[@TooncesToo](https://github.com/TooncesToo)** por desarrollar la API de biblioteca GIF de red, subida de archivos múltiples y gestor de archivos Web UI con soporte de doble orientación tanto en ESP32 como en Raspberry Pi.
+- **[@TooncesToo](https://github.com/TooncesToo)** por desarrollar el motor de Home Assistant y Datos MQTT con blueprints listos para usar, la API de biblioteca GIF de red, subida de archivos múltiples y gestor de archivos Web UI con soporte de doble orientación tanto en ESP32 como en Raspberry Pi.
 
 ¡Un agradecimiento especial al **RPiTeam** por el increíble pack de 600 GIFs!
 

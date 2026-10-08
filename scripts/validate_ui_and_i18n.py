@@ -196,21 +196,25 @@ def test_message_engine_smooth_scrolling():
         pass_step("MessageEngine continuous delta-time scrolling contract verified on ESP32 (RPi not present).")
 
 def test_marquee_screen_clear():
-    print("🔍 [6/8] Testing Marquee and Rotation screen clearance contracts...")
+    print("🔍 [6/8] Testing Marquee and Rotation screen clearance contracts (Invariants 18 & 19)...")
     
     rot_mgr = os.path.join(REPO_ROOT, "src", "core", "RotationManager.cpp")
     with open(rot_mgr, "r", encoding="utf-8") as f:
         rot_content = f.read()
-    if "m_ctx->getMatrix()->fillScreen(0)" not in rot_content:
-        fail("RotationManager.cpp: missing fillScreen(0) on module transition")
+    if "m_ctx->getSurface()->clear(0)" not in rot_content:
+        fail("RotationManager.cpp: missing surface clear(0) on module transition (Invariant 18)")
+    if "m_ctx->getMatrix()->fillScreen(0)" in rot_content:
+        fail("RotationManager.cpp: direct matrix fillScreen(0) forbidden (Invariant 19)")
 
     marquee_cpp = os.path.join(REPO_ROOT, "src", "engines", "MarqueeEngine.cpp")
     with open(marquee_cpp, "r", encoding="utf-8") as f:
         marq_content = f.read()
-    if "matrix->fillScreen(0)" not in marq_content:
-        fail("MarqueeEngine.cpp: missing fillScreen(0) in activate()")
+    if "surface->clear(0)" not in marq_content:
+        fail("MarqueeEngine.cpp: missing surface clear(0) in activate() (Invariant 18)")
+    if "matrix->fillScreen(" in marq_content:
+        fail("MarqueeEngine.cpp: direct matrix fillScreen forbidden (Invariant 19)")
 
-    pass_step("Screen clearance verified: no lingering ghost frames during transitions or marquee activate.")
+    pass_step("Screen clearance verified: pure IDrawingSurface isolation maintained across transitions.")
 
 def test_hardware_isolation():
     print("🔍 [7/8] Testing Hardware & WebUI Isolation (GEMINI.md Invariant 8)...")
@@ -244,7 +248,7 @@ def test_hardware_isolation():
         'id="hw-row-addr-type"',
         'id="hw-latch-blanking"',
         'id="hw-clk-phase"',
-        'id="hw-force-single-buffer"',
+        'id="hw-render-pipeline"',
         'id="btn-save-hw"',
     ]
     for term in required_esp_terms:
@@ -260,7 +264,7 @@ def test_hardware_isolation():
         forbidden_esp_in_rpi = [
             'id="hw-caps-grid"',
             'id="hw-clk-phase"',
-            'id="hw-force-single-buffer"',
+            'id="hw-render-pipeline"',
         ]
         for term in forbidden_esp_in_rpi:
             if term in rpi_content:

@@ -1,11 +1,12 @@
 #include "GraphRenderer.h"
+#include "../../core/drawing/IDrawingSurface.h"
 #include <math.h>
 #include "PanelText.h"
 
 // Graph pages of the MQTT Data engine, drawn with the same pixels as the RPi firmware.
 namespace graph_renderer {
 
-static void drawHeader(MatrixPanel_I2S_DMA* matrix, const graph::GraphData& g, const graph::Layout& layout) {
+static void drawHeader(IDrawingSurface* matrix, const graph::GraphData& g, const graph::Layout& layout) {
     auto color = [&](const graph::Rgb& c) { return matrix->color565(c.r, c.g, c.b); };
     const int size = layout.textSize;
     // Title in white, clipped one scale unit before the summary, which is right-aligned with its
@@ -28,7 +29,7 @@ static void drawHeader(MatrixPanel_I2S_DMA* matrix, const graph::GraphData& g, c
     }
 }
 
-void drawGraph(MatrixPanel_I2S_DMA* matrix, const graph::GraphData& g, bool showHeader) {
+void drawGraph(IDrawingSurface* matrix, const graph::GraphData& g, bool showHeader) {
     auto color = [&](const graph::Rgb& c) { return matrix->color565(c.r, c.g, c.b); };
     const graph::Layout layout = graph::calculateLayout(matrix->width(), matrix->height(), showHeader);
     if (layout.header) drawHeader(matrix, g, layout);

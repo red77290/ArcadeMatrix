@@ -20,7 +20,7 @@
  */
 class MarioClock : public ClockFace {
 public:
-    MarioClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    MarioClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
@@ -41,12 +41,19 @@ private:
     uint32_t lastFrameMs = 0;
     Phase phase = Phase::Waiting;
     float runnerX = -40.0f;     ///< runner centre, pixels; starts off the left edge
+    float runnerY = 0.0f;
+    uint8_t climbStage = 0;     ///< multi-stage platform ascent in portrait mode
     float jumpT = 0.0f;         ///< 0..1 through the jump arc
     int jumpTarget = 1;         ///< block the jump is aimed at: 0 hours, 1 minutes
     float blockBounce[2] = { 0.0f, 0.0f };
     bool pendingDigits = false; ///< digits flip when the block is actually hit
     char shownHH[4] = "--";
     char shownMM[4] = "--";
+
+    // 128x32 compact shell-kick animation
+    float shellX = -100.0f;
+    bool shellActive = false;
+    bool coinPop = false;
 
     uint8_t m_dirty = 2;        ///< full repaints still owed (both DMA buffers)
     bool m_hasFrame = true;

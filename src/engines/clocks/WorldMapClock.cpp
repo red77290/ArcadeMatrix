@@ -1,4 +1,7 @@
 #include "WorldMapClock.h"
+
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "WorldMapAssets.h"
 #include "SmallFont.h"
 #include "ClockFaceFont.h"
@@ -34,7 +37,7 @@ constexpr uint16_t MAP_MASK = 0xF81F;
 constexpr uint16_t MARKER = 0xF000;
 }  // namespace
 
-WorldMapClock::WorldMapClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config)
+WorldMapClock::WorldMapClock(IDrawingSurface* display, const EngineConfig* config)
     : ClockFace(display, config) {
     storedTime = { 0, 0, 0 };
 }
@@ -115,3 +118,6 @@ void WorldMapClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     lastMinute = -1;
 }
+
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+

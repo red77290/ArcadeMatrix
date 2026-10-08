@@ -43,6 +43,19 @@ public:
     void setVisualizerEngine(VisualizerEngine* engine);
 
     /**
+     * @brief Pre-initialize REST API and static routes early in boot.
+     *
+     * Consolidates all static route closures at the base of heap before
+     * volatile display surfaces or network engines are allocated.
+     */
+    void preinitRoutes();
+
+    /**
+     * @brief Attach the MessageEngine used by the /api/message route.
+     */
+    void setMessageEngine(MessageEngine* engine);
+
+    /**
      * @brief Initialize the web server, register routes, and start listening.
      */
     void begin();
@@ -52,6 +65,8 @@ private:
     MessageEngine* msg;    ///< Reference to the MessageEngine
     MarqueeEngine* marquee = nullptr; ///< Reference to the MarqueeEngine
     VisualizerEngine* visualizer = nullptr; ///< Reference to the VisualizerEngine
+    bool m_routesInitialized = false; ///< Guard against duplicate route registrations
+    bool m_started = false;           ///< Guard against duplicate begin() invocations
     
     /**
      * @brief Setup all REST API and Static File routes.
@@ -64,7 +79,7 @@ private:
      * @param request The active HTTP request.
      * @param doc The JsonDocument to serialize and send.
      */
-    void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
+    static void sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc);
 
 public:
     /**

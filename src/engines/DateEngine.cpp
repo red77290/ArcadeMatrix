@@ -1,5 +1,4 @@
 #include "DateEngine.h"
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <string.h>
 #include "fonts/ArcadeFonts.h"
 #include "../core/ConfigLoader.h"
@@ -40,7 +39,8 @@ DateEngine::DateEngine() : matrix(nullptr), activeFace(nullptr) {
 }
 
 EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* config) {
-    matrix = context->getMatrix();
+    matrix = context ? context->getSurface() : nullptr;
+    if (!matrix) return EngineError::InitializationFailed;
     matrixW = matrix->width();
     matrixH = matrix->height();
     
@@ -59,10 +59,8 @@ EngineError DateEngine::initialize(EngineContext* context, const EngineConfig* c
         m_config.date_font_path = m_config.date_font;
     }
     
-    reloadCustomFont();
-    
     m_dateDirty = true;
-    setTheme(static_cast<PublisherTheme>(m_config.theme));
+    currentTheme = static_cast<PublisherTheme>(m_config.theme);
     return EngineError::OK;
 }
 
@@ -82,13 +80,21 @@ void DateEngine::onConfigChanged(const EngineConfig* config) {
         m_config.date_color_1 = config->getString("date_color_1", "");
         m_config.date_color_2 = config->getString("date_color_2", "");
         
-        reloadCustomFont();
         m_dateDirty = true;
-        setTheme(static_cast<PublisherTheme>(m_config.theme));
+        currentTheme = static_cast<PublisherTheme>(m_config.theme);
+        if (activeFace) {
+            reloadCustomFont();
+            setTheme(currentTheme);
+        }
     }
 }
 
-void DateEngine::activate() {}
+void DateEngine::activate() {
+    reloadCustomFont();
+    if (!activeFace) {
+        setTheme(currentTheme);
+    }
+}
 
 static void formatLocalizedDate(char* dest, size_t maxLen, const String& format, const struct tm* timeinfo, const String& lang) {
     char buf[128];
@@ -177,7 +183,7 @@ void DateEngine::update(EngineContext* context) {
     }
     
     if (activeFace) {
-        activeFace->update();
+        activeFace->draw(currentDateData);
     }
 }
 
@@ -185,10 +191,21 @@ void DateEngine::render(EngineContext* context) {
     loop(); // reuse the old loop code which does the actual drawing
 }
 
-void DateEngine::deactivate() {};
+void DateEngine::deactivate() {
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+        LOGI("DateEngine", "Deallocated active date face on deactivate.");
+    }
+    customFont.unload();
+}
 
 DateEngine::~DateEngine() {
-    if (activeFace) delete activeFace;
+    if (activeFace) {
+        delete activeFace;
+        activeFace = nullptr;
+    }
+    customFont.unload();
 }
 
 void DateEngine::setDateData(const TimeData& d) {
@@ -243,27 +260,30 @@ void DateEngine::setTheme(PublisherTheme theme) {
     currentTheme = theme;
 
     if (theme == THEME_CYBERPUNK) {
-        activeFace = new CyberpunkClock(matrix);
+        activeFace = new (std::nothrow) CyberpunkClock(matrix);
     } else if (theme == THEME_FLIP) {
-        activeFace = new FlipClock(matrix);
+        activeFace = new (std::nothrow) FlipClock(matrix);
     } else if ((int)theme == 22) {
-        activeFace = new PongClock(matrix);
+        activeFace = new (std::nothrow) PongClock(matrix);
     } else if ((int)theme == 23) {
-        activeFace = new TetrisClock(matrix, false);
+        activeFace = new (std::nothrow) TetrisClock(matrix, false);
     } else if ((int)theme == 29) {
-        activeFace = new TetrisClock(matrix, true);
+        activeFace = new (std::nothrow) TetrisClock(matrix, true);
     } else if ((int)theme == 24) {
-        activeFace = new WordClock(matrix);
+        activeFace = new (std::nothrow) WordClock(matrix);
     } else if ((int)theme == 25) {
-        activeFace = new BinaryClock(matrix);
+        activeFace = new (std::nothrow) BinaryClock(matrix);
     } else if ((int)theme == 26) {
-        activeFace = new PacmanClock(matrix);
+        activeFace = new (std::nothrow) PacmanClock(matrix);
     } else if ((int)theme == 27) {
-        activeFace = new VersusClock(matrix);
+        activeFace = new (std::nothrow) VersusClock(matrix);
     } else if (theme == THEME_MATRIX_RAIN) {
-        activeFace = new MatrixRainClock(matrix);
+        activeFace = new (std::nothrow) MatrixRainClock(matrix);
     } else if ((int)theme == 28) {
-        activeFace = new SlotMachineClock(matrix);
+        activeFace = new (std::nothrow) SlotMachineClock(matrix);
+    }
+    if (!activeFace) {
+        LOGW("DateEngine", "Theme %d allocation failed due to heap pressure; operating with no custom face", (int)theme);
     }
 }
 
@@ -496,7 +516,6 @@ bool DateEngine::loop() {
     }
     
     if (activeFace) {
-        activeFace->draw(currentDateData);
         activeFace->update();
         return true;
     }
@@ -553,7 +572,7 @@ bool DateEngine::loop() {
     int effectDepth = (logicalSize >= 5) ? 2 : 1;
     
     int leftExtra = 0, rightExtra = 0, topExtra = 0, bottomExtra = 0;
-    if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+    if ((currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) || currentTheme == THEME_TAITO) {
         leftExtra = 1; rightExtra = effectDepth + 1;
         topExtra = 1; bottomExtra = effectDepth + 1;
     } else if (currentTheme == THEME_NINTENDO || currentTheme == THEME_CAPCOM || currentTheme == THEME_SEGA) {
@@ -579,25 +598,30 @@ bool DateEngine::loop() {
             matrix->setCursor(x, y + i); matrix->print(currentDate);
             matrix->setCursor(x, y - i); matrix->print(currentDate);
         }
-    } else if (currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) {
+    } else if ((currentTheme >= THEME_CAVE && currentTheme <= THEME_BUB) || currentTheme == THEME_TAITO) {
         // Arcade 3D Outline Effect
         int shadowDepth = effectDepth + 1;
-        for (int i = 1; i <= shadowDepth; i++) {
-            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
-            matrix->setCursor(x + i - 1, y + i); matrix->print(currentDate);
-            matrix->setCursor(x + i, y + i - 1); matrix->print(currentDate);
-        }
-
         uint16_t outline = matrix->color565(0, 0, 0);
+
+        // 1. Black outline around the outer perimeter of the 3D block
         matrix->setTextColor(outline);
         matrix->setCursor(x - 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x, y - 1); matrix->print(currentDate);
         matrix->setCursor(x + 1, y - 1); matrix->print(currentDate);
         matrix->setCursor(x - 1, y); matrix->print(currentDate);
-        matrix->setCursor(x + 1, y); matrix->print(currentDate);
         matrix->setCursor(x - 1, y + 1); matrix->print(currentDate);
-        matrix->setCursor(x, y + 1); matrix->print(currentDate);
-        matrix->setCursor(x + 1, y + 1); matrix->print(currentDate);
+        for (int i = 1; i <= shadowDepth + 1; i++) {
+            matrix->setCursor(x + i, y + shadowDepth + 1); matrix->print(currentDate);
+            matrix->setCursor(x + shadowDepth + 1, y + i); matrix->print(currentDate);
+        }
+
+        // 2. 3D Extrusion Shadow (drawn on top of outline, connecting solidly to text with zero gap)
+        matrix->setTextColor(shadowColor);
+        for (int i = shadowDepth; i >= 1; i--) {
+            matrix->setCursor(x + i, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i - 1, y + i); matrix->print(currentDate);
+            matrix->setCursor(x + i, y + i - 1); matrix->print(currentDate);
+        }
     } else {
         // Drop shadow
         for (int i = 1; i <= effectDepth; i++) {
@@ -618,11 +642,14 @@ EngineDescriptor DateEngineDescriptorHandler::getDescriptor() const {
     desc_date.capabilities.realtime = false;
     desc_date.requirements.needsAudio = false;
     desc_date.requirements.needsNetwork = false;
+    desc_date.requirements.targetFps = 30;
+    desc_date.requirements.supportsSingleBuffer = true;
+    desc_date.requirements.internalPersistentBytes = 3000;
     desc_date.schema.fields = {
         ConfigField("date_theme", ConfigType::ENUM, "Date Theme", "Visual theme for date", "0", false, "", "", "", "", "/api/themes", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_format", ConfigType::ENUM, "Date Format", "Format for date display", "system", false, "", "", "", "system:System (General),%d/%m/%Y:Day/Month/Year (%d/%m/%Y),%m/%d/%Y:Month/Day/Year (%m/%d/%Y),%Y-%m-%d:Year-Month-Day (%Y-%m-%d),%a %d %b:Short with day (%a %d %b),%A %d %B:Full (%A %d %B)", "", false, "", ValidationPolicy::Accept),
         ConfigField("date_font", ConfigType::ENUM, "Font", "Display typeface", "PressStart2P.ttf", false, "", "", "", "", "/api/fonts", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "/api/timezones", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("timezone", ConfigType::ENUM, "Timezone", "Select timezone or region", "system", false, "", "", "", "system:System (General)", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("date_size", ConfigType::INTEGER, "Font Size", "Text scaling multiplier", "1", false, "1", "4", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("date_color_1", ConfigType::COLOR, "Primary Color", "Custom gradient top color", "#ffffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),
         ConfigField("date_color_2", ConfigType::COLOR, "Secondary Color", "Custom gradient bottom color", "#00ffff", false, "", "", "", "", "", false, "date_theme=20", ValidationPolicy::Accept),

@@ -1,6 +1,8 @@
 #ifndef WORLDMAPCLOCK_H
 #define WORLDMAPCLOCK_H
 
+#if !defined(HARDWARE_PROFILE_ESP32_DEV)
+
 #include "../ClockEngine.h"
 
 /**
@@ -13,7 +15,7 @@
  */
 class WorldMapClock : public ClockFace {
 public:
-    WorldMapClock(MatrixPanel_I2S_DMA* display, const EngineConfig* config = nullptr);
+    WorldMapClock(IDrawingSurface* display, const EngineConfig* config = nullptr);
     void draw(const TimeData& t) override;
     void update() override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
@@ -28,4 +30,7 @@ private:
     bool m_hasFrame = true;
 };
 
+#endif // !HARDWARE_PROFILE_ESP32_DEV
+
 #endif
+

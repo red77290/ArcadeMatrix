@@ -1,5 +1,6 @@
 #pragma once
-#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+
+class IDrawingSurface;
 
 /**
  * The weather screen's 24x24 vector icons (sun, cloud, rain, storm, snow), keyed by OpenWeatherMap
@@ -9,6 +10,6 @@
  */
 namespace WeatherIcon {
 
-void draw(MatrixPanel_I2S_DMA* matrix, const char* icon, int x, int y, int scale = 1);
+void draw(IDrawingSurface* matrix, const char* icon, int x, int y, int scale = 1);
 
 }  // namespace WeatherIcon
