@@ -63,9 +63,13 @@ Every engine in ArcadeMatrix is engineered with **zero dynamic allocations and z
 > [!NOTE]
 > All clock screen previews below are software simulations. Real-life hardware rendering on physical RGB LED panels may have subtle differences in color temperature, brightness, and optical diffusion.
 
+> [!IMPORTANT]
+> **Hardware Profile Availability (ESP32-S3 vs ESP32 Standard):**
+> Due to high-resolution Flash ROM asset footprints on boards with 4 MB Flash, **Metal Slug** (Theme 41), **Pokédex** (Theme 32), **World Clock** (Theme 33), and **Words Clock** (Theme 37) are exclusive to **ESP32-S3 boards (16 MB Flash)**. On classic ESP32 DevKit boards, selecting these themes automatically falls back gracefully to the standard Arcade Clock.
+
 ArcadeMatrix includes a signature collection of handcrafted, hardware-synchronized retro arcade and console clocks rendered with 100% bit-perfect original sprites in full 60 FPS, with zero dynamic allocations on the Core 1 hot-path:
 
-### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41
+### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Theme 41 *(ESP32-S3 only)*
 *Authentic SNK Neo Geo pixel art with Arabian desert bazaar backdrop, Marco Rossi combat animations, Rebel Di-Cokka tank, patrol helicopter, and heavy machine gun firefights.*
 ![Metal Slug Clock](docs/assets/clocks/poster_metal_slug.png)
 
@@ -74,7 +78,7 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 ![Castlevania Clock](docs/assets/clocks/poster_castlevania.png)
 
 ### 3. Super Mario Bros (NES) — Theme 30
-*Mushroom Kingdom Overworld with 100% authentic 16x16 SMB1 brick & question mark blocks, jumping Mario hitting blocks to reveal coins, and animated Goombas.*
+*Mushroom Kingdom Overworld with 100% authentic SMB1 brick blocks; Mario runs across the screen and jumps under the digit block to trigger an elastic bounce and digit flip (with green Koopa shell kick and gold coin pop in 128x32 compact mode).*
 ![Super Mario Bros Clock](docs/assets/clocks/poster_super_mario.png)
 
 ### 4. Mega Man (Capcom NES) — Theme 35
@@ -85,7 +89,7 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 *Green Hill Zone checkered platforms, spinning gold rings, red spring, Motobug badnik, and Sonic idle/spin-dash jumping animations.*
 ![Sonic The Hedgehog Clock](docs/assets/clocks/poster_sonic.png)
 
-### 6. Pokémon Pokédex (Nintendo Game Boy) — Theme 32
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Theme 32 *(ESP32-S3 only)*
 *Authentic dual-screen Pokédex (Pocket Index) interface with creature inspection viewport, animated Pikachu sprite, PKMN font digital clock, live seconds telemetry bar, and blinking LED status sensor.*
 ![Pokédex Clock](docs/assets/clocks/poster_pokedex.png)
 
@@ -97,7 +101,7 @@ ArcadeMatrix includes a signature collection of handcrafted, hardware-synchroniz
 *Legendary falling block puzzle with dynamic 3D-beveled mino bricks (I, J, L, O, S, T, Z) cascading down to assemble the hours and minutes in real-time.*
 ![Tetris Clock](docs/assets/clocks/poster_tetris.png)
 
-### 9. World Clock & Solar Terminator — Theme 33
+### 9. World Clock & Solar Terminator — Theme 33 *(ESP32-S3 only)*
 *High-resolution continental world map with dynamic day/night solar terminator calculating real-time solar declination, local meridian marker, and dual UTC/local time.*
 ![World Map Clock](docs/assets/clocks/poster_worldmap.png)
 
@@ -270,7 +274,8 @@ A huge thanks to the open-source community and the creators of the incredible li
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** by mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** by Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** by greiman
-- **[@TooncesToo](https://github.com/TooncesToo)** for developing the Home Assistant & MQTT Data engine with ready-to-use blueprints, the network GIF library API, multi-file uploader, and Web UI file manager with dual-orientation support on both ESP32 and Raspberry Pi.
+- **[Clockwise](https://github.com/jnthas/clockwise)** by Jonathas Amaral Barbosa (@jnthas) for the pixel art clock designs and retro assets (Mario, Pokédex, World Map, Words).
+- **[@TooncesToo](https://github.com/TooncesToo)** (Erik Jerue) for developing the Home Assistant & MQTT Data engine with ready-to-use blueprints, the network GIF library API, multi-file uploader, Web UI file manager with dual-orientation support on both ESP32 and Raspberry Pi, clockface optimizations, and outstanding cross-platform contributions.
 
 Special thanks to the **RPiTeam** for the awesome pack of 600 GIFs!
 

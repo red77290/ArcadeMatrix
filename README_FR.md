@@ -28,27 +28,30 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 - **Kit Carte SD (`ArcadeMatrix-sdcard.zip`)** : Contient l'arborescence complète à copier à la racine de la carte SD (`config.json`, dossiers GIFs/MUGEN, et scripts d'indexation).
 
 
-- **🎛️ Master Desk Deck & Hub Multi-Widgets (`dashboard`) :** Horloge de bureau complète & dashboard avec cadrans pixel-art soignés, balayage fluide de trotteuse, horloges multi-fuseaux horaires mondiaux, météo extérieure (OpenWeatherMap + fallback gratuit Open-Meteo), climat intérieur calibré SHTC3, bandeau ticker live cryptos Binance & actions Yahoo Finance, et agencement auto-adaptatif dynamique 100% responsive !
-- **Large sélection d'horloges animées (`clock`) :** horloges interactives incluant les classiques Arcade, Binary, Cyberpunk, Flip, Word, **Pac-Man**, **Tetris**, **SlotMachine**, **Pong**, **MatrixRain (Katakana)** et **Versus (Mugen)** !
-- **📻 WebRadio Autonome & Moteur Musical (`music`) :** Streaming audio d'arrière-plan avec décodage MP3 linéaire temps réel (`minimp3`), sortie haute fidélité DAC I2S Everest ES8311 (flux WebRadio via Wi-Fi — *note : Bluetooth BLE 5.0 uniquement pour la configuration, pas de streaming audio Bluetooth Classic A2DP*), pochettes d'albums PNG couleur, artiste/titre défilant et visualiseur audio FFT 64 points Cooley-Tukey dynamique !
-- **🧭 Auto-Rotation d'Écran Gyroscopique 6-Axes (`QMI8658` / `GyroHAL`) :** Orientation automatique de l'affichage ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) par détection du vecteur de gravité physique, hystérèse anti-vibrations 500ms, offset mécanique de montage et calibration 1-clic depuis la Web UI !
-- **🎵 Spotify Now Playing (`spotify`) :** affichage en direct du morceau en cours de lecture avec pochette d'album en couleur, défilement artiste/titre, barre de progression et égaliseur audio animé.
-- **📡 Google Cast & Nest (`google_cast`) :** découverte automatique mDNS de vos enceintes Google Home / Nest Audio et affichage en direct des médias et flux audio diffusés.
-- **🖥️ Moniteur Système (`sysinfo`) :** surveillance en direct de l'utilisation CPU (%), RAM (%), température SoC (°C/°F) et Uptime avec jauges colorées et thèmes visuels.
-- **🥊 Moteur de combat M.U.G.E.N (`fighter`) :** combats de sprites rétro authentiques (Street Fighter, KOF, DBZ, Marvel...) extraits directement en RGB565 sans saccade, jouables en mode autonome ou en overlay discret sur vos horloges.
-- **📈 Tickers & Graphiques Crypto / Bourse (`crypto`, `stock`) :** cotations en direct, variations % sur 24h et courbes sparklines historiques depuis CoinGecko, Binance et Yahoo Finance avec cache intelligent.
-- **📰 Actualités & Ticker GNews en Direct (`gnews`) :** flux de grands titres et dépêches d'actualités filtrés par catégories (Tech, Monde, Économie, Science, Sport...), témoin lumineux de direct clignotant, défilement sous-pixel fluide à 60 FPS et filtrage multi-langue/région !
-- **🌦️ Météo dynamique (`weather`) :** météo en direct, température actuelle, prévisions sur 3 jours et icônes rétro animées via OpenWeatherMap.
-- **🌡️ Température & Humidité Intérieure (SHTC3) :** affichage dynamique (°C/°F), icônes Pixel Art thermomètre/eau, et endpoint REST pour remonter les données dans Home Assistant !
-- **📊 Moteur Home Assistant & Données MQTT (`mqttdata`) :** Affichez en direct vos tableaux de bord Home Assistant, valeurs de capteurs, tables multi-entités, graphiques historiques sur 24h et prévisions météo locales via MQTT ! Zéro template complexe requis grâce aux [Blueprints Home Assistant](https://github.com/red77290/ArcadeMatrix/tree/main/tools/home_assistant/blueprints) prêts à importer et au [Guide d'intégration Home Assistant](docs/HOME_ASSISTANT_FR.md) — réalisé par [@TooncesToo](https://github.com/TooncesToo) !
-- **🔊 Sonomètre & Décibelomètre (Gaming Room / Arcade) :** mesure en temps réel du volume sonore ambiant en dB SPL avec 6 smileys Pixel Art réactifs (<45dB 😊 à >88dB 🚨) et Visualiseur Audio. ([🎥 Voir la Démo](https://youtu.be/Ljx5W2vFIU8?si=efGPixHGv7h8kcQU))
-- **🎵 Visualiseur de Musique Rythmique :** 4 modes d'affichage prioritaire (Equalizer Spectrum avec peak hold, Oscilloscope Waveform, Radial Circles et Neon Fire).
-- **Interface Web Wi-Fi :** accédez à `http://arcadematrix.local` pour gérer vos playlists, calibrer l'orientation d'écran et modifier la configuration en direct !
-- **🗂️ Bibliothèque GIF Réseau & Gestionnaire de Fichiers Web (`gifs`) :** Carte gestionnaire de fichiers intégrée dans la Web UI permettant de parcourir les dossiers, téléverser des GIF animés par Wi-Fi sans retirer la carte SD, créer/supprimer des dossiers, renommer et réindexer automatiquement en arrière-plan. Support natif double orientation (`?orientation=yoko|tate`) pour affichages horizontaux (Yoko) et verticaux (Tate) — réalisé par [@TooncesToo](https://github.com/TooncesToo) !
-- **Moteur GIF (`gifs`) :** lecture fluide des GIF et playlists organisées sur la carte SD.
-- **Support MQTT (`marquee`) :** s'intègre parfaitement avec Batocera et Recalbox pour afficher les marquees de jeux officiels via votre fork Pixelcade.
-- **Mises à jour OTA :** Flashez les mises à jour du firmware sans fil directement via l'interface Web ou le Web Installer.
-- **Support ESP32-S3 Waveshare :** Support complet des cartes ESP32-S3 haut de gamme et des dalles 256x64 True Matrix via DMA.
+## 🕹️ Moteurs Intégrés & Simulations Matérielles
+
+Chaque moteur d'ArcadeMatrix est conçu avec **zéro allocation dynamique et zéro contention de mutex** sur le chemin critique Core 1, garantissant une cadence d'affichage absolue de 60 FPS. Voici les simulations fidèles de chaque moteur en fonctionnement sur dalles physiques HUB75 :
+
+| Moteur / ID | Simulation Matérielle | Description & Fonctionnalités Clés |
+| :--- | :---: | :--- |
+| **Desk Master Dashboard**<br>`dashboard` | <img src="docs/assets/engines/engine_dashboard.png" width="240" alt="Moteur Dashboard"> | Horloge de bureau complète avec cadran analogique pixel-art, balayage fluide de trotteuse, horloges mondiales, climat intérieur SHTC3, et bandeau ticker live cryptos Binance & actions Yahoo Finance. |
+| **Horloge Rétro Gaming**<br>`clock` | <img src="docs/assets/engines/engine_clock.png" width="240" alt="Horloge Rétro"><br><br>[👉 **Voir la galerie des 10+ horloges rétro ➔**](#-horloges-rétro-gaming-légendaires-posters--simulations-hub75) | Collection exclusive d'horloges animées d'arcade et de consoles rétro (Metal Slug, Castlevania, Mario, Mega Man, Sonic, Pokédex, Pac-Man, Tetris, Horloge Mondiale, Pluie Matrix...) avec sprites 100 % authentiques au pixel près. |
+| **WebRadio & Lecteur Musical**<br>`music` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Moteur Musique"> | Streaming audio autonome avec décodage MP3 linéaire temps réel (`minimp3`), sortie audio DAC I2S Everest ES8311, pochettes d'albums et visualiseur audio dynamique 64 bandes. |
+| **Spotify Now Playing**<br>`spotify` | <img src="docs/assets/engines/engine_spotify.png" width="240" alt="Moteur Spotify"> | Affichage en direct du morceau en cours avec pochette d'album en couleur, défilement artiste/titre, mini barres d'égaliseur animées et barre de progression. |
+| **Google Cast & Nest**<br>`googlecast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Moteur Google Cast"> | Découverte automatique mDNS des enceintes Google Home / Nest Audio avec affichage des pochettes, volume et progression de lecture en streaming. |
+| **Ticker & Graphique Crypto**<br>`crypto` | <img src="docs/assets/engines/engine_crypto.png" width="240" alt="Moteur Crypto"> | Cotations en direct Binance / CoinGecko, badge de variation sur 24h et courbes sparklines historiques en temps réel avec cache TTL intelligent. |
+| **Ticker Bourse & Actions**<br>`stock` | <img src="docs/assets/engines/engine_stock.png" width="240" alt="Moteur Bourse"> | Cotations en temps réel Yahoo Finance, badges de variation 1D % et graphiques d'aires sparkline intrajournaliers pour actions et ETF NASDAQ/S&P. |
+| **Météo Dynamique**<br>`weather` | <img src="docs/assets/engines/engine_weather.png" width="240" alt="Moteur Météo"> | Conditions extérieures en direct, températures max/min, humidité, vent et icônes rétro animées via OpenWeatherMap & Open-Meteo. |
+| **Capteur Climat Intérieur**<br>`temp` | <img src="docs/assets/engines/engine_temp.png" width="240" alt="Moteur Température"> | Température intérieure (°C/°F) et humidité relative en temps réel via le capteur I2C intégré SHTC3 avec indicateurs dynamiques de confort. |
+| **Sonomètre Décibelmètre**<br>`decibel` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Moteur Décibels"> | Surveillance calibrée du niveau sonore ambiant en dB SPL avec smileys arcade réactifs, jauge supérieure style barre de vie VS fighting et VU-mètre segmenté. |
+| **HUD Télémétrie Système**<br>`sysinfo` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="Moteur SysInfo"> | Moniteur double colonne en temps réel de l'utilisation CPU (%), RAM (%), température matérielle du SoC (°C/°F) et Uptime avec jauges colorées. |
+| **Ticker Actualités en Direct**<br>`gnews` | <img src="docs/assets/engines/engine_gnews.png" width="240" alt="Moteur GNews"> | Derniers grands titres en temps réel avec badges de catégories (`[TECH]`, `[MONDE]`, `[ÉCO]`), balise clignotante de direct et bandeau défilant fluide à 60 FPS. |
+| **Home Assistant & MQTT**<br>`mqttdata` | <img src="docs/assets/engines/engine_mqttdata.png" width="240" alt="Moteur MQTT Data"> | Tableaux de bord Home Assistant, valeurs de capteurs, graphiques historiques sur 24h et météo locale diffusés via MQTT avec blueprints prêts à l'emploi. |
+| **Visualiseur Audio**<br>`visualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Moteur Visualiseur"> | Barres de spectre 32 bandes en dégradé arc-en-ciel avec points de crête (peak hold), formes d'ondes oscilloscope et modes audio-réactifs radiaux. |
+| **Lecteur GIF Animés**<br>`gif` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Moteur GIF"> | Lecture fluide à 60 FPS d'animations rétro et de playlists sur carte SD avec accélération DMA canvas zéro-copie. |
+| **Bandeau Défilant Marquee**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Moteur Message"> | Enseignes matricielles personnalisables avec typographie ambrée lumineuse, multiples directions de défilement et déclencheurs API REST. |
+| **Marquee Borne d'Arcade**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Moteur Marquee"> | Affichage des marquees de jeux d'arcade officiels via intégration Pixelcade pour configurations Batocera, Recalbox et RetroPie. |
+| **Calendrier & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Moteur Date"> | Grande date au style arcade avec ombres portées 3D Capcom/Nintendo, support multilingue (FR, EN, ES) et synchronisation NTP/RTC DS3231. |
 
 > [!NOTE]
 > **Avertissement sur le rendu matériel :** Les captures d'écran, visuels d'aperçu des moteurs et posters d'horloges présentés dans cette documentation sont des simulations logicielles haute fidélité destinées à illustrer la mise en page, les animations et la disposition des éléments. Le rendu visuel réel sur un panneau LED HUB75 physique peut légèrement différer selon le pas de masque (pitch), le filtre diffuseur acrylique, la luminosité des LEDs et l'éclairage ambiant.
@@ -60,9 +63,13 @@ Bienvenue sur le firmware open source ESP32 conçu pour piloter des matrices LED
 > [!NOTE]
 > Les visuels ci-dessous sont des simulations logicielles haute fidélité. Le rendu réel sur dalle LED HUB75 physique peut présenter de légères variations d'affichage (diffusion optique, colorimétrie et luminosité perçue).
 
+> [!IMPORTANT]
+> **Disponibilité selon le profil matériel (ESP32-S3 vs ESP32 Standard) :**
+> En raison de l'empreinte mémoire Flash ROM des assets graphiques haute résolution sur les cartes à 4 Mo de Flash, **Metal Slug** (Thème 41), **Pokédex** (Thème 32), **World Clock** (Thème 33) et **Words Clock** (Thème 37) sont exclusifs aux **cartes ESP32-S3 (16 Mo de Flash)**. Sur les cartes ESP32 DevKit classiques, la sélection de ces thèmes bascule automatiquement et de façon transparente vers l'horloge Arcade standard.
+
 ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et consoles synchronisées au matériel, rendues avec des sprites d'origine 100 % fidèles au pixel près à 60 FPS constants, avec zéro allocation dynamique sur la boucle chaude Core 1 :
 
-### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Thème 41
+### 1. Metal Slug: Super Vehicle-001 (SNK Neo Geo) — Thème 41 *(Exclusif ESP32-S3)*
 *Pixel art authentique SNK Neo Geo avec décor de bazar arabe désertique, soldat Marco Rossi en combat, char Rebel Di-Cokka, hélicoptère de patrouille et fusillades à la mitrailleuse lourde.*
 ![Horloge Metal Slug](docs/assets/clocks/poster_metal_slug.png)
 
@@ -71,7 +78,7 @@ ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et conso
 ![Horloge Castlevania](docs/assets/clocks/poster_castlevania.png)
 
 ### 3. Super Mario Bros (NES) — Thème 30
-*Overworld du Royaume Champignon avec briques et blocs '?' 16x16 originaux, Mario sautant pour frapper les blocs et faire jaillir des pièces, et Goombas animés.*
+*Overworld du Royaume Champignon avec briques SMB1 authentiques ; Mario traverse l'écran et saute sous le bloc pour déclencher un rebond élastique et le basculement du chiffre (avec coup de carapace Koopa verte et jaillissement d'une pièce dorée en mode compact 128x32).*
 ![Horloge Super Mario Bros](docs/assets/clocks/poster_super_mario.png)
 
 ### 4. Mega Man (Capcom NES) — Thème 35
@@ -82,7 +89,7 @@ ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et conso
 *Plateformes à damier de Green Hill Zone, anneaux dorés tournoyants, ressort rouge, badnik Motobug et animations d'attente et de saut spin-dash de Sonic.*
 ![Horloge Sonic The Hedgehog](docs/assets/clocks/poster_sonic.png)
 
-### 6. Pokémon Pokédex (Nintendo Game Boy) — Thème 32
+### 6. Pokémon Pokédex (Nintendo Game Boy) — Thème 32 *(Exclusif ESP32-S3)*
 *Interface Pokédex (Pocket Index) authentique à double écran avec hublot d'inspection, sprite animé de Pikachu, horloge numérique en police PKMN, barre de télémétrie des secondes et témoin LED clignotant.*
 ![Horloge Pokédex](docs/assets/clocks/poster_pokedex.png)
 
@@ -94,7 +101,7 @@ ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et conso
 *Casse-tête légendaire de briques tombantes avec minos 3D biseautés dynamiques (I, J, L, O, S, T, Z) descendant en cascade pour assembler les heures et les minutes en temps réel.*
 ![Horloge Tetris](docs/assets/clocks/poster_tetris.png)
 
-### 9. World Clock & Terminateur Solaire — Thème 33
+### 9. World Clock & Terminateur Solaire — Thème 33 *(Exclusif ESP32-S3)*
 *Carte du monde continentale haute résolution avec terminateur solaire jour/nuit dynamique calculant la déclinaison solaire en temps réel, méridien local et double heure UTC/locale.*
 ![Horloge World Map](docs/assets/clocks/poster_worldmap.png)
 
@@ -259,7 +266,8 @@ Un immense merci à la communauté open source et aux créateurs des formidables
 - **[PicoMQTT](https://github.com/mlesniew/PicoMQTT)** par mlesniew
 - **[Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library)** par Adafruit
 - **[SdFat](https://github.com/greiman/SdFat)** par greiman
-- **[@TooncesToo](https://github.com/TooncesToo)** pour le développement du moteur Home Assistant & Données MQTT avec blueprints prêts à l'emploi, l'API de bibliothèque GIF réseau, le téléversement multi-fichiers et le gestionnaire de fichiers Web UI avec support double orientation sur ESP32 et Raspberry Pi.
+- **[Clockwise](https://github.com/jnthas/clockwise)** par Jonathas Amaral Barbosa (@jnthas) pour les designs d'horloges pixel art et assets rétro Clockwise (Mario, Pokédex, World Map, Words).
+- **[@TooncesToo](https://github.com/TooncesToo)** (Erik Jerue) pour le développement du moteur Home Assistant & Données MQTT avec blueprints prêts à l'emploi, l'API de bibliothèque GIF réseau, le téléversement multi-fichiers, le gestionnaire de fichiers Web UI avec support double orientation sur ESP32 et Raspberry Pi, les optimisations des cadrans d'horloge et ses contributions majeures au projet.
 
 Un grand merci à la **RPiTeam** pour le super pack de 600 GIFs !
 
