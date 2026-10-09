@@ -149,9 +149,31 @@ void ClockEngine::setTheme(PublisherTheme theme, bool forceReload, const EngineC
     } else if (theme == 33) {
         activeFace = makeFace<WorldMapClock>(matrixDisplay, config);
     } else if (theme == 37) {
-        activeFace = makeFace<WordsClockFace>(matrixDisplay, config);
+        const bool isTooSmallForWords = (matrixDisplay && (matrixDisplay->width() < 192 || matrixDisplay->height() < 64));
+        if (isTooSmallForWords) {
+            LOGW("ClockEngine", "Theme 37 (Words Clock) requires at least 192x64; falling back to ArcadeClock on %dx%d",
+                 matrixDisplay ? matrixDisplay->width() : 0, matrixDisplay ? matrixDisplay->height() : 0);
+            ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
+            if (arcade) {
+                static_cast<ArcadeClock*>(arcade)->setTheme(THEME_NONE);
+                activeFace = arcade;
+            }
+        } else {
+            activeFace = makeFace<WordsClockFace>(matrixDisplay, config);
+        }
     } else if (theme == 41 || theme == THEME_METAL_SLUG) {
-        activeFace = makeFace<MetalSlugClock>(matrixDisplay, config);
+        const bool isPortrait = (matrixDisplay && matrixDisplay->height() > matrixDisplay->width());
+        if (!isPortrait && matrixDisplay && matrixDisplay->height() < 64) {
+            LOGW("ClockEngine", "Theme 41 (Metal Slug) requires 256x64 landscape or tall portrait (64x256); falling back to ArcadeClock on %dx%d",
+                 matrixDisplay ? matrixDisplay->width() : 0, matrixDisplay ? matrixDisplay->height() : 0);
+            ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
+            if (arcade) {
+                static_cast<ArcadeClock*>(arcade)->setTheme(THEME_NONE);
+                activeFace = arcade;
+            }
+        } else {
+            activeFace = makeFace<MetalSlugClock>(matrixDisplay, config);
+        }
 #endif
     } else {
         ClockFace* arcade = makeFace<ArcadeClock>(matrixDisplay, config);
