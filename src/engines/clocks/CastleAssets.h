@@ -4,10 +4,9 @@
 #include <Arduino.h>
 
 /**
- * Artwork for the clock tower face.
+ * Artwork for the Castlevania clock tower face.
  *
- * From the Clockwise clockface cw-cf-0x04 by Jonathas Amaral Barbosa (@jnthas),
- * https://github.com/jnthas/cw-cf-0x04, part of the Clockwise project (https://github.com/jnthas/clockwise).
+ * Authored by Red1L for ArcadeMatrix.
  * RGB565, 64x64; PROGMEM markers dropped since the ESP32 maps flash constants directly.
  */
 
