@@ -152,3 +152,75 @@ protected:
     int16_t m_physW;
     int16_t m_physH;
 };
+
+/**
+ * @class ScopedCanvasGuard
+ * @brief Move-only RAII guard strictly enforcing the scoped per-frame lifetime of a borrowed CanvasView.
+ *
+ * Prevents display engines from leaking or caching raw canvas pointers across frames.
+ * Upon successful rendering, call markDrawnAndRelease() to notify external drawing and release the lease.
+ * If destroyed without markDrawnAndRelease() (e.g. early return/exception), the lease is released cleanly.
+ */
+class ScopedCanvasGuard {
+public:
+    explicit ScopedCanvasGuard(IDrawingSurface* surface)
+        : m_surface(surface) {
+        if (m_surface && m_surface->hasCanvas()) {
+            m_view = m_surface->acquireCanvas();
+        }
+    }
+
+    ~ScopedCanvasGuard() {
+        release();
+    }
+
+    ScopedCanvasGuard(const ScopedCanvasGuard&) = delete;
+    ScopedCanvasGuard& operator=(const ScopedCanvasGuard&) = delete;
+
+    ScopedCanvasGuard(ScopedCanvasGuard&& other) noexcept
+        : m_surface(other.m_surface), m_view(other.m_view), m_released(other.m_released) {
+        other.m_surface = nullptr;
+        other.m_view = CanvasView{};
+        other.m_released = true;
+    }
+
+    ScopedCanvasGuard& operator=(ScopedCanvasGuard&& other) noexcept {
+        if (this != &other) {
+            release();
+            m_surface = other.m_surface;
+            m_view = other.m_view;
+            m_released = other.m_released;
+            other.m_surface = nullptr;
+            other.m_view = CanvasView{};
+            other.m_released = true;
+        }
+        return *this;
+    }
+
+    inline bool isValid() const { return !m_released && m_view.isValid(); }
+    inline const CanvasView& view() const { return m_view; }
+    inline uint16_t* data() const { return m_view.data; }
+    inline uint16_t width() const { return m_view.width; }
+    inline uint16_t height() const { return m_view.height; }
+    inline size_t stridePixels() const { return m_view.stridePixels; }
+
+    inline void markDrawnAndRelease() {
+        if (!m_released && m_surface) {
+            m_surface->markExternalDraw();
+            m_surface->releaseCanvas();
+            m_released = true;
+        }
+    }
+
+    inline void release() {
+        if (!m_released && m_surface) {
+            m_surface->releaseCanvas();
+            m_released = true;
+        }
+    }
+
+private:
+    IDrawingSurface* m_surface = nullptr;
+    CanvasView m_view;
+    bool m_released = false;
+};

@@ -28,84 +28,53 @@ GifEngine::~GifEngine() {
     delete png;
     freeGifDecoder();
     freeCanvasBuffer();
+    if (instance == this) {
+        instance = nullptr;
+    }
 }
 
 static AnimatedGIF* s_sharedGifDecoder = nullptr;
-static uint16_t* s_sharedCanvasBuffer = nullptr;
-static size_t s_sharedCanvasPixels = 0;
-static bool s_sharedCanvasBorrowed = false;
 
 bool GifEngine::ensureCanvasBuffer() {
     if (!matrix) return false;
-    size_t matrixPixels = (size_t)matrix->width() * matrix->height();
-
     // Zero-copy canvas optimization:
-    // If the surface has an internal RGB565 canvas and is unrotated, borrow it directly!
-    // This avoids allocating a duplicate 8 KB/32 KB buffer in DRAM/PSRAM and skips memcpy per frame.
+    // If the surface has an internal RGB565 canvas and is unrotated, it is borrowed per-frame via
+    // ScopedCanvasGuard. No private buffer is required!
     if (matrix->hasCanvas() && matrix->getRotation() == 0) {
-        CanvasView cv = matrix->acquireCanvas();
-        if (cv.isValid() && (size_t)(cv.width * cv.height) >= matrixPixels) {
-            if (s_sharedCanvasBuffer && !s_sharedCanvasBorrowed) {
-                heap_caps_free(s_sharedCanvasBuffer);
-            }
-            s_sharedCanvasBuffer = cv.data;
-            s_sharedCanvasPixels = (size_t)cv.width * cv.height;
-            s_sharedCanvasBorrowed = true;
-            m_borrowedSurfaceCanvas = true;
-            canvasBuffer = s_sharedCanvasBuffer;
-            return true;
+        if (m_privateCanvasBuffer) {
+            freeCanvasBuffer();
         }
+        return true;
     }
 
-    if (canvasBuffer && s_sharedCanvasBuffer && s_sharedCanvasPixels >= matrixPixels && !s_sharedCanvasBorrowed) {
+    // Fallback path: surface without canvas (e.g. DirectDmaSurface) or rotated matrix.
+    // Allocate private canvas buffer to decode frames and apply compositing/rotations.
+    size_t matrixPixels = (size_t)matrix->width() * matrix->height();
+    if (m_privateCanvasBuffer && m_privateCanvasPixels >= matrixPixels) {
         return true;
     }
-    if (s_sharedCanvasBuffer && s_sharedCanvasPixels >= matrixPixels && !s_sharedCanvasBorrowed) {
-        canvasBuffer = s_sharedCanvasBuffer;
-        m_borrowedSurfaceCanvas = false;
-        return true;
-    }
-    if (s_sharedCanvasBuffer) {
-        if (!s_sharedCanvasBorrowed) {
-            heap_caps_free(s_sharedCanvasBuffer);
-        } else if (matrix) {
-            matrix->releaseCanvas();
-        }
-        s_sharedCanvasBuffer = nullptr;
-        s_sharedCanvasPixels = 0;
-        s_sharedCanvasBorrowed = false;
-        m_borrowedSurfaceCanvas = false;
-    }
-    s_sharedCanvasBuffer = allocateCanvasBuffer(matrixPixels);
-    if (s_sharedCanvasBuffer) {
-        s_sharedCanvasPixels = matrixPixels;
-        memset(s_sharedCanvasBuffer, 0, matrixPixels * 2);
-        canvasBuffer = s_sharedCanvasBuffer;
-        s_sharedCanvasBorrowed = false;
-        m_borrowedSurfaceCanvas = false;
+    freeCanvasBuffer();
+    m_privateCanvasBuffer = allocateCanvasBuffer(matrixPixels);
+    if (m_privateCanvasBuffer) {
+        m_privateCanvasPixels = matrixPixels;
+        memset(m_privateCanvasBuffer, 0, matrixPixels * sizeof(uint16_t));
+        LOGI("GifEngine", "Allocated %u bytes private canvas buffer (rotated/direct DMA mode).",
+             (unsigned)(matrixPixels * sizeof(uint16_t)));
         return true;
     }
     return false;
 }
 
 void GifEngine::freeCanvasBuffer() {
-    if (s_sharedCanvasBorrowed || m_borrowedSurfaceCanvas) {
-        if (matrix) {
-            matrix->releaseCanvas();
-        }
-        s_sharedCanvasBuffer = nullptr;
-        s_sharedCanvasPixels = 0;
-        s_sharedCanvasBorrowed = false;
-        m_borrowedSurfaceCanvas = false;
-        LOGI("GifEngine", "Released borrowed surface canvas.");
-    } else if (s_sharedCanvasBuffer) {
-        heap_caps_free(s_sharedCanvasBuffer);
-        s_sharedCanvasBuffer = nullptr;
-        s_sharedCanvasPixels = 0;
-        LOGI("GifEngine", "Deallocated shared canvas buffer on demand.");
+    if (m_privateCanvasBuffer) {
+        heap_caps_free(m_privateCanvasBuffer);
+        m_privateCanvasBuffer = nullptr;
+        m_privateCanvasPixels = 0;
+        LOGI("GifEngine", "Deallocated private canvas buffer on demand.");
     }
     canvasBuffer = nullptr;
 }
+
 
 
 void GifEngine::preallocateSharedBuffers(size_t matrixPixels) {
@@ -400,10 +369,8 @@ void GifEngine::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     instance = this;
     if (matrix) {
         size_t matrixPixels = matrix->width() * matrix->height();
-        if (canvasBuffer) {
-            freeCanvasBuffer();
-            ensureCanvasBuffer();
-        }
+        freeCanvasBuffer();
+        ensureCanvasBuffer();
         allocateShadows(matrixPixels);
         if (m_srcW > 0) updateFitGeometry(m_srcW, m_srcH);
     }
@@ -438,23 +405,24 @@ bool GifEngine::begin(IDrawingSurface* display) {
 void GifEngine::allocateShadows(size_t matrixPixels) {
     freeShadows();
     if (matrixPixels == 0) return;
+    if (matrix && matrix->hasCanvas() && matrix->getRotation() == 0) {
+        return; // Zero-copy canvas borrowing does not require a shadow mirror
+    }
 #if !defined(HARDWARE_PROFILE_WAVESHARE_S3)
     if (!m_hasPsram) return;
 #endif
-    // Read sequentially once per frame, so PSRAM is fine here; internal DRAM stays free for TLS/DMA.
-    for (int i = 0; i < 2; i++) {
-        m_shadow[i] = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!m_shadow[i]) m_shadow[i] = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_8BIT);
-        if (!m_shadow[i]) {
-            LOGW("GifEngine", "Shadow buffer %d allocation failed (%u bytes); frames will be repainted in full.", i, (unsigned)(matrixPixels * 2));
-        }
+    m_diffShadow = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!m_diffShadow) m_diffShadow = (uint16_t*)heap_caps_malloc(matrixPixels * 2, MALLOC_CAP_8BIT);
+    if (!m_diffShadow) {
+        LOGW("GifEngine", "Shadow buffer allocation failed (%u bytes); frames will be repainted in full.", (unsigned)(matrixPixels * 2));
     }
     invalidateShadows();
 }
 
 void GifEngine::freeShadows() {
-    for (int i = 0; i < 2; i++) {
-        if (m_shadow[i]) { heap_caps_free(m_shadow[i]); m_shadow[i] = nullptr; }
+    if (m_diffShadow) {
+        heap_caps_free(m_diffShadow);
+        m_diffShadow = nullptr;
     }
     invalidateShadows();
 }
@@ -481,9 +449,8 @@ void GifEngine::updateFitGeometry(int srcW, int srcH) {
 }
 
 /**
- * Push the canvas to the current back buffer, writing only pixels that differ from what that buffer
- * last received. Returns true when a frame was pushed (a flip is due either way: the front buffer
- * shows the previous frame).
+ * Push the private canvas to the drawing surface, updating only pixels that differ from what that
+ * surface last received. Used exclusively on fallback path (rotated screen or direct DMA surface).
  */
 bool GifEngine::blitCanvas() {
     if (!canvasBuffer || !matrix) return false;
@@ -491,37 +458,22 @@ bool GifEngine::blitCanvas() {
     const int h = matrix->height();
     const size_t n = (size_t)w * h;
 
-    if (m_borrowedSurfaceCanvas) {
-        matrix->markExternalDraw();
-        g_renderStats.gifBlitMicros += 1;
-        g_renderStats.gifPixelsWritten += (uint32_t)n;
-        g_renderStats.gifPixelsTotal += (uint32_t)n;
-        g_renderStats.gifFrames++;
-        return true;
-    }
-
     uint32_t gen = matrix->externalDrawGeneration();
     if (gen != m_shadowGeneration) {
         m_shadowGeneration = gen;
         invalidateShadows();
     }
-    int idx = matrix->isDoubleBuffered() ? (int)(matrix->flipCount() & 1u) : 0;
-    uint16_t* shadow = m_shadow[idx];
-    bool full = (shadow == nullptr) || !m_shadowValid[idx];
+    uint16_t* shadow = m_diffShadow;
+    bool full = (shadow == nullptr) || !m_diffShadowValid;
 
-    // Only pixels that differ from the shadow are written. Each drawPixel is expensive on this board
-    // (per colour plane: a read-modify-write into the PSRAM DMA buffer plus a cache write-back, about
-    // 14 us per pixel measured on the S3 Waveshare at 256x64), so the number of pixels written is the
-    // whole cost; the scan over canvas and shadow is a few milliseconds. Writing runs through the
-    // library's hlineDMA is no cheaper per pixel and needs a global cache write-back that collides
-    // with flash writes (OTA failed while a GIF was playing), so the per-pixel path stays.
+    // Only pixels that differ from the shadow are written to minimize per-pixel draw costs.
     uint32_t t0 = micros();
     size_t written = 0;
     if (full) {
         matrix->blit565(canvasBuffer, 0, 0, w, h);
         if (shadow) {
             memcpy(shadow, canvasBuffer, n * sizeof(uint16_t));
-            m_shadowValid[idx] = true;
+            m_diffShadowValid = true;
         }
         written = n;
     } else {
@@ -564,6 +516,7 @@ bool GifEngine::blitCanvas() {
             }
         }
     }
+    matrix->markExternalDraw();
     g_renderStats.gifBlitMicros += micros() - t0;
     g_renderStats.gifPixelsWritten += (uint32_t)written;
     g_renderStats.gifPixelsTotal += (uint32_t)n;
@@ -676,8 +629,13 @@ bool GifEngine::playGif(const char* filepath) {
                 if (ensureGifDecoder() && gif->open(psramBuffer, psramBufferSize, GIFDraw)) {
                     updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
                     LOGI("GifEngine", "GIF loaded directly into PSRAM: %s (%zu bytes)", path.c_str(), psramBufferSize);
-                    if (canvasBuffer && matrix) {
-                        memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
+                    if (matrix) {
+                        if (matrix->hasCanvas() && matrix->getRotation() == 0) {
+                            matrix->clear(0);
+                        } else if (m_privateCanvasBuffer) {
+                            memset(m_privateCanvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+                            invalidateShadows();
+                        }
                     }
                     isRaw = false;
                     isPng = false;
@@ -699,8 +657,13 @@ bool GifEngine::playGif(const char* filepath) {
         if (streamOpened && gif) {
             updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
             LOGD("GifEngine", "GIF opened (streaming from SD): %s", filepath);
-            if (canvasBuffer && matrix) {
-                memset(canvasBuffer, 0, matrix->width() * matrix->height() * 2);
+            if (matrix) {
+                if (matrix->hasCanvas() && matrix->getRotation() == 0) {
+                    matrix->clear(0);
+                } else if (m_privateCanvasBuffer) {
+                    memset(m_privateCanvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+                    invalidateShadows();
+                }
             }
             isRaw = false;
             isPng = false;
@@ -749,16 +712,28 @@ void GifEngine::startPreloadTask() {
 void GifEngine::stopPreloadTask() {
     if (m_preloadTask) {
         m_stopPreload.store(true, std::memory_order_release);
-        for (int i = 0; i < 30 && !m_preloadExited.load(std::memory_order_acquire); i++) {
+        // Wait up to 2500ms for preload task to exit cooperatively (SD lock timeout is 1500ms)
+        for (int i = 0; i < 250 && !m_preloadExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
         if (m_preloadExited.load(std::memory_order_acquire)) {
             m_preloadTask = nullptr;
+            freePreloadBuffer();
         } else {
-            LOGW("GifEngine", "gif_preload task did not exit within 300ms cooperative window");
+            // Task failed to exit within cooperative window.
+            // DO NOT kill task with vTaskDelete() to avoid leaving locks or shared state inconsistent.
+            // DO NOT free m_preloaded.buffer to avoid Use-After-Free if task is still writing.
+            // Instead, isolate the task handle and quarantine the buffer.
+            LOGE("GifEngine", "CRITICAL: gif_preload task did not exit within 2500ms cooperative window! Quarantining buffer.");
+            m_preloaded.buffer = nullptr;
+            m_preloaded.size = 0;
+            m_preloaded.ready.store(false, std::memory_order_release);
+            m_preloaded.path[0] = '\0';
+            m_preloadTask = nullptr;
         }
+    } else {
+        freePreloadBuffer();
     }
-    freePreloadBuffer();
 }
 
 void GifEngine::preloadTaskEntry(void* arg) {
@@ -776,9 +751,10 @@ void GifEngine::preloadWorker() {
                 bool isPngCand = false;
                 bool isRawCand = false;
                 if (pickNextCandidate(candidate, sizeof(candidate), isPngCand, isRawCand)) {
+                    if (m_stopPreload.load(std::memory_order_acquire)) break;
                     if (m_hasPsram && !isPngCand && !isRawCand) {
                         SdLockGuard guard(pdMS_TO_TICKS(1500));
-                        if (guard) {
+                        if (guard && !m_stopPreload.load(std::memory_order_acquire)) {
                             FsFile f = sd.open(candidate, FILE_OPEN_READ);
                             if (f) {
                                 size_t sz = f.size();
@@ -795,7 +771,7 @@ void GifEngine::preloadWorker() {
                                             toRead -= r;
                                         }
                                         f.close();
-                                        if (offset == sz) {
+                                        if (offset == sz && !m_stopPreload.load(std::memory_order_acquire)) {
                                             freePreloadBuffer();
                                             strncpy(m_preloaded.path, candidate, sizeof(m_preloaded.path) - 1);
                                             m_preloaded.buffer = buf;
@@ -815,7 +791,7 @@ void GifEngine::preloadWorker() {
                                 }
                             }
                         }
-                    } else {
+                    } else if (!m_stopPreload.load(std::memory_order_acquire)) {
                         freePreloadBuffer();
                         strncpy(m_preloaded.path, candidate, sizeof(m_preloaded.path) - 1);
                         m_preloaded.isPng = isPngCand;
@@ -826,21 +802,19 @@ void GifEngine::preloadWorker() {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Responsive idle wait: 5 x 10ms so stopPreload is checked quickly
+        for (int i = 0; i < 5 && !m_stopPreload.load(std::memory_order_acquire); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 }
 
 bool GifEngine::decodePng(const char* filepath) {
     instance = this;
-    ensureCanvasBuffer();
     if (!png) png = new (std::nothrow) PNG();
     if (!png) {
         LOGE("GifEngine", "Failed to allocate memory for PNG decoder!");
         return false;
-    }
-
-    if (canvasBuffer && matrix) {
-        memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
     }
 
     SdLockGuard guard(pdMS_TO_TICKS(2000));
@@ -850,15 +824,37 @@ bool GifEngine::decodePng(const char* filepath) {
     }
 
     // PNGdec has no concept of animation: decode the whole image once, directly onto the
-    // matrix (via PNGDrawCallback -> matrix->drawPixel), then just leave it on screen. loop()
-    // only needs to track pngShowStartTime to know when to advance/loop - see loop()/GifEngine.h.
+    // matrix (via PNGDrawCallback -> canvasBuffer/matrix), then just leave it on screen.
     int rc = png->open(filepath, PNGOpenFile, PNGCloseFile, PNGReadFile, PNGSeekFile, PNGDrawCallback);
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.open() failed for %s (rc=%d)", filepath, rc);
         return false;
     }
     updateFitGeometry(png->getWidth(), png->getHeight());
-    rc = png->decode((void*)this, 0);
+
+    if (matrix && matrix->hasCanvas() && matrix->getRotation() == 0) {
+        ScopedCanvasGuard canvasGuard(matrix);
+        if (canvasGuard.isValid()) {
+            canvasBuffer = canvasGuard.data();
+            m_borrowedSurfaceCanvas = true;
+            memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+            rc = png->decode((void*)this, 0);
+            canvasGuard.markDrawnAndRelease();
+            canvasBuffer = nullptr;
+            m_borrowedSurfaceCanvas = false;
+        }
+    } else {
+        ensureCanvasBuffer();
+        canvasBuffer = m_privateCanvasBuffer;
+        m_borrowedSurfaceCanvas = false;
+        if (canvasBuffer && matrix) {
+            memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+        }
+        rc = png->decode((void*)this, 0);
+        blitCanvas();
+        canvasBuffer = nullptr;
+    }
+
     png->close();
     if (rc != PNG_SUCCESS) {
         LOGE("GifEngine", "png.decode() failed for %s (rc=%d)", filepath, rc);
@@ -936,7 +932,6 @@ void GifEngine::expandPlaylists(const std::vector<String>& inputPaths, std::vect
                         outPaths.push_back(rootP);
                     }
                 }
-                xSemaphoreGive(sdMutex);
             }
             continue;
         } else {
@@ -1147,7 +1142,9 @@ bool GifEngine::pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPn
     if (playlists.empty()) return false;
 
     int attempts = 0;
-    while (attempts < 5) {
+    while (attempts < 5 && !m_stopPreload.load(std::memory_order_acquire)) {
+        attempts++;
+        if (m_stopPreload.load(std::memory_order_acquire)) return false;
         int pIndex = pickPlaylistIndex();
         if (pIndex < 0) return false;
         String pPath = playlists[pIndex];
@@ -1211,6 +1208,8 @@ bool GifEngine::pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPn
                 }
             }
         }
+
+        if (m_stopPreload.load(std::memory_order_acquire)) return false;
 
         // Single-folder directory scan fallback if index.txt is not found or empty (v3.1.0 compatibility)
         char subDirs[16][128];
@@ -1336,8 +1335,13 @@ void GifEngine::loadNextFileInPlaylist() {
             if (ensureGifDecoder() && gif->open(psramBuffer, psramBufferSize, GIFDraw)) {
                 updateFitGeometry(gif->getCanvasWidth(), gif->getCanvasHeight());
                 LOGI("GifEngine", "Preloaded GIF swapped in <1ms: %s (%zu bytes)", chosenPath.c_str(), psramBufferSize);
-                if (canvasBuffer && matrix) {
-                    memset(canvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+                if (matrix) {
+                    if (matrix->hasCanvas() && matrix->getRotation() == 0) {
+                        matrix->clear(0);
+                    } else if (m_privateCanvasBuffer) {
+                        memset(m_privateCanvasBuffer, 0, (size_t)matrix->width() * matrix->height() * sizeof(uint16_t));
+                        invalidateShadows();
+                    }
                 }
                 isRaw = false;
                 isPng = false;
@@ -1375,7 +1379,7 @@ void GifEngine::loadNextFileInPlaylist() {
             rememberPlayed(pathHash(candidate));
             m_preloadTrigger.store(true, std::memory_order_release);
             return;
-        } else if (!canvasBuffer || !gif) {
+        } else if (!gif) {
             LOGE("GifEngine", "Aborting playlist playback due to allocation failure.");
             stop();
             playlistMode = false;
@@ -1420,7 +1424,14 @@ bool GifEngine::loop() {
     if (isRaw) {
         return playRawFrame();
     } else if (isPng) {
-        blitCanvas();   // both DMA buffers end up holding the image; cheap once they do
+        if (!matrix) return false;
+        if (!matrix->hasCanvas() || matrix->getRotation() != 0) {
+            if (m_privateCanvasBuffer) {
+                canvasBuffer = m_privateCanvasBuffer;
+                blitCanvas();
+                canvasBuffer = nullptr;
+            }
+        }
         if (millis() - pngShowStartTime > pngHoldDurationMs) {
             if (playlistMode) {
                 loadNextFileInPlaylist();
@@ -1442,11 +1453,32 @@ bool GifEngine::loop() {
         unsigned long startDecode = millis();
         uint32_t decodeStartUs = micros();
         int delayMs = 0;
-        int result = (gif != nullptr) ? gif->playFrame(false, &delayMs, (void*)this) : 0;
-        g_renderStats.gifDecodeMicros += micros() - decodeStartUs;
+        int result = 0;
 
-        blitCanvas();
-        
+        if (matrix && matrix->hasCanvas() && matrix->getRotation() == 0) {
+            ScopedCanvasGuard guard(matrix);
+            if (guard.isValid()) {
+                canvasBuffer = guard.data();
+                m_borrowedSurfaceCanvas = true;
+                result = (gif != nullptr) ? gif->playFrame(false, &delayMs, (void*)this) : 0;
+                guard.markDrawnAndRelease();
+                canvasBuffer = nullptr;
+                m_borrowedSurfaceCanvas = false;
+                g_renderStats.gifBlitMicros += 1;
+                g_renderStats.gifPixelsWritten += (uint32_t)(matrix->width() * matrix->height());
+                g_renderStats.gifPixelsTotal += (uint32_t)(matrix->width() * matrix->height());
+                g_renderStats.gifFrames++;
+            }
+        } else {
+            ensureCanvasBuffer();
+            canvasBuffer = m_privateCanvasBuffer;
+            m_borrowedSurfaceCanvas = false;
+            result = (gif != nullptr) ? gif->playFrame(false, &delayMs, (void*)this) : 0;
+            blitCanvas();
+            canvasBuffer = nullptr;
+        }
+
+        g_renderStats.gifDecodeMicros += micros() - decodeStartUs;
         unsigned long decodeTime = millis() - startDecode;
         
         // Respect native GIF framerate up to 62 FPS (16ms per frame).

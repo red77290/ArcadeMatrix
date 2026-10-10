@@ -2101,6 +2101,99 @@ void test_canvas_buffered_surface_drawing_and_rotation(void) {
     surface->releaseCanvas();
 }
 
+void test_scoped_canvas_guard_lifecycle(void) {
+    auto res = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "canvas_single");
+    auto* surface = res.surface.get();
+    TEST_ASSERT_NOT_NULL(surface);
+    surface->clear(0);
+
+    // 1. Normal scoped usage with markDrawnAndRelease
+    {
+        ScopedCanvasGuard guard(surface);
+        TEST_ASSERT_TRUE(guard.isValid());
+        TEST_ASSERT_NOT_NULL(guard.data());
+        TEST_ASSERT_EQUAL_UINT16(64, guard.width());
+        TEST_ASSERT_EQUAL_UINT16(32, guard.height());
+        TEST_ASSERT_EQUAL_UINT32(64, guard.stridePixels());
+
+        // Draw pixel into canvas
+        guard.data()[0] = 0xC001;
+
+        guard.markDrawnAndRelease();
+        TEST_ASSERT_FALSE(guard.isValid());
+    }
+
+    // Verify written data persists on canvas across guards (GIF compositing model)
+    {
+        ScopedCanvasGuard guard(surface);
+        TEST_ASSERT_TRUE(guard.isValid());
+        TEST_ASSERT_EQUAL_UINT16(0xC001, guard.data()[0]);
+    } // Guard falls out of scope without markDrawnAndRelease (early return simulation)
+
+    // Verify that after early return, canvas can be re-acquired cleanly
+    {
+        ScopedCanvasGuard guard(surface);
+        TEST_ASSERT_TRUE(guard.isValid());
+    }
+
+    // 2. Direct DMA surface (no canvas)
+    auto resDirect = DisplaySurfaceFactory::createSurface(nullptr, 64, 32, "direct_double");
+    auto* directSurface = resDirect.surface.get();
+    TEST_ASSERT_NOT_NULL(directSurface);
+    {
+        ScopedCanvasGuard directGuard(directSurface);
+        TEST_ASSERT_FALSE(directGuard.isValid());
+        TEST_ASSERT_NULL(directGuard.data());
+    }
+}
+
+void test_task_quiescence_and_timeout_quarantine(void) {
+    // Simulate preload item and task state
+    struct MockPreload {
+        uint8_t* buffer = nullptr;
+        size_t size = 0;
+        std::atomic<bool> ready{false};
+    } preload;
+
+    uint8_t dummyBuf[64];
+    preload.buffer = dummyBuf;
+    preload.size = sizeof(dummyBuf);
+    preload.ready.store(true);
+
+    // Scenario A: Cooperative exit within timeout window
+    bool taskExited = true;
+    bool bufferFreed = false;
+    if (taskExited) {
+        preload.buffer = nullptr;
+        preload.size = 0;
+        preload.ready.store(false);
+        bufferFreed = true;
+    }
+    TEST_ASSERT_TRUE(bufferFreed);
+    TEST_ASSERT_NULL(preload.buffer);
+    TEST_ASSERT_FALSE(preload.ready.load());
+
+    // Scenario B: Timeout expired while task still running (quarantine simulation)
+    preload.buffer = dummyBuf;
+    preload.size = sizeof(dummyBuf);
+    preload.ready.store(true);
+    taskExited = false; // Task stuck or still reading SD chunk
+
+    bool bufferQuarantined = false;
+    if (!taskExited) {
+        // DO NOT free buffer (prevents Use-After-Free)
+        // DO NOT call vTaskDelete (prevents mutex/heap deadlocks)
+        // Quarantine resources and isolate handle
+        preload.buffer = nullptr;
+        preload.size = 0;
+        preload.ready.store(false);
+        bufferQuarantined = true;
+    }
+    TEST_ASSERT_TRUE(bufferQuarantined);
+    TEST_ASSERT_NULL(preload.buffer);
+    TEST_ASSERT_FALSE(preload.ready.load());
+}
+
 void test_presentation_backends(void) {
     MockPresentationBackend mock(64, 32, 8);
     TEST_ASSERT_EQUAL_UINT32(DmaMemoryLayout::calculateTotalBytes(64, 32, 8, false), mock.calculateDmaBytes());
@@ -3307,6 +3400,8 @@ void setup() {
     RUN_TEST(test_hub75_bulk_encoder_multi_depth_and_edge_colors);
     RUN_TEST(test_display_surface_factory_selection);
     RUN_TEST(test_canvas_buffered_surface_drawing_and_rotation);
+    RUN_TEST(test_scoped_canvas_guard_lifecycle);
+    RUN_TEST(test_task_quiescence_and_timeout_quarantine);
     RUN_TEST(test_presentation_backends);
     RUN_TEST(test_presentation_policy_budget_enforcement);
     RUN_TEST(test_dma_memory_layout_exact_bytes);

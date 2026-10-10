@@ -193,8 +193,10 @@ private:
     bool playRawFrame();
     bool decodePng(const char* filepath);
     
-    // PSRAM caching
+    // PSRAM caching & private fallback canvas (for rotated or direct DMA surfaces)
     uint16_t* canvasBuffer = nullptr;
+    uint16_t* m_privateCanvasBuffer = nullptr;
+    size_t m_privateCanvasPixels = 0;
     uint8_t* psramBuffer = nullptr;
     size_t psramBufferSize = 0;
     void freePsramBuffer();
@@ -222,20 +224,16 @@ private:
     bool pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPng, bool& outIsRaw);
 
     /**
-     * Dirty-pixel presentation. Pushing a whole 256x64 frame through drawPixel costs 8 PSRAM
-     * read-modify-writes plus 8 cache write-backs per pixel (the HUB75 DMA buffer lives in PSRAM),
-     * about 100 ms per frame, which is what held GIF playback to ~7 fps. We keep one shadow copy of
-     * what was last drawn into each DMA buffer and write only the pixels that differ; a typical
-     * animation changes a small fraction of the panel per frame. The shadows are invalidated whenever
-     * something else may have drawn into the buffers (activation, resume, overlays, notices,
-     * transitions: see IDrawingSurface::markExternalDraw), which falls back to a full repaint.
+     * Differential pixel tracking buffer for rotated or direct DMA surfaces (Chemin B).
+     * Keeps a single mirror copy of what was last pushed to the drawing surface to update
+     * only pixels that differ between consecutive animation frames.
      */
-    uint16_t* m_shadow[2] = { nullptr, nullptr };
-    bool m_shadowValid[2] = { false, false };
+    uint16_t* m_diffShadow = nullptr;
+    bool m_diffShadowValid = false;
     uint32_t m_shadowGeneration = 0;
     void allocateShadows(size_t matrixPixels);
     void freeShadows();
-    void invalidateShadows() { m_shadowValid[0] = m_shadowValid[1] = false; }
+    void invalidateShadows() { m_diffShadowValid = false; }
     bool blitCanvas();
 
     /// Placement of the current file on the panel, computed once per file/fit-mode/geometry change
