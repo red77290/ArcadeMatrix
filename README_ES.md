@@ -2,6 +2,9 @@
 
 🇬🇧 [English](README.md) | 🇫🇷 [Français](README_FR.md) | 🇪🇸 Español
 
+[![Comunidad Telegram](https://img.shields.io/badge/Telegram-Unirse%20a%20la%20Comunidad-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+DrSdAO8UMUViNmE0)
+
+💬 **Comunidad Telegram:** [https://t.me/+DrSdAO8UMUViNmE0](https://t.me/+DrSdAO8UMUViNmE0)  
 📺 **Demostración en Video / Presentación:** https://youtu.be/2sA5wLVozRQ?si=T1gn6MYDwpq2-54c
 
 ¡Bienvenido al firmware de código abierto para ESP32 diseñado para controlar matrices LED HUB75! Este proyecto te permite mostrar relojes Arcade, GIFs animados, el tiempo en directo y **sprites de juegos de lucha MUGEN** simulados directamente en una matriz LED real.

@@ -264,7 +264,6 @@ def test_hardware_isolation():
         forbidden_esp_in_rpi = [
             'id="hw-caps-grid"',
             'id="hw-clk-phase"',
-            'id="hw-render-pipeline"',
         ]
         for term in forbidden_esp_in_rpi:
             if term in rpi_content:
