@@ -106,7 +106,7 @@ uint32_t Hub75BulkEncoder::encode(
 
                 uint16_t rgb = r1 | (g1 << 1) | (b1 << 2) | (r2 << 3) | (g2 << 4) | (b2 << 5);
                 int ax = MATRIX_TX_ADJUST(x);
-                dmaRow[ax] = (dmaRow[ax] & BITMASK_RGB12_CLEAR) | rgb;
+                dmaRow[ax] = (dmaRow[ax] & HUB75_BITMASK_RGB12_CLEAR) | rgb;
             }
         }
     }

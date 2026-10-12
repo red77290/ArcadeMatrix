@@ -19,9 +19,8 @@
 #endif
 #endif
 
-#ifndef BITMASK_RGB12_CLEAR
-#define BITMASK_RGB12_CLEAR (0b1111111111000000)
-#endif
+// Inverted bitmask clearing R1G1B1R2G2B2 (bits 0..5)
+static constexpr uint16_t HUB75_BITMASK_RGB12_CLEAR = 0b1111111111000000;
 
 #include "Hub75DmaTarget.h"
 
