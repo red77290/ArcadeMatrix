@@ -91,8 +91,9 @@ void DisplayOrientationManager::setRotation(uint8_t rotation, bool animated) {
         uint8_t oldRot = _currentRotation;
         _currentRotation = target;
         
-        if (animated && _transitionEffect != RotationEffect::NONE && _display) {
-            _fx.start(oldRot, _currentRotation, _transitionEffect, _transitionDurationMs, _display->width(), _display->height());
+        Adafruit_GFX* target = _surface ? static_cast<Adafruit_GFX*>(_surface) : _display;
+        if (animated && _transitionEffect != RotationEffect::NONE && target) {
+            _fx.start(oldRot, _currentRotation, _transitionEffect, _transitionDurationMs, target->width(), target->height());
             LOGI("DisplayOrientation", "Started rotation transition '%s' (%d -> %d)", 
                  RotationTransitionFX::effectToString(_transitionEffect).c_str(), oldRot, _currentRotation);
         } else {
@@ -104,8 +105,13 @@ void DisplayOrientationManager::setRotation(uint8_t rotation, bool animated) {
 }
 
 bool DisplayOrientationManager::renderTransition() {
-    if (_fx.isRunning() && _display) {
-        return _fx.render(_display, onApexReached);
+    Adafruit_GFX* target = _surface ? static_cast<Adafruit_GFX*>(_surface) : _display;
+    if (_fx.isRunning() && target) {
+        bool rendered = _fx.render(target, onApexReached);
+        if (_surface) {
+            _surface->markDirty();
+        }
+        return rendered;
     }
     return false;
 }
@@ -127,7 +133,7 @@ bool DisplayOrientationManager::update(bool autoRotate, uint8_t manualRotation) 
             targetRot = (orient.suggestedRotation + _rotationOffset) % 4;
         }
     } else {
-        targetRot = (manualRotation + _rotationOffset) % 4;
+        targetRot = manualRotation % 4;
     }
 
     if (targetRot != _currentRotation && !_fx.isRunning()) {

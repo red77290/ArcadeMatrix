@@ -560,9 +560,12 @@ static bool checkAuth(AsyncWebServerRequest* request) {
 // Config mutations copy maps/strings (snapshot publish, SD save). Under severe DRAM exhaustion a
 // throwing allocation aborts the firmware, so refuse the request early instead.
 static bool rejectIfLowHeap(AsyncWebServerRequest* request) {
-    if (ESP.getMaxAllocHeap() >= 12288 && ESP.getFreeHeap() >= 20480) return false;
-    LOGW("WebServer", "Rejecting config mutation: DRAM pressure (free=%u, largest=%u)",
-         (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    size_t minLargest = hasPsram ? 12288 : 5120;
+    size_t minFree = hasPsram ? 20480 : 12288;
+    if (ESP.getMaxAllocHeap() >= minLargest && ESP.getFreeHeap() >= minFree) return false;
+    LOGW("WebServer", "Rejecting config mutation: DRAM pressure (free=%u, largest=%u, minFree=%u, minLargest=%u)",
+         (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)minFree, (unsigned)minLargest);
     AsyncWebServerResponse* r = request->beginResponse(503);
     r->addHeader("Retry-After", "2");
     request->send(r);
@@ -570,9 +573,12 @@ static bool rejectIfLowHeap(AsyncWebServerRequest* request) {
 }
 
 void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument& doc) {
-    if (ESP.getMaxAllocHeap() < 4096 || ESP.getFreeHeap() < 12288) {
-        LOGW("WebServer", "Dropping API response: DRAM pressure (free=%u, largest=%u)",
-             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    bool hasPsram = hardwareHAL.capabilities().hasPsram;
+    size_t minLargest = hasPsram ? 4096 : 3072;
+    size_t minFree = hasPsram ? 12288 : 8192;
+    if (ESP.getMaxAllocHeap() < minLargest || ESP.getFreeHeap() < minFree) {
+        LOGW("WebServer", "Dropping API response: DRAM pressure (free=%u, largest=%u, minFree=%u, minLargest=%u)",
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), (unsigned)minFree, (unsigned)minLargest);
         // Never close the client from inside a handler: the library keeps parsing this request
         // after the handler returns and would dereference a destroyed client. A body-less 503 is
         // the smallest valid answer and lets the client retry.

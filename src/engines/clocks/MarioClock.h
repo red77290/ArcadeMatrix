@@ -32,7 +32,7 @@ public:
     void onActivated() override { m_dirty = 2; m_hasFrame = true; m_snapToNow = true; }
 
 private:
-    enum class Phase : uint8_t { Waiting, RunIn, Jump, RunOut };
+    enum class Phase : uint8_t { Waiting, RunIn, Jump, Kick, RunOut };
 
     TimeData storedTime;
     ClockFaceFont faceFont;
@@ -51,8 +51,10 @@ private:
     char shownMM[4] = "--";
 
     // 128x32 compact shell-kick animation
-    float shellX = -100.0f;
-    bool shellActive = false;
+    float shellX = 40.0f;
+    float shellDir = 1.0f;
+    float jumpStartX = 0.0f;
+    float jumpTargetX = 0.0f;
     bool coinPop = false;
 
     uint8_t m_dirty = 2;        ///< full repaints still owed (both DMA buffers)

@@ -16,7 +16,8 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
     const String& requestedPipeline,
     bool hasPsram,
     const MemoryBudgetConstraints& memory,
-    const EngineRequirements& requirements)
+    const EngineRequirements& requirements,
+    bool hasPreallocatedCanvas)
 {
     PipelineSelectionResult res;
 
@@ -153,9 +154,14 @@ PipelineSelectionResult PipelineSelectionPolicy::evaluate(
         }
     } else {
         // Resource-aware Auto resolution for Classic ESP32 without PSRAM:
-        // Must preserve at least 45KB internal DRAM headroom for networking stack
-        bool sramCanFit = (effectiveMem.largestInternalBlock == 0 || effectiveMem.largestInternalBlock >= canvasBytes) &&
+        // If canvas buffer was pre-allocated at boot, do not double-count it against free heap or contiguous block.
+        bool sramCanFit = false;
+        if (hasPreallocatedCanvas) {
+            sramCanFit = (effectiveMem.freeInternalHeap == 0 || effectiveMem.freeInternalHeap >= 35000);
+        } else {
+            sramCanFit = (effectiveMem.largestInternalBlock == 0 || effectiveMem.largestInternalBlock >= canvasBytes) &&
                           (effectiveMem.freeInternalHeap == 0 || effectiveMem.freeInternalHeap >= (canvasBytes + 45000));
+        }
         if (sramCanFit) {
             res.descriptor.strategy = PresentationStrategy::CANVAS_BURST_SINGLE;
             res.descriptor.canvasStorage = CanvasStorage::SRAM;

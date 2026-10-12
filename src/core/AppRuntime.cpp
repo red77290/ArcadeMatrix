@@ -434,7 +434,8 @@ void AppRuntime::initialize() {
 #else
         MemoryBudgetConstraints(),
 #endif
-        rotationReq
+        rotationReq,
+        m_preallocatedCanvasBuffer != nullptr
     );
 
     LOGI("Matrix", "Initializing matrix engine: %dx%d (Chain: %d, Driver: %s, ConfiguredDepth: %d, EffectiveDepth: %u, Pipeline: %s)...",
@@ -825,8 +826,14 @@ void AppRuntime::update() {
 
     if (m_displayRuntime.isTransitioning()) {
         m_displayRuntime.renderTransition();
-        matrixEngine.markExternalDraw();
-        matrixEngine.present();
+        if (m_drawingSurface) {
+            if (m_drawingSurface->isDirty()) {
+                m_drawingSurface->present();
+            }
+        } else {
+            matrixEngine.markExternalDraw();
+            matrixEngine.present();
+        }
         m_displayRuntime.getScheduler().delayUntilNextFrame(true);
         return;
     }

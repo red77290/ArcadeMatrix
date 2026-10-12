@@ -58,7 +58,12 @@ public:
     void begin(AppEngineContext* ctx, MatrixEngine* matrix, RotationManager* rot,
                OverlayManager* ov, DisplayOrientationManager* orient, DisplayArbiter* arb);
 
-    void setSurface(IDrawingSurface* surface) { m_surface = surface; }
+    void setSurface(IDrawingSurface* surface) {
+        m_surface = surface;
+        if (m_orientationManager) {
+            m_orientationManager->setSurface(surface);
+        }
+    }
     IDrawingSurface* getSurface() const { return m_surface; }
 
     void registerSourceEngine(DisplaySourceId sourceId, IEngine* engine, const EngineHandle& handle = {});

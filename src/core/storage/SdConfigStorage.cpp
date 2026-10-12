@@ -65,7 +65,10 @@ bool SdConfigStorage::writeStringAtomic(const char* path, const String& content)
 
     String tmpPath = String(path) + ".tmp";
 
-    // 1. Write to temporary file
+    // 1. Write to temporary file (clean up stale .tmp if present)
+    if (sd.exists(tmpPath.c_str())) {
+        sd.remove(tmpPath.c_str());
+    }
     FsFile f = sd.open(tmpPath.c_str(), FILE_OPEN_WRITE);
     if (!f) {
         LOGE("SdConfigStorage", "Failed to open temporary file %s", tmpPath.c_str());

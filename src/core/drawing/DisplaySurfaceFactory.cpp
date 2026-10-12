@@ -36,7 +36,8 @@ SurfaceCreationResult DisplaySurfaceFactory::createSurface(
 #endif
 
     auto policyRes = PipelineSelectionPolicy::evaluate(
-        width, height, depth, requestedPipeline, hasPsram, mem
+        width, height, depth, requestedPipeline, hasPsram, mem,
+        EngineRequirements(), preallocatedCanvas != nullptr
     );
 
     result.reason = policyRes.reason;

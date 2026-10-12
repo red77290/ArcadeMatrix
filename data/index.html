@@ -2237,7 +2237,19 @@ const API = {
       handleUnauthorized();
       throw new Error(`HTTP Error 401: Unauthorized`);
     }
-    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    if (!res.ok) {
+      let errMsg = `HTTP Error ${res.status}`;
+      try {
+        const errText = await res.text();
+        const parsed = JSON.parse(errText);
+        if (parsed && (parsed.error || parsed.message)) {
+          errMsg = parsed.error || parsed.message;
+        }
+      } catch (_) {}
+      const err = new Error(errMsg);
+      err.status = res.status;
+      throw err;
+    }
     const text = await res.text();
     try {
       return JSON.parse(text);
@@ -5615,7 +5627,7 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
       markClean();
       window.showToast('Rotation playlist saved successfully!', 'success');
     } catch (e) {
-      window.showToast('Failed to save rotation playlist', 'warning');
+      window.showToast(e && e.message ? e.message : 'Failed to save rotation playlist', 'warning');
     }
   };
 

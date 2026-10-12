@@ -1317,12 +1317,7 @@ void GifEngine::loadNextFileInPlaylist() {
     // Fast-path: Check if Core 0 already preloaded the next GIF
     if (m_preloaded.ready.load(std::memory_order_acquire)) {
         if (m_hasPsram && m_preloaded.buffer != nullptr) {
-            if (isPlaying) {
-                if (!isRaw && !isPng && gif) gif->close();
-                if (currentFile) currentFile.close();
-                isPlaying = false;
-            }
-            freePsramBuffer();
+            stop();
 
             psramBuffer = m_preloaded.buffer;
             psramBufferSize = m_preloaded.size;
@@ -1394,8 +1389,11 @@ void GifEngine::loadNextFileInPlaylist() {
 
 void GifEngine::stop() {
     if (isPlaying) {
-        if (!isRaw && !isPng && gif) gif->close();
-        if (currentFile) currentFile.close();
+        {
+            SdLockGuard guard(pdMS_TO_TICKS(500));
+            if (!isRaw && !isPng && gif) gif->close();
+            if (currentFile) currentFile.close();
+        }
         isPlaying = false;
     }
     playlistMode = false;
@@ -1562,10 +1560,9 @@ bool GifEngine::playRawFrame() {
 
 // --- AnimatedGIF Callbacks ---
 
-// Symmetric with GIFReadFile/GIFSeekFile: no sdMutex here either. The caller (playGif) already
-// owns the mutex while gif.open() runs, and re-entering it would deadlock.
 void* GifEngine::GIFOpenFile(const char *fname, int32_t *pSize) {
     if (!instance) return nullptr;
+    SdLockGuard guard(pdMS_TO_TICKS(500));
     instance->currentFile = sd.open(fname, FILE_OPEN_READ);
     if (instance->currentFile) {
         *pSize = instance->currentFile.size();
@@ -1576,7 +1573,10 @@ void* GifEngine::GIFOpenFile(const char *fname, int32_t *pSize) {
 
 void GifEngine::GIFCloseFile(void *pHandle) {
     FsFile *f = static_cast<FsFile *>(pHandle);
-    if (f && *f) f->close();
+    if (f && *f) {
+        SdLockGuard guard(pdMS_TO_TICKS(500));
+        f->close();
+    }
 }
 
 // NOTE (Core 1 hot-path, zero-mutex invariant): these callbacks are invoked synchronously by

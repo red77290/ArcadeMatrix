@@ -148,7 +148,10 @@ void MarioClock::update() {
         phase = Phase::Waiting;
         pendingDigits = false;
         blockBounce[0] = blockBounce[1] = 0.0f;
-        shellActive = false;
+        runnerX = -40.0f;
+        runnerY = (float)(groundTop - MARIO_H);
+        shellX = 40.0f;
+        shellDir = 1.0f;
         coinPop = false;
         m_dirty = 2;
     }
@@ -168,11 +171,12 @@ void MarioClock::update() {
                 pendingDigits = true;
             }
         } else {
-            // 128x32 compact mode: trigger green Koopa shell kick
-            shellActive = true;
-            shellX = 26.0f;
-            pendingDigits = true;
+            // 128x32 compact mode: trigger Mario run-in and shell kick
             phase = Phase::RunIn;
+            runnerX = -(float)MARIO_W;
+            runnerY = (float)(groundTop - MARIO_H);
+            pendingDigits = true;
+            coinPop = false;
         }
         m_dirty = 2;
     }
@@ -329,19 +333,98 @@ void MarioClock::update() {
         }
     } else {
         // 128x32 compact mode shell physics
-        if (shellActive) {
-            float shellSpeed = 280.0f * (speedPct / 100.0f);
-            shellX += shellSpeed * dt;
-            int targetX = (jumpTarget == 0) ? hourX : minuteX;
-            if (shellX >= targetX - 6) {
-                shellActive = false;
-                blockBounce[jumpTarget] = 0.001f;
-                strcpy(shownHH, hh);
-                strcpy(shownMM, mm);
-                pendingDigits = false;
-                coinPop = true;
-                phase = Phase::Waiting;
-            }
+        const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - KOOPA_SHELL_W / 2;
+        const float pace = 75.0f * (speedPct / 100.0f);
+
+        switch (phase) {
+            case Phase::Waiting:
+                {
+                    // Shell patrols back and forth between x=20 and x=65
+                    float patrolSpeed = 22.0f * (speedPct / 100.0f);
+                    shellX += shellDir * patrolSpeed * dt;
+                    if (shellX >= 65.0f) {
+                        shellX = 65.0f;
+                        shellDir = -1.0f;
+                    } else if (shellX <= 20.0f) {
+                        shellX = 20.0f;
+                        shellDir = 1.0f;
+                    }
+                    runnerX = -40.0f;
+                }
+                break;
+
+            case Phase::RunIn:
+                {
+                    runnerX += pace * dt;
+                    runnerY = (float)(groundTop - MARIO_H);
+                    // Launch jump when approaching shell
+                    if (runnerX >= 10.0f && (shellX - runnerX) <= 35.0f) {
+                        jumpStartX = runnerX;
+                        jumpTargetX = shellX - 1.0f;
+                        jumpT = 0.0f;
+                        phase = Phase::Jump;
+                    } else if (runnerX >= 25.0f) {
+                        jumpStartX = runnerX;
+                        jumpTargetX = shellX - 1.0f;
+                        jumpT = 0.0f;
+                        phase = Phase::Jump;
+                    }
+                }
+                break;
+
+            case Phase::Jump:
+                {
+                    jumpT += dt * 2.2f * (speedPct / 100.0f);
+                    float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                    runnerX = jumpStartX + (jumpTargetX - jumpStartX) * t;
+                    // High jump arc (up to 22px) that clips above screen top (32px matrix)
+                    float arc = sinf(t * 3.14159f) * 22.0f;
+                    runnerY = (float)(groundTop - MARIO_H) - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        runnerX = jumpTargetX;
+                        runnerY = (float)(groundTop - MARIO_H);
+                        phase = Phase::Kick;
+                        shellDir = 1.0f;
+                    }
+                }
+                break;
+
+            case Phase::Kick:
+                {
+                    float shellSpeed = 280.0f * (speedPct / 100.0f);
+                    shellX += shellSpeed * dt;
+                    // Mario does a small hop on kick impact
+                    float hopProgress = constrain((shellX - jumpTargetX) / 30.0f, 0.0f, 1.0f);
+                    runnerY = (float)(groundTop - MARIO_H) - sinf(hopProgress * 3.14159f) * 6.0f;
+
+                    if (shellX >= targetX - 4) {
+                        shellX = (float)(targetX - 4);
+                        blockBounce[jumpTarget] = 0.001f;
+                        strcpy(shownHH, hh);
+                        strcpy(shownMM, mm);
+                        pendingDigits = false;
+                        coinPop = true;
+                        phase = Phase::RunOut;
+                    }
+                }
+                break;
+
+            case Phase::RunOut:
+                {
+                    runnerX -= pace * dt;
+                    runnerY = (float)(groundTop - MARIO_H);
+                    // Shell rebounds gently towards patrol area
+                    if (shellX > 55.0f) {
+                        shellX -= 40.0f * (speedPct / 100.0f) * dt;
+                    }
+                    if (runnerX < -(float)MARIO_W - 8.0f) {
+                        phase = Phase::Waiting;
+                        shellDir = -1.0f;
+                        m_dirty = 2;
+                    }
+                }
+                break;
         }
     }
 
@@ -350,12 +433,15 @@ void MarioClock::update() {
             blockBounce[i] += dt * 3.2f;
             if (blockBounce[i] >= 1.0f) {
                 blockBounce[i] = 0.0f;
-                if (!isWideTall && !isPortrait) coinPop = false;
+                if (!isWideTall && !isPortrait) {
+                    coinPop = false;
+                    m_dirty = 2;
+                }
             }
         }
     }
 
-    bool animating = (phase != Phase::Waiting) || blockBounce[0] > 0.0f || blockBounce[1] > 0.0f || shellActive;
+    bool animating = (phase != Phase::Waiting) || blockBounce[0] > 0.0f || blockBounce[1] > 0.0f || (!isWideTall && !isPortrait);
     if (!animating && m_dirty == 0) {
         m_hasFrame = false;
         return;
@@ -401,11 +487,19 @@ void MarioClock::update() {
             }
         }
     } else {
-        // 128x32: Mario stands at x=14
-        blitSprite(MARIO_IDLE, MARIO_W, MARIO_H, 14, groundTop - MARIO_H, true);
-        if (shellActive) {
-            blitSprite(KOOPA_SHELL, KOOPA_SHELL_W, KOOPA_SHELL_H, (int)shellX, groundTop - KOOPA_SHELL_H, true);
+        // 128x32: Draw Mario if on screen
+        if (runnerX >= -(float)MARIO_W && runnerX < (float)w) {
+            if (phase == Phase::Jump) {
+                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, (int)runnerY, true);
+            } else {
+                const int f = (((int)runnerX + 1200) / 6) % 3;
+                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], (int)runnerY, true);
+            }
         }
+        // Always draw the living shell
+        blitSprite(KOOPA_SHELL, KOOPA_SHELL_W, KOOPA_SHELL_H, (int)shellX, groundTop - KOOPA_SHELL_H, true);
+
+        // Draw pop-up coin
         if (coinPop && blockBounce[jumpTarget] > 0.0f) {
             int targetX = (jumpTarget == 0) ? hourX : minuteX;
             float b = blockBounce[jumpTarget];
@@ -419,6 +513,8 @@ void MarioClock::onDisplayGeometryChanged(const DisplayGeometry& geometry) {
     m_dirty = 2;
     phase = Phase::Waiting;
     lastMinute = -1;
-    shellActive = false;
+    shellX = 40.0f;
+    shellDir = 1.0f;
+    runnerX = -40.0f;
     coinPop = false;
 }

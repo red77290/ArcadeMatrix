@@ -64,7 +64,8 @@ public:
         const String& requestedPipeline = "auto",
         bool hasPsram = false,
         const MemoryBudgetConstraints& memory = MemoryBudgetConstraints(),
-        const EngineRequirements& requirements = EngineRequirements()
+        const EngineRequirements& requirements = EngineRequirements(),
+        bool hasPreallocatedCanvas = false
     );
 
     /**

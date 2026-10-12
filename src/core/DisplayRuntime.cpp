@@ -500,6 +500,10 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
         if (m_surface) {
             m_surface->setPresentationBackend(m_matrixEngine->getPresentationBackend());
         }
+        if (m_orientationManager) {
+            m_orientationManager->begin(m_matrixEngine->getDisplay());
+            m_orientationManager->setSurface(m_surface);
+        }
     }
     SystemWatchdog::instance().recordEngineState(
         descId,
