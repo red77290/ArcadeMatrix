@@ -3,6 +3,7 @@
 🇬🇧 English | 🇫🇷 [Français](README_FR.md) | 🇪🇸 [Español](README_ES.md)
 
 [![Telegram Community](https://img.shields.io/badge/Telegram-Join%20Community-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+DrSdAO8UMUViNmE0)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Project-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/red1l)
 
 💬 **Telegram Community:** [https://t.me/+DrSdAO8UMUViNmE0](https://t.me/+DrSdAO8UMUViNmE0)  
 📺 **Video Demo / Présentation :** https://youtu.be/2sA5wLVozRQ?si=T1gn6MYDwpq2-54c
@@ -281,6 +282,12 @@ A huge thanks to the open-source community and the creators of the incredible li
 - **[@TooncesToo](https://github.com/TooncesToo)** (Erik Jerue) for developing the Home Assistant & MQTT Data engine with ready-to-use blueprints, the network GIF library API, multi-file uploader, Web UI file manager with dual-orientation support on both ESP32 and Raspberry Pi, clockface optimizations, and outstanding cross-platform contributions.
 
 Special thanks to the **RPiTeam** for the awesome pack of 600 GIFs!
+
+## ☕ Support the Project
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20Me%20a%20Coffee-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/red1l)
+
+If you enjoy this project and want to support its ongoing development, feel free to [buy me a coffee on Ko-fi](https://ko-fi.com/red1l). It is completely voluntary, no strings attached, and nothing expected in return — just a kind gesture that fuels motivation and testing on new hardware!
 
 ## 📜 License
 This project is licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
