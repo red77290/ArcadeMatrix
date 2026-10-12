@@ -63,7 +63,7 @@ private:
 
     void drawScene(int w, int h);
     void drawBlockAt(int x, int y, const char* text);
-    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent);
+    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent, bool flipH = false);
 };
 
 #endif

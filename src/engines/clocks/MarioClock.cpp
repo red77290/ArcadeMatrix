@@ -28,14 +28,14 @@ void MarioClock::draw(const TimeData& t) {
 }
 
 // Straight bitmap blits: the artwork is RGB565 already, and SKY_COLOR doubles as the mask.
-void MarioClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent) {
+void MarioClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent, bool flipH) {
     if (!matrix || !data) return;
     const int panelW = matrix->width(), panelH = matrix->height();
     for (int row = 0; row < h; row++) {
         int py = y + row;
         if (py < 0 || py >= panelH) continue;
         for (int col = 0; col < w; col++) {
-            int px = x + col;
+            int px = x + (flipH ? (w - 1 - col) : col);
             if (px < 0 || px >= panelW) continue;
             uint16_t c = data[row * w + col];
             if (transparent && c == _MASK) continue;
@@ -355,17 +355,28 @@ void MarioClock::update() {
 
             case Phase::RunIn:
                 {
+                    // Koopa continues walking while Mario runs in
+                    float patrolSpeed = 22.0f * (speedPct / 100.0f);
+                    shellX += shellDir * patrolSpeed * dt;
+                    if (shellX >= 65.0f) {
+                        shellX = 65.0f;
+                        shellDir = -1.0f;
+                    } else if (shellX <= 20.0f) {
+                        shellX = 20.0f;
+                        shellDir = 1.0f;
+                    }
+
                     runnerX += pace * dt;
                     runnerY = (float)(groundTop - MARIO_H);
-                    // Launch jump when approaching shell
+                    // Launch jump when approaching Koopa
                     if (runnerX >= 10.0f && (shellX - runnerX) <= 35.0f) {
                         jumpStartX = runnerX;
-                        jumpTargetX = shellX - 1.0f;
+                        jumpTargetX = shellX;
                         jumpT = 0.0f;
                         phase = Phase::Jump;
                     } else if (runnerX >= 25.0f) {
                         jumpStartX = runnerX;
-                        jumpTargetX = shellX - 1.0f;
+                        jumpTargetX = shellX;
                         jumpT = 0.0f;
                         phase = Phase::Jump;
                     }
@@ -496,8 +507,15 @@ void MarioClock::update() {
                 blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], (int)runnerY, true);
             }
         }
-        // Always draw the living shell
-        blitSprite(KOOPA_SHELL, KOOPA_SHELL_W, KOOPA_SHELL_H, (int)shellX, groundTop - KOOPA_SHELL_H, true);
+        // Draw Koopa: walking turtle with 2-frame animation when waiting/run-in/jump, shell when kicked/run-out
+        const bool inShell = (phase == Phase::Kick || phase == Phase::RunOut);
+        if (inShell) {
+            blitSprite(KOOPA_SHELL, KOOPA_SHELL_W, KOOPA_SHELL_H, (int)shellX, groundTop - KOOPA_SHELL_H, true);
+        } else {
+            const int kf = (((int)shellX + 500) / 4) % 2;
+            const bool flipH = (shellDir > 0);
+            blitSprite(KOOPA_WALK[kf], KOOPA_W, KOOPA_H, (int)shellX, groundTop - KOOPA_H, true, flipH);
+        }
 
         // Draw pop-up coin
         if (coinPop && blockBounce[jumpTarget] > 0.0f) {
