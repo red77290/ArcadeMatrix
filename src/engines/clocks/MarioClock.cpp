@@ -44,16 +44,77 @@ void MarioClock::blitSprite(const uint16_t* data, int w, int h, int x, int y, bo
     }
 }
 
-void MarioClock::drawBlockAt(int x, int y, const char* text) {
-    blitSprite(BLOCK, BLOCK_W, BLOCK_H, x, y, false);
-    matrix->setFont(&Super_Mario_Bros__24pt7b);
-    matrix->setTextSize(1);
-    // Its own font at its own size, and no outline: the digits sit in a 19 px block, where a
-    // halo closes the counters and makes them unreadable.
-    matrix->setTextColor(0x0000);
-    matrix->setCursor(x + (strlen(text) == 1 ? 6 : 2), y + 12);
-    matrix->print(text);
-    matrix->setFont(nullptr);
+// 14x14 downscaled Question Block for 32-wide Tate mode
+static const unsigned short BLOCK_14X14[196] = {
+    // Row 0
+    _MASK,  0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, 0x9A40, _MASK,
+    // Row 1
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    // Row 2 (rivets at col 2 and 11)
+    0x9A40, 0xE4E4, 0x0000, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000, 0xE4E4, 0x0000,
+    // Rows 3-10 (golden interior)
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    // Row 11 (rivets at col 2 and 11)
+    0x9A40, 0xE4E4, 0x0000, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000, 0xE4E4, 0x0000,
+    // Row 12
+    0x9A40, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0xE4E4, 0x0000,
+    // Row 13
+    _MASK,  0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, _MASK
+};
+
+static void drawDigit4x6(IDrawingSurface* surf, int px, int py, char c, uint16_t color) {
+    if (!surf || c < '0' || c > '9') return;
+    static const uint8_t DIGITS[10][6] = {
+        { 0x6, 0x9, 0x9, 0x9, 0x9, 0x6 }, // 0
+        { 0x2, 0x6, 0x2, 0x2, 0x2, 0x7 }, // 1
+        { 0x6, 0x9, 0x1, 0x2, 0x4, 0xF }, // 2
+        { 0xE, 0x1, 0x6, 0x1, 0x1, 0xE }, // 3
+        { 0x9, 0x9, 0xF, 0x1, 0x1, 0x1 }, // 4
+        { 0xF, 0x8, 0xE, 0x1, 0x1, 0xE }, // 5
+        { 0x6, 0x8, 0xE, 0x9, 0x9, 0x6 }, // 6
+        { 0xF, 0x1, 0x2, 0x2, 0x4, 0x4 }, // 7
+        { 0x6, 0x9, 0x6, 0x9, 0x9, 0x6 }, // 8
+        { 0x6, 0x9, 0x9, 0x7, 0x1, 0x6 }  // 9
+    };
+    int idx = c - '0';
+    for (int r = 0; r < 6; r++) {
+        uint8_t row = DIGITS[idx][r];
+        for (int b = 0; b < 4; b++) {
+            if (row & (0x8 >> b)) {
+                surf->drawPixel(px + b, py + r, color);
+            }
+        }
+    }
+}
+
+void MarioClock::drawBlockAt(int x, int y, const char* text, bool downscaled) {
+    if (downscaled) {
+        blitSprite(BLOCK_14X14, 14, 14, x, y, true);
+        int len = strlen(text);
+        if (len == 1) {
+            drawDigit4x6(matrix, x + 5, y + 4, text[0], 0x0000);
+        } else if (len >= 2) {
+            drawDigit4x6(matrix, x + 2, y + 4, text[0], 0x0000);
+            drawDigit4x6(matrix, x + 7, y + 4, text[1], 0x0000);
+        }
+    } else {
+        blitSprite(BLOCK, BLOCK_W, BLOCK_H, x, y, false);
+        matrix->setFont(&Super_Mario_Bros__24pt7b);
+        matrix->setTextSize(1);
+        // Its own font at its own size, and no outline: the digits sit in a 19 px block, where a
+        // halo closes the counters and makes them unreadable.
+        matrix->setTextColor(0x0000);
+        matrix->setCursor(x + (strlen(text) == 1 ? 6 : 2), y + 12);
+        matrix->print(text);
+        matrix->setFont(nullptr);
+    }
 }
 
 // The scene: the square original in the middle, with the ground and clouds carried out to both
@@ -68,18 +129,32 @@ void MarioClock::drawScene(int w, int h) {
     }
 
     if (isPortrait) {
-        // Stepped brick platforms in vertical mode
-        for (int px = 8; px < 56; px += GROUND_W) {
-            blitSprite(GROUND, GROUND_W, GROUND_H, px, 70, false);
+        if (w >= 64) {
+            // Stepped brick platforms in vertical mode (64x256 / 64x128)
+            for (int px = 8; px < 56; px += GROUND_W) {
+                blitSprite(GROUND, GROUND_W, GROUND_H, px, 70, false);
+            }
+            for (int px = 16; px < 48; px += GROUND_W) {
+                blitSprite(GROUND, GROUND_W, GROUND_H, px, 130, false);
+            }
+            for (int px = 8; px < 56; px += GROUND_W) {
+                blitSprite(GROUND, GROUND_W, GROUND_H, px, 190, false);
+            }
+            blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 4, 4, true);
+            blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W - 4, 10, true);
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128)
+            // Platform 1 (top): y=56, spans across the width under both blocks
+            for (int px = 0; px < w; px += GROUND_W) {
+                blitSprite(GROUND, GROUND_W, GROUND_H, px, 56, false);
+            }
+            // Platform 2 (middle step): y=88, on the right side (x=8..31)
+            for (int px = 8; px < w; px += GROUND_W) {
+                blitSprite(GROUND, GROUND_W, GROUND_H, px, 88, false);
+            }
+            blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 2, 2, true);
+            blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W - 1, 6, true);
         }
-        for (int px = 16; px < 48; px += GROUND_W) {
-            blitSprite(GROUND, GROUND_W, GROUND_H, px, 130, false);
-        }
-        for (int px = 8; px < 56; px += GROUND_W) {
-            blitSprite(GROUND, GROUND_W, GROUND_H, px, 190, false);
-        }
-        blitSprite(CLOUD1, CLOUD_W, CLOUD_H, 4, 4, true);
-        blitSprite(CLOUD2, CLOUD_W, CLOUD_H, w - CLOUD_W - 4, 10, true);
         return;
     }
 
@@ -112,10 +187,17 @@ void MarioClock::update() {
     int hourX, minuteX, blockY;
 
     if (isPortrait) {
-        // 64x256 / 64x128 vertical layout: blocks over Platform 1 (y=70)
-        hourX = 10;
-        minuteX = 35;
-        blockY = 24;
+        if (w >= 64) {
+            // 64x256 / 64x128 vertical layout: blocks over Platform 1 (y=70)
+            hourX = 10;
+            minuteX = 35;
+            blockY = 24;
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128): side-by-side 14x14 downscaled blocks
+            hourX = 1;
+            minuteX = 17;
+            blockY = 18;
+        }
     } else if (isWideTall) {
         const int sceneLeft = (w - SCENE) / 2;
         hourX = sceneLeft + 13;
@@ -183,120 +265,233 @@ void MarioClock::update() {
     if (shownHH[0] == '-') { strcpy(shownHH, hh); strcpy(shownMM, mm); m_dirty = 2; }
 
     if (isPortrait) {
-        const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
-        const float pace = 75.0f * (speedPct / 100.0f);
+        if (w >= 64) {
+            const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
+            const float pace = 75.0f * (speedPct / 100.0f);
 
-        switch (phase) {
-            case Phase::Waiting:
-                break;
-            case Phase::RunIn:
-                {
-                    const float groundY = (float)(h - GROUND_H - MARIO_H);
+            switch (phase) {
+                case Phase::Waiting:
+                    break;
+                case Phase::RunIn:
+                    {
+                        const float groundY = (float)(h - GROUND_H - MARIO_H);
+                        if (climbStage == 0) {
+                            // Stage 0: Running on bottom ground
+                            runnerX += pace * dt;
+                            runnerY = groundY;
+                            if (runnerX >= 14.0f) {
+                                climbStage = 1;
+                                jumpT = 0.0f;
+                            }
+                        } else if (climbStage == 1) {
+                            // Stage 1: Jump from Ground to Platform 3 (y=190)
+                            jumpT += dt * 2.6f * (speedPct / 100.0f);
+                            float t = jumpT < 1.0f ? jumpT : 1.0f;
+                            runnerX = 14.0f + 22.0f * t;
+                            float baseY = groundY + (190.0f - MARIO_H - groundY) * t;
+                            float arc = 4.0f * 14.0f * t * (1.0f - t);
+                            runnerY = baseY - arc;
+                            if (jumpT >= 1.0f) {
+                                jumpT = 0.0f;
+                                runnerY = 190.0f - MARIO_H;
+                                climbStage = 2;
+                            }
+                        } else if (climbStage == 2) {
+                            // Stage 2: Run left on Platform 3
+                            runnerX -= pace * dt;
+                            runnerY = 190.0f - MARIO_H;
+                            if (runnerX <= 30.0f) {
+                                climbStage = 3;
+                                jumpT = 0.0f;
+                            }
+                        } else if (climbStage == 3) {
+                            // Stage 3: Jump from Platform 3 to Platform 2 (y=130)
+                            jumpT += dt * 2.8f * (speedPct / 100.0f);
+                            float t = jumpT < 1.0f ? jumpT : 1.0f;
+                            runnerX = 30.0f + (18.0f - 30.0f) * t;
+                            float baseY = (190.0f - MARIO_H) + ((130.0f - MARIO_H) - (190.0f - MARIO_H)) * t;
+                            float arc = 4.0f * 14.0f * t * (1.0f - t);
+                            runnerY = baseY - arc;
+                            if (jumpT >= 1.0f) {
+                                jumpT = 0.0f;
+                                runnerY = 130.0f - MARIO_H;
+                                climbStage = 4;
+                            }
+                        } else if (climbStage == 4) {
+                            // Stage 4: Run right on Platform 2
+                            runnerX += pace * dt;
+                            runnerY = 130.0f - MARIO_H;
+                            if (runnerX >= 24.0f) {
+                                climbStage = 5;
+                                jumpT = 0.0f;
+                            }
+                        } else if (climbStage == 5) {
+                            // Stage 5: Jump from Platform 2 to Platform 1 (y=70)
+                            jumpT += dt * 2.8f * (speedPct / 100.0f);
+                            float t = jumpT < 1.0f ? jumpT : 1.0f;
+                            runnerX = 24.0f + (32.0f - 24.0f) * t;
+                            float baseY = (130.0f - MARIO_H) + ((70.0f - MARIO_H) - (130.0f - MARIO_H)) * t;
+                            float arc = 4.0f * 14.0f * t * (1.0f - t);
+                            runnerY = baseY - arc;
+                            if (jumpT >= 1.0f) {
+                                jumpT = 0.0f;
+                                runnerY = 70.0f - MARIO_H;
+                                climbStage = 6;
+                            }
+                        } else if (climbStage == 6) {
+                            // Stage 6: Running along Platform 1 (y=70) towards target block
+                            if (runnerX < (float)targetX) {
+                                runnerX += pace * dt;
+                                if (runnerX >= (float)targetX) {
+                                    runnerX = (float)targetX;
+                                    phase = Phase::Jump;
+                                    jumpT = 0.0f;
+                                }
+                            } else {
+                                runnerX -= pace * dt;
+                                if (runnerX <= (float)targetX) {
+                                    runnerX = (float)targetX;
+                                    phase = Phase::Jump;
+                                    jumpT = 0.0f;
+                                }
+                            }
+                            runnerY = 70.0f - MARIO_H;
+                        }
+                    }
+                    break;
+                case Phase::Jump:
+                    jumpT += dt * 4.0f * (speedPct / 100.0f);
+                    if (jumpT >= 0.5f && pendingDigits) {
+                        pendingDigits = false;
+                        blockBounce[jumpTarget] = 0.001f;
+                        strcpy(shownHH, hh);
+                        strcpy(shownMM, mm);
+                    }
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        phase = Phase::RunOut;
+                    }
+                    break;
+                case Phase::RunOut:
+                    runnerX += pace * dt;
+                    runnerY = 70.0f - MARIO_H;
+                    if (runnerX > (float)w + (float)MARIO_JUMP_W + 16.0f) {
+                        phase = Phase::Waiting;
+                        m_dirty = 3;
+                    }
+                    break;
+                case Phase::Kick:
+                    break;
+            }
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128): multi-stage platform climb from bottom ground
+            const float pace = 65.0f * (speedPct / 100.0f);
+            // Hour block center: 1 + 7 = 8. Target Mario X: 8 - MARIO_W/2 = 8 - 6 = 2.
+            // Minute block center: 17 + 7 = 24. Target Mario X: 24 - MARIO_W/2 = 24 - 6 = 18.
+            const float targetBlockX = (jumpTarget == 0) ? 2.0f : 18.0f;
+            const float groundY = (float)(h - GROUND_H - MARIO_H); // 120 - 16 = 104
+
+            switch (phase) {
+                case Phase::Waiting:
+                    break;
+                case Phase::RunIn:
                     if (climbStage == 0) {
-                        // Stage 0: Running on bottom ground
+                        // Stage 0: Running on bottom ground floor
                         runnerX += pace * dt;
                         runnerY = groundY;
-                        if (runnerX >= 14.0f) {
+                        if (runnerX >= 8.0f) {
                             climbStage = 1;
                             jumpT = 0.0f;
                         }
                     } else if (climbStage == 1) {
-                        // Stage 1: Jump from Ground to Platform 3 (y=190)
-                        jumpT += dt * 2.6f * (speedPct / 100.0f);
-                        float t = jumpT < 1.0f ? jumpT : 1.0f;
-                        runnerX = 14.0f + 22.0f * t;
-                        float baseY = groundY + (190.0f - MARIO_H - groundY) * t;
-                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        // Stage 1: Jump from Ground (y=104) to Platform 2 (y=72, x=8..31)
+                        jumpT += dt * 2.8f * (speedPct / 100.0f);
+                        float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                        runnerX = 8.0f + (20.0f - 8.0f) * t;
+                        float baseY = groundY + ((88.0f - MARIO_H) - groundY) * t;
+                        float arc = 4.0f * 12.0f * t * (1.0f - t);
                         runnerY = baseY - arc;
                         if (jumpT >= 1.0f) {
                             jumpT = 0.0f;
-                            runnerY = 190.0f - MARIO_H;
+                            runnerY = 88.0f - MARIO_H;
                             climbStage = 2;
                         }
                     } else if (climbStage == 2) {
-                        // Stage 2: Run left on Platform 3
+                        // Stage 2: Run left on Platform 2
                         runnerX -= pace * dt;
-                        runnerY = 190.0f - MARIO_H;
-                        if (runnerX <= 30.0f) {
+                        runnerY = 88.0f - MARIO_H;
+                        if (runnerX <= 10.0f) {
                             climbStage = 3;
                             jumpT = 0.0f;
                         }
                     } else if (climbStage == 3) {
-                        // Stage 3: Jump from Platform 3 to Platform 2 (y=130)
+                        // Stage 3: Jump from Platform 2 (y=72) to Platform 1 (y=40)
                         jumpT += dt * 2.8f * (speedPct / 100.0f);
-                        float t = jumpT < 1.0f ? jumpT : 1.0f;
-                        runnerX = 30.0f + (18.0f - 30.0f) * t;
-                        float baseY = (190.0f - MARIO_H) + ((130.0f - MARIO_H) - (190.0f - MARIO_H)) * t;
-                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                        runnerX = 10.0f + (targetBlockX - 10.0f) * t;
+                        float baseY = (88.0f - MARIO_H) + ((56.0f - MARIO_H) - (88.0f - MARIO_H)) * t;
+                        float arc = 4.0f * 12.0f * t * (1.0f - t);
                         runnerY = baseY - arc;
                         if (jumpT >= 1.0f) {
                             jumpT = 0.0f;
-                            runnerY = 130.0f - MARIO_H;
+                            runnerY = 56.0f - MARIO_H;
                             climbStage = 4;
                         }
                     } else if (climbStage == 4) {
-                        // Stage 4: Run right on Platform 2
-                        runnerX += pace * dt;
-                        runnerY = 130.0f - MARIO_H;
-                        if (runnerX >= 24.0f) {
-                            climbStage = 5;
+                        // Stage 4: Align on Platform 1 with targetBlockX
+                        runnerY = 56.0f - MARIO_H;
+                        if (fabsf(runnerX - targetBlockX) <= 1.5f) {
+                            runnerX = targetBlockX;
+                            phase = Phase::Jump;
                             jumpT = 0.0f;
-                        }
-                    } else if (climbStage == 5) {
-                        // Stage 5: Jump from Platform 2 to Platform 1 (y=70)
-                        jumpT += dt * 2.8f * (speedPct / 100.0f);
-                        float t = jumpT < 1.0f ? jumpT : 1.0f;
-                        runnerX = 24.0f + (32.0f - 24.0f) * t;
-                        float baseY = (130.0f - MARIO_H) + ((70.0f - MARIO_H) - (130.0f - MARIO_H)) * t;
-                        float arc = 4.0f * 14.0f * t * (1.0f - t);
-                        runnerY = baseY - arc;
-                        if (jumpT >= 1.0f) {
-                            jumpT = 0.0f;
-                            runnerY = 70.0f - MARIO_H;
-                            climbStage = 6;
-                        }
-                    } else if (climbStage == 6) {
-                        // Stage 6: Running along Platform 1 (y=70) towards target block
-                        if (runnerX < (float)targetX) {
+                        } else if (runnerX < targetBlockX) {
                             runnerX += pace * dt;
-                            if (runnerX >= (float)targetX) {
-                                runnerX = (float)targetX;
+                            if (runnerX >= targetBlockX) {
+                                runnerX = targetBlockX;
                                 phase = Phase::Jump;
                                 jumpT = 0.0f;
                             }
                         } else {
                             runnerX -= pace * dt;
-                            if (runnerX <= (float)targetX) {
-                                runnerX = (float)targetX;
+                            if (runnerX <= targetBlockX) {
+                                runnerX = targetBlockX;
                                 phase = Phase::Jump;
                                 jumpT = 0.0f;
                             }
                         }
-                        runnerY = 70.0f - MARIO_H;
                     }
-                }
-                break;
-            case Phase::Jump:
-                jumpT += dt * 4.0f * (speedPct / 100.0f);
-                if (jumpT >= 0.5f && pendingDigits) {
-                    pendingDigits = false;
-                    blockBounce[jumpTarget] = 0.001f;
-                    strcpy(shownHH, hh);
-                    strcpy(shownMM, mm);
-                }
-                if (jumpT >= 1.0f) {
-                    jumpT = 0.0f;
-                    phase = Phase::RunOut;
-                }
-                break;
-            case Phase::RunOut:
-                runnerX += pace * dt;
-                runnerY = 70.0f - MARIO_H;
-                if (runnerX > (float)w + (float)MARIO_JUMP_W + 16.0f) {
-                    phase = Phase::Waiting;
-                    m_dirty = 3;
-                }
-                break;
+                    break;
+                case Phase::Jump:
+                    {
+                        jumpT += dt * 3.8f * (speedPct / 100.0f);
+                        float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                        float lift = sinf(t * 3.14159f) * 10.0f;
+                        runnerY = (56.0f - MARIO_H) - lift;
+                        if (jumpT >= 0.5f && pendingDigits) {
+                            pendingDigits = false;
+                            blockBounce[jumpTarget] = 0.001f;
+                            strcpy(shownHH, hh);
+                            strcpy(shownMM, mm);
+                            coinPop = true;
+                        }
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            runnerY = 56.0f - MARIO_H;
+                            phase = Phase::RunOut;
+                        }
+                    }
+                    break;
+                case Phase::RunOut:
+                    runnerX += pace * dt;
+                    runnerY = 56.0f - MARIO_H;
+                    if (runnerX > (float)w + 16.0f) {
+                        phase = Phase::Waiting;
+                        m_dirty = 3;
+                    }
+                    break;
+                case Phase::Kick:
+                    break;
+            }
         }
     } else if (isWideTall) {
         const int targetX = ((jumpTarget == 0) ? hourX : minuteX) + BLOCK_W / 2 - MARIO_W / 2;
@@ -465,24 +660,43 @@ void MarioClock::update() {
     for (int i = 0; i < 2; i++) {
         float b = blockBounce[i];
         int lift = (b > 0.0f) ? (int)(sinf(b * 3.14159f) * 4.0f) : 0;
-        drawBlockAt(i == 0 ? hourX : minuteX, blockY - lift, i == 0 ? shownHH : shownMM);
+        int bx = (i == 0 ? hourX : minuteX);
+        int by = blockY - lift;
+        drawBlockAt(bx, by, i == 0 ? shownHH : shownMM, (isPortrait && w < 64));
+    }
+
+    if (isPortrait && w < 64 && coinPop && blockBounce[jumpTarget] > 0.0f) {
+        float b = blockBounce[jumpTarget];
+        int coinLift = (int)(sinf(b * 3.14159f) * 6.0f);
+        int targetBx = (jumpTarget == 0) ? hourX : minuteX;
+        blitSprite(GOLD_COIN, 8, 8, targetBx + 3, blockY - 8 - coinLift, true);
     }
 
     if (isWideTall || isPortrait) {
         if (phase != Phase::Waiting) {
             bool airborne = false;
             int drawY = 0;
+            bool flipH = false;
             if (isPortrait) {
-                if (phase == Phase::Jump) {
-                    airborne = true;
-                    int lift = (int)(sinf(jumpT * 3.14159f) * (70 - blockY - BLOCK_H - 2));
-                    drawY = (70 - MARIO_H) - lift;
-                } else if (phase == Phase::RunIn && (climbStage == 1 || climbStage == 3 || climbStage == 5)) {
-                    airborne = true;
-                    drawY = (int)runnerY;
+                if (w >= 64) {
+                    if (phase == Phase::Jump) {
+                        airborne = true;
+                        int lift = (int)(sinf(jumpT * 3.14159f) * (70 - blockY - BLOCK_H - 2));
+                        drawY = (70 - MARIO_H) - lift;
+                    } else if (phase == Phase::RunIn && (climbStage == 1 || climbStage == 3 || climbStage == 5)) {
+                        airborne = true;
+                        drawY = (int)runnerY;
+                    } else {
+                        airborne = false;
+                        drawY = (int)runnerY;
+                    }
                 } else {
-                    airborne = false;
+                    airborne = (phase == Phase::Jump || (phase == Phase::RunIn && (climbStage == 1 || climbStage == 3)));
                     drawY = (int)runnerY;
+                    const float targetBlockX = (jumpTarget == 0) ? 2.0f : 18.0f;
+                    if (phase == Phase::RunIn && (climbStage == 2 || (climbStage == 4 && runnerX > targetBlockX))) {
+                        flipH = true;
+                    }
                 }
             } else {
                 airborne = (phase == Phase::Jump);
@@ -491,10 +705,10 @@ void MarioClock::update() {
             }
 
             if (airborne) {
-                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, drawY, true);
+                blitSprite(MARIO_JUMP, MARIO_JUMP_W, MARIO_H, (int)runnerX, drawY, true, flipH);
             } else {
                 const int f = (((int)runnerX + 1200) / 6) % 3;
-                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], drawY, true);
+                blitSprite(MARIO_RUN[f], MARIO_RUN_W[f], MARIO_H, (int)runnerX - 2 + MARIO_RUN_LEFT[f], drawY, true, flipH);
             }
         }
     } else {

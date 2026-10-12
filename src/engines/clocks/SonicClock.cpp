@@ -52,9 +52,16 @@ void SonicClock::drawArcadeDigit(int x, int y, char c, uint16_t color, int scale
 }
 
 void SonicClock::drawArcadeTime(int startX, int startY, const char* str, uint16_t color, int scale) {
-    if (strlen(str) < 5) return;
+    if (!str) return;
+    int len = strlen(str);
     int digitW = 3 * scale;
     int digitGap = 1 * scale;
+    if (len == 2) {
+        drawArcadeDigit(startX, startY, str[0], color, scale);
+        drawArcadeDigit(startX + digitW + digitGap, startY, str[1], color, scale);
+        return;
+    }
+    if (len < 5) return;
     int S = 2 * scale; // Exact symmetric spacing on both sides of colon
 
     int xH1 = startX;
@@ -132,16 +139,24 @@ void SonicClock::drawScene(int w, int h) {
         matrix->fillTriangle(0, 48, 16, 28, 32, 48, mountainCol);
         matrix->fillTriangle(24, 48, 44, 24, 64, 48, mountainCol);
 
-        // 3 Stepped Green Hill floating platforms leading up to the Item Monitor Box
-        // Platform 3 (bottom): y=190, from x=16 to x=56 (width 40)
-        drawCheckeredPlatform(16, 190, 40, 6);
-        // Platform 2 (middle): y=130, from x=8 to x=48 (width 40)
-        drawCheckeredPlatform(8, 130, 40, 6);
-        // Platform 1 (top): y=70, from x=8 to x=56 (width 48)
-        drawCheckeredPlatform(8, 70, 48, 6);
+        if (w >= 64) {
+            // 3 Stepped Green Hill floating platforms leading up to the Item Monitor Box
+            // Platform 3 (bottom): y=190, from x=16 to x=56 (width 40)
+            drawCheckeredPlatform(16, 190, 40, 6);
+            // Platform 2 (middle): y=130, from x=8 to x=48 (width 40)
+            drawCheckeredPlatform(8, 130, 40, 6);
+            // Platform 1 (top): y=70, from x=8 to x=56 (width 48)
+            drawCheckeredPlatform(8, 70, 48, 6);
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128)
+            // Platform 1 (top): y=56 across full width
+            drawCheckeredPlatform(0, 56, w, 6);
+            // Platform 2 (mid): y=88 on right side (x=8..31)
+            drawCheckeredPlatform(8, 88, w - 8, 6);
+        }
 
-        // Bottom ground (16px high)
-        drawGreenHillGround(w, h, 16);
+        // Bottom ground (12px high)
+        drawGreenHillGround(w, h, 12);
     } else if (h >= 48) {
         // --- 256x64 Green Hill Zone ---
         matrix->fillRect(0, 0, w, 48, skyBlue);
@@ -263,7 +278,8 @@ void SonicClock::update() {
         case Phase::HeroEnter:
             m_dirty = 2;
             if (isPortrait) {
-                const float groundY = (float)(h - 16 - 24);
+                if (w >= 64) {
+                    const float groundY = (float)(h - 16 - 24);
                 if (climbStage == 0) {
                     // Stage 0: Dashes in on bottom ground
                     sonicX += 80.0f * dt;
@@ -338,6 +354,59 @@ void SonicClock::update() {
                     }
                 }
             } else {
+                // 32-wide Tate (128x32 rotated: w=32, h=128): multi-stage platform climb from bottom ground
+                const float groundY = (float)(h - 12 - SONIC_SMS_IDLE_H);
+                if (climbStage == 0) {
+                    // Stage 0: Dashes right on bottom ground floor
+                    sonicX += 65.0f * dt;
+                    sonicY = groundY;
+                    if (sonicX >= 8.0f) {
+                        climbStage = 1;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 1) {
+                    // Stage 1: Jump from Ground to Platform 2 (y=88)
+                    jumpT += dt * 2.8f;
+                    float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                    sonicX = 8.0f + (20.0f - 8.0f) * t;
+                    float baseY = groundY + ((88.0f - SONIC_SMS_IDLE_H) - groundY) * t;
+                    float arc = 4.0f * 12.0f * t * (1.0f - t);
+                    sonicY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        sonicY = 88.0f - SONIC_SMS_IDLE_H;
+                        climbStage = 2;
+                    }
+                } else if (climbStage == 2) {
+                    // Stage 2: Runs left on Platform 2
+                    sonicX -= 65.0f * dt;
+                    sonicY = 88.0f - SONIC_SMS_IDLE_H;
+                    if (sonicX <= 10.0f) {
+                        climbStage = 3;
+                        jumpT = 0.0f;
+                    }
+                } else if (climbStage == 3) {
+                    // Stage 3: Jump from Platform 2 to Platform 1 (y=56)
+                    jumpT += dt * 2.8f;
+                    float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                    sonicX = 10.0f + (7.0f - 10.0f) * t;
+                    float baseY = (88.0f - SONIC_SMS_IDLE_H) + ((56.0f - SONIC_SMS_IDLE_H) - (88.0f - SONIC_SMS_IDLE_H)) * t;
+                    float arc = 4.0f * 12.0f * t * (1.0f - t);
+                    sonicY = baseY - arc;
+                    if (jumpT >= 1.0f) {
+                        jumpT = 0.0f;
+                        sonicY = 56.0f - SONIC_SMS_IDLE_H;
+                        climbStage = 4;
+                    }
+                } else if (climbStage == 4) {
+                    // Stage 4: Reached Platform 1 -> trigger JumpStrike
+                    sonicX = 7.0f;
+                    sonicY = 56.0f - SONIC_SMS_IDLE_H;
+                    phase = Phase::JumpStrike;
+                    phaseTimer = 0.0f;
+                }
+            }
+        } else {
                 // Dashes forward into view
                 float targetX = (h >= 48) ? 36.0f : 10.0f;
                 sonicX += 130.0f * dt;
@@ -375,7 +444,7 @@ void SonicClock::update() {
             if (isPortrait) {
                 // Sprints right along Platform 1 to exit offscreen
                 sonicX += 85.0f * dt;
-                sonicY = 70.0f - 24.0f;
+                sonicY = (w >= 64) ? (70.0f - 24.0f) : (56.0f - SONIC_SMS_IDLE_H);
                 if (sonicX > (float)w + 24.0f) {
                     phase = Phase::Idle;
                     phaseTimer = 0.0f;
@@ -411,31 +480,45 @@ void SonicClock::update() {
     const uint8_t* ringPix = SONIC_RING_PIXELS[ringFrame % 4];
 
     if (isPortrait) {
-        // --- Portrait (64x256 / 64x128) ---
-        // Symmetrically centered time at top (scale 2 = 44px wide, centered at 10)
-        drawArcadeTime(10, 16, timeBuf, yellowTime, 2);
+        if (w >= 64) {
+            // --- Portrait (64x256 / 64x128) ---
+            // Symmetrically centered time at top (scale 2 = 44px wide, centered at 10)
+            drawArcadeTime(10, 16, timeBuf, yellowTime, 2);
 
-        // Monitor box sitting squarely on Platform 1 (y=70, monitor height 32 -> y=38)
-        blitSprite(SONIC_ITEM_BOX_PAL, SONIC_ITEM_BOX_PIXELS, SONIC_ITEM_BOX_W, SONIC_ITEM_BOX_H, 16, 70 - 32, false);
+            // Monitor box sitting squarely on Platform 1 (y=70, monitor height 32 -> y=38)
+            blitSprite(SONIC_ITEM_BOX_PAL, SONIC_ITEM_BOX_PIXELS, SONIC_ITEM_BOX_W, SONIC_ITEM_BOX_H, 16, 70 - 32, false);
 
-        // Rotating golden rings floating above platforms
-        blitSprite(ringPal, ringPix, 16, 16, 20, 110, false);
-        blitSprite(ringPal, ringPix, 16, 16, 28, 170, false);
+            // Rotating golden rings floating above platforms
+            blitSprite(ringPal, ringPix, 16, 16, 20, 110, false);
+            blitSprite(ringPal, ringPix, 16, 16, 28, 170, false);
 
-        // Motobug patrol on bottom ground
-        int motoX = 12 + (int)motoOffset;
-        blitSprite(SONIC_MOTOBUG_PAL, SONIC_MOTOBUG_PIXELS, SONIC_MOTOBUG_W, SONIC_MOTOBUG_H, motoX, h - 16 - 29, motoFlip);
+            // Motobug patrol on bottom ground
+            int motoX = 12 + (int)motoOffset;
+            blitSprite(SONIC_MOTOBUG_PAL, SONIC_MOTOBUG_PIXELS, SONIC_MOTOBUG_W, SONIC_MOTOBUG_H, motoX, h - 16 - 29, motoFlip);
+        } else {
+            // --- 32-wide Tate (128x32 rotated: w=32, h=128) ---
+            // Stacked hours and minutes at scale 2 (each 14px wide, centered at (32 - 14) / 2 = 9)
+            int timeX = (w - 14) / 2;
+            drawArcadeTime(timeX, 8, shownHH, yellowTime, 2);
+            // Colon separator dots
+            matrix->fillRect(timeX + 6, 19, 2, 2, yellowTime);
+            drawArcadeTime(timeX, 23, shownMM, yellowTime, 2);
+
+            // Rotating golden ring floating on Platform 2
+            blitSprite(ringPal, ringPix, 16, 16, (w - 16) / 2, 68, false);
+        }
 
         // Sonic during minute reward sequence
         if (phase != Phase::Idle) {
             bool isAirborne = (phase == Phase::JumpStrike || phase == Phase::Impact || (phase == Phase::HeroEnter && (climbStage == 1 || climbStage == 3 || climbStage == 5)));
+            bool flipH = (isPortrait && w < 64 && phase == Phase::HeroEnter && climbStage == 2);
             if (isAirborne) {
                 blitSprite(SONIC_MD_IDLE_PAL, SONIC_MD_BALL_PIXELS[ballFrame], SONIC_MD_BALL_0_W, SONIC_MD_BALL_0_H, (int)sonicX, (int)sonicY, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle(32, 54, 5, 0xFFFF);
+                    matrix->fillCircle(w / 2, (w >= 64 ? 54 : 36), 5, 0xFFFF);
                 }
             } else {
-                blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_RUN_PIXELS[runFrame], SONIC_SMS_RUN_0_W, SONIC_SMS_RUN_0_H, (int)sonicX, (int)sonicY, false);
+                blitSprite(SONIC_SMS_IDLE_PAL, SONIC_SMS_RUN_PIXELS[runFrame], SONIC_SMS_RUN_0_W, SONIC_SMS_RUN_0_H, (int)sonicX, (int)sonicY, flipH);
             }
         }
     } else if (h >= 48) {

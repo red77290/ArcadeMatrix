@@ -62,7 +62,7 @@ private:
     bool m_snapToNow = true;   ///< next update shows the current time without the run-in
 
     void drawScene(int w, int h);
-    void drawBlockAt(int x, int y, const char* text);
+    void drawBlockAt(int x, int y, const char* text, bool downscaled = false);
     void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent, bool flipH = false);
 };
 

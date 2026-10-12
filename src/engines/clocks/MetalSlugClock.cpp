@@ -206,26 +206,34 @@ void MetalSlugClock::drawScene(int w, int h) {
         matrix->fillRect(0, 0, w, 10, hudBg);
         matrix->drawFastHLine(0, 10, w, matrix->color565(40, 40, 70));
 
-        // "1UP" and score at top
-        drawArcadeDigit(4, 2, '1', hudRed, 1);
-        matrix->fillRect(9, 2, 1, 5, hudRed);
-        matrix->fillRect(11, 2, 1, 5, hudRed);
-        matrix->fillRect(9, 6, 3, 1, hudRed);
-        matrix->fillRect(14, 2, 1, 5, hudRed);
-        matrix->fillRect(14, 2, 3, 1, hudRed);
-        matrix->fillRect(16, 2, 1, 3, hudRed);
-        matrix->fillRect(14, 4, 3, 1, hudRed);
+        if (w >= 64) {
+            // "1UP" and score at top
+            drawArcadeDigit(4, 2, '1', hudRed, 1);
+            matrix->fillRect(9, 2, 1, 5, hudRed);
+            matrix->fillRect(11, 2, 1, 5, hudRed);
+            matrix->fillRect(9, 6, 3, 1, hudRed);
+            matrix->fillRect(14, 2, 1, 5, hudRed);
+            matrix->fillRect(14, 2, 3, 1, hudRed);
+            matrix->fillRect(16, 2, 1, 3, hudRed);
+            matrix->fillRect(14, 4, 3, 1, hudRed);
 
-        char scoreStr[16];
-        snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
-        int sx = 20;
-        for (int i = 0; scoreStr[i] != '\0' && sx < w - 4; i++) {
-            drawArcadeDigit(sx, 2, scoreStr[i], hudWhite, 1);
-            sx += 4;
+            char scoreStr[16];
+            snprintf(scoreStr, sizeof(scoreStr), "00%s%s", shownHH, shownMM);
+            int sx = 20;
+            for (int i = 0; scoreStr[i] != '\0' && sx < w - 4; i++) {
+                drawArcadeDigit(sx, 2, scoreStr[i], hudWhite, 1);
+                sx += 4;
+            }
+
+            // Centered Big Glowing Arcade Time (scale 2 = 44px wide, centered at 10)
+            drawArcadeTime(10, 14, timeStr, hudYellow, 2);
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128):
+            // Stacked hours and minutes at scale 2 (each 18px wide, centered at (32 - 18) / 2 = 7)
+            int timeX = (w - 18) / 2;
+            drawArcadeTime(timeX, 14, shownHH, hudYellow, 2);
+            drawArcadeTime(timeX, 30, shownMM, hudYellow, 2);
         }
-
-        // Centered Big Glowing Arcade Time (scale 2 = 44px wide, centered at 10)
-        drawArcadeTime(10, 14, timeStr, hudYellow, 2);
     } else {
         // --- Landscape 256x64 HUD ---
         matrix->fillRect(0, 0, w, 12, hudBg);

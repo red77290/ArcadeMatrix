@@ -78,11 +78,13 @@ void CastleClock::drawScene(int w, int h) {
         uint16_t nightSky = matrix->color565(16, 0, 24);
         matrix->fillRect(0, 0, w, h, nightSky);
 
-        // Blood Moon top center (x=32, y=14, radius 11) - separated from clock time below
+        // Blood Moon top center - separated from clock time below
         uint16_t moonOuter = matrix->color565(220, 40, 20);
         uint16_t moonInner = matrix->color565(240, 80, 40);
-        matrix->fillCircle(32, 14, 11, moonOuter);
-        matrix->fillCircle(31, 13, 8, moonInner);
+        int moonX = w / 2;
+        int moonR = (w >= 64) ? 11 : 6;
+        matrix->fillCircle(moonX, 12, moonR, moonOuter);
+        matrix->fillCircle(moonX - 1, 11, max(1, moonR - 3), moonInner);
 
         // Flying Vampire Bat across moon
         const uint16_t* batPal = BAT_PALS[batFrame % 2];
@@ -104,26 +106,38 @@ void CastleClock::drawScene(int w, int h) {
         matrix->fillRect(0, h - 8, w, 8, stoneDark);
         matrix->drawFastHLine(0, h - 8, w, stoneLight);
 
-        // 3 Solid stone platforms in portrait mode leading up to the candle torch
-        // Platform 3 (bottom): y=190, from x=16 to x=56 (width 40)
-        matrix->fillRect(16, 190, 40, 5, stoneBase);
-        matrix->drawFastHLine(16, 190, 40, stoneLight);
-        // Platform 2 (middle): y=130, from x=8 to x=48 (width 40)
-        matrix->fillRect(8, 130, 40, 5, stoneBase);
-        matrix->drawFastHLine(8, 130, 40, stoneLight);
-        // Platform 1 (top): y=70, from x=8 to x=56 (width 48)
-        matrix->fillRect(8, 70, 48, 5, stoneBase);
-        matrix->drawFastHLine(8, 70, 48, stoneLight);
+        if (w >= 64) {
+            // 3 Solid stone platforms in portrait mode leading up to the candle torch
+            // Platform 3 (bottom): y=190, from x=16 to x=56 (width 40)
+            matrix->fillRect(16, 190, 40, 5, stoneBase);
+            matrix->drawFastHLine(16, 190, 40, stoneLight);
+            // Platform 2 (middle): y=130, from x=8 to x=48 (width 40)
+            matrix->fillRect(8, 130, 40, 5, stoneBase);
+            matrix->drawFastHLine(8, 130, 40, stoneLight);
+            // Platform 1 (top): y=70, from x=8 to x=56 (width 48)
+            matrix->fillRect(8, 70, 48, 5, stoneBase);
+            matrix->drawFastHLine(8, 70, 48, stoneLight);
+        } else {
+            // 32-wide Tate (128x32 rotated: w=32, h=128)
+            // Platform 1 (top): y=56 across full width
+            matrix->fillRect(0, 56, w, 5, stoneBase);
+            matrix->drawFastHLine(0, 56, w, stoneLight);
+            // Platform 2 (middle): y=88 on right side (x=8..31)
+            matrix->fillRect(8, 88, w - 8, 5, stoneBase);
+            matrix->drawFastHLine(8, 88, w - 8, stoneLight);
+        }
 
-        // Candle torch stand on Platform 1 (x=46, y=56..69)
+        // Candle torch stand on Platform 1
+        int torchX = (w >= 64) ? 46 : (w - 7);
+        int torchPlatY = (w >= 64) ? 70 : 56;
         uint16_t torchMetal = matrix->color565(140, 100, 50);
-        matrix->fillRect(46, 56, 4, 14, torchMetal);
-        matrix->fillRect(44, 52, 8, 4, torchMetal);
+        matrix->fillRect(torchX, torchPlatY - 14, 4, 14, torchMetal);
+        matrix->fillRect(torchX - 2, torchPlatY - 18, 8, 4, torchMetal);
 
         // Animated candle flame
         const uint16_t* flamePal = FLAME_PALS[flameFrame % 3];
         const uint8_t* flamePix = FLAME_PIXELS[flameFrame % 3];
-        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, 44, 42, false);
+        blitSprite(flamePal, flamePix, FLAME_F0_W, FLAME_F0_H, torchX - 2, torchPlatY - 28, false);
     } else if (h >= 48) {
         // --- 256x64 Dracula's Castle Parapets ---
         uint16_t nightSky = matrix->color565(16, 0, 24);
@@ -165,6 +179,12 @@ void CastleClock::drawScene(int w, int h) {
     } else {
         // --- 128x32 Dungeon Floor ---
         matrix->fillRect(0, 0, w, 26, 0x0000);
+
+        // Blood Moon in upper-left sky (away from torch on right)
+        uint16_t moonOuter = matrix->color565(220, 40, 20);
+        uint16_t moonInner = matrix->color565(240, 80, 40);
+        matrix->fillCircle(14, 10, 8, moonOuter);
+        matrix->fillCircle(13, 9, 6, moonInner);
 
         // Brick floor at y=26..31
         uint16_t brickCol = matrix->color565(116, 40, 12);
@@ -281,76 +301,130 @@ void CastleClock::update() {
         case Phase::HeroEnter:
             m_dirty = 2;
             if (isPortrait) {
-                const float floorY = (float)(h - 8 - 30);
-                if (climbStage == 0) {
-                    // Stage 0: Simon walks onto Dungeon Floor
-                    simonX += 50.0f * dt;
-                    simonY = floorY;
-                    if (simonX >= 12.0f) {
-                        climbStage = 1;
-                        jumpT = 0.0f;
-                    }
-                } else if (climbStage == 1) {
-                    // Stage 1: Simon jumps from Floor up to Platform 3 (y=190)
-                    jumpT += dt * 2.6f;
-                    float t = jumpT < 1.0f ? jumpT : 1.0f;
-                    simonX = 12.0f + (36.0f - 12.0f) * t;
-                    float baseY = floorY + (160.0f - floorY) * t;
-                    float arc = 4.0f * 14.0f * t * (1.0f - t);
-                    simonY = baseY - arc;
-                    if (jumpT >= 1.0f) {
-                        jumpT = 0.0f;
+                if (w >= 64) {
+                    const float floorY = (float)(h - 8 - 30);
+                    if (climbStage == 0) {
+                        // Stage 0: Simon walks onto Dungeon Floor
+                        simonX += 50.0f * dt;
+                        simonY = floorY;
+                        if (simonX >= 12.0f) {
+                            climbStage = 1;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 1) {
+                        // Stage 1: Simon jumps from Floor up to Platform 3 (y=190)
+                        jumpT += dt * 2.6f;
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        simonX = 12.0f + (36.0f - 12.0f) * t;
+                        float baseY = floorY + (160.0f - floorY) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        simonY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            simonY = 160.0f;
+                            climbStage = 2;
+                        }
+                    } else if (climbStage == 2) {
+                        // Stage 2: Simon walks left on Platform 3
+                        simonX -= 45.0f * dt;
                         simonY = 160.0f;
-                        climbStage = 2;
-                    }
-                } else if (climbStage == 2) {
-                    // Stage 2: Simon walks left on Platform 3
-                    simonX -= 45.0f * dt;
-                    simonY = 160.0f;
-                    if (simonX <= 30.0f) {
-                        climbStage = 3;
-                        jumpT = 0.0f;
-                    }
-                } else if (climbStage == 3) {
-                    // Stage 3: Simon jumps from Platform 3 up to Platform 2 (y=130)
-                    jumpT += dt * 2.8f;
-                    float t = jumpT < 1.0f ? jumpT : 1.0f;
-                    simonX = 30.0f + (18.0f - 30.0f) * t;
-                    float baseY = 160.0f + (100.0f - 160.0f) * t;
-                    float arc = 4.0f * 14.0f * t * (1.0f - t);
-                    simonY = baseY - arc;
-                    if (jumpT >= 1.0f) {
-                        jumpT = 0.0f;
+                        if (simonX <= 30.0f) {
+                            climbStage = 3;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 3) {
+                        // Stage 3: Simon jumps from Platform 3 up to Platform 2 (y=130)
+                        jumpT += dt * 2.8f;
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        simonX = 30.0f + (18.0f - 30.0f) * t;
+                        float baseY = 160.0f + (100.0f - 160.0f) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        simonY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            simonY = 100.0f;
+                            climbStage = 4;
+                        }
+                    } else if (climbStage == 4) {
+                        // Stage 4: Simon walks right on Platform 2
+                        simonX += 45.0f * dt;
                         simonY = 100.0f;
-                        climbStage = 4;
-                    }
-                } else if (climbStage == 4) {
-                    // Stage 4: Simon walks right on Platform 2
-                    simonX += 45.0f * dt;
-                    simonY = 100.0f;
-                    if (simonX >= 24.0f) {
-                        climbStage = 5;
-                        jumpT = 0.0f;
-                    }
-                } else if (climbStage == 5) {
-                    // Stage 5: Simon jumps from Platform 2 up to Platform 1 (y=70)
-                    jumpT += dt * 2.8f;
-                    float t = jumpT < 1.0f ? jumpT : 1.0f;
-                    simonX = 24.0f + (16.0f - 24.0f) * t;
-                    float baseY = 100.0f + (40.0f - 100.0f) * t;
-                    float arc = 4.0f * 14.0f * t * (1.0f - t);
-                    simonY = baseY - arc;
-                    if (jumpT >= 1.0f) {
-                        jumpT = 0.0f;
+                        if (simonX >= 24.0f) {
+                            climbStage = 5;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 5) {
+                        // Stage 5: Simon jumps from Platform 2 up to Platform 1 (y=70)
+                        jumpT += dt * 2.8f;
+                        float t = jumpT < 1.0f ? jumpT : 1.0f;
+                        simonX = 24.0f + (16.0f - 24.0f) * t;
+                        float baseY = 100.0f + (40.0f - 100.0f) * t;
+                        float arc = 4.0f * 14.0f * t * (1.0f - t);
+                        simonY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            simonY = 40.0f;
+                            climbStage = 6;
+                        }
+                    } else if (climbStage == 6) {
+                        // Stage 6: Simon walks forward on Platform 1 towards the candle torch
+                        simonX += 45.0f * dt;
                         simonY = 40.0f;
-                        climbStage = 6;
+                        if (simonX >= 14.0f) {
+                            simonX = 14.0f;
+                            phase = Phase::WhipWindup;
+                            phaseTimer = 0.0f;
+                        }
                     }
-                } else if (climbStage == 6) {
-                    // Stage 6: Simon walks forward on Platform 1 towards the candle torch
-                    simonX += 45.0f * dt;
-                    simonY = 40.0f;
-                    if (simonX >= 14.0f) {
-                        simonX = 14.0f;
+                } else {
+                    // 32-wide Tate (128x32 rotated: w=32, h=128): multi-stage platform climb from bottom dungeon floor
+                    const float floorY = (float)(h - 8 - 30); // 128 - 8 - 30 = 90
+                    if (climbStage == 0) {
+                        // Stage 0: Simon walks onto Dungeon Floor
+                        simonX += 50.0f * dt;
+                        simonY = floorY;
+                        if (simonX >= 8.0f) {
+                            climbStage = 1;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 1) {
+                        // Stage 1: Simon jumps from Floor to Platform 2 (y=88)
+                        jumpT += dt * 2.8f;
+                        float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                        simonX = 8.0f + (20.0f - 8.0f) * t;
+                        float baseY = floorY + ((88.0f - 30.0f) - floorY) * t;
+                        float arc = 4.0f * 12.0f * t * (1.0f - t);
+                        simonY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            simonY = 88.0f - 30.0f;
+                            climbStage = 2;
+                        }
+                    } else if (climbStage == 2) {
+                        // Stage 2: Simon walks left on Platform 2
+                        simonX -= 45.0f * dt;
+                        simonY = 88.0f - 30.0f;
+                        if (simonX <= 10.0f) {
+                            climbStage = 3;
+                            jumpT = 0.0f;
+                        }
+                    } else if (climbStage == 3) {
+                        // Stage 3: Simon jumps from Platform 2 to Platform 1 (y=56)
+                        jumpT += dt * 2.8f;
+                        float t = (jumpT < 1.0f) ? jumpT : 1.0f;
+                        simonX = 10.0f + (2.0f - 10.0f) * t;
+                        float baseY = (88.0f - 30.0f) + ((56.0f - 30.0f) - (88.0f - 30.0f)) * t;
+                        float arc = 4.0f * 12.0f * t * (1.0f - t);
+                        simonY = baseY - arc;
+                        if (jumpT >= 1.0f) {
+                            jumpT = 0.0f;
+                            simonY = 56.0f - 30.0f;
+                            climbStage = 4;
+                        }
+                    } else if (climbStage == 4) {
+                        // Stage 4: Ready on Platform 1 to strike torch
+                        simonX = 2.0f;
+                        simonY = 56.0f - 30.0f;
                         phase = Phase::WhipWindup;
                         phaseTimer = 0.0f;
                     }
@@ -402,7 +476,7 @@ void CastleClock::update() {
             if (isPortrait) {
                 // Simon walks forward on Platform 1 and cleanly exits offscreen
                 simonX += 60.0f * dt;
-                simonY = 70.0f - 30.0f;
+                simonY = (w >= 64 ? 70.0f : 56.0f) - 30.0f;
                 if (simonX > (float)w + 24.0f) {
                     phase = Phase::Idle;
                     phaseTimer = 0.0f;
@@ -445,8 +519,22 @@ void CastleClock::update() {
         // (Positioned cleanly below the blood moon and above the stone cornice for 100% legibility)
         uint16_t timeShadow = matrix->color565(120, 10, 10);
         uint16_t timeIvory = matrix->color565(255, 245, 220);
-        drawGothicTime(11, 35, timeBuf, timeShadow, 2);
-        drawGothicTime(10, 34, timeBuf, timeIvory, 2);
+        if (w >= 64) {
+            drawGothicTime(11, 35, timeBuf, timeShadow, 2);
+            drawGothicTime(10, 34, timeBuf, timeIvory, 2);
+        } else {
+            // --- 32-wide Tate (128x32 rotated: w=32, h=128) ---
+            int xPos = 3;
+            drawGothicDigit(xPos + 1, 19, shownHH[0], timeShadow, 2);
+            drawGothicDigit(xPos + 9, 19, shownHH[1], timeShadow, 2);
+            drawGothicDigit(xPos, 18, shownHH[0], timeIvory, 2);
+            drawGothicDigit(xPos + 8, 18, shownHH[1], timeIvory, 2);
+
+            drawGothicDigit(xPos + 1, 37, shownMM[0], timeShadow, 2);
+            drawGothicDigit(xPos + 9, 37, shownMM[1], timeShadow, 2);
+            drawGothicDigit(xPos, 36, shownMM[0], timeIvory, 2);
+            drawGothicDigit(xPos + 8, 36, shownMM[1], timeIvory, 2);
+        }
 
         // Simon Belmont rendered during minute reward sequence
         if (phase != Phase::Idle) {
@@ -456,12 +544,14 @@ void CastleClock::update() {
                 blitSprite(SIMON_IDLE_PAL, SIMON_WHIP_STRIKE_PIXELS, SIMON_WHIP_STRIKE_W, SIMON_WHIP_STRIKE_H, (int)simonX, (int)simonY, false);
                 blitSprite(WHIP_EXTENDED_PAL, WHIP_EXTENDED_PIXELS, WHIP_EXTENDED_W, WHIP_EXTENDED_H, (int)simonX + SIMON_WHIP_STRIKE_W, (int)simonY + 11, false);
                 if (phase == Phase::Impact) {
-                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + 16, (int)simonY + 12, 3, 0xFFFF);
+                    int sparkOffset = (w >= 64) ? 16 : 8;
+                    matrix->fillCircle((int)simonX + SIMON_WHIP_STRIKE_W + sparkOffset, (int)simonY + 12, 3, 0xFFFF);
                 }
             } else {
                 bool isJumping = (phase == Phase::HeroEnter && (climbStage == 1 || climbStage == 3 || climbStage == 5));
+                bool flipH = (isPortrait && w < 64 && phase == Phase::HeroEnter && climbStage == 2);
                 const uint8_t* pPix = isJumping ? SIMON_WALK_PIXELS[1] : walkPix;
-                blitSprite(walkPal, pPix, 16, 30, (int)simonX, (int)simonY, false);
+                blitSprite(walkPal, pPix, 16, 30, (int)simonX, (int)simonY, flipH);
             }
         }
     } else if (h >= 48) {

@@ -72,6 +72,8 @@ private:
 
     // Bullet & hit spark physics
     bool bulletActive = false;
+    float bulletStartX = 0.0f;
+    float bulletStartY = 0.0f;
     float bulletX = 0.0f;
     float bulletY = 0.0f;
     float bulletTargetX = 0.0f;
@@ -91,11 +93,11 @@ private:
     int climbStage = 0;
     float jumpT = 0.0f;
 
-    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true);
+    void blitSprite(const uint16_t* data, int w, int h, int x, int y, bool transparent = true, bool flipH = false);
     void drawScene(int w, int h);
     void drawTechPlatform(int startX, int startY, int tileCount);
     void drawCapcomDigit(int x, int y, char c, uint16_t color);
-    void drawTimePod(int x, int y, const char* text, int bounce = 0, bool highlight = false);
+    void drawTimePod(int x, int y, const char* text, int bounce = 0, bool highlight = false, bool downscaled = false);
     void drawEnergyGauge(int x, int y, int seconds);
     void drawMiniEnergyGauge(int x, int y, int seconds);
 };
