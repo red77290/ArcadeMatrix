@@ -37,8 +37,8 @@ public:
     bool loadSystem(SystemConfig& outSystem);
     bool saveSystem(const SystemConfig& system);
 
-    bool loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt);
-    bool saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt);
+    bool loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt);
+    bool saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt);
 
     bool loadPlaylist(std::vector<RotationEntry>& outRotation);
     bool savePlaylist(const std::vector<RotationEntry>& rotation);

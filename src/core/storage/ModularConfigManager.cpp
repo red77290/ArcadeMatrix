@@ -5,6 +5,7 @@
 #include "ModularConfigManager.h"
 #include "../ConfigSanitizer.h"
 #include "../Logger.h"
+#include "../SpiRamJsonDocument.h"
 #include <ArduinoJson.h>
 
 ModularConfigManager::ModularConfigManager(IConfigStorage& storage)
@@ -65,7 +66,7 @@ bool ModularConfigManager::loadAll(ConfigLoader& config) {
     // Load domain files
     bool hwOk = loadHardware(config.matrix);
     bool sysOk = loadSystem(config.system);
-    bool netOk = loadNetwork(config.wifi, config.mqtt);
+    bool netOk = loadNetwork(config.wifi, config.mqtt, config.dataMqtt);
     bool rotOk = loadPlaylist(config.rotation);
 
     if (!hwOk || !sysOk || !netOk || !rotOk) {
@@ -108,7 +109,7 @@ bool ModularConfigManager::saveAll(const ConfigLoader& config) {
 
     bool hwOk = saveHardware(config.matrix);
     bool sysOk = saveSystem(config.system);
-    bool netOk = saveNetwork(config.wifi, config.mqtt);
+    bool netOk = saveNetwork(config.wifi, config.mqtt, config.dataMqtt);
     bool rotOk = savePlaylist(config.rotation);
 
     // Persist all instances
@@ -295,7 +296,7 @@ bool ModularConfigManager::saveSystem(const SystemConfig& system) {
     return _storage.writeStringAtomic("/config/system.json", out);
 }
 
-bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt) {
+bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt) {
     String content;
     if (!_storage.readString("/config/network.json", content)) {
         return false;
@@ -321,10 +322,18 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt)
         if (m.containsKey("allow_overlay")) outMqtt.allow_overlay = m["allow_overlay"].as<bool>();
         else if (m.containsKey("allowOverlay")) outMqtt.allow_overlay = m["allowOverlay"].as<bool>();
     }
+    // Data MQTT (MQTT Data engine broker), same "data_mqtt" object as the legacy /config.json.
+    if (doc.containsKey("data_mqtt")) {
+        JsonObjectConst d = doc["data_mqtt"];
+        if (d.containsKey("broker")) outDataMqtt.broker = d["broker"].as<String>();
+        outDataMqtt.port = d["port"] | outDataMqtt.port;
+        if (d.containsKey("user")) outDataMqtt.user = d["user"].as<String>();
+        if (d.containsKey("pass")) outDataMqtt.pass = d["pass"].as<String>();
+    }
     return true;
 }
 
-bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt) {
+bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt) {
     StaticJsonDocument<1024> doc;
     JsonObject w = doc.createNestedObject("wifi");
     w["ssid"] = wifi.ssid;
@@ -340,6 +349,12 @@ bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig&
     m["deviceName"] = mqtt.deviceName;
     m["allow_overlay"] = mqtt.allow_overlay;
 
+    JsonObject d = doc.createNestedObject("data_mqtt");
+    d["broker"] = dataMqtt.broker;
+    d["port"] = dataMqtt.port;
+    d["user"] = dataMqtt.user;
+    d["pass"] = dataMqtt.pass;
+
     String out;
     serializeJsonPretty(doc, out);
     return _storage.writeStringAtomic("/config/network.json", out);
@@ -350,8 +365,21 @@ bool ModularConfigManager::loadPlaylist(std::vector<RotationEntry>& outRotation)
     if (!_storage.readString("/config/playlist.json", content)) {
         return false;
     }
-    StaticJsonDocument<2048> doc;
-    if (deserializeJson(doc, content)) return false;
+    // Capacity derived from the file: a fixed 2048 bytes could not hold a rotation of
+    // roughly 23+ entries with overlays, so the load failed and the defaults replaced the
+    // user's rotation. Every '{' opens an entry (up to 3 members) or its overlays object
+    // (1 member), and copied strings never exceed the file length.
+    size_t objects = 0;
+    for (size_t i = 0; i < content.length(); i++) {
+        if (content[i] == '{') objects++;
+    }
+    SpiRamJsonDocument doc(JSON_ARRAY_SIZE(objects) + objects * JSON_OBJECT_SIZE(3)
+                           + content.length() + 256);
+    DeserializationError err = deserializeJson(doc, content);
+    if (err) {
+        LOGE("ModularConfigManager", "Cannot parse /config/playlist.json: %s", err.c_str());
+        return false;
+    }
 
     outRotation.clear();
     JsonArrayConst arr = doc.as<JsonArrayConst>();
@@ -378,7 +406,14 @@ bool ModularConfigManager::loadPlaylist(std::vector<RotationEntry>& outRotation)
 }
 
 bool ModularConfigManager::savePlaylist(const std::vector<RotationEntry>& rotation) {
-    StaticJsonDocument<2048> doc;
+    // Capacity derived from the rotation length (same sizing as GET /api/rotation).
+    size_t stringBytes = 0;
+    for (const auto& rot : rotation) {
+        stringBytes += rot.instance_id.length() + 1;
+    }
+    SpiRamJsonDocument doc(JSON_ARRAY_SIZE(rotation.size())
+                           + rotation.size() * (JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1))
+                           + stringBytes + 256);
     JsonArray arr = doc.to<JsonArray>();
     for (const auto& rot : rotation) {
         JsonObject rObj = arr.createNestedObject();
@@ -388,6 +423,12 @@ bool ModularConfigManager::savePlaylist(const std::vector<RotationEntry>& rotati
             JsonObject ov = rObj.createNestedObject("overlays");
             ov["fighter"] = (rot.overlays.fighter == FighterOverride::Enabled);
         }
+    }
+    if (doc.overflowed()) {
+        // Never write a truncated playlist: the next boot would load the shortened list.
+        LOGE("ModularConfigManager", "Playlist of %u entries overflowed its document; not saved.",
+             (unsigned)rotation.size());
+        return false;
     }
 
     String out;
