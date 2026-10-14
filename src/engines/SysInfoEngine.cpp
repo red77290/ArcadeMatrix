@@ -16,7 +16,9 @@ EngineError SysInfoEngine::initialize(EngineContext* context, const EngineConfig
     return EngineError::OK;
 }
 
-void SysInfoEngine::activate() {}
+void SysInfoEngine::activate() {
+    m_hasTempSample = false;
+}
 void SysInfoEngine::deactivate() {}
 
 void SysInfoEngine::onConfigChanged(const EngineConfig* engineConfig) {
@@ -72,12 +74,22 @@ void SysInfoEngine::drawGaugeBar(IDrawingSurface* matrix, int x, int y, int w, i
 }
 
 void SysInfoEngine::update(EngineContext* context) {
+    (void)context;
     uint32_t now = millis();
     if (now - lastCpuSampleTime >= 500) {
         lastCpuSampleTime = now;
         // Measured: share of the last second each core spent outside its idle task (CpuLoad).
         float target = CpuLoad::total();
         smoothedCpuLoad = (smoothedCpuLoad * 0.7f) + (target * 0.3f);
+    }
+    if (!m_hasTempSample || (now - m_lastTempSampleMs >= 2000UL)) {
+        if (hardwareHAL.capabilities().hasTempSensor) {
+            m_cachedTempC = hardwareHAL.readEnvironment().temperatureC;
+        } else {
+            m_cachedTempC = temperatureRead();
+        }
+        m_lastTempSampleMs = now;
+        m_hasTempSample = true;
     }
 }
 
@@ -93,13 +105,7 @@ void SysInfoEngine::render(EngineContext* context) {
     uint32_t totalHeap = ESP.getHeapSize();
     float ramPct = (totalHeap > 0) ? (float)(totalHeap - freeHeap) * 100.0f / (float)totalHeap : 0.0f;
 
-    // Compute Temp metric
-    float tempC = 0.0f;
-    if (hardwareHAL.capabilities().hasTempSensor) {
-        tempC = hardwareHAL.readEnvironment().temperatureC;
-    } else {
-        tempC = temperatureRead();
-    }
+    float tempC = m_cachedTempC;
 
     uint32_t uptimeSec = millis() / 1000;
 
@@ -331,116 +337,144 @@ void SysInfoEngine::renderCyberpunkTheme(IDrawingSurface* matrix, float cpuPct, 
         int x2 = (w / 2) + offsetX;
         int y1 = 4 + offsetY;
         int y2 = 18 + offsetY;
+        char buf[8];
 
         // CPU
-        matrix->setTextColor(cyan);
-        matrix->setCursor(x1, y1);
-        matrix->print("CPU:");
-        matrix->setTextColor(cpuColor);
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->print(buf);
+        if (showCpu) {
+            matrix->setTextColor(cyan);
+            matrix->setCursor(x1, y1);
+            matrix->print("CPU:");
+            matrix->setTextColor(cpuColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->print(buf);
+        }
 
         // RAM
-        matrix->setTextColor(purple);
-        matrix->setCursor(x1, y2);
-        matrix->print("RAM:");
-        matrix->setTextColor(ramColor);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->print(buf);
+        if (showRam) {
+            matrix->setTextColor(purple);
+            matrix->setCursor(x1, y2);
+            matrix->print("RAM:");
+            matrix->setTextColor(ramColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->print(buf);
+        }
 
         // TMP
-        matrix->setTextColor(matrix->color565(255, 140, 0));
-        matrix->setCursor(x2, y1);
-        matrix->print("TMP:");
-        matrix->setTextColor(tempColor);
-        matrix->print(tBuf);
+        if (showTemp) {
+            matrix->setTextColor(matrix->color565(255, 140, 0));
+            matrix->setCursor(x2, y1);
+            matrix->print("TMP:");
+            matrix->setTextColor(tempColor);
+            matrix->print(tBuf);
+        }
 
         // UPTIME
-        matrix->setTextColor(cyan);
-        matrix->setCursor(x2, y2);
-        matrix->print("UPT:");
-        matrix->setTextColor(matrix->color565(0, 220, 200));
-        matrix->print(upBuf);
+        if (showUptime) {
+            matrix->setTextColor(cyan);
+            matrix->setCursor(x2, y2);
+            matrix->print("UPT:");
+            matrix->setTextColor(matrix->color565(0, 220, 200));
+            matrix->print(upBuf);
+        }
 
         // Vertical Level Meter on Right edge
-        int barH = h - 8;
-        int fillH = (int)((cpuPct / 100.0f) * barH);
-        if (fillH > 0) {
-            matrix->fillRect(w - 4, h - 4 - fillH, 2, fillH, cpuColor);
+        if (showCpu) {
+            int barH = h - 8;
+            int fillH = (int)((cpuPct / 100.0f) * barH);
+            if (fillH > 0) {
+                matrix->fillRect(w - 4, h - 4 - fillH, 2, fillH, cpuColor);
+            }
         }
     } else if (w < 48 || h > (w * 3) / 2) {
         // Tate Portrait 4-Tier Vertical Stack (e.g. 32x128, 64x128)
         int stepY = h / 4;
         int baseY = 4 + offsetY;
+        char buf[8];
 
         // CPU
-        matrix->setTextColor(cyan);
-        matrix->setCursor(3 + offsetX, baseY);
-        matrix->print("CPU");
-        matrix->setTextColor(cpuColor);
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
-        matrix->print(buf);
+        if (showCpu) {
+            matrix->setTextColor(cyan);
+            matrix->setCursor(3 + offsetX, baseY);
+            matrix->print("CPU");
+            matrix->setTextColor(cpuColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
+            matrix->print(buf);
+        }
 
         // RAM
-        matrix->setTextColor(purple);
-        matrix->setCursor(3 + offsetX, baseY + stepY);
-        matrix->print("RAM");
-        matrix->setTextColor(ramColor);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
-        matrix->print(buf);
+        if (showRam) {
+            matrix->setTextColor(purple);
+            matrix->setCursor(3 + offsetX, baseY + stepY);
+            matrix->print("RAM");
+            matrix->setTextColor(ramColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
+            matrix->print(buf);
+        }
 
         // TMP
-        matrix->setTextColor(matrix->color565(255, 140, 0));
-        matrix->setCursor(3 + offsetX, baseY + stepY * 2);
-        matrix->print("TMP");
-        matrix->setTextColor(tempColor);
-        matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
-        matrix->print(tBuf);
+        if (showTemp) {
+            matrix->setTextColor(matrix->color565(255, 140, 0));
+            matrix->setCursor(3 + offsetX, baseY + stepY * 2);
+            matrix->print("TMP");
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
+            matrix->print(tBuf);
+        }
 
         // UPTIME
-        matrix->setTextColor(cyan);
-        matrix->setCursor(3 + offsetX, baseY + stepY * 3);
-        matrix->print("UPT");
-        matrix->setTextColor(matrix->color565(0, 220, 200));
-        matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
-        matrix->print(upBuf);
+        if (showUptime) {
+            matrix->setTextColor(cyan);
+            matrix->setCursor(3 + offsetX, baseY + stepY * 3);
+            matrix->print("UPT");
+            matrix->setTextColor(matrix->color565(0, 220, 200));
+            matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
+            matrix->print(upBuf);
+        }
     } else {
         // Compact (64x32)
         int baseX = 4 + offsetX;
         int baseY = 4 + offsetY;
-
-        matrix->setTextColor(cyan);
-        matrix->setCursor(baseX, baseY);
-        matrix->print("C:");
-        matrix->setTextColor(cpuColor);
         char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->print(buf);
 
-        matrix->setTextColor(purple);
-        matrix->setCursor((w / 2) + offsetX, baseY);
-        matrix->print("R:");
-        matrix->setTextColor(ramColor);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->print(buf);
+        if (showCpu) {
+            matrix->setTextColor(cyan);
+            matrix->setCursor(baseX, baseY);
+            matrix->print("C:");
+            matrix->setTextColor(cpuColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->print(buf);
+        }
+
+        if (showRam) {
+            matrix->setTextColor(purple);
+            matrix->setCursor((w / 2) + offsetX, baseY);
+            matrix->print("R:");
+            matrix->setTextColor(ramColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->print(buf);
+        }
 
         int y2 = baseY + 14;
-        matrix->setTextColor(tempColor);
-        matrix->setCursor(baseX, y2);
-        matrix->print(tBuf);
+        if (showTemp) {
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(baseX, y2);
+            matrix->print(tBuf);
+        }
 
-        matrix->setTextColor(matrix->color565(0, 220, 200));
-        matrix->setCursor((w / 2) + offsetX, y2);
-        matrix->print(upBuf);
+        if (showUptime) {
+            matrix->setTextColor(matrix->color565(0, 220, 200));
+            matrix->setCursor((w / 2) + offsetX, y2);
+            matrix->print(upBuf);
+        }
 
-        int barH = h - 8;
-        int fillH = (int)((cpuPct / 100.0f) * barH);
-        if (fillH > 0) {
-            matrix->fillRect(w - 3, h - 4 - fillH, 2, fillH, cpuColor);
+        if (showCpu) {
+            int barH = h - 8;
+            int fillH = (int)((cpuPct / 100.0f) * barH);
+            if (fillH > 0) {
+                matrix->fillRect(w - 3, h - 4 - fillH, 2, fillH, cpuColor);
+            }
         }
     }
 }
@@ -468,130 +502,154 @@ void SysInfoEngine::renderCompactTheme(IDrawingSurface* matrix, float cpuPct, fl
         for (int i = 1; i < 4; i++) {
             matrix->drawFastVLine(2 + (i * colW), 2, h - 4, matrix->color565(40, 45, 60));
         }
+        char buf[8];
 
         // Col 1: CPU
-        int x0 = 3 + offsetX;
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(x0, 4 + offsetY);
-        matrix->print("CPU");
-        matrix->setTextColor(cpuColor);
-        matrix->setCursor(x0, 16 + offsetY);
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->print(buf);
+        if (showCpu) {
+            int x0 = 3 + offsetX;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(x0, 4 + offsetY);
+            matrix->print("CPU");
+            matrix->setTextColor(cpuColor);
+            matrix->setCursor(x0, 16 + offsetY);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->print(buf);
+        }
 
         // Col 2: RAM
-        int x1 = 3 + colW + offsetX;
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(x1, 4 + offsetY);
-        matrix->print("RAM");
-        matrix->setTextColor(ramColor);
-        matrix->setCursor(x1, 16 + offsetY);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->print(buf);
+        if (showRam) {
+            int x1 = 3 + colW + offsetX;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(x1, 4 + offsetY);
+            matrix->print("RAM");
+            matrix->setTextColor(ramColor);
+            matrix->setCursor(x1, 16 + offsetY);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->print(buf);
+        }
 
         // Col 3: TMP
-        int x2 = 3 + (2 * colW) + offsetX;
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(x2, 4 + offsetY);
-        matrix->print("TMP");
-        matrix->setTextColor(tempColor);
-        matrix->setCursor(x2, 16 + offsetY);
-        matrix->print(tBuf);
+        if (showTemp) {
+            int x2 = 3 + (2 * colW) + offsetX;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(x2, 4 + offsetY);
+            matrix->print("TMP");
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(x2, 16 + offsetY);
+            matrix->print(tBuf);
+        }
 
         // Col 4: UPT
-        int x3 = 3 + (3 * colW) + offsetX;
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(x3, 4 + offsetY);
-        matrix->print("UPT");
-        matrix->setTextColor(matrix->color565(0, 190, 255));
-        matrix->setCursor(x3, 16 + offsetY);
-        matrix->print(upBuf);
+        if (showUptime) {
+            int x3 = 3 + (3 * colW) + offsetX;
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(x3, 4 + offsetY);
+            matrix->print("UPT");
+            matrix->setTextColor(matrix->color565(0, 190, 255));
+            matrix->setCursor(x3, 16 + offsetY);
+            matrix->print(upBuf);
+        }
     } else if (w < 48 || h > (w * 3) / 2) {
         // Tate Portrait 4-Tier Stack
         int stepY = h / 4;
         int baseY = 3 + offsetY;
+        char buf[8];
 
         for (int i = 1; i < 4; i++) {
             matrix->drawFastHLine(2, i * stepY, w - 4, matrix->color565(40, 45, 60));
         }
 
         // Tier 1: CPU
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(3 + offsetX, baseY);
-        matrix->print("CPU");
-        matrix->setTextColor(cpuColor);
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
-        matrix->print(buf);
+        if (showCpu) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(3 + offsetX, baseY);
+            matrix->print("CPU");
+            matrix->setTextColor(cpuColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY);
+            matrix->print(buf);
+        }
 
         // Tier 2: RAM
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(3 + offsetX, baseY + stepY);
-        matrix->print("RAM");
-        matrix->setTextColor(ramColor);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
-        matrix->print(buf);
+        if (showRam) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(3 + offsetX, baseY + stepY);
+            matrix->print("RAM");
+            matrix->setTextColor(ramColor);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->setCursor(w - (strlen(buf) * 6 + 3) + offsetX, baseY + stepY);
+            matrix->print(buf);
+        }
 
         // Tier 3: TMP
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(3 + offsetX, baseY + stepY * 2);
-        matrix->print("TMP");
-        matrix->setTextColor(tempColor);
-        matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
-        matrix->print(tBuf);
+        if (showTemp) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(3 + offsetX, baseY + stepY * 2);
+            matrix->print("TMP");
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(w - (strlen(tBuf) * 6 + 3) + offsetX, baseY + stepY * 2);
+            matrix->print(tBuf);
+        }
 
         // Tier 4: UPT
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(3 + offsetX, baseY + stepY * 3);
-        matrix->print("UPT");
-        matrix->setTextColor(matrix->color565(0, 190, 255));
-        matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
-        matrix->print(upBuf);
+        if (showUptime) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(3 + offsetX, baseY + stepY * 3);
+            matrix->print("UPT");
+            matrix->setTextColor(matrix->color565(0, 190, 255));
+            matrix->setCursor(w - (strlen(upBuf) * 6 + 3) + offsetX, baseY + stepY * 3);
+            matrix->print(upBuf);
+        }
     } else {
         // Compact / Square: 2x2 Grid
         int midX = w / 2;
         int midY = h / 2;
+        char buf[8];
 
         matrix->drawFastVLine(midX, 2, h - 4, matrix->color565(40, 45, 60));
         matrix->drawFastHLine(2, midY, w - 4, matrix->color565(40, 45, 60));
 
         // Quad 1: CPU
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(2 + offsetX, 2 + offsetY);
-        matrix->print("CPU");
-        matrix->setTextColor(cpuColor);
-        matrix->setCursor(2 + offsetX, 9 + offsetY);
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
-        matrix->print(buf);
+        if (showCpu) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, 2 + offsetY);
+            matrix->print("CPU");
+            matrix->setTextColor(cpuColor);
+            matrix->setCursor(2 + offsetX, 9 + offsetY);
+            snprintf(buf, sizeof(buf), "%.0f%%", cpuPct);
+            matrix->print(buf);
+        }
 
         // Quad 2: RAM
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(midX + 3 + offsetX, 2 + offsetY);
-        matrix->print("RAM");
-        matrix->setTextColor(ramColor);
-        matrix->setCursor(midX + 3 + offsetX, 9 + offsetY);
-        snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
-        matrix->print(buf);
+        if (showRam) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(midX + 3 + offsetX, 2 + offsetY);
+            matrix->print("RAM");
+            matrix->setTextColor(ramColor);
+            matrix->setCursor(midX + 3 + offsetX, 9 + offsetY);
+            snprintf(buf, sizeof(buf), "%.0f%%", ramPct);
+            matrix->print(buf);
+        }
 
         // Quad 3: TEMP
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(2 + offsetX, midY + 3 + offsetY);
-        matrix->print("TMP");
-        matrix->setTextColor(tempColor);
-        matrix->setCursor(2 + offsetX, midY + 10 + offsetY);
-        matrix->print(tBuf);
+        if (showTemp) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(2 + offsetX, midY + 3 + offsetY);
+            matrix->print("TMP");
+            matrix->setTextColor(tempColor);
+            matrix->setCursor(2 + offsetX, midY + 10 + offsetY);
+            matrix->print(tBuf);
+        }
 
         // Quad 4: UPTIME
-        matrix->setTextColor(labelColor);
-        matrix->setCursor(midX + 3 + offsetX, midY + 3 + offsetY);
-        matrix->print("UPT");
-        matrix->setTextColor(matrix->color565(0, 190, 255));
-        matrix->setCursor(midX + 3 + offsetX, midY + 10 + offsetY);
-        matrix->print(upBuf);
+        if (showUptime) {
+            matrix->setTextColor(labelColor);
+            matrix->setCursor(midX + 3 + offsetX, midY + 3 + offsetY);
+            matrix->print("UPT");
+            matrix->setTextColor(matrix->color565(0, 190, 255));
+            matrix->setCursor(midX + 3 + offsetX, midY + 10 + offsetY);
+            matrix->print(upBuf);
+        }
     }
 }
 

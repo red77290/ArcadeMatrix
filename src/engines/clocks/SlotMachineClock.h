@@ -23,6 +23,10 @@ private:
     char currentTime[12];
     char targetTime[12];
     uint32_t lastFrameTime;
+    int m_gfxSize = 2;
+    int m_offX = 0;
+    int m_offY = 0;
+    uint16_t m_color1 = 0xFFFF;
 };
 
 #endif

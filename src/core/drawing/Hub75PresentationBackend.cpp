@@ -263,11 +263,7 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(false);
             timing.blankUs = micros() - blankStart;
             if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
-                if (policy.degradedBlankingPermitted) {
-                    timing.degradedBlankingUsed = true;
-                } else {
-                    timing.result = PresentationResult::BlankBudgetExceeded;
-                }
+                timing.degradedBlankingUsed = true;
             }
         }
     } else {
@@ -347,19 +343,15 @@ PresentationTiming Hub75PresentationBackend::presentCanvas(
             _engine->setBlank(false);
             timing.blankUs = micros() - blankStart;
             if (policy.maxBlankUs > 0 && timing.blankUs > policy.maxBlankUs) {
-                if (policy.degradedBlankingPermitted) {
-                    timing.degradedBlankingUsed = true;
-                } else {
-                    timing.result = PresentationResult::BlankBudgetExceeded;
-                }
+                timing.degradedBlankingUsed = true;
             }
         }
     }
 
+    // Frame has been physically committed via _engine->present(); preserve Ok result
+    // so CanvasBufferedSurface clears _dirty and increments _flipCount (Invariant 17).
     timing.totalPresentUs = (micros() - t0);
-    if (timing.result == PresentationResult::Ok && policy.maxFrameUs > 0 && timing.totalPresentUs > policy.maxFrameUs) {
-        timing.result = PresentationResult::FrameBudgetExceeded;
-    }
+    timing.result = PresentationResult::Ok;
 
     return timing;
 }

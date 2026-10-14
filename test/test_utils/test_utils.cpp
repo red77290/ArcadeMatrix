@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <unity.h>
 #include "core/LayoutHelper.h"
+#include "engines/clocks/ClockFaceFont.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -37,35 +38,66 @@ void test_sensirion_crc8_vectors(void) {
 }
 
 /**
- * @brief Tests LayoutHelper text centering calculation on standard 64x32 matrix.
- *
- * Checks that an 8-character string (6 pixels wide per char = 48px) is centered horizontally at x = (64 - 48)/2 = 8.
+ * @brief Tests LayoutHelper geometry functions (aspectFit, intersectScreen, clampPosition, splits) on 64x32 matrix.
  */
 void test_layout_helper_centering(void) {
-    int textWidth = 48;
-    int displayWidth = 64;
-    int expectedX = (displayWidth - textWidth) / 2;
-    TEST_ASSERT_EQUAL_INT(8, expectedX);
+    Rect screen{ 0, 0, 64, 32 };
+
+    // 48x8 banner inside 64x32 bounds: scale = min(64/48, 32/8) = 1.3333 -> outW = 64, outH = 10, centered Y = (32 - 10)/2 = 11
+    Rect fitted = LayoutHelper::aspectFit(48, 8, screen);
+    TEST_ASSERT_EQUAL_INT16(0, fitted.x);
+    TEST_ASSERT_EQUAL_INT16(11, fitted.y);
+    TEST_ASSERT_EQUAL_UINT16(64, fitted.width);
+    TEST_ASSERT_EQUAL_UINT16(10, fitted.height);
+
+    // 16x16 square inside 64x32 bounds: scale = 2.0 -> 32x32 centered at x = (64 - 32)/2 = 16, y = 0
+    Rect sqFit = LayoutHelper::aspectFit(16, 16, screen);
+    TEST_ASSERT_EQUAL_INT16(16, sqFit.x);
+    TEST_ASSERT_EQUAL_INT16(0, sqFit.y);
+    TEST_ASSERT_EQUAL_UINT16(32, sqFit.width);
+    TEST_ASSERT_EQUAL_UINT16(32, sqFit.height);
+
+    // clampPosition translates out-of-bounds rectangle inside screen
+    Rect clamped = LayoutHelper::clampPosition(Rect{ 50, 25, 24, 12 }, 64, 32);
+    TEST_ASSERT_EQUAL_INT16(40, clamped.x);
+    TEST_ASSERT_EQUAL_INT16(20, clamped.y);
+    TEST_ASSERT_EQUAL_UINT16(24, clamped.width);
+    TEST_ASSERT_EQUAL_UINT16(12, clamped.height);
+
+    // intersectScreen strictly crops rectangle protruding past right/bottom edges
+    Rect cropped = LayoutHelper::intersectScreen(Rect{ 48, 20, 32, 20 }, 64, 32);
+    TEST_ASSERT_EQUAL_INT16(48, cropped.x);
+    TEST_ASSERT_EQUAL_INT16(20, cropped.y);
+    TEST_ASSERT_EQUAL_UINT16(16, cropped.width);
+    TEST_ASSERT_EQUAL_UINT16(12, cropped.height);
+
+    // Region splits
+    Rect top = LayoutHelper::splitTop(screen, 10);
+    Rect bottom = LayoutHelper::splitBottom(screen, 10);
+    TEST_ASSERT_EQUAL_INT16(0, top.y);
+    TEST_ASSERT_EQUAL_UINT16(10, top.height);
+    TEST_ASSERT_EQUAL_INT16(22, bottom.y);
+    TEST_ASSERT_EQUAL_UINT16(10, bottom.height);
 }
 
 /**
- * @brief Tests RGB888 to RGB565 packing and component bit-depth extraction.
+ * @brief Tests RGB888 to RGB565 packing and ClockFaceFont::parseHex color conversion.
  */
 void test_rgb565_color_math(void) {
     // Pure White: (255, 255, 255) -> 0xFFFF
-    uint16_t white = ((255 & 0xF8) << 8) | ((255 & 0xFC) << 3) | (255 >> 3);
+    uint16_t white = ClockFaceFont::parseHex("#FFFFFF", 0x0000);
     TEST_ASSERT_EQUAL_HEX16(0xFFFF, white);
 
     // Pure Red: (255, 0, 0) -> 0xF800
-    uint16_t red = ((255 & 0xF8) << 8) | ((0 & 0xFC) << 3) | (0 >> 3);
+    uint16_t red = ClockFaceFont::parseHex("#FF0000", 0x0000);
     TEST_ASSERT_EQUAL_HEX16(0xF800, red);
 
     // Pure Green: (0, 255, 0) -> 0x07E0
-    uint16_t green = ((0 & 0xF8) << 8) | ((255 & 0xFC) << 3) | (0 >> 3);
+    uint16_t green = ClockFaceFont::parseHex("#00FF00", 0x0000);
     TEST_ASSERT_EQUAL_HEX16(0x07E0, green);
 
     // Pure Blue: (0, 0, 255) -> 0x001F
-    uint16_t blue = ((0 & 0xF8) << 8) | ((0 & 0xFC) << 3) | (255 >> 3);
+    uint16_t blue = ClockFaceFont::parseHex("#0000FF", 0x0000);
     TEST_ASSERT_EQUAL_HEX16(0x001F, blue);
 }
 

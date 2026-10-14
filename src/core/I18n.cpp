@@ -1,19 +1,32 @@
-#include "core/I18n.h"
+#include "I18n.h"
 #include "core/ConfigLoader.h"
+#include <string.h>
+#include <strings.h>
+#include <ctype.h>
 
 extern ConfigLoader config;
 
-Lang I18n::parseLang(const String& code) {
-    String c = code;
-    c.trim();
-    c.toLowerCase();
-    if (c == "en") return Lang::EN;
-    if (c == "es") return Lang::ES;
+Lang I18n::parseLang(const char* code) {
+    if (!code) return Lang::FR;
+    while (*code == ' ' || *code == '\t' || *code == '\r' || *code == '\n') {
+        code++;
+    }
+    if (strncasecmp(code, "en", 2) == 0 && (code[2] == '\0' || code[2] == '_' || code[2] == '-' || isspace((unsigned char)code[2]))) {
+        return Lang::EN;
+    }
+    if (strncasecmp(code, "es", 2) == 0 && (code[2] == '\0' || code[2] == '_' || code[2] == '-' || isspace((unsigned char)code[2]))) {
+        return Lang::ES;
+    }
     return Lang::FR;
 }
 
+Lang I18n::parseLang(const String& code) {
+    return parseLang(code.c_str());
+}
+
 Lang I18n::getLang() {
-    return parseLang(config.system.lang);
+    ConfigSnapshotGuard guard = config.acquireSnapshot();
+    return parseLang(guard.get().system.lang.c_str());
 }
 
 const char* I18n::getLangCode(Lang l) {
@@ -652,3 +665,119 @@ void I18n::getSpokenTime(int hours, int minutes, Lang l,
         snprintf(minuteWords, minuteSize, "%s", mins);
     }
 }
+
+namespace {
+void replaceTokenInBuffer(char* buf, size_t maxLen, const char* from, const char* to) {
+    if (!buf || !from || !to || !*from) return;
+    char* pos = strstr(buf, from);
+    if (!pos) return;
+    size_t fromLen = strlen(from);
+    size_t toLen = strlen(to);
+    char tmp[128];
+    size_t prefixLen = (size_t)(pos - buf);
+    if (prefixLen >= sizeof(tmp)) prefixLen = sizeof(tmp) - 1;
+    memcpy(tmp, buf, prefixLen);
+    tmp[prefixLen] = '\0';
+    strncat(tmp, to, sizeof(tmp) - strlen(tmp) - 1);
+    strncat(tmp, pos + fromLen, sizeof(tmp) - strlen(tmp) - 1);
+    strncpy(buf, tmp, maxLen - 1);
+    buf[maxLen - 1] = '\0';
+}
+
+bool containsIgnoreCase(const char* haystack, const char* needle) {
+    if (!haystack || !needle || !*needle) return false;
+    size_t nLen = strlen(needle);
+    for (const char* p = haystack; *p; ++p) {
+        if (strncasecmp(p, needle, nLen) == 0) return true;
+    }
+    return false;
+}
+} // namespace
+
+void I18n::formatLocalizedDate(char* dest, size_t maxLen, const char* format, const struct tm* timeinfo, Lang l) {
+    if (!dest || maxLen == 0) return;
+    if (!format || !timeinfo) {
+        dest[0] = '\0';
+        return;
+    }
+    char buf[128];
+    strftime(buf, sizeof(buf), format, timeinfo);
+    if (l == Lang::EN) {
+        strncpy(dest, buf, maxLen - 1);
+        dest[maxLen - 1] = '\0';
+        return;
+    }
+
+    static const char* DAYS_SHORT_EN[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char* DAYS_LONG_EN[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+    static const char* MONTHS_SHORT_EN[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_EN[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+
+    static const char* DAYS_SHORT_FR[] = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
+    static const char* DAYS_LONG_FR[] = {"Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"};
+    static const char* MONTHS_SHORT_FR[] = {"Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aout", "Sep", "Oct", "Nov", "Dec"};
+    static const char* MONTHS_LONG_FR[] = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
+
+    static const char* DAYS_SHORT_ES[] = {"Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"};
+    static const char* DAYS_LONG_ES[] = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
+    static const char* MONTHS_SHORT_ES[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
+    static const char* MONTHS_LONG_ES[] = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
+
+    int wday = timeinfo->tm_wday;
+    int mon = timeinfo->tm_mon;
+    if (wday >= 0 && wday < 7) {
+        if (l == Lang::FR) {
+            replaceTokenInBuffer(buf, sizeof(buf), DAYS_LONG_EN[wday], DAYS_LONG_FR[wday]);
+            replaceTokenInBuffer(buf, sizeof(buf), DAYS_SHORT_EN[wday], DAYS_SHORT_FR[wday]);
+        } else if (l == Lang::ES) {
+            replaceTokenInBuffer(buf, sizeof(buf), DAYS_LONG_EN[wday], DAYS_LONG_ES[wday]);
+            replaceTokenInBuffer(buf, sizeof(buf), DAYS_SHORT_EN[wday], DAYS_SHORT_ES[wday]);
+        }
+    }
+    if (mon >= 0 && mon < 12) {
+        if (l == Lang::FR) {
+            replaceTokenInBuffer(buf, sizeof(buf), MONTHS_LONG_EN[mon], MONTHS_LONG_FR[mon]);
+            replaceTokenInBuffer(buf, sizeof(buf), MONTHS_SHORT_EN[mon], MONTHS_SHORT_FR[mon]);
+        } else if (l == Lang::ES) {
+            replaceTokenInBuffer(buf, sizeof(buf), MONTHS_LONG_EN[mon], MONTHS_LONG_ES[mon]);
+            replaceTokenInBuffer(buf, sizeof(buf), MONTHS_SHORT_EN[mon], MONTHS_SHORT_ES[mon]);
+        }
+    }
+    strncpy(dest, buf, maxLen - 1);
+    dest[maxLen - 1] = '\0';
+}
+
+const char* I18n::getNoDataLabel(Lang l) {
+    return (l == Lang::FR) ? "PAS DE DONNEES" : (l == Lang::ES) ? "SIN DATOS" : "NO DATA";
+}
+
+const char* I18n::getConnectingLabel(Lang l) {
+    return (l == Lang::FR) ? "CONNEXION" : (l == Lang::ES) ? "CONECTANDO" : "CONNECTING";
+}
+
+const char* I18n::getNoConnectionLabel(Lang l) {
+    return (l == Lang::FR) ? "PAS DE CONNEXION" : (l == Lang::ES) ? "SIN CONEXION" : "NO CONNECTION";
+}
+
+const char* I18n::getUnsupportedLabel(Lang l) {
+    return (l == Lang::FR) ? "NON PRIS EN CHARGE" : (l == Lang::ES) ? "NO COMPATIBLE" : "UNSUPPORTED";
+}
+
+const char* I18n::getGNewsCategoryShort(const char* category) {
+    return getGNewsCategoryShort(category, getLang());
+}
+
+const char* I18n::getGNewsCategoryShort(const char* category, Lang l) {
+    if (!category) return "NEWS";
+    if (containsIgnoreCase(category, "tech")) return "TECH";
+    if (containsIgnoreCase(category, "sci")) return "SCI";
+    if (containsIgnoreCase(category, "sport")) return "SPORT";
+    if (containsIgnoreCase(category, "bus") || containsIgnoreCase(category, "fin") || containsIgnoreCase(category, "econ")) return "BIZ";
+    if (containsIgnoreCase(category, "world") || containsIgnoreCase(category, "nation")) return "WORLD";
+    if (containsIgnoreCase(category, "ent") || containsIgnoreCase(category, "art")) return "CULT";
+    if (containsIgnoreCase(category, "heal")) {
+        return (l == Lang::EN) ? "HEALTH" : (l == Lang::ES) ? "SALUD" : "SANTE";
+    }
+    return "NEWS";
+}
+

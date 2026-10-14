@@ -262,6 +262,7 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
 
     // 1. Check if file is JPEG (header 0xFF 0xD8)
     if (size >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
+        std::lock_guard<std::mutex> decodeLock(m_mutex);
         auto* jpg = new (std::nothrow) JPEGDEC();
         if (jpg) {
             memset(outPixels, 0, width * height * sizeof(uint16_t));
@@ -286,11 +287,16 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
     }
 
     // 2. Decode as PNG
+    std::lock_guard<std::mutex> decodeLock(m_mutex);
     PNG* png = nullptr;
+    bool allocatedInPsram = false;
 #if defined(ESP32)
     if (psramFound()) {
         void* mem = heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (mem) png = new (mem) PNG();
+        if (mem) {
+            png = new (mem) PNG();
+            allocatedInPsram = true;
+        }
     }
 #endif
     if (!png) {
@@ -334,7 +340,7 @@ bool IconService::decodeIconFromSd(const char* category, const String& symbol, u
 
     png->close();
 #if defined(ESP32)
-    if (psramFound()) {
+    if (allocatedInPsram) {
         png->~PNG();
         heap_caps_free(png);
     } else {
@@ -356,16 +362,20 @@ bool IconService::loadOrFetchIcon(const char* category, const String& symbol, co
     if (!outPixels) return false;
 
     String safeKey = String(category) + ":" + sanitizeSymbol(symbol);
-    auto it = m_failedAttempts.find(safeKey);
-    if (it != m_failedAttempts.end()) {
-        if (millis() - it->second < 3600000UL) {
-            return false; // Negative cache hit: cooldown active
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_failedAttempts.find(safeKey);
+        if (it != m_failedAttempts.end()) {
+            if (millis() - it->second < 3600000UL) {
+                return false; // Negative cache hit: cooldown active
+            }
         }
     }
 
     // 1. Try decoding from SD first if already cached
     if (hasIconOnSd(category, symbol)) {
         if (decodeIconFromSd(category, symbol, outPixels, width, height)) {
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_failedAttempts.erase(safeKey);
             return true;
         }
@@ -374,13 +384,17 @@ bool IconService::loadOrFetchIcon(const char* category, const String& symbol, co
     // 2. Not on SD (or decode skipped): download via plain HTTP proxy
     if (downloadIconToSd(category, symbol, rawUrl, width, height)) {
         if (decodeIconFromSd(category, symbol, outPixels, width, height)) {
+            std::lock_guard<std::mutex> lock(m_mutex);
             m_failedAttempts.erase(safeKey);
             return true;
         }
     }
 
     // Record negative cache entry to prevent repeated network spam
-    m_failedAttempts[safeKey] = millis();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_failedAttempts[safeKey] = millis();
+    }
     return false;
 }
 
@@ -404,5 +418,6 @@ bool IconService::loadOrFetchMarketIcon(const String& symbol, const String& rawU
 }
 
 void IconService::clearNegativeCache() {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_failedAttempts.clear();
 }

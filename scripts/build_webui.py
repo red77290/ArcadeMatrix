@@ -20,7 +20,7 @@ try:
     with open(input_file, "r", encoding="utf-8") as f:
         html_text = f.read()
 
-    # Hardware Isolation Verification (GEMINI.md Invariant 8.4)
+    # Hardware Isolation Verification (Architectural Invariant 8.4)
     FORBIDDEN_RPI_TERMS = [
         'id="hw-slowdown"',
         'id="hw-mapping"',
@@ -34,7 +34,7 @@ try:
         if term in html_text:
             print(f"❌ FATAL ERROR: Raspberry Pi hardware setting '{term}' detected in {input_file}!")
             print("ESP32 WebUI must NEVER contain Raspberry Pi hardware settings.")
-            print("See GEMINI.md Section 8. Aborting build.")
+            print("See Architectural Invariant 8. Aborting build.")
             sys.exit(1)
 
     REQUIRED_ESP32_TERMS = [
@@ -52,7 +52,7 @@ try:
     for term in REQUIRED_ESP32_TERMS:
         if term not in html_text:
             print(f"❌ FATAL ERROR: Required ESP32 hardware setting '{term}' missing from {input_file}!")
-            print("See GEMINI.md Section 8. Aborting build.")
+            print("See Architectural Invariant 8. Aborting build.")
             sys.exit(1)
 
     parts = html_text.split("<script>")

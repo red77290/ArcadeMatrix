@@ -37,14 +37,14 @@ cd ArcadeMatrix
 
 No `pio project init` needed - `platformio.ini` already exists at the repo root and defines both
 supported boards as separate build environments: `esp32dev` (classic ESP32, 4MB flash) and
-`esp32s3` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16)). See `docs/HARDWARE.md` for which one matches
+`esp32s3_waveshare` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16)). See `docs/HARDWARE.md` for which one matches
 your board and its specific GPIO/resolution limits.
 
 ## 3. Build the firmware
 
 ```bash
 # Build both environments (fastest way to sanity-check your changes):
-pio run -e esp32dev -e esp32s3
+pio run -e esp32dev -e esp32s3_waveshare
 
 # Or just the one you actually own:
 pio run -e esp32dev
@@ -60,7 +60,7 @@ prints a `RAM:`/`Flash:` usage summary and ends with `[SUCCESS]`.
 Connect the ESP32/ESP32-S3 via USB, then:
 
 ```bash
-pio run -e esp32dev -t upload      # replace esp32dev with esp32s3 if that's your board
+pio run -e esp32dev -t upload      # replace esp32dev with esp32s3_waveshare if that's your board
 ```
 
 PlatformIO auto-detects the serial port in most cases. If it picks the wrong one (e.g. you have
@@ -89,7 +89,7 @@ esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash \
   0x10000 firmware-esp32dev.bin
 ```
 
-For `esp32s3`, use `--chip esp32s3` and offset `0x0` for the bootloader instead of `0x1000` (the
+For `esp32s3_waveshare`, use `--chip esp32s3` and offset `0x0` for the bootloader instead of `0x1000` (the
 S3's ROM bootloader header differs) - see the flash offset table in `webinstaller/README.md` for
 the full breakdown.
 
@@ -111,7 +111,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 ## 6. Prepare the SD card
 
 The firmware needs an external SD card (wired per `docs/WIRING.md`, chip-select on GPIO 5 by
-default - see `SD_CS_PIN` in `src/main.cpp`) for:
+default - see `SD_CS_PIN` in `include/HardwareProfile.h`) for:
 - `/config.json` — your Wi-Fi/matrix/theme settings (auto-generated with defaults on first boot if
   missing; edit it directly on the card, or via the web UI once Wi-Fi is up).
 - `/gifs/`, playlists of `.gif`/`.raw`/`.png` assets (see `docs/ARCHITECTURE.md` §4 for the format

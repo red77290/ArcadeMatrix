@@ -49,13 +49,16 @@ void FrontendSyncEngine::begin() {
 }
 
 void FrontendSyncEngine::reconnectTaskFunc(void* param) {
-    FrontendSyncEngine* self = (FrontendSyncEngine*)param;
+    FrontendSyncEngine* self = static_cast<FrontendSyncEngine*>(param);
     if (self) {
-        self->reconnect();
-        self->isReconnecting = false;
+        if (!self->stopReconnectRequested.load(std::memory_order_acquire)) {
+            self->reconnect();
+        }
+        self->isReconnecting.store(false, std::memory_order_release);
         self->reconnectTaskHandle = nullptr;
+        self->reconnectTaskExited.store(true, std::memory_order_release);
     }
-    vTaskDelete(NULL);
+    vTaskDelete(nullptr);
 }
 
 void FrontendSyncEngine::stop() {
@@ -63,11 +66,15 @@ void FrontendSyncEngine::stop() {
     waitingDisplayed = false;
     hasPendingEvent = false;
     
-    if (reconnectTaskHandle) {
-        vTaskDelete(reconnectTaskHandle);
+    stopReconnectRequested.store(true, std::memory_order_release);
+    if (reconnectTaskHandle || !reconnectTaskExited.load(std::memory_order_acquire)) {
+        espClient.stop();
+        for (int i = 0; i < 120 && !reconnectTaskExited.load(std::memory_order_acquire); ++i) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
         reconnectTaskHandle = nullptr;
     }
-    isReconnecting = false;
+    isReconnecting.store(false, std::memory_order_release);
 
     if (internalBroker) {
         delete internalBroker;
@@ -96,10 +103,18 @@ bool FrontendSyncEngine::loop() {
     } else {
         if (!mqttClient.connected()) {
             long now = millis();
-            if (now - lastReconnectAttempt > 30000 && !isReconnecting) {
+            if (now - lastReconnectAttempt > 30000 &&
+                !isReconnecting.load(std::memory_order_acquire) &&
+                reconnectTaskExited.load(std::memory_order_acquire)) {
                 lastReconnectAttempt = now;
-                isReconnecting = true;
-                xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", 4096, this, 1, &reconnectTaskHandle, 0);
+                stopReconnectRequested.store(false, std::memory_order_release);
+                isReconnecting.store(true, std::memory_order_release);
+                reconnectTaskExited.store(false, std::memory_order_release);
+                if (xTaskCreatePinnedToCore(reconnectTaskFunc, "MqttReconnect", 4096, this, 1, &reconnectTaskHandle, 0) != pdPASS) {
+                    reconnectTaskHandle = nullptr;
+                    isReconnecting.store(false, std::memory_order_release);
+                    reconnectTaskExited.store(true, std::memory_order_release);
+                }
             }
         } else {
             mqttClient.loop();
@@ -127,12 +142,15 @@ bool FrontendSyncEngine::loop() {
 }
 
 void FrontendSyncEngine::reconnect() {
+    if (stopReconnectRequested.load(std::memory_order_acquire)) return;
     if (WiFi.status() == WL_CONNECTED) {
         Serial.print("Attempting MQTT connection...");
         if (mqttClient.connect(mqttConfig.deviceName.c_str(), mqttConfig.user.c_str(), mqttConfig.pass.c_str())) {
             Serial.println("connected");
-            // Subscribe strictly to canonical wildcard topic
-            mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
+            if (!stopReconnectRequested.load(std::memory_order_acquire)) {
+                // Subscribe strictly to canonical wildcard topic
+                mqttClient.subscribe(MQTT_TOPIC_WILDCARD);
+            }
         } else {
             Serial.print("failed, rc=");
             Serial.print(mqttClient.state());

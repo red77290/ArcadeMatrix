@@ -29,13 +29,13 @@ git clone <this-repo-url>
 cd ArcadeMatrix
 ```
 
-No hace falta `pio project init`: `platformio.ini` ya existe en la raíz del repositorio y define las dos placas compatibles como entornos de compilación separados: `esp32dev` (ESP32 clásico, 4MB flash) y `esp32s3` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16) opcional). Consulta `docs/HARDWARE_ES.md` para saber cuál corresponde a tu placa y sus límites específicos de GPIO/resolución.
+No hace falta `pio project init`: `platformio.ini` ya existe en la raíz del repositorio y define las dos placas compatibles como entornos de compilación separados: `esp32dev` (ESP32 clásico, 4MB flash) y `esp32s3_waveshare` (ESP32-S3, 32MB Flash + 16MB PSRAM (N32R16) opcional). Consulta `docs/HARDWARE_ES.md` para saber cuál corresponde a tu placa y sus límites específicos de GPIO/resolución.
 
 ## 3. Compilar el firmware
 
 ```bash
 # Build both environments (fastest way to sanity-check your changes):
-pio run -e esp32dev -e esp32s3
+pio run -e esp32dev -e esp32s3_waveshare
 
 # Or just the one you actually own:
 pio run -e esp32dev
@@ -48,7 +48,7 @@ La primera compilación descarga la toolchain de Espressif y todas las bibliotec
 Conecta el ESP32/ESP32-S3 por USB y luego:
 
 ```bash
-pio run -e esp32dev -t upload      # replace esp32dev with esp32s3 if that's your board
+pio run -e esp32dev -t upload      # replace esp32dev with esp32s3_waveshare if that's your board
 ```
 
 PlatformIO detecta automáticamente el puerto serie en la mayoría de los casos. Si elige el incorrecto (por ejemplo, si tienes varios dispositivos USB-serie conectados), indícalo explícitamente:
@@ -73,7 +73,7 @@ pip install esptool
 esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash   0x1000  bootloader-esp32dev.bin   0x8000  partitions-esp32dev.bin   0xE000  boot_app0.bin   0x10000 firmware-esp32dev.bin
 ```
 
-Para `esp32s3`, usa `--chip esp32s3` y el offset `0x0` para el bootloader en lugar de `0x1000` (la cabecera del bootloader ROM del S3 es distinta); consulta la tabla de offsets de flasheo en `webinstaller/README_ES.md` para ver el detalle completo.
+Para `esp32s3_waveshare`, usa `--chip esp32s3` y el offset `0x0` para el bootloader en lugar de `0x1000` (la cabecera del bootloader ROM del S3 es distinta); consulta la tabla de offsets de flasheo en `webinstaller/README_ES.md` para ver el detalle completo.
 
 ## 5. Leer los logs serie
 
@@ -92,7 +92,7 @@ pio run -e esp32dev -t upload && pio device monitor -e esp32dev -b 115200
 ## 6. Preparar la tarjeta SD
 
 El firmware necesita una tarjeta SD externa (cableada según `docs/WIRING_ES.md`, chip-select en GPIO 5 por
-defecto; consulta `SD_CS_PIN` en `src/main.cpp`) para:
+defecto; consulta `SD_CS_PIN` en `include/HardwareProfile.h`) para:
 - `/config.json` — tus ajustes de Wi-Fi/matriz/temas (se genera automáticamente con valores predeterminados en el primer arranque si falta; edítalo directamente en la tarjeta, o mediante la interfaz web una vez que el Wi-Fi esté activo).
 - `/gifs/`, playlists de assets `.gif`/`.raw`/`.png` (consulta §4 de `docs/ARCHITECTURE_ES.md` para ver las diferencias de formato entre los tres).
 - `/fighters_32/` o `/fighters_64/` — hojas de sprites `.fgt` derivadas de MUGEN (consulta `tools/mugen_extractor/README_ES.md` para generar las tuyas a partir de archivos de personajes MUGEN).

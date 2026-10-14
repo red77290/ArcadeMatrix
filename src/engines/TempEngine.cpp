@@ -45,9 +45,18 @@ void TempEngine::drawWaterDropIcon(IDrawingSurface* matrix, int x, int y, uint16
 }
 
 void TempEngine::update(EngineContext* context) {
+    (void)context;
+    uint32_t now = millis();
+    if (!m_hasSampled || (now - m_lastSampleMs >= 2000UL)) {
+        m_cachedEnv = hardwareHAL.readEnvironment(0.0f);
+        m_lastSampleMs = now;
+        m_hasSampled = true;
+    }
 }
 
-void TempEngine::activate() {}
+void TempEngine::activate() {
+    m_hasSampled = false;
+}
 void TempEngine::deactivate() {}
 void TempEngine::onConfigChanged(const EngineConfig* engineConfig) {
     extern ConfigLoader config;
@@ -77,7 +86,7 @@ void TempEngine::render(EngineContext* context) {
 
     matrix->fillScreen(0);
 
-    EnvironmentData envData = hardwareHAL.readEnvironment(0.0f);
+    const EnvironmentData& envData = m_cachedEnv;
     if (!envData.available) {
         // Fallback or warning if sensor not detected
         matrix->setTextSize(1);

@@ -192,7 +192,7 @@ void ConfigLoader::setDefaults() {
     system.idle_fighter_speed = 100;
     system.api_auth_enabled = false;
     system.api_token = "";
-    publishSnapshot_locked();
+    publishSnapshot();
 }
 
 bool ConfigLoader::parseFromJson(const char* jsonContent) {
@@ -416,7 +416,7 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         saveToSD("/config.json");
     }
 
-    publishSnapshot_locked();
+    publishSnapshot();
     return true;
 }
 
@@ -464,7 +464,6 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     dispObj["slot_transition"] = matrix.slot_transition;
     dispObj["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     dispObj["matrix_power"] = matrix.matrix_power;
-    dispObj["render_pipeline"] = matrix.render_pipeline;
 
     JsonObject wObj = doc.createNestedObject("wifi");
     wObj["ssid"] = wifi.ssid;
@@ -626,7 +625,12 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
     if (sdStorage.exists("/config/hardware.json") && sdStorage.exists("/config/system.json")) {
         LOGI("ConfigLoader", "Loading modular configuration from /config/...");
         if (mgr.loadAll(*this)) {
-            publishSnapshot_locked();
+            bool hadPlaylist = sdStorage.exists("/config/playlist.json");
+            SanitizeResult san = ConfigSanitizer::sanitize(*this, !hadPlaylist);
+            if (san.modified) {
+                mgr.saveAll(*this);
+            }
+            publishSnapshot();
             LOGI("ConfigLoader", "Modular configuration loaded successfully from /config/.");
             return true;
         }
@@ -634,7 +638,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
 
     // Otherwise, check for legacy /config.json and migrate to /config/
     if (mgr.checkAndMigrateLegacy(*this, filepath)) {
-        publishSnapshot_locked();
+        publishSnapshot();
         LOGI("ConfigLoader", "Legacy configuration migrated and loaded successfully.");
         return true;
     }

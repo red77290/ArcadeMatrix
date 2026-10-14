@@ -62,6 +62,7 @@ private:
     volatile bool m_taskRunning = false;
     volatile bool m_isActive = false;
     std::atomic<bool> m_taskStopped{false};
+    std::atomic<bool> m_reconnectRequested{false};
     static void pollTaskStatic(void* pvParameters);
     void pollTaskLoop();
 

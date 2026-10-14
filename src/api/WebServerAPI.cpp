@@ -403,6 +403,7 @@ void gifReindexTask(void*) {
             }
         }
     }
+    invalidatePlaylistCache();
     g_gifReindex.lastResult = g_gifReindex.cancel ? ("cancelled after " + String(g_gifReindex.done) + "/" + String(g_gifReindex.total) + " folders") : ("ok: " + String(g_gifReindex.total) + " folders, " + String((long)g_gifReindex.files) + " files");
     g_gifReindex.current = "";
     g_gifReindex.finishedMs = millis();
@@ -787,26 +788,33 @@ void WebServerAPI::setupRoutes() {
     // API: GET /api/instances & POST /api/instances (CRUD instances)
     server.on("/api/instances", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
+        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
         size_t stringBytes = 0;
-        for (const auto& inst : config.instances) {
+        for (const auto& inst : snap.instances) {
             stringBytes += inst.instance_id.length() + inst.engine_id.length() + 2;
             for (const auto& kv : inst.config.getDictionary()) {
                 stringBytes += kv.first.length() + kv.second.length() + 2;
             }
         }
-        const size_t capacity = JSON_ARRAY_SIZE(config.instances.size())
-                              + config.instances.size() * (JSON_OBJECT_SIZE(3) + 256)
+        const size_t capacity = JSON_ARRAY_SIZE(snap.instances.size())
+                              + snap.instances.size() * (JSON_OBJECT_SIZE(3) + 256)
                               + stringBytes
                               + 512;
         SpiRamJsonDocument doc(capacity);
         JsonArray arr = doc.to<JsonArray>();
-        for (const auto& inst : config.instances) {
+        for (const auto& inst : snap.instances) {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = inst.instance_id;
             obj["engine_id"] = inst.engine_id;
             JsonObject cfgObj = obj.createNestedObject("config");
             for (const auto& kv : inst.config.getDictionary()) {
-                cfgObj[kv.first] = kv.second;
+                if (redactSecrets && (kv.first == "api_key" || kv.first == "token" || kv.first == "password" || kv.first == "pass" || kv.first == "client_secret" || kv.first == "refresh_token")) {
+                    cfgObj[kv.first] = "";
+                } else {
+                    cfgObj[kv.first] = kv.second;
+                }
             }
         }
         sendJsonResponse(request, doc);
@@ -848,19 +856,21 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
-        const char* targetPipeline = doc.containsKey("pipeline")
-            ? doc["pipeline"].as<const char*>()
-            : guard.get().matrix.render_pipeline.c_str();
-        auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
-        if (!verdict.compatible()) {
-            SpiRamJsonDocument errDoc(256);
-            errDoc["error"] = "engine_unavailable";
-            errDoc["reason"] = verdict.reasonText;
-            String errResp;
-            serializeJson(errDoc, errResp);
-            request->send(400, "application/json", errResp);
-            return;
+        {
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            const char* targetPipeline = doc.containsKey("pipeline")
+                ? doc["pipeline"].as<const char*>()
+                : guard.get().matrix.render_pipeline.c_str();
+            auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
+            if (!verdict.compatible()) {
+                SpiRamJsonDocument errDoc(256);
+                errDoc["error"] = "engine_unavailable";
+                errDoc["reason"] = verdict.reasonText;
+                String errResp;
+                serializeJson(errDoc, errResp);
+                request->send(400, "application/json", errResp);
+                return;
+            }
         }
         
         DictionaryEngineConfig activeConfig;
@@ -937,7 +947,25 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         extern RotationManager* rotationManager;
         
-        bool removed = config.removeInstance(instanceId);
+        bool removed = false;
+        config.mutate([&](ConfigLoader& c) {
+            for (auto it = c.instances.begin(); it != c.instances.end(); ++it) {
+                if (it->instance_id == instanceId) {
+                    c.instances.erase(it);
+                    removed = true;
+                    break;
+                }
+            }
+            if (removed) {
+                for (auto it = c.rotation.begin(); it != c.rotation.end(); ) {
+                    if (it->instance_id == instanceId) {
+                        it = c.rotation.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        });
         if (!removed) {
             request->send(404, "application/json", "{\"error\":\"Instance not found\"}");
             return;
@@ -950,15 +978,6 @@ void WebServerAPI::setupRoutes() {
                 if (sd.exists(instPath.c_str())) {
                     sd.remove(instPath.c_str());
                 }
-            }
-        }
-        
-        // Also remove from rotation if present
-        for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
-            if (it->instance_id == instanceId) {
-                it = config.rotation.erase(it);
-            } else {
-                ++it;
             }
         }
         
@@ -992,7 +1011,25 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         extern RotationManager* rotationManager;
         
-        bool removed = config.removeInstance(instanceId);
+        bool removed = false;
+        config.mutate([&](ConfigLoader& c) {
+            for (auto it = c.instances.begin(); it != c.instances.end(); ++it) {
+                if (it->instance_id == instanceId) {
+                    c.instances.erase(it);
+                    removed = true;
+                    break;
+                }
+            }
+            if (removed) {
+                for (auto it = c.rotation.begin(); it != c.rotation.end(); ) {
+                    if (it->instance_id == instanceId) {
+                        it = c.rotation.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        });
         if (!removed) {
             request->send(404, "application/json", "{\"error\":\"Instance not found\"}");
             return;
@@ -1005,14 +1042,6 @@ void WebServerAPI::setupRoutes() {
                 if (sd.exists(instPath.c_str())) {
                     sd.remove(instPath.c_str());
                 }
-            }
-        }
-        
-        for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
-            if (it->instance_id == instanceId) {
-                it = config.rotation.erase(it);
-            } else {
-                ++it;
             }
         }
         
@@ -1031,19 +1060,21 @@ void WebServerAPI::setupRoutes() {
     // API: GET /api/rotation — Return the current rotation list
     server.on("/api/rotation", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
         // Capacity derived from the actual rotation length: a fixed 2048 bytes silently dropped
         // entries once the loop grew past roughly 25 screens.
         size_t stringBytes = 0;
-        for (const auto& rot : config.rotation) {
+        for (const auto& rot : snap.rotation) {
             stringBytes += rot.instance_id.length() + 1;
         }
-        const size_t capacity = JSON_ARRAY_SIZE(config.rotation.size())
-                              + config.rotation.size() * (JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1))
+        const size_t capacity = JSON_ARRAY_SIZE(snap.rotation.size())
+                              + snap.rotation.size() * (JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(1))
                               + stringBytes
                               + 256;
         SpiRamJsonDocument doc(capacity);
         JsonArray arr = doc.to<JsonArray>();
-        for (const auto& rot : config.rotation) {
+        for (const auto& rot : snap.rotation) {
             JsonObject obj = arr.createNestedObject();
             obj["instance_id"] = rot.instance_id;
             obj["duration_sec"] = rot.duration_sec;
@@ -1071,58 +1102,63 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         extern RotationManager* rotationManager;
 
-        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        {
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            const ConfigSnapshot& snap = guard.get();
 
-        // Level 2 Runtime Safety Gating: Reject any entry that references an incompatible engine
-        for (JsonObject entry : arr) {
-            String instId = entry["instance_id"].as<String>();
-            if (instId.isEmpty()) continue;
-            String engineId = "";
-            for (const auto& inst : guard.get().instances) {
-                if (inst.instance_id == instId) {
-                    engineId = inst.engine_id;
-                    break;
+            // Level 2 Runtime Safety Gating: Reject any entry that references an incompatible engine
+            for (JsonObject entry : arr) {
+                String instId = entry["instance_id"].as<String>();
+                if (instId.isEmpty()) continue;
+                String engineId = "";
+                for (const auto& inst : snap.instances) {
+                    if (inst.instance_id == instId) {
+                        engineId = inst.engine_id;
+                        break;
+                    }
                 }
-            }
-            if (engineId.isEmpty()) {
-                engineId = instId;
-            }
-            const EngineDescriptor* desc = EngineRegistry::getDescriptor(engineId.c_str());
-            if (desc) {
-                const char* targetPipeline = entry.containsKey("pipeline")
-                    ? entry["pipeline"].as<const char*>()
-                    : guard.get().matrix.render_pipeline.c_str();
-                auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
-                if (!verdict.compatible()) {
-                    SpiRamJsonDocument errDoc(256);
-                    errDoc["error"] = "incompatible_engine";
-                    errDoc["instance_id"] = instId;
-                    errDoc["engine_id"] = engineId;
-                    errDoc["reason"] = verdict.reasonText;
-                    String errResp;
-                    serializeJson(errDoc, errResp);
-                    request->send(400, "application/json", errResp);
-                    return;
+                if (engineId.isEmpty()) {
+                    engineId = instId;
+                }
+                const EngineDescriptor* desc = EngineRegistry::getDescriptor(engineId.c_str());
+                if (desc) {
+                    const char* targetPipeline = entry.containsKey("pipeline")
+                        ? entry["pipeline"].as<const char*>()
+                        : snap.matrix.render_pipeline.c_str();
+                    auto verdict = EngineRegistrar::evaluateCompatibility(*desc, targetPipeline, EvaluationMode::ReferenceCapability);
+                    if (!verdict.compatible()) {
+                        SpiRamJsonDocument errDoc(256);
+                        errDoc["error"] = "incompatible_engine";
+                        errDoc["instance_id"] = instId;
+                        errDoc["engine_id"] = engineId;
+                        errDoc["reason"] = verdict.reasonText;
+                        String errResp;
+                        serializeJson(errDoc, errResp);
+                        request->send(400, "application/json", errResp);
+                        return;
+                    }
                 }
             }
         }
         
-        config.rotation.clear();
-        for (JsonObject entry : arr) {
-            RotationEntry re;
-            re.instance_id = entry["instance_id"].as<String>();
-            re.duration_sec = entry["duration_sec"] | 15;
-            if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>() && entry["overlays"].containsKey("fighter")) {
-                re.overlays.fighter = entry["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
-            } else if (entry.containsKey("fighter_overlay")) {
-                re.overlays.fighter = entry["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
-            } else {
-                re.overlays.fighter = FighterOverride::Unspecified;
+        config.mutate([&](ConfigLoader& c) {
+            c.rotation.clear();
+            for (JsonObject entry : arr) {
+                RotationEntry re;
+                re.instance_id = entry["instance_id"].as<String>();
+                re.duration_sec = entry["duration_sec"] | 15;
+                if (entry.containsKey("overlays") && entry["overlays"].is<JsonObject>() && entry["overlays"].containsKey("fighter")) {
+                    re.overlays.fighter = entry["overlays"]["fighter"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
+                } else if (entry.containsKey("fighter_overlay")) {
+                    re.overlays.fighter = entry["fighter_overlay"].as<bool>() ? FighterOverride::Enabled : FighterOverride::Disabled;
+                } else {
+                    re.overlays.fighter = FighterOverride::Unspecified;
+                }
+                if (!re.instance_id.isEmpty()) {
+                    c.rotation.push_back(re);
+                }
             }
-            if (!re.instance_id.isEmpty()) {
-                config.rotation.push_back(re);
-            }
-        }
+        });
         
         bool saved = config.saveToSD("/config.json");
         
@@ -1229,14 +1265,7 @@ void WebServerAPI::setupRoutes() {
                 doc["disk_free_gb"] = 0.0f;
             }
         }
-        // Render rate since the previous /api/stats call: the closest thing this board has to a load figure.
         {
-            static uint32_t lastMs = 0, lastLoops = 0, lastPresents = 0;
-            uint32_t nowMs = millis();
-            uint32_t loops = g_renderStats.loops.load(), presents = g_renderStats.presents.load();
-            uint32_t dtMs = nowMs - lastMs;
-            if (lastMs != 0 && dtMs >= 500) {
-                {
             WeatherEngine::FetchState ws = WeatherEngine::fetchState();
             JsonObject wx = doc.createNestedObject("weather_fetch");
             wx["valid"] = ws.valid;
@@ -1244,7 +1273,14 @@ void WebServerAPI::setupRoutes() {
             wx["last_attempt_age_s"] = ws.lastAttemptAgeS;
             wx["last_error"] = ws.lastError;
         }
-        doc["render_loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
+        // Render rate since the previous /api/stats call: the closest thing this board has to a load figure.
+        {
+            static uint32_t lastMs = 0, lastLoops = 0, lastPresents = 0;
+            uint32_t nowMs = millis();
+            uint32_t loops = g_renderStats.loops.load(), presents = g_renderStats.presents.load();
+            uint32_t dtMs = nowMs - lastMs;
+            if (lastMs != 0 && dtMs >= 500) {
+                doc["render_loop_fps"] = (float)(loops - lastLoops) * 1000.0f / dtMs;
                 doc["render_present_fps"] = (float)(presents - lastPresents) * 1000.0f / dtMs;
             }
             lastMs = nowMs; lastLoops = loops; lastPresents = presents;
@@ -1318,13 +1354,15 @@ void WebServerAPI::setupRoutes() {
     // API: Get Indoor Environment Sensor (Home Automation / REST Sensor)
     server.on("/api/sensor", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const ConfigSnapshot& snap = guard.get();
         EnvironmentData data = hardwareHAL.readEnvironment();
         SpiRamJsonDocument doc(256);
         doc["available"] = data.available;
         doc["temperature_c"] = data.temperatureC;
         doc["temperature_f"] = data.temperatureF;
         doc["humidity"] = data.humidity;
-        doc["unit"] = config.system.unit;
+        doc["unit"] = snap.system.unit;
         doc["status"] = data.available ? "ok" : "not_detected";
         sendJsonResponse(request, doc);
     });
@@ -1511,6 +1549,7 @@ void WebServerAPI::setupRoutes() {
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
+        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
 
         // Matrix
         doc["brightness_limit"] = snap.matrix.powerLimitPercent;
@@ -1623,7 +1662,9 @@ void WebServerAPI::setupRoutes() {
         // Weather
         auto weatherInst = getInst("weather_main");
         if (weatherInst) {
-            doc["weather_api_key"] = weatherInst->config.getString("api_key");
+            String wxApiKey = weatherInst->config.getString("api_key");
+            doc["weather_api_key"] = redactSecrets ? "" : wxApiKey;
+            doc["weather_api_key_configured"] = wxApiKey.length() > 0;
             doc["weather_city"] = weatherInst->config.getString("city");
             doc["weather_lang"] = weatherInst->config.getString("lang");
             doc["weather_offset_x"] = weatherInst->config.getInt("weather_offset_x");
@@ -1656,7 +1697,8 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_broker"] = snap.mqtt.broker;
         doc["mqtt_port"] = snap.mqtt.port;
         doc["mqtt_user"] = snap.mqtt.user;
-        doc["mqtt_pass"] = snap.mqtt.pass;
+        doc["mqtt_pass"] = redactSecrets ? "" : snap.mqtt.pass;
+        doc["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
         doc["mqtt_device"] = snap.mqtt.deviceName;
         doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
 
@@ -1664,7 +1706,8 @@ void WebServerAPI::setupRoutes() {
         doc["data_mqtt_broker"] = snap.dataMqtt.broker;
         doc["data_mqtt_port"] = snap.dataMqtt.port;
         doc["data_mqtt_user"] = snap.dataMqtt.user;
-        doc["data_mqtt_pass"] = snap.dataMqtt.pass;
+        doc["data_mqtt_pass"] = redactSecrets ? "" : snap.dataMqtt.pass;
+        doc["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
 
         response->setLength();
         request->send(response);
@@ -1927,8 +1970,11 @@ void WebServerAPI::setupRoutes() {
         if (!saved) { sendConfigSaveFailed(request); return; }
         if (willReboot) {
             request->send(200, "application/json", "{\"status\":\"rebooting\"}");
-            delay(500);
-            ESP.restart();
+            xTaskCreatePinnedToCore([](void *param) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                ESP.restart();
+                vTaskDelete(nullptr);
+            }, "settings_reboot", 2048, nullptr, 1, nullptr, 0);
         } else {
             request->send(200, "application/json", "{\"status\":\"success\"}");
         }
@@ -2122,6 +2168,7 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
+        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
 
         String section = "";
         if (request->hasParam("section")) {
@@ -2210,7 +2257,8 @@ void WebServerAPI::setupRoutes() {
             mqtt["broker"] = snap.mqtt.broker;
             mqtt["port"] = snap.mqtt.port;
             mqtt["user"] = snap.mqtt.user;
-            mqtt["pass"] = snap.mqtt.pass;
+            mqtt["pass"] = redactSecrets ? "" : snap.mqtt.pass;
+            mqtt["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
             mqtt["device_name"] = snap.mqtt.deviceName;
             mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
         }
@@ -2220,7 +2268,8 @@ void WebServerAPI::setupRoutes() {
             dmq["broker"] = snap.dataMqtt.broker;
             dmq["port"] = snap.dataMqtt.port;
             dmq["user"] = snap.dataMqtt.user;
-            dmq["pass"] = snap.dataMqtt.pass;
+            dmq["pass"] = redactSecrets ? "" : snap.dataMqtt.pass;
+            dmq["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
         }
 
         if (section.isEmpty() || section == "wifi") {
@@ -2988,6 +3037,7 @@ void WebServerAPI::setupRoutes() {
             }
             g_gifReindex.total = 0; g_gifReindex.done = 0; g_gifReindex.files = 0; g_gifReindex.expected = 0; g_gifReindex.cancel = false; g_gifReindex.lastMsgMs = 0; g_gifReindex.current = ""; g_gifReindex.lastResult = "";
             g_gifReindex.startedMs = millis(); g_gifReindex.finishedMs = 0;
+            invalidatePlaylistCache();
             gifReindexEnterMaintenance();
             if (xTaskCreatePinnedToCore(gifReindexTask, "gif_reindex", 12288, nullptr, 1, nullptr, 0) != pdPASS) {
                 g_gifReindex.running = false; g_gifReindex.lastResult = "error: task";
@@ -3029,7 +3079,7 @@ void WebServerAPI::setupRoutes() {
                 SdLockGuard guard(pdMS_TO_TICKS(5000));
                 if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
                 if (sd.exists(path.c_str())) removed = sd.remove(path.c_str());
-                if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); SdSpace::requestRefresh(); }
+                if (removed) { int c = updateFolderIndex(root, folder, {}, { name }); updatePlaylistsEntry(root, folder, c); invalidatePlaylistCache(); SdSpace::requestRefresh(); }
             }
             if (!removed) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}"); return; }
             request->send(200, "application/json", "{\"status\":\"ok\",\"orientation\":\"" + orientation + "\",\"deleted\":\"" + jsonEsc(path) + "\"}");
@@ -3156,7 +3206,7 @@ void WebServerAPI::setupRoutes() {
                 if (!guard) { request->send(503, "application/json", "{\"status\":\"busy\",\"message\":\"SD card busy (rescan in progress?) - try again in a moment\"}"); return; }
                 if (sd.exists(path.c_str())) {
                     extern GifEngine* gifEngine; if (gifEngine) gifEngine->stop();
-                    n = removeTree(path); updatePlaylistsEntry(root, folder, -1);
+                    n = removeTree(path); updatePlaylistsEntry(root, folder, -1); invalidatePlaylistCache();
                 }
             }
             if (n < 0) { request->send(404, "application/json", "{\"status\":\"error\",\"message\":\"Folder not found\"}"); return; }
@@ -3182,7 +3232,7 @@ void WebServerAPI::setupRoutes() {
                     if (sd.exists(path.c_str())) { code = 409; msg = "Folder already exists"; }
                     else if (sd.mkdir(path.c_str())) { code = 200; }
                     else { msg = "mkdir failed"; }
-                    if (code == 200) { String ip = path + "/index.txt"; FsFile ix = sd.open(ip.c_str(), FILE_OPEN_WRITE); if (ix) ix.close(); updatePlaylistsEntry(root, folder, 0); }
+                    if (code == 200) { String ip = path + "/index.txt"; FsFile ix = sd.open(ip.c_str(), FILE_OPEN_WRITE); if (ix) ix.close(); updatePlaylistsEntry(root, folder, 0); invalidatePlaylistCache(); }
                 }
             }
             if (code != 200) { request->send(code, "application/json", "{\"status\":\"error\",\"message\":\"" + msg + "\"}"); return; }
@@ -3220,6 +3270,7 @@ void WebServerAPI::setupRoutes() {
                     if (code == 200) {
                         if (rawName.isEmpty()) { String tf = sanitizeName(rawTo, false); updatePlaylistsEntry(root, folder, -1); updatePlaylistsEntry(root, tf, indexLineCount(root, tf)); }
                         else { int c = updateFolderIndex(root, folder, { newName }, { oldName }); updatePlaylistsEntry(root, folder, c); SdSpace::requestRefresh(); }
+                        invalidatePlaylistCache();
                     }
                 }
             }
@@ -3281,7 +3332,7 @@ void WebServerAPI::setupRoutes() {
                 if (ctx->badFolder) { request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"folder must be a plain playlist name (no path separators)\"}"); delete ctx; request->_tempObject = nullptr; return; }
                 {
                     SdLockGuard guard(pdMS_TO_TICKS(15000));
-                    if (guard && ctx->savedCount > 0) { int c = updateFolderIndex(ctx->root, ctx->folder, ctx->savedNames, {}); updatePlaylistsEntry(ctx->root, ctx->folder, c); SdSpace::requestRefresh(); }
+                    if (guard && ctx->savedCount > 0) { int c = updateFolderIndex(ctx->root, ctx->folder, ctx->savedNames, {}); updatePlaylistsEntry(ctx->root, ctx->folder, c); invalidatePlaylistCache(); SdSpace::requestRefresh(); }
                 }
                 String body = "{\"status\":\"" + String(ctx->savedCount > 0 ? "ok" : "error") + "\",\"folder\":\"" + jsonEsc(ctx->folder) +
                               "\",\"orientation\":\"" + ctx->orientation + "\",\"count\":" + String(ctx->savedCount) + ",\"saved\":[" + ctx->saved + "],\"skipped\":[" + ctx->skipped + "]}";
@@ -3372,10 +3423,7 @@ void WebServerAPI::setupRoutes() {
             });
     }
 
-    // API: Wi-Fi (re)configuration with an immediate connection attempt (parity with the RPi's
-    // /api/wifi). Unlike the generic /api/system handler, this persists the new credentials to
-    // SD *and* tries to associate right away, reporting success/failure synchronously instead of
-    // requiring a full reboot to find out if the new SSID/password actually work.
+    // API: Wi-Fi (re)configuration with an immediate non-blocking connection attempt.
     AsyncCallbackJsonWebHandler* wifiHandler = new AsyncCallbackJsonWebHandler("/api/wifi", [](AsyncWebServerRequest *request, JsonVariant &json) {
         if (!checkAuth(request)) return;
         if (!json.is<JsonObject>()) {
@@ -3391,32 +3439,43 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         String newSsid = body["ssid"].as<String>();
         String newPass = body["password"].as<String>();
+        String tz;
 
         config.mutate([&](ConfigLoader& cfg) {
             cfg.wifi.ssid = newSsid;
             cfg.wifi.password = newPass;
+            tz = cfg.system.timezone;
         });
         bool saved = config.saveToSD("/config.json");
-
-        WiFi.disconnect(true);
-        delay(100);
-        WiFi.begin(newSsid.c_str(), newPass.c_str());
-
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            attempts++;
+        if (!saved) {
+            sendConfigSaveFailed(request);
+            return;
         }
 
-        if (WiFi.status() == WL_CONNECTED) {
-            configTzTime(getPosixTimezone(config.system.timezone).c_str(), "pool.ntp.org");
-            String msg = "Connected! IP: " + WiFi.localIP().toString();
-            if (!saved) msg += " (Warning: credentials could NOT be saved to SD - will be lost on reboot)";
-            request->send(200, "application/json", "{\"success\":true,\"message\":\"" + msg + "\"}");
-        } else if (!saved) {
-            request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to connect AND could not save credentials to SD - nothing was persisted.\"}");
-        } else {
-            request->send(500, "application/json", "{\"success\":false,\"message\":\"Failed to connect to the new network. Credentials were still saved to SD for the next reboot.\"}");
+        request->send(200, "application/json", "{\"success\":true,\"status\":\"connecting\",\"message\":\"Wi-Fi credentials saved; connecting asynchronously...\"}");
+
+        struct WifiConnectTaskArgs {
+            String ssid;
+            String pass;
+            String tz;
+        };
+        WifiConnectTaskArgs* taskArgs = new WifiConnectTaskArgs{newSsid, newPass, tz};
+        if (xTaskCreatePinnedToCore([](void* param) {
+            WifiConnectTaskArgs* args = static_cast<WifiConnectTaskArgs*>(param);
+            vTaskDelay(pdMS_TO_TICKS(250));
+            WiFi.disconnect(true);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            WiFi.begin(args->ssid.c_str(), args->pass.c_str());
+            for (int attempts = 0; WiFi.status() != WL_CONNECTED && attempts < 20; ++attempts) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            if (WiFi.status() == WL_CONNECTED) {
+                configTzTime(getPosixTimezone(args->tz).c_str(), "pool.ntp.org");
+            }
+            delete args;
+            vTaskDelete(nullptr);
+        }, "wifi_reconnect", 4096, taskArgs, 1, nullptr, 0) != pdPASS) {
+            delete taskArgs;
         }
     });
     server.addHandler(wifiHandler);
@@ -3431,11 +3490,13 @@ void WebServerAPI::setupRoutes() {
         request->send(200, "application/json", "{\"success\":true,\"logs\":\"SSH logs are only available on Raspberry Pi.\"}");
     });
 
-    // API: Marquee endpoint — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/custom_marquee.<ext>)
     // API: Marquee & Upload endpoints — Supports multipart file upload (GIF/PNG/JPG saved to /marquees/marquee.<ext>)
     // with single-file overwrite and zero rotation preemption, as well as direct raw RGB565 streaming (application/octet-stream).
     auto uploadHandler = [this](AsyncWebServerRequest *request) {
         if (!checkAuth(request)) return;
+        if (!request->contentType().startsWith("multipart/")) {
+            return;
+        }
         if (request->_tempObject) {
             String* pPath = (String*)request->_tempObject;
             String json = "{\"success\":true,\"path\":\"" + *pPath + "\",\"message\":\"Asset uploaded successfully\"}";
@@ -3520,19 +3581,38 @@ void WebServerAPI::setupRoutes() {
                 if (index == 0) request->send(503, "application/json", "{\"success\":false,\"message\":\"Marquee engine not initialized\"}");
                 return;
             }
-            if (index == 0 && total > 0) {
-                request->_tempObject = malloc(total);
+            const size_t expectedBytes = marquee->expectedBufferBytes();
+            if (index == 0) {
+                if (total > 0 && total == expectedBytes) {
+                    request->_tempObject = malloc(total);
+                    if (request->_tempObject) {
+                        request->onDisconnect([request]() {
+                            if (request->_tempObject) {
+                                free(request->_tempObject);
+                                request->_tempObject = nullptr;
+                            }
+                        });
+                    }
+                } else {
+                    request->_tempObject = nullptr;
+                }
             }
-            if (request->_tempObject) {
+            if (request->_tempObject && (index + len <= total)) {
                 memcpy((uint8_t*)request->_tempObject + index, data, len);
             }
             if (index + len == total) {
-                if (request->_tempObject && total == marquee->expectedBufferBytes()) {
+                if (request->_tempObject && total == expectedBytes) {
                     marquee->show((uint8_t*)request->_tempObject, total);
+                    free(request->_tempObject);
+                    request->_tempObject = nullptr;
                     request->send(200, "application/json", "{\"success\":true,\"message\":\"Marquee image received and displayed\"}");
                 } else {
+                    if (request->_tempObject) {
+                        free(request->_tempObject);
+                        request->_tempObject = nullptr;
+                    }
                     char msgBuf[128];
-                    snprintf(msgBuf, sizeof(msgBuf), "{\"success\":false,\"message\":\"Expected exactly %u bytes of raw RGB565, got %u\"}", (unsigned)marquee->expectedBufferBytes(), (unsigned)total);
+                    snprintf(msgBuf, sizeof(msgBuf), "{\"success\":false,\"message\":\"Expected exactly %u bytes of raw RGB565, got %u\"}", (unsigned)expectedBytes, (unsigned)total);
                     request->send(400, "application/json", msgBuf);
                 }
             }
@@ -3641,7 +3721,9 @@ void WebServerAPI::setupRoutes() {
         if (!checkAuth(request)) return;
         displayOrientationManager.calibrateZeroReference();
         extern ConfigLoader config;
-        config.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
+        config.mutate([&](ConfigLoader& c) {
+            c.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
+        });
         ConfigSanitizer::sanitize(config);
         bool saved = config.saveToSD("/config.json");
         if (!saved) { sendConfigSaveFailed(request); return; }
@@ -3682,25 +3764,27 @@ void WebServerAPI::setupRoutes() {
         if (!obj["manual_rotation"].isNull()) {
             displayOrientationManager.setRotation(obj["manual_rotation"].as<uint8_t>());
         }
-        if (!obj["auto_rotate"].isNull()) {
-            config.matrix.auto_rotate = obj["auto_rotate"].as<bool>();
-            changed = true;
-        }
-        if (!obj["rotation_offset"].isNull()) {
-            config.matrix.rotation_offset = obj["rotation_offset"].as<int>();
-            displayOrientationManager.setRotationOffset((uint8_t)config.matrix.rotation_offset);
-            changed = true;
-        }
-        if (!obj["transition_effect"].isNull()) {
-            config.matrix.rotation_transition = obj["transition_effect"].as<String>();
-            displayOrientationManager.setTransitionEffect(config.matrix.rotation_transition);
-            changed = true;
-        }
-        if (!obj["transition_duration_ms"].isNull()) {
-            config.matrix.rotation_transition_duration_ms = obj["transition_duration_ms"].as<int>();
-            displayOrientationManager.setTransitionDuration((uint32_t)config.matrix.rotation_transition_duration_ms);
-            changed = true;
-        }
+        config.mutate([&](ConfigLoader& c) {
+            if (!obj["auto_rotate"].isNull()) {
+                c.matrix.auto_rotate = obj["auto_rotate"].as<bool>();
+                changed = true;
+            }
+            if (!obj["rotation_offset"].isNull()) {
+                c.matrix.rotation_offset = obj["rotation_offset"].as<int>();
+                displayOrientationManager.setRotationOffset((uint8_t)c.matrix.rotation_offset);
+                changed = true;
+            }
+            if (!obj["transition_effect"].isNull()) {
+                c.matrix.rotation_transition = obj["transition_effect"].as<String>();
+                displayOrientationManager.setTransitionEffect(c.matrix.rotation_transition);
+                changed = true;
+            }
+            if (!obj["transition_duration_ms"].isNull()) {
+                c.matrix.rotation_transition_duration_ms = obj["transition_duration_ms"].as<int>();
+                displayOrientationManager.setTransitionDuration((uint32_t)c.matrix.rotation_transition_duration_ms);
+                changed = true;
+            }
+        });
         bool saved = true;
         if (changed) {
             ConfigSanitizer::sanitize(config);
@@ -3716,6 +3800,10 @@ void WebServerAPI::setupRoutes() {
 
     // Helper to serve marquee and custom assets from SD card
     auto serveMarqueeFile = [](AsyncWebServerRequest *request, const String& path) {
+        if (!path.startsWith("/marquees/") || path.indexOf("..") >= 0 || path.indexOf("//") >= 0 || path.indexOf('\\') >= 0) {
+            request->send(400, "text/plain", "Invalid marquee path");
+            return;
+        }
         struct MarqueeFileCtx {
             FsFile f;
             size_t size = 0;

@@ -16,13 +16,15 @@ Le système de configuration repose exclusivement sur un fichier unique `config.
   "wifi": { ... },
   "mqtt": { ... },
   "data_mqtt": { ... },
-  "system": { ... },
+  "system": {
+    "api_auth_enabled": false,
+    "api_token": "",
+    ...
+  },
   "display": { ... },
   "audio": { ... },
   "instances": [ ... ],
-  "rotation": [ ... ],
-  "api_auth_enabled": false,
-  "api_token": ""
+  "rotation": [ ... ]
 }
 ```
 
@@ -266,7 +268,7 @@ Un tableau contenant la configuration de chaque bloc logique.
 }
 ```
 * `instance_id` : Nom unique de ce bloc.
-* `engine_id` : Identifiant interne de l'Engine Rust (doit être un moteur enregistré — voir §9).
+* `engine_id` : Identifiant interne du moteur C++ (`IDisplayEngine`, doit être un moteur enregistré — voir §9).
 * `config` : Une map plate de valeurs `String` propres au moteur, validée par rapport à son `ConfigSchema`.
 
 Modifier une instance via la Web UI (`POST /api/instances`) est appliqué **à chaud, sans redémarrage** : le runtime appelle `on_config_changed()` du moteur à la frame suivante (hot-reload Lazy-Once). Ajouter ou supprimer une instance réinitialise proprement la rotation.
@@ -289,7 +291,7 @@ Définit l'ordre d'affichage, la durée de chaque créneau et l'activation des o
 
 Seules les instances listées ici sont initialisées, ce qui économise de la mémoire pour les fonctionnalités inutilisées. La rotation est modifiable depuis le panneau **Rotation** de la Web UI (`GET`/`POST /api/rotation`).
 
-> **Persistance Lisible** : Lors de son enregistrement sur disque (`config.json`), le fichier est systématiquement écrit formaté avec des indentations claires pour permettre une relecture et modification manuelle sans risque.
+> **Persistance Lisible** : Lors de son enregistrement sur disque (`config.json`), le fichier est systématiquement écrit formaté avec des indentations claires (`serializeJsonPretty`) pour permettre une relecture et modification manuelle sans risque.
 
 ---
 
@@ -329,7 +331,7 @@ Chaque moteur expose ses propres champs via son `ConfigSchema` (consultable à `
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Index du thème d'horloge : `0` = Digital Standard, `1` = Flip Clock, `2` = Cyberpunk, `3` = Word Clock, `4` = Binary Clock, `5` = Pac-Man, `6` = Tetris, `7` = Slot Machine, `8` = Versus (M.U.G.E.N), `9` = Pong, `10` = Matrix Rain (Katakana). |
 | `format` | `String` | `%H:%M:%S` | Format d'heure strftime. |
-| `font` | `String` | `PressStart2P.ttf` | Fichier de police depuis `/fonts/`. |
+| `font` | `String` | `Default` | Police bitmap intégrée (`Default`) ou fichier de police depuis `/fonts/`. |
 | `size` | `int` | `2` | Facteur de mise à l'échelle de la police. |
 | `color_1` | `String` | `#FFFFFF` | Couleur hex principale (début du dégradé sur le thème Custom). |
 | `color_2` | `String` | `#FFFFFF` | Couleur hex secondaire (fin du dégradé sur le thème Custom). |
@@ -341,7 +343,7 @@ Chaque moteur expose ses propres champs via son `ConfigSchema` (consultable à `
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Index du thème de date. |
 | `format` | `String` | `%d/%m` | Format de date strftime. |
-| `font` | `String` | `PressStart2P.ttf` | Fichier de police depuis `/fonts/`. |
+| `font` | `String` | `Default` | Police bitmap intégrée (`Default`) ou fichier de police depuis `/fonts/`. |
 | `size` | `int` | `2` | Facteur de mise à l'échelle de la police. |
 | `color_1` | `String` | `#FFFFFF` | Couleur hex principale. |
 | `color_2` | `String` | `#FFFFFF` | Couleur hex secondaire. |
@@ -382,7 +384,7 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 * **Emplacements aux États-Unis :** Utilisez `Ville,CodeEtat,CodePays` (ex. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`).
 * **Où trouver le nom exact :** Rendez-vous sur [openweathermap.org](https://openweathermap.org) et recherchez votre ville.
 
-### Moteur : `sysinfo` (Moniteur Système)
+### Moteur : `system_info` (Moniteur Système)
 | Champ | Type | Défaut | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | `0` à `2` | Thème visuel : `0` = Jauges horizontales colorées, `1` = Grille compacte 4 blocs, `2` = Terminal Retro. |
@@ -392,6 +394,8 @@ OpenWeatherMap utilise le code pays ISO 3166 (et le code d'état à 2 lettres po
 | `show_uptime` | `bool` | `true` | `true`, `false` | Affiche le temps d'activité (Uptime) en heures/jours. |
 | `temp_unit` | `Options` | `C` | `C`, `F` | Unité de température : Celsius (`C`) ou Fahrenheit (`F`). |
 | `offset_x` | `int` | `0` | `-64` à `64` | Décalage horizontal en pixels. |
+| `offset_y` | `int` | `0` | `-32` à `32` | Décalage vertical en pixels. |
+
 ### Moteur : `gnews` (Actualités en Direct & Ticker GNews)
 
 Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel alimenté par l'API [GNews.io](https://gnews.io). Il intègre un pool multi-clés d'API avec bascule automatique, une persistance sur carte SD/disque et une gestion optimisée des quotas journaliers.
@@ -438,14 +442,28 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 5. **Remise à Zéro Automatique à Minuit (00:00 UTC) :**
    - Le changement de jour calendrier réinitialise automatiquement les compteurs d'usage à 0 et lève les alertes de limite de quota.
 
-### Moteur : `fighter` (Combat M.U.G.E.N)
+### Overlay Transversal : `fighter` (Combat M.U.G.E.N)
+> [!NOTE]
+> `FighterEngine` **n'est pas** un moteur autonome enregistré dans `EngineRegistry` (`instances`). Il opère comme un **overlay décoratif transversal** superposé aux écrans de rotation actifs (`RotationManager` étape 2) lorsqu'il est activé globalement dans le bloc `system` (`idle_fighter_enabled`, `idle_fighter_interval`, `fighter_theme`, `fighter_1`, `fighter_2`, `fighter_stage`) et autorisé par créneau via `rotation[i].overlays.fighter = true`.
+
+| Champ Système | Type | Défaut | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `idle_fighter_enabled` | `bool` | `true` | `true`, `false` | Interrupteur principal de l'overlay décoratif Combattant. |
+| `idle_fighter_interval` | `int` | `5` | `1` à `3600` | Secondes entre deux animations de combat. |
+| `fighter_theme` | `int` | `0` | `0`, `1` | Style visuel de l'overlay (`0` = Idle / Street Brawlers, `1` = Arène M.U.G.E.N complète). |
+| `fighter_1` | `String` | `Random` | Nom du dossier | Combattant P1 (`Random` pour sélection automatique). |
+| `fighter_2` | `String` | `Random` | Nom du dossier | Combattant P2 (`Random` pour sélection automatique). |
+| `fighter_stage` | `String` | `None` | Nom de l'arène | Arène de fond optionnelle (`None` pour superposer directement sur le moteur actif). |
+
+### Moteur : `music_player` (Lecteur Musical Universel)
 | Champ | Type | Défaut | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `mode` | `Options` | `match` | `match`, `showcase` | Mode de combat : `match` (duel complet avec K.O. et victoire) ou `showcase` (démonstration continue de coups). |
-| `fighter_1` | `String` | `""` | Nom du dossier | Combattant P1 (laisser vide pour sélection aléatoire dans la liste). |
-| `fighter_2` | `String` | `""` | Nom du dossier | Combattant P2 (laisser vide pour sélection aléatoire dans la liste). |
-| `show_hud` | `bool` | `true` | `true`, `false` | Affiche les barres de vie rétro (HP), les jauges de Super et les noms des combattants. |
-| `match_duration` | `int` | `30` | `10` à `120` | Durée maximale d'un round en secondes avant time-out. |
+| `show_source` | `bool` | `true` | `true`, `false` | Affiche le badge de la source audio active (Bluetooth A2DP, Web Radio ou Lecteur SD). |
+| `show_title` | `bool` | `true` | `true`, `false` | Affiche le titre du morceau ou de la station en cours. |
+| `show_artist` | `bool` | `true` | `true`, `false` | Affiche l'artiste ou les métadonnées de l'album. |
+| `show_progress` | `bool` | `true` | `true`, `false` | Affiche la barre de progression temporelle en bas de l'écran. |
+| `show_visualizer` | `bool` | `true` | `true`, `false` | Affiche le visualiseur de spectre audio en temps réel pendant la lecture. |
+| `marquee_speed` | `int` | `40` | `10` à `200` | Vitesse de défilement en millisecondes par pas pour les titres longs. |
 
 ### Moteur : `google_cast` (Google Home / Nest Audio)
 | Champ | Type | Défaut | Description |
@@ -511,14 +529,14 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 
 > **Auto-Scaling Dynamique** : Lorsque des widgets sont masqués, l'affichage se redimensionne dynamiquement pour occuper 100% de la matrice sans bande noire ni espace vide.
 
-### Moteur : `visualizer` (Visualiseur Audio Temps Réel)
+### Moteur : `audiovisualizer` (Visualiseur Audio Temps Réel)
 | Champ | Type | Défaut | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Mode de rendu : Barres de spectre FFT, Oscilloscope, Cercle Radial ou Flamme Néon. |
 | `gain` | `int` | `24` | `0` à `30` | Gain matériel du microphone en dB (codec ES7210). |
 | `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Dégradé de couleur des barres et ondes. |
 
-### Moteur : `decibel` (Sonomètre Décibel)
+### Moteur : `decibelMeter` (Sonomètre Décibel)
 | Champ | Type | Défaut | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `alert_threshold_db` | `int` | `85` | `40` à `120` | Seuil d'alerte visuelle en décibels. |

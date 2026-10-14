@@ -22,7 +22,7 @@ bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, flo
     return fetchQuote(symbol, outPrice, outChange, outImageUrl, net::OWNER_ANY);
 }
 
-bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl, uint8_t ownerId) {
+bool YahooFinanceProvider::fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl, uint16_t ownerId) {
     net::SecureHttpOptions options;
     options.ownerId = ownerId;
     options.requestTimeoutMs = 3000;
@@ -369,11 +369,12 @@ bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::
     return fetchQuotes(symbols, outQuotes, net::OWNER_ANY);
 }
 
-bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes, uint8_t ownerId) {
-    (void)ownerId;
+bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes, uint16_t ownerId) {
     if (symbols.empty()) return false;
 
-    net::SecureHttpSession session("query1.finance.yahoo.com");
+    net::SecureHttpOptions options;
+    options.ownerId = ownerId;
+    net::SecureHttpSession session("query1.finance.yahoo.com", 443, options);
     bool anyOk = false;
 
     for (const auto& sym : symbols) {
@@ -392,7 +393,7 @@ bool YahooFinanceProvider::fetchQuotes(const std::vector<String>& symbols, std::
         
         if (!res.ok()) {
             session.close(); // Cleanly close session 1 to avoid dual TLS sessions concurrently
-            net::SecureHttpSession session2("query2.finance.yahoo.com");
+            net::SecureHttpSession session2("query2.finance.yahoo.com", 443, options);
             auto res2 = session2.get(path);
             if (res2.ok()) {
                 float price = 0.0f, change = 0.0f;

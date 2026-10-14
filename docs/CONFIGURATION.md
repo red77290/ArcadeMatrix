@@ -16,13 +16,15 @@ The configuration system relies exclusively on a single `config.json` file locat
   "wifi": { ... },
   "mqtt": { ... },
   "data_mqtt": { ... },
-  "system": { ... },
+  "system": {
+    "api_auth_enabled": false,
+    "api_token": "",
+    ...
+  },
   "display": { ... },
   "audio": { ... },
   "instances": [ ... ],
-  "rotation": [ ... ],
-  "api_auth_enabled": false,
-  "api_token": ""
+  "rotation": [ ... ]
 }
 ```
 
@@ -266,7 +268,7 @@ An array holding the configuration of each logical block.
 }
 ```
 * `instance_id`: Unique name of this block.
-* `engine_id`: The internal identifier of the Rust Engine (must be a registered engine — see §9).
+* `engine_id`: The internal identifier of the C++ `IDisplayEngine` (must be a registered engine — see §9).
 * `config`: A flat map of `String` values specific to the engine, validated against its `ConfigSchema`.
 
 Editing an instance through the Web UI (`POST /api/instances`) is applied **live, without a restart**: the runtime calls the engine's `on_config_changed()` on the next frame (Lazy-Once hot-reload). Adding or removing an instance resets the rotation cleanly.
@@ -289,7 +291,7 @@ Defines the display order, per-slot duration, and transverse overlay toggles.
 
 Only instances listed here are ever initialized, saving memory for unused features. The rotation is editable from the Web UI **Rotation** panel (`GET`/`POST /api/rotation`).
 
-> **Human-Readable Persistence**: When saved to disk (`config.json`), the file is always written formatted and indented (`to_string_pretty`) so it can be cleanly inspected and edited by hand without breaking.
+> **Human-Readable Persistence**: When saved to disk (`config.json`), the file is always written formatted and indented (`serializeJsonPretty`) so it can be cleanly inspected and edited by hand without breaking.
 
 ---
 
@@ -329,7 +331,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Animated clock theme index: `0` = Digital Standard, `1` = Flip Clock, `2` = Cyberpunk, `3` = Word Clock, `4` = Binary Clock, `5` = Pac-Man, `6` = Tetris, `7` = Slot Machine, `8` = Versus (M.U.G.E.N), `9` = Pong, `10` = Matrix Rain (Katakana). |
 | `format` | `String` | `%H:%M:%S` | strftime time format. |
-| `font` | `String` | `PressStart2P.ttf` | Font file from `/fonts/`. |
+| `font` | `String` | `Default` | Built-in bitmap font (`Default`) or font from `/fonts/`. |
 | `size` | `int` | `2` | Font scaling factor. |
 | `color_1` | `String` | `#FFFFFF` | Primary hex color (gradient start on Custom theme). |
 | `color_2` | `String` | `#FFFFFF` | Secondary hex color (gradient end on Custom theme). |
@@ -341,7 +343,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Date theme index. |
 | `format` | `String` | `%d/%m` | strftime date format. |
-| `font` | `String` | `PressStart2P.ttf` | Font file from `/fonts/`. |
+| `font` | `String` | `Default` | Built-in bitmap font (`Default`) or font from `/fonts/`. |
 | `size` | `int` | `2` | Font scaling factor. |
 | `color_1` | `String` | `#FFFFFF` | Primary hex color. |
 | `color_2` | `String` | `#FFFFFF` | Secondary hex color. |
@@ -382,7 +384,7 @@ OpenWeatherMap uses the ISO 3166 country code (and 2-letter state code for the U
 * **United States Locations:** Use `City,StateCode,CountryCode` (e.g. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`). Specifying only the city or omitting the country may return an incorrect city with the same name.
 * **Where to Look:** Go to [openweathermap.org](https://openweathermap.org), search for your city. The top search result header and URL show the exact `City,State,Country` string recognized by the API.
 
-### Engine: `sysinfo` (System Monitor)
+### Engine: `system_info` (System Monitor)
 | Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | `0` to `2` | Visual theme: `0` = Color Gauge Bars, `1` = Compact 4-Block Grid, `2` = Retro Terminal. |
@@ -440,14 +442,28 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 5. **Midnight UTC Rollover:**
    - At 00:00 UTC, daily quota consumption counters reset to 0 and rate-limited status flags are automatically cleared.
 
-### Engine: `fighter` (M.U.G.E.N Combat)
+### Transverse Overlay: `fighter` (M.U.G.E.N Combat)
+> [!NOTE]
+> `FighterEngine` is **not** a standalone engine in `EngineRegistry` (`instances`). It operates as a **transverse decorative overlay** composited on top of active baseline screens (`RotationManager` stage 2) when enabled globally in the `system` block (`idle_fighter_enabled`, `idle_fighter_interval`, `fighter_theme`, `fighter_1`, `fighter_2`, `fighter_stage`) and opted-in per slot via `rotation[i].overlays.fighter = true`.
+
+| System Field | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `idle_fighter_enabled` | `bool` | `true` | `true`, `false` | Master toggle for the decorative Fighter overlay. |
+| `idle_fighter_interval` | `int` | `5` | `1` to `3600` | Seconds between two fight animations. |
+| `fighter_theme` | `int` | `0` | `0`, `1` | Visual combat overlay style (`0` = Idle / Street Brawlers, `1` = Full M.U.G.E.N Arena). |
+| `fighter_1` | `String` | `Random` | Character folder name | P1 Fighter (`Random` for automatic selection). |
+| `fighter_2` | `String` | `Random` | Character folder name | P2 Fighter (`Random` for automatic selection). |
+| `fighter_stage` | `String` | `None` | Stage asset name | Optional background stage (`None` to composite over the active engine). |
+
+### Engine: `music_player` (Universal Music Player)
 | Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `mode` | `Options` | `match` | `match`, `showcase` | Battle mode: `match` (full battle with K.O. & victory) or `showcase` (continuous demonstration). |
-| `fighter_1` | `String` | `""` | Character folder name | P1 Fighter (leave blank for random selection). |
-| `fighter_2` | `String` | `""` | Character folder name | P2 Fighter (leave blank for random selection). |
-| `show_hud` | `bool` | `true` | `true`, `false` | Display retro HP health bars, Super gauges, and fighter names. |
-| `match_duration` | `int` | `30` | `10` to `120` | Maximum round duration in seconds before timeout. |
+| `show_source` | `bool` | `true` | `true`, `false` | Display active audio source badge (Bluetooth A2DP, Web Radio, or SD Player). |
+| `show_title` | `bool` | `true` | `true`, `false` | Display current track or station title. |
+| `show_artist` | `bool` | `true` | `true`, `false` | Display current artist or album metadata. |
+| `show_progress` | `bool` | `true` | `true`, `false` | Display track playback progress bar at the bottom. |
+| `show_visualizer` | `bool` | `true` | `true`, `false` | Display real-time audio spectrum visualizer during playback. |
+| `marquee_speed` | `int` | `40` | `10` to `200` | Scrolling speed in milliseconds per step for long track titles. |
 
 ### Engine: `google_cast` (Google Home / Nest Audio)
 | Field | Type | Default | Description |
@@ -513,14 +529,14 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 
 > **Adaptive Auto-Scaling**: When widgets are disabled, remaining widgets dynamically expand horizontally and vertically to take 100% of the display without dead space or black borders.
 
-### Engine: `visualizer` (Live Audio Equalizer)
+### Engine: `audiovisualizer` (Live Audio Equalizer)
 | Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Visualizer rendering mode: Spectrum Bars, Oscilloscope Waveform, Radial Circular, or Neon Fire. |
 | `gain` | `int` | `24` | `0` to `30` | Microphone hardware gain in dB (ES7210 codec). |
 | `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Color gradient for audio bars and waves. |
 
-### Engine: `decibel` (Sound Level Meter)
+### Engine: `decibelMeter` (Sound Level Meter)
 | Field | Type | Default | Options | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `alert_threshold_db` | `int` | `85` | `40` to `120` | Sound pressure level threshold for visual warning. |

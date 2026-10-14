@@ -40,19 +40,19 @@ Chaque moteur d'ArcadeMatrix est conçu avec **zéro allocation dynamique et zé
 | :--- | :---: | :--- |
 | **Desk Master Dashboard**<br>`dashboard` | <img src="docs/assets/engines/engine_dashboard.png" width="240" alt="Moteur Dashboard"> | Horloge de bureau complète avec cadran analogique pixel-art, balayage fluide de trotteuse, horloges mondiales, climat intérieur SHTC3, et bandeau ticker live cryptos Binance & actions Yahoo Finance. |
 | **Horloge Rétro Gaming**<br>`clock` | <img src="docs/assets/engines/engine_clock.png" width="240" alt="Horloge Rétro"><br><br>[👉 **Voir la galerie des 10+ horloges rétro ➔**](#-horloges-rétro-gaming-légendaires-posters--simulations-hub75) | Collection exclusive d'horloges animées d'arcade et de consoles rétro (Metal Slug, Castlevania, Mario, Mega Man, Sonic, Pokédex, Pac-Man, Tetris, Horloge Mondiale, Pluie Matrix...) avec sprites 100 % authentiques au pixel près. |
-| **WebRadio & Lecteur Musical**<br>`music` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Moteur Musique"> | Streaming audio autonome avec décodage MP3 linéaire temps réel (`minimp3`), sortie audio DAC I2S Everest ES8311, pochettes d'albums et visualiseur audio dynamique 64 bandes. |
+| **WebRadio & Lecteur Musical**<br>`music_player` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Moteur Musique"> | Streaming audio autonome avec décodage MP3 linéaire temps réel (`minimp3`), sortie audio DAC I2S Everest ES8311, pochettes d'albums et visualiseur audio dynamique 64 bandes. |
 | **Spotify Now Playing**<br>`spotify` | <img src="docs/assets/engines/engine_spotify.png" width="240" alt="Moteur Spotify"> | Affichage en direct du morceau en cours avec pochette d'album en couleur, défilement artiste/titre, mini barres d'égaliseur animées et barre de progression. |
-| **Google Cast & Nest**<br>`googlecast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Moteur Google Cast"> | Découverte automatique mDNS des enceintes Google Home / Nest Audio avec affichage des pochettes, volume et progression de lecture en streaming. |
+| **Google Cast & Nest**<br>`google_cast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Moteur Google Cast"> | Découverte automatique mDNS des enceintes Google Home / Nest Audio avec affichage des pochettes, volume et progression de lecture en streaming. |
 | **Ticker & Graphique Crypto**<br>`crypto` | <img src="docs/assets/engines/engine_crypto.png" width="240" alt="Moteur Crypto"> | Cotations en direct Binance / CoinGecko, badge de variation sur 24h et courbes sparklines historiques en temps réel avec cache TTL intelligent. |
 | **Ticker Bourse & Actions**<br>`stock` | <img src="docs/assets/engines/engine_stock.png" width="240" alt="Moteur Bourse"> | Cotations en temps réel Yahoo Finance, badges de variation 1D % et graphiques d'aires sparkline intrajournaliers pour actions et ETF NASDAQ/S&P. |
 | **Météo Dynamique**<br>`weather` | <img src="docs/assets/engines/engine_weather.png" width="240" alt="Moteur Météo"> | Conditions extérieures en direct, températures max/min, humidité, vent et icônes rétro animées via OpenWeatherMap & Open-Meteo. |
 | **Capteur Climat Intérieur**<br>`temp` | <img src="docs/assets/engines/engine_temp.png" width="240" alt="Moteur Température"> | Température intérieure (°C/°F) et humidité relative en temps réel via le capteur I2C intégré SHTC3 avec indicateurs dynamiques de confort. |
-| **Sonomètre Décibelmètre**<br>`decibel` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Moteur Décibels"> | Surveillance calibrée du niveau sonore ambiant en dB SPL avec smileys arcade réactifs, jauge supérieure style barre de vie VS fighting et VU-mètre segmenté. |
-| **HUD Télémétrie Système**<br>`sysinfo` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="Moteur SysInfo"> | Moniteur double colonne en temps réel de l'utilisation CPU (%), RAM (%), température matérielle du SoC (°C/°F) et Uptime avec jauges colorées. |
+| **Sonomètre Décibelmètre**<br>`decibelMeter` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Moteur Décibels"> | Surveillance calibrée du niveau sonore ambiant en dB SPL avec smileys arcade réactifs, jauge supérieure style barre de vie VS fighting et VU-mètre segmenté. |
+| **HUD Télémétrie Système**<br>`system_info` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="Moteur SysInfo"> | Moniteur double colonne en temps réel de l'utilisation CPU (%), RAM (%), température matérielle du SoC (°C/°F) et Uptime avec jauges colorées. |
 | **Ticker Actualités en Direct**<br>`gnews` | <img src="docs/assets/engines/engine_gnews.png" width="240" alt="Moteur GNews"> | Derniers grands titres en temps réel avec badges de catégories (`[TECH]`, `[MONDE]`, `[ÉCO]`), balise clignotante de direct et bandeau défilant fluide à 60 FPS. |
 | **Home Assistant & MQTT**<br>`mqttdata` | <img src="docs/assets/engines/engine_mqttdata.png" width="240" alt="Moteur MQTT Data"> | Tableaux de bord Home Assistant, valeurs de capteurs, graphiques historiques sur 24h et météo locale diffusés via MQTT avec blueprints prêts à l'emploi. |
-| **Visualiseur Audio**<br>`visualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Moteur Visualiseur"> | Barres de spectre 32 bandes en dégradé arc-en-ciel avec points de crête (peak hold), formes d'ondes oscilloscope et modes audio-réactifs radiaux. |
-| **Lecteur GIF Animés**<br>`gif` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Moteur GIF"> | Lecture fluide à 60 FPS d'animations rétro et de playlists sur carte SD avec accélération DMA canvas zéro-copie. |
+| **Visualiseur Audio**<br>`audiovisualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Moteur Visualiseur"> | Barres de spectre 32 bandes en dégradé arc-en-ciel avec points de crête (peak hold), formes d'ondes oscilloscope et modes audio-réactifs radiaux. |
+| **Lecteur GIF Animés**<br>`gifs` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Moteur GIF"> | Lecture fluide à 60 FPS d'animations rétro et de playlists sur carte SD avec accélération DMA canvas zéro-copie. |
 | **Bandeau Défilant Marquee**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Moteur Message"> | Enseignes matricielles personnalisables avec typographie ambrée lumineuse, multiples directions de défilement et déclencheurs API REST. |
 | **Marquee Borne d'Arcade**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Moteur Marquee"> | Affichage des marquees de jeux d'arcade officiels via intégration Pixelcade pour configurations Batocera, Recalbox et RetroPie. |
 | **Calendrier & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Moteur Date"> | Grande date au style arcade avec ombres portées 3D Capcom/Nintendo, support multilingue (FR, EN, ES) et synchronisation NTP/RTC DS3231. |
@@ -169,10 +169,15 @@ Pour afficher des combattants dans le module `SPRITES`, l'ESP32 attend des fichi
 Pour tous les détails, consultez la documentation dans `tools/mugen_extractor/README_FR.md`.
 
 ### Arrière-plans des sprites
-Les combattants ont besoin d'une arène ! Vous pouvez définir l'arrière-plan sur lequel ils se battent en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/`.
-Ensuite, associez cet arrière-plan dans votre `config.json` sous la section `[DATE]` (les arrière-plans servent à enrichir le module date !) :
-```ini
-BACKGROUND_SPRITE=stage1.raw
+Les combattants et le module Date peuvent afficher un décor d'arène en plaçant un fichier image brut (par ex. `stage1.raw`) dans `SD:/fighters_32/backgrounds/` et en le sélectionnant via l'option `bg_sprite` de votre instance `date` dans `config.json` (ou depuis la Web UI) :
+```json
+{
+  "instance_id": "date_main",
+  "engine_id": "date",
+  "config": {
+    "bg_sprite": "stage1.raw"
+  }
+}
 ```
 
 ## Playlists GIF (Découverte Automatique)
@@ -205,7 +210,7 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 | :--- | :--- | :---: | :---: | :--- |
 | **Horloge & Watch Faces (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Polices bitmap dynamiques, thèmes rétro/arcade |
 | **Animations GIFs (`gifs`)** | `media` | 🟢 Fullspeed 60 FPS | 🟢 Fullspeed 60 FPS | Carte Micro-SD (orientations Yoko / Tate) |
-| **Combat M.U.G.E.N (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Carte Micro-SD (streaming sprites RGB565) |
+| **Combat M.U.G.E.N (`fighter` overlay)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Carte Micro-SD (streaming sprites RGB565) |
 | **Tableau de Bord Desk Deck (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Horloge multi-widgets, météo & marchés) |
 | **Crypto en Temps Réel (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
 | **Bourse & Graphiques Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en cache) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
@@ -213,13 +218,13 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 | **Météo en Direct (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
 | **Date & Calendrier (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Heure système locale & fond sprite optionnel |
 | **Défilement de Texte (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Scroller textuel sous-pixel à 60 FPS |
-| **Télémétrie Système (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Jauges temps réel CPU, RAM, Temp & Uptime |
+| **Télémétrie Système (`system_info`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Jauges temps réel CPU, RAM, Temp & Uptime |
 | **Marquee Rétro Gameroom (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
 | **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, API Web Spotify |
 | **Affichage Google Cast (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, découverte locale mDNS |
-| **WebRadio Autonome (`music`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | DAC ES8311 & PSRAM requis |
+| **WebRadio Autonome (`music_player`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | DAC ES8311 & PSRAM requis |
 | **Spectre Audio FFT (`audiovisualizer`)** | `audio` | 🟢 60 FPS (Micro I2S) | ❌ Incompatible | Double micro ES7210 requis |
-| **Sonomètre SPL / Décibels (`decibel`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Double micro ES7210 requis |
+| **Sonomètre SPL / Décibels (`decibelMeter`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Double micro ES7210 requis |
 | **Capteur Climat Intérieur (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Capteur température/humidité SHTC3 requis |
 | **Home Assistant & Données MQTT (`mqttdata`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Broker MQTT / Blueprints Home Assistant |
 

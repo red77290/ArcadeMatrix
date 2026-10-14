@@ -316,11 +316,21 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, float* outPoints, size_
 bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) {
     if (!outPoints || maxPoints == 0) return false;
 
+    auto readNextByte = [&stream]() -> int {
+        uint32_t waitedMs = 0;
+        while (stream.available() <= 0) {
+            if (waitedMs >= 1500) return -1;
+            delay(1);
+            waitedMs++;
+        }
+        return stream.read();
+    };
+
     // Scan stream for "\"prices\":"
     const char* target = "\"prices\":";
     size_t targetIdx = 0;
-    while (stream.available() > 0) {
-        int c = stream.read();
+    int c = -1;
+    while ((c = readNextByte()) >= 0) {
         if ((char)c == target[targetIdx]) {
             targetIdx++;
             if (target[targetIdx] == '\0') break;
@@ -331,8 +341,7 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* ou
     if (target[targetIdx] != '\0') return false;
 
     // Scan until '['
-    while (stream.available() > 0) {
-        int c = stream.read();
+    while ((c = readNextByte()) >= 0) {
         if (c == '[') break;
     }
 
@@ -341,25 +350,25 @@ bool CoinGeckoProvider::parseMarketChart(Stream& stream, Timeframe tf, float* ou
     size_t n = 0;
 
     // Stream-parse [timestamp, price] pairs
-    while (stream.available() > 0) {
-        int c = stream.read();
+    while ((c = readNextByte()) >= 0) {
         if (c == ']') break;
         if (c == '[') {
             // Read until comma
-            while (stream.available() > 0) {
-                int ch = stream.read();
+            int ch = -1;
+            while ((ch = readNextByte()) >= 0) {
                 if (ch == ',') break;
             }
             // Read price float until ']'
-            String numStr = "";
-            while (stream.available() > 0) {
-                int ch = stream.read();
+            char numBuf[32];
+            size_t numLen = 0;
+            while ((ch = readNextByte()) >= 0) {
                 if (ch == ']') break;
-                if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == 'e' || ch == 'E') {
-                    numStr += (char)ch;
+                if (((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == 'e' || ch == 'E') && numLen + 1 < sizeof(numBuf)) {
+                    numBuf[numLen++] = (char)ch;
                 }
             }
-            float val = numStr.toFloat();
+            numBuf[numLen] = '\0';
+            float val = (numLen > 0) ? strtof(numBuf, nullptr) : 0.0f;
             if (val > 0.0f && n < MAX_RAW_PRICES) {
                 rawPrices[n++] = val;
             }

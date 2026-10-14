@@ -11,7 +11,7 @@
 
 ## 2. Preparación de la Tarjeta SD
 1. Formatee la tarjeta microSD en **FAT32**.
-2. Copie el contenido de la carpeta `sdcard_assets/` en la raíz de la tarjeta microSD.
+2. Copie el contenido de la carpeta `release/sdCard/` en la raíz de la tarjeta microSD.
 3. Inserte la tarjeta en la ranura de su placa.
 
 ---

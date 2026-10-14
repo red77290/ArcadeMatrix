@@ -6,9 +6,9 @@
 class YahooFinanceProvider : public IStockProvider {
 public:
     bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl) override;
-    bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl, uint8_t ownerId);
+    bool fetchQuote(const String& symbol, float& outPrice, float& outChange, String& outImageUrl, uint16_t ownerId);
     bool fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes) override;
-    bool fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes, uint8_t ownerId);
+    bool fetchQuotes(const std::vector<String>& symbols, std::map<String, StockQuote>& outQuotes, uint16_t ownerId);
     bool fetchHistory(const String& symbol, Timeframe tf, float* outPoints, size_t maxPoints, size_t& outCount, float& outMin, float& outMax) override;
     bool fetchHistories(const std::vector<String>& symbols, Timeframe tf, std::map<String, StockHistoryData>& outHistories) override;
     

@@ -8,6 +8,7 @@
 #include "../engines/FighterEngine.h"
 
 #include "AppEngineContext.h"
+#include "DisplayArbiter.h"
 #include "RotationTransitionFX.h"
 #include <memory>
 #include <mutex>
@@ -19,6 +20,11 @@ enum class RotationAction {
     NOTIFY_CONFIG_CHANGED,
     RECREATE_INSTANCE,
     RESET_ROTATION
+};
+
+struct PendingRotationAction {
+    RotationAction action = RotationAction::RESET_ROTATION;
+    char moduleName[32]{0};
 };
 
 struct ActiveEngineSlot {
@@ -34,8 +40,10 @@ public:
     RotationManager();
     
     void begin(const ConfigLoader& cfg);
-    void notifyConfigChanged(const String& instanceId);
-    void recreateInstance(const String& instanceId);
+    void notifyConfigChanged(const char* instanceId);
+    void notifyConfigChanged(const String& instanceId) { notifyConfigChanged(instanceId.c_str()); }
+    void recreateInstance(const char* instanceId);
+    void recreateInstance(const String& instanceId) { recreateInstance(instanceId.c_str()); }
     bool loop();
     
     // Reset to start of rotation (e.g. after manual interruption)
@@ -43,6 +51,7 @@ public:
     
     const char* getCurrentInstanceIdCStr() const { return currentActiveInstanceId; }
     String getCurrentInstanceId() const { return String(currentActiveInstanceId); }
+    const char* getCurrentEngineIdCStr() const;
     String getCurrentEngineId() const;
     void setSuspended(bool suspended);
     bool isSuspended() const { return suspended; }
@@ -91,15 +100,16 @@ public:
 
     void notifyGeometryChanged(const DisplayGeometry& geometry);
 
-    // Thread-safe API for WebServer
-    void queueAction(RotationAction action, const String& instanceId = "");
+    // Thread-safe API for WebServer (Core 0 multi-producer serialized via actionMutex, Core 1 lock-free consumer)
+    void queueAction(RotationAction action, const char* instanceId = "");
+    void queueAction(RotationAction action, const String& instanceId) { queueAction(action, instanceId.c_str()); }
 
     // Helper: count valid non-empty comma-separated symbols
     static size_t countSymbols(const String& symbols);
 
 private:
     std::mutex actionMutex;
-    std::vector<std::pair<RotationAction, String>> pendingActions;
+    LockFreeSPSCQueue<PendingRotationAction, 8> pendingActions;
     void processPendingActions();
 
     AppEngineContext* m_ctx = nullptr;
@@ -113,6 +123,7 @@ private:
     uint8_t switchDepth = 0;
     bool suspended = false;
     char currentActiveInstanceId[32]{0};
+    mutable char currentActiveEngineId[32]{0};
 
     void switchToModule(int index);
     void retireEngineSlot(size_t slotIndex);

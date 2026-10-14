@@ -24,18 +24,11 @@ void SecureHttpClient::unregisterSession(SecureHttpSession* session) {
 }
 
 void SecureHttpClient::abortSessionsOwnedBy(uint16_t ownerId) {
-    std::vector<SecureHttpSession*> toAbort;
-    {
-        std::lock_guard<std::mutex> lock(s_sessionMutex);
-        for (auto* s : s_activeSessions) {
-            if (s && (ownerId == 0 || s->ownerId() == ownerId)) {
-                toAbort.push_back(s);
-            }
+    std::lock_guard<std::mutex> lock(s_sessionMutex);
+    for (auto* s : s_activeSessions) {
+        if (s && (ownerId == 0 || s->ownerId() == ownerId)) {
+            s->requestAbort();
         }
-    }
-    // Abort outside of mutex lock to prevent lock inversion with transport callbacks
-    for (auto* s : toAbort) {
-        s->abort();
     }
 }
 
@@ -57,6 +50,7 @@ SecureHttpResponse SecureHttpClient::get(const String& url,
     }
 
     std::unique_ptr<SecureHttpSession> sess(new SecureHttpSession(parsed.host, parsed.port, options));
+    sess->setHttps(parsed.isHttps);
     auto response = sess->get(parsed.path, headers);
     response.attachStandaloneSession(std::move(sess));
     return response;
@@ -73,6 +67,7 @@ SecureHttpResponse SecureHttpClient::post(const String& url,
     }
 
     std::unique_ptr<SecureHttpSession> sess(new SecureHttpSession(parsed.host, parsed.port, options));
+    sess->setHttps(parsed.isHttps);
     auto response = sess->post(parsed.path, contentType, body, headers);
     response.attachStandaloneSession(std::move(sess));
     return response;

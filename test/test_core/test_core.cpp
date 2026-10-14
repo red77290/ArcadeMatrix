@@ -790,6 +790,35 @@ void test_fighter_not_in_registry_or_selectable(void) {
     TEST_ASSERT_EQUAL(0, cfg.instances.size());
 }
 
+/**
+ * @brief Verifies that EngineRegistrar registers all 18 canonical engine descriptors.
+ */
+void test_canonical_engine_catalog_completeness(void) {
+    EngineRegistry::clear();
+    EngineRegistrar::registerAll();
+
+    size_t count = 0;
+    const EngineDescriptor* all = EngineRegistry::getAllDescriptors(count);
+    TEST_ASSERT_NOT_NULL(all);
+    TEST_ASSERT_EQUAL(18, count);
+
+    const char* canonicalIds[18] = {
+        "clock", "date", "weather", "gifs", "crypto", "stock",
+        "audiovisualizer", "decibelMeter", "temp", "message",
+        "google_cast", "spotify", "system_info", "music_player",
+        "dashboard", "gnews", "marquee", "mqttdata"
+    };
+
+    for (size_t i = 0; i < 18; ++i) {
+        const EngineDescriptor* desc = EngineRegistry::getDescriptor(canonicalIds[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(desc, canonicalIds[i]);
+        TEST_ASSERT_EQUAL_STRING(canonicalIds[i], desc->metadata.id);
+    }
+
+    // Transverse overlay must not be in EngineRegistry
+    TEST_ASSERT_NULL(EngineRegistry::getDescriptor("fighter"));
+}
+
 // =========================================================================
 // 7. Overlay Manager & Layering Invariants
 // =========================================================================
@@ -2443,9 +2472,7 @@ void test_hub75_bulk_encoder_golden_snapshots(void) {
     };
 
     uint8_t lutR[32], lutG[64], lutB[32];
-    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
-    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
-    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
 
     Hub75EncodingParams params;
     params.width = W;
@@ -2625,9 +2652,7 @@ void test_hub75_bulk_encoder_byte_exact_snapshots(void) {
     };
 
     uint8_t lutR[32], lutG[64], lutB[32];
-    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
-    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
-    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
 
     for (const auto& res : resolutions) {
         size_t totalBytes = DmaMemoryLayout::calculateTotalBytes(res.w, res.h, res.depth, false);
@@ -2776,9 +2801,7 @@ void test_hub75_bulk_encoder_immutable_golden_fixture(void) {
     };
 
     uint8_t lutR[32], lutG[64], lutB[32];
-    for (int i = 0; i < 32; ++i) lutR[i] = (i * 255) / 31;
-    for (int i = 0; i < 64; ++i) lutG[i] = (i * 255) / 63;
-    for (int i = 0; i < 32; ++i) lutB[i] = (i * 255) / 31;
+    Hub75BulkEncoder::generateLuts(8, lutR, lutG, lutB);
 
     struct Ctx {
         uint16_t* base;
@@ -3413,8 +3436,16 @@ void setup() {
     // =========================================================================
     RUN_TEST(test_display_runtime_lifecycle_centralization);
     RUN_TEST(test_display_runtime_preemption_lifecycle);
+    RUN_TEST(test_preemption_intermediate_expiration_unwinding);
     RUN_TEST(test_preemption_refresh_does_not_push_same_engine);
     RUN_TEST(test_same_source_different_instance_replaces_without_preemption);
+    RUN_TEST(test_runtime_transactional_rejection_preserves_lifecycle);
+    RUN_TEST(test_preemption_stack_overflow_rejection);
+    RUN_TEST(test_arbiter_stateless_no_phantom_state_on_runtime_rejection);
+    RUN_TEST(test_preemption_child_refresh_preserves_single_stack_entry);
+    RUN_TEST(test_rotation_manager_bounded_lookup);
+    RUN_TEST(test_preemption_replace_unwinds_orphaned_stack);
+    RUN_TEST(test_runtime_resolve_does_not_create_instance);
     RUN_TEST(test_preemptive_same_session_refresh_is_not_preemption);
     RUN_TEST(test_display_runtime_state_machine_matrix);
 
@@ -3424,6 +3455,7 @@ void setup() {
     RUN_TEST(test_registrar_capability_truth_table);
     RUN_TEST(test_requirements_gating);
     RUN_TEST(test_fighter_not_in_registry_or_selectable);
+    RUN_TEST(test_canonical_engine_catalog_completeness);
 
     // =========================================================================
     // 7. Overlay Manager & Layering Invariants

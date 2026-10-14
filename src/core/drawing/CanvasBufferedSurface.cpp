@@ -204,6 +204,7 @@ PresentationTiming CanvasBufferedSurface::present() {
 
 void CanvasBufferedSurface::markExternalDraw() {
     markModified();
+    _externalDrawGeneration++;
     if (_backend) {
         _backend->markExternalDraw();
     }

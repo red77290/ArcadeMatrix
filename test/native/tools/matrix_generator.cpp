@@ -44,7 +44,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         HwProfile::ESP32_STD,
         128, 32, 0,
         false, 0,
-        false, true, false, true, true,
+        false, false, false, true, true,
         140000, 70000, 0
     },
     {
@@ -53,7 +53,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         HwProfile::ESP32_STD,
         64, 32, 0,
         false, 0,
-        false, true, false, true, true,
+        false, false, false, true, true,
         160000, 80000, 0
     },
     {
@@ -62,7 +62,7 @@ static const std::vector<ProfileDef> REFERENCE_PROFILES = {
         HwProfile::ESP32_STD,
         128, 64, 0,
         false, 0,
-        false, true, false, true, true,
+        false, false, false, true, true,
         110000, 50000, 0
     },
     {
@@ -138,7 +138,7 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
     // 5. Decibel
     {
         EngineDescriptor d;
-        d.metadata = {"decibel", "Audio Sound Level Meter", "audio", FIRMWARE_VERSION};
+        d.metadata = {"decibelMeter", "Audio Sound Level Meter", "audio", FIRMWARE_VERSION};
         d.requirements.needsAudioInput = true;
         d.requirements.needsAudio = true;
         d.requirements.targetFps = 30;
@@ -197,7 +197,7 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
     {
         EngineDescriptor d;
         d.metadata = {"temp", "Environment Sensor", "sensor", FIRMWARE_VERSION};
-        d.requirements.needsTempSensor = false; // Graceful fallback if sensor absent
+        d.requirements.needsTempSensor = true;
         d.requirements.targetFps = 30;
         d.requirements.supportsSingleBuffer = true;
         d.requirements.internalPersistentBytes = 4000;
@@ -208,9 +208,10 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         EngineDescriptor d;
         d.metadata = {"google_cast", "Google Nest Cast Audio", "media", FIRMWARE_VERSION};
         d.requirements.needsNetwork = true;
+        d.requirements.needsTls = true;
         d.requirements.targetFps = 30;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalPersistentBytes = 14000;
         d.requirements.internalContiguousBytes = 24000;
         engines.push_back(d);
     }
@@ -239,6 +240,8 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
     {
         EngineDescriptor d;
         d.metadata = {"music_player", "Universal Music Player", "media", FIRMWARE_VERSION};
+        d.requirements.needsPsram = true;
+        d.requirements.needsAudioOutput = true;
         d.requirements.targetFps = 30;
         d.requirements.supportsSingleBuffer = true;
         d.requirements.internalPersistentBytes = 5000;

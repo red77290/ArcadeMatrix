@@ -19,6 +19,7 @@ TEST_SUITES = [
     "test_hardware",
     "test_api",
     "test_providers",
+    "test_gifs",
 ]
 
 def find_qemu():

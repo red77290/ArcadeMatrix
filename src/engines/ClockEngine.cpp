@@ -289,6 +289,7 @@ void ClockEngine::update(EngineContext* context) {
         currentTime.hours = h;
         currentTime.minutes = timeinfo.tm_min;
         currentTime.seconds = timeinfo.tm_sec;
+        currentTime.tm_wday = (timeinfo.tm_wday >= 0 && timeinfo.tm_wday <= 6) ? static_cast<uint8_t>(timeinfo.tm_wday) : 0;
     }
     if (activeFace) {
         activeFace->draw(currentTime);

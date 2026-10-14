@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <vector>
 #include <map>
+#include <mutex>
 
 /**
  * @class IconService
@@ -83,6 +84,7 @@ public:
     void clearNegativeCache();
 
 private:
+    mutable std::mutex m_mutex;
     std::map<String, uint32_t> m_failedAttempts;
 };
 

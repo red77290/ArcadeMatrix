@@ -20,13 +20,12 @@ MarqueeEngine::MarqueeEngine()
 EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig* engineConfig) {
     if (!context) return EngineError::InitializationFailed;
     auto surface = context->getSurface();
-    auto matrix = context->getMatrix();
-    if (!surface && !matrix) return EngineError::HardwareUnavailable;
+    if (!surface) return EngineError::HardwareUnavailable;
 
     m_context = context;
     m_hasPsram = context->hasPsram();
-    panelWidth = surface ? surface->width() : matrix->width();
-    panelHeight = surface ? surface->height() : matrix->height();
+    panelWidth = surface->width();
+    panelHeight = surface->height();
 
     // MEMORY OPTIMIZATION: Do not eagerly allocate 8KB m_rawBuffer at boot time.
     // Instead, allocate it on-demand in show() if raw pixel streaming is actually used.
@@ -44,7 +43,7 @@ EngineError MarqueeEngine::initialize(EngineContext* context, const EngineConfig
     if (!m_gifEngine) {
         m_gifEngine = new GifEngine();
         m_gifEngine->initialize(context, engineConfig);
-        m_gifEngine->begin(surface ? surface : context->getSurface());
+        m_gifEngine->begin(surface);
         m_gifEngine->setFitMode(m_fitMode);
         m_gifEngine->setSpeedMultiplier(m_speedMultiplier);
     }
@@ -336,6 +335,13 @@ void MarqueeEngine::deactivate() {
     }
 }
 
+bool MarqueeEngine::shutdownForDestruction() {
+    if (m_gifEngine) {
+        return m_gifEngine->shutdownForDestruction();
+    }
+    return true;
+}
+
 void MarqueeEngine::onConfigChanged(const EngineConfig* engineConfig) {
     if (!engineConfig) return;
     m_filePath = engineConfig->getString("file_path", "/marquees/marquee.gif");
@@ -384,14 +390,6 @@ void MarqueeEngine::render(EngineContext* context) {
         auto surface = context ? context->getSurface() : nullptr;
         if (surface) {
             surface->blit565(m_rawBuffer, 0, 0, panelWidth, panelHeight, panelWidth);
-        } else {
-            auto matrix = context ? context->getMatrix() : nullptr;
-            if (!matrix) return;
-            for (int y = 0; y < panelHeight; y++) {
-                for (int x = 0; x < panelWidth; x++) {
-                    matrix->drawPixel(x, y, m_rawBuffer[y * panelWidth + x]);
-                }
-            }
         }
     } else if (m_gifEngine) {
         m_gifEngine->render(context);

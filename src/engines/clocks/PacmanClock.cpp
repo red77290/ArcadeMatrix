@@ -25,6 +25,33 @@ PacmanClock::PacmanClock(IDrawingSurface* display, const EngineConfig* config, b
         ghostColors[2] = matrix->color565(0, 255, 255);     // Inky
         ghostColors[3] = matrix->color565(255, 184, 82);    // Clyde
     }
+
+    m_is24hOverride = -1;
+    m_showSeconds = true;
+    if (engineConfig) {
+        String fmt = engineConfig->getString("clock_format", "system");
+        if (fmt.isEmpty() || fmt.equalsIgnoreCase("system")) fmt = engineConfig->getString("format", "system");
+        if (fmt.indexOf("%I") >= 0) m_is24hOverride = 0;
+        else if (fmt.indexOf("%H") >= 0) m_is24hOverride = 1;
+        if (!(fmt.isEmpty() || fmt.equalsIgnoreCase("system"))) m_showSeconds = fmt.indexOf("%S") >= 0;
+    }
+
+    m_gfxSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1;
+    if (m_gfxSize < 1) m_gfxSize = 1;
+    m_offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    m_offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+    m_speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
+    m_speedPct = constrain(m_speedPct, 25, 300);
+
+    m_color1 = matrix ? matrix->color565(60, 100, 255) : 0x3B3F;
+    if (engineConfig) {
+        String colStr = engineConfig->getString("clock_color_1", "");
+        if (colStr.length() > 0 && colStr[0] == '#') {
+            long c1 = strtol(colStr.c_str() + 1, nullptr, 16);
+            m_color1 = matrix ? matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF) : 0x3B3F;
+        }
+    }
+    if (m_color1 == 0 && matrix) m_color1 = matrix->color565(60, 100, 255);
 }
 
 void PacmanClock::draw(const TimeData& t) {
@@ -35,17 +62,16 @@ void PacmanClock::draw(const TimeData& t) {
 // it; this decides the leading zero (kept for 24h, dropped for 12h: "8:08") and whether seconds show
 // (any format containing %S, and the "system" default). %p is not rendered.
 void PacmanClock::formatTime(char* out, size_t n) const {
-    extern ConfigLoader config;
-    bool is24h = config.acquireSnapshot()->system.format24h;
-    bool seconds = true;
-    if (engineConfig) {
-        String fmt = engineConfig->getString("clock_format", "system");
-        if (fmt.isEmpty() || fmt.equalsIgnoreCase("system")) fmt = engineConfig->getString("format", "system");
-        if (fmt.indexOf("%I") >= 0) is24h = false;
-        else if (fmt.indexOf("%H") >= 0) is24h = true;
-        if (!(fmt.isEmpty() || fmt.equalsIgnoreCase("system"))) seconds = fmt.indexOf("%S") >= 0;
+    bool is24h = true;
+    if (m_is24hOverride == 0) {
+        is24h = false;
+    } else if (m_is24hOverride == 1) {
+        is24h = true;
+    } else {
+        extern ConfigLoader config;
+        is24h = config.acquireSnapshot()->system.format24h;
     }
-    if (seconds) {
+    if (m_showSeconds) {
         snprintf(out, n, is24h ? "%02d:%02d:%02d" : "%d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
     } else {
         snprintf(out, n, is24h ? "%02d:%02d" : "%d:%02d", storedTime.hours, storedTime.minutes);
@@ -273,23 +299,15 @@ void PacmanClock::update() {
     int h = matrix->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
-    if (gfxSize < 1) gfxSize = 1;
-    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
-    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
-    int speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
-    speedPct = constrain(speedPct, 25, 300);
+    int gfxSize = m_gfxSize;
+    int offX = m_offX;
+    int offY = m_offY;
+    int speedPct = m_speedPct;
 
     // The face's own palette: the digits carry the blue the colon is drawn in, so the yellow
     // outline below reads against them instead of bleeding into white. An instance that sets
     // clock_color_1 still gets exactly what it asked for.
-    uint16_t color1 = matrix->color565(60, 100, 255);
-    const char* colStr = engineConfig ? engineConfig->getString("clock_color_1", "").c_str() : "";
-    if (colStr[0] == '#') {
-        long c1 = strtol(&colStr[1], NULL, 16);
-        color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
-    }
-    if (color1 == 0) color1 = matrix->color565(60, 100, 255);
+    uint16_t color1 = (m_color1 != 0) ? m_color1 : matrix->color565(60, 100, 255);
     uint16_t colonColor = matrix->color565(60, 100, 255);
     uint16_t dotColor = matrix->color565(255, 183, 174);
     // The digits waiting to be eaten keep the clock's own colours. Dimming them made the whole

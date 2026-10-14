@@ -29,6 +29,10 @@ private:
     bool initialized;
     TimeData storedTime;
     unsigned long lastFrameTime;
+    char m_format[24];
+    int m_logicalSize = 1;
+    int m_offX = 0;
+    int m_offY = 0;
 
     void drawTime();
 };

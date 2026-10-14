@@ -10,18 +10,20 @@ namespace {
 // only recompute it when the underlying raw description or language actually changes (i.e. on
 // the ~10 min weather refresh cadence), keeping the hot render path allocation-free.
 const char* getCachedOutdoorLabel(const String& rawDescription, Lang lang) {
-    static String s_lastRaw;
+    static char s_lastRaw[64] = {0};
     static Lang s_lastLang = static_cast<Lang>(-1);
     static char s_labelBuf[9] = {0};
     static bool s_initialized = false;
 
-    if (!s_initialized || s_lastLang != lang || s_lastRaw != rawDescription) {
+    const char* rawCStr = rawDescription.c_str();
+    if (!s_initialized || s_lastLang != lang || strncmp(s_lastRaw, rawCStr, sizeof(s_lastRaw) - 1) != 0) {
         String desc = I18n::getWeatherCondition(rawDescription, lang);
         if (desc.isEmpty()) desc = I18n::getOutdoorLabel(lang);
         desc.toUpperCase();
-        strncpy(s_labelBuf, desc.substring(0, 8).c_str(), sizeof(s_labelBuf) - 1);
+        strncpy(s_labelBuf, desc.c_str(), sizeof(s_labelBuf) - 1);
         s_labelBuf[sizeof(s_labelBuf) - 1] = '\0';
-        s_lastRaw = rawDescription;
+        strncpy(s_lastRaw, rawCStr, sizeof(s_lastRaw) - 1);
+        s_lastRaw[sizeof(s_lastRaw) - 1] = '\0';
         s_lastLang = lang;
         s_initialized = true;
     }
@@ -33,7 +35,7 @@ const char* getCachedOutdoorLabel(const String& rawDescription, Lang lang) {
 void ClimateWidget::render(IDrawingSurface* matrix, const Rect& rect, const WeatherData& weather, bool weatherValid, const IndoorData& indoor, float tempOffset, const DashboardTheme& theme, bool useFahrenheit, const String& lang) {
     if (!matrix || rect.width < 14 || rect.height < 8) return;
 
-    Lang l = I18n::parseLang(lang);
+    Lang l = I18n::parseLang(lang.c_str());
 
     matrix->fillRect(rect.x, rect.y, rect.width, rect.height, theme.panelBg);
     matrix->drawRect(rect.x, rect.y, rect.width, rect.height, theme.border);

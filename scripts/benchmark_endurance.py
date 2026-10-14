@@ -12,7 +12,27 @@ import argparse
 import requests
 import csv
 
-def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_csv="benchmark_results.csv"):
+ENGINES = [
+    "clock",
+    "weather",
+    "crypto",
+    "stock",
+    "gifs",
+    "system_info",
+    "gnews",
+    "dashboard",
+    "audiovisualizer",
+    "decibelMeter",
+    "temp",
+    "message",
+    "google_cast",
+    "spotify",
+    "music_player",
+    "marquee",
+    "mqttdata",
+]
+
+def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_csv="benchmark_results.csv", rotate_engines=False):
     print(f"Starting ArcadeMatrix Endurance Benchmark against {target_url} for {duration_hours}h...")
     start_time = time.time()
     end_time = start_time + (duration_hours * 3600)
@@ -24,6 +44,8 @@ def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_cs
 
     initial_baseline = None
     max_alloc_detected = 0
+    row = {}
+    step_idx = 0
 
     with open(output_csv, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fields)
@@ -32,24 +54,42 @@ def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_cs
         while time.time() < end_time:
             now = time.strftime("%Y-%m-%d %H:%M:%S")
             try:
-                sys_resp = requests.get(f"{target_url}/api/system", timeout=5).json()
-                stat_resp = requests.get(f"{target_url}/api/status", timeout=5).json()
+                if rotate_engines:
+                    eng = ENGINES[step_idx % len(ENGINES)]
+                    use_fighter = (eng == "clock" and (step_idx // len(ENGINES)) % 2 == 1)
+                    rotation_payload = [
+                        {
+                            "instance_id": eng,
+                            "duration_sec": 60,
+                            "overlays": {"fighter": use_fighter},
+                        }
+                    ]
+                    requests.post(f"{target_url}/api/rotation", json=rotation_payload, timeout=5)
+                    step_idx += 1
 
-                mem = sys_resp.get("memory", {})
-                render = stat_resp.get("render", {})
+                stat_resp = requests.get(f"{target_url}/api/status", timeout=5).json()
+                mem = stat_resp.get("memory", {})
+                pres = stat_resp.get("presentation", stat_resp.get("render", {}))
+
+                free_heap = stat_resp.get("free_heap", mem.get("free_heap", 0))
+                largest_block = stat_resp.get(
+                    "max_alloc_heap",
+                    stat_resp.get("internal_largest", mem.get("largest_free_block", 0)),
+                )
+                min_free_heap = stat_resp.get("min_free_heap", mem.get("min_free_heap", 0))
 
                 row = {
                     "timestamp": now,
-                    "uptime_s": sys_resp.get("uptime_seconds", 0),
-                    "free_heap": mem.get("free_heap", 0),
-                    "largest_block": mem.get("largest_free_block", 0),
-                    "min_free_heap": mem.get("min_free_heap", 0),
-                    "dma_free": mem.get("free_dma_heap", 0),
-                    "dma_largest": mem.get("largest_dma_block", 0),
-                    "fps": render.get("fps", 0),
-                    "presents": render.get("presents", 0),
-                    "frame_allocs": render.get("frame_allocs", 0),
-                    "frame_frees": render.get("frame_frees", 0),
+                    "uptime_s": stat_resp.get("uptime", stat_resp.get("uptime_seconds", 0)),
+                    "free_heap": free_heap,
+                    "largest_block": largest_block,
+                    "min_free_heap": min_free_heap,
+                    "dma_free": stat_resp.get("dma_free", mem.get("free_dma_heap", 0)),
+                    "dma_largest": stat_resp.get("dma_largest", mem.get("largest_dma_block", 0)),
+                    "fps": pres.get("fps", stat_resp.get("fps", 0)),
+                    "presents": pres.get("presents", 0),
+                    "frame_allocs": pres.get("frame_allocs", 0),
+                    "frame_frees": pres.get("frame_frees", 0),
                 }
 
                 if initial_baseline is None:
@@ -62,7 +102,7 @@ def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_cs
                 writer.writerow(row)
                 csvfile.flush()
 
-                print(f"[{now}] Heap: {row['free_heap']} B (Largest: {row['largest_block']} B) | "
+                print(f"[{now}] Heap: {row['free_heap']} B (Largest: {row['largest_block']} B, Min: {row['min_free_heap']} B) | "
                       f"FPS: {row['fps']} | Core 1 Allocs: {alloc_count}")
 
             except Exception as e:
@@ -70,7 +110,7 @@ def run_benchmark(target_url, duration_hours=24, sample_interval_s=30, output_cs
 
             time.sleep(sample_interval_s)
 
-    drift = abs(row["free_heap"] - initial_baseline) if initial_baseline else 0
+    drift = abs(row.get("free_heap", 0) - initial_baseline) if initial_baseline else 0
     print("\n--- Benchmark Complete ---")
     print(f"Initial Baseline: {initial_baseline} B | Final Baseline: {row.get('free_heap', 0)} B | Drift: {drift} B")
     print(f"Max Core 1 Allocations: {max_alloc_detected}")

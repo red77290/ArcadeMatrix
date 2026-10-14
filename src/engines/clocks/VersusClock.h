@@ -23,6 +23,10 @@ private:
     float targetP2HP;
     uint32_t lastFrameTime;
     uint32_t animFrame;
+    int m_gfxSize = 2;
+    int m_offX = 0;
+    int m_offY = 0;
+    uint16_t m_color1 = 0xFFFF;
     
     void drawHealthBar(int x, int y, int width, int height, float hpPercent, bool isPlayer1);
     void drawKO(int x, int y);

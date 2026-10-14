@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ArcadeMatrix Local API
   description: API for controlling and configuring the ArcadeMatrix ESP32 firmware locally over Wi-Fi.
-  version: 3.0.1
+  version: 4.0.3
 servers:
   - url: http://ArcadeMatrix.local
     description: Default local mDNS address (or use the device's assigned IP)
@@ -221,7 +221,8 @@ paths:
                       broker: { type: string, example: "127.0.0.1" }
                       port: { type: integer, example: 1883 }
                       user: { type: string, example: "" }
-                      pass: { type: string, example: "" }
+                      pass: { type: string, example: "", description: "Redacted when api_auth_enabled is true and caller is unauthenticated" }
+                      pass_configured: { type: boolean, example: false }
                       device_name: { type: string, example: "ArcadeMatrix" }
                       allow_overlay: { type: boolean, example: false }
                   data_mqtt:
@@ -231,7 +232,8 @@ paths:
                       broker: { type: string, example: "192.168.1.10" }
                       port: { type: integer, example: 1883 }
                       user: { type: string, example: "" }
-                      pass: { type: string, example: "" }
+                      pass: { type: string, example: "", description: "Redacted when api_auth_enabled is true and caller is unauthenticated" }
+                      pass_configured: { type: boolean, example: false }
                   wifi:
                     type: object
                     properties:
@@ -264,7 +266,7 @@ paths:
       tags:
         - System
       summary: Live hardware and system statistics
-      description: Returns CPU load, free memory, temperature, and uptime for dashboard gauges and SysInfo engine.
+      description: Returns CPU load, free memory, temperature, weather fetch diagnostics, and uptime for dashboard gauges and SysInfo engine.
       responses:
         '200':
           description: Live statistics
@@ -273,7 +275,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  version: { type: string, example: "3.0.0" }
+                  version: { type: string, example: "4.0.2" }
                   arch: { type: string, example: "esp32s3" }
                   uptime: { type: integer, description: "Uptime in seconds", example: 3600 }
                   cpu_load: { type: number, example: 15.2 }
@@ -281,8 +283,20 @@ paths:
                   cpu_load_core1: { type: number }
                   render_loop_fps: { type: number, description: Render-loop iterations per second since the previous call }
                   render_present_fps: { type: number, description: Framebuffer flips per second since the previous call }
+                  weather_fetch:
+                    type: object
+                    properties:
+                      last_code: { type: integer }
+                      last_age_s: { type: integer }
+                      last_internal_free_kb: { type: integer }
+                      last_internal_largest_kb: { type: integer }
+                      ok_count: { type: integer }
+                      fail_count: { type: integer }
                   free_heap_kb: { type: integer }
                   total_heap_kb: { type: integer }
+                  ram_used_kb: { type: integer }
+                  ram_total_kb: { type: integer }
+                  internal_largest_kb: { type: integer }
                   psram_found: { type: boolean }
                   psram_free_mb: { type: number }
                   psram_total_mb: { type: number }
@@ -290,11 +304,24 @@ paths:
                   sd_total_gb: { type: number }
                   sd_free_gb: { type: number }
                   sd_measured_age_s: { type: integer }
-                  arch: { type: string, example: esp32s3 }
-                  ram_used_mb: { type: integer, example: 55 }
-                  ram_total_mb: { type: integer, example: 320 }
+                  ram_used_mb: { type: integer, example: 1 }
+                  ram_total_mb: { type: integer, example: 8 }
                   temperature_c: { type: number, example: 42.5 }
                   temperature_f: { type: number, example: 108.5 }
+
+  /api/system_info:
+    get:
+      tags:
+        - System
+      summary: Live hardware and system statistics (alias of /api/stats)
+      description: Returns identical payload to /api/stats for legacy and companion clients.
+      responses:
+        '200':
+          description: Live statistics
+          content:
+            application/json:
+              schema:
+                type: object
 
   /api/system/power:
     get:
@@ -1049,6 +1076,46 @@ paths:
                     example: false
                   error:
                     type: string
+    delete:
+      tags:
+        - Configuration
+      summary: Delete an engine instance by query parameter
+      description: Deletes the specified instance and removes any rotation slots referencing it.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Instance identifier to delete
+      responses:
+        '200':
+          description: Instance deleted
+        '400':
+          description: Missing id parameter or cannot delete last remaining instance
+        '404':
+          description: Instance not found
+
+  /api/instances/{id}:
+    delete:
+      tags:
+        - Configuration
+      summary: Delete an engine instance by path parameter
+      description: Deletes the specified instance and removes any rotation slots referencing it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Instance identifier to delete
+      responses:
+        '200':
+          description: Instance deleted
+        '400':
+          description: Cannot delete last remaining instance
+        '404':
+          description: Instance not found
 
   /api/rotation:
     get:
@@ -1192,6 +1259,12 @@ paths:
                         needs_tls:
                           type: boolean
                           description: Whether this engine requires TLS secure sockets (HTTPS).
+                        needs_internal_ram_bytes:
+                          type: integer
+                        needs_contiguous_internal_bytes:
+                          type: integer
+                        needs_psram_bytes:
+                          type: integer
                         target_fps:
                           type: integer
                     available:
@@ -1306,7 +1379,7 @@ paths:
       tags:
         - System
       summary: Get firmware version and build information
-      description: Returns firmware semantic version, git commit hash, and build timestamp.
+      description: Returns firmware semantic version, git commit hash, build timestamp, architecture, and running OTA partition.
       responses:
         '200':
           description: Build version info
@@ -1317,7 +1390,7 @@ paths:
                 properties:
                   version:
                     type: string
-                    example: "3.0.0"
+                    example: "4.0.2"
                   git_commit:
                     type: string
                     example: "a63490c"
@@ -1327,49 +1400,112 @@ paths:
                   arch:
                     type: string
                     example: "esp32s3"
-                  running_partition:
+                  partition:
                     type: string
                     example: "app0"
 
-  /api/hardware:
+  /api/themes:
     get:
       tags:
-        - System
-      summary: Hardware detection and capabilities
-      description: Returns detected hardware peripherals (sensors, audio codecs, gyroscope, SD card, PSRAM).
+        - Configuration
+      summary: List available built-in UI/display themes
       responses:
         '200':
-          description: Hardware profile
+          description: Array of theme descriptors
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  has_temp_sensor: { type: boolean, example: true }
-                  has_audio_input: { type: boolean, example: true }
-                  has_audio_output: { type: boolean, example: true }
-                  has_gyroscope: { type: boolean, example: true }
-                  has_psram: { type: boolean, example: true }
-                  has_sd: { type: boolean, example: true }
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, example: "cyberpunk" }
+                    name: { type: string, example: "Cyberpunk" }
 
-  /api/sensor:
+  /api/settings:
     get:
       tags:
-        - System
-      summary: Get live environmental sensor readings (SHTC3)
-      description: Returns temperature (°C and °F) and relative humidity (%) from onboard SHTC3 sensor.
+        - Configuration
+      summary: Get legacy flat settings snapshot
+      description: Returns flat legacy settings snapshot (with secrets redacted when api_auth_enabled is true and caller is unauthenticated).
       responses:
         '200':
-          description: Sensor data
+          description: Flat settings object
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags:
+        - Configuration
+      summary: Update legacy flat settings
+      description: Updates system, matrix, or engine settings from flat legacy keys and schedules a non-blocking reboot if hardware parameters changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Settings updated
+
+  /api/playlists/selected:
+    get:
+      tags:
+        - Media
+      summary: List GIF playlist folders with active selection state
+      responses:
+        '200':
+          description: Playlist folder array with selected booleans
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  available: { type: boolean, example: true }
-                  temperature_c: { type: number, example: 22.4 }
-                  temperature_f: { type: number, example: 72.3 }
-                  humidity: { type: number, example: 48.6 }
+                  status: { type: string, example: "success" }
+                  playlists:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, example: "arcade" }
+                        selected: { type: boolean, example: true }
+
+  /api/system/time:
+    get:
+      tags:
+        - System
+      summary: Get current device epoch time and timezone
+      responses:
+        '200':
+          description: Current system time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  epoch: { type: integer, example: 1755864000 }
+                  timezone: { type: string, example: "Europe/Paris" }
+                  valid: { type: boolean, example: true }
+    post:
+      tags:
+        - System
+      summary: Synchronize device clock from browser epoch time
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - epoch
+              properties:
+                epoch: { type: integer, example: 1755864000 }
+                timezone: { type: string, example: "Europe/Paris" }
+      responses:
+        '200':
+          description: System time synchronized
 
   /api/audio/status:
     get:
@@ -1459,51 +1595,12 @@ paths:
         '200':
           description: Test tone played
 
-  /api/audio/gain:
-    post:
-      tags:
-        - System
-      summary: Set microphone hardware gain (ES7210)
-      description: Sets the microphone analog/digital gain in dB (0 to 30 dB).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - gain
-              properties:
-                gain: { type: integer, minimum: 0, maximum: 30, example: 24 }
-      responses:
-        '200':
-          description: Gain updated
-
-  /api/audio/play:
-    post:
-      tags:
-        - System
-      summary: Play audio effect or tone
-      description: Plays an alert tone or audio asset on the speaker.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                tone_hz: { type: integer, example: 440 }
-                duration_ms: { type: integer, example: 200 }
-      responses:
-        '200':
-          description: Audio playback started
-
   /api/gyro/status:
     get:
       tags:
         - System
       summary: Get gyroscope and orientation sensor status (QMI8658)
-      description: Returns real-time 3-axis accelerometer and gyro data, auto-rotation angle, and tilt calibration status.
+      description: Returns real-time 3-axis accelerometer and gyro data and current active display rotation angle.
       responses:
         '200':
           description: Gyroscope readings
@@ -1513,10 +1610,10 @@ paths:
                 type: object
                 properties:
                   available: { type: boolean, example: true }
+                  current_rotation: { type: integer, example: 0, enum: [0, 90, 180, 270] }
                   ax: { type: number, example: 0.96 }
                   ay: { type: number, example: 0.08 }
                   az: { type: number, example: -0.22 }
-                  rotation_deg: { type: integer, example: 0 }
 
   /api/gyro/calibrate:
     post:
@@ -1526,6 +1623,44 @@ paths:
       responses:
         '200':
           description: Gyroscope calibrated successfully
+
+  /api/display/test-transition:
+    post:
+      tags:
+        - System
+      summary: Trigger a live rotation transition effect preview on the panel
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transition: { type: string, example: "vortex" }
+                duration_ms: { type: integer, example: 500 }
+      responses:
+        '200':
+          description: Transition preview triggered
+
+  /api/display/orientation:
+    post:
+      tags:
+        - System
+      summary: Update screen orientation, auto-rotate, and transition effect settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotation_offset: { type: integer, enum: [0, 90, 180, 270], example: 0 }
+                auto_rotate: { type: boolean, example: true }
+                rotation_transition: { type: string, example: "vortex" }
+                rotation_transition_duration_ms: { type: integer, example: 400 }
+      responses:
+        '200':
+          description: Orientation settings applied and saved
 
   /api/update:
     post:

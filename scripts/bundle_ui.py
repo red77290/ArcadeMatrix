@@ -2,7 +2,7 @@
 """
 bundle_ui.py - Safe Asset Synchronizer for ArcadeMatrix ESP32 WebUI.
 
-CRITICAL ARCHITECTURAL INVARIANT (GEMINI.md Section 8):
+CRITICAL ARCHITECTURAL INVARIANT (Section 8):
 data/index.html is the SOLE MASTER for the ESP32 WebUI.
 It is STRICTLY PROHIBITED to overwrite data/index.html with ../ArcadeMatrix_RPi/api/www/index.html.
 Raspberry Pi hardware settings (slowdown, mapping, disable_pulsing, pwm_lsb, multiplexing)

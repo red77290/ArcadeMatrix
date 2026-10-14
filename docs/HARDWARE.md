@@ -23,19 +23,27 @@ ArcadeMatrix supports two physical board profiles:
 
 ## 2. Feature Availability & Requirements Matrix
 
-| Engine / Feature | ESP32 Standard (No PSRAM) | Waveshare ESP32-S3 (16MB PSRAM) | Requirement (`EngineRequirements`) |
-|---|---|---|---|
-| **Clock Engine** (30 Themes) | ✅ Active | ✅ Active | None |
-| **Date Engine** | ✅ Active | ✅ Active | None |
-| **Weather Engine** | ✅ Active | ✅ Active | `needsNetwork=true` |
-| **GIF Player** | ✅ Active (SD Streaming) | ✅ Active (PSRAM Buffering) | `needsSd=true` |
-| **Fighter Overlay** | ✅ Active (32px mode) | ✅ Active (64px mode) | `needsSd=true` |
-| **Temp & Humidity** | ⚠️ Active if SHTC3 present | ✅ Active (Onboard SHTC3) | `needsTempSensor=true` |
-| **Visualizer & Decibel** | ⚠️ Active if I2S mic present | ✅ Active (Onboard ES7210) | `needsAudio=true` |
-| **Crypto Ticker** | 🚫 Skipped (*Requires PSRAM*) | ✅ Active (Quote Cache) | `needsPsram=true`, `needsNetwork=true` |
-| **Stock Ticker** | 🚫 Skipped (*Requires PSRAM*) | ✅ Active (Quote Cache) | `needsPsram=true`, `needsNetwork=true` |
-| **Custom Message** | ✅ Active | ✅ Active | None |
-| **Marquee Alert** | ✅ Active | ✅ Active | None |
+| Engine / Feature | Canonical ID | ESP32 Standard (No PSRAM) | Waveshare ESP32-S3 (16MB PSRAM) | Requirement (`EngineRequirements`) |
+|---|---|---|---|---|
+| **Clock Engine** (36 Themes) | `clock` | ✅ Active | ✅ Active | None |
+| **Date Engine** | `date` | ✅ Active | ✅ Active | None |
+| **Weather Engine** | `weather` | ✅ Active | ✅ Active | `needsNetwork=true` |
+| **GIF Player** | `gifs` | ✅ Active (SD Streaming) | ✅ Active (PSRAM Buffering) | `needsSd=true` |
+| **Crypto Ticker** | `crypto` | ✅ Active (4-bit dynamic depth + transition prefetch) | ✅ Active (8-bit + Quote Cache) | `needsNetwork=true`, `needsTls=true` |
+| **Stock Ticker** | `stock` | ✅ Active (4-bit dynamic depth + transition prefetch) | ✅ Active (8-bit + Quote Cache) | `needsNetwork=true`, `needsTls=true` |
+| **Audio Visualizer** | `audiovisualizer` | ⚠️ Active if I2S mic present | ✅ Active (Onboard ES7210) | `needsAudio=true` |
+| **Decibel Meter** | `decibelMeter` | ⚠️ Active if I2S mic present | ✅ Active (Onboard ES7210) | `needsAudio=true` |
+| **Temp & Humidity** | `temp` | ⚠️ Active if SHTC3 present | ✅ Active (Onboard SHTC3) | `needsTempSensor=true` |
+| **Custom Message** | `message` | ✅ Active | ✅ Active | None |
+| **Google Cast / Nest** | `google_cast` | ✅ Active | ✅ Active | `needsNetwork=true` |
+| **Spotify Official Player** | `spotify` | ✅ Active (4-bit dynamic depth) | ✅ Active | `needsNetwork=true`, `needsTls=true` |
+| **System Monitor** | `system_info` | ✅ Active | ✅ Active | None |
+| **Universal Music Player** | `music_player` | 🚫 Skipped (*Requires PSRAM & Audio Output*) | ✅ Active | `needsPsram=true`, `needsAudioOutput=true` |
+| **Master Dashboard** | `dashboard` | ✅ Active (4-bit dynamic depth + transition prefetch) | ✅ Active | None (Network/Sensor optional) |
+| **GNews Live Ticker** | `gnews` | ✅ Active (4-bit dynamic depth + SD cache) | ✅ Active | `needsNetwork=true`, `needsTls=true` |
+| **Arcade Marquee** | `marquee` | ✅ Active | ✅ Active | None |
+| **MQTT Data** | `mqttdata` | ✅ Active (Up to 4 pages) | ✅ Active (Up to 6 pages) | `needsNetwork=true` |
+| **Fighter Overlay** *(Transverse)* | `fighter` *(overlay)* | ✅ Active (32px mode) | ✅ Active (64px mode) | `needsSd=true` |
 
 ---
 

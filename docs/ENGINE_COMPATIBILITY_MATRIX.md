@@ -12,16 +12,16 @@
 | **Live Weather** (`weather`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **Live Ticker & Quotes** (`message`) | `text` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
 | **Real-time Audio Spectrum** (`audiovisualizer`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Audio Sound Level Meter** (`decibel`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Audio Sound Level Meter** (`decibelMeter`) | `audio` | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🚫 **Incompatible**<br>_Requires I2S microphone hardware_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Crypto Ticker & Fear/Greed** (`crypto`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **Stock Ticker & Indices** (`stock`) | `finance` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **Date Display** (`date`) | `info` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **GIF Player** (`gifs`) | `media` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
-| **Environment Sensor** (`temp`) | `sensor` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Environment Sensor** (`temp`) | `sensor` | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🚫 **Incompatible**<br>_Requires SHTC3 temperature sensor_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Google Nest Cast Audio** (`google_cast`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Spotify Player** (`spotify`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **System Monitor** (`system_info`) | `system` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
-| **Universal Music Player** (`music_player`) | `media` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** | 🟢 **30 FPS** |
+| **Universal Music Player** (`music_player`) | `media` | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires external PSRAM memory_ | 🚫 **Incompatible**<br>_Requires I2S audio speaker/DAC output_ | 🚫 **Incompatible**<br>_Requires I2S audio speaker/DAC output_ |
 | **Dashboard Engine** (`dashboard`) | `info` | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** | 🟢 **10 FPS** |
 | **GNews Live Feed** (`gnews`) | `news` | 🟢 **30 FPS** | 🟢 **30 FPS** | 🚫 **Incompatible**<br>_Internal memory fragmented (largest block too small)_ | 🟢 **30 FPS** | 🟢 **30 FPS** |
 | **Gameroom Marquee** (`marquee`) | `arcade` | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | ⚡ **60 FPS** (Engine requires double buffering (tear-free)) | 🟢 **60 FPS** | 🟢 **60 FPS** |
@@ -35,16 +35,16 @@
 | `weather` | 10 FPS | Single Buffer OK | 5 KB / 11 KB | 0 KB | Wi-Fi |
 | `message` | 60 FPS | Prefers Double | 5 KB / 7 KB | 0 KB | Wi-Fi |
 | `audiovisualizer` | 60 FPS | Prefers Double | 11 KB / 23 KB | 0 KB | I2S Mic |
-| `decibel` | 30 FPS | Single Buffer OK | 3 KB / 7 KB | 0 KB | I2S Mic |
+| `decibelMeter` | 30 FPS | Single Buffer OK | 3 KB / 7 KB | 0 KB | I2S Mic |
 | `crypto` | 10 FPS | Single Buffer OK | 7 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `stock` | 10 FPS | Single Buffer OK | 7 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `date` | 30 FPS | Single Buffer OK | 2 KB / 0 KB | 0 KB | None |
 | `gifs` | 60 FPS | Prefers Double | 11 KB / 15 KB | 0 KB | SD Card |
-| `temp` | 30 FPS | Single Buffer OK | 3 KB / 0 KB | 0 KB | None |
-| `google_cast` | 30 FPS | Single Buffer OK | 15 KB / 23 KB | 0 KB | Wi-Fi |
+| `temp` | 30 FPS | Single Buffer OK | 3 KB / 0 KB | 0 KB | SHTC3 Temp |
+| `google_cast` | 30 FPS | Single Buffer OK | 13 KB / 23 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `spotify` | 30 FPS | Single Buffer OK | 13 KB / 23 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `system_info` | 10 FPS | Single Buffer OK | 2 KB / 0 KB | 0 KB | None |
-| `music_player` | 30 FPS | Single Buffer OK | 4 KB / 0 KB | 0 KB | None |
+| `music_player` | 30 FPS | Single Buffer OK | 4 KB / 0 KB | 0 KB | PSRAM |
 | `dashboard` | 10 FPS | Single Buffer OK | 5 KB / 0 KB | 0 KB | None |
 | `gnews` | 30 FPS | Single Buffer OK | 11 KB / 15 KB | 0 KB | Wi-Fi, TLS/HTTPS |
 | `marquee` | 60 FPS | Prefers Double | 7 KB / 15 KB | 0 KB | SD Card |
@@ -62,4 +62,4 @@ To prevent system crashes and heap starvation during heavy network or audio acti
 Any engine requiring TLS or Wi-Fi will be safely marked **Incompatible** if the free internal heap cannot cover its persistent requirements *plus* these admission reserves and panel canvas requirements.
 
 ---
-*Generated by ArcadeMatrix V4 Architecture Tools on 2026-10-06 15:19:24 UTC*
+*Generated by ArcadeMatrix V4 Architecture Tools on 2026-10-14 15:37:21 UTC*

@@ -114,6 +114,13 @@ bool MatrixEngine::begin(const MatrixConfig& config, uint8_t effectiveColorDepth
         mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
     }
 
+    switch (config.rowAddressMode) {
+        case 1:  mxconfig.line_decoder = HUB75_I2S_CFG::TYPE595; break;
+        case 2:  mxconfig.line_decoder = HUB75_I2S_CFG::TYPE_DIRECT; break;
+        case 3:  mxconfig.line_decoder = HUB75_I2S_CFG::SM5266P; break;
+        default: mxconfig.line_decoder = HUB75_I2S_CFG::TYPE138; break;
+    }
+
     // Evaluate canonical rendering pipeline & buffering using PipelineSelectionPolicy
     auto pipeRes = PipelineSelectionPolicy::evaluate(
         totalWidth, config.height, depth, config.render_pipeline, hasPsram

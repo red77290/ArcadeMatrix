@@ -11,7 +11,7 @@
 
 ## 2. Prepare the SD Card
 1. Format your microSD card to **FAT32**.
-2. Copy the contents of the `sdcard_assets/` folder to the root of the microSD card.
+2. Copy the contents of the `release/sdCard/` folder to the root of the microSD card.
 3. Insert the card into your board's SD slot.
 
 ---

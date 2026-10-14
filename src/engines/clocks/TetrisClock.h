@@ -50,6 +50,10 @@ private:
     /// Trace the outline of the digits the blocks are falling into, one pixel outside their cells.
     void drawOutline();
     GFXcanvas1* canvas;       ///< Pre-allocated 1-bit raster canvas
+    int m_logicalSize = 1;
+    int m_offX = 0;
+    int m_offY = 0;
+    uint32_t m_landMs = 350;
 
     void addBlock(const TetrisBlock& b);
     uint16_t blockColor(int8_t charIndex) const;

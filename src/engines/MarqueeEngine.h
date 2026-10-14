@@ -21,6 +21,7 @@ public:
     void render(EngineContext* context) override;
     void activate() override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* engineConfig) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override;
 

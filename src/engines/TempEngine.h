@@ -30,6 +30,9 @@ private:
     float tempOffset;
     int offsetX;
     int offsetY;
+    EnvironmentData m_cachedEnv{};
+    uint32_t m_lastSampleMs = 0;
+    bool m_hasSampled = false;
 
     void drawThermometerIcon(IDrawingSurface* matrix, int x, int y, uint16_t color);
     void drawWaterDropIcon(IDrawingSurface* matrix, int x, int y, uint16_t color);

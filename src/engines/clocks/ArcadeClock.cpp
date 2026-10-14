@@ -10,6 +10,40 @@ ArcadeClock::ArcadeClock(IDrawingSurface* display, const EngineConfig* config) :
     animationFrame = 0;
     lastFrameTime = 0;
     currentTheme = static_cast<PublisherTheme>((engineConfig ? engineConfig->getInt("clock_theme", engineConfig->getInt("theme", 0)) : 0));
+
+    String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
+    if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
+    m_showSeconds = !(fmt == "%H:%M" || fmt == "%I:%M %p");
+
+    m_tateLogicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 0)) : 0;
+    m_logicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1;
+    if (m_logicalSize < 1) m_logicalSize = 1;
+    m_offsetX = engineConfig ? engineConfig->getInt("clock_offset_x", engineConfig->getInt("offset_x", 0)) : 0;
+    m_offsetY = engineConfig ? engineConfig->getInt("clock_offset_y", engineConfig->getInt("offset_y", 0)) : 0;
+
+    m_customColor1 = matrix ? matrix->color565(0, 255, 255) : 0x07FF;
+    m_customColor2 = matrix ? matrix->color565(255, 0, 255) : 0xF81F;
+    if (engineConfig) {
+        String c1Str = engineConfig->getString("clock_color_1", "");
+        if (c1Str.length() > 0) {
+            const char* hex1 = c1Str.c_str();
+            if (hex1[0] == '#') hex1++;
+            if (strlen(hex1) >= 6) {
+                long val1 = strtol(hex1, nullptr, 16);
+                m_customColor1 = matrix ? matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF) : 0x07FF;
+            }
+        }
+        String c2Str = engineConfig->getString("clock_color_2", "");
+        if (c2Str.length() > 0) {
+            const char* hex2 = c2Str.c_str();
+            if (hex2[0] == '#') hex2++;
+            if (strlen(hex2) >= 6) {
+                long val2 = strtol(hex2, nullptr, 16);
+                m_customColor2 = matrix ? matrix->color565((val2 >> 16) & 0xFF, (val2 >> 8) & 0xFF, val2 & 0xFF) : 0xF81F;
+            }
+        }
+    }
+
     String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
     if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
     if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
@@ -23,6 +57,25 @@ ArcadeClock::ArcadeClock(IDrawingSurface* display, const EngineConfig* config) :
                 }
             }
         }
+    }
+
+    m_hasFontOverride = false;
+    m_overrideFont9pt = nullptr;
+    m_overrideFont12pt = nullptr;
+    if (fontSetting.equalsIgnoreCase("PressStart2P") || fontSetting.equalsIgnoreCase("PressStart2P.ttf")) {
+        m_overrideFont9pt = &PressStart2P9pt7b; m_overrideFont12pt = &PressStart2P12pt7b; m_hasFontOverride = true;
+    } else if (fontSetting.equalsIgnoreCase("namco") || fontSetting.equalsIgnoreCase("namco.ttf")) {
+        m_overrideFont9pt = &namco__9pt7b; m_overrideFont12pt = &namco__12pt7b; m_hasFontOverride = true;
+    } else if (fontSetting.equalsIgnoreCase("FreeSansBold") || fontSetting.equalsIgnoreCase("FreeSansBold.ttf")) {
+        m_overrideFont9pt = &FreeSansBold9pt7b; m_overrideFont12pt = &FreeSansBold12pt7b; m_hasFontOverride = true;
+    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold") || fontSetting.equalsIgnoreCase("FreeMonoBold.ttf")) {
+        m_overrideFont9pt = &FreeMonoBold9pt7b; m_overrideFont12pt = &FreeMonoBold12pt7b; m_hasFontOverride = true;
+    } else if (fontSetting.equalsIgnoreCase("RetroGaming") || fontSetting.equalsIgnoreCase("Retro_Gaming") || fontSetting.equalsIgnoreCase("RetroGaming.ttf")) {
+        m_overrideFont9pt = &Retro_Gaming9pt7b; m_overrideFont12pt = &Retro_Gaming12pt7b; m_hasFontOverride = true;
+    } else if (customFont.getFont()) {
+        m_overrideFont9pt = customFont.getFont(); m_overrideFont12pt = customFont.getFont(); m_hasFontOverride = true;
+    } else if (fontSetting.equalsIgnoreCase("Default")) {
+        m_overrideFont9pt = nullptr; m_overrideFont12pt = nullptr; m_hasFontOverride = true;
     }
 }
 
@@ -103,9 +156,7 @@ void ArcadeClock::drawStrWithShadow(const char* str, int x, int y, uint16_t text
 
 void ArcadeClock::drawTextWithShadow(int x, int y, uint16_t textColor, uint16_t shadowColor, int scale) {
     char timeStr[16];
-    String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
-    if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
-    if (fmt == "%H:%M") {
+    if (!m_showSeconds) {
         sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
     } else {
         sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
@@ -141,7 +192,7 @@ void ArcadeClock::drawTateTime() {
     sprintf(sStr, "%02d", storedTime.seconds);
 
     matrix->setFont(nullptr);
-    int logicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 0)) : 0;
+    int logicalSize = m_tateLogicalSize;
     int maxScale = (w >= 64) ? 4 : 2;
     int scale = (logicalSize > 0) ? min(logicalSize, maxScale) : maxScale;
     if (scale < 1) scale = 1;
@@ -151,8 +202,8 @@ void ArcadeClock::drawTateTime() {
     int digitH = 8 * scale;
     int drawX = (w - digitW) / 2;
 
-    int offsetX = engineConfig ? engineConfig->getInt("clock_offset_x", engineConfig->getInt("offset_x", 0)) : 0;
-    int offsetY = engineConfig ? engineConfig->getInt("clock_offset_y", engineConfig->getInt("offset_y", 0)) : 0;
+    int offsetX = m_offsetX;
+    int offsetY = m_offsetY;
     drawX += offsetX;
 
     if (h >= 128) {
@@ -186,33 +237,15 @@ void ArcadeClock::drawStaticTime() {
         drawTateTime();
         return;
     }
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
-    if (logicalSize < 1) logicalSize = 1;
+    int logicalSize = m_logicalSize;
     bool isHD = (matrix->height() >= 64);
     
     const GFXfont* font9pt = nullptr;
     const GFXfont* font12pt = nullptr;
     
-    String fontSetting = engineConfig ? engineConfig->getString("clock_font", "") : "";
-    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font", "");
-    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("clock_font_path", "");
-    if (fontSetting.isEmpty() && engineConfig) fontSetting = engineConfig->getString("font_path", "");
-    
-    if (fontSetting.equalsIgnoreCase("PressStart2P") || fontSetting.equalsIgnoreCase("PressStart2P.ttf")) {
-        font9pt = &PressStart2P9pt7b; font12pt = &PressStart2P12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("namco") || fontSetting.equalsIgnoreCase("namco.ttf")) {
-        font9pt = &namco__9pt7b; font12pt = &namco__12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("FreeSansBold") || fontSetting.equalsIgnoreCase("FreeSansBold.ttf")) {
-        font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("FreeMonoBold") || fontSetting.equalsIgnoreCase("FreeMonoBold.ttf")) {
-        font9pt = &FreeMonoBold9pt7b; font12pt = &FreeMonoBold12pt7b;
-    } else if (fontSetting.equalsIgnoreCase("RetroGaming") || fontSetting.equalsIgnoreCase("Retro_Gaming") || fontSetting.equalsIgnoreCase("RetroGaming.ttf")) {
-        font9pt = &Retro_Gaming9pt7b; font12pt = &Retro_Gaming12pt7b;
-    } else if (customFont.getFont()) {
-        font9pt = customFont.getFont();
-        font12pt = customFont.getFont();
-    } else if (fontSetting.equalsIgnoreCase("Default")) {
-        font9pt = nullptr; font12pt = nullptr;
+    if (m_hasFontOverride) {
+        font9pt = m_overrideFont9pt;
+        font12pt = m_overrideFont12pt;
     } else {
         switch (currentTheme) {
             case THEME_NINTENDO: case THEME_HUDSON: font9pt = &FreeSansBold9pt7b; font12pt = &FreeSansBold12pt7b; break;
@@ -225,9 +258,7 @@ void ArcadeClock::drawStaticTime() {
     }
     
     char timeStr[16];
-    String fmt = engineConfig ? engineConfig->getString("clock_format", "%H:%M:%S") : "%H:%M:%S";
-    if (fmt.isEmpty() && engineConfig) fmt = engineConfig->getString("format", "%H:%M:%S");
-    if (fmt == "%H:%M") {
+    if (!m_showSeconds) {
         sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
     } else {
         sprintf(timeStr, "%02d:%02d:%02d", storedTime.hours, storedTime.minutes, storedTime.seconds);
@@ -294,8 +325,8 @@ void ArcadeClock::drawStaticTime() {
     int fullW = leftExtra + bw + rightExtra;
     int fullH = topExtra + bh + bottomExtra;
     
-    int offsetX = engineConfig ? engineConfig->getInt("clock_offset_x", engineConfig->getInt("offset_x", 0)) : 0;
-    int offsetY = engineConfig ? engineConfig->getInt("clock_offset_y", engineConfig->getInt("offset_y", 0)) : 0;
+    int offsetX = m_offsetX;
+    int offsetY = m_offsetY;
     int x = (matrix->width() - fullW) / 2 + leftExtra + offsetX - bx;
     int y = (matrix->height() - fullH) / 2 + topExtra - by + offsetY;
     
@@ -394,26 +425,8 @@ void ArcadeClock::drawStaticTime() {
             break;
 
         case THEME_CUSTOM_GRADIENT: {
-            uint16_t defaultC1 = matrix->color565(0, 255, 255);  // Cyan
-            uint16_t defaultC2 = matrix->color565(255, 0, 255);  // Magenta
-            if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String("")).length() > 0) {
-                const char* hex1 = (engineConfig ? engineConfig->getString("clock_color_1", "") : String("")).c_str();
-                if (hex1[0] == '#') hex1++;
-                if (strlen(hex1) >= 6) {
-                    long val1 = strtol(hex1, NULL, 16);
-                    defaultC1 = matrix->color565((val1 >> 16) & 0xFF, (val1 >> 8) & 0xFF, val1 & 0xFF);
-                }
-            }
-            if ((engineConfig ? engineConfig->getString("clock_color_2", "") : String("")).length() > 0) {
-                const char* hex2 = (engineConfig ? engineConfig->getString("clock_color_2", "") : String("")).c_str();
-                if (hex2[0] == '#') hex2++;
-                if (strlen(hex2) >= 6) {
-                    long val2 = strtol(hex2, NULL, 16);
-                    defaultC2 = matrix->color565((val2 >> 16) & 0xFF, (val2 >> 8) & 0xFF, val2 & 0xFF);
-                }
-            }
-            textColor = defaultC1;
-            shadowColor = defaultC2;
+            textColor = m_customColor1;
+            shadowColor = m_customColor2;
             break;
         }
 

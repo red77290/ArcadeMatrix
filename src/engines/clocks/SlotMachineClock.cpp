@@ -3,7 +3,9 @@
 #include "../../core/ConfigLoader.h"
 #include <string.h>
 
-SlotMachineClock::SlotMachineClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config); glow = ClockFaceFont::resolveGlow(config);
+SlotMachineClock::SlotMachineClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
+    faceFont.load(config);
+    glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animFrame = 0;
@@ -13,6 +15,20 @@ SlotMachineClock::SlotMachineClock(IDrawingSurface* display, const EngineConfig*
     strcpy(currentTime, "00:00");
     strcpy(targetTime, "00:00");
     lastFrameTime = 0;
+
+    int cfgSize = engineConfig ? engineConfig->getInt("clock_size", 1) : 1;
+    m_gfxSize = (cfgSize > 0) ? cfgSize : 2;
+    m_offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    m_offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+    m_color1 = matrix ? matrix->color565(255, 255, 255) : 0xFFFF;
+    if (engineConfig) {
+        String colStr = engineConfig->getString("clock_color_1", "");
+        if (colStr.length() > 0 && colStr[0] == '#') {
+            long c1 = strtol(colStr.c_str() + 1, nullptr, 16);
+            m_color1 = matrix ? matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF) : 0xFFFF;
+        }
+    }
+    if (m_color1 == 0) m_color1 = matrix ? matrix->color565(255, 255, 255) : 0xFFFF;
 }
 
 void SlotMachineClock::draw(const TimeData& t) {
@@ -66,16 +82,10 @@ void SlotMachineClock::update() {
     int h = matrix->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
-    int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
-    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
-    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
-
-    uint16_t color1 = matrix->color565(255, 255, 255);
-    if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[0] == '#') {
-        long c1 = strtol(&(engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[1], NULL, 16);
-        color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
-    }
-    if (color1 == 0) color1 = matrix->color565(255, 255, 255);
+    int gfxSize = m_gfxSize;
+    int offX = m_offX;
+    int offY = m_offY;
+    uint16_t color1 = m_color1;
 
     uint16_t frameColor = spinning ? matrix->color565(200, 150, 0) : matrix->color565(80, 80, 80);
     if (!spinning && (animFrame / 20) % 2 == 0) {

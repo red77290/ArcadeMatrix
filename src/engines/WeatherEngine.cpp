@@ -137,7 +137,7 @@ void WeatherEngine::deactivate() {
 }
 
 bool WeatherEngine::shutdownForDestruction() {
-    if (!m_fetchTask) {
+    if (!m_fetchTask && m_fetchExited.load(std::memory_order_acquire)) {
         return true;
     }
     stopFetchTask();
@@ -218,6 +218,7 @@ void WeatherEngine::startFetchTask() {
     // Core 0 keeps the render loop on Core 1 free; 8 KB covers a TLS handshake and JSON parse.
     if (xTaskCreatePinnedToCore(fetchTaskEntry, "weather_fetch", 8192, this, 1, &m_fetchTask, 0) != pdPASS) {
         m_fetchTask = nullptr;
+        m_fetchExited.store(true, std::memory_order_release);
         LOGW("WeatherEngine", "fetch task did not start; falling back to no updates");
     }
 }
@@ -247,6 +248,7 @@ void WeatherEngine::fetchTaskEntry(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
+    self->m_fetchTask = nullptr;
     self->m_fetchExited.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
 }

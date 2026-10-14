@@ -189,10 +189,11 @@ void GoogleCastEngine::applyConfig(const EngineConfig* config) {
     if (oldIp != m_deviceIp || oldName != m_deviceName) {
         m_resolvedIp = m_deviceIp;
         m_lastMdnsQuery = 0;
-        if (m_client.connected()) {
-            m_client.stop();
+        m_lastMdnsQueryMs = 0;
+        m_reconnectRequested.store(true, std::memory_order_release);
+        if (m_pollTaskHandle) {
+            xTaskNotifyGive(m_pollTaskHandle);
         }
-        m_lastTransportId = "";
     }
 }
 
@@ -205,6 +206,13 @@ void GoogleCastEngine::pollTaskStatic(void* pvParameters) {
 
 void GoogleCastEngine::pollTaskLoop() {
     while (m_taskRunning) {
+        if (m_reconnectRequested.exchange(false, std::memory_order_acq_rel)) {
+            if (m_client.connected()) {
+                m_client.stop();
+            }
+            m_lastTransportId = "";
+            m_nextReconnectMs = 0;
+        }
         if (m_isActive && WiFi.status() == WL_CONNECTED) {
             pollCastStatus();
             static uint32_t lastHwmLog = 0;
@@ -887,11 +895,12 @@ EngineDescriptor GoogleCastDescriptorHandler::getDescriptor() const {
     desc.capabilities.realtime = true;
 
     desc.requirements.needsNetwork = true;
-    desc.requirements.needsTls = false;
+    desc.requirements.needsTls = true;
     desc.requirements.needsPsram = false; // Adaptive: works on both ESP32 classic and S3!
     desc.requirements.targetFps = 30;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalPersistentBytes = 14000;
+    desc.requirements.internalContiguousBytes = 24000;
 
     desc.schema.fields = {
         ConfigField("device_ip", ConfigType::STRING, "Device IP (Optional)", "Static IP of your Google Home / Nest Audio. Leave empty for automatic discovery.", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),

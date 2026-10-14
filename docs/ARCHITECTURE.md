@@ -21,14 +21,19 @@ This document is the **deep, exhaustive** reference for the ArcadeMatrix archite
 9. [Schema-Driven Dynamic UI & Options Endpoints](#9-schema-driven-dynamic-ui--options-endpoints)
 10. [Internationalization Architecture (i18n) & Single Source of Truth](#10-internationalization-architecture-i18n--single-source-of-truth)
 11. [Hardware Abstraction Layer (`HardwareHAL`) & Capabilities Gating](#11-hardware-abstraction-layer-hardwarehal--capabilities-gating)
-12. [The Display Arbiter: Multi-Source Priority Resolution](#12-the-display-arbiter-multi-source-priority-resolution)
-13. [The Transverse Overlay Compositor (`OverlayManager`)](#13-the-transverse-overlay-compositor-overlaymanager)
-14. [Dual-Core Runtime & FreeRTOS Task Isolation](#14-dual-core-runtime--freertos-task-isolation)
-15. [Frame Pacing & DMA Double-Buffering](#15-frame-pacing--dma-double-buffering)
+12. [The Display Arbiter & Display Runtime (`DisplayArbiter`, `DisplayRuntime`)](#12-the-display-arbiter--display-runtime-displayarbiter-displayruntime)
+13. [Formally Proven SRSW Lock-Free Configuration (`ConfigSnapshot`)](#13-formally-proven-srsw-lock-free-configuration-configsnapshot)
+14. [Transverse Overlay Compositor (`OverlayManager`)](#14-transverse-overlay-compositor-overlaymanager)
+15. [Dual-Core Runtime & FreeRTOS Task Isolation](#15-dual-core-runtime--freertos-task-isolation)
 16. [Autonomous Audio Subsystem Architecture (`AudioHub` & `AudioOutputHAL`)](#16-autonomous-audio-subsystem-architecture-audiohub--audiooutputhal)
 17. [Gyroscopic Orientation Architecture (`GyroHAL` & `DisplayOrientationManager`)](#17-gyroscopic-orientation-architecture-gyrohal--displayorientationmanager)
 18. [HTTP REST API Surface](#18-http-rest-api-surface)
 19. [Build Metadata & Telemetry](#19-build-metadata--telemetry)
+20. [Multi-Resolution & Declarative Geometry Architecture](#20-multi-resolution--declarative-geometry-architecture)
+21. [Ownership Contract & Control-Plane Boundaries](#21-ownership-contract--control-plane-boundaries)
+22. [Validation Architecture & Testing Framework](#22-validation-architecture--testing-framework)
+23. [Drawing Surface Architecture, Dirty-State Tracking & Memory Invariants](#23-drawing-surface-architecture-dirty-state-tracking--memory-invariants)
+24. [Dynamic Presentation Pipeline & Memory Optimization Architecture](#24-dynamic-presentation-pipeline--memory-optimization-architecture)
 
 ---
 
@@ -447,7 +452,7 @@ The ESP32 platform exhibits distinct hardware memory tiers:
 
 | Hardware Board | Internal SRAM | External PSRAM | DMA Memory | SSL / TLS Strategy | Max Resolution |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **ESP32 Classic (`esp32dev`)** | ~320 KB (shared with FreeRTOS & WiFi) | None | Internal SRAM (DMA-capable) | **Gated Off:** TLS buffers (~45-60 KB each) starve DMA, causing crashes. Heavy SSL engines (Crypto, Stock) are disabled via `EngineCapabilities`. | `128x32` / `64x32` |
+| **ESP32 Classic (`esp32dev`)** | ~320 KB (shared with FreeRTOS & WiFi) | None | Internal SRAM (DMA-capable) | **Dynamic 4-bit Depth + Serialized TLS:** Presentation downshifts to 4-bit color depth (`canvas_single`), TLS handshakes are serialized via `NetworkBudget::ScopedTlsHandshakeLock`, and `CryptoEngine`/`StockEngine` prefetch via `fetchCombined()` in the DMA-released transition window. | `128x32` / `64x32` |
 | **ESP32-S3 Waveshare (`esp32s3_waveshare`)** | ~320 KB (core SRAM) | **8 MB / 16 MB Octal PSRAM** | Internal SRAM only (`MALLOC_CAP_INTERNAL \| MALLOC_CAP_DMA`) | **Internal-DRAM-only, serialized:** mbedTLS uses the stock ESP-IDF/Arduino allocator (never PSRAM — see below). All TLS handshakes system-wide are serialized through `NetworkBudget::ScopedTlsHandshakeLock`. | `256x64` / `64x256` |
 
 #### How the SSL / TLS Memory Exhaustion Was Solved (and why mbedTLS never uses PSRAM)
@@ -456,7 +461,7 @@ On resource-constrained microcontrollers, establishing HTTPS/TLS connections req
 An earlier iteration of this codebase attempted to solve this by routing mbedTLS's dynamic allocations to PSRAM via a custom `mbedtls_platform_set_calloc_free()` hook (`MbedTlsAllocator`), on the theory that internal DRAM would then be fully reserved for real-time networking and display DMA. **Live hardware testing proved this actively corrupts the display**: on the ESP32-S3 Waveshare board, the HUB75 framebuffer is itself PSRAM-resident (`-D SPIRAM_DMA_BUFFER`, required because moving it to internal DRAM would cost ~64 KB of internal DRAM this board cannot spare). mbedTLS's ~32 KB combined TLS record buffers are exactly the kind of large, bursty PSRAM access that contends with the HUB75 GDMA engine's continuous PSRAM reads for the framebuffer over the shared PSRAM cache — any TLS handshake with PSRAM-resident buffers reliably blanked the display within seconds. **This allocator has been reverted and removed** (`MbedTlsAllocator.cpp/.h` deleted); mbedTLS is back to the stock, 100%-internal-DRAM allocator on both targets, matching `v3.1.0` behavior.
 
 Display integrity takes strict priority over TLS reliability: a TLS fetch that fails due to internal DRAM pressure degrades gracefully (cached values are kept — see `DashboardDataProvider`, `YahooFinanceProvider`, `BinanceProvider`), whereas a corrupted display cannot recover without a reboot. Since internal DRAM is now the sole home for both TLS and DMA/networking, the actual fix is **admission control + serialization**, not allocator routing:
-1. **Capabilities Gating on Classic ESP32:** Heavy network engines (`CryptoEngine`, `StockEngine`) declare `EngineRequirements::needsPsram = true`. On boards without PSRAM, `ConfigSanitizer` automatically gates them off safely without crashing.
+1. **Dynamic 4-Bit Downshift & Transition Prefetch on Classic ESP32:** Network TLS engines (`CryptoEngine`, `StockEngine`, `DashboardEngine`) declare `EngineRequirements::needsPsram = false` and `needsTls = true`. On `esp32dev`, `PipelineSelectionPolicy` automatically downshifts presentation depth to 4-bit (`canvas_single`), reclaiming 8 KB of DMA SRAM, while `prefetchData()` (`fetchCombined()`) runs inside the clean transition window with DMA released and `IconService` caches icons via a lightweight 3-level JPEG pipeline (~2.5 KB RAM). Only audio streaming engines (`music_player`) require PSRAM (`needsPsram = true`).
 2. **System-Wide TLS Serialization (`NetworkBudget::ScopedTlsHandshakeLock`):** Every TLS call site in the codebase (Dashboard weather/markets, Crypto, Stock, Spotify, Google Cast, Artwork, Marquee HTTPS fallback, GNews, Pixelcade sync) constructs a `ScopedTlsHandshakeLock` immediately before `WiFiClientSecure::connect()`. This is a single global FreeRTOS mutex: only one TLS handshake may be in flight anywhere in the firmware at any time, bounding peak internal-DRAM demand from concurrent handshakes to a single ~32 KB reservation instead of N-way overlap. **Atomicity fix (this round):** the constructor re-validates `NetworkBudget::canStartTlsSession()` *while already holding the mutex*, immediately before reporting success — closing a TOCTOU race where the budget could have been checked, found sufficient, and then invalidated by another handshake/allocation while this task was still waiting (up to 5s) to acquire the contended mutex. A cheap, non-authoritative `canStartTlsSession()` pre-check is still allowed at call sites purely to avoid blocking on an already-known-insufficient budget; only the lock's internal post-acquire re-check is authoritative.
 3. **Known open limitation:** the serialization above prevents crashes/display corruption, but does **not** solve underlying internal-DRAM fragmentation. On live hardware, with `Dashboard` active, free internal DRAM has been observed to drop from ~65 KB to a fragmented plateau of ~11-12 KB (largest block ~3 KB) within about 3 minutes of uptime. Since `canStartTlsSession()` requires `largestInternalBlock >= 16717 bytes`, **once this plateau is reached, `GoogleCastEngine` (and any other TLS consumer) can be denied admission indefinitely** — this currently manifests as **Google Cast never successfully connecting / rendering anything** once the system has been up for a few minutes with Dashboard or other engines active, even though mDNS discovery of the Cast device itself succeeds. This is an accepted degradation path (no crash, no corruption) but is **not yet solved** — see the Fragmentation / Future Work note below.
 4. **Hardware-verified update (classic ESP32, no PSRAM, 128x32; `logBoot7`-`logBoot12`):**
@@ -548,87 +553,76 @@ Real-time audio decoding and HUB75 matrix scanning operate concurrently without 
 - **`sdmmc_read_blocks failed (257)`** still occurs intermittently under heavy fragmentation (observed alongside the above); `ConfigLoader` and `GifEngine` recover gracefully (backup restore / skip), but the root allocation-pressure cause is shared with the TLS admission problem above and needs a dedicated defragmentation or reservation strategy (e.g. a small dedicated internal-DRAM pool reserved at boot for DMA-capable transactions) rather than best-effort admission gating.
 - A prior live-hardware session observed a Task Watchdog Timeout / `abort()` / reboot at ~5.5 minutes uptime while `GifEngine` was active with severely fragmented heap and Cast TLS retries running concurrently. The most recent soak test (after the TLS admission-atomicity fix) ran ~6 minutes without that crash recurring, but the test was ended by an intentional physical USB unplug before a longer window could confirm the fix's durability — **this crash is not yet confirmed fixed**, only not-yet-reproduced under the new serialization.
 
-
-
 ---
 
-## 2. High-Level Component Map
+## 16. Autonomous Audio Subsystem Architecture (`AudioHub` & `AudioOutputHAL`)
 
-```mermaid
-flowchart TD
-    subgraph Boot["Boot & Setup (Core 1)"]
-        MAIN["main.cpp (setup)"] --> HAL["HardwareHAL.begin() (Sensor & I2S probe)"]
-        HAL --> CFG["ConfigLoader::load() + ConfigSanitizer::sanitize()"]
-        CFG --> REG["EngineRegistrar::registerAll()"]
-        REG --> RM["RotationManager::begin()"]
-        RM --> ARB["DisplayArbiter"]
-    end
-
-    subgraph Core0["Core 0: Network & Services"]
-        WS["AsyncWebServer (Port 80)"]
-        WS --> API["REST API (/api/v1/*, /api/engines, /api/instances)"]
-        API --> SAN["ConfigSanitizer"]
-        SAN --> SAVE["ModularConfigManager (/config/*.json)"]
-        SAVE --> WSC["WorkingSetCache (RAM Flyweight Cache)"]
-        MDNS["mDNS Responder"]
-        AH["AudioHub (Background Audio Arbiter)"]
-        AH --> AHAL["AudioOutputHAL (I2S TX DAC)"]
-    end
-
-    subgraph Core1["Core 1: Matrix Render Loop (FreeRTOS)"]
-        LOOP["main.cpp (loop)"] --> ARB_EVAL["DisplayArbiter::evaluate()"]
-        ARB_EVAL --> RM_LOOP["RotationManager::loop() (Lazy-Once)"]
-        RM_LOOP --> ENG["Active IEngine (update + render)"]
-        ENG --> SURFACE["IDrawingSurface (DirectDma / CanvasBuffered)"]
-        RM_LOOP --> OV["OverlayManager::render() (Fighter Pass)"]
-        OV --> SURFACE
-        SURFACE --> PRESENT["present() (Hub75BulkEncoder / FastBlit)"]
-        PRESENT --> DMA["DMA Output to HUB75 LEDs"]
-    end
-
-    API -.->|"actionMutex queue (RECREATE_INSTANCE / NOTIFY_CONFIG)"| RM
-```,StartLine:522,TargetContent:
-
----
-
-## 3. The Engine Contract (`IEngine`)
-
-Every display engine implements the abstract `IEngine` contract defined in [`include/core/EngineContract.h`](../include/core/EngineContract.h):
-
-```cpp
-class IDisplayGeometryAware {
-public:
-    virtual ~IDisplayGeometryAware() = default;
-    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) = 0;
-};
-
-class IEngine : public IDisplayGeometryAware {
-public:
-    virtual ~IEngine() = default;
-
-    // Lifecycle
-    virtual EngineError initialize(EngineContext* context, const EngineConfig* config) = 0;
-    virtual void activate() = 0;
-    virtual void update(EngineContext* context) = 0;
-    virtual void render(EngineContext* context) = 0;
-    virtual void deactivate() = 0;
-    
-    // Dynamic Configuration
-    virtual void onConfigChanged(const EngineConfig* config) {}
-    
-    // Geometry Awareness (rebuilds geometry-derived caches on rotation)
-    virtual void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {}
-    
-    // Capabilities & Flow
-    virtual bool isFinished() const { return false; }
-    virtual bool isRealtime() const { return false; }
-    virtual bool selfPaced() const { return false; }
-    virtual bool allowsOverlay() const { return true; }
-    virtual bool allowRotation() const { return true; }
-    virtual bool hasNewFrame() const { return true; }
-    virtual bool needsClear() const { return true; }
-};
+```text
+Audio Services (BT, Spotify, AirPlay, WebRadio)
+    ↓ (PCM + Metadata)
+AudioHub (State, Generation & Arbitration)
+    ├──► AudioOutputHAL (Hardware I2S TX DAC)
+    ├──► AudioAnalysisService (FFT / RMS Spectrum)
+    └──► ArtworkService (PSRAM Image Cache)
+            ↓
+      AudioPlaybackState
+            ↓
+       MusicEngine (Visual Presentation Only)
 ```
+
+- **`AudioHub`** arbitrates active audio sources and publishes an immutable `AudioPlaybackState` snapshot with an incrementing `generation` identifier.
+- **`AudioOutputHAL`** is the sole hardware abstraction authorized to communicate with the physical I2S DAC (`ES8311`).
+- **`MusicEngine`** renders audio playback state visually on Core 1 without touching audio hardware or network sockets.
+
+---
+
+## 17. Gyroscopic Orientation Architecture (`GyroHAL` & `DisplayOrientationManager`)
+
+- **`GyroHAL`** polls I2C inertial sensors (`MPU6050`, `QMI8658`) on Core 0 and computes the discrete logical orientation (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) with a 500 ms debounce filter and configurable mounting offset.
+- **`DisplayOrientationManager`** schedules orientation transitions and applies physical framebuffer rotation (`display->setRotation()`) exclusively on Core 1 at the transition apex.
+- Display engines and `OverlayManager` adapt dynamically to the updated `DisplayGeometry` via `onDisplayGeometryChanged()`.
+
+---
+
+## 18. HTTP REST API Surface
+
+| Method | Route | Description |
+| :-- | :-- | :-- |
+| `GET` | `/api/v1/system/status` | Heap, PSRAM, uptime, WiFi, capabilities. |
+| `GET` | `/api/engines` | Returns all engine descriptors and schemas. |
+| `GET` | `/api/instances` | Returns active instances and configurations. |
+| `POST`| `/api/instances` | Creates or updates an engine instance. |
+| `GET` | `/api/rotation` | Returns current playlist rotation. |
+| `POST`| `/api/rotation` | Updates playlist rotation sequence. |
+| `GET` | `/api/audio/status` | Current audio playback state, source, volume. |
+| `POST`| `/api/audio/volume` | Adjusts master audio volume (0-100%). |
+| `GET` | `/api/gyro/status` | Current gravity vector, active rotation, and transition FX. |
+| `POST`| `/api/gyro/calibrate` | 1-Click zero reference calibration ($0^\circ$ Normal). |
+| `POST`| `/api/display/orientation` | Sets manual rotation, mounting offset, and transition FX. |
+| `POST`| `/api/display/test-transition` | Triggers a live preview of rotation transition effects. |
+| `GET` | `/api/gifs/library` | Playlist folders of one library with file counts (from `playlists.json`). |
+| `GET` | `/api/gifs/files` | Files of one playlist folder, streamed from its `index.txt`. |
+| `GET` | `/api/gifs/file` | Serve one media file (inline preview; `download=1` for an attachment). |
+| `POST`| `/api/gifs/upload` | Multipart upload into a playlist folder (rotation suspended while writing). |
+| `POST`| `/api/gifs/mkdir` | Create a playlist folder. |
+| `POST`| `/api/gifs/rename` | Rename a folder, or a file when `name` is given. |
+| `POST`| `/api/gifs/reindex` | Rebuild `index.txt` + `playlists.json` for **both** libraries (background task, `202`). |
+| `GET` | `/api/gifs/reindex/status` | Rescan progress (`running`, `done/total`, `files`, `eta`, `last_result`). |
+| `DELETE`| `/api/gifs/reindex` | Cancel a running rescan (honoured between folders). |
+| `DELETE`| `/api/gifs/file` | Delete one file. |
+| `DELETE`| `/api/gifs/folder` | Delete a playlist folder recursively. |
+
+Every `/api/gifs/*` route takes an optional `orientation=yoko|tate` parameter selecting the horizontal
+(`/gifs`) or vertical (`/gifs_tate`) library, matching the split `GifEngine` already makes between the two
+roots. Omitting it means `yoko`. `POST /api/gifs/reindex` ignores it and always walks both roots, so
+vertical display playlists are rebuilt too; the rescan slot is claimed atomically, and a second request
+while one is running answers `409`.
+
+---
+
+## 19. Build Metadata & Telemetry
+
+The `/api/v1/system/version` endpoint exposes the exact build fingerprint (`git_commit`, `build_timestamp`, `firmware_version`), ensuring traceability between source code and running firmware.
 
 ---
 
@@ -680,48 +674,6 @@ enum class LayoutClass : uint8_t {
 - `SD:/gifs/` holds landscape-optimized GIFs (YOKO).
 - `SD:/gifs_tate/` holds portrait-optimized GIFs (TATE).
 - `GifSourceSelector` resolves the appropriate primary and fallback directories based on `DisplayGeometry`. `GifEngine` remains completely decoupled from layout classes and utilizes `LayoutHelper::aspectFit()` per frame for optimal letterboxing/pillarboxing.
-
----
-
-## 18. HTTP REST API Surface
-
-| Method | Route | Description |
-| :-- | :-- | :-- |
-| `GET` | `/api/v1/system/status` | Heap, PSRAM, uptime, WiFi, capabilities. |
-| `GET` | `/api/engines` | Returns all engine descriptors and schemas. |
-| `GET` | `/api/instances` | Returns active instances and configurations. |
-| `POST`| `/api/instances` | Creates or updates an engine instance. |
-| `GET` | `/api/rotation` | Returns current playlist rotation. |
-| `POST`| `/api/rotation` | Updates playlist rotation sequence. |
-| `GET` | `/api/audio/status` | Current audio playback state, source, volume. |
-| `POST`| `/api/audio/volume` | Adjusts master audio volume (0-100%). |
-| `GET` | `/api/gyro/status` | Current gravity vector, active rotation, and transition FX. |
-| `POST`| `/api/gyro/calibrate` | 1-Click zero reference calibration ($0^\circ$ Normal). |
-| `POST`| `/api/display/orientation` | Sets manual rotation, mounting offset, and transition FX. |
-| `POST`| `/api/display/test-transition` | Triggers a live preview of rotation transition effects. |
-| `GET` | `/api/gifs/library` | Playlist folders of one library with file counts (from `playlists.json`). |
-| `GET` | `/api/gifs/files` | Files of one playlist folder, streamed from its `index.txt`. |
-| `GET` | `/api/gifs/file` | Serve one media file (inline preview; `download=1` for an attachment). |
-| `POST`| `/api/gifs/upload` | Multipart upload into a playlist folder (rotation suspended while writing). |
-| `POST`| `/api/gifs/mkdir` | Create a playlist folder. |
-| `POST`| `/api/gifs/rename` | Rename a folder, or a file when `name` is given. |
-| `POST`| `/api/gifs/reindex` | Rebuild `index.txt` + `playlists.json` for **both** libraries (background task, `202`). |
-| `GET` | `/api/gifs/reindex/status` | Rescan progress (`running`, `done/total`, `files`, `eta`, `last_result`). |
-| `DELETE`| `/api/gifs/reindex` | Cancel a running rescan (honoured between folders). |
-| `DELETE`| `/api/gifs/file` | Delete one file. |
-| `DELETE`| `/api/gifs/folder` | Delete a playlist folder recursively. |
-
-Every `/api/gifs/*` route takes an optional `orientation=yoko|tate` parameter selecting the horizontal
-(`/gifs`) or vertical (`/gifs_tate`) library, matching the split `GifEngine` already makes between the two
-roots. Omitting it means `yoko`. `POST /api/gifs/reindex` ignores it and always walks both roots, so
-vertical display playlists are rebuilt too; the rescan slot is claimed atomically, and a second request
-while one is running answers `409`.
-
----
-
-## 19. Build Metadata & Telemetry
-
-The `/api/v1/system/version` endpoint exposes the exact build fingerprint (`git_commit`, `build_timestamp`, `firmware_version`), ensuring traceability between source code and running firmware.
 
 ---
 

@@ -7,6 +7,7 @@
 #include "ClockwiseScene.h"
 #include "ClockFaceFont.h"
 #include <stdio.h>
+#include <time.h>
 
 namespace {
 // Colours and positions as they are in the original face.
@@ -54,9 +55,13 @@ void PokedexClock::drawFace(int w, int h) {
     int wd = 0;
     {
         // Sunday = 0, matching the source face's weekday numbering.
-        static const uint8_t MDAYS[12] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
-        (void)MDAYS;
-        wd = storedTime.hours >= 0 ? (millis() / 86400000UL) % 7 : 0;   // no date in TimeData
+        time_t nowT = time(nullptr);
+        struct tm currentTime = {};
+        if (nowT > 1600000000 && localtime_r(&nowT, &currentTime)) {
+            wd = (currentTime.tm_wday >= 0 && currentTime.tm_wday <= 6) ? currentTime.tm_wday : 0;
+        } else {
+            wd = (storedTime.tm_wday <= 6) ? storedTime.tm_wday : 0;
+        }
     }
     int x = 36 + ((wd > 3 ? (wd - 4) : wd) * 6);
     int y = 35 + (wd > 3 ? 5 : 0);

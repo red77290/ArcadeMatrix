@@ -1084,7 +1084,12 @@ bool FighterEngine::loop() {
     
     uint32_t now = millis();
     extern ConfigLoader config;
-    uint32_t speed = (config.system.idle_fighter_speed >= 25 && config.system.idle_fighter_speed <= 200) ? config.system.idle_fighter_speed : 100;
+    uint32_t speed = 100;
+    {
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        uint32_t cfgSpeed = guard.get().system.idle_fighter_speed;
+        if (cfgSpeed >= 25 && cfgSpeed <= 200) speed = cfgSpeed;
+    }
     
     // Update frames
     FgtAnimation* anim1 = nullptr;
@@ -1390,15 +1395,23 @@ void FighterEngine::draw() {
             matrix->setFont(nullptr);
             matrix->setTextSize(1);
             matrix->setTextColor(rgb565(255, 215, 0));
-            String p1Tag = p1.name.substring(0, 3);
-            p1Tag.toUpperCase();
+            char p1Tag[4] = {0, 0, 0, 0};
+            const char* p1Raw = p1.name.c_str();
+            int p1Len = 0;
+            for (; p1Len < 3 && p1Raw[p1Len] != '\0'; ++p1Len) {
+                p1Tag[p1Len] = (char)toupper((unsigned char)p1Raw[p1Len]);
+            }
             matrix->setCursor(2, 8);
             matrix->print(p1Tag);
 
             matrix->setTextColor(rgb565(0, 200, 255));
-            String p2Tag = p2.name.substring(0, 3);
-            p2Tag.toUpperCase();
-            int p2TagX = max(2, screenW - (int)(p2Tag.length() * 6) - 2);
+            char p2Tag[4] = {0, 0, 0, 0};
+            const char* p2Raw = p2.name.c_str();
+            int p2Len = 0;
+            for (; p2Len < 3 && p2Raw[p2Len] != '\0'; ++p2Len) {
+                p2Tag[p2Len] = (char)toupper((unsigned char)p2Raw[p2Len]);
+            }
+            int p2TagX = max(2, screenW - (p2Len * 6) - 2);
             matrix->setCursor(p2TagX, 8);
             matrix->print(p2Tag);
         }

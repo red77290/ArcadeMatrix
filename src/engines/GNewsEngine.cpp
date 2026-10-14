@@ -11,6 +11,17 @@ GNewsEngine::GNewsEngine() {
     _geometry.layoutClass = LayoutClass::WIDE;
 }
 
+GNewsEngine::~GNewsEngine() {
+    if (m_fetchTask && !m_fetchExited.load(std::memory_order_acquire)) {
+        m_stopFetch.store(true, std::memory_order_release);
+        net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
+        while (!m_fetchExited.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        m_fetchTask = nullptr;
+    }
+}
+
 void GNewsEngine::applyConfig(const EngineConfig* config) {
     if (!config) return;
     config_api_key = config->getString("api_key", "");
@@ -48,17 +59,7 @@ EngineError GNewsEngine::initialize(EngineContext* context, const EngineConfig* 
 }
 
 const char* GNewsEngine::getCategoryShort(const char* category) {
-    if (!category) return "NEWS";
-    String cat = String(category);
-    cat.toLowerCase();
-    if (cat.indexOf("tech") >= 0) return "TECH";
-    if (cat.indexOf("sci") >= 0) return "SCI";
-    if (cat.indexOf("sport") >= 0) return "SPORT";
-    if (cat.indexOf("bus") >= 0 || cat.indexOf("fin") >= 0 || cat.indexOf("econ") >= 0) return "BIZ";
-    if (cat.indexOf("world") >= 0 || cat.indexOf("nation") >= 0) return "WORLD";
-    if (cat.indexOf("ent") >= 0 || cat.indexOf("art") >= 0) return "CULT";
-    if (cat.indexOf("heal") >= 0) return "SANTE";
-    return "NEWS";
+    return I18n::getGNewsCategoryShort(category);
 }
 
 void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
@@ -407,12 +408,16 @@ void GNewsEngine::stopFetchTask() {
 void GNewsEngine::fetchTaskEntry(void* arg) {
     auto* self = static_cast<GNewsEngine*>(arg);
     self->fetchWorker();
+    self->m_fetchTask = nullptr;
     self->m_fetchExited.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
 }
 
 void GNewsEngine::fetchWorker() {
     while (!m_stopFetch.load(std::memory_order_acquire)) {
+        if (m_purgeRequested.exchange(false, std::memory_order_acq_rel)) {
+            gnewsService.purgeArticles();
+        }
         bool force = config_force_refresh || m_fetchRequested.exchange(false);
         gnewsService.fetchNews(config_api_key, config_category, config_keywords,
                                config_lang, config_country, config_max_articles, config_cache_ttl_min,
@@ -450,13 +455,22 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     applyConfig(config);
     cachedArticleIndex = -1;
     if (config_force_refresh && !prevForce) {
-        gnewsService.purgeArticles();
+        m_purgeRequested.store(true, std::memory_order_release);
     }
     m_fetchRequested.store(true, std::memory_order_release);
 }
 
 void GNewsEngine::deactivate() {
+    m_stopFetch.store(true, std::memory_order_release);
+    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
+}
+
+bool GNewsEngine::shutdownForDestruction() {
+    if (!m_fetchTask && m_fetchExited.load(std::memory_order_acquire)) {
+        return true;
+    }
     stopFetchTask();
+    return m_fetchExited.load(std::memory_order_acquire);
 }
 
 bool GNewsEngine::isFinished() const {
@@ -464,6 +478,7 @@ bool GNewsEngine::isFinished() const {
 }
 
 void GNewsEngine::update(EngineContext* context) {
+    startFetchTask();
     uint32_t now = millis();
     lastUpdateTime = now;
 
@@ -900,11 +915,13 @@ void GNewsEngine::renderCompact(EngineContext* context, const GNewsArticle& arti
     matrix->print(catShort);
 
     // Article index
-    String idx = String(currentArticleIndex + 1) + "/" + String(totalCount);
-    int idxX = mW - (idx.length() * 6 + 2);
+    char idxBuf[16];
+    int idxLen = snprintf(idxBuf, sizeof(idxBuf), "%u/%u", (unsigned)(currentArticleIndex + 1), (unsigned)totalCount);
+    if (idxLen < 0) idxLen = 0;
+    int idxX = mW - (idxLen * 6 + 2);
     matrix->setTextColor(matrix->color565(140, 150, 160));
     matrix->setCursor(idxX, 1);
-    matrix->print(idx);
+    matrix->print(idxBuf);
 
     matrix->drawFastHLine(0, divY, mW, matrix->color565(35, 40, 50));
 }

@@ -34,6 +34,11 @@ String RotationTransitionFX::effectToString(RotationEffect effect) {
         case RotationEffect::SMOOTH_SLIDE: return "slide";
         case RotationEffect::TUNNEL_ZOOM: return "zoom";
         case RotationEffect::MATRIX_RAIN: return "matrix";
+        case RotationEffect::WIPE: return "wipe";
+        case RotationEffect::CURTAIN: return "curtain";
+        case RotationEffect::DISSOLVE: return "dissolve";
+        case RotationEffect::CHECKER: return "checker";
+        case RotationEffect::SHUTTER: return "shutter";
         case RotationEffect::RANDOM: return "random";
         default: return "none";
     }

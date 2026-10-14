@@ -88,8 +88,13 @@ void DisplayRuntime::reconcile(const ConfigSnapshot& snapshot) {
     
     // Only notify the currently active instance if present to avoid
     // Core 1 allocation and mutex contention on hot-path (Invariant 1)
-    if (m_rotationManager && m_session.activeEngine && m_session.engineHandle.instanceId[0] != '\0') {
-        m_rotationManager->notifyConfigChanged(m_session.engineHandle.instanceId);
+    if (m_rotationManager && m_session.activeEngine) {
+        if (m_session.engineHandle.instanceId[0] != '\0') {
+            m_rotationManager->notifyConfigChanged(m_session.engineHandle.instanceId);
+        } else if (m_session.sourceId == DisplaySourceId::ROTATION &&
+                   m_rotationManager->getCurrentInstanceIdCStr()[0] != '\0') {
+            m_rotationManager->notifyConfigChanged(m_rotationManager->getCurrentInstanceIdCStr());
+        }
     }
     LOGI("DisplayRuntime", "Reconciled display runtime to config version %u", snapshot.version);
 }
@@ -394,10 +399,8 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     if (!matrixCfg.dynamicColorDepth) return;
 
     const char* descId = handle.descriptorId;
-    String engineIdStr;
     if ((!descId || descId[0] == '\0') && sourceId == DisplaySourceId::ROTATION && m_rotationManager) {
-        engineIdStr = m_rotationManager->getCurrentEngineId();
-        descId = engineIdStr.c_str();
+        descId = m_rotationManager->getCurrentEngineIdCStr();
     }
 
     EngineRequirements reqs;
@@ -416,16 +419,6 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
     }
 
     const bool hasPsram = hardwareHAL.capabilities().hasPsram;
-
-    // Resource-aware TLS gating:
-    // If the engine requires TLS on non-PSRAM hardware, verify if NetworkBudget admits a TLS session.
-    // If memory/network conditions cannot accommodate TLS right now (e.g. bulk transfer or low DRAM),
-    // suppress reqs.needsTls to prevent futile panel teardown and blackout (Invariant 17, 20).
-    if (reqs.needsTls && !hasPsram && !NetworkBudget::canStartTlsSession()) {
-        LOGI("DisplayRuntime", "TLS session not admitted for '%s': suppressing clean-window teardown to maintain display.",
-             descId ? descId : "unknown");
-        reqs.needsTls = false;
-    }
 
     size_t largestBlock = 0;
     size_t freeInternal = 0;
@@ -480,20 +473,25 @@ void DisplayRuntime::maybeReconfigurePipelineFor(IEngine* targetEngine, const En
 
         // Pre-fetch initial data in DMA-released memory window:
         // Strictly gated to memory-constrained platforms (!hasPsram) running TLS engines when WiFi is connected.
-        // Boards with PSRAM (ESP32-S3) or unconstrained heap NEVER execute this hook.
+        // Check NetworkBudget::canStartTlsSession() AFTER releasePanel() has freed the DMA buffers.
         bool wifiReady = false;
 #if defined(ESP32)
         wifiReady = (WiFi.status() == WL_CONNECTED);
 #endif
         if (targetEngine && reqs.needsTls && !hasPsram && wifiReady) {
+            if (NetworkBudget::canStartTlsSession()) {
 #if defined(ESP32)
-            esp_task_wdt_reset();
+                esp_task_wdt_reset();
 #endif
-            targetEngine->prefetchData();
+                targetEngine->prefetchData();
 #if defined(ESP32)
-            esp_task_wdt_reset();
+                esp_task_wdt_reset();
 #endif
-            measure();
+                measure();
+            } else {
+                LOGW("DisplayRuntime", "TLS session not admitted for '%s' after DMA panel release: skipping prefetchData().",
+                     descId ? descId : "unknown");
+            }
         }
 
         auto res = m_matrixEngine->reconfigurePresentationPipeline(targetDepth);

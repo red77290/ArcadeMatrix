@@ -21,17 +21,19 @@ Ce document est la référence **exhaustive et approfondie** de l'architecture A
 9. [WebUI Dynamique & Endpoints d'Options](#9-webui-dynamique--endpoints-doptions)
 10. [Architecture d'Internationalisation (i18n) & Source Unique](#10-architecture-dinternationalisation-i18n--source-unique)
 11. [Couche d'Abstraction Matérielle (`HardwareHAL`) & Gating](#11-couche-dabstraction-matérielle-hardwarehal--gating)
-12. [L'Arbitre d'Affichage (`DisplayArbiter`)](#12-larbitre-daffichage-displayarbiter)
-13. [Le Compositeur d'Overlay Transverse (`OverlayManager`)](#13-le-compositeur-doverlay-transverse-overlaymanager)
-14. [Exécution Double-Cœur & Isolation FreeRTOS](#14-exécution-double-cœur--isolation-freertos)
-15. [Régulation de Cadence & Double-Buffering DMA](#15-régulation-de-cadence--double-buffering-dma)
+12. [L'Arbitre d'Affichage & Runtime d'Affichage (`DisplayArbiter`, `DisplayRuntime`)](#12-larbitre-daffichage--runtime-daffichage-displayarbiter-displayruntime)
+13. [Configuration Lock-Free SRSW Prouvée Formellement (`ConfigSnapshot`)](#13-configuration-lock-free-srsw-prouvée-formellement-configsnapshot)
+14. [Le Compositeur d'Overlay Transverse (`OverlayManager`)](#14-le-compositeur-doverlay-transverse-overlaymanager)
+15. [Exécution Double-Cœur & Isolation FreeRTOS](#15-exécution-double-cœur--isolation-freertos)
 16. [Sous-Système Audio Autonome (`AudioHub` & `AudioOutputHAL`)](#16-sous-système-audio-autonome-audiohub--audiooutputhal)
 17. [Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)](#17-orientation-gyroscopique-gyrohal--displayorientationmanager)
 18. [Surface API REST HTTP](#18-surface-api-rest-http)
 19. [Métadonnées de Build & Télémétrie](#19-métadonnées-de-build--télémétrie)
-20. [Contrat de Propriété & Frontières du Plan de Contrôle](#20-contrat-de-propriété--frontières-du-plan-de-contrôle)
-21. [Architecture de Validation & Framework de Test](#21-architecture-de-validation--framework-de-test)
-22. [Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire](#22-surface-de-rendu-suivi-détat-dirty--invariants-mémoire)
+20. [Architecture Multi-Résolutions & Géométrie Déclarative](#20-architecture-multi-résolutions--géométrie-déclarative)
+21. [Contrat de Propriété & Frontières du Plan de Contrôle](#21-contrat-de-propriété--frontières-du-plan-de-contrôle)
+22. [Architecture de Validation & Framework de Test](#22-architecture-de-validation--framework-de-test)
+23. [Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire](#23-surface-de-rendu-suivi-détat-dirty--invariants-mémoire)
+24. [Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire](#24-pipeline-de-présentation-dynamique--architecture-doptimisation-mémoire)
 
 ---
 
@@ -381,11 +383,19 @@ AudioHub (État, Génération & Arbitrage)
 
 ---
 
+## 17. Orientation Gyroscopique (`GyroHAL` & `DisplayOrientationManager`)
+
+- **`GyroHAL`** interroge les capteurs inertiels I2C (`MPU6050`, `QMI8658`) sur le Cœur 0 et calcule l'orientation logique discrète (`ROT_0`, `ROT_90`, `ROT_180`, `ROT_270`) avec un filtre anti-rebond de 500 ms et un offset de montage configurable.
+- **`DisplayOrientationManager`** planifie les transitions d'orientation et applique la rotation matérielle du framebuffer (`display->setRotation()`) exclusivement sur le Cœur 1 à l'apex de la transition.
+- Les moteurs d'affichage et l'`OverlayManager` s'adaptent dynamiquement à la nouvelle `DisplayGeometry` via `onDisplayGeometryChanged()`.
+
+---
+
 ### Gestion Avancée de la Mémoire (ESP32 vs ESP32-S3 avec PSRAM)
 
 | Carte Matérielle | SRAM Interne | PSRAM Externe | Mémoire DMA | Stratégie SSL / TLS | Résolutions Max |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **ESP32 Classic (`esp32dev`)** | ~320 Ko (partagée FreeRTOS / Wi-Fi) | Aucune | SRAM Interne (compatible DMA) | **Désactivé :** Les buffers TLS (~45-60 Ko) privent le DMA et causent des crashs. Moteurs SSL lourds (Crypto, Bourse) désactivés via `EngineCapabilities`. | `128x32` / `64x32` |
+| **ESP32 Classic (`esp32dev`)** | ~320 Ko (partagée FreeRTOS / Wi-Fi) | Aucune | SRAM Interne (compatible DMA) | **Profondeur 4 bits Dynamique + TLS Sérialisé :** L'affichage bascule en 4 bits (`canvas_single`), les poignées de main TLS sont sérialisées via `NetworkBudget::ScopedTlsHandshakeLock`, et `CryptoEngine`/`StockEngine` préchargent via `fetchCombined()` dans la fenêtre de transition avec DMA libéré. | `128x32` / `64x32` |
 | **ESP32-S3 Waveshare (`esp32s3_waveshare`)** | ~320 Ko (SRAM centrale) | **8 Mo / 16 Mo Octal PSRAM** | SRAM Interne uniquement (`MALLOC_CAP_INTERNAL \| MALLOC_CAP_DMA`) | **100% SRAM interne, sérialisé :** mbedTLS utilise l'allocateur standard ESP-IDF/Arduino (jamais la PSRAM — voir ci-dessous). Toutes les poignées de main TLS du système sont sérialisées via `NetworkBudget::ScopedTlsHandshakeLock`. | `256x64` / `64x256` |
 
 #### Résolution de l'Épuisement Mémoire SSL / TLS (et pourquoi mbedTLS n'utilise plus jamais la PSRAM)
@@ -394,7 +404,7 @@ Sur microcontrôleur, une connexion HTTPS exige d'importants buffers d'échange 
 Une itération précédente de ce code tentait de résoudre ce problème en routant les allocations dynamiques de mbedTLS vers la PSRAM via un hook `mbedtls_platform_set_calloc_free()` personnalisé (`MbedTlsAllocator`), dans l'idée que la SRAM interne serait ainsi entièrement réservée au réseau temps réel et au DMA d'affichage. **Les tests sur matériel réel ont prouvé que cela corrompt activement l'affichage** : sur la carte ESP32-S3 Waveshare, le framebuffer HUB75 lui-même réside en PSRAM (`-D SPIRAM_DMA_BUFFER`, nécessaire car le déplacer en SRAM interne coûterait ~64 Ko que cette carte ne peut pas se permettre). Les buffers d'enregistrement TLS de mbedTLS (~32 Ko combinés) constituent exactement le type d'accès PSRAM volumineux et en rafale qui entre en contention avec les lectures PSRAM continues du moteur GDMA HUB75 pour le framebuffer, via le cache PSRAM partagé — toute poignée de main TLS avec des buffers résidant en PSRAM a systématiquement éteint l'affichage en quelques secondes. **Cet allocateur a été annulé et supprimé** (`MbedTlsAllocator.cpp/.h` supprimés) ; mbedTLS utilise de nouveau l'allocateur standard 100% SRAM interne sur les deux cibles, comme en `v3.1.0`.
 
 L'intégrité de l'affichage prime strictement sur la fiabilité TLS : un échec TLS dû à la pression sur la SRAM interne dégrade proprement (les valeurs en cache sont conservées — voir `DashboardDataProvider`, `YahooFinanceProvider`, `BinanceProvider`), alors qu'un affichage corrompu ne peut se rétablir sans redémarrage. La SRAM interne étant désormais l'unique foyer du TLS et du DMA/réseau, la vraie solution est un **contrôle d'admission + sérialisation**, pas un routage d'allocateur :
-1. **Filtrage via capacités sur ESP32 Classic :** Les moteurs réseau lourds (`CryptoEngine`, `StockEngine`) déclarent `EngineRequirements::needsPsram = true`. Sur les cartes sans PSRAM, `ConfigSanitizer` les désactive automatiquement sans crash.
+1. **Abaissement Dynamique en 4 Bits & Préchargement en Fenêtre de Transition sur ESP32 Classic :** Les moteurs réseau TLS (`CryptoEngine`, `StockEngine`, `DashboardEngine`) déclarent `EngineRequirements::needsPsram = false` et `needsTls = true`. Sur `esp32dev`, `PipelineSelectionPolicy` abaisse automatiquement la profondeur de couleur à 4 bits (`canvas_single`), libérant 8 Ko de SRAM DMA, tandis que `prefetchData()` (`fetchCombined()`) s'exécute dans la fenêtre de transition propre avec DMA libéré et `IconService` met en cache les icônes via un pipeline JPEG léger à 3 niveaux (~2,5 Ko de RAM). Seuls les moteurs de streaming audio (`music_player`) requièrent la PSRAM (`needsPsram = true`).
 2. **Sérialisation TLS Système (`NetworkBudget::ScopedTlsHandshakeLock`) :** Chaque point d'appel TLS du code (météo/marchés du Dashboard, Crypto, Bourse, Spotify, Google Cast, Artwork, repli HTTPS Marquee, GNews, synchronisation Pixelcade) construit un `ScopedTlsHandshakeLock` immédiatement avant `WiFiClientSecure::connect()`. Il s'agit d'un unique mutex FreeRTOS global : une seule poignée de main TLS peut être en cours n'importe où dans le firmware à un instant donné, bornant la demande de pointe en SRAM interne à une seule réservation d'environ 32 Ko au lieu d'un chevauchement à N voies. **Correction d'atomicité (ce tour) :** le constructeur revalide `NetworkBudget::canStartTlsSession()` *alors qu'il détient déjà le mutex*, juste avant de signaler le succès — fermant une fenêtre de compétition TOCTOU où le budget aurait pu être vérifié suffisant puis invalidé par une autre poignée de main/allocation pendant que la tâche attendait (jusqu'à 5s) le mutex contesté. Une pré-vérification bon marché et non-autoritative de `canStartTlsSession()` reste autorisée aux points d'appel, uniquement pour éviter de bloquer sur un budget déjà connu insuffisant ; seule la revérification interne du verrou, après acquisition, fait autorité.
 3. **Limite connue et fiabilisation de l'admission :** cette sérialisation évite les crashs/corruptions d'affichage. Comme `canStartTlsSession()` exige désormais `freeInternal >= 45 Ko` et une marge de double buffer vérifiée (soit `largestInternalBlock >= 34.5 Ko` soit deux blocs indépendants de 16.5 Ko) pour allouer simultanément les tampons d'entrée et de sortie de mbedTLS (~33.4 Ko au total), **les tentatives de poignée de main vouées à l'échec sont rejetées proprement (`result=REJECTED_BY_BUDGET`) sans crash `MBEDTLS_ERR_SSL_ALLOC_FAILED (-32512)`**. Si la SRAM interne est fragmentée par d'autres moteurs, `GoogleCastEngine` temporise avec un backoff exponentiel sans déstabiliser le système.
 4. **Mise à jour validée sur matériel (ESP32 classique sans PSRAM, 128x32 ; `logBoot7`-`logBoot12`) :**
@@ -484,45 +494,6 @@ Pour éviter que les consommateurs réseau concurrents (AsyncWebServer / AsyncTC
 
 ---
 
-## 20. Architecture Multi-Résolutions & Géométrie Déclarative
-
-ArcadeMatrix prend en charge toutes les résolutions et orientations (`64x32`, `128x32`, `256x64`, `128x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
-
-### La Règle d'Or du Rendu Responsif
-> **Les renderers ne contiennent aucun embranchement `if (layoutClass)`.**
-> La classification est effectuée **une seule fois** par une calculatrice pure `*LayoutCalculator` produisant des structures déclaratives de `Rect`s bornés. Le moteur de rendu dessine exclusivement dans ces rectangles.
-
-```text
-                 DisplayGeometry (width, height, rotation, layoutClass, version)
-                                       │
-                                LayoutHelper (Stateless)
-                                       │
-                    ┌──────────────────┴──────────────────┐
-                    ▼                                     ▼
-           *LayoutCalculator                     *GeometryAdapter
-           (ex: MusicLayout)                     (ex: FighterGeometry)
-                    │                                     │
-                    ▼                                     ▼
-             Layout / Rects                        Geometry (groundY, spawns)
-                    │                                     │
-                    └──────────────────┬──────────────────┘
-                                       ▼
-                             Renderer Pur Unique
-```
-
-### Séquencement Multi-Core Strict à l'Apex
-1. La rotation matérielle `display->setRotation(newRot)` est appliquée **exclusivement sur le Core 1 à l'apex de la transition**.
-2. `DisplayGeometry` est actualisée directement depuis les dimensions actives `display->width()` / `display->height()`.
-3. `onDisplayGeometryChanged(geometry)` est notifié à l'engine actif et à l'`OverlayManager`.
-4. Les moteurs avec caches géométriques (`MatrixRainClock`, `TetrisClock`, `VisualizerEngine`, `FighterEngine`) reconfigurent leurs structures dérivées sans réinitialiser la logique métier ni la partie en cours.
-
-### Bibliothèque Dual-GIF (YOKO & TATE)
-- `/gifs/` : Animations optimisées pour le mode paysage (YOKO).
-- `/gifs_tate/` : Animations optimisées pour le mode portrait (TATE).
-- `GifSourceSelector` résout dynamiquement le dossier primaire et le dossier de repli sans dépendance de layout dans `GifEngine`.
-
----
-
 ## 18. Surface API REST HTTP
 
 | Méthode | Route | Description |
@@ -565,7 +536,46 @@ L'endpoint `/api/v1/system/version` expose l'empreinte exacte du build (`git_com
 
 ---
 
-## 20. Contrat de Propriété & Frontières du Plan de Contrôle
+## 20. Architecture Multi-Résolutions & Géométrie Déclarative
+
+ArcadeMatrix prend en charge toutes les résolutions et orientations (`64x32`, `128x32`, `256x64`, `128x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+### La Règle d'Or du Rendu Responsif
+> **Les renderers ne contiennent aucun embranchement `if (layoutClass)`.**
+> La classification est effectuée **une seule fois** par une calculatrice pure `*LayoutCalculator` produisant des structures déclaratives de `Rect`s bornés. Le moteur de rendu dessine exclusivement dans ces rectangles.
+
+```text
+                 DisplayGeometry (width, height, rotation, layoutClass, version)
+                                       │
+                                LayoutHelper (Stateless)
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+           *LayoutCalculator                     *GeometryAdapter
+           (ex: MusicLayout)                     (ex: FighterGeometry)
+                    │                                     │
+                    ▼                                     ▼
+             Layout / Rects                        Geometry (groundY, spawns)
+                    │                                     │
+                    └──────────────────┬──────────────────┘
+                                       ▼
+                             Renderer Pur Unique
+```
+
+### Séquencement Multi-Core Strict à l'Apex
+1. La rotation matérielle `display->setRotation(newRot)` est appliquée **exclusivement sur le Core 1 à l'apex de la transition**.
+2. `DisplayGeometry` est actualisée directement depuis les dimensions actives `display->width()` / `display->height()`.
+3. `onDisplayGeometryChanged(geometry)` est notifié à l'engine actif et à l'`OverlayManager`.
+4. Les moteurs avec caches géométriques (`MatrixRainClock`, `TetrisClock`, `VisualizerEngine`, `FighterEngine`) reconfigurent leurs structures dérivées sans réinitialiser la logique métier ni la partie en cours.
+
+### Bibliothèque Dual-GIF (YOKO & TATE)
+- `/gifs/` : Animations optimisées pour le mode paysage (YOKO).
+- `/gifs_tate/` : Animations optimisées pour le mode portrait (TATE).
+- `GifSourceSelector` résout dynamiquement le dossier primaire et le dossier de repli sans dépendance de layout dans `GifEngine`.
+
+---
+
+## 21. Contrat de Propriété & Frontières du Plan de Contrôle
 
 ArcadeMatrix applique une séparation multi-cœur stricte entre les plans de contrôle asynchrones et le hot-path de rendu temps réel :
 
@@ -588,7 +598,7 @@ AppRuntime
     └── possède les instances de moteurs événementiels (Pixelcade, Audio, handlers MQTT)
 ```
 
-### 20.1 Matrice de Transition FSM d'Affichage
+### 21.1 Matrice de Transition FSM d'Affichage
 
 | Séquence de Transition | Classification | Effets de Cycle de Vie | État de Pile & Profondeur |
 | :--- | :--- | :--- | :--- |
@@ -611,7 +621,7 @@ AppRuntime
 
 ---
 
-## 21. Architecture de Validation & Framework de Test
+## 22. Architecture de Validation & Framework de Test
 
 ArcadeMatrix intègre un pipeline de validation à 3 niveaux garantissant une couverture de test complète et zéro régression :
 
@@ -625,18 +635,19 @@ ArcadeMatrix intègre un pipeline de validation à 3 niveaux garantissant une co
 │ • test_api           │ • scripts/run_qemu_tests.py   │ • esp32dev           │
 │ • test_core          │ • Bootloader double cœur ESP32│ • esp32s3_waveshare  │
 │ • test_engines       │ • Runner de tests UART Unity  │ • Check statique     │
-│ • test_hardware      │ • Zéro dépendance carte réelle│ • Check taille binaire│
-│ • test_providers     │ • CI GitHub Actions auto      │                      │
+│ • test_gifs          │ • Zéro dépendance carte réelle│ • Check taille binaire│
+│ • test_hardware      │ • CI GitHub Actions auto      │                      │
+│ • test_providers     │                               │                      │
 │ • test_retrofrontend │                               │                      │
 │ • test_utils         │                               │                      │
 └──────────────────────┴───────────────────────────────┴──────────────────────┘
 ```
 
-1. **Niveau 1 — Compilation PlatformIO Locale (`pio test`) :** 7 suites de tests compilant des firmwares avec assertions `Unity` pour valider les types et contrats sans nécessiter de matériel physique connecté.
+1. **Niveau 1 — Compilation PlatformIO Locale (`pio test`) :** 8 suites de tests compilant des firmwares avec assertions `Unity` pour valider les types et contrats sans nécessiter de matériel physique connecté.
 2. **Niveau 2 — Exécution Émulée Matérielle QEMU (`scripts/run_qemu_tests.py`) :** Démarrage automatisé de chaque firmware de test dans un CPU ESP32 émulé (QEMU Espressif), capturant et évaluant la sortie série UART pour les codes de succès `UNITY_END()`.
 3. **Niveau 3 — Compilation Dual-Target :** Garantit la compatibilité du build sur ESP32 classique Dual-Core (I2S DMA) et ESP32-S3 (LCD DMA).
 
-### 21.1 Contrat ValidationPolicy comme Gestionnaire de Violation
+### 22.1 Contrat ValidationPolicy comme Gestionnaire de Violation
 
 `ValidationPolicy` définit l'action déterministe de récupération lorsqu'un champ de configuration enfreint ses contraintes :
 - `Clamp` : Restreint les valeurs numériques hors limites à `[min_val, max_val]`.
@@ -646,7 +657,7 @@ ArcadeMatrix intègre un pipeline de validation à 3 niveaux garantissant une co
 
 ---
 
-## 22. Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire
+## 23. Surface de Rendu, Suivi d'État Dirty & Invariants Mémoire
 
 Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux DMA à simple buffer (ex. ESP32 classique avec Canvas SRAM + DMA unique) tout en garantissant un comportement mémoire temps réel déterministe, ArcadeMatrix isole strictement les moteurs de rendu du buffer physique via `IDrawingSurface`.
 
@@ -685,13 +696,13 @@ Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux D
                                Commit DMA
 ```
 
-### 22.1 Sémantique de l'État Dirty & Cycle de Vie de Présentation
+### 23.1 Sémantique de l'État Dirty & Cycle de Vie de Présentation
 
 1. **Suivi Dirty Automatique via `markModified()`** : Toutes les opérations mutantes sur `CanvasBufferedSurface` (`drawPixel`, `drawFastHLine`, `drawFastVLine`, `fillRect`, `fillScreen`, `blit565`, `acquireCanvas`) convergent vers `markModified()` qui positionne `_dirty = true`. `Adafruit_GFX` implémentant ses primitives de haut niveau sur ces virtuelles, 100 % des modifications du canvas sont capturées sans charge additionnelle pour les moteurs.
 2. **Gating de Présentation** : Lors de l'évaluation de `present()`, si `!_dirty`, aucun transfert DMA ni encodage en salve de bitplanes n'a lieu. Le DMA matériel continue de balayer le buffer actif sans intervention CPU, éliminant les sauts de trame.
 3. **Atomicité du Commit** : `_dirty` est réinitialisé à `false` **uniquement si** `backend->presentCanvas()` retourne `PresentationResult::Ok`. En cas d'échec (ex. timeout de fenêtre de sécurité `SafeWindowTimeout` ou contention de bus DMA), `_dirty` reste `true` (Invariant 20), garantissant que l'image non validée est re-tentée à la trame suivante sans perte visuelle.
 
-### 22.2 Invariants Architecturaux Formels 15 à 20
+### 23.2 Invariants Architecturaux Formels 15 à 20
 
 - **🔴 Invariant 15 — Désactivation Sans Allocation :**
   Dès que la désactivation débute, le moteur sortant NE DOIT effectuer aucune nouvelle allocation dynamique. La désactivation peut uniquement libérer, fermer, stopper ou détacher les ressources détenues par le moteur. Toutes les désallocations internes de conteneurs utilisent `std::vector<T>().swap(vec)` ou `{}` plutôt qu'un appel non contraignant à `shrink_to_fit()`.
@@ -712,7 +723,7 @@ Afin d'obtenir un affichage sans scintillement (zero-flicker) sur les panneaux D
 - **🔴 Invariant N8 — Isolation Applicative Post-Quiescence :**
   Une fois qu'une session réseau a été interrompue et que son moteur propriétaire a achevé sa désactivation quiescente, aucun nouveau traitement applicatif, parsing JSON, callback ou allocation de buffer ne peut être effectué sur cette session.
 
-### 22.3 Enveloppe de Référence Quiescente (Quiescent Baseline Envelope)
+### 23.3 Enveloppe de Référence Quiescente (Quiescent Baseline Envelope)
 
 Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas face aux opérations réseau dynamiques, ArcadeMatrix définit formellement une **Enveloppe de Référence Quiescente** :
 - Lors de `deactivate(old)`, le système retourne à l'empreinte de repos de référence dans une enveloppe bornée : $|\text{baseline}_{\text{finale}} - \text{baseline}_{\text{initiale}}| \le 2\text{ Ko}$.
@@ -721,7 +732,7 @@ Plutôt qu'une promesse irréaliste d'égalité stricte octet par octet du tas f
 
 ---
 
-## 23. Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire
+## 24. Pipeline de Présentation Dynamique & Architecture d'Optimisation Mémoire
 
 Pour les cibles matérielles contraintes (telles que l'ESP32 classique pilotant des géométries 128×32), ArcadeMatrix met en œuvre un **Dynamic Presentation Pipeline** adossé à un ensemble de sous-systèmes de réclamation mémoire :
 1. **Profondeur de Couleur Dynamique ($8 \leftrightarrow 7 \dots 2$) :** Commute dynamiquement entre la profondeur non bridée préférée pour les graphismes (jusqu'à 8 bits sur toutes les cartes, y compris ESP32 classique) et une profondeur allégée sécurisée pour TLS (typiquement 4 bits ou 2 bits) pendant l'exécution des moteurs réseau, en évaluant mathématiquement la DRAM libre, le bloc contigu et la mémoire DMA.
@@ -735,3 +746,4 @@ Pour les cibles matérielles contraintes (telles que l'ESP32 classique pilotant 
 9. **Architecture de Cache d'Icônes à 3 Niveaux :** Bitmaps RGB565 en RAM (L1), stockage persistant sur SD (L2) et proxy HTTP léger `images.weserv.nl` + `JPEGDEC` (L3) ne consommant que ~2,5 Ko de RAM (réduction de plus de 92 % par rapport à l'ancien décodeur PNG).
 
 L'analyse architecturale détaillée, les benchmarks et les comparaisons quantitatives de référence sont documentés dans [docs/MEMORY_OPTIMIZATIONS_FR.md](MEMORY_OPTIMIZATIONS_FR.md).
+

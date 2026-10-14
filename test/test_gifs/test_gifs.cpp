@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <unity.h>
+#include "core/LayoutHelper.h"
+#include "engines/GifEngine.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -7,7 +9,7 @@ void tearDown(void) {}
 // ---------------------------------------------------------------------------------------------
 // Test helpers mirroring the GIF library logic in WebServerAPI (see the test_api.cpp convention):
 // the production helpers are lambdas local to WebServerAPI::begin(), so the behaviour under test
-// is restated here and kept in step with it.
+// is restated here and kept in step with it, while GifSourceSelector and GifEngine are tested directly.
 // ---------------------------------------------------------------------------------------------
 
 /**
@@ -24,7 +26,9 @@ static String gifOrientationOf(String raw) {
  * @brief Maps an orientation onto its SD card root, matching GifEngine's own split.
  */
 static String gifRootFor(const String& orientation) {
-    return orientation == "tate" ? String("/gifs_tate") : String("/gifs");
+    DisplayGeometry geom{};
+    geom.layoutClass = (orientation == "tate") ? LayoutClass::PORTRAIT : LayoutClass::WIDE;
+    return String(GifSourceSelector::select(geom).primaryPath);
 }
 
 /**
@@ -69,12 +73,36 @@ void test_gif_orientation_parsing(void) {
 }
 
 /**
- * @brief Each orientation resolves to its own SD root, as GifEngine expects.
+ * @brief Each orientation resolves to its own SD root via production GifSourceSelector::select.
  */
 void test_gif_root_for_orientation(void) {
+    DisplayGeometry wideGeom;
+    wideGeom.width = 64; wideGeom.height = 32; wideGeom.rotation = 0; wideGeom.layoutClass = LayoutClass::WIDE;
+    DisplayGeometry sqGeom;
+    sqGeom.width = 32; sqGeom.height = 32; sqGeom.rotation = 0; sqGeom.layoutClass = LayoutClass::SQUARE;
+    DisplayGeometry portGeom;
+    portGeom.width = 32; portGeom.height = 64; portGeom.rotation = 1; portGeom.layoutClass = LayoutClass::PORTRAIT;
+    DisplayGeometry tallGeom;
+    tallGeom.width = 32; tallGeom.height = 64; tallGeom.rotation = 3; tallGeom.layoutClass = LayoutClass::TALL;
+
+    GifPlaylistSelection wideSel = GifSourceSelector::select(wideGeom);
+    TEST_ASSERT_EQUAL_STRING("/gifs", wideSel.primaryPath);
+    TEST_ASSERT_EQUAL_STRING("/gifs_tate", wideSel.fallbackPath);
+
+    GifPlaylistSelection sqSel = GifSourceSelector::select(sqGeom);
+    TEST_ASSERT_EQUAL_STRING("/gifs", sqSel.primaryPath);
+    TEST_ASSERT_EQUAL_STRING("/gifs_tate", sqSel.fallbackPath);
+
+    GifPlaylistSelection portSel = GifSourceSelector::select(portGeom);
+    TEST_ASSERT_EQUAL_STRING("/gifs_tate", portSel.primaryPath);
+    TEST_ASSERT_EQUAL_STRING("/gifs", portSel.fallbackPath);
+
+    GifPlaylistSelection tallSel = GifSourceSelector::select(tallGeom);
+    TEST_ASSERT_EQUAL_STRING("/gifs_tate", tallSel.primaryPath);
+    TEST_ASSERT_EQUAL_STRING("/gifs", tallSel.fallbackPath);
+
     TEST_ASSERT_EQUAL_STRING("/gifs", gifRootFor("yoko").c_str());
     TEST_ASSERT_EQUAL_STRING("/gifs_tate", gifRootFor("tate").c_str());
-    // the horizontal root must never be a prefix match that swallows the vertical one
     TEST_ASSERT_FALSE(gifRootFor("yoko") == gifRootFor("tate"));
 }
 
@@ -88,6 +116,18 @@ void test_gif_path_uses_resolved_root(void) {
                              (gifRootFor("tate") + "/" + folder + "/" + name).c_str());
     TEST_ASSERT_EQUAL_STRING("/gifs/Arcade/logo.gif",
                              (gifRootFor("yoko") + "/" + folder + "/" + name).c_str());
+
+    GifEngine engine;
+    TEST_ASSERT_FALSE(engine.isActive());
+    TEST_ASSERT_TRUE(engine.isRealtime());
+    TEST_ASSERT_TRUE(engine.selfPaced());
+    TEST_ASSERT_FALSE(engine.allowsOverlay());
+    engine.setFitMode("contain");
+    TEST_ASSERT_EQUAL_STRING("contain", engine.getFitMode().c_str());
+    engine.setSpeedMultiplier(1.5f);
+    TEST_ASSERT_EQUAL_FLOAT(1.5f, engine.getSpeedMultiplier());
+    engine.setSpeedMultiplier(0.01f); // clamped fallback to 1.0f when <= 0.05f
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, engine.getSpeedMultiplier());
 }
 
 /**

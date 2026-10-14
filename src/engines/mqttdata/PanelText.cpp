@@ -1,6 +1,6 @@
 #include "PanelText.h"
 #include "../../core/drawing/IDrawingSurface.h"
-#include "../../../include/core/I18n.h"
+#include "../../core/I18n.h"
 
 namespace panel_text {
 
@@ -95,22 +95,18 @@ void drawCentred(IDrawingSurface* m, const char* msg, uint16_t color) {
 void drawNoData(IDrawingSurface* m) {
     if (!m) return;
     const Lang l = I18n::getLang();
-    const char* msg = (l == Lang::FR) ? "PAS DE DONNEES" : (l == Lang::ES) ? "SIN DATOS" : "NO DATA";
-    drawCentred(m, msg, m->color565(0x78, 0x78, 0x78));
+    drawCentred(m, I18n::getNoDataLabel(l), m->color565(0x78, 0x78, 0x78));
 }
 
 void drawNotice(IDrawingSurface* m, Message msg) {
     if (!m) return;
     const Lang l = I18n::getLang();
     if (msg == Message::Connecting) {
-        const char* t = (l == Lang::FR) ? "CONNEXION" : (l == Lang::ES) ? "CONECTANDO" : "CONNECTING";
-        drawCentred(m, t, m->color565(0x78, 0x78, 0x78));
+        drawCentred(m, I18n::getConnectingLabel(l), m->color565(0x78, 0x78, 0x78));
     } else if (msg == Message::NoConnection) {
-        const char* t = (l == Lang::FR) ? "PAS DE CONNEXION" : (l == Lang::ES) ? "SIN CONEXION" : "NO CONNECTION";
-        drawCentred(m, t, m->color565(0xB4, 0x50, 0x50));
+        drawCentred(m, I18n::getNoConnectionLabel(l), m->color565(0xB4, 0x50, 0x50));
     } else {
-        const char* t = (l == Lang::FR) ? "NON PRIS EN CHARGE" : (l == Lang::ES) ? "NO COMPATIBLE" : "UNSUPPORTED";
-        drawCentred(m, t, m->color565(0xC0, 0x80, 0x00));
+        drawCentred(m, I18n::getUnsupportedLabel(l), m->color565(0xC0, 0x80, 0x00));
     }
 }
 

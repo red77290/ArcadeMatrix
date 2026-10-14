@@ -21,14 +21,19 @@ Este documento es la referencia **exhaustiva y profunda** de la arquitectura de 
 9. [WebUI Dinámica y Endpoints de Opciones](#9-webui-din%C3%A1mica-y-endpoints-de-opciones)
 10. [Arquitectura de Internacionalización (i18n) y Fuente Única](#10-arquitectura-de-internacionalizaci%C3%B3n-i18n-y-fuente-%C3%BAnica)
 11. [Capa de Abstracción de Hardware (`HardwareHAL`) y Gating](#11-capa-de-abstracci%C3%B3n-de-hardware-hardwarehal-y-gating)
-12. [El Árbitro de Pantalla (`DisplayArbiter`)](#12-el-%C3%A1rbitro-de-pantalla-displayarbiter)
-13. [El Compositor de Superposiciones Transversales (`OverlayManager`)](#13-el-compositor-de-superposiciones-transversales-overlaymanager)
-14. [Ejecución en Doble Núcleo y Aislamiento FreeRTOS](#14-ejecuci%C3%B3n-en-doble-n%C3%BAcleo-y-aislamiento-freertos)
-15. [Regulación de Cuadros y Doble Búfer DMA](#15-regulaci%C3%B3n-de-cuadros-y-doble-b%C3%BAfer-dma)
+12. [El Árbitro de Pantalla y Runtime de Pantalla (`DisplayArbiter`, `DisplayRuntime`)](#12-el-%C3%A1rbitro-de-pantalla-y-runtime-de-pantalla-displayarbiter-displayruntime)
+13. [Configuración Lock-Free SRSW Probada Formalmente (`ConfigSnapshot`)](#13-configuraci%C3%B3n-lock-free-srsw-probada-formalmente-configsnapshot)
+14. [El Compositor de Superposiciones Transversales (`OverlayManager`)](#14-el-compositor-de-superposiciones-transversales-overlaymanager)
+15. [Ejecución en Doble Núcleo y Aislamiento FreeRTOS](#15-ejecuci%C3%B3n-en-doble-n%C3%BAcleo-y-aislamiento-freertos)
 16. [Subsistema de Audio Autónomo (`AudioHub` y `AudioOutputHAL`)](#16-subsistema-de-audio-aut%C3%B3nomo-audiohub-y-audiooutputhal)
 17. [Orientación Giroscópica (`GyroHAL` y `DisplayOrientationManager`)](#17-orientaci%C3%B3n-girosc%C3%B3pica-gyrohal-y-displayorientationmanager)
 18. [Superficie API REST HTTP](#18-superficie-api-rest-http)
 19. [Metadatos de Compilación y Telemetría](#19-metadatos-de-compilaci%C3%B3n-y-telemetr%C3%ADa)
+20. [Arquitectura Multirresolución y Geometría Declarativa](#20-arquitectura-multirresoluci%C3%B3n-y-geometr%C3%ADa-declarativa)
+21. [Contrato de Propiedad y Fronteras del Plano de Control](#21-contrato-de-propiedad-y-fronteras-del-plano-de-control)
+22. [Arquitectura de Validación y Framework de Pruebas](#22-arquitectura-de-validaci%C3%B3n-y-framework-de-pruebas)
+23. [Superficie de Dibujo, Seguimiento de Estado Dirty e Invariantes de Memoria](#23-superficie-de-dibujo-seguimiento-de-estado-dirty-e-invariantes-de-memoria)
+24. [Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria](#24-pipeline-de-presentaci%C3%B3n-din%C3%A1mico-y-arquitectura-de-optimizaci%C3%B3n-de-memoria)
 
 ---
 
@@ -287,27 +292,42 @@ Soporte nativo de inglés, francés y español:
 
 ---
 
-## 12. El Árbitro de Pantalla (`DisplayArbiter`)
+## 12. El Árbitro de Pantalla y Runtime de Pantalla (`DisplayArbiter`, `DisplayRuntime`)
 
-Resolución estricta de prioridades:
+ArcadeMatrix separa estrictamente la decisión de arbitraje de la ejecución del ciclo de vida de los motores:
 1. **Alertas de Emergencia / OTA** (Prioridad 100).
 2. **Interrupciones en Tiempo Real (Mensajes MQTT / Alertas en Vivo)** (Prioridad 75).
-3. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
-4. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
+3. **Visualizador de Audio / Petición de Motor Activo** (Prioridad 60).
+4. **Carrusel de Rotación Activo (Reloj, Clima, Música)** (Prioridad 50).
+5. **Pantalla de Reserva (Reloj Digital)** (Prioridad 10).
 
-El audio en segundo plano continúa sonando incluso si un mensaje prioritario toma la pantalla.
+- **Cola de Comandos SPSC Lock-Free:** El Núcleo 0 envía peticiones asíncronas mediante `submitRequest()` y `cancelRequest()` hacia un búfer circular sin bloqueos (`LockFreeSPSCQueue<ArbiterCommand, 16>`), serializadas entre productores mediante `producerMutex` en el Núcleo 0.
+- **Consumidor Único en Núcleo 1:** `DisplayArbiter::evaluate()` drena los comandos y resuelve prioridades en $O(1)$ con **CERO mutex** y **CERO asignaciones dinámicas**.
+- **Propiedad del Ciclo de Vida (`DisplayRuntime`):** Gestiona las transiciones explícitas (`PREEMPT`: `pause(old) -> push(old) -> activate(new)`, `RESUME`: `deactivate(old) -> pop(prev) -> resume(prev)`, `REPLACE`: `deactivate(old) -> activate(new)`) sobre una pila acotada `PreemptionStack<PreemptionEntry, 4>`.
 
 ---
 
-## 13. El Compositor de Superposiciones Transversales (`OverlayManager`)
+## 13. Configuración Lock-Free SRSW Probada Formalmente (`ConfigSnapshot`)
 
-- Renderizado superpu- **Fighter es un overlay transversal, NO un engine en `EngineRegistry`.**
+Para eliminar condiciones de carrera entre núcleos y evitar bloqueos mutex en el bucle crítico de renderizado del Núcleo 1:
+- **Máquina de 4 Estados Atómicos (`SlotState`):** `ConfigLoader` gestiona 3 búferes físicos de instantáneas mediante estados atómicos explícitos: `FREE`, `WRITING`, `PUBLISHED` y `READING`.
+- **Reserva Linealizable mediante Bucle CAS (Núcleo 1):** `ConfigSnapshotGuard guard = config.acquireSnapshot();` ejecuta un bucle CAS atómico `compare_exchange_weak(PUBLISHED, READING)` con semántica acquire. El acceso al payload es estrictamente imposible antes del éxito del CAS.
+- **Reciclaje Seguro y Publicación Diferida (Núcleo 0):** Si los 3 slots están ocupados (`READING + PUBLISHED + WRITING`), el escritor activa `_publishPending = true;` y retorna inmediatamente sin espera activa ni `yield()`, consolidando la publicación en cuanto un slot vuelve a `FREE`.
+
+---
+
+## 14. El Compositor de Superposiciones Transversales (`OverlayManager`)
+
+- Renderizado superpuesto después del pase gráfico del motor de fondo.
+- Decodificación de secuencias de sprites comprimidos `.fgt.gz` para luchadores MUGEN.
+- Activación por elemento de rotación en `config.rotation[i].overlays.fighter`.
+- **Fighter es un overlay transversal, NO un engine en `EngineRegistry`.**
 - **Aislamiento de Overlays por Motor (`allowsOverlay()`):** Los motores de alta tasa de cuadros (`GifEngine`) anulan `bool allowsOverlay() const override { return false; }`, evitando sobrecarga de composición y preservando un renderizado superior a 30 FPS en animaciones fluidas.
 - **Renderizado Transparente No Destructivo:** Los overlays (`FighterEngine`) se dibujan exclusivamente mediante trazado de píxeles transparentes (`if (color != anim->transparentColor) matrix->drawPixel(...)`). Nunca borran cuadros delimitadores anteriores con rectángulos negros opacos (`fillRect(..., 0)`), manteniendo intactos los dígitos del reloj y el fondo subyacente.
 
 ---
 
-## 14. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
+## 15. Ejecución en Doble Núcleo y Aislamiento FreeRTOS
 
 - **Núcleo 0:** Tareas asíncronas (Web, Audio, Sensores, Análisis FFT).
 - **Núcleo 1:** Renderizado LED a 60 FPS, DMA, Overlay, Lógica visual. La regulación de cuadros mediante `FrameScheduler` respeta los retardos GIF al milisegundo en vez de redondearlos al tick de 16 ms.
@@ -339,14 +359,8 @@ Para evitar que consumidores de red concurrentes (AsyncWebServer / AsyncTCP sirv
 5. **Borrado de Pantalla sin Parpadeos (`FastMatrixPanel::fillScreen(0)`):**
    `fillScreen(0)` abre casi cada cuadro de los motores. La función original `setBrightness8()` escribe pulsos de modulación OE tanto en el **búfer 0 como en el búfer 1**. En modo de doble búfer, alterar el búfer frontal mientras GDMA transmite activamente los datos a los LEDs produce desgarro horizontal y parpadeo de barrido (análogo a la interferencia PWM en Raspberry Pi). `FastMatrixPanel::fillScreen(0)` enmascara directamente los bits de color (`ptr[x] &= BITMASK_RGB12_CLEAR`) exclusivamente en el **búfer trasero (`m_back`)** en $\sim 0.8\text{ ms}$, preservando las líneas OE, LAT y de dirección sin tocar el búfer frontal en emisión.
 6. **Aislamiento de Núcleo y Pila de AsyncTCP:** La tarea de servicio `async_tcp` se dimensiona en 8192 bytes y se fija estrictamente al Core 0 (`CONFIG_ASYNC_TCP_RUNNING_CORE=0`), aislando callbacks de red del hot-path de 60 FPS del Core 1.
-7. **Backoff de Reconexión de Google Cast:** Las reconnexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
-8. **Telemetría Periódica de Renderizado (5s):** Registro escalar sin bloqueos en `AppRuntime::update()` que reporta en consola serie el framerate del bucle, el framerate físico en pantalla, el framerate del GIF, la duración de volcado (`blit`), decodificación y DRAM libre cada 5 segundos, sin asignaciones dinámicas en el heap.onexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
-
----
-
-## 15. Regulación de Cuadros y Doble Búfer DMA
-
-Mantenimiento de 60 FPS estables para animaciones en tiempo real con doble búfer DMA de hardware.
+7. **Backoff de Reconexión de Google Cast:** Las reconexiones aplican backoff exponencial (5s, 10s, 20s, 60s) inicializado ante la caída de sesión, evitando tormentas de reconexión durante ráfagas de tráfico HTTP.
+8. **Telemetría Periódica de Renderizado (5s):** Registro escalar sin bloqueos en `AppRuntime::update()` que reporta en consola serie el framerate del bucle, el framerate físico en pantalla, el framerate del GIF, la duración de volcado (`blit`), decodificación y DRAM libre cada 5 segundos, sin asignaciones dinámicas en el heap.
 
 ---
 
@@ -392,7 +406,9 @@ AudioHub (Estado, Generación y Arbitraje)
 | `GET` | `/api/audio/status` | Estado de reproducción de audio, fuente, volumen. |
 | `POST`| `/api/audio/volume` | Ajuste del volumen de audio principal (0-100%). |
 | `GET` | `/api/gyro/status` | Vector de gravedad y orientación sugerida. |
-| `POST`| `/api/display/orientation` | Fijación manual de rotación o autorrotación. |
+| `POST`| `/api/gyro/calibrate` | Calibración del punto cero de referencia ($0^\circ$ Normal). |
+| `POST`| `/api/display/orientation` | Fijación manual de rotación, offset de montaje y transición FX. |
+| `POST`| `/api/display/test-transition` | Activa una vista previa de los efectos de transición de rotación. |
 | `GET` | `/api/gifs/library` | Carpetas de playlists de una biblioteca con el número de archivos (desde `playlists.json`). |
 | `GET` | `/api/gifs/files` | Archivos de una carpeta de playlist, transmitidos desde su `index.txt`. |
 | `GET` | `/api/gifs/file` | Sirve un archivo multimedia (vista previa inline; `download=1` para descargar). |
@@ -419,7 +435,137 @@ El endpoint `/api/v1/system/version` expone la huella exacta de compilación (`g
 
 ---
 
-## 20. Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria
+## 20. Arquitectura Multirresolución y Geometría Declarativa
+
+ArcadeMatrix soporta todas las resoluciones y orientaciones (`64x32`, `128x32`, `256x64`, `128x64`, `64x64`, `32x64`, `32x128`, `64x128`, `64x256`).
+
+### La Regla de Oro del Renderizado Responsivo
+> **Los renderizadores no contienen ramificaciones `if (layoutClass)`.**
+> La clasificación se realiza **una sola vez** mediante una calculadora pura `*LayoutCalculator` que produce estructuras declarativas de `Rect` acotados. El motor de renderizado dibuja exclusivamente dentro de estos rectángulos.
+
+```text
+                 DisplayGeometry (width, height, rotation, layoutClass, version)
+                                       │
+                                LayoutHelper (Stateless)
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+           *LayoutCalculator                     *GeometryAdapter
+           (ej: MusicLayout)                     (ej: FighterGeometry)
+                    │                                     │
+                    ▼                                     ▼
+             Layout / Rects                        Geometry (groundY, spawns)
+                    │                                     │
+                    └──────────────────┬──────────────────┘
+                                       ▼
+                             Renderizador Puro Único
+```
+
+### Secuenciación Multinúcleo Estricta en el Ápice
+1. La rotación por hardware `display->setRotation(newRot)` se aplica **exclusivamente en el Núcleo 1 en el ápice de la transición**.
+2. `DisplayGeometry` se actualiza directamente desde las dimensiones activas `display->width()` / `display->height()`.
+3. `onDisplayGeometryChanged(geometry)` se notifica al motor activo y al `OverlayManager`.
+4. Los motores con cachés geométricas (`MatrixRainClock`, `TetrisClock`, `VisualizerEngine`, `FighterEngine`) reconfiguran sus estructuras derivadas sin reiniciar el estado de negocio.
+
+### Biblioteca Dual-GIF (YOKO y TATE)
+- `/gifs/`: Animaciones optimizadas para modo horizontal (YOKO).
+- `/gifs_tate/`: Animaciones optimizadas para modo vertical (TATE).
+- `GifSourceSelector` resuelve dinámicamente la carpeta primaria y la de respaldo sin acoplamiento de diseño en `GifEngine`.
+
+---
+
+## 21. Contrato de Propiedad y Fronteras del Plano de Control
+
+ArcadeMatrix aplica una separación multinúcleo estricta entre los planos de control asíncronos y el hot-path de renderizado en tiempo real:
+
+```text
+DisplayArbiter
+    └── calcula únicamente la intención dominante (motor de decisión puro sin estado)
+
+DisplayRuntime
+    ├── posee el estado de la sesión activa
+    ├── posee las transiciones del ciclo de vida (activate, pause, resume, deactivate)
+    ├── posee la pila de preempción (PreemptionStack<PreemptionEntry, 4>)
+    └── clasifica REFRESH interno frente a PREEMPT / RESUME / REPLACE externo
+
+RotationManager
+    ├── posee las instancias de motores seleccionables (MAX_ACTIVE_ENGINES = 32)
+    ├── crea instancias en el camino frío (API REST / configuración)
+    └── expone búsqueda sin asignaciones en el camino caliente (findActiveEngine())
+
+AppRuntime
+    └── posee las instancias de motores dirigidos por eventos (Pixelcade, Audio, handlers MQTT)
+```
+
+### 21.1 Matriz de Transición FSM de Pantalla
+
+| Secuencia de Transición | Clasificación | Efectos del Ciclo de Vida | Estado de Pila y Profundidad |
+| :--- | :--- | :--- | :--- |
+| **A $\to$ A (misma petición/fuente)** | `REFRESH` interno | `0` (sin pausa, sin activate, actualización in-place) | Profundidad sin cambios |
+| **A $\to$ B (rotación normal)** | `REPLACE` | `deactivate(A) → activate(B)` | Profundidad = 0 |
+| **A $\to$ B (alerta preemptiva)** | `PREEMPT` | `pause(A) → push(A) → activate(B)` | Profundidad incrementa |
+| **A $\to$ B $\to$ C (alerta apilada)**| `PREEMPT` | `pause(B) → push(B) → activate(C)` | Profundidad = 2 |
+| **A $\to$ B $\to$ C $\to$ expiración C**| `RESUME` | `deactivate(C) → pop(B) → resume(B)` | Profundidad = 1 |
+| **A $\to$ B $\to$ cancelación B** | `RESUME` | `deactivate(B) → pop(A) → resume(A)` | Profundidad = 0 |
+| **Pila saturada (depth=4) $\to$ alerta** | Rechazo transaccional | `0` (preempción rechazada limpiamente, sesión superior intacta) | Profundidad = 4 |
+| **REPLACE independiente sobre pila activa** | `REPLACE` | `deactivate(All) → activate(New)` | Profundidad vuelve a 0 |
+
+---
+
+## 22. Arquitectura de Validación y Framework de Pruebas
+
+ArcadeMatrix incorpora un pipeline de validación de 3 niveles que garantiza cobertura de pruebas completa y cero regresiones:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Pipeline de Validación de 3 Niveles                    │
+├──────────────────────┬───────────────────────────────┬──────────────────────┤
+│ Nivel 1: PIO Local   │ Nivel 2: Emulación QEMU CI    │ Nivel 3: Dual-Target │
+│ Suites Pruebas Unit. │ Ejecución Emulada de Hardware │ Compilación          │
+├──────────────────────┼───────────────────────────────┼──────────────────────┤
+│ • test_api           │ • scripts/run_qemu_tests.py   │ • esp32dev           │
+│ • test_core          │ • Bootloader doble núcleo     │ • esp32s3_waveshare  │
+│ • test_engines       │ • Runner UART Unity           │ • Chequeo estático   │
+│ • test_gifs          │ • Cero dependencia de placa   │ • Tamaño de binario  │
+│ • test_hardware      │ • CI GitHub Actions auto      │                      │
+│ • test_providers     │                               │                      │
+│ • test_retrofrontend │                               │                      │
+│ • test_utils         │                               │                      │
+└──────────────────────┴───────────────────────────────┴──────────────────────┘
+```
+
+### 22.1 Contrato ValidationPolicy como Gestor de Violaciones
+
+`ValidationPolicy` define la acción determinista de recuperación cuando un campo de configuración incumple sus restricciones:
+- `Clamp`: Restringe los valores numéricos fuera de rango a `[min_val, max_val]`.
+- `FallbackDefault`: Restaura el valor del campo a `field.default_value`.
+- `Accept`: Acepta valores personalizados libres del usuario (texto libre, URLs).
+- `Reject`: Descarta la configuración inválida y restaura el valor por defecto documentado.
+
+---
+
+## 23. Superficie de Dibujo, Seguimiento de Estado Dirty e Invariantes de Memoria
+
+Para lograr un renderizado sin parpadeos en paneles DMA de búfer único manteniendo un comportamiento de memoria determinista en tiempo real, ArcadeMatrix aísla estrictamente los motores de visualización del búfer físico mediante `IDrawingSurface`.
+
+### 23.1 Semántica del Estado Dirty y Ciclo de Presentación
+1. **Seguimiento Dirty Automático mediante `markModified()`**: Todas las operaciones de dibujo mutantes en `CanvasBufferedSurface` activan `_dirty = true`.
+2. **Gating de Presentación**: Cuando se evalúa `present()`, si `!_dirty`, no se realiza ninguna transferencia DMA ni codificación de planos de bits.
+3. **Atomicidad del Commit**: `_dirty` vuelve a `false` **únicamente si** `backend->presentCanvas()` devuelve `PresentationResult::Ok` (Invariante 20).
+
+### 23.2 Invariantes Arquitectónicos Formales 15 a 21 y N8
+- **🔴 Invariante 15 — Desactivación Sin Asignaciones:** Una vez iniciada la desactivación, el motor saliente NO DEBE realizar ninguna nueva asignación dinámica (`std::vector<T>().swap(vec)` o `{}`).
+- **🔴 Invariante 16 — Desactivación Quiescente en Dos Etapas:** `deactivate()` en Core 1 establece la quiescencia lógica inmediata sin bloqueos, mientras que `shutdownForDestruction()` en Core 0 detiene y une todas las tareas de fondo (`FgtLoader`, `DashFetch`, `CastPoll`), cierra descriptores de archivos y aborta sockets antes de liberar recursos.
+- **🔴 Invariante 17 — El Estado Dirty Representa Cambios No Presentados:** `IDrawingSurface::isDirty()` permanece `true` hasta que el estado del lienzo se confirma con éxito (`PresentationResult::Ok`).
+- **🔴 Invariante 18 — Borrado Exclusivo del Lienzo:** `clear()` / `fillScreen(0)` modifica exclusivamente la memoria del lienzo y nunca escribe directamente en un búfer DMA HUB75 en barrido activo.
+- **🔴 Invariante 19 — Aislamiento DMA:** Los motores y `RotationManager` nunca acceden directamente a `FastMatrixPanel`; todo renderizado pasa por `IDrawingSurface`.
+- **🔴 Invariante 20 — Preservación ante Fallo de Presentación:** Un intento fallido de presentación preserva `_dirty = true` para reintentar en el siguiente ciclo.
+- **🔴 Invariante 21 — Aislamiento de Salida HUB75:** Durante la reconfiguración del pipeline, OE permanece en HIGH hasta que el fotograma 0 es confirmado (`firstFrameCommitted == true`).
+- **🔴 Invariante N8 — Aislamiento Post-Quiescencia:** Ningún procesamiento de aplicación puede ocurrir sobre una sesión de red cancelada tras la desactivación quiescente.
+
+---
+
+## 24. Pipeline de Presentación Dinámico y Arquitectura de Optimización de Memoria
 
 Para plataformas con limitaciones severas de memoria (como el ESP32 clásico controlando paneles de 128×32), ArcadeMatrix incorpora un **Dynamic Presentation Pipeline** respaldado por un sistema integral de recuperación de memoria:
 1. **Profundidad de Color Dinámica ($8 \leftrightarrow 7 \dots 2$):** Conmuta dinámicamente entre la profundidad sin restricciones preferida para gráficos (hasta 8 bits en todas las placas, incluyendo ESP32 clásico) y una profundidad optimizada y segura para TLS (típicamente 4 bits o 2 bits) durante la ejecución de motores de red, evaluando matemáticamente la DRAM libre, el bloque contiguo mayor y la memoria DMA.
@@ -437,4 +583,5 @@ Para plataformas con limitaciones severas de memoria (como el ESP32 clásico con
 11. **Jerarquía de Caché de Iconos en 3 Niveles:** Mapas de bits RGB565 en RAM (L1), almacenamiento persistente en SD (L2) y proxy HTTP ligero `images.weserv.nl` + `JPEGDEC` (L3) consumiendo únicamente ~2,5 KB de RAM (ahorro de más del 92% respecto al decodificador PNG).
 
 El análisis arquitectónico detallado, las pruebas de rendimiento y las comparaciones cuantitativas se documentan en [MEMORY_OPTIMIZATIONS_ES.md](MEMORY_OPTIMIZATIONS_ES.md).
+
 

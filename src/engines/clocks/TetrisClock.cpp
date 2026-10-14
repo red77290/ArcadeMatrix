@@ -28,6 +28,15 @@ TetrisClock::TetrisClock(IDrawingSurface* display, bool gameboyMode, const Engin
     faceFont.load(config);
     glow = ClockFaceFont::resolveGlow(config);
     canvas = new (std::nothrow) GFXcanvas1(128, 64);
+
+    m_logicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1;
+    if (m_logicalSize < 1) m_logicalSize = 1;
+    m_offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    m_offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+    int speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
+    if (speedPct < 25) speedPct = 25;
+    if (speedPct > 300) speedPct = 300;
+    m_landMs = (uint32_t)(350UL * 100UL / (uint32_t)speedPct);
 }
 
 TetrisClock::~TetrisClock() {
@@ -103,26 +112,19 @@ void TetrisClock::emitBlocksFor(const char* str, int charIdx, int labelIdx, cons
 }
 
 void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, size_t targetCount) {
+    if (!canvas || !canvas->getBuffer()) return;
     int w = display->width();
     int h = display->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
-    if (logicalSize < 1) logicalSize = 1;
-
-    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
-    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
-
-    // clock_speed is a percentage: 100 lands a digit in ~350 ms, 50 takes twice as long, 200 half.
-    int speedPct = engineConfig ? engineConfig->getInt("clock_speed", 100) : 100;
-    if (speedPct < 25) speedPct = 25;
-    if (speedPct > 300) speedPct = 300;
-    const uint32_t landMs = (uint32_t)(350UL * 100UL / (uint32_t)speedPct);
+    int logicalSize = m_logicalSize;
+    int offX = m_offX;
+    int offY = m_offY;
+    const uint32_t landMs = m_landMs;
 
     int16_t bx, by;
     uint16_t bw, bh;
-    GFXcanvas1 measure(8, 8);   // getTextBounds only needs a GFX context, not a real surface
-    measure.setTextWrap(false); // otherwise bounds of a string wider than 8 px would be computed as wrapped lines
+    canvas->setTextWrap(false);
 
     if (isTate) {
         // Stacked Portrait Layout: 3 tiers (HH, MM, SS), each 2 characters
@@ -132,8 +134,8 @@ void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, si
         tierStrs[2][0] = timeStr[6]; tierStrs[2][1] = timeStr[7]; tierStrs[2][2] = '\0';
 
         // the configured font, unless "88" cannot fit one tier even at block size 1
-        const GFXfont* font = faceFont.apply(measure, 1, "88", w, h / 3);
-        measure.getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
+        const GFXfont* font = faceFont.apply(*canvas, 1, "88", w, h / 3);
+        canvas->getTextBounds("88", 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0 || bh == 0) { bw = 11; bh = 7; }
 
         int sMax = min((int)(w / bw), (int)((h / 3) / bh));
@@ -159,8 +161,8 @@ void TetrisClock::buildTargets(const char* timeStr, const int* targetIndices, si
         }
     } else {
         // Landscape / Widescreen Layout (single row "HH:MM:SS")
-        const GFXfont* font = faceFont.apply(measure, 1, timeStr, w, h);
-        measure.getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
+        const GFXfont* font = faceFont.apply(*canvas, 1, timeStr, w, h);
+        canvas->getTextBounds(timeStr, 0, 0, &bx, &by, &bw, &bh);
         if (bw == 0 || bh == 0) { bw = 48; bh = 7; }
 
         int sMax = min((int)(w / bw), (int)(h / bh));

@@ -23,22 +23,36 @@ import argparse
 import requests
 
 ENGINES = [
-    ("clock", 8),
-    ("crypto", 4),
-    ("gif", 8),
-    ("weather", 4),
-    ("clock", 8),
-    ("stock", 4)
+    ("clock", 8, False),
+    ("weather", 4, False),
+    ("crypto", 4, False),
+    ("stock", 4, False),
+    ("gifs", 8, False),
+    ("system_info", 8, False),
+    ("gnews", 8, False),
+    ("dashboard", 4, False),
+    ("audiovisualizer", 8, False),
+    ("decibelMeter", 8, False),
+    ("temp", 8, False),
+    ("message", 8, False),
+    ("google_cast", 8, False),
+    ("spotify", 8, False),
+    ("music_player", 8, False),
+    ("marquee", 8, False),
+    ("mqttdata", 8, False),
+    ("clock", 8, True),  # Transverse Fighter overlay test on clock instance
 ]
 
 def run_torture(target_url, iterations=100, step_delay_s=2.0):
     print(f"Starting STRESS-06 Torture Test against {target_url} for {iterations} iterations...")
     
-    # Check initial system state
+    # Check initial system state via GET /api/status
     try:
-        sys_init = requests.get(f"{target_url}/api/system", timeout=5).json()
-        initial_heap = sys_init.get("memory", {}).get("free_heap", 0)
-        print(f"Initial Free Heap: {initial_heap} B")
+        stat_init = requests.get(f"{target_url}/api/status", timeout=5).json()
+        initial_heap = stat_init.get("free_heap", 0)
+        initial_largest = stat_init.get("max_alloc_heap", stat_init.get("internal_largest", 0))
+        initial_min_heap = stat_init.get("min_free_heap", 0)
+        print(f"Initial Free Heap: {initial_heap} B (Largest Block: {initial_largest} B, Min Free: {initial_min_heap} B)")
     except Exception as e:
         print(f"Failed to connect to {target_url}: {e}")
         return 1
@@ -46,12 +60,24 @@ def run_torture(target_url, iterations=100, step_delay_s=2.0):
     violations = []
     
     for i in range(1, iterations + 1):
-        engine_id, expected_depth = ENGINES[(i - 1) % len(ENGINES)]
-        print(f"[{i}/{iterations}] Transitioning to '{engine_id}' (Expected depth: {expected_depth} bits)...", end=" ", flush=True)
+        engine_id, expected_depth, fighter_overlay = ENGINES[(i - 1) % len(ENGINES)]
+        print(
+            f"[{i}/{iterations}] Transitioning to '{engine_id}' "
+            f"(Expected depth: {expected_depth} bits, fighter overlay: {fighter_overlay})...",
+            end=" ",
+            flush=True,
+        )
 
         try:
-            # Trigger transition via POST /api/display/engine or rotation simulation
-            resp = requests.post(f"{target_url}/api/display/engine", json={"engine": engine_id}, timeout=10)
+            # Trigger transition via POST /api/rotation with canonical array payload
+            rotation_payload = [
+                {
+                    "instance_id": engine_id,
+                    "duration_sec": 60,
+                    "overlays": {"fighter": fighter_overlay},
+                }
+            ]
+            resp = requests.post(f"{target_url}/api/rotation", json=rotation_payload, timeout=10)
             if resp.status_code != 200:
                 print(f"FAIL (HTTP {resp.status_code})")
                 violations.append(f"Cycle {i}: Transition HTTP error {resp.status_code}")
@@ -59,11 +85,19 @@ def run_torture(target_url, iterations=100, step_delay_s=2.0):
 
             time.sleep(step_delay_s)
 
-            # Audit status
+            # Audit status via GET /api/status
             status = requests.get(f"{target_url}/api/status", timeout=5).json()
-            render = status.get("render", {})
-            actual_depth = render.get("color_depth", expected_depth) # or from matrix status
-            allocs = render.get("frame_allocs", 0)
+            free_heap = status.get("free_heap", 0)
+            max_alloc_heap = status.get("max_alloc_heap", status.get("internal_largest", 0))
+            min_free_heap = status.get("min_free_heap", 0)
+            pres = status.get("presentation", status.get("render", {}))
+            actual_depth = pres.get("color_depth", expected_depth)
+            allocs = pres.get("frame_allocs", 0)
+
+            if free_heap <= 0 or max_alloc_heap <= 0 or min_free_heap <= 0:
+                print(f"HEAP_TELEMETRY_ERROR (free={free_heap}, max_alloc={max_alloc_heap}, min={min_free_heap})")
+                violations.append(f"Cycle {i}: Invalid heap telemetry in /api/status")
+                continue
 
             # Invariant 8: Depth invariance
             if actual_depth != expected_depth:
@@ -83,10 +117,10 @@ def run_torture(target_url, iterations=100, step_delay_s=2.0):
             print(f"ERROR ({e})")
             violations.append(f"Cycle {i}: Exception {e}")
 
-    # Final baseline check
+    # Final baseline check via GET /api/status
     try:
-        sys_final = requests.get(f"{target_url}/api/system", timeout=5).json()
-        final_heap = sys_final.get("memory", {}).get("free_heap", 0)
+        stat_final = requests.get(f"{target_url}/api/status", timeout=5).json()
+        final_heap = stat_final.get("free_heap", 0)
         drift = abs(final_heap - initial_heap)
         print(f"\nFinal Free Heap: {final_heap} B (Drift: {drift} B)")
         if drift > 2048:

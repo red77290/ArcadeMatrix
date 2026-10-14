@@ -589,6 +589,7 @@ body {
   transition: all 0.2s ease;
   z-index: 1000;
   pointer-events: none;
+}
 [data-tooltip]:hover::after,
 [data-tooltip]:hover::before,
 [data-tooltip]:focus::after,
@@ -894,90 +895,6 @@ select.input option {
   flex: 1;
   text-align: center;
   justify-content: center;
-}
-
-/* Rotation List & Rows */
-.rotation-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  margin-bottom: 1.25rem;
-}
-.rotation-row {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  transition: all 0.2s ease;
-}
-.rotation-row:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(99, 102, 241, 0.4);
-}
-.rotation-row-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex: 1;
-  min-width: 240px;
-}
-.rotation-order-badge {
-  background: var(--accent-primary);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
-  min-width: 28px;
-  text-align: center;
-}
-.rotation-title {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #fff;
-}
-.rotation-settings-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-.rotation-dur-group {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
-  border: 1px solid var(--glass-border);
-}
-.rotation-dur-input {
-  width: 55px;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.85rem;
-  text-align: center;
-}
-.rotation-fighter-lbl {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-  user-select: none;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 0.3rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--glass-border);
-}
-.rotation-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
 }
 
 /* Modal Dialog */
@@ -1376,7 +1293,7 @@ select.input option {
             </div>
             <div class="form-group">
               <label data-i18n="radio_station_name">Station Name / Label</label>
-              <input type="text" id="radio-name-input" class="input" value="SomaFM Vaporwaves" placeholder="Nom de la station">
+              <input type="text" id="radio-name-input" class="input" value="SomaFM Vaporwaves" placeholder="Station name" data-i18n-placeholder="radio_station_name_ph">
             </div>
           </div>
 
@@ -1394,7 +1311,7 @@ select.input option {
             </div>
           </div>
           <div style="margin-top: 0.75rem; display: flex; justify-content: flex-end;">
-            <button id="btn-test-audio" class="btn btn-secondary btn-sm" style="font-weight: 600;" data-i18n="radio_test_btn">🔊 Tester le Haut-Parleur (Bip 880Hz)</button>
+            <button id="btn-test-audio" class="btn btn-secondary btn-sm" style="font-weight: 600;" data-i18n="radio_test_btn">🔊 Test Speaker (880Hz Tone)</button>
           </div>
 
           <!-- Live Now Playing Info Box -->
@@ -1431,54 +1348,6 @@ select.input option {
             </div>
           </div>
           <button id="btn-save-fighter" class="btn btn-primary" style="margin-top: 1.5rem;" data-i18n="fighter_save">Save Fighter Settings</button>
-        </div>
-      </section>
-
-      <!-- Message Page -->
-      <section id="page-message" class="page">
-        <header class="page-header">
-          <div class="header-left">
-            <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
-            <h1 data-i18n="nav_message">Custom Message</h1>
-          </div>
-        </header>
-        <div class="card glass shadow">
-          <h3>Custom Marquee Message</h3>
-          <div class="form-group">
-            <label>Text</label>
-            <input type="text" id="msg-input" class="input" placeholder="Type text to scroll...">
-          </div>
-          <div class="form-grid col-3" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Color (Hex)</label>
-              <input type="color" id="msg-color" class="input" value="#ffffff" style="height: 42px; padding: 0.2rem;">
-            </div>
-            <div class="form-group">
-              <label>Size (Scale)</label>
-              <input type="number" id="msg-size" class="input" value="1" min="1" max="5">
-            </div>
-            <div class="form-group">
-              <label>Direction</label>
-              <select id="msg-direction" class="input">
-                <option value="rtl">Right to Left (RTL)</option>
-                <option value="ltr">Left to Right (LTR)</option>
-                <option value="ttb">Top to Bottom (TTB)</option>
-                <option value="btt">Bottom to Top (BTT)</option>
-                <option value="static">Static (No Scroll)</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-grid col-2" style="margin-top: 1rem;">
-            <div class="form-group">
-              <label>Speed (Higher = Slower)</label>
-              <input type="number" id="msg-speed" class="input" value="30">
-            </div>
-            <div class="form-group">
-              <label>Timeout (Seconds)</label>
-              <input type="number" id="msg-timeout" class="input" value="10">
-            </div>
-          </div>
-          <button id="btn-send-message" class="btn btn-primary" style="margin-top: 1.5rem;">Send to Matrix 🚀</button>
         </div>
       </section>
 
@@ -2943,6 +2812,9 @@ const translations = {
     radio_idle_desc: "Launch a radio preset or stream via DLNA",
     radio_ready_badge: "DLNA / Radio Ready",
     radio_volume_label: "Master Volume",
+    radio_station_name_ph: "Station name",
+    radio_test_sent: "Test tone sent to speaker! 🔊",
+    radio_test_error: "Audio test error: ",
   },
   fr: {
     gifs_queued: "{n} fichier(s) en file pour {k} playlist(s) : {list}. Cliquez sur Envoyer.",
@@ -3431,7 +3303,7 @@ const translations = {
     field_display_mode: "Mode d'Affichage",
     field_scroll_speed: "Vitesse de Défilement",
     field_scroll_pause_start_ms: "Pause au Démarrage (ms)",
-    field_scroll_pause_end_ms: "End Pause (ms)",
+    field_scroll_pause_end_ms: "Pause de fin (ms)",
     field_api_key: "Clé API",
     field_category: "Catégorie",
     field_country: "Pays",
@@ -3529,6 +3401,9 @@ const translations = {
     radio_idle_desc: "Sélectionnez une radio ou diffusez via DLNA",
     radio_ready_badge: "DLNA / Radio Prêt",
     radio_volume_label: "Volume Général",
+    radio_station_name_ph: "Nom de la station",
+    radio_test_sent: "Bip de test envoyé au haut-parleur ! 🔊",
+    radio_test_error: "Erreur test audio : ",
   },
   es: {
     gifs_queued: "{n} archivo(s) en cola para {k} playlist(s): {list}. Pulsa Subir para enviar.",
@@ -4115,6 +3990,9 @@ const translations = {
     radio_idle_desc: "Inicie una radio o transmita mediante DLNA",
     radio_ready_badge: "DLNA / Radio Listo",
     radio_volume_label: "Volumen Principal",
+    radio_station_name_ph: "Nombre de la emisora",
+    radio_test_sent: "¡Tono de prueba enviado al altavoz! 🔊",
+    radio_test_error: "Error de prueba de audio: ",
   }
 };
 
@@ -6157,11 +6035,12 @@ function buildFileAssetWidget(field, instId, initVal) {
     formData.append('image', uploadFile);
 
     try {
-      const res = await fetch(uploadEndpoint, {
+      const res = await httpQueue.enqueue(() => fetch(uploadEndpoint, {
         method: 'POST',
         headers: (typeof authHeaders === 'function') ? authHeaders() : {},
-        body: formData
-      });
+        body: formData,
+        signal: withTimeout(30000)
+      }));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const savedPath = data.path || textInput.value;
@@ -6987,8 +6866,13 @@ function switchPage(pageName) {
     clearInterval(_audioStatusPollInterval);
     _audioStatusPollInterval = null;
   }
+  if (pageName !== 'dashboard' && window._dashboardMetricsInterval) {
+    clearInterval(window._dashboardMetricsInterval);
+    window._dashboardMetricsInterval = null;
+  }
 }
 window.switchPage = switchPage;
+window.navigateTo = switchPage;
 
 function initNavigation() {
   document.querySelectorAll('.nav-item').forEach(item => {
@@ -7561,6 +7445,8 @@ function initCustomMarquee() {
   const dropZone = document.getElementById('marquee-drop-zone');
   const fileInput = document.getElementById('marquee-file-input');
   if (!dropZone || !fileInput) return;
+  if (dropZone.dataset.bound === '1') return;
+  dropZone.dataset.bound = '1';
 
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', (e) => {
@@ -7626,7 +7512,7 @@ function initGifLibrary() {
   let previewCtl = null;          // one preview fetch at a time on the single-core board
   const PREVIEW_AUTO_MAX = 512 * 1024;
   // media fetch through the authenticated path (works with the API token on, no URL tokens)
-  async function fetchBlobUrl(url) { const r = await fetch(url, { headers: headers() }); if (!r.ok) throw new Error('HTTP ' + r.status); return URL.createObjectURL(await r.blob()); }
+  async function fetchBlobUrl(url) { const r = await httpQueue.enqueue(() => fetch(url, { headers: headers(), signal: withTimeout(30000) })); if (!r.ok) throw new Error('HTTP ' + r.status); return URL.createObjectURL(await r.blob()); }
   async function downloadFile(url, name) { try { const u = await fetchBlobUrl(url); const a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 10000); } catch (e) { toast('Download failed: ' + (e.message || e), 'error'); } }
 
   // ---------------- in-page confirm (the browser's confirm() is easy to miss) ----------------
@@ -7655,7 +7541,7 @@ function initGifLibrary() {
       if (st.running) {
         const pct = st.expected ? Math.min(100, Math.round((st.files || 0) * 100 / st.expected)) : (st.total ? Math.round((st.done || 0) * 100 / st.total) : 0);
         progress.innerHTML = `<div style="display:flex; align-items:center; gap:0.6rem;"><div style="flex:1; height:8px; background: rgba(255,255,255,0.12); border-radius:4px; overflow:hidden;"><div style="width:${pct}%; height:100%; background: var(--accent-primary, #6cf); transition: width 0.4s;"></div></div><span style="white-space:nowrap;">${esc(tr('gifs_rescan_progress', 'Rescanning {done}/{total}: {current}', { done: st.done || 0, total: st.total || '?', current: st.current || '' }))} · ${(st.files || 0).toLocaleString()}${st.expected ? '/' + st.expected.toLocaleString() : ''} ${esc(tr('gifs_files_word', 'files'))} · ${Math.round((st.elapsed_ms || 0) / 1000)}s${st.eta ? ' · ' + esc(st.eta) : ''}${st.cancelling ? ' · ' + esc(tr('gifs_rescan_cancelling', 'cancelling…')) : ''}</span><a href="#" class="fm-rescan-cancel" style="white-space:nowrap;">${esc(tr('gifs_cancel', 'Cancel'))}</a></div>`;
-        const c = progress.querySelector('.fm-rescan-cancel'); if (c) c.onclick = async (e) => { e.preventDefault(); try { await fetch('/api/gifs/reindex', { method: 'DELETE', headers: headers() }); } catch (_) {} };
+        const c = progress.querySelector('.fm-rescan-cancel'); if (c) c.onclick = async (e) => { e.preventDefault(); try { await httpQueue.enqueue(() => fetch('/api/gifs/reindex', { method: 'DELETE', headers: headers(), signal: withTimeout() })); } catch (_) {} };
         continue;
       }
       progress.textContent = tr('gifs_rescan_done', 'Rescan finished ({result})', { result: st.last_result || '' }) + ` · ${(st.files || 0).toLocaleString()} ${tr('gifs_files_word', 'files')} · ${Math.round((st.elapsed_ms || 0) / 1000)}s`;
@@ -7667,7 +7553,7 @@ function initGifLibrary() {
     if (!await fmConfirm(tr('gifs_rescan', '🔄 Rescan library'), tr('gifs_rescan_confirm', 'Rebuild the index of every folder from the card? On a large library this takes minutes and the panel pauses meanwhile.'), tr('gifs_rescan_go', 'Continue'))) return;
     busy = true; rescanBtn.disabled = true;
     try {
-      const r = await fetch('/api/gifs/reindex', { method: 'POST', headers: headers() });
+      const r = await httpQueue.enqueue(() => fetch('/api/gifs/reindex', { method: 'POST', headers: headers(), signal: withTimeout() }));
       if (r.status === 202) { progress.textContent = tr('gifs_rescan_started', 'Rescan started…'); await pollRescan(); }
       else if (r.status === 409) { toast(tr('gifs_rescan_busy', 'A rescan is already running'), 'info'); await pollRescan(); }
       else if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.message || ('HTTP ' + r.status)); }
@@ -7735,7 +7621,7 @@ function initGifLibrary() {
           if (previewCtl) previewCtl.abort();
           const ctl = new AbortController(); previewCtl = ctl;
           pv.innerHTML = `<span class="text-muted">${tr('gifs_preview_loading', 'loading preview…')}${f.bytes ? ' (' + fmtBytes(f.bytes) + ', the board streams at roughly 150 KB/s)' : ''}</span>`;
-          fetch(url, { headers: headers(), signal: ctl.signal }).then(async r => { if (!r.ok) throw new Error('HTTP ' + r.status); const u = URL.createObjectURL(await r.blob()); pv.innerHTML = `<img src="${u}" alt="${esc(f.name)}" style="image-rendering: pixelated; max-width: 100%; height: 64px;">`; })
+          httpQueue.enqueue(() => fetch(url, { headers: headers(), signal: ctl.signal })).then(async r => { if (!r.ok) throw new Error('HTTP ' + r.status); const u = URL.createObjectURL(await r.blob()); pv.innerHTML = `<img src="${u}" alt="${esc(f.name)}" style="image-rendering: pixelated; max-width: 100%; height: 64px;">`; })
             .catch(err => { if (err && err.name === 'AbortError') { pv.remove(); return; } pv.innerHTML = `<span class="text-muted">preview failed: ${esc(err.message || err)}</span>`; })
             .finally(() => { if (previewCtl === ctl) previewCtl = null; });
         };
@@ -7781,7 +7667,7 @@ function initGifLibrary() {
   // ---------------- uploads: queue by drop/browse, send with the Upload button ----------------
   async function uploadBatch(folder, batch) {
     const fd = new FormData(); batch.forEach(f => fd.append('file', f, f.name));
-    const r = await fetch('/api/gifs/upload?' + orient() + '&folder=' + enc(folder), { method: 'POST', headers: headers(), body: fd });
+    const r = await httpQueue.enqueue(() => fetch('/api/gifs/upload?' + orient() + '&folder=' + enc(folder), { method: 'POST', headers: headers(), body: fd, signal: withTimeout(60000) }));
     let body = {}; try { body = await r.json(); } catch (_) {}
     if (!r.ok && !(body.saved && body.saved.length)) throw new Error(body.message || ('HTTP ' + r.status));
     return body;
@@ -8019,9 +7905,9 @@ function initAudioStreaming() {
       testBtn.disabled = true;
       try {
         await API.post('/api/audio/test', {});
-        window.showToast?.('Bip de test envoyé au haut-parleur ! 🔊', 'success');
+        window.showToast?.(t('radio_test_sent', 'Test tone sent to speaker! 🔊'), 'success');
       } catch (e) {
-        window.showToast?.('Erreur test audio: ' + (e.message || ''), 'error');
+        window.showToast?.(t('radio_test_error', 'Audio test error: ') + (e.message || ''), 'error');
       } finally {
         testBtn.disabled = false;
       }
@@ -8049,8 +7935,9 @@ function initNetworkSettings() {
     setVal('hw-wifi-ssid', window.__sysConfig.wifi.ssid || '');
   }
   const btnSaveWifi = document.getElementById('btn-save-wifi');
-  if (btnSaveWifi && !btnSaveWifi._boundClick) {
+  if (btnSaveWifi && !btnSaveWifi._boundClick && btnSaveWifi.dataset.bound !== '1') {
     btnSaveWifi._boundClick = true;
+    btnSaveWifi.dataset.bound = '1';
     btnSaveWifi.addEventListener('click', async () => {
       const ssid = document.getElementById('hw-wifi-ssid').value;
       const pass = document.getElementById('hw-wifi-pass').value;
@@ -8076,14 +7963,16 @@ function initNetworkSettings() {
   if (btnInstallMqtt) {
     const cbCustomAuth = document.getElementById('hw-mqtt-custom-auth');
     const authFields = document.getElementById('mqtt-custom-auth-fields');
-    if (cbCustomAuth && authFields) {
+    if (cbCustomAuth && authFields && cbCustomAuth.dataset.bound !== '1') {
+      cbCustomAuth.dataset.bound = '1';
       cbCustomAuth.addEventListener('change', () => {
         authFields.style.display = cbCustomAuth.checked ? 'grid' : 'none';
       });
     }
 
     const targetOsSelect = document.getElementById('hw-mqtt-target-os');
-    if (targetOsSelect) {
+    if (targetOsSelect && targetOsSelect.dataset.bound !== '1') {
+      targetOsSelect.dataset.bound = '1';
       targetOsSelect.addEventListener('change', () => {
         const osVal = targetOsSelect.value;
         const userInput = document.getElementById('hw-mqtt-ssh-user');
@@ -8101,36 +7990,40 @@ function initNetworkSettings() {
       });
     }
 
-    btnInstallMqtt.addEventListener('click', async () => {
-      const ip = document.getElementById('hw-mqtt-ip').value;
-      if (!ip) {
-        window.showToast('Please enter Console IP Address', 'error');
-        return;
-      }
-      
-      const os = targetOsSelect ? targetOsSelect.value : 'auto';
-      let user = null;
-      let pass = null;
-      if (cbCustomAuth && cbCustomAuth.checked) {
-        user = document.getElementById('hw-mqtt-ssh-user').value || (os === 'retropie' ? 'pi' : 'root');
-        pass = document.getElementById('hw-mqtt-ssh-pass').value;
-      }
+    if (btnInstallMqtt.dataset.bound !== '1') {
+      btnInstallMqtt.dataset.bound = '1';
+      btnInstallMqtt.addEventListener('click', async () => {
+        const ip = document.getElementById('hw-mqtt-ip').value;
+        if (!ip) {
+          window.showToast('Please enter Console IP Address', 'error');
+          return;
+        }
+        
+        const os = targetOsSelect ? targetOsSelect.value : 'auto';
+        let user = null;
+        let pass = null;
+        if (cbCustomAuth && cbCustomAuth.checked) {
+          user = document.getElementById('hw-mqtt-ssh-user').value || (os === 'retropie' ? 'pi' : 'root');
+          pass = document.getElementById('hw-mqtt-ssh-pass').value;
+        }
 
-      btnInstallMqtt.disabled = true;
-      btnInstallMqtt.textContent = 'Installing...';
-      try {
-        await API.postAuth('/api/mqtt/install', { ip, os, user, pass });
-        window.showToast('MQTT Sync Script Installed!', 'success');
-      } catch (e) {
-        window.showToast('Failed to install script', 'error');
-      } finally {
-        btnInstallMqtt.disabled = false;
-        btnInstallMqtt.textContent = 'Install via SSH';
-      }
-    });
+        btnInstallMqtt.disabled = true;
+        btnInstallMqtt.textContent = 'Installing...';
+        try {
+          await API.postAuth('/api/mqtt/install', { ip, os, user, pass });
+          window.showToast('MQTT Sync Script Installed!', 'success');
+        } catch (e) {
+          window.showToast('Failed to install script', 'error');
+        } finally {
+          btnInstallMqtt.disabled = false;
+          btnInstallMqtt.textContent = 'Install via SSH';
+        }
+      });
+    }
 
     const btnCheckLogs = document.getElementById('btn-check-logs');
-    if (btnCheckLogs) {
+    if (btnCheckLogs && btnCheckLogs.dataset.bound !== '1') {
+      btnCheckLogs.dataset.bound = '1';
       btnCheckLogs.addEventListener('click', async () => {
         const ip = document.getElementById('hw-mqtt-ip').value;
         if (!ip) {
@@ -8174,8 +8067,9 @@ function initNetworkSettings() {
   }
 
   const btnSaveMqtt = document.getElementById('btn-save-mqtt');
-  if (btnSaveMqtt && !btnSaveMqtt._boundClick) {
+  if (btnSaveMqtt && !btnSaveMqtt._boundClick && btnSaveMqtt.dataset.bound !== '1') {
     btnSaveMqtt._boundClick = true;
+    btnSaveMqtt.dataset.bound = '1';
     btnSaveMqtt.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.mqtt) ? { ...window.__sysConfig.mqtt } : {};
       const mqtt = {
@@ -8202,7 +8096,8 @@ function initNetworkSettings() {
   }
 
   const btnSaveDmqtt = document.getElementById('btn-save-dmqtt');
-  if (btnSaveDmqtt) {
+  if (btnSaveDmqtt && btnSaveDmqtt.dataset.bound !== '1') {
+    btnSaveDmqtt.dataset.bound = '1';
     btnSaveDmqtt.addEventListener('click', async () => {
       const data_mqtt = {
         broker: document.getElementById('hw-dmqtt-broker').value.trim(),
@@ -8221,8 +8116,9 @@ function initNetworkSettings() {
   }
 
   const btnSaveApi = document.getElementById('btn-save-api');
-  if (btnSaveApi && !btnSaveApi._boundClick) {
+  if (btnSaveApi && !btnSaveApi._boundClick && btnSaveApi.dataset.bound !== '1') {
     btnSaveApi._boundClick = true;
+    btnSaveApi.dataset.bound = '1';
     btnSaveApi.addEventListener('click', async () => {
       const api_auth_enabled = document.getElementById('hw-api-auth').value === 'true';
       const api_token = document.getElementById('hw-api-token').value.trim();

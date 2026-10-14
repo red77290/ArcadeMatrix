@@ -225,7 +225,7 @@ void GifEngine::rebuildActivePlaylists() {
 
 EngineError GifEngine::initialize(EngineContext* context, const EngineConfig* config) {
     instance = this;
-    if (!context || (!context->getSurface() && !context->getMatrix())) return EngineError::InitializationFailed;
+    if (!context || !context->getSurface()) return EngineError::InitializationFailed;
     m_context = context;
     m_instanceConfig = config;
     m_hasPsram = context->hasPsram();
@@ -298,7 +298,11 @@ void GifEngine::render(EngineContext* context) {
 
 void GifEngine::deactivate() {
     instance = this;
-    stopPreloadTask();
+    m_stopPreload.store(true, std::memory_order_release);
+    // Wait briefly (up to 20ms) in case preload task is idle so we can reclaim preload buffer immediately
+    for (int i = 0; i < 4 && !m_preloadExited.load(std::memory_order_acquire); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
     stop();
     freeShadows();
     freeCanvasBuffer();
@@ -308,16 +312,35 @@ void GifEngine::deactivate() {
         png = nullptr;
         LOGI("GifEngine", "Deallocated PNG decoder on demand.");
     }
+    if (currentFile) currentFile.close();
+    if (pngFile) pngFile.close();
+    if (m_preloadExited.load(std::memory_order_acquire)) {
+        m_preloadTask = nullptr;
+        freePreloadBuffer();
+        std::vector<String>().swap(playlists);
+        std::vector<uint32_t>().swap(playlistWeights);
+        std::vector<String>().swap(activeFiles);
+        std::vector<String>().swap(defaultPlaylists);
+        std::vector<String>().swap(pendingPlaylists);
+        lastPlayedGif = String();
+        std::vector<String>().swap(m_configuredFolders);
+    }
+    LOGI("GifEngine", "Deactivated GifEngine: decoders and canvas buffers freed.");
+}
+
+bool GifEngine::shutdownForDestruction() {
+    stopPreloadTask();
+    if (!m_preloadExited.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::vector<String>().swap(playlists);
     std::vector<uint32_t>().swap(playlistWeights);
     std::vector<String>().swap(activeFiles);
     std::vector<String>().swap(defaultPlaylists);
     std::vector<String>().swap(pendingPlaylists);
-    if (currentFile) currentFile.close();
-    if (pngFile) pngFile.close();
     lastPlayedGif = String();
     std::vector<String>().swap(m_configuredFolders);
-    LOGI("GifEngine", "Deactivated GifEngine: all decoders, canvas buffers, and playlist caches freed.");
+    return true;
 }
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
@@ -696,8 +719,16 @@ void GifEngine::freePreloadBuffer() {
 }
 
 void GifEngine::startPreloadTask() {
-    if (m_preloadTask) {
-        m_stopPreload.store(false, std::memory_order_release);
+    if (m_preloadTask || !m_preloadExited.load(std::memory_order_acquire)) {
+        if (m_stopPreload.load(std::memory_order_acquire)) {
+            for (int i = 0; i < 30 && !m_preloadExited.load(std::memory_order_acquire); ++i) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+        } else {
+            return;
+        }
+    }
+    if (!m_preloadExited.load(std::memory_order_acquire)) {
         return;
     }
     m_stopPreload.store(false, std::memory_order_release);
@@ -710,26 +741,17 @@ void GifEngine::startPreloadTask() {
 }
 
 void GifEngine::stopPreloadTask() {
-    if (m_preloadTask) {
+    if (m_preloadTask || !m_preloadExited.load(std::memory_order_acquire)) {
         m_stopPreload.store(true, std::memory_order_release);
-        // Wait up to 2500ms for preload task to exit cooperatively (SD lock timeout is 1500ms)
-        for (int i = 0; i < 250 && !m_preloadExited.load(std::memory_order_acquire); i++) {
+        // Wait up to 300ms per shutdownForDestruction poll for preload task to exit cooperatively
+        for (int i = 0; i < 30 && !m_preloadExited.load(std::memory_order_acquire); i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
         if (m_preloadExited.load(std::memory_order_acquire)) {
             m_preloadTask = nullptr;
             freePreloadBuffer();
         } else {
-            // Task failed to exit within cooperative window.
-            // DO NOT kill task with vTaskDelete() to avoid leaving locks or shared state inconsistent.
-            // DO NOT free m_preloaded.buffer to avoid Use-After-Free if task is still writing.
-            // Instead, isolate the task handle and quarantine the buffer.
-            LOGE("GifEngine", "CRITICAL: gif_preload task did not exit within 2500ms cooperative window! Quarantining buffer.");
-            m_preloaded.buffer = nullptr;
-            m_preloaded.size = 0;
-            m_preloaded.ready.store(false, std::memory_order_release);
-            m_preloaded.path[0] = '\0';
-            m_preloadTask = nullptr;
+            LOGW("GifEngine", "gif_preload task still winding down after 300ms cooperative poll");
         }
     } else {
         freePreloadBuffer();
@@ -739,6 +761,8 @@ void GifEngine::stopPreloadTask() {
 void GifEngine::preloadTaskEntry(void* arg) {
     auto* self = static_cast<GifEngine*>(arg);
     self->preloadWorker();
+    self->freePreloadBuffer();
+    self->m_preloadTask = nullptr;
     self->m_preloadExited.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
 }

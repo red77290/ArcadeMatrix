@@ -15,6 +15,10 @@ Thumbs.db
 scrap/
 tmp/
 *.log
+log*.txt
+*Log*.txt
+graphify-out/
+launch_graphify.sh
 
 # Python virtual environments
 scripts/venv/

@@ -8,8 +8,20 @@ static uint8_t randomGlyph() {
 }
 
 MatrixRainClock::MatrixRainClock(IDrawingSurface* display, const EngineConfig* config) 
-    : ClockFace(display, config), numColumns(0), numRows(0), initialized(false), lastFrameTime(0) { faceFont.load(config);
+    : ClockFace(display, config), numColumns(0), numRows(0), initialized(false), lastFrameTime(0) {
+    faceFont.load(config);
     storedTime = {0, 0, 0};
+    m_logicalSize = engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1;
+    if (m_logicalSize < 1) m_logicalSize = 1;
+    m_offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    m_offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+
+    auto isPlaceholder = [](const String& f) { return f.isEmpty() || f.equalsIgnoreCase("system"); };
+    String fmt = engineConfig ? engineConfig->getString("clock_format", "") : "";
+    if (isPlaceholder(fmt) && engineConfig) fmt = engineConfig->getString("format", "");
+    if (isPlaceholder(fmt)) fmt = "%H:%M:%S";
+    strncpy(m_format, fmt.c_str(), sizeof(m_format) - 1);
+    m_format[sizeof(m_format) - 1] = '\0';
 }
 
 void MatrixRainClock::draw(const TimeData& t) {
@@ -22,11 +34,9 @@ void MatrixRainClock::drawTime() {
     int h = matrix->height();
     bool isTate = (w < 48 || h > (w * 3) / 2);
 
-    int logicalSize = (engineConfig ? engineConfig->getInt("clock_size", engineConfig->getInt("size", 1)) : 1);
-    if (logicalSize < 1) logicalSize = 1;
-
-    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
-    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+    int logicalSize = m_logicalSize;
+    int offX = m_offX;
+    int offY = m_offY;
 
     uint16_t glowGreen = matrix->color565(0, 255, 60);    // Outer Neon Glow
     uint16_t coreMint  = matrix->color565(225, 255, 225); // Ultra-bright Mint-White Core
@@ -86,14 +96,6 @@ void MatrixRainClock::drawTime() {
         // ====================================================================
         // Landscape / Widescreen Layout ("HH:MM:SS" or configured format)
         // ====================================================================
-        // "system" is the Time Format setting's default placeholder (see ClockEngine), not a strftime
-        // pattern: passing it through printed the literal word "system" on the panel (#33). The engine has
-        // already applied the 12/24-hour preference to storedTime, so the plain pattern is the right fallback.
-        auto isPlaceholder = [](const String& f) { return f.isEmpty() || f.equalsIgnoreCase("system"); };
-        String fmt = engineConfig ? engineConfig->getString("clock_format", "") : "";
-        if (isPlaceholder(fmt) && engineConfig) fmt = engineConfig->getString("format", "");
-        if (isPlaceholder(fmt)) fmt = "%H:%M:%S";
-
         char timeStr[32];
         struct tm timeinfo;
         timeinfo.tm_hour = storedTime.hours;
@@ -104,7 +106,7 @@ void MatrixRainClock::drawTime() {
         timeinfo.tm_mon = 0;
         timeinfo.tm_year = 126;
         timeinfo.tm_isdst = -1;
-        strftime(timeStr, sizeof(timeStr), fmt.c_str(), &timeinfo);
+        strftime(timeStr, sizeof(timeStr), m_format, &timeinfo);
 
         char refStr[32];
         size_t tLen = strlen(timeStr);

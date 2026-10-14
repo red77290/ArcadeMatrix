@@ -35,6 +35,9 @@ private:
     // Simulated / tracked CPU load
     float smoothedCpuLoad;
     uint32_t lastCpuSampleTime;
+    float m_cachedTempC = 0.0f;
+    uint32_t m_lastTempSampleMs = 0;
+    bool m_hasTempSample = false;
 
     void drawGaugeBar(IDrawingSurface* matrix, int x, int y, int w, int h, float percent, uint16_t color);
     void renderHudTheme(IDrawingSurface* matrix, float cpuPct, float ramPct, float tempC, uint32_t uptimeSec);

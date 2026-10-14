@@ -40,17 +40,25 @@ size_t RotationManager::countSymbols(const String& symbols) {
 
 
 void RotationManager::begin(const ConfigLoader &cfg) {
+  (void)cfg;
   for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
       activeEngines[i].engine.reset();
       activeEngines[i].instanceId[0] = '\0';
   }
   currentActiveInstanceId[0] = '\0';
+  currentActiveEngineId[0] = '\0';
   queueAction(RotationAction::RESET_ROTATION);
 }
 
-void RotationManager::queueAction(RotationAction action, const String& instanceId) {
+void RotationManager::queueAction(RotationAction action, const char* instanceId) {
     std::lock_guard<std::mutex> lock(actionMutex);
-    pendingActions.push_back({action, instanceId});
+    PendingRotationAction item{};
+    item.action = action;
+    if (instanceId) {
+        strncpy(item.moduleName, instanceId, sizeof(item.moduleName) - 1);
+        item.moduleName[sizeof(item.moduleName) - 1] = '\0';
+    }
+    pendingActions.push(item);
 }
 
 void RotationManager::retireEngineSlot(size_t slotIndex) {
@@ -67,6 +75,7 @@ void RotationManager::retireEngineSlot(size_t slotIndex) {
     // Release Barrier Step 2: clear currentActiveInstanceId if matching
     if (instId[0] != '\0' && strcmp(currentActiveInstanceId, instId) == 0) {
         currentActiveInstanceId[0] = '\0';
+        currentActiveEngineId[0] = '\0';
     }
 
     // Release Barrier Step 3: purge all references from DisplayRuntime (session activeEngine & preemption stack)
@@ -101,29 +110,23 @@ void RotationManager::processPendingActions() {
         }
     }
 
-    std::vector<std::pair<RotationAction, String>> actionsToProcess;
-    {
-        std::lock_guard<std::mutex> lock(actionMutex);
-        actionsToProcess = std::move(pendingActions);
-        pendingActions.clear();
-    }
-    
-    for (const auto& p : actionsToProcess) {
-        if (p.first == RotationAction::NOTIFY_CONFIG_CHANGED) {
+    PendingRotationAction p;
+    while (pendingActions.pop(p)) {
+        if (p.action == RotationAction::NOTIFY_CONFIG_CHANGED) {
             extern ConfigLoader config;
             ConfigSnapshotGuard guard = config.acquireSnapshot();
-            IEngine* eng = findActiveEngine(p.second.c_str());
+            IEngine* eng = findActiveEngine(p.moduleName);
             if (eng) {
                 for (const auto& inst : guard->instances) {
-                    if (inst.instance_id == p.second) {
+                    if (strcmp(inst.instance_id.c_str(), p.moduleName) == 0) {
                         eng->onConfigChanged(&inst.config);
                         break;
                     }
                 }
             }
-        } else if (p.first == RotationAction::RECREATE_INSTANCE) {
+        } else if (p.action == RotationAction::RECREATE_INSTANCE) {
             for (size_t i = 0; i < MAX_ACTIVE_ENGINES; ++i) {
-                if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.second.c_str(), sizeof(activeEngines[i].instanceId)) == 0) {
+                if (activeEngines[i].engine && strncmp(activeEngines[i].instanceId, p.moduleName, sizeof(activeEngines[i].instanceId)) == 0) {
                     retireEngineSlot(i);
 #if defined(ESP32)
                     uint32_t waitStart = millis();
@@ -134,7 +137,7 @@ void RotationManager::processPendingActions() {
                     break;
                 }
             }
-        } else if (p.first == RotationAction::RESET_ROTATION) {
+        } else if (p.action == RotationAction::RESET_ROTATION) {
             extern ConfigLoader config;
             ConfigSnapshotGuard guard = config.acquireSnapshot();
 
@@ -144,7 +147,7 @@ void RotationManager::processPendingActions() {
                 if (activeEngines[i].engine && activeEngines[i].instanceId[0] != '\0') {
                     bool stillInRotation = false;
                     for (const auto& entry : guard->rotation) {
-                        if (entry.instance_id == activeEngines[i].instanceId) {
+                        if (strcmp(entry.instance_id.c_str(), activeEngines[i].instanceId) == 0) {
                             stillInRotation = true;
                             break;
                         }
@@ -181,7 +184,7 @@ void RotationManager::processPendingActions() {
             int newIndex = 0;
             if (currentActiveInstanceId[0] != '\0') {
                 for (size_t i = 0; i < guard->rotation.size(); ++i) {
-                    if (guard->rotation[i].instance_id == currentActiveInstanceId) {
+                    if (strcmp(guard->rotation[i].instance_id.c_str(), currentActiveInstanceId) == 0) {
                         newIndex = (int)i;
                         break;
                     }
@@ -193,11 +196,11 @@ void RotationManager::processPendingActions() {
     }
 }
 
-void RotationManager::notifyConfigChanged(const String& instanceId) {
+void RotationManager::notifyConfigChanged(const char* instanceId) {
     queueAction(RotationAction::NOTIFY_CONFIG_CHANGED, instanceId);
 }
 
-void RotationManager::recreateInstance(const String& instanceId) {
+void RotationManager::recreateInstance(const char* instanceId) {
     queueAction(RotationAction::RECREATE_INSTANCE, instanceId);
 }
 
@@ -286,12 +289,12 @@ void RotationManager::switchToModule(int index) {
         oldEngine->deactivate();
       }
       currentActiveInstanceId[0] = '\0';
+      currentActiveEngineId[0] = '\0';
     }
     return;
   }
 
-  static int switchDepth = 0;
-  if (switchDepth > (int)guard->rotation.size()) {
+  if (switchDepth > guard->rotation.size()) {
     switchDepth = 0;
     return; // Infinite skip loop protection
   }
@@ -300,19 +303,22 @@ void RotationManager::switchToModule(int index) {
   moduleStartTime = millis();
   m_slotMissing = false;
   m_missingClears = 0;
-  String newInstanceId = guard->rotation[index].instance_id;
+  char newInstanceId[32]{0};
+  strncpy(newInstanceId, guard->rotation[index].instance_id.c_str(), sizeof(newInstanceId) - 1);
   uint32_t dur = guard->rotation[index].duration_sec;
   
-  String mod = newInstanceId; // Default to instance_id for legacy compatibility
+  char mod[32]{0};
+  strncpy(mod, newInstanceId, sizeof(mod) - 1); // Default to instance_id for legacy compatibility
   for (const auto& inst : guard->instances) {
-      if (inst.instance_id == newInstanceId) {
-          mod = inst.engine_id;
+      if (strcmp(inst.instance_id.c_str(), newInstanceId) == 0) {
+          strncpy(mod, inst.engine_id.c_str(), sizeof(mod) - 1);
+          mod[sizeof(mod) - 1] = '\0';
           break;
       }
   }
 
   // Deactivate old engine
-  if (currentActiveInstanceId[0] != '\0' && strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0) {
+  if (currentActiveInstanceId[0] != '\0' && strcmp(currentActiveInstanceId, newInstanceId) != 0) {
       IEngine* oldEngine = findActiveEngine(currentActiveInstanceId);
       if (oldEngine) {
           oldEngine->deactivate();
@@ -333,25 +339,27 @@ void RotationManager::switchToModule(int index) {
   }
 
   // Activate new engine
-  IEngine* newEngine = getOrCreateEngine(newInstanceId.c_str());
+  IEngine* newEngine = getOrCreateEngine(newInstanceId);
   if (newEngine) {
       if (m_displayRuntime) {
-          EngineHandle h(mod.c_str(), newInstanceId.c_str());
+          EngineHandle h(mod, newInstanceId);
           m_displayRuntime->maybeReconfigurePipelineFor(newEngine, h, DisplaySourceId::ROTATION);
       }
       if (newEngine->selfPaced()) {
           newEngine->setRotationBudget(dur);
       }
-      if (strcmp(currentActiveInstanceId, newInstanceId.c_str()) != 0 || (newEngine->selfPaced() && newEngine->isFinished())) {
+      if (strcmp(currentActiveInstanceId, newInstanceId) != 0 || (newEngine->selfPaced() && newEngine->isFinished())) {
           newEngine->activate();
       }
   }
   
-  strncpy(currentActiveInstanceId, newInstanceId.c_str(), sizeof(currentActiveInstanceId) - 1);
+  strncpy(currentActiveInstanceId, newInstanceId, sizeof(currentActiveInstanceId) - 1);
   currentActiveInstanceId[sizeof(currentActiveInstanceId) - 1] = '\0';
+  strncpy(currentActiveEngineId, mod, sizeof(currentActiveEngineId) - 1);
+  currentActiveEngineId[sizeof(currentActiveEngineId) - 1] = '\0';
   
   LOGI("RotationManager", "[Rotation Transition] Activated '%s' (%s) | Heap: Free=%u, MinFree=%u, LargestBlock=%u", 
-      newInstanceId.c_str(), mod.c_str(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+      newInstanceId, mod, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   switchDepth = 0;
 }
 
@@ -416,6 +424,7 @@ bool RotationManager::loop() {
                 oldEngine->deactivate();
             }
             currentActiveInstanceId[0] = '\0';
+            currentActiveEngineId[0] = '\0';
         }
         return true;
     }
@@ -564,11 +573,25 @@ bool RotationManager::loop() {
     return shouldFlip;
 }
 
-String RotationManager::getCurrentEngineId() const {
+const char* RotationManager::getCurrentEngineIdCStr() const {
     extern ConfigLoader config;
     ConfigSnapshotGuard guard = config.acquireSnapshot();
-    if (guard->rotation.empty() || currentIndex >= guard->rotation.size()) return "";
-    String inst_id = guard->rotation[currentIndex].instance_id;
-    const auto* inst = guard->getInstance(inst_id);
-    return inst ? inst->engine_id : "";
+    if (guard->rotation.empty() || currentIndex >= guard->rotation.size()) {
+        currentActiveEngineId[0] = '\0';
+        return currentActiveEngineId;
+    }
+    const char* inst_id = guard->rotation[currentIndex].instance_id.c_str();
+    for (const auto& inst : guard->instances) {
+        if (strcmp(inst.instance_id.c_str(), inst_id) == 0) {
+            strncpy(currentActiveEngineId, inst.engine_id.c_str(), sizeof(currentActiveEngineId) - 1);
+            currentActiveEngineId[sizeof(currentActiveEngineId) - 1] = '\0';
+            return currentActiveEngineId;
+        }
+    }
+    currentActiveEngineId[0] = '\0';
+    return currentActiveEngineId;
+}
+
+String RotationManager::getCurrentEngineId() const {
+    return String(getCurrentEngineIdCStr());
 }

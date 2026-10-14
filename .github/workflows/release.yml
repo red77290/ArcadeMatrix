@@ -29,6 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run native C++ test suites
+        run: python3 scripts/run_native_tests.py
+
       - name: Validate documentation & SD configuration
         run: python3 scripts/validate_docs.py
 

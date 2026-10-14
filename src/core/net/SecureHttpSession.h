@@ -2,6 +2,7 @@
 
 #include "SecureTypes.h"
 #include "SecureHttpResponse.h"
+#include <atomic>
 #include <memory>
 
 namespace net {
@@ -100,16 +101,31 @@ public:
     void close();
 
     /**
-     * @brief Invariant N8: Aborts the session immediately and asynchronously.
+     * @brief Invariant N8: Aborts the session immediately on the owning thread.
      * Cuts the underlying transport without draining, marks session aborted,
      * and invalidates any in-flight response.
      */
     void abort();
 
     /**
+     * @brief Thread-safe cooperative abort request that can be called while holding s_sessionMutex
+     * without touching the non-thread-safe underlying socket from another task.
+     */
+    void requestAbort() {
+        _aborted.store(true, std::memory_order_release);
+        _lastError = TransportError::Aborted;
+    }
+
+    /**
      * @brief Checks if session has been aborted.
      */
-    bool isAborted() const { return _aborted; }
+    bool isAborted() const { return _aborted.load(std::memory_order_acquire); }
+
+    /**
+     * @brief Sets whether this session uses HTTPS/TLS (defaults to port != 80).
+     */
+    void setHttps(bool https) { _isHttps = https; }
+    bool isHttps() const { return _isHttps; }
 
     /**
      * @brief Gets the owner ID associated with this session.
@@ -133,7 +149,8 @@ private:
     SessionState _state = SessionState::Disconnected;
     TransportError _lastError = TransportError::None;
     bool _hasActiveResponse = false;
-    bool _aborted = false;
+    std::atomic<bool> _aborted{false};
+    bool _isHttps = true;
     uint16_t _ownerId = 0;
 
     std::unique_ptr<SessionTransport> _transport;

@@ -101,12 +101,13 @@ private:
     
     // Currently displayed market quote
     String activeSymbol;
+    String m_activeHistKey;
     float currentPrice;
     float changePercent24h;
     bool fetchSuccess;
     String currentImageUrl;
     
-    
+    void setActiveSymbol(const String& sym);
     void loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache);
     void parseSymbols(const String& syms);
     void fetchQuote(const String& symbol);

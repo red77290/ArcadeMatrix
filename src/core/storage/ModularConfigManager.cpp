@@ -121,6 +121,26 @@ bool ModularConfigManager::saveAll(const ConfigLoader& config) {
         }
     }
 
+    // Clean up orphan /config/instances/<id>.json files that are no longer in config.instances
+    std::vector<String> existingFiles;
+    if (_storage.listFiles("/config/instances", existingFiles)) {
+        for (const auto& f : existingFiles) {
+            if (f.endsWith(".json")) {
+                String instId = f.substring(0, f.length() - 5);
+                bool stillPresent = false;
+                for (const auto& inst : config.instances) {
+                    if (inst.instance_id == instId) {
+                        stillPresent = true;
+                        break;
+                    }
+                }
+                if (!stillPresent) {
+                    _workingSet.deleteInstance(instId);
+                }
+            }
+        }
+    }
+
     return hwOk && sysOk && netOk && rotOk && instOk;
 }
 
@@ -149,6 +169,10 @@ bool ModularConfigManager::loadHardware(MatrixConfig& outMatrix) {
 
     if (doc.containsKey("color_depth")) outMatrix.colorDepth = doc["color_depth"].as<int>();
     else if (doc.containsKey("colorDepth")) outMatrix.colorDepth = doc["colorDepth"].as<int>();
+
+    if (doc.containsKey("dynamic_color_depth")) outMatrix.dynamicColorDepth = doc["dynamic_color_depth"].as<bool>();
+    else if (doc.containsKey("dynamicColorDepth")) outMatrix.dynamicColorDepth = doc["dynamicColorDepth"].as<bool>();
+    else if (outMatrix.colorDepth == 0) outMatrix.dynamicColorDepth = true;
 
     if (doc.containsKey("rgb_sequence")) outMatrix.rgbSequence = doc["rgb_sequence"].as<String>();
     else if (doc.containsKey("rgbSequence")) outMatrix.rgbSequence = doc["rgbSequence"].as<String>();
@@ -205,6 +229,8 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["powerLimitPercent"] = matrix.powerLimitPercent;
     doc["render_pipeline"] = matrix.render_pipeline;
     doc["colorDepth"] = matrix.colorDepth;
+    doc["dynamicColorDepth"] = matrix.dynamicColorDepth;
+    doc["dynamic_color_depth"] = matrix.dynamicColorDepth;
     doc["rgbSequence"] = matrix.rgbSequence;
     doc["limitRefreshRateHz"] = matrix.limitRefreshRateHz;
     doc["driverChip"] = matrix.driverChip;
@@ -218,7 +244,6 @@ bool ModularConfigManager::saveHardware(const MatrixConfig& matrix) {
     doc["slot_transition"] = matrix.slot_transition;
     doc["slot_transition_duration_ms"] = matrix.slot_transition_duration_ms;
     doc["matrix_power"] = matrix.matrix_power;
-    doc["render_pipeline"] = matrix.render_pipeline;
 
     String out;
     serializeJsonPretty(doc, out);

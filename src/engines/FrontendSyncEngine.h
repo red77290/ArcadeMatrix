@@ -60,7 +60,9 @@ private:
     bool waitingDisplayed = false;
     bool hasReceivedAnyEvent = false;
 
-    volatile bool isReconnecting = false;
+    std::atomic<bool> isReconnecting{false};
+    std::atomic<bool> stopReconnectRequested{false};
+    std::atomic<bool> reconnectTaskExited{true};
     TaskHandle_t reconnectTaskHandle = nullptr;
     static void reconnectTaskFunc(void* param);
 

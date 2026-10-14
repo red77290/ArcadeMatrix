@@ -39,19 +39,19 @@ Cada motor en ArcadeMatrix está diseñado con **cero asignaciones dinámicas y 
 | :--- | :---: | :--- |
 | **Desk Master Dashboard**<br>`dashboard` | <img src="docs/assets/engines/engine_dashboard.png" width="240" alt="Motor Dashboard"> | Reloj de escritorio horizontal completo con esfera de reloj analógica en pixel-art, segundero fluido, relojes mundiales, clima interior SHTC3 y teletipo en vivo de criptomonedas Binance y acciones Yahoo Finance. |
 | **Reloj Retro Gaming**<br>`clock` | <img src="docs/assets/engines/engine_clock.png" width="240" alt="Reloj Retro"><br><br>[👉 **Ver galería de 10+ relojes retro ➔**](#-relojes-retro-legendarios-posters--simulaciones-hub75) | Colección exclusiva de relojes animados de arcade y consolas retro (Metal Slug, Castlevania, Mario, Mega Man, Sonic, Pokédex, Pac-Man, Tetris, Reloj Mundial, Lluvia Matrix...) con sprites 100 % fieles al píxel original. |
-| **WebRadio y Reproductor Musical**<br>`music` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Motor Música"> | Streaming de audio autónomo con decodificación MP3 lineal en tiempo real (`minimp3`), salida DAC I2S Everest ES8311 de alta fidelidad, carátulas de álbumes y visualizador de audio dinámico de 64 bandas. |
+| **WebRadio y Reproductor Musical**<br>`music_player` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Motor Música"> | Streaming de audio autónomo con decodificación MP3 lineal en tiempo real (`minimp3`), salida DAC I2S Everest ES8311 de alta fidelidad, carátulas de álbumes y visualizador de audio dinámico de 64 bandas. |
 | **Spotify Now Playing**<br>`spotify` | <img src="docs/assets/engines/engine_spotify.png" width="240" alt="Motor Spotify"> | Visualización en tiempo real de la pista en reproducción con carátula a todo color, desplazamiento artista/título, barras de ecualizador animadas y barra de progreso. |
-| **Google Cast & Nest**<br>`googlecast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Motor Google Cast"> | Descubrimiento automático mDNS de dispositivos Google Home / Nest Audio con carátulas de streaming, volumen y progreso de reproducción en vivo. |
+| **Google Cast & Nest**<br>`google_cast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Motor Google Cast"> | Descubrimiento automático mDNS de dispositivos Google Home / Nest Audio con carátulas de streaming, volumen y progreso de reproducción en vivo. |
 | **Ticker y Gráfico Cripto**<br>`crypto` | <img src="docs/assets/engines/engine_crypto.png" width="240" alt="Motor Cripto"> | Precios en vivo de Binance / CoinGecko, indicador de variación en 24h y gráficos sparkline históricos en tiempo real con caché TTL inteligente. |
 | **Ticker de Mercado de Valores**<br>`stock` | <img src="docs/assets/engines/engine_stock.png" width="240" alt="Motor Bolsa"> | Cotizaciones en tiempo real de Yahoo Finance, indicadores de 1D % y gráficos sparkline intradiarios para acciones y ETFs de NASDAQ/S&P. |
 | **Pronóstico del Clima**<br>`weather` | <img src="docs/assets/engines/engine_weather.png" width="240" alt="Motor Clima"> | Condiciones exteriores en vivo, temperaturas máximas/mínimas, humedad, viento e iconos retro animados mediante OpenWeatherMap y Open-Meteo. |
 | **Sensor de Clima Interior**<br>`temp` | <img src="docs/assets/engines/engine_temp.png" width="240" alt="Motor Temperatura"> | Temperatura interior (°C/°F) y humedad relativa en tiempo real mediante el sensor I2C integrado SHTC3 con indicadores dinámicos de confort. |
-| **Sonómetro Decibelímetro SPL**<br>`decibel` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Motor Decibelios"> | Monitorización calibrada de ruido ambiental en dB SPL con smileys arcade reactivos, indicador superior de barra de salud estilo lucha VS y vúmetro segmentado. |
-| **HUD de Telemetría del Sistema**<br>`sysinfo` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="Motor SysInfo"> | Monitor de doble columna en tiempo real de uso de CPU (%), RAM (%), temperatura del hardware SoC (°C/°F) y tiempo de actividad con barras de colores. |
+| **Sonómetro Decibelímetro SPL**<br>`decibelMeter` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Motor Decibelios"> | Monitorización calibrada de ruido ambiental en dB SPL con smileys arcade reactivos, indicador superior de barra de salud estilo lucha VS y vúmetro segmentado. |
+| **HUD de Telemetría del Sistema**<br>`system_info` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="Motor SysInfo"> | Monitor de doble columna en tiempo real de uso de CPU (%), RAM (%), temperatura del hardware SoC (°C/°F) y tiempo de actividad con barras de colores. |
 | **Ticker de Noticias en Vivo**<br>`gnews` | <img src="docs/assets/engines/engine_gnews.png" width="240" alt="Motor GNews"> | Titulares de última hora en tiempo real con etiquetas temáticas (`[TECH]`, `[MUNDO]`, `[ECON]`), baliza luminosa parpadeante de emisión en directo y teletipo fluido a 60 FPS. |
 | **Home Assistant y MQTT**<br>`mqttdata` | <img src="docs/assets/engines/engine_mqttdata.png" width="240" alt="Motor MQTT Data"> | Paneles de Home Assistant, valores de sensores, gráficos históricos de 24h y pronósticos locales emitidos por MQTT con blueprints listos para usar. |
-| **Visualizador de Audio**<br>`visualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Motor Visualizador"> | Barras de espectro de 32 bandas en gradiente arcoíris con retención de picos (peak hold), formas de onda de osciloscopio y modos radiales reactivos. |
-| **Reproductor de GIFs Animados**<br>`gif` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Motor GIF"> | Reproducción fluida a 60 FPS de animaciones retro y listas de reproducción de tarjeta SD con aceleración canvas DMA de copia cero. |
+| **Visualizador de Audio**<br>`audiovisualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Motor Visualizador"> | Barras de espectro de 32 bandas en gradiente arcoíris con retención de picos (peak hold), formas de onda de osciloscopio y modos radiales reactivos. |
+| **Reproductor de GIFs Animados**<br>`gifs` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Motor GIF"> | Reproducción fluida a 60 FPS de animaciones retro y listas de reproducción de tarjeta SD con aceleración canvas DMA de copia cero. |
 | **Pancarta de Texto Desplazable**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Motor Mensaje"> | Letreros de matriz de puntos personalizables con tipografía ámbar brillante, múltiples direcciones de desplazamiento y activadores de API REST. |
 | **Marquesina de Recreativa Arcade**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Motor Marquesina"> | Muestra marquesinas oficiales de juegos arcade iluminadas mediante integración Pixelcade para sistemas Batocera, Recalbox y RetroPie. |
 | **Calendario y Fecha**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Motor Fecha"> | Fecha en tamaño grande con diseño arcade, sombras proyectadas 3D estilo Capcom/Nintendo, soporte multilingüe (ES, EN, FR) y sincronización NTP/RTC DS3231. |
@@ -168,30 +168,27 @@ Para mostrar luchadores en el módulo `SPRITES`, el ESP32 espera archivos brutos
 Para ver todos los detalles, consulta la documentación en `tools/mugen_extractor/README_ES.md`.
 
 ### Fondos de sprites
-¡Los luchadores necesitan una arena! Puedes definir el fondo en el que luchan colocando un archivo de imagen bruto (por ejemplo, `stage1.raw`) en `SD:/fighters_32/backgrounds/`.
-Luego, vincula este fondo en tu `config.json` bajo la sección `[DATE]` (¡los fondos sirven para dar más vida al módulo de fecha!):
-```ini
-BACKGROUND_SPRITE=stage1.raw
+Los luchadores y el módulo de Fecha pueden mostrar un escenario de arena colocando un archivo de imagen bruto (por ejemplo, `stage1.raw`) en `SD:/fighters_32/backgrounds/` y seleccionándolo mediante la opción `bg_sprite` de su instancia `date` en `config.json` (o desde la Web UI):
+```json
+{
+  "instance_id": "date_main",
+  "engine_id": "date",
+  "config": {
+    "bg_sprite": "stage1.raw"
+  }
+}
 ```
 
-## Indexación de playlists GIF (selección de carpetas en la Web UI)
-La Web UI te permite marcar/desmarcar qué subcarpetas de `gifs/` se reproducen durante la rotación en reposo, pero necesita un manifiesto `playlists.json` para saber qué hay en la tarjeta SD. La reproducción de GIF funciona perfectamente sin él (el motor siempre lee los archivos directamente desde la tarjeta SD) - este paso solo es necesario si quieres usar ese selector de casillas.
+## Playlists GIF (Descubrimiento Automático)
+El firmware ESP32 escanea dinámicamente las carpetas `/gifs/` y `/gifs_tate/` de tu tarjeta SD y permite reindexar en segundo plano directamente desde la Web UI (`POST /api/gifs/reindex`) — ¡sin necesidad de ejecutar scripts manuales!
 
 > [!TIP]
 > **Gestor de Archivos y Subida Web (¡Sin extraer la tarjeta SD!):**
 > Ahora puedes gestionar playlists, crear/eliminar carpetas, renombrar y subir GIFs animados directamente desde tu navegador con la tarjeta **GIF File Manager** en la Web UI, con soporte nativo Horizontal / Vertical y reindexación automática en segundo plano — desarrollado por [@TooncesToo](https://github.com/TooncesToo).
 
-1. Organiza tus GIF en subcarpetas dentro de `gifs/` en tu tarjeta SD, por ejemplo `gifs/mario/`, `gifs/sonic/` (cada subcarpeta se convierte en una playlist seleccionable; los archivos `.gif` sueltos directamente en `gifs/` siempre se reproducen y no necesitan este paso).
-2. Ejecuta uno de los scripts nativos en `tools/gif_indexation/` - sin necesidad de Python:
-   ```bash
-   ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - pasa la raíz de la SD o su carpeta gifs/
-   ```
-   ```powershell
-   .\generate_index.ps1 -Path E:\           # Windows
-   ```
-3. Esto crea `gifs/playlists.json` en la tarjeta SD. Vuelve a ejecutarlo cada vez que agregues, elimines o renombres una carpeta dentro de `gifs/`.
-
-Para ver todos los detalles, consulta `tools/gif_indexation/README_ES.md`.
+1. Simplemente organiza tus GIF en subcarpetas dentro de `gifs/` en tu tarjeta SD, por ejemplo `gifs/mario/`, `gifs/sonic/`.
+2. La interfaz web las detectará automáticamente como playlists seleccionables (y los scripts sin conexión en `tools/gif_indexation/` siguen disponibles si preparas una tarjeta SD en lote en un PC).
+3. Los archivos `.gif` sueltos colocados directamente en la raíz de `gifs/` siempre se reproducen por defecto.
 
 ## Fuentes personalizadas (conversión BDF → AMF)
 El Reloj, la Fecha y el mensaje desplazante pueden usar fuentes bitmap personalizadas cargadas desde la tarjeta SD en lugar de las ~6 fuentes compiladas en el firmware, usando las mismas fuentes `.bdf` que `ArcadeMatrix_RPi` ya incluye. Sin embargo, el ESP32 no tiene un analizador BDF a bordo, por lo que primero deben convertirse al formato compacto `.amf`.
@@ -212,7 +209,7 @@ Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 | :--- | :--- | :---: | :---: | :--- |
 | **Reloj y Watch Faces (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Fuentes bitmap dinámicas, temas retro/arcade |
 | **Animaciones GIFs (`gifs`)** | `media` | 🟢 Fullspeed 60 FPS | 🟢 Fullspeed 60 FPS | Tarjeta Micro-SD (orientaciones Yoko / Tate) |
-| **Combate M.U.G.E.N (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Tarjeta Micro-SD (streaming sprites RGB565) |
+| **Combate M.U.G.E.N (`fighter` overlay)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Tarjeta Micro-SD (streaming sprites RGB565) |
 | **Panel Desk Deck (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Reloj multi-widget, clima y mercados) |
 | **Criptomonedas en Tiempo Real (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en caché) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
 | **Bolsa de Valores y Gráficos Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits en caché) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
@@ -220,13 +217,13 @@ Para todos los detalles, revisa `tools/bdf_to_amfont/README_ES.md`.
 | **Tiempo en Directo (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
 | **Fecha y Calendario (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Hora del sistema local y fondo sprite opcional |
 | **Texto Desplazable (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Desplazador de texto sub-píxel a 60 FPS |
-| **Telemetría del Sistema (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Indicadores en tiempo real CPU, RAM, Temp y Uptime |
+| **Telemetría del Sistema (`system_info`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Indicadores en tiempo real CPU, RAM, Temp y Uptime |
 | **Marquesina Retro Arcade (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
 | **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, API Web de Spotify |
 | **Pantalla Google Cast (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, descubrimiento local mDNS |
-| **WebRadio Autónoma (`music`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | Requiere DAC ES8311 y PSRAM |
+| **WebRadio Autónoma (`music_player`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | Requiere DAC ES8311 y PSRAM |
 | **Visualizador de Espectro Audio FFT (`audiovisualizer`)** | `audio` | 🟢 60 FPS (Micro I2S) | ❌ Incompatible | Requiere conjunto de doble micro ES7210 |
-| **Medidor de Decibelios SPL (`decibel`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Requiere conjunto de doble micro ES7210 |
+| **Medidor de Decibelios SPL (`decibelMeter`)** | `audio` | 🟢 30 FPS (Micro I2S) | ❌ Incompatible | Requiere conjunto de doble micro ES7210 |
 | **Sensor de Clima Interior (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Requiere sensor de temperatura/humedad SHTC3 |
 | **Home Assistant y Datos MQTT (`mqttdata`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Broker MQTT / Blueprints de Home Assistant |
 

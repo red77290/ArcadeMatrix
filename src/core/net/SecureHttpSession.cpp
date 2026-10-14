@@ -106,7 +106,7 @@ private:
 #endif
 
 SecureHttpSession::SecureHttpSession(const String& host, uint16_t port, const SecureHttpOptions& options)
-    : _host(host), _port(port), _options(options), _ownerId(options.ownerId) {
+    : _host(host), _port(port), _options(options), _isHttps(port != 80), _ownerId(options.ownerId) {
 #if defined(ARDUINO)
     _transport.reset(new EspSessionTransport());
 #endif
@@ -125,7 +125,8 @@ SecureHttpSession::SecureHttpSession(SecureHttpSession&& other) noexcept
       _state(other._state),
       _lastError(other._lastError),
       _hasActiveResponse(other._hasActiveResponse),
-      _aborted(other._aborted),
+      _aborted(other._aborted.load(std::memory_order_acquire)),
+      _isHttps(other._isHttps),
       _ownerId(other._ownerId),
       _transport(std::move(other._transport)) {
     SecureHttpClient::unregisterSession(&other);
@@ -144,7 +145,8 @@ SecureHttpSession& SecureHttpSession::operator=(SecureHttpSession&& other) noexc
         _state = other._state;
         _lastError = other._lastError;
         _hasActiveResponse = other._hasActiveResponse;
-        _aborted = other._aborted;
+        _aborted.store(other._aborted.load(std::memory_order_acquire), std::memory_order_release);
+        _isHttps = other._isHttps;
         _ownerId = other._ownerId;
         _transport = std::move(other._transport);
 
@@ -158,7 +160,7 @@ SecureHttpSession& SecureHttpSession::operator=(SecureHttpSession&& other) noexc
 }
 
 void SecureHttpSession::abort() {
-    _aborted = true;
+    _aborted.store(true, std::memory_order_release);
     _lastError = TransportError::Aborted;
     _state = SessionState::Closed;
     _hasActiveResponse = false;
@@ -177,7 +179,7 @@ bool SecureHttpSession::isConnected() const {
 }
 
 bool SecureHttpSession::ensureConnected() {
-    if (_aborted) {
+    if (_aborted.load(std::memory_order_acquire)) {
         _lastError = TransportError::Aborted;
         return false;
     }
@@ -223,6 +225,13 @@ bool SecureHttpSession::ensureConnected() {
         // 👉 lock destructor runs here: released immediately upon connect() success!
     }
 
+    if (_aborted.load(std::memory_order_acquire)) {
+        _transport->stop();
+        _lastError = TransportError::Aborted;
+        _state = SessionState::Closed;
+        return false;
+    }
+
 #if defined(ARDUINO)
     esp_task_wdt_reset();
 #endif
@@ -233,7 +242,7 @@ bool SecureHttpSession::ensureConnected() {
 
 SecureHttpResponse SecureHttpSession::get(const String& path,
                                          const std::vector<std::pair<String, String>>& headers) {
-    if (_aborted) {
+    if (_aborted.load(std::memory_order_acquire)) {
         return SecureHttpResponse(this, -1, nullptr, 0, 0, TransportError::Aborted);
     }
     uint32_t startMs = millis();
@@ -252,7 +261,7 @@ SecureHttpResponse SecureHttpSession::get(const String& path,
     esp_task_wdt_reset();
 #endif
 
-    bool beginOk = _transport->begin(_host, _port, path, (_port == 443), _options);
+    bool beginOk = _transport->begin(_host, _port, path, _isHttps, _options);
     if (!beginOk) {
         _lastError = TransportError::ConnectFailed;
         return SecureHttpResponse(this, -1, nullptr, 0, millis() - startMs, _lastError);
@@ -267,6 +276,14 @@ SecureHttpResponse SecureHttpSession::get(const String& path,
 #if defined(ARDUINO)
     esp_task_wdt_reset();
 #endif
+
+    if (_aborted.load(std::memory_order_acquire)) {
+        _transport->end();
+        _transport->stop();
+        _lastError = TransportError::Aborted;
+        _state = SessionState::Closed;
+        return SecureHttpResponse(this, -1, nullptr, 0, durationMs, _lastError);
+    }
 
     if (statusCode <= 0) {
         _lastError = TransportError::Timeout;
@@ -290,7 +307,7 @@ SecureHttpResponse SecureHttpSession::get(const String& path,
 
 SecureHttpResponse SecureHttpSession::post(const String& path, const String& contentType, const String& body,
                                            const std::vector<std::pair<String, String>>& headers) {
-    if (_aborted) {
+    if (_aborted.load(std::memory_order_acquire)) {
         return SecureHttpResponse(this, -1, nullptr, 0, 0, TransportError::Aborted);
     }
     uint32_t startMs = millis();
@@ -307,7 +324,7 @@ SecureHttpResponse SecureHttpSession::post(const String& path, const String& con
     esp_task_wdt_reset();
 #endif
 
-    bool beginOk = _transport->begin(_host, _port, path, (_port == 443), _options);
+    bool beginOk = _transport->begin(_host, _port, path, _isHttps, _options);
     if (!beginOk) {
         _lastError = TransportError::ConnectFailed;
         return SecureHttpResponse(this, -1, nullptr, 0, millis() - startMs, _lastError);
@@ -322,6 +339,14 @@ SecureHttpResponse SecureHttpSession::post(const String& path, const String& con
 #if defined(ARDUINO)
     esp_task_wdt_reset();
 #endif
+
+    if (_aborted.load(std::memory_order_acquire)) {
+        _transport->end();
+        _transport->stop();
+        _lastError = TransportError::Aborted;
+        _state = SessionState::Closed;
+        return SecureHttpResponse(this, -1, nullptr, 0, durationMs, _lastError);
+    }
 
     if (statusCode <= 0) {
         _lastError = TransportError::Timeout;
@@ -343,7 +368,7 @@ SecureHttpResponse SecureHttpSession::post(const String& path, const String& con
 }
 
 String SecureHttpSession::readResponseBodyString() {
-    if (_aborted || !_transport || !_hasActiveResponse) {
+    if (_aborted.load(std::memory_order_acquire) || !_transport || !_hasActiveResponse) {
         return "";
     }
     String result = _transport->getString();
@@ -354,10 +379,18 @@ String SecureHttpSession::readResponseBodyString() {
 void SecureHttpSession::finalizeCurrentResponse() {
     if (!_hasActiveResponse || !_transport) return;
 
+    if (_aborted.load(std::memory_order_acquire)) {
+        _transport->end();
+        _transport->stop();
+        _hasActiveResponse = false;
+        _state = SessionState::Closed;
+        return;
+    }
+
     // Drain remaining unread stream bytes to keep TCP pipe clean for keepalive
     Stream* streamPtr = _transport->getStream();
     if (streamPtr && _transport->connected()) {
-        while (streamPtr->available() > 0) {
+        while (streamPtr->available() > 0 && !_aborted.load(std::memory_order_acquire)) {
             streamPtr->read();
         }
     }

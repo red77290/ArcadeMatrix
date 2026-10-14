@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <array>
+#include <atomic>
 #include <memory>
 #include "EngineRetirementQueue.h"
 #include "Logger.h"
@@ -35,11 +36,17 @@ public:
      * @return true if successfully queued, false if queue is full (caller must retain and retry).
      */
     bool retire(std::unique_ptr<IEngine>&& engine) {
+        if (!engine) return false;
+        _activeRetirements.fetch_add(1, std::memory_order_acq_rel);
         bool pushed = _retireQueue.push(std::move(engine));
-        if (pushed && _lifecycleTaskHandle) {
+        if (!pushed) {
+            _activeRetirements.fetch_sub(1, std::memory_order_release);
+            return false;
+        }
+        if (_lifecycleTaskHandle) {
             xTaskNotifyGive(_lifecycleTaskHandle);
         }
-        return pushed;
+        return true;
     }
 
     /**
@@ -58,7 +65,7 @@ public:
     }
 
     size_t getQuarantineCount() const { return _quarantineCount; }
-    bool hasPending() const { return !_retireQueue.isEmpty(); }
+    bool hasPending() const { return _activeRetirements.load(std::memory_order_acquire) > 0 || !_retireQueue.isEmpty(); }
 
 private:
     Core0LifecycleDispatcher() = default;
@@ -69,6 +76,7 @@ private:
     static void lifecycleTaskFunc(void* param);
 
     EngineRetirementQueue<8> _retireQueue;
+    std::atomic<uint8_t> _activeRetirements{0};
     static constexpr size_t QUARANTINE_CAPACITY = 4;
     std::array<std::unique_ptr<IEngine>, QUARANTINE_CAPACITY> _quarantine{};
     size_t _quarantineCount = 0;

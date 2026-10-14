@@ -12,7 +12,7 @@ In early firmware iterations, the M.U.G.E.N `FighterEngine` was treated as a sel
 ## Decision
 1. **Separation of Concerns:**
    - `DisplayArbiter`: Selects the primary display source (e.g. `MQTT` > `VISUALIZER` > `MARQUEE` > `GIF` > `ROTATION`).
-   - `EngineRegistry`: Contains only primary selectable display sources (`clock`, `date`, `weather`, `gifs`, `crypto`, `stock`, `audiovisualizer`, `decibelMeter`, `temp`, `message`).
+   - `EngineRegistry`: Contains only primary selectable display sources (`clock`, `date`, `weather`, `gifs`, `crypto`, `stock`, `audiovisualizer`, `decibelMeter`, `temp`, `message`, `google_cast`, `spotify`, `system_info`, `music_player`, `dashboard`, `gnews`, `marquee`, `mqttdata`).
    - `OverlayManager`: Manages transverse overlays (`FighterEngine`).
 2. **User-Driven Per-Rotation Configuration:**
    - Overlays are enabled per rotation slot via `"overlays": { "fighter": true }` (migrated from legacy `"fighter_overlay"`).

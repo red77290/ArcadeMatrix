@@ -830,7 +830,7 @@ void AppRuntime::update() {
             if (m_drawingSurface->isDirty()) {
                 m_drawingSurface->present();
             }
-        } else {
+        } else if (matrixEngine.getDisplay()) {
             matrixEngine.markExternalDraw();
             matrixEngine.present();
         }
@@ -852,10 +852,15 @@ void AppRuntime::update() {
                  snapshot.system.night_mode_enabled ? "true" : "false",
                  snapshot.system.night_brightness);
             matrixEngine.setBrightness(0);
-            matrixEngine.getDisplay()->fillScreen(0);
-            matrixEngine.present();
-            matrixEngine.getDisplay()->fillScreen(0);
-            matrixEngine.present();
+            if (m_drawingSurface) {
+                m_drawingSurface->clear(0);
+            }
+            if (matrixEngine.getDisplay()) {
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.present();
+                matrixEngine.getDisplay()->fillScreen(0);
+                matrixEngine.present();
+            }
             matrixEngine.markExternalDraw();
             m_wasPoweredOn = false;
             m_lastAppliedBrightness = 0;
@@ -893,7 +898,7 @@ void AppRuntime::update() {
     if (m_displayRuntime.getScheduler().evaluatePresentation(renderResult)) {
         if (m_drawingSurface) {
             m_drawingSurface->present();
-        } else {
+        } else if (matrixEngine.getDisplay()) {
             matrixEngine.present();
         }
     }

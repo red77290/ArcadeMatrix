@@ -3,6 +3,8 @@
 #include "../../include/core/EngineContract.h"
 #include <memory>
 #include <map>
+#include <cstring>
+#include <strings.h>
 #include <Arduino.h>
 
 class DictionaryEngineConfig : public EngineConfig {
@@ -17,44 +19,38 @@ public:
     DictionaryEngineConfig& operator=(DictionaryEngineConfig&& other) noexcept = default;
 
     bool hasKey(const char* key) const {
-        if (!dict) return false;
-        return dict->find(String(key)) != dict->end();
+        return findValue(key) != nullptr;
     }
 
     String getString(const char* key, const char* default_val = "") const override {
-        if (!dict) return default_val;
-        auto it = dict->find(String(key));
-        if (it != dict->end()) {
-            return it->second;
+        const String* val = findValue(key);
+        if (val) {
+            return *val;
         }
-        return default_val;
+        return default_val ? default_val : "";
     }
 
     int getInt(const char* key, int default_val = 0) const override {
-        if (!dict) return default_val;
-        auto it = dict->find(String(key));
-        if (it != dict->end()) {
-            return it->second.toInt();
+        const String* val = findValue(key);
+        if (val) {
+            return val->toInt();
         }
         return default_val;
     }
 
     float getFloat(const char* key, float default_val = 0.0f) const override {
-        if (!dict) return default_val;
-        auto it = dict->find(String(key));
-        if (it != dict->end()) {
-            return it->second.toFloat();
+        const String* val = findValue(key);
+        if (val) {
+            return val->toFloat();
         }
         return default_val;
     }
 
     bool getBool(const char* key, bool default_val = false) const override {
-        if (!dict) return default_val;
-        auto it = dict->find(String(key));
-        if (it != dict->end()) {
-            String v = it->second;
-            v.toLowerCase();
-            return (v == "true" || v == "1" || v == "yes");
+        const String* val = findValue(key);
+        if (val) {
+            const char* s = val->c_str();
+            return (strcasecmp(s, "true") == 0 || strcmp(s, "1") == 0 || strcasecmp(s, "yes") == 0);
         }
         return default_val;
     }
@@ -88,6 +84,16 @@ public:
     }
 
 private:
+    const String* findValue(const char* key) const {
+        if (!dict || !key) return nullptr;
+        for (const auto& kv : *dict) {
+            if (strcmp(kv.first.c_str(), key) == 0) {
+                return &kv.second;
+            }
+        }
+        return nullptr;
+    }
+
     void ensureUnique() {
         if (!dict) {
             dict = std::make_shared<std::map<String, String>>();

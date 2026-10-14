@@ -16,13 +16,15 @@ El sistema de configuración se basa exclusivamente en un único archivo `config
   "wifi": { ... },
   "mqtt": { ... },
   "data_mqtt": { ... },
-  "system": { ... },
+  "system": {
+    "api_auth_enabled": false,
+    "api_token": "",
+    ...
+  },
   "display": { ... },
   "audio": { ... },
   "instances": [ ... ],
-  "rotation": [ ... ],
-  "api_auth_enabled": false,
-  "api_token": ""
+  "rotation": [ ... ]
 }
 ```
 
@@ -30,7 +32,7 @@ El sistema de configuración se basa exclusivamente en un único archivo `config
 
 ## 2. El Bloque `"matrix"` (Controlador de Hardware)
 
-Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-MatrixPanel-I2S-DMA`. Modificar parámetros de hardware críticos recarga automáticamente el controlador.ón del controlador tenga efecto.
+Este bloque configura los parámetros DMA para la biblioteca `ESP32-HUB75-MatrixPanel-I2S-DMA`. Modificar parámetros de hardware críticos recarga automáticamente el controlador.
 
 | Clave | Tipo | Descripción |
 | :--- | :--- | :--- |
@@ -266,7 +268,7 @@ Un array que contiene la configuración de cada bloque lógico.
 }
 ```
 * `instance_id`: Nombre único de este bloque.
-* `engine_id`: El identificador interno del Motor Rust (debe ser un motor registrado — ver §9).
+* `engine_id`: El identificador interno del motor C++ (`IDisplayEngine`, debe ser un motor registrado — ver §9).
 * `config`: Un mapa plano de valores `String` específicos del motor, validado contra su `ConfigSchema`.
 
 Editar una instancia a través de la interfaz Web (`POST /api/instances`) se aplica **en vivo, sin reinicio**: el runtime llama al `on_config_changed()` del motor en el siguiente frame (hot-reload Lazy-Once). Añadir o eliminar una instancia reinicia limpiamente la rotación.
@@ -289,7 +291,7 @@ Define el orden de visualización, la duración por slot y la activación de ove
 
 Solo se inicializan las instancias enumeradas aquí, ahorrando memoria para funciones no utilizadas. La rotación se puede editar desde el panel **Rotation** de la interfaz Web (`GET`/`POST /api/rotation`).
 
-> **Persistencia Legible**: Al guardarse en disco (`config.json`), el archivo siempre se escribe formateado con sangrías claras para permitir su inspección y modificación manual segura.
+> **Persistencia Legible**: Al guardarse en disco (`config.json`), el archivo siempre se escribe formateado con sangrías claras (`serializeJsonPretty`) para permitir su inspección y modificación manual segura.
 
 ---
 
@@ -329,7 +331,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Índice del tema de reloj animado: `0` = Digital Estándar, `1` = Flip Clock, `2` = Cyberpunk, `3` = Word Clock, `4` = Binary Clock, `5` = Pac-Man, `6` = Tetris, `7` = Slot Machine, `8` = Versus (M.U.G.E.N), `9` = Pong, `10` = Matrix Rain (Katakana). |
 | `format` | `String` | `%H:%M:%S` | Formato de hora strftime. |
-| `font` | `String` | `PressStart2P.ttf` | Archivo de fuente de `/fonts/`. |
+| `font` | `String` | `Default` | Fuente de mapa de bits integrada (`Default`) o archivo de fuente de `/fonts/`. |
 | `size` | `int` | `2` | Factor de escalado de la fuente. |
 | `color_1` | `String` | `#FFFFFF` | Color hexadecimal primario (inicio de degradado en tema Custom). |
 | `color_2` | `String` | `#FFFFFF` | Color hexadecimal secundario (fin de degradado en tema Custom). |
@@ -341,7 +343,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | Índice del tema de fecha. |
 | `format` | `String` | `%d/%m` | Formato de fecha strftime. |
-| `font` | `String` | `PressStart2P.ttf` | Archivo de fuente de `/fonts/`. |
+| `font` | `String` | `Default` | Fuente de mapa de bits integrada (`Default`) o archivo de fuente de `/fonts/`. |
 | `size` | `int` | `2` | Factor de escalado de la fuente. |
 | `color_1` | `String` | `#FFFFFF` | Color hexadecimal primario. |
 | `color_2` | `String` | `#FFFFFF` | Color hexadecimal secundario. |
@@ -382,7 +384,7 @@ OpenWeatherMap utiliza el código de país ISO 3166 (y el código de estado de 2
 * **Ubicaciones en Estados Unidos:** Use `Ciudad,CodigoEstado,CodigoPais` (ej. `Tucson,AZ,US`, `Miami,FL,US`, `Dallas,TX,US`).
 * **Dónde buscar el nombre exacto:** Vaya a [openweathermap.org](https://openweathermap.org) y busque su ciudad.
 
-### Motor: `sysinfo` (Monitor de Sistema)
+### Motor: `system_info` (Monitor de Sistema)
 | Campo | Tipo | Por defecto | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
 | `theme` | `int` | `0` | `0` a `2` | Tema visual: `0` = Barras de nivel de color, `1` = Cuadrícula compacta 4 bloques, `2` = Terminal Retro. |
@@ -440,14 +442,28 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 5. **Reinicio a Medianoche (00:00 UTC):**
    - El cambio de día calendario restablece automáticamente los contadores de consumo a 0 y borra las alertas de límite de cuota.
 
-### Motor: `fighter` (Combate M.U.G.E.N)
+### Overlay Transversal: `fighter` (Combate M.U.G.E.N)
+> [!NOTE]
+> `FighterEngine` **no** es un motor independiente registrado en `EngineRegistry` (`instances`). Opera como un **overlay decorativo transversal** superpuesto a las pantallas de rotación activas (`RotationManager` etapa 2) cuando está habilitado globalmente en el bloque `system` (`idle_fighter_enabled`, `idle_fighter_interval`, `fighter_theme`, `fighter_1`, `fighter_2`, `fighter_stage`) y activado por slot mediante `rotation[i].overlays.fighter = true`.
+
+| Campo del Sistema | Tipo | Por defecto | Opciones | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `idle_fighter_enabled` | `bool` | `true` | `true`, `false` | Interruptor principal para el overlay decorativo de Luchador. |
+| `idle_fighter_interval` | `int` | `5` | `1` a `3600` | Segundos entre dos animaciones de combate. |
+| `fighter_theme` | `int` | `0` | `0`, `1` | Estilo visual del overlay (`0` = Idle / Street Brawlers, `1` = Arena M.U.G.E.N completa). |
+| `fighter_1` | `String` | `Random` | Nombre de carpeta | Luchador P1 (`Random` para selección automática). |
+| `fighter_2` | `String` | `Random` | Nombre de carpeta | Luchador P2 (`Random` para selección automática). |
+| `fighter_stage` | `String` | `None` | Nombre del escenario | Escenario de fondo opcional (`None` para superponer sobre el motor activo). |
+
+### Motor: `music_player` (Reproductor Musical Universal)
 | Campo | Tipo | Por defecto | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
-| `mode` | `Options` | `match` | `match`, `showcase` | Modo de combate: `match` (duelo con K.O. y victoria) o `showcase` (demostración continua). |
-| `fighter_1` | `String` | `""` | Nombre de carpeta | Luchador P1 (dejar vacío para selección aleatoria). |
-| `fighter_2` | `String` | `""` | Nombre de carpeta | Luchador P2 (dejar vacío para selección aleatoria). |
-| `show_hud` | `bool` | `true` | `true`, `false` | Muestra barras de vida retro (HP), medidores de Super y nombres de luchadores. |
-| `match_duration` | `int` | `30` | `10` a `120` | Duración máxima del asalto en segundos antes de agotar el tiempo. |
+| `show_source` | `bool` | `true` | `true`, `false` | Muestra la insignia de la fuente de audio activa (Bluetooth A2DP, Web Radio o Reproductor SD). |
+| `show_title` | `bool` | `true` | `true`, `false` | Muestra el título de la pista o emisora actual. |
+| `show_artist` | `bool` | `true` | `true`, `false` | Muestra el artista o los metadatos del álbum actual. |
+| `show_progress` | `bool` | `true` | `true`, `false` | Muestra la barra de progreso de reproducción en la parte inferior. |
+| `show_visualizer` | `bool` | `true` | `true`, `false` | Muestra el visualizador de espectro de audio en tiempo real durante la reproducción. |
+| `marquee_speed` | `int` | `40` | `10` a `200` | Velocidad de desplazamiento en milisegundos por paso para títulos largos. |
 
 ### Motor: `google_cast` (Google Home / Nest Audio)
 | Campo | Tipo | Por defecto | Descripción |
@@ -513,14 +529,14 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 
 > **Auto-Escalado Dinámico**: Cuando los widgets están ocultos, la pantalla se redimensiona dinámicamente para ocupar el 100% de la matriz sin bordes negros ni espacios vacíos.
 
-### Motor: `visualizer` (Visualizador de Audio en Tiempo Real)
+### Motor: `audiovisualizer` (Visualizador de Audio en Tiempo Real)
 | Campo | Tipo | Predeterminado | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
 | `style` | `Options` | `spectrum` | `spectrum`, `waveform`, `radial`, `neon_fire` | Modo de renderizado: Barras de Espectro, Osciloscopio, Radial Circular o Fuego Neón. |
 | `gain` | `int` | `24` | `0` a `30` | Ganancia del micrófono por hardware en dB (códec ES7210). |
 | `color_theme` | `Options` | `rainbow` | `rainbow`, `neon`, `fire`, `matrix` | Gradiente de color para barras y ondas. |
 
-### Motor: `decibel` (Sonómetro de Nivel Acústico)
+### Motor: `decibelMeter` (Sonómetro de Nivel Acústico)
 | Campo | Tipo | Predeterminado | Opciones | Descripción |
 | :--- | :--- | :--- | :--- | :--- |
 | `alert_threshold_db` | `int` | `85` | `40` a `120` | Umbral de advertencia de presión acústica. |

@@ -35,6 +35,13 @@ private:
     uint16_t ghostColors[4];
     ClockFaceFont faceFont;
     bool msVariant = false;   ///< Ms Pac-Man: bow, eye and lips over the same body
+    int8_t m_is24hOverride = -1; ///< -1 = system, 0 = 12h, 1 = 24h
+    bool m_showSeconds = true;
+    int m_gfxSize = 1;
+    int m_offX = 0;
+    int m_offY = 0;
+    int m_speedPct = 100;
+    uint16_t m_color1 = 0;
 
     void formatTime(char* out, size_t n) const;
     static void splitTime(const char* str, char* hours, char* minutes);

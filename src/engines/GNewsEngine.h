@@ -17,15 +17,14 @@ public:
     };
 
     GNewsEngine();
-    ~GNewsEngine() override {
-        stopFetchTask();
-    }
+    ~GNewsEngine() override;
 
     EngineError initialize(EngineContext* context, const EngineConfig* config) override;
     void activate() override;
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
+    bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
     bool isRealtime() const override { return true; }
@@ -107,6 +106,7 @@ private:
     std::atomic<bool> m_stopFetch{false};
     std::atomic<bool> m_fetchExited{true};
     std::atomic<bool> m_fetchRequested{false};
+    std::atomic<bool> m_purgeRequested{false};
 
     void startFetchTask();
     void stopFetchTask();

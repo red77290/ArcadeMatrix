@@ -52,6 +52,7 @@ public:
     };
 
     StockEngine();
+    ~StockEngine() override;
     
     EngineError initialize(EngineContext* context, const EngineConfig* engineConfig) override;
     void update(EngineContext* context) override;
@@ -93,11 +94,13 @@ private:
     std::map<String, AssetHistoryCache> historyCache;
     
     String activeSymbol;
+    String m_activeHistKey;
     float currentPrice;
     float changePercent24h;
     bool fetchSuccess;
     String currentImageUrl;
     
+    void setActiveSymbol(const String& sym);
     void loadOrDownloadIcon(const String& symbol, const String& newImgUrl, AssetQuoteCache& cache);
     
     void parseSymbols(const String& syms);

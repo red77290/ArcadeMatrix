@@ -3,7 +3,9 @@
 #include "../../core/ConfigLoader.h"
 #include <math.h>
 
-VersusClock::VersusClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) { faceFont.load(config); glow = ClockFaceFont::resolveGlow(config);
+VersusClock::VersusClock(IDrawingSurface* display, const EngineConfig* config) : ClockFace(display, config) {
+    faceFont.load(config);
+    glow = ClockFaceFont::resolveGlow(config);
     storedTime = {0, 0, 0};
     lastMinute = -1;
     animating = false; // Kept for compatibility but unused
@@ -13,6 +15,20 @@ VersusClock::VersusClock(IDrawingSurface* display, const EngineConfig* config) :
     targetP2HP = 100.0f;
     lastFrameTime = 0;
     animFrame = 0;
+
+    int cfgSize = engineConfig ? engineConfig->getInt("clock_size", 1) : 1;
+    m_gfxSize = (cfgSize > 0) ? cfgSize : 2;
+    m_offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
+    m_offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
+    m_color1 = matrix ? matrix->color565(255, 255, 255) : 0xFFFF;
+    if (engineConfig) {
+        String colStr = engineConfig->getString("clock_color_1", "");
+        if (colStr.length() > 0 && colStr[0] == '#') {
+            long c1 = strtol(colStr.c_str() + 1, nullptr, 16);
+            m_color1 = matrix ? matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF) : 0xFFFF;
+        }
+    }
+    if (m_color1 == 0) m_color1 = matrix ? matrix->color565(255, 255, 255) : 0xFFFF;
 }
 
 void VersusClock::draw(const TimeData& t) {
@@ -96,15 +112,9 @@ void VersusClock::update() {
     float p1HP = 1.0f - min(1.0f, storedTime.hours / 23.0f);
     float p2HP = 1.0f - min(1.0f, storedTime.minutes / 59.0f);
 
-    int offX = engineConfig ? engineConfig->getInt("clock_offset_x", 0) : 0;
-    int offY = engineConfig ? engineConfig->getInt("clock_offset_y", 0) : 0;
-
-    uint16_t color1 = matrix->color565(255, 255, 255);
-    if ((engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[0] == '#') {
-        long c1 = strtol(&(engineConfig ? engineConfig->getString("clock_color_1", "") : String(""))[1], NULL, 16);
-        color1 = matrix->color565((c1 >> 16) & 0xFF, (c1 >> 8) & 0xFF, c1 & 0xFF);
-    }
-    if (color1 == 0) color1 = matrix->color565(255, 255, 255);
+    int offX = m_offX;
+    int offY = m_offY;
+    uint16_t color1 = m_color1;
 
     int bounce1 = (int)(sin(animFrame * 0.2f) * 2.0f);
     int bounce2 = (int)(cos(animFrame * 0.2f) * 2.0f);
@@ -119,7 +129,7 @@ void VersusClock::update() {
         drawHealthBar(2 + offX, 7 + offY, w - 4, 3, p1HP, true);
         drawHealthBar(2 + offX, 11 + offY, w - 4, 3, p2HP, false);
 
-        int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
+        int gfxSize = m_gfxSize;
         int scale = (w >= 64) ? 3 : 2;
         if (gfxSize >= 1 && gfxSize <= 4) scale = min(scale, gfxSize);
         faceFont.apply(*matrix, scale, "88", w, h / 2);
@@ -156,7 +166,7 @@ void VersusClock::update() {
         char timeStr[12];
         sprintf(timeStr, "%02d:%02d", storedTime.hours, storedTime.minutes);
         
-        int gfxSize = (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) > 0 ? (engineConfig ? engineConfig->getInt("clock_size", 1) : 1) : 2;
+        int gfxSize = m_gfxSize;
         faceFont.apply(*matrix, gfxSize, "88:88", w, h);
         
         int16_t bx, by;

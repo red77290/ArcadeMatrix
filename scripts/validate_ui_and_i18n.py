@@ -9,7 +9,7 @@ Validates:
 4. Issue #24 regression test: Verifies modal creation logic in dynamic_engines.js safely handles engines without primaryField.
 5. Rotation live-sync contract: Verifies updateInstanceRotationState is wired to trash removal and quick add.
 6. MessageEngine smooth scrolling: Verifies continuous delta-time sub-pixel advance in C++ and Rust.
-7. Hardware & WebUI isolation: Verifies zero ESP32/Raspberry Pi cross-contamination (GEMINI.md invariant 8).
+7. Hardware & WebUI isolation: Verifies zero ESP32/Raspberry Pi cross-contamination (Architectural Invariant 8).
 8. ESP32 WebUI i18n integrity: duplicate-free EN/FR/ES parity in data/index.html, every markup key defined, no RPi key residue.
 """
 
@@ -217,7 +217,7 @@ def test_marquee_screen_clear():
     pass_step("Screen clearance verified: pure IDrawingSurface isolation maintained across transitions.")
 
 def test_hardware_isolation():
-    print("🔍 [7/8] Testing Hardware & WebUI Isolation (GEMINI.md Invariant 8)...")
+    print("🔍 [7/8] Testing Hardware & WebUI Isolation (Architectural Invariant 8)...")
     
     esp_html = os.path.join(REPO_ROOT, "data", "index.html")
     with open(esp_html, "r", encoding="utf-8") as f:
@@ -345,7 +345,7 @@ def test_esp32_i18n_integrity():
     if undefined:
         fail(f"ESP32 markup references {len(undefined)} undefined i18n keys: {sorted(undefined)}")
 
-    # 4. GEMINI.md invariant 8.2: no Raspberry Pi setting may leak into the ESP32 dictionaries.
+    # 4. Architectural Invariant 8.2: no Raspberry Pi setting may leak into the ESP32 dictionaries.
     rpi_keys = [
         "hw_mapping", "hw_slowdown", "hw_multiplexing", "hw_pwm_lsb", "hw_pwm_bits",
         "hw_disable_pulsing", "tt_hw_mapping", "tt_hw_slowdown", "tt_hw_multiplexing",

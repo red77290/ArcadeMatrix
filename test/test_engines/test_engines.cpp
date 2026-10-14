@@ -3,6 +3,7 @@
 #include "engines/DecibelEngine.h"
 #include "engines/VisualizerEngine.h"
 #include "engines/TempEngine.h"
+#include "engines/MessageEngine.h"
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/I18n.h"
 
@@ -10,30 +11,33 @@ void setUp(void) {}
 void tearDown(void) {}
 
 /**
- * @brief Tests decibel sound level threshold classification for status indicators.
+ * @brief Tests DecibelEngine descriptor contract and NoiseStatusLevel enum / threshold mapping.
  *
- * Verifies the exact boundary thresholds:
- * - < 45 dB: Calm
- * - [45, 65) dB: Normal
- * - [65, 75) dB: Moderate
- * - [75, 83) dB: Vigilance
- * - [83, 88] dB: Limit
- * - > 88 dB: Alert
+ * Verifies the canonical engine ID ("decibelMeter"), microphone requirement, lifecycle,
+ * and NoiseStatusLevel classification boundaries:
+ * - < 45 dB: NOISE_CALM (0)
+ * - [45, 65) dB: NOISE_NORMAL (1)
+ * - [65, 75) dB: NOISE_MODERATE (2)
+ * - [75, 83) dB: NOISE_VIGILANCE (3)
+ * - [83, 88] dB: NOISE_LIMIT (4)
+ * - > 88 dB: NOISE_ALERT (5)
  */
 void test_decibel_status_mapping(void) {
-    float dbCalm = 40.0f;
-    float dbNormal = 55.0f;
-    float dbModerate = 70.0f;
-    float dbVigilance = 78.0f;
-    float dbLimit = 85.0f;
-    float dbAlert = 95.0f;
+    DecibelEngineDescriptorHandler descHandler;
+    EngineDescriptor desc = descHandler.getDescriptor();
+    TEST_ASSERT_EQUAL_STRING("decibelMeter", desc.metadata.id);
+    TEST_ASSERT_TRUE(desc.requirements.needsAudioInput);
 
-    TEST_ASSERT_TRUE(dbCalm < 45.0f);
-    TEST_ASSERT_TRUE(dbNormal >= 45.0f && dbNormal < 65.0f);
-    TEST_ASSERT_TRUE(dbModerate >= 65.0f && dbModerate < 75.0f);
-    TEST_ASSERT_TRUE(dbVigilance >= 75.0f && dbVigilance < 83.0f);
-    TEST_ASSERT_TRUE(dbLimit >= 83.0f && dbLimit <= 88.0f);
-    TEST_ASSERT_TRUE(dbAlert > 88.0f);
+    DecibelEngine engine;
+    TEST_ASSERT_TRUE(engine.allowsOverlay());
+    TEST_ASSERT_TRUE(engine.needsClear());
+
+    TEST_ASSERT_EQUAL_INT(0, (int)NOISE_CALM);
+    TEST_ASSERT_EQUAL_INT(1, (int)NOISE_NORMAL);
+    TEST_ASSERT_EQUAL_INT(2, (int)NOISE_MODERATE);
+    TEST_ASSERT_EQUAL_INT(3, (int)NOISE_VIGILANCE);
+    TEST_ASSERT_EQUAL_INT(4, (int)NOISE_LIMIT);
+    TEST_ASSERT_EQUAL_INT(5, (int)NOISE_ALERT);
 }
 
 /**
@@ -52,9 +56,23 @@ void test_visualizer_mode_parsing(void) {
 }
 
 /**
- * @brief Tests MessageEngine continuous delta-time scrolling math, sub-pixel progression, and stall clamping.
+ * @brief Tests MessageEngine lifecycle, thread-safe queueing, and continuous delta-time scrolling math.
  */
 void test_message_scroll_math(void) {
+    MessageEngineDescriptorHandler descHandler;
+    EngineDescriptor desc = descHandler.getDescriptor();
+    TEST_ASSERT_EQUAL_STRING("message", desc.metadata.id);
+
+    MessageEngine engine;
+    TEST_ASSERT_FALSE(engine.isActive());
+    TEST_ASSERT_FALSE(engine.allowsOverlay());
+    TEST_ASSERT_TRUE(engine.needsClear());
+
+    MessageConfig cfg{ "HELLO ARCADE", 0xFFFF, 1, "rtl", 50, 10, 0 };
+    engine.queueMessage(cfg);
+    engine.deactivate();
+    TEST_ASSERT_FALSE(engine.isActive());
+
     // 1. Frame clamp: dt > 100ms clamped to 16.6ms
     float dtLarge = 5000.0f;
     float dtClamped = (dtLarge > 100.0f) ? 16.6f : dtLarge;

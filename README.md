@@ -40,19 +40,19 @@ Every engine in ArcadeMatrix is engineered with **zero dynamic allocations and z
 | :--- | :---: | :--- |
 | **Desk Master Dashboard**<br>`dashboard` | <img src="docs/assets/engines/engine_dashboard.png" width="240" alt="Dashboard Engine"> | Complete horizontal desk deck with handcrafted analog watch dial, smooth sweeping second hand, world clocks, SHTC3 indoor climate, and live Binance cryptos & Yahoo Finance stocks ticker. |
 | **Retro Game Clock**<br>`clock` | <img src="docs/assets/engines/engine_clock.png" width="240" alt="Retro Clock"><br><br>[👉 **View 10+ Retro Clocks Showcase ➔**](#-legendary-retro-game-clocks-showcase--hardware-simulations) | Signature animated retro arcade and console clocks (Metal Slug, Castlevania, Mario, Mega Man, Sonic, Pokédex, Pac-Man, Tetris, World Clock, Matrix Rain...) with 100% bit-perfect sprites. |
-| **WebRadio & Music Player**<br>`music` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Music Engine"> | Autonomous streaming audio with linear real-time MP3 decoding (`minimp3`), Everest ES8311 I2S DAC output, album artwork, and dynamic 64-band audio visualizer. |
+| **WebRadio & Music Player**<br>`music_player` | <img src="docs/assets/engines/engine_music.png" width="240" alt="Music Engine"> | Autonomous streaming audio with linear real-time MP3 decoding (`minimp3`), Everest ES8311 I2S DAC output, album artwork, and dynamic 64-band audio visualizer. |
 | **Spotify Now Playing**<br>`spotify` | <img src="docs/assets/engines/engine_spotify.png" width="240" alt="Spotify Engine"> | Real-time track display with full-color album artwork, scrolling artist/title, animated mini equalizer bars, and track progress. |
-| **Google Cast & Nest**<br>`googlecast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Google Cast Engine"> | Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, volume, and playback progress. |
+| **Google Cast & Nest**<br>`google_cast` | <img src="docs/assets/engines/engine_googlecast.png" width="240" alt="Google Cast Engine"> | Automatic mDNS discovery of Google Home / Nest Audio devices with live streaming media artwork, volume, and playback progress. |
 | **Crypto Ticker & Chart**<br>`crypto` | <img src="docs/assets/engines/engine_crypto.png" width="240" alt="Crypto Engine"> | Live Binance / CoinGecko prices, 24h change badge, and real-time historical sparkline charts with smart TTL caching. |
 | **Stock Market Ticker**<br>`stock` | <img src="docs/assets/engines/engine_stock.png" width="240" alt="Stock Engine"> | Real-time quotes from Yahoo Finance, 1D % badges, and intraday sparkline area charts for NASDAQ/S&P stocks and ETFs. |
 | **Weather Forecast**<br>`weather` | <img src="docs/assets/engines/engine_weather.png" width="240" alt="Weather Engine"> | Live outdoor conditions, high/low temperatures, humidity, wind, and animated retro icons via OpenWeatherMap & Open-Meteo. |
 | **Climate Sensor**<br>`temp` | <img src="docs/assets/engines/engine_temp.png" width="240" alt="Temp Engine"> | Real-time indoor temperature (°C/°F) and relative humidity via on-board SHTC3 I2C sensor with dynamic comfort indicators. |
-| **SPL Decibel Meter**<br>`decibel` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Decibel Engine"> | Calibrated SPL ambient noise monitoring with reactive arcade smileys, top VS fighting healthbar gauge, and segmented VU meter. |
-| **System Telemetry HUD**<br>`sysinfo` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="SysInfo Engine"> | Real-time dual-column monitor of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars. |
+| **SPL Decibel Meter**<br>`decibelMeter` | <img src="docs/assets/engines/engine_decibel.png" width="240" alt="Decibel Engine"> | Calibrated SPL ambient noise monitoring with reactive arcade smileys, top VS fighting healthbar gauge, and segmented VU meter. |
+| **System Telemetry HUD**<br>`system_info` | <img src="docs/assets/engines/engine_sysinfo.png" width="240" alt="SysInfo Engine"> | Real-time dual-column monitor of CPU usage (%), RAM (%), SoC hardware temperature (°C/°F), and Uptime with vibrant gauge bars. |
 | **Live News Ticker**<br>`gnews` | <img src="docs/assets/engines/engine_gnews.png" width="240" alt="GNews Engine"> | Real-time breaking headlines with topic pills (`[TECH]`, `[WORLD]`, `[BIZ]`), live pulsing red beacon, and smooth sub-pixel scrolling ticker. |
 | **Home Assistant & MQTT**<br>`mqttdata` | <img src="docs/assets/engines/engine_mqttdata.png" width="240" alt="MQTT Data Engine"> | Stream Home Assistant dashboards, sensor values, 24h historical charts, and local weather via MQTT with ready-to-use blueprints. |
-| **Audio Visualizer**<br>`visualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Visualizer Engine"> | Real-time 32-band rainbow spectrum bars with peak hold dots, oscilloscope waveforms, and radial audio reactive modes. |
-| **Animated GIF Player**<br>`gif` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="GIF Engine"> | Smooth 60 FPS playback of retro animations and SD card playlists with zero-copy DMA canvas acceleration. |
+| **Audio Visualizer**<br>`audiovisualizer` | <img src="docs/assets/engines/engine_visualizer.png" width="240" alt="Visualizer Engine"> | Real-time 32-band rainbow spectrum bars with peak hold dots, oscilloscope waveforms, and radial audio reactive modes. |
+| **Animated GIF Player**<br>`gifs` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="GIF Engine"> | Smooth 60 FPS playback of retro animations and SD card playlists with zero-copy DMA canvas acceleration. |
 | **Scrolling Text Banner**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Message Engine"> | Customizable dot-matrix marquee signs with glowing amber typography, multiple scroll directions, and REST API triggers. |
 | **Arcade Cabinet Marquee**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Marquee Engine"> | Displays official illuminated arcade marquees via Pixelcade integration for Batocera, Recalbox, and RetroPie gaming setups. |
 | **Calendar & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Date Engine"> | Large arcade-styled date with 3D Capcom/Nintendo drop shadows, multi-language support (EN, FR, ES), and NTP/RTC DS3231 synchronization. |
@@ -169,30 +169,27 @@ To display fighters in the `SPRITES` module, the ESP32 expects `.fgt` raw files.
 For full details, please read the documentation inside `tools/mugen_extractor/README.md`.
 
 ### Sprite Backgrounds
-Fighters need an arena! You can define the background they fight on by placing a raw image file (e.g., `stage1.raw`) in `SD:/fighters_32/backgrounds/`.
-Then, link this background in your `config.json` under the `[DATE]` section (backgrounds are used to spice up the date module!):
-```ini
-BACKGROUND_SPRITE=stage1.raw
+Fighters and the Date engine can display an optional arena backdrop by placing a raw image file (e.g., `stage1.raw`) in `SD:/fighters_32/backgrounds/` and selecting it via the `bg_sprite` option on your `date` instance in `config.json` (or from the Web UI):
+```json
+{
+  "instance_id": "date_main",
+  "engine_id": "date",
+  "config": {
+    "bg_sprite": "stage1.raw"
+  }
+}
 ```
 
-## GIF Playlist Indexing (Web UI folder selection)
-The Web UI lets you tick/untick which `gifs/` subfolders play during the idle rotation, but it needs a `playlists.json` manifest to know what's on the SD card. GIF playback itself works fine without it (the engine always reads files directly from the SD card) - this step is only needed if you want to use that checkbox selector.
+## GIF Playlists (Automatic Discovery)
+The ESP32 firmware dynamically scans your SD card `/gifs/` and `/gifs_tate/` folders and supports background re-indexing directly from the Web UI (`POST /api/gifs/reindex`) — no manual indexing scripts required!
 
 > [!TIP]
 > **Web UI File Manager & Uploader (No SD card removal needed!):**
 > You can now manage playlists, create/delete folders, rename items, and upload animated GIFs directly through the browser using the Web UI **GIF File Manager** card with native Horizontal / Vertical orientation support, with automatic background re-indexing — implemented by [@TooncesToo](https://github.com/TooncesToo)!
-> 
-> Alternatively, for batch offline preparation on your computer:
-2. Run one of the native scripts in `tools/gif_indexation/` - no Python required:
-   ```bash
-   ./generate_index.sh /Volumes/SDCARD      # macOS/Linux - pass the SD root or its gifs/ folder
-   ```
-   ```powershell
-   .\generate_index.ps1 -Path E:\           # Windows
-   ```
-3. This creates `gifs/playlists.json` on the SD card. Re-run it whenever you add, remove, or rename a folder inside `gifs/`.
 
-For full details, see `tools/gif_indexation/README.md`.
+1. Simply organize your GIFs into subfolders under `gifs/` on your SD card, e.g. `gifs/mario/`, `gifs/sonic/`.
+2. The Web UI automatically detects them as selectable playlists (and optional offline scripts in `tools/gif_indexation/` remain available if preparing an SD card in bulk on a PC).
+3. Loose `.gif` files placed directly at the root of `gifs/` are always played by default.
 
 ## Custom Fonts (BDF → AMF conversion)
 The Clock, Date, and scrolling Message can use custom bitmap fonts loaded from the SD card instead of the ~6 fonts compiled into the firmware, using the same `.bdf` fonts `ArcadeMatrix_RPi` already ships. The ESP32 has no on-device BDF parser though, so they must be converted to the compact `.amf` format first.
@@ -213,7 +210,7 @@ For full details, check `tools/bdf_to_amfont/README.md`.
 | :--- | :--- | :---: | :---: | :--- |
 | **Clock Engine (`clock`)** | `info` | 🟢 60 FPS | 🟢 60 FPS | Dynamic fonts, arcade/retro watch faces |
 | **Animated GIFs (`gifs`)** | `media` | 🟢 Fullspeed 60 FPS | 🟢 Fullspeed 60 FPS | Micro-SD Card (Yoko / Tate orientations) |
-| **M.U.G.E.N Combat (`fighter`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Micro-SD Card (RGB565 sprite streaming) |
+| **M.U.G.E.N Combat (`fighter` overlay)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | Micro-SD Card (RGB565 sprite streaming) |
 | **Desk Deck Dashboard (`dashboard`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (Multi-widget clock, weather & market) |
 | **Real-Time Crypto (`crypto`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits cached) | Wi-Fi, HTTPS/TLS (Binance, CoinGecko) |
 | **Stock Market & Sparklines (`stock`)** | `finance` | 🟢 10 FPS (8 bits) | 🟢 10 FPS (8 bits cached) | Wi-Fi, HTTPS/TLS (Yahoo Finance) |
@@ -221,13 +218,13 @@ For full details, check `tools/bdf_to_amfont/README.md`.
 | **Live Weather Forecasts (`weather`)** | `info` | 🟢 10 FPS | 🟢 10 FPS | Wi-Fi (OpenWeatherMap, Open-Meteo) |
 | **Date & Calendar (`date`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | Local system time & optional sprite backdrop |
 | **Scrolling Text Ticker (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Sub-pixel 60 FPS text scroller |
-| **System Telemetry (`sysinfo`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Real-time CPU, RAM, Temp & Uptime gauges |
+| **System Telemetry (`system_info`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Real-time CPU, RAM, Temp & Uptime gauges |
 | **Retro Gameroom Marquee (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
 | **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, Spotify Web API |
 | **Google Cast Display (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, mDNS local discovery |
-| **Autonomous WebRadio (`music`)** | `media` | 🟢 30 FPS (I2S DAC) | ❌ Incompatible | Built-in ES8311 DAC & PSRAM required |
+| **Autonomous WebRadio (`music_player`)** | `media` | 🟢 30 FPS (I2S DAC) | ❌ Incompatible | Built-in ES8311 DAC & PSRAM required |
 | **Audio Spectrum Visualizer (`audiovisualizer`)** | `audio` | 🟢 60 FPS (I2S Mic) | ❌ Incompatible | Built-in ES7210 microphone array required |
-| **SPL Decibel Sound Meter (`decibel`)** | `audio` | 🟢 30 FPS (I2S Mic) | ❌ Incompatible | Built-in ES7210 microphone array required |
+| **SPL Decibel Sound Meter (`decibelMeter`)** | `audio` | 🟢 30 FPS (I2S Mic) | ❌ Incompatible | Built-in ES7210 microphone array required |
 | **Indoor Climate Sensor (`temp`)** | `sensor` | 🟢 30 FPS (I2C SHTC3) | ❌ Incompatible | Built-in SHTC3 temperature/humidity sensor required |
 | **Home Assistant & MQTT Data (`mqttdata`)** | `info` | 🟢 30 FPS | 🟢 30 FPS | MQTT Broker / Home Assistant Blueprints |
 

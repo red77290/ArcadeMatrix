@@ -136,12 +136,19 @@ def extract_engine_catalog(engines_dir="src/engines"):
                 if f_vis: field_obj["visible_when"] = f_vis
                 fields.append(field_obj)
                 
+        ver_str = "4.0.2-dev"
+        if os.path.exists("VERSION"):
+            with open("VERSION", "r", encoding="utf-8") as vf:
+                v_clean = vf.read().strip()
+                if v_clean:
+                    ver_str = f"{v_clean}-dev" if not v_clean.endswith("-dev") else v_clean
+
         engines.append({
             "metadata": {
                 "id": eng_id,
                 "name": eng_name,
                 "category": eng_cat,
-                "version": "3.4.0-dev"
+                "version": ver_str
             },
             "capabilities": cap,
             "requirements": req,
@@ -185,7 +192,7 @@ def extract_engine_meta_map(catalog):
         meta_map[m['id']] = {
             "name": m['name'],
             "category": m['category'],
-            "version": m.get('version', '3.4.0-dev')
+            "version": m.get('version', '4.0.2-dev')
         }
     return meta_map
 

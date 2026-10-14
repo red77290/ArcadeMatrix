@@ -1,6 +1,73 @@
-#pragma once
+#ifndef I18N_H
+#define I18N_H
 
-// The declarations live in include/core/I18n.h, which is what the build's include path resolves.
-// This file used to be a second copy of them, so a relative include from src/ picked up a stale
-// interface and anything added to the real header looked missing. It now forwards instead.
-#include "../../include/core/I18n.h"
+#include <Arduino.h>
+#include <vector>
+#include <time.h>
+
+enum class Lang {
+    FR,
+    EN,
+    ES
+};
+
+class I18n {
+public:
+    static Lang getLang();
+    static Lang parseLang(const char* code);
+    static Lang parseLang(const String& code);
+    static const char* getLangCode(Lang l);
+    
+    // Weather & Climate
+    static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow);
+    static const char* getWeatherDayLabel(int dayOfWeek, bool isToday, bool isTomorrow, Lang l);
+    /// Unabbreviated day label ("TODAY", "TOMORROW", "WEDNESDAY") for panels wide enough to show it.
+    static const char* getWeatherDayLabelLong(int dayOfWeek, bool isToday, bool isTomorrow, Lang l);
+    static String getWeatherCondition(const String& raw);
+    static String getWeatherCondition(const String& raw, Lang l);
+    /// Unabbreviated condition ("Partly Cloudy", "Thunderstorm") for panels wide enough to show it.
+    static String getWeatherConditionLong(const String& raw, Lang l);
+    /// Label for a weather condition group of the MQTT Data contract (feed::conditionGroup(): 0 Clear, 1 Sunny,
+    /// 2 Partly cloudy, 3 Cloudy, 4 Fog, 5 Unusual, 6 Rain, 7 Heavy rain, 8 Storm, 9 Storm + rain,
+    /// 10 Snow, 11 Sleet, 12 Hail, 13 Windy). "" for an unknown group (the caller shows the raw id).
+    static const char* getConditionLabel(int group, bool longForm, Lang l);
+    /// Label of the live-reading weather page: NOW / ACTU. / AHORA.
+    static const char* getNowLabel(Lang l);
+    static const char* getOutdoorLabel(Lang l);
+    static const char* getIndoorLabel(Lang l);
+    static const char* getClimateLabel(Lang l);
+    
+    // WordClock
+    static std::vector<String> getWordClockLines(int hours, int minutes);
+
+    // Dates
+    /// Three-letter month label ("SEP", "SEPT", "SEP"), month0 is 0-11.
+    static const char* getMonthLabel(int month0, Lang l);
+    /// Format a strftime pattern with localized day/month names into caller-owned buffer without heap allocations.
+    static void formatLocalizedDate(char* dest, size_t maxLen, const char* format, const struct tm* timeinfo, Lang l);
+    /// A date line in the order the language uses: "MON SEP 28", "LUN 28 SEPT", "LUN 28 SEP".
+    /// Written into the caller's buffer so a clock face can build it without touching the heap.
+    static void getDateLine(int weekday, int month0, int day, Lang l, char* out, size_t outSize);
+    /// The time spoken as words, split into the hour line and the minute line beneath it. Both are
+    /// written into caller-owned buffers for the same reason.
+    static void getSpokenTime(int hours, int minutes, Lang l,
+                              char* hourWords, size_t hourSize,
+                              char* minuteWords, size_t minuteSize);
+    
+    // Noise / Decibel
+    static const char* getNoiseLevelLabel(int level);
+
+    // Panel / MQTT Status Notices
+    static const char* getNoDataLabel(Lang l);
+    static const char* getConnectingLabel(Lang l);
+    static const char* getNoConnectionLabel(Lang l);
+    static const char* getUnsupportedLabel(Lang l);
+
+    // GNews Status & Categories
+    static const char* getGNewsStatusLabel(uint8_t status);
+    static const char* getGNewsStatusLabel(uint8_t status, Lang l);
+    static const char* getGNewsCategoryShort(const char* category);
+    static const char* getGNewsCategoryShort(const char* category, Lang l);
+};
+
+#endif // I18N_H
