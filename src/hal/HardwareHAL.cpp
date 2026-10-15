@@ -223,20 +223,34 @@ void HardwareHAL::begin() {
     if (!i2cConflictsWithMatrix) {
         gyroHAL.begin();
         _capabilities.hasGyroscope = gyroHAL.isAvailable();
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3) && !defined(UNIT_TEST)
+#if defined(HARDWARE_VARIANT_N16R8) && !defined(UNIT_TEST)
         // On generic ESP32-S3 N16R8 / DevKitC-1 boards (where no I2C peripherals exist on GPIO 47/48),
         // GPIO 48 (or GPIO 38 on v1.1) drives an onboard WS2812 RGB NeoPixel LED.
         // The 100 kHz I2C bus scan on SCL=48 latches random/all-1 bits into the WS2812, turning it
-        // blinding full-brightness white. Release Wire and explicitly latch RGB(0,0,0) to turn it off.
+        // blinding full-brightness white. Release Wire and explicitly latch RGB(0,0,0) via RMT to turn it off.
         if (!_capabilities.hasTempSensor && !_es7210Detected && !_capabilities.hasGyroscope) {
             Wire.end();
-            neopixelWrite(I2C_SCL_PIN, 0, 0, 0);
-            pinMode(I2C_SCL_PIN, OUTPUT);
-            digitalWrite(I2C_SCL_PIN, LOW);
+            auto shutOffPin = [](uint8_t pin) {
+                rmt_obj_t* rmt = rmtInit(pin, RMT_TX_MODE, RMT_MEM_64);
+                if (rmt) {
+                    rmtSetTick(rmt, 100);
+                    rmt_data_t led_data[24];
+                    for (int i = 0; i < 24; i++) {
+                        led_data[i].level0 = 1;
+                        led_data[i].duration0 = 4;
+                        led_data[i].level1 = 0;
+                        led_data[i].duration1 = 8;
+                    }
+                    rmtWriteBlocking(rmt, led_data, 24);
+                    delayMicroseconds(100);
+                    rmtDeinit(rmt);
+                }
+                pinMode(pin, OUTPUT);
+                digitalWrite(pin, LOW);
+            };
+            shutOffPin(I2C_SCL_PIN);
             if (!_capabilities.hasMicrophone) {
-                neopixelWrite(38, 0, 0, 0);
-                pinMode(38, OUTPUT);
-                digitalWrite(38, LOW);
+                shutOffPin(38);
             }
             LOGI("HardwareHAL", "No I2C devices on GPIO %d/%d; turned off onboard WS2812 RGB LED (GPIO 48/38).",
                  I2C_SDA_PIN, I2C_SCL_PIN);

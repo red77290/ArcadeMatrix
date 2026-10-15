@@ -60,17 +60,36 @@ void WaveshareS3Profile::refreshCapabilities() {
 #endif
 }
 
+#if defined(HARDWARE_VARIANT_N16R8) && !defined(UNIT_TEST)
+#include "esp32-hal-rmt.h"
+
+static void shutOffWs2812Pin(uint8_t pin) {
+    rmt_obj_t* rmt = rmtInit(pin, RMT_TX_MODE, RMT_MEM_64);
+    if (rmt) {
+        rmtSetTick(rmt, 100);
+        rmt_data_t led_data[24];
+        for (int i = 0; i < 24; i++) {
+            led_data[i].level0 = 1;
+            led_data[i].duration0 = 4; // 0.4us T0H
+            led_data[i].level1 = 0;
+            led_data[i].duration1 = 8; // 0.8us T0L
+        }
+        rmtWriteBlocking(rmt, led_data, 24);
+        delayMicroseconds(100); // >50us WS2812 latch reset pulse before detaching RMT
+        rmtDeinit(rmt);
+    }
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+}
+#endif
+
 void WaveshareS3Profile::applyPowerQuirks() {
     // Refresh runtime memory capabilities once ESP-IDF heap/flash subsystems are fully initialized.
     refreshCapabilities();
 #if defined(HARDWARE_VARIANT_N16R8) && !defined(UNIT_TEST)
     // Immediately turn off the blinding onboard WS2812 RGB LED on ESP32-S3 N16R8 / DevKitC-1 (GPIO 48 / GPIO 38)
-    neopixelWrite(48, 0, 0, 0);
-    pinMode(48, OUTPUT);
-    digitalWrite(48, LOW);
-    neopixelWrite(38, 0, 0, 0);
-    pinMode(38, OUTPUT);
-    digitalWrite(38, LOW);
+    shutOffWs2812Pin(48);
+    shutOffWs2812Pin(38);
 #endif
 }
 
