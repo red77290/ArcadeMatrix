@@ -19,6 +19,11 @@ EXPECTED_MANIFESTS = [
         "filename": "manifest-esp32s3_waveshare.json",
         "chipFamily": "ESP32-S3",
         "expected_offsets": {0, 32768, 57344, 65536}
+    },
+    {
+        "filename": "manifest-esp32s3_n16r8.json",
+        "chipFamily": "ESP32-S3",
+        "expected_offsets": {0, 32768, 57344, 65536}
     }
 ]
 

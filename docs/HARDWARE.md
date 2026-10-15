@@ -4,20 +4,41 @@
 
 ## 1. Supported Board Profiles
 
-ArcadeMatrix supports two physical board profiles:
+ArcadeMatrix supports three firmware targets across two hardware capability tiers:
 
 ### 1.1 ESP32 Standard (`esp32dev`)
 - **Microcontroller**: Standard ESP32 dual-core (e.g. NodeMCU, ESP32 Dev Module).
 - **RAM**: ~320 KB Internal SRAM (No PSRAM).
-- **Storage**: SPI SD card (VSPI).
+- **Storage**: SPI SD card (VSPI: `CS=5, SCK=18, MISO=19, MOSI=23`).
 - **Matrix Resolution**: Up to 128x32 or 64x64.
 - **Audio / Sensor**: Optional external INMP441 / SHTC3 modules.
 
-### 1.2 Waveshare ESP32-S3 Matrix Board (`esp32s3_waveshare`)
-- **Microcontroller**: ESP32-S3 dual-core with 32 MB Flash + 16 MB Octal PSRAM.
-- **Storage**: Fast 1-bit SD_MMC (D0=17, CMD=44, CLK=1).
-- **Onboard Peripherals**: ES7210 I2S audio codec + digital microphone, SHTC3 temperature/humidity sensor.
+### 1.2 Generic ESP32-S3 N16R8 / N8R8 (`esp32s3_n16r8`)
+- **Microcontroller**: ESP32-S3 dual-core with **Quad SPI Flash** (`8 MB` or `16 MB`, `QIO`) + **Octal SPI PSRAM** (`8 MB`, `OPI`) — e.g. `ESP32-S3-DevKitC-1-N16R8` or `N8R8`.
+- **Runtime Memory Detection**: Automatically detects physical Flash (`8 MB` / `16 MB` / `32 MB`) and PSRAM size at boot.
+- **Storage**: Fast 1-bit `SD_MMC` (`CLK=1, CMD=44, D0=17`; pull `DAT3/CS` to `3.3V` with a `10kΩ` resistor).
 - **Matrix Resolution**: Up to 256x64 (SPIRAM DMA double-buffering supported).
+
+### 1.3 Waveshare ESP32-S3 Matrix Board (`esp32s3_waveshare`)
+- **Microcontroller**: ESP32-S3 dual-core (`N32R16V`) with **32 MB Octal Flash (`OPI`)** + **16 MB Octal PSRAM (`OPI`)**.
+- **Storage**: Fast 1-bit `SD_MMC` (`D0=17, CMD=44, CLK=1`).
+- **Onboard Peripherals**: ES7210 I2S audio codec + digital microphone, ES8311 DAC, SHTC3 temperature/humidity sensor.
+- **Matrix Resolution**: Up to 256x64 (SPIRAM DMA double-buffering supported).
+
+### 1.4 ESP32-S3 Pinout (`esp32s3_n16r8` & `esp32s3_waveshare`)
+
+| Subsystem | Signal | ESP32-S3 GPIO | Notes |
+|---|---|---|---|
+| **HUB75 Matrix** | `R1, G1, B1` | `GPIO 4, 5, 6` | Upper half RGB data |
+| **HUB75 Matrix** | `R2, G2, B2` | `GPIO 7, 15, 16` | Lower half RGB data |
+| **HUB75 Matrix** | `A, B, C, D, E` | `GPIO 18, 8, 3, 42, 9` | Row address lines (`E` used on 64-row panels) |
+| **HUB75 Matrix** | `LAT, OE, CLK` | `GPIO 40, 2, 41` | Latch, Output Enable, Pixel Clock |
+| **MicroSD (1-bit SD_MMC)** | `CLK` | `GPIO 1` | Hardware SDMMC clock |
+| **MicroSD (1-bit SD_MMC)** | `CMD` | `GPIO 44` | Command / Response (`10kΩ` pull-up to `3.3V`) |
+| **MicroSD (1-bit SD_MMC)** | `DAT0 (D0)` | `GPIO 17` | Data line 0 (`10kΩ` pull-up to `3.3V`) |
+| **MicroSD (1-bit SD_MMC)** | `DAT3 / CS` | `3.3V` | Pull high to `3.3V` via `10kΩ` resistor (native SD mode) |
+| **I2C Bus** | `SDA, SCL` | `GPIO 47, 48` | Optional `SHTC3` (`0x70`), `QMI8658` (`0x6B`), `MPU6050` (`0x68`) |
+| **I2S Audio** | `MCLK, BCLK, WS, DIN, DOUT` | `GPIO 12, 43, 38, 39, 21` | Onboard ES7210/ES8311 or external I2S Mic/DAC |
 
 ---
 

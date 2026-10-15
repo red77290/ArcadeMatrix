@@ -199,6 +199,7 @@ private:
     float micGain;
 
     // --- ES7210 Lock-Free Watchdog & Core 0 Recovery State ---
+    bool _es7210Detected = false;
     std::atomic<uint16_t> _es7210ZeroFrames{0};
     std::atomic<bool> _es7210RecoveryPending{false};
     std::atomic<bool> _es7210SignalHealthy{false};

@@ -275,6 +275,9 @@ paths:
                 properties:
                   version: { type: string, example: "3.0.0" }
                   arch: { type: string, example: "esp32s3" }
+                  board_env: { type: string, example: "esp32s3_n16r8" }
+                  profile_label: { type: string, example: "ESP32-S3 N16R8 (16MB Flash / 8MB PSRAM)" }
+                  flash_bytes: { type: integer, example: 16777216 }
                   uptime: { type: integer, description: "Uptime in seconds", example: 3600 }
                   cpu_load: { type: number, example: 15.2 }
                   cpu_load_core0: { type: number, description: Load of core 0 over the last second (share of ticks not spent in the idle task) }
@@ -1327,6 +1330,12 @@ paths:
                   arch:
                     type: string
                     example: "esp32s3"
+                  board_env:
+                    type: string
+                    example: "esp32s3_n16r8"
+                  profile_label:
+                    type: string
+                    example: "ESP32-S3 N16R8 (16MB Flash / 8MB PSRAM)"
                   running_partition:
                     type: string
                     example: "app0"
@@ -1345,6 +1354,9 @@ paths:
               schema:
                 type: object
                 properties:
+                  board_env: { type: string, example: "esp32s3_n16r8" }
+                  profile_label: { type: string, example: "ESP32-S3 N16R8 (16MB Flash / 8MB PSRAM)" }
+                  flash_bytes: { type: integer, example: 16777216 }
                   has_temp_sensor: { type: boolean, example: true }
                   has_audio_input: { type: boolean, example: true }
                   has_audio_output: { type: boolean, example: true }

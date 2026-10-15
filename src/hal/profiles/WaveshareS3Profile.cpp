@@ -7,28 +7,62 @@
 #include "../../../include/HardwareProfile.h"
 
 WaveshareS3Profile::WaveshareS3Profile() {
-    m_memory.hasPsram = psramFound();
-    m_memory.internalRamBytes = 512 * 1024;
-    size_t detectedPsram = psramFound() ? ESP.getPsramSize() : 0;
-    m_memory.psramBytes = (detectedPsram > 0) ? detectedPsram : (8 * 1024 * 1024);
-    m_memory.flashBytes = 16 * 1024 * 1024;
-    m_memory.tier = MemoryTier::EXPANDED;
-
     m_storage.supportsSdMmc = true;
     m_storage.supportsSdSpi = false;
     m_storage.sdMounted = false;
     m_storage.defaultSckMhz = 40;
 
-    m_display.defaultColorDepth = 8; // 8-bit default on Waveshare S3
-    m_display.maxWidth = 256;
-    m_display.maxHeight = 128;
-    m_display.maxPanels = 4;
     m_display.supportsDoubleBuffering = true;
     m_display.supportsWideCanvas = true;
+
+    refreshCapabilities();
+}
+
+void WaveshareS3Profile::refreshCapabilities() {
+    m_memory.hasPsram = psramFound();
+    m_memory.internalRamBytes = 512 * 1024;
+    size_t detectedPsram = m_memory.hasPsram ? ESP.getPsramSize() : 0;
+    m_memory.psramBytes = detectedPsram;
+    uint32_t detectedFlash = ESP.getFlashChipSize();
+    m_memory.flashBytes = (detectedFlash > 0) ? detectedFlash : (8 * 1024 * 1024);
+    m_memory.tier = (m_memory.hasPsram && m_memory.psramBytes >= (2 * 1024 * 1024))
+                        ? MemoryTier::EXPANDED
+                        : MemoryTier::CONSTRAINED;
+
+    if (m_memory.tier == MemoryTier::EXPANDED) {
+        m_display.defaultColorDepth = 8;
+        m_display.maxWidth = 256;
+        m_display.maxHeight = 128;
+        m_display.maxPanels = 4;
+    } else {
+        m_display.defaultColorDepth = 6;
+        m_display.maxWidth = 128;
+        m_display.maxHeight = 64;
+        m_display.maxPanels = 2;
+    }
+
+    unsigned flashMb = (unsigned)(m_memory.flashBytes / (1024 * 1024));
+    unsigned psramMb = (unsigned)((m_memory.psramBytes + (512 * 1024)) / (1024 * 1024));
+#if defined(HARDWARE_VARIANT_N16R8)
+    if (psramMb > 0) {
+        snprintf(m_boardName, sizeof(m_boardName), "ESP32-S3 N%uR%u (%uMB Flash / %uMB PSRAM)",
+                 flashMb, psramMb, flashMb, psramMb);
+    } else {
+        snprintf(m_boardName, sizeof(m_boardName), "ESP32-S3 N%u (%uMB Flash / No PSRAM)",
+                 flashMb, flashMb);
+    }
+#else
+    if (psramMb > 0) {
+        snprintf(m_boardName, sizeof(m_boardName), "Waveshare ESP32-S3 (N%uR%u)", flashMb, psramMb);
+    } else {
+        snprintf(m_boardName, sizeof(m_boardName), "Waveshare ESP32-S3 (N%u)", flashMb);
+    }
+#endif
 }
 
 void WaveshareS3Profile::applyPowerQuirks() {
-    // Waveshare S3 integrates high-efficiency onboard DC-DC power converter; no brownout quirk needed.
+    // Refresh runtime memory capabilities once ESP-IDF heap/flash subsystems are fully initialized.
+    refreshCapabilities();
 }
 
 void WaveshareS3Profile::configureWifiTxPower() {
