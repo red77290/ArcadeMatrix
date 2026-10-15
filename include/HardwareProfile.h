@@ -3,7 +3,7 @@
 // Active hardware profile configuration
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
 
-    // Profile: Waveshare ESP32-S3-RGB-Matrix
+    // Profile: Waveshare ESP32-S3-RGB-Matrix (N32R16V) & Generic ESP32-S3 N16R8 / N8R8 (PSRAM)
     #define MATRIX_R1_PIN 4
     #define MATRIX_G1_PIN 5
     #define MATRIX_B1_PIN 6
@@ -19,7 +19,7 @@
     #define MATRIX_OE_PIN 2
     #define MATRIX_CLK_PIN 41
 
-    // SD Card via bus SD_MMC (1-bit)
+    // SD Card via 1-bit SD_MMC bus (CLK=1, CMD=44, D0=17; pull DAT3/CS to 3.3V via 10k resistor)
     #define USE_SD_MMC 1
     #define SD_MMC_D0_PIN 17
     #define SD_MMC_CMD_PIN 44

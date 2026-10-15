@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: [esp32dev, esp32s3_waveshare]
+        env: [esp32dev, esp32s3_waveshare, esp32s3_n16r8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +51,7 @@ jobs:
       contents: write
     strategy:
       matrix:
-        env: [esp32dev, esp32s3_waveshare]
+        env: [esp32dev, esp32s3_waveshare, esp32s3_n16r8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,10 +106,17 @@ jobs:
           name: release-esp32s3_waveshare
           path: release/esp32s3_waveshare
 
+      - name: Download esp32s3_n16r8 release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-esp32s3_n16r8
+          path: release/esp32s3_n16r8
+
       - name: Zip per-board flashing bundles
         run: |
           cd release/esp32dev && zip -r ../../ArcadeMatrix-esp32dev.zip . && cd -
-          cd release/esp32s3_waveshare  && zip -r ../../ArcadeMatrix-esp32s3_waveshare.zip  . && cd -
+          cd release/esp32s3_waveshare && zip -r ../../ArcadeMatrix-esp32s3_waveshare.zip . && cd -
+          cd release/esp32s3_n16r8 && zip -r ../../ArcadeMatrix-esp32s3_n16r8.zip . && cd -
 
       - name: Zip sample SD card bundle
         run: |
@@ -121,9 +128,11 @@ jobs:
           files: |
             ArcadeMatrix-esp32dev.zip
             ArcadeMatrix-esp32s3_waveshare.zip
+            ArcadeMatrix-esp32s3_n16r8.zip
             ArcadeMatrix-sdcard.zip
             release/esp32dev/firmware-esp32dev.bin
             release/esp32s3_waveshare/firmware-esp32s3_waveshare.bin
+            release/esp32s3_n16r8/firmware-esp32s3_n16r8.bin
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

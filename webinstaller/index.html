@@ -37,7 +37,7 @@
     }
 
     .container {
-      max-width: 800px;
+      max-width: 980px;
       width: 90%;
       margin: 2rem auto;
       padding: 2.5rem;
@@ -104,9 +104,9 @@
       margin-bottom: 2rem;
     }
 
-    @media (min-width: 768px) {
+    @media (min-width: 820px) {
       .boards-grid {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, 1fr);
       }
     }
 
@@ -139,8 +139,15 @@
       box-shadow: 0 15px 30px rgba(0, 240, 255, 0.1);
     }
 
-    .board:nth-child(2):hover::before { background: var(--accent-magenta); }
+    .board:nth-child(2):hover::before { background: #00e676; }
     .board:nth-child(2):hover {
+      transform: translateY(-8px);
+      border-color: rgba(0, 230, 118, 0.3);
+      box-shadow: 0 15px 30px rgba(0, 230, 118, 0.1);
+    }
+
+    .board:nth-child(3):hover::before { background: var(--accent-magenta); }
+    .board:nth-child(3):hover {
       transform: translateY(-8px);
       border-color: rgba(255, 0, 85, 0.3);
       box-shadow: 0 15px 30px rgba(255, 0, 85, 0.1);
@@ -247,9 +254,16 @@
       </div>
 
       <div class="board">
+        <div class="board-icon">🟩</div>
+        <h2>ESP32-S3 (N16R8 / N8R8)</h2>
+        <p>Generic ESP32-S3 DevKitC-1 boards with Quad Flash (8/16MB) + Octal PSRAM (8MB).<br>Supports up to 256x64 panels.</p>
+        <esp-web-install-button manifest="manifest-esp32s3_n16r8.json"></esp-web-install-button>
+      </div>
+
+      <div class="board">
         <div class="board-icon">🟪</div>
-        <h2>ESP32-S3 (PSRAM)</h2>
-        <p>Requires a PSRAM-equipped S3 board (e.g. N16R8 / N32R16 / N8R8).<br>Supports up to 256x64 panels.</p>
+        <h2>Waveshare ESP32-S3 (N32R16V)</h2>
+        <p>Waveshare ESP32-S3 Matrix / N32R16V boards with Octal Flash (32MB) + Octal PSRAM (16MB).<br>Supports up to 256x64 panels.</p>
         <esp-web-install-button manifest="manifest-esp32s3_waveshare.json"></esp-web-install-button>
       </div>
     </div>

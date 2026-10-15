@@ -29,6 +29,7 @@
 #include "../services/DLNAService.h"
 #include "../core/DisplayOrientationManager.h"
 #include "../hal/GyroHAL.h"
+#include "../hal/BoardProfile.h"
 #include <atomic>
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
@@ -593,6 +594,16 @@ void WebServerAPI::sendJsonResponse(AsyncWebServerRequest *request, JsonDocument
     request->send(200, "application/json", response);
 }
 
+static constexpr const char* currentBoardEnv() {
+#if defined(HARDWARE_VARIANT_N16R8)
+    return "esp32s3_n16r8";
+#elif defined(HARDWARE_PROFILE_WAVESHARE_S3)
+    return "esp32s3_waveshare";
+#else
+    return "esp32dev";
+#endif
+}
+
 void WebServerAPI::setupRoutes() {
     if (m_routesInitialized) return;
     m_routesInitialized = true;
@@ -602,6 +613,9 @@ void WebServerAPI::setupRoutes() {
         SpiRamJsonDocument doc(512);
         const auto& caps = hardwareHAL.capabilities();
         doc["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
+        doc["board_env"] = currentBoardEnv();
+        doc["profile_label"] = BoardProfile::current().name();
+        doc["flash_bytes"] = BoardProfile::current().memory().flashBytes;
         JsonObject psramObj = doc.createNestedObject("psram");
         psramObj["available"] = caps.hasPsram;
         psramObj["bytes"] = caps.psramBytes;
@@ -1286,13 +1300,14 @@ void WebServerAPI::setupRoutes() {
             lastMs = nowMs; lastLoops = loops; lastPresents = presents;
         }
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
+        doc["board_env"] = currentBoardEnv();
         doc["uptime_sec"] = millis() / 1000;
         doc["has_temp_sensor"] = hardwareHAL.capabilities().hasTempSensor;
         doc["has_microphone"] = hardwareHAL.capabilities().hasMicrophone;
         doc["has_dac"] = hardwareHAL.capabilities().audio.output;
         doc["has_gyro"] = gyroHAL.isAvailable();
         doc["gyro_sensor"] = gyroHAL.getOrientation().sensorName;
-        doc["hardware_profile"] = "Waveshare ESP32-S3 RGB Matrix";
+        doc["hardware_profile"] = BoardProfile::current().name();
         
         extern ConfigLoader config;
         ConfigSnapshotGuard snapGuard = config.acquireSnapshot();
@@ -1346,6 +1361,7 @@ void WebServerAPI::setupRoutes() {
         doc["git_commit"] = BUILD_GIT_COMMIT;
         doc["build_timestamp"] = BUILD_TIMESTAMP;
         doc["arch"] = (hardwareHAL.capabilities().profile == HwProfile::WAVESHARE_S3) ? "esp32s3" : "esp32";
+        doc["board_env"] = currentBoardEnv();
         const esp_partition_t* running = esp_ota_get_running_partition();
         doc["partition"] = running ? running->label : "app0";
         sendJsonResponse(request, doc);
@@ -2282,6 +2298,9 @@ void WebServerAPI::setupRoutes() {
             JsonObject hw = section.isEmpty() ? doc.createNestedObject("hardware") : doc.to<JsonObject>();
             const auto& caps = hardwareHAL.capabilities();
             hw["profile"] = (caps.profile == HwProfile::WAVESHARE_S3) ? "WAVESHARE_S3" : "ESP32_STD";
+            hw["board_env"] = currentBoardEnv();
+            hw["profile_label"] = BoardProfile::current().name();
+            hw["flash_bytes"] = BoardProfile::current().memory().flashBytes;
             JsonObject psramObj = hw.createNestedObject("psram");
             psramObj["available"] = caps.hasPsram;
             psramObj["bytes"] = caps.psramBytes;

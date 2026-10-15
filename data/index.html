@@ -7245,9 +7245,10 @@ function initOta() {
       window.showToast('Checking GitHub for latest release...', 'info');
 
       try {
-        const sysInfo = await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32' }));
+        const sysInfo = await API.get('/api/version').catch(() => ({ version: '3.0.0', arch: 'esp32', board_env: '' }));
         const currentVer = sysInfo.version || '3.0.0';
         const isS3 = (sysInfo.arch || '').toLowerCase().includes('s3');
+        const boardEnv = (sysInfo.board_env || '').toLowerCase();
 
         const res = await fetch('https://api.github.com/repos/red77290/ArcadeMatrix/releases');
         if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
@@ -7258,29 +7259,35 @@ function initOta() {
         const latestVer = (latestRel.tag_name || '').replace(/^[vV]/, '');
         targetVersionName = latestVer;
 
-        // Find matching asset for ESP32 board
+        // Find matching asset for ESP32 board (strictly prefer exact board_env match first)
         let matchingAsset = null;
         const binAssets = (latestRel.assets || []).filter(a => (a.name || '').toLowerCase().endsWith('.bin'));
-        for (const asset of binAssets) {
-          const nameLower = asset.name.toLowerCase();
-          if (isS3 && (nameLower.includes('s3') || nameLower.includes('waveshare'))) {
-            matchingAsset = asset;
-            break;
-          } else if (!isS3 && (nameLower.includes('esp32dev') || nameLower.includes('esp32.bin') || (!nameLower.includes('s3') && !nameLower.includes('waveshare')))) {
-            matchingAsset = asset;
-            break;
+        if (boardEnv) {
+          matchingAsset = binAssets.find(a => a.name.toLowerCase().includes(boardEnv)) || null;
+        }
+        if (!matchingAsset) {
+          for (const asset of binAssets) {
+            const nameLower = asset.name.toLowerCase();
+            if (isS3 && (nameLower.includes('waveshare') || (nameLower.includes('s3') && !nameLower.includes('n16r8')))) {
+              matchingAsset = asset;
+              break;
+            } else if (!isS3 && (nameLower.includes('esp32dev') || nameLower.includes('esp32.bin') || (!nameLower.includes('s3') && !nameLower.includes('waveshare')))) {
+              matchingAsset = asset;
+              break;
+            }
           }
         }
         if (!matchingAsset && binAssets.length === 1) {
           matchingAsset = binAssets[0];
         }
 
+        const boardLabel = boardEnv === 'esp32s3_n16r8' ? 'ESP32-S3 N16R8' : (isS3 ? 'Waveshare ESP32-S3' : 'ESP32');
         onlineCard.style.display = 'block';
         onlineTargetVer.textContent = `v${latestVer}`;
         if (matchingAsset) {
-          onlineSize.textContent = `${(matchingAsset.size / (1024 * 1024)).toFixed(2)} MB (${isS3 ? 'ESP32-S3' : 'ESP32'})`;
+          onlineSize.textContent = `${(matchingAsset.size / (1024 * 1024)).toFixed(2)} MB (${boardLabel})`;
         } else {
-          onlineSize.textContent = isS3 ? 'ESP32-S3' : 'ESP32';
+          onlineSize.textContent = boardLabel;
         }
 
         if (latestRel.body) {
@@ -8159,7 +8166,9 @@ async function initHardwareCapabilities() {
       }
       const elProf = document.getElementById('hw-cap-profile');
       if (elProf) {
-        elProf.textContent = hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)';
+        elProf.textContent = hw.profile_label || (hw.board_env === 'esp32s3_n16r8'
+          ? 'ESP32-S3 N16R8 (PSRAM 8MB)'
+          : (hw.profile === 'WAVESHARE_S3' ? 'Waveshare ESP32-S3 (Matrix 64px)' : 'ESP32 Standard (Matrix 32px)'));
         elProf.style.color = 'var(--accent-info)';
       }
       

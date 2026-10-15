@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: [esp32dev, esp32s3_waveshare]
+        env: [esp32dev, esp32s3_waveshare, esp32s3_n16r8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,10 +115,16 @@ jobs:
           name: firmware-esp32s3_waveshare
           path: artifacts/esp32s3_waveshare
 
+      - name: Download esp32s3_n16r8 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-esp32s3_n16r8
+          path: artifacts/esp32s3_n16r8
+
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json _site/
+          cp webinstaller/index.html webinstaller/manifest-esp32dev.json webinstaller/manifest-esp32s3_waveshare.json webinstaller/manifest-esp32s3_n16r8.json _site/
           cp -r webinstaller/bin _site/bin
           cp artifacts/esp32dev/bootloader.bin _site/bootloader-esp32dev.bin
           cp artifacts/esp32dev/partitions.bin _site/partitions-esp32dev.bin
@@ -126,9 +132,12 @@ jobs:
           cp artifacts/esp32s3_waveshare/bootloader.bin  _site/bootloader-esp32s3_waveshare.bin
           cp artifacts/esp32s3_waveshare/partitions.bin  _site/partitions-esp32s3_waveshare.bin
           cp artifacts/esp32s3_waveshare/firmware.bin    _site/firmware-esp32s3_waveshare.bin
+          cp artifacts/esp32s3_n16r8/bootloader.bin  _site/bootloader-esp32s3_n16r8.bin
+          cp artifacts/esp32s3_n16r8/partitions.bin  _site/partitions-esp32s3_n16r8.bin
+          cp artifacts/esp32s3_n16r8/firmware.bin    _site/firmware-esp32s3_n16r8.bin
           python3 -c "
           import os, sys
-          for env in ['esp32dev', 'esp32s3_waveshare']:
+          for env in ['esp32dev', 'esp32s3_waveshare', 'esp32s3_n16r8']:
               path = f'_site/firmware-{env}.bin'
               size = os.path.getsize(path)
               print(f'Installer {path}: {size} bytes')
