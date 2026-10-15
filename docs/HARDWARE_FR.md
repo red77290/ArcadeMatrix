@@ -16,7 +16,7 @@ ArcadeMatrix prend en charge trois cibles firmware réparties sur deux paliers d
 ### 1.2 ESP32-S3 Générique N16R8 / N8R8 (`esp32s3_n16r8`)
 - **Microcontrôleur** : ESP32-S3 double cœur avec **Flash Quad SPI** (`8 Mo` ou `16 Mo`, `QIO`) + **PSRAM Octale** (`8 Mo`, `OPI`) — ex. `ESP32-S3-DevKitC-1-N16R8` ou `N8R8`.
 - **Détection Mémoire Dynamique** : Détecte automatiquement la taille réelle de la Flash (`8 Mo` / `16 Mo` / `32 Mo`) et de la PSRAM au démarrage.
-- **Stockage** : `SD_MMC` 1-bit rapide (`CLK=1, CMD=44, D0=17` ; tirer `DAT3/CS` au `3.3V` via une résistance de `10kΩ`).
+- **Stockage** : `SD_MMC` 1-bit rapide (`CLK=1`, `CMD/MOSI=44` [sérigraphié **`RX`** sur les cartes DevKitC-1], `D0/MISO=17` ; tirer `DAT3/CS` au `3.3V` via une résistance de `10kΩ`).
 - **Résolution Matrice** : Jusqu'à 256x64 (double tampon DMA SPIRAM supporté).
 
 ### 1.3 Waveshare ESP32-S3 Matrix Board (`esp32s3_waveshare`)
@@ -27,18 +27,18 @@ ArcadeMatrix prend en charge trois cibles firmware réparties sur deux paliers d
 
 ### 1.4 Brochage ESP32-S3 (`esp32s3_n16r8` & `esp32s3_waveshare`)
 
-| Sous-système | Signal | GPIO ESP32-S3 | Notes |
+| Sous-système | Signal (SD_MMC / Label Adaptateur SPI) | GPIO ESP32-S3 | Notes |
 |---|---|---|---|
 | **Matrice HUB75** | `R1, G1, B1` | `GPIO 4, 5, 6` | Données RGB moitié supérieure |
 | **Matrice HUB75** | `R2, G2, B2` | `GPIO 7, 15, 16` | Données RGB moitié inférieure |
 | **Matrice HUB75** | `A, B, C, D, E` | `GPIO 18, 8, 3, 42, 9` | Adressage lignes (`E` requis pour panneaux 64 lignes) |
 | **Matrice HUB75** | `LAT, OE, CLK` | `GPIO 40, 2, 41` | Latch, Output Enable, Horloge pixel |
-| **MicroSD (SD_MMC 1-bit)** | `CLK` | `GPIO 1` | Horloge matérielle SDMMC |
-| **MicroSD (SD_MMC 1-bit)** | `CMD` | `GPIO 44` | Commande / Réponse (pull-up `10kΩ` vers `3.3V`) |
-| **MicroSD (SD_MMC 1-bit)** | `DAT0 (D0)` | `GPIO 17` | Ligne de données 0 (pull-up `10kΩ` vers `3.3V`) |
-| **MicroSD (SD_MMC 1-bit)** | `DAT3 / CS` | `3.3V` | Tirer au `3.3V` via résistance `10kΩ` (maintient le mode SD natif) |
+| **MicroSD (SD_MMC 1-bit)** | `CLK` (`CLK` / `SCK`) | `GPIO 1` | Horloge matérielle SDMMC |
+| **MicroSD (SD_MMC 1-bit)** | `CMD` (**`MOSI`** sur adaptateurs SPI) | `GPIO 44` (**`RX`** sur DevKitC-1) | Commande / Réponse (pull-up `10kΩ` vers `3.3V`) |
+| **MicroSD (SD_MMC 1-bit)** | `DAT0 / D0` (**`MISO`** sur adaptateurs SPI) | `GPIO 17` | Ligne de données 0 (pull-up `10kΩ` vers `3.3V`) |
+| **MicroSD (SD_MMC 1-bit)** | `DAT3 / CS` (**`CS`** sur adaptateurs SPI) | `3.3V` | Tirer au `3.3V` via résistance `10kΩ` (ou laisser non connecté si l'adaptateur 3.3V possède déjà ses pull-ups `10kΩ`) |
 | **Bus I2C** | `SDA, SCL` | `GPIO 47, 48` | Capteurs optionnels `SHTC3` (`0x70`), `QMI8658` (`0x6B`), `MPU6050` (`0x68`) |
-| **Audio I2S** | `MCLK, BCLK, WS, DIN, DOUT` | `GPIO 12, 43, 38, 39, 21` | ES7210/ES8311 intégrés ou Micro/DAC I2S externe |
+| **Audio I2S** | `MCLK, BCLK, WS, DIN, DOUT` | `GPIO 12, 43 (`TX`), 38, 39, 21` | ES7210/ES8311 intégrés ou Micro/DAC I2S externe |
 
 ---
 
