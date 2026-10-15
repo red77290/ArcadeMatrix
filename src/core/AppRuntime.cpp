@@ -219,6 +219,7 @@ void AppRuntime::initialize() {
     if (!config.loadFromSD("/config.json")) {
         LOGW("Config", "/config.json not found or failed to parse. Using defaults.");
         ConfigSanitizer::sanitize(config, true);
+        config.publishSnapshot();
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }

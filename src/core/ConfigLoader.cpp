@@ -136,15 +136,9 @@ void ConfigLoader::setDefaults() {
     RotationEntry re;
     re.instance_id = "clock_main"; re.duration_sec = 15; rotation.push_back(re);
 
-#if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    matrix.width = 256;
-    matrix.height = 64;
-    matrix.chainLength = 4;
-#else
     matrix.width = 64;
     matrix.height = 32;
     matrix.chainLength = 2;
-#endif
     matrix.panelType = "SHIFTREG";
     matrix.powerLimitPercent = 50;
     matrix.colorDepth = 0; // 0 = Auto (Adaptive TLS / Hardware)
