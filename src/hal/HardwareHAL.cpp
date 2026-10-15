@@ -143,6 +143,7 @@ void HardwareHAL::begin() {
         Wire.setClock(100000); // 100kHz standard I2C speed
         Wire.setTimeOut(25);   // 25ms timeout to prevent peripheral lockups
 
+#if !defined(HARDWARE_VARIANT_N16R8)
         String i2cLog = "I2C Bus Scan: ";
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
@@ -151,6 +152,7 @@ void HardwareHAL::begin() {
             }
         }
         LOGI("HardwareHAL", "%s", i2cLog.c_str());
+#endif
 
         // 2. Probe Temperature & Humidity Sensor (SHTC3)
         _capabilities.hasTempSensor = probeSHTC3();
@@ -173,8 +175,13 @@ void HardwareHAL::begin() {
     if (_es7210Detected) {
         LOGI("HardwareHAL", "Waveshare ES7210 Microphone Codec DETECTED on I2C address 0x40.");
     } else {
+#if defined(HARDWARE_VARIANT_N16R8)
+        LOGI("HardwareHAL", "ES7210 Codec not present on generic ESP32-S3 board; onboard microphone disabled.");
+        _capabilities.hasMicrophone = false;
+#else
         LOGW("HardwareHAL", "ES7210 Codec not found; checking generic I2S microphone capability...");
         _capabilities.hasMicrophone = true; // Fallback to generic I2S mic
+#endif
     }
     _capabilities.audio.input = _capabilities.hasMicrophone;
     _capabilities.audio.output = true; // ES8311 DAC or external I2S DAC on GPIO 21
@@ -216,6 +223,25 @@ void HardwareHAL::begin() {
     if (!i2cConflictsWithMatrix) {
         gyroHAL.begin();
         _capabilities.hasGyroscope = gyroHAL.isAvailable();
+#if defined(HARDWARE_PROFILE_WAVESHARE_S3) && !defined(UNIT_TEST)
+        // On generic ESP32-S3 N16R8 / DevKitC-1 boards (where no I2C peripherals exist on GPIO 47/48),
+        // GPIO 48 (or GPIO 38 on v1.1) drives an onboard WS2812 RGB NeoPixel LED.
+        // The 100 kHz I2C bus scan on SCL=48 latches random/all-1 bits into the WS2812, turning it
+        // blinding full-brightness white. Release Wire and explicitly latch RGB(0,0,0) to turn it off.
+        if (!_capabilities.hasTempSensor && !_es7210Detected && !_capabilities.hasGyroscope) {
+            Wire.end();
+            neopixelWrite(I2C_SCL_PIN, 0, 0, 0);
+            pinMode(I2C_SCL_PIN, OUTPUT);
+            digitalWrite(I2C_SCL_PIN, LOW);
+            if (!_capabilities.hasMicrophone) {
+                neopixelWrite(38, 0, 0, 0);
+                pinMode(38, OUTPUT);
+                digitalWrite(38, LOW);
+            }
+            LOGI("HardwareHAL", "No I2C devices on GPIO %d/%d; turned off onboard WS2812 RGB LED (GPIO 48/38).",
+                 I2C_SDA_PIN, I2C_SCL_PIN);
+        }
+#endif
     } else {
         _capabilities.hasGyroscope = false;
     }
