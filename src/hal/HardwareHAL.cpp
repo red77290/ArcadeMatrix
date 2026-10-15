@@ -168,22 +168,23 @@ void HardwareHAL::begin() {
 
     // 3. Probe Audio Codec / I2S Hardware
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-    _capabilities.hasMicrophone = probeES7210();
-    if (_capabilities.hasMicrophone) {
+    _es7210Detected = probeES7210();
+    _capabilities.hasMicrophone = _es7210Detected;
+    if (_es7210Detected) {
         LOGI("HardwareHAL", "Waveshare ES7210 Microphone Codec DETECTED on I2C address 0x40.");
     } else {
         LOGW("HardwareHAL", "ES7210 Codec not found; checking generic I2S microphone capability...");
         _capabilities.hasMicrophone = true; // Fallback to generic I2S mic
     }
     _capabilities.audio.input = _capabilities.hasMicrophone;
-    _capabilities.audio.output = true; // ES8311 DAC on GPIO 21
+    _capabilities.audio.output = true; // ES8311 DAC or external I2S DAC on GPIO 21
     _capabilities.audio.fullDuplex = true;
     _capabilities.audio.maxSampleRate = 44100;
     _capabilities.audio.maxChannels = 2;
     _capabilities.audio.bluetoothClassic = false; // S3 is BLE only
 
 #if !defined(UNIT_TEST)
-    if (_capabilities.hasMicrophone && s_es7210RecoveryTaskHandle == nullptr) {
+    if (_es7210Detected && s_es7210RecoveryTaskHandle == nullptr) {
         xTaskCreatePinnedToCore(
             es7210RecoveryTaskFunc,
             "ES7210Rec",
@@ -720,10 +721,12 @@ void HardwareHAL::startAudioSampling() {
 
         // Configure & Power up ES7210 ADC registers NOW while MCLK is active!
 #if defined(HARDWARE_PROFILE_WAVESHARE_S3)
-        if (configureES7210()) {
-            LOGI("HardwareHAL", "ES7210 Microphone ADC configured and powered up successfully.");
-        } else {
-            LOGW("HardwareHAL", "ES7210 I2C config failed, running generic I2S audio mode.");
+        if (_es7210Detected) {
+            if (configureES7210()) {
+                LOGI("HardwareHAL", "ES7210 Microphone ADC configured and powered up successfully.");
+            } else {
+                LOGW("HardwareHAL", "ES7210 I2C config failed, running generic I2S audio mode.");
+            }
         }
 #endif
         // Flush initial stale DMA data captured while the ES7210 registers were still settling.

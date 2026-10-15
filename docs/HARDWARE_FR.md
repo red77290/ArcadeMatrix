@@ -4,20 +4,41 @@
 
 ## 1. Profils de Cartes Supportés
 
-ArcadeMatrix prend en charge deux profils matériels physiques :
+ArcadeMatrix prend en charge trois cibles firmware réparties sur deux paliers de capacités matérielles :
 
 ### 1.1 ESP32 Standard (`esp32dev`)
 - **Microcontrôleur** : ESP32 double cœur classique (NodeMCU, ESP32 Dev Module).
 - **RAM** : ~320 Ko de SRAM interne (sans PSRAM).
-- **Stockage** : Carte SD en SPI (VSPI).
+- **Stockage** : Carte SD en SPI (VSPI : `CS=5, SCK=18, MISO=19, MOSI=23`).
 - **Résolution Matrice** : Jusqu'à 128x32 ou 64x64.
 - **Audio / Capteur** : Modules optionnels externes INMP441 / SHTC3.
 
-### 1.2 Waveshare ESP32-S3 Matrix Board (`esp32s3_waveshare`)
-- **Microcontrôleur** : ESP32-S3 double cœur avec 32 Mo Flash + 16 Mo de PSRAM Octal.
-- **Stockage** : SD_MMC 1-bit rapide (D0=17, CMD=44, CLK=1).
-- **Périphériques intégrés** : Codec audio I2S ES7210 + microphone numérique, capteur température/humidité SHTC3.
+### 1.2 ESP32-S3 Générique N16R8 / N8R8 (`esp32s3_n16r8`)
+- **Microcontrôleur** : ESP32-S3 double cœur avec **Flash Quad SPI** (`8 Mo` ou `16 Mo`, `QIO`) + **PSRAM Octale** (`8 Mo`, `OPI`) — ex. `ESP32-S3-DevKitC-1-N16R8` ou `N8R8`.
+- **Détection Mémoire Dynamique** : Détecte automatiquement la taille réelle de la Flash (`8 Mo` / `16 Mo` / `32 Mo`) et de la PSRAM au démarrage.
+- **Stockage** : `SD_MMC` 1-bit rapide (`CLK=1, CMD=44, D0=17` ; tirer `DAT3/CS` au `3.3V` via une résistance de `10kΩ`).
 - **Résolution Matrice** : Jusqu'à 256x64 (double tampon DMA SPIRAM supporté).
+
+### 1.3 Waveshare ESP32-S3 Matrix Board (`esp32s3_waveshare`)
+- **Microcontrôleur** : ESP32-S3 double cœur (`N32R16V`) avec **32 Mo Flash Octale (`OPI`)** + **16 Mo PSRAM Octale (`OPI`)**.
+- **Stockage** : `SD_MMC` 1-bit rapide (`D0=17, CMD=44, CLK=1`).
+- **Périphériques intégrés** : Codec audio I2S ES7210 + microphone numérique, DAC ES8311, capteur température/humidité SHTC3.
+- **Résolution Matrice** : Jusqu'à 256x64 (double tampon DMA SPIRAM supporté).
+
+### 1.4 Brochage ESP32-S3 (`esp32s3_n16r8` & `esp32s3_waveshare`)
+
+| Sous-système | Signal | GPIO ESP32-S3 | Notes |
+|---|---|---|---|
+| **Matrice HUB75** | `R1, G1, B1` | `GPIO 4, 5, 6` | Données RGB moitié supérieure |
+| **Matrice HUB75** | `R2, G2, B2` | `GPIO 7, 15, 16` | Données RGB moitié inférieure |
+| **Matrice HUB75** | `A, B, C, D, E` | `GPIO 18, 8, 3, 42, 9` | Adressage lignes (`E` requis pour panneaux 64 lignes) |
+| **Matrice HUB75** | `LAT, OE, CLK` | `GPIO 40, 2, 41` | Latch, Output Enable, Horloge pixel |
+| **MicroSD (SD_MMC 1-bit)** | `CLK` | `GPIO 1` | Horloge matérielle SDMMC |
+| **MicroSD (SD_MMC 1-bit)** | `CMD` | `GPIO 44` | Commande / Réponse (pull-up `10kΩ` vers `3.3V`) |
+| **MicroSD (SD_MMC 1-bit)** | `DAT0 (D0)` | `GPIO 17` | Ligne de données 0 (pull-up `10kΩ` vers `3.3V`) |
+| **MicroSD (SD_MMC 1-bit)** | `DAT3 / CS` | `3.3V` | Tirer au `3.3V` via résistance `10kΩ` (maintient le mode SD natif) |
+| **Bus I2C** | `SDA, SCL` | `GPIO 47, 48` | Capteurs optionnels `SHTC3` (`0x70`), `QMI8658` (`0x6B`), `MPU6050` (`0x68`) |
+| **Audio I2S** | `MCLK, BCLK, WS, DIN, DOUT` | `GPIO 12, 43, 38, 39, 21` | ES7210/ES8311 intégrés ou Micro/DAC I2S externe |
 
 ---
 
