@@ -63,6 +63,15 @@ void WaveshareS3Profile::refreshCapabilities() {
 void WaveshareS3Profile::applyPowerQuirks() {
     // Refresh runtime memory capabilities once ESP-IDF heap/flash subsystems are fully initialized.
     refreshCapabilities();
+#if defined(HARDWARE_VARIANT_N16R8) && !defined(UNIT_TEST)
+    // Immediately turn off the blinding onboard WS2812 RGB LED on ESP32-S3 N16R8 / DevKitC-1 (GPIO 48 / GPIO 38)
+    neopixelWrite(48, 0, 0, 0);
+    pinMode(48, OUTPUT);
+    digitalWrite(48, LOW);
+    neopixelWrite(38, 0, 0, 0);
+    pinMode(38, OUTPUT);
+    digitalWrite(38, LOW);
+#endif
 }
 
 void WaveshareS3Profile::configureWifiTxPower() {
