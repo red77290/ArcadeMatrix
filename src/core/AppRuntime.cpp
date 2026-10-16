@@ -223,7 +223,6 @@ void AppRuntime::initialize() {
     } else {
         LOGI("Config", "Configuration loaded from /config.json.");
     }
-    EngineRegistrar::refreshAvailability();
     uint32_t postConfigFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     uint32_t postConfigLargest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     uint32_t postConfigLargestDma = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);

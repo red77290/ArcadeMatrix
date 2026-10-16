@@ -26,7 +26,6 @@ struct RequirementCheckResult {
 class EngineRegistrar {
 public:
     static void registerAll();
-    static void refreshAvailability();
     static bool registerHandler(const IEngineDescriptorHandler& handler);
     static RequirementCheckResult checkRequirements(const EngineRequirements& req, const char* targetPipeline = nullptr, EvaluationMode mode = EvaluationMode::ReferenceCapability);
     static bool meetsRequirements(const EngineRequirements& req, const char* targetPipeline = nullptr, EvaluationMode mode = EvaluationMode::ReferenceCapability);

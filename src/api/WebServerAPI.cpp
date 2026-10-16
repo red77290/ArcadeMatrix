@@ -2550,7 +2550,6 @@ void WebServerAPI::setupRoutes() {
         bool saved = true;
         if (changed) {
             CompatibilityEvaluator::notifyHardwareCapabilityChanged();
-            EngineRegistrar::refreshAvailability();
             saved = config.saveToSD("/config.json");
             if (!saved) willReboot = false;   // a reboot now would discard the change
         }

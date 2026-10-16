@@ -52,16 +52,6 @@ bool EngineRegistrar::registerHandler(const IEngineDescriptorHandler& handler) {
     return EngineRegistry::registerEngine(desc);
 }
 
-void EngineRegistrar::refreshAvailability() {
-    size_t count = 0;
-    EngineDescriptor* descriptors = EngineRegistry::getMutableDescriptors(count);
-    for (size_t i = 0; i < count; ++i) {
-        auto verdict = evaluateCompatibility(descriptors[i]);
-        descriptors[i].available = verdict.compatible();
-        descriptors[i].unavailableReason = verdict.reasonText;
-    }
-}
-
 void EngineRegistrar::registerAll() {
     LOGI("Registrar", "Registering dynamic engines from descriptor handlers...");
 
