@@ -121,26 +121,6 @@ bool ModularConfigManager::saveAll(const ConfigLoader& config) {
         }
     }
 
-    // Clean up orphan /config/instances/<id>.json files that are no longer in config.instances
-    std::vector<String> existingFiles;
-    if (_storage.listFiles("/config/instances", existingFiles)) {
-        for (const auto& f : existingFiles) {
-            if (f.endsWith(".json")) {
-                String instId = f.substring(0, f.length() - 5);
-                bool stillPresent = false;
-                for (const auto& inst : config.instances) {
-                    if (inst.instance_id == instId) {
-                        stillPresent = true;
-                        break;
-                    }
-                }
-                if (!stillPresent) {
-                    _workingSet.deleteInstance(instId);
-                }
-            }
-        }
-    }
-
     return hwOk && sysOk && netOk && rotOk && instOk;
 }
 

@@ -620,10 +620,7 @@ bool ConfigLoader::loadFromSD(const char* filepath) {
         LOGI("ConfigLoader", "Loading modular configuration from /config/...");
         if (mgr.loadAll(*this)) {
             bool hadPlaylist = sdStorage.exists("/config/playlist.json");
-            SanitizeResult san = ConfigSanitizer::sanitize(*this, !hadPlaylist);
-            if (san.modified) {
-                mgr.saveAll(*this);
-            }
+            ConfigSanitizer::sanitize(*this, !hadPlaylist);
             publishSnapshot();
             LOGI("ConfigLoader", "Modular configuration loaded successfully from /config/.");
             return true;

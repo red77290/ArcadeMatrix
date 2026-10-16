@@ -336,24 +336,16 @@ void ConfigSanitizer::sanitizeDataMqtt(DataMqttConfig& dm, SanitizeResult& resul
 }
 
 void ConfigSanitizer::sanitizeRotation(ConfigLoader& config, bool allowBootstrap, SanitizeResult& result) {
-    // 1. Prune rotation entries pointing to engines unavailable on this hardware profile
+    // 1. Prune only structurally invalid rotation entries (empty ID or internal-only 'fighter' overlay).
+    // Do NOT remove entries merely because an engine is currently marked unavailable (!desc->available),
+    // as temporary unavailability or a misconfigured geometry would otherwise permanently delete the
+    // user's rotation when saved; RotationManager already skips unavailable engines at runtime.
     for (auto it = config.rotation.begin(); it != config.rotation.end(); ) {
-        const EngineInstance* inst = nullptr;
-        for (const auto& i : config.instances) {
-            if (i.instance_id == it->instance_id) {
-                inst = &i;
-                break;
-            }
-        }
-        if (inst) {
-            const auto* desc = EngineRegistry::getDescriptor(inst->engine_id.c_str());
-            if (desc && !desc->available) {
-                LOGW("ConfigSanitizer", "Removing rotation entry '%s' (engine '%s' unavailable on this hardware)",
-                     it->instance_id.c_str(), inst->engine_id.c_str());
-                it = config.rotation.erase(it);
-                result.modified = true;
-                continue;
-            }
+        if (it->instance_id.isEmpty() || it->instance_id == "fighter" || it->instance_id.startsWith("fighter_")) {
+            LOGW("ConfigSanitizer", "Removing invalid rotation entry '%s'", it->instance_id.c_str());
+            it = config.rotation.erase(it);
+            result.modified = true;
+            continue;
         }
         ++it;
     }

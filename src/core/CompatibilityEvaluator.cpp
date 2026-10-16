@@ -60,8 +60,7 @@ CompatibilityContext CompatibilityEvaluator::buildCurrentContext(EvaluationMode 
     extern ConfigLoader config;
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     const auto& snap = guard.get();
-    uint16_t chain = snap.matrix.chainLength > 0 ? snap.matrix.chainLength : 1;
-    ctx.width = snap.matrix.width > 0 ? (snap.matrix.width * chain) : 128;
+    ctx.width = snap.matrix.width > 0 ? snap.matrix.width : 128;
     ctx.height = snap.matrix.height > 0 ? snap.matrix.height : 32;
     ctx.colorDepth = (snap.matrix.colorDepth >= 0 && snap.matrix.colorDepth <= 8) ? snap.matrix.colorDepth : 0;
     ctx.requestedPipeline = snap.matrix.render_pipeline.isEmpty() ? "auto" : snap.matrix.render_pipeline;

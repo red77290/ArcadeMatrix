@@ -3385,6 +3385,66 @@ void test_compatibility_evaluator_multi_issue_bitmask(void) {
     TEST_ASSERT_EQUAL_STRING("incompatible", CompatibilityEvaluator::statusToString(verdict.status));
 }
 
+void test_compatibility_evaluator_chained_width_no_multiplication(void) {
+    extern ConfigLoader config;
+    int origWidth = config.matrix.width;
+    int origHeight = config.matrix.height;
+    int origChain = config.matrix.chainLength;
+
+    config.mutate([](ConfigLoader& c) {
+        c.matrix.width = 128;
+        c.matrix.height = 64;
+        c.matrix.chainLength = 2;
+    });
+    CompatibilityContext ctx1 = CompatibilityEvaluator::buildCurrentContext();
+    TEST_ASSERT_EQUAL_UINT16(128, ctx1.width);
+    TEST_ASSERT_EQUAL_UINT16(64, ctx1.height);
+
+    config.mutate([](ConfigLoader& c) {
+        c.matrix.width = 256;
+        c.matrix.height = 64;
+        c.matrix.chainLength = 4;
+    });
+    CompatibilityContext ctx2 = CompatibilityEvaluator::buildCurrentContext();
+    TEST_ASSERT_EQUAL_UINT16(256, ctx2.width);
+    TEST_ASSERT_EQUAL_UINT16(64, ctx2.height);
+
+    config.mutate([&](ConfigLoader& c) {
+        c.matrix.width = origWidth;
+        c.matrix.height = origHeight;
+        c.matrix.chainLength = origChain;
+    });
+}
+
+void test_sanitizer_rotation_preserves_unavailable_engines(void) {
+    EngineRegistry::clear();
+
+    EngineDescriptor unavailDesc;
+    unavailDesc.metadata.id = "temp_unavail";
+    unavailDesc.metadata.name = "Temporarily Unavailable";
+    unavailDesc.available = false;
+    unavailDesc.unavailableReason = "Matrix panel dimensions unsupported";
+    unavailDesc.factory = []() { return std::unique_ptr<IEngine>(new MockTestEngine()); };
+    TEST_ASSERT_TRUE(EngineRegistry::registerEngine(unavailDesc));
+
+    ConfigLoader cfg;
+    cfg.mutate([](ConfigLoader& c) {
+        c.instances.clear();
+        c.rotation.clear();
+        EngineInstance inst;
+        inst.instance_id = "unavail_main";
+        inst.engine_id = "temp_unavail";
+        c.instances.push_back(inst);
+        c.rotation.emplace_back("unavail_main", 15, OverlayConfig{false});
+    });
+
+    SanitizeResult res = ConfigSanitizer::sanitize(cfg, false);
+    TEST_ASSERT_EQUAL(1, cfg.rotation.size());
+    TEST_ASSERT_EQUAL_STRING("unavail_main", cfg.rotation[0].instance_id.c_str());
+    TEST_ASSERT_EQUAL(15, cfg.rotation[0].duration_sec);
+    (void)res;
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -3411,6 +3471,7 @@ void setup() {
     RUN_TEST(test_sanitizer_validation_policy_coverage);
     RUN_TEST(test_sanitizer_night_brightness_allows_zero);
     RUN_TEST(test_sanitizer_rotation_recreates_missing_instances);
+    RUN_TEST(test_sanitizer_rotation_preserves_unavailable_engines);
 
     // =========================================================================
     // 3. Display Arbiter & SPSC Queue Lock-Free Invariants
@@ -3514,6 +3575,7 @@ void setup() {
     RUN_TEST(test_compatibility_evaluator_memory_and_fragmentation);
     RUN_TEST(test_compatibility_evaluator_presentation_budget_and_single_buffer);
     RUN_TEST(test_compatibility_evaluator_multi_issue_bitmask);
+    RUN_TEST(test_compatibility_evaluator_chained_width_no_multiplication);
 
     UNITY_END();
 }

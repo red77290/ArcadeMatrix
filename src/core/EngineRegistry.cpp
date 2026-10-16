@@ -35,6 +35,11 @@ const EngineDescriptor* EngineRegistry::getAllDescriptors(size_t& count) {
     return _engines;
 }
 
+EngineDescriptor* EngineRegistry::getMutableDescriptors(size_t& count) {
+    count = _engineCount;
+    return _engines;
+}
+
 void EngineRegistry::clear() {
     _engineCount = 0;
 }

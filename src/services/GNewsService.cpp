@@ -13,22 +13,20 @@
 GNewsService gnewsService;
 
 GNewsService::GNewsService() {
-    for (int i = 0; i < 2; i++) {
-        _snapshots[i].count = 0;
-        _snapshots[i].hasData = false;
-        _snapshots[i].fetchSuccess = false;
-        _snapshots[i].lastFetchTime = 0;
-        _snapshots[i].lastFetchEpoch = 0;
-        _snapshots[i].status = 1; // EMPTY_KEY
-    }
+    _snapshot.count = 0;
+    _snapshot.hasData = false;
+    _snapshot.fetchSuccess = false;
+    _snapshot.lastFetchTime = 0;
+    _snapshot.lastFetchEpoch = 0;
+    _snapshot.status = 1; // EMPTY_KEY
 }
 
 GNewsService::~GNewsService() {
     releaseArticleStorage();
 }
 
-bool GNewsService::ensureArticleStorage(GNewsSnapshot& snap) {
-    if (snap.articles) return true;
+bool GNewsService::ensureArticleStorage() {
+    if (_snapshot.articles) return true;
 
     const size_t bytes = sizeof(GNewsArticle) * GNEWS_MAX_ARTICLES;
     // Prefer PSRAM: this block is only read by the render path, never from an ISR or DMA.
@@ -45,56 +43,35 @@ bool GNewsService::ensureArticleStorage(GNewsSnapshot& snap) {
     }
 
     memset(block, 0, bytes);
-    snap.articles = static_cast<GNewsArticle*>(block);
+    _snapshot.articles = static_cast<GNewsArticle*>(block);
     return true;
-}
-
-void GNewsService::setStatusLocked(uint8_t status) {
-    _snapshots[0].status = status;
-    _snapshots[1].status = status;
 }
 
 void GNewsService::releaseArticleStorage() {
     std::lock_guard<std::mutex> lock(_mutex);
-    for (int i = 0; i < 2; i++) {
-        if (_snapshots[i].articles) {
-            heap_caps_free(_snapshots[i].articles);
-            _snapshots[i].articles = nullptr;
-        }
-        _snapshots[i].count = 0;
-        _snapshots[i].hasData = false;
+    if (_snapshot.articles) {
+        heap_caps_free(_snapshot.articles);
+        _snapshot.articles = nullptr;
     }
+    _snapshot.count = 0;
+    _snapshot.hasData = false;
 }
 
 const GNewsSnapshot& GNewsService::getSnapshot() const {
-    return _snapshots[_activeIdx.load(std::memory_order_acquire)];
+    return _snapshot;
 }
 
 bool GNewsService::hasData() const {
-    const GNewsSnapshot& snap = getSnapshot();
-    return snap.articles && snap.hasData && snap.count > 0;
+    return _snapshot.articles && _snapshot.hasData && _snapshot.count > 0;
 }
 
 void GNewsService::purgeArticles() {
     std::lock_guard<std::mutex> lock(_mutex);
-    uint8_t curIdx = _activeIdx.load(std::memory_order_relaxed);
-    uint8_t nextIdx = 1 - curIdx;
-    GNewsSnapshot& next = _snapshots[nextIdx];
-    next.count = 0;
-    next.hasData = false;
-    next.fetchSuccess = false;
-    next.lastFetchTime = 0;
-    next.lastFetchEpoch = 0;
-    next.status = _snapshots[curIdx].status;
-    _activeIdx.store(nextIdx, std::memory_order_release);
-
-    GNewsSnapshot& prev = _snapshots[curIdx];
-    prev.count = 0;
-    prev.hasData = false;
-    prev.fetchSuccess = false;
-    prev.lastFetchTime = 0;
-    prev.lastFetchEpoch = 0;
-
+    _snapshot.count = 0;
+    _snapshot.hasData = false;
+    _snapshot.fetchSuccess = false;
+    _snapshot.lastFetchTime = 0;
+    _snapshot.lastFetchEpoch = 0;
     _lastAttemptTime = 0;
     _lastAttemptEpoch = 0;
     _consecutiveFailures = 0;
@@ -175,37 +152,39 @@ void GNewsService::saveToSd() {
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
     if (!f) return;
 
-    const GNewsSnapshot& activeSnap = _snapshots[_activeIdx.load(std::memory_order_acquire)];
     DynamicJsonDocument doc(12288);
-    doc["last_fetch_time"] = activeSnap.lastFetchTime;
-    doc["last_fetch_epoch"] = activeSnap.lastFetchEpoch;
-    doc["last_fetch_day"] = _lastFetchDay;
-    doc["last_attempt_epoch"] = _lastAttemptEpoch;
-    doc["consecutive_failures"] = _consecutiveFailures;
-    doc["active_key_idx"] = _activeKeyIdx;
-    doc["last_cat_idx"] = _catRoundRobinIdx;
-    doc["cat_round_robin_idx"] = _catRoundRobinIdx;
-    doc["status"] = activeSnap.status;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        doc["last_fetch_time"] = _snapshot.lastFetchTime;
+        doc["last_fetch_epoch"] = _snapshot.lastFetchEpoch;
+        doc["last_fetch_day"] = _lastFetchDay;
+        doc["last_attempt_epoch"] = _lastAttemptEpoch;
+        doc["consecutive_failures"] = _consecutiveFailures;
+        doc["active_key_idx"] = _activeKeyIdx;
+        doc["last_cat_idx"] = _catRoundRobinIdx;
+        doc["cat_round_robin_idx"] = _catRoundRobinIdx;
+        doc["status"] = _snapshot.status;
 
-    JsonArray usagesArr = doc.createNestedArray("key_usages");
-    for (uint32_t u : _keyUsages) {
-        usagesArr.add(u);
-    }
+        JsonArray usagesArr = doc.createNestedArray("key_usages");
+        for (uint32_t u : _keyUsages) {
+            usagesArr.add(u);
+        }
 
-    JsonArray artArr = doc.createNestedArray("articles");
-    for (size_t i = 0; i < activeSnap.count && activeSnap.articles; i++) {
-        JsonObject obj = artArr.createNestedObject();
-        obj["title"] = activeSnap.articles[i].title;
-        obj["description"] = activeSnap.articles[i].description;
-        obj["source"] = activeSnap.articles[i].source;
-        obj["category"] = activeSnap.articles[i].category;
-        obj["published_epoch"] = activeSnap.articles[i].publishedEpoch;
+        JsonArray artArr = doc.createNestedArray("articles");
+        for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
+            JsonObject obj = artArr.createNestedObject();
+            obj["title"] = _snapshot.articles[i].title;
+            obj["description"] = _snapshot.articles[i].description;
+            obj["source"] = _snapshot.articles[i].source;
+            obj["category"] = _snapshot.articles[i].category;
+            obj["published_epoch"] = _snapshot.articles[i].publishedEpoch;
+        }
     }
 
     serializeJson(doc, f);
     f.close();
     guard.unlock();
-    LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json (epoch: %u)", (int)activeSnap.count, activeSnap.lastFetchEpoch);
+    LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json (epoch: %u)", (int)_snapshot.count, _snapshot.lastFetchEpoch);
 }
 
 void GNewsService::loadFromSd() {
@@ -226,18 +205,15 @@ void GNewsService::loadFromSd() {
         return;
     }
 
-    uint8_t curIdx = _activeIdx.load(std::memory_order_relaxed);
-    uint8_t nextIdx = 1 - curIdx;
-    GNewsSnapshot& next = _snapshots[nextIdx];
-
-    next.lastFetchTime = millis();
-    next.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
+    std::lock_guard<std::mutex> lock(_mutex);
+    _snapshot.lastFetchTime = millis();
+    _snapshot.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
     _lastFetchDay = doc["last_fetch_day"] | -1;
     _lastAttemptEpoch = doc["last_attempt_epoch"] | 0;
     _consecutiveFailures = doc["consecutive_failures"] | 0;
     _activeKeyIdx = doc["active_key_idx"] | 0;
     _catRoundRobinIdx = doc["last_cat_idx"] | doc["cat_round_robin_idx"] | 0;
-    next.status = doc["status"] | 0;
+    _snapshot.status = doc["status"] | 0;
 
     JsonArray usagesArr = doc["key_usages"].as<JsonArray>();
     _keyUsages.clear();
@@ -246,14 +222,14 @@ void GNewsService::loadFromSd() {
     }
 
     JsonArray artArr = doc["articles"].as<JsonArray>();
-    next.count = 0;
-    next.hasData = false;
-    next.fetchSuccess = false;
-    if (!artArr.isNull() && artArr.size() > 0 && !ensureArticleStorage(next)) {
+    _snapshot.count = 0;
+    _snapshot.hasData = false;
+    _snapshot.fetchSuccess = false;
+    if (!artArr.isNull() && artArr.size() > 0 && !ensureArticleStorage()) {
         return;
     }
     for (JsonObject obj : artArr) {
-        if (next.count >= GNEWS_MAX_ARTICLES) break;
+        if (_snapshot.count >= GNEWS_MAX_ARTICLES) break;
         const char* title = obj["title"] | "";
         const char* desc = obj["description"] | "";
         const char* source = obj["source"] | "News";
@@ -262,7 +238,7 @@ void GNewsService::loadFromSd() {
 
         if (strlen(title) == 0) continue;
 
-        GNewsArticle& a = next.articles[next.count++];
+        GNewsArticle& a = _snapshot.articles[_snapshot.count++];
         strncpy(a.title, title, sizeof(a.title) - 1);
         a.title[sizeof(a.title) - 1] = '\0';
         strncpy(a.description, desc, sizeof(a.description) - 1);
@@ -275,13 +251,11 @@ void GNewsService::loadFromSd() {
         a.badgeColor = getCategoryColor(category);
     }
 
-    if (next.count > 0) {
-        next.hasData = true;
-        next.fetchSuccess = true;
-        LOGI("GNewsService", "Restored %d articles from SD /gnews_cache.json", (int)next.count);
+    if (_snapshot.count > 0) {
+        _snapshot.hasData = true;
+        _snapshot.fetchSuccess = true;
+        LOGI("GNewsService", "Restored %d articles from SD /gnews_cache.json", (int)_snapshot.count);
     }
-    _snapshots[curIdx].status = next.status;
-    _activeIdx.store(nextIdx, std::memory_order_release);
 }
 
 String GNewsService::getQuotaStatusString() const {
@@ -355,48 +329,44 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
 
     if (incoming.empty()) return false;
 
-    uint8_t curIdx = _activeIdx.load(std::memory_order_relaxed);
-    const GNewsSnapshot& curSnap = _snapshots[curIdx];
+    std::lock_guard<std::mutex> lock(_mutex);
 
     // Merge incoming into the snapshot articles with title deduplication
     std::vector<GNewsArticle> merged;
     for (const auto& inc : incoming) {
         merged.push_back(inc);
     }
-    for (size_t i = 0; i < curSnap.count && curSnap.articles; i++) {
+    for (size_t i = 0; i < _snapshot.count && _snapshot.articles; i++) {
         bool dup = false;
         for (const auto& m : merged) {
-            if (strcmp(m.title, curSnap.articles[i].title) == 0) {
+            if (strcmp(m.title, _snapshot.articles[i].title) == 0) {
                 dup = true;
                 break;
             }
         }
         if (!dup && merged.size() < GNEWS_MAX_ARTICLES) {
-            merged.push_back(curSnap.articles[i]);
+            merged.push_back(_snapshot.articles[i]);
         }
     }
 
-    uint8_t nextIdx = 1 - curIdx;
-    GNewsSnapshot& next = _snapshots[nextIdx];
-    if (!ensureArticleStorage(next)) {
-        next.count = 0;
-        next.hasData = false;
+    if (!ensureArticleStorage()) {
+        _snapshot.count = 0;
+        _snapshot.hasData = false;
         return false;
     }
 
-    next.count = min((size_t)GNEWS_MAX_ARTICLES, merged.size());
-    for (size_t i = 0; i < next.count; i++) {
-        next.articles[i] = merged[i];
+    _snapshot.count = min((size_t)GNEWS_MAX_ARTICLES, merged.size());
+    for (size_t i = 0; i < _snapshot.count; i++) {
+        _snapshot.articles[i] = merged[i];
     }
 
-    next.hasData = (next.count > 0);
-    next.fetchSuccess = true;
-    next.lastFetchTime = millis();
+    _snapshot.hasData = (_snapshot.count > 0);
+    _snapshot.fetchSuccess = true;
+    _snapshot.lastFetchTime = millis();
     time_t curEp = 0;
     time(&curEp);
-    next.lastFetchEpoch = (curEp > 1600000000) ? (uint32_t)curEp : 0;
-    next.status = 0;
-    _activeIdx.store(nextIdx, std::memory_order_release);
+    _snapshot.lastFetchEpoch = (curEp > 1600000000) ? (uint32_t)curEp : 0;
+    _snapshot.status = 0;
     return true;
 }
 
@@ -407,145 +377,142 @@ bool GNewsService::parseGNewsJson(Stream& stream, const char* defaultCategory) {
 void GNewsService::fetchNews(const String& apiKey, const String& category, const String& keywords,
                             const String& lang, const String& country, int maxArticles, int cacheTtlMin,
                             int requestsPerDay, bool forceRefresh) {
-    std::lock_guard<std::mutex> lock(_mutex);
     if (!_loadedFromSd) {
         loadFromSd();
     }
 
-    GNewsSnapshot& activeSnap = _snapshots[_activeIdx.load(std::memory_order_relaxed)];
-
     uint32_t now = millis();
-    _lastRequestsPerDay = (requestsPerDay > 0) ? std::min(requestsPerDay, 100) : 10;
-    uint32_t intervalFromBudgetSec = 86400UL / (uint32_t)_lastRequestsPerDay;
-    uint32_t intervalFromTtlSec = (cacheTtlMin > 0) ? ((uint32_t)cacheTtlMin * 60UL) : 1800UL;
-    uint32_t intervalSec = std::max(intervalFromBudgetSec, intervalFromTtlSec);
-    uint32_t intervalMs = intervalSec * 1000UL;
-
-    if (_lastApiKey != apiKey) {
-        _lastApiKey = apiKey;
-        _consecutiveFailures = 0;
-        if (activeSnap.status == 1 || activeSnap.status == 2 || activeSnap.status == 3) {
-            setStatusLocked(0);
-        }
-    }
-
-    // Parse comma-separated keys
-    _apiKeys.clear();
-    int kStart = 0;
-    int kComma = apiKey.indexOf(',');
-    while (kComma != -1) {
-        String token = apiKey.substring(kStart, kComma);
-        token.trim();
-        if (token.length() > 0) _apiKeys.push_back(token);
-        kStart = kComma + 1;
-        kComma = apiKey.indexOf(',', kStart);
-    }
-    String lastKey = apiKey.substring(kStart);
-    lastKey.trim();
-    if (lastKey.length() > 0) _apiKeys.push_back(lastKey);
-
-    while (_keyUsages.size() < _apiKeys.size()) {
-        _keyUsages.push_back(0);
-    }
-
-    if (_apiKeys.empty()) {
-        setStatusLocked(1); // EMPTY_KEY
-        LOGW("GNewsService", "No API key configured. Please configure api_key in settings to fetch live news.");
-        return;
-    }
-
-    // UTC Midnight rollover check (GNews daily quota resets precisely at 00:00 UTC / 12:00 AM UTC)
     time_t epochTime = 0;
     time(&epochTime);
-    int curUtcDay = 0;
-    if (epochTime > 1600000000) {
-        curUtcDay = (int)(epochTime / 86400);
-    } else {
-        curUtcDay = (int)(now / 86400000UL); // Fallback before NTP sync
-    }
+    int curUtcDay = (epochTime > 1600000000) ? (int)(epochTime / 86400) : (int)(now / 86400000UL);
 
-    if (_lastFetchDay != -1 && curUtcDay != _lastFetchDay) {
-        LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
-        for (size_t i = 0; i < _keyUsages.size(); i++) {
-            _keyUsages[i] = 0;
+    bool needMidnightSave = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _lastRequestsPerDay = (requestsPerDay > 0) ? std::min(requestsPerDay, 100) : 10;
+        uint32_t intervalFromBudgetSec = 86400UL / (uint32_t)_lastRequestsPerDay;
+        uint32_t intervalFromTtlSec = (cacheTtlMin > 0) ? ((uint32_t)cacheTtlMin * 60UL) : 1800UL;
+        uint32_t intervalSec = std::max(intervalFromBudgetSec, intervalFromTtlSec);
+        uint32_t intervalMs = intervalSec * 1000UL;
+
+        if (_lastApiKey != apiKey) {
+            _lastApiKey = apiKey;
+            _consecutiveFailures = 0;
+            if (_snapshot.status == 1 || _snapshot.status == 2 || _snapshot.status == 3) {
+                _snapshot.status = 0;
+            }
         }
-        _consecutiveFailures = 0;
-        if (activeSnap.status == 3) { // RATE_LIMITED
-            setStatusLocked(0); // OK
+
+        // Parse comma-separated keys
+        _apiKeys.clear();
+        int kStart = 0;
+        int kComma = apiKey.indexOf(',');
+        while (kComma != -1) {
+            String token = apiKey.substring(kStart, kComma);
+            token.trim();
+            if (token.length() > 0) _apiKeys.push_back(token);
+            kStart = kComma + 1;
+            kComma = apiKey.indexOf(',', kStart);
         }
-        saveToSd();
-    }
-    _lastFetchDay = curUtcDay;
+        String lastKey = apiKey.substring(kStart);
+        lastKey.trim();
+        if (lastKey.length() > 0) _apiKeys.push_back(lastKey);
 
-    // Check if daily quota is reached for all keys (strict hard cap: requests_per_day per key)
-    bool hasAvailableKey = false;
-    for (size_t i = 0; i < _apiKeys.size(); i++) {
-        if (_keyUsages[i] < (uint32_t)_lastRequestsPerDay) {
-            hasAvailableKey = true;
-            break;
+        while (_keyUsages.size() < _apiKeys.size()) {
+            _keyUsages.push_back(0);
         }
-    }
-    if (!hasAvailableKey) {
-        setStatusLocked(3); // RATE_LIMITED / QUOTA_EXHAUSTED
-        return; // Absolute hard stop: do NOT perform any network calls until midnight UTC!
-    }
 
-    // If currently rate limited (429 received from server), stay locked out until midnight UTC unless forced
-    if (activeSnap.status == 3 && !forceRefresh) {
-        return;
-    }
+        if (_apiKeys.empty()) {
+            _snapshot.status = 1; // EMPTY_KEY
+            LOGW("GNewsService", "No API key configured. Please configure api_key in settings to fetch live news.");
+            return;
+        }
 
-    // Failure backoff guard (anti-hammering):
-    // If a previous attempt failed (network error, timeout, 429), wait at least 5 minutes before retrying.
-    // This applies REGARDLESS of whether activeSnap.hasData is true or false.
-    uint32_t failureBackoffSec = 300; // 5 minutes minimum
-    if (_consecutiveFailures > 1) {
-        failureBackoffSec = std::min((uint32_t)300 * _consecutiveFailures, (uint32_t)1800); // Up to 30 min
-    }
-    uint32_t failureBackoffMs = failureBackoffSec * 1000UL;
+        if (_lastFetchDay != -1 && curUtcDay != _lastFetchDay) {
+            LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
+            for (size_t i = 0; i < _keyUsages.size(); i++) {
+                _keyUsages[i] = 0;
+            }
+            _consecutiveFailures = 0;
+            if (_snapshot.status == 3) { // RATE_LIMITED
+                _snapshot.status = 0; // OK
+            }
+            needMidnightSave = true;
+        }
+        _lastFetchDay = curUtcDay;
 
-    if (!forceRefresh && _lastAttemptTime != 0) {
-        bool inFailureBackoff = false;
-        if (epochTime > 1600000000 && _lastAttemptEpoch > 1600000000) {
-            if ((uint32_t)epochTime >= _lastAttemptEpoch) {
-                inFailureBackoff = (((uint32_t)epochTime - _lastAttemptEpoch) < failureBackoffSec);
+        // Check if daily quota is reached for all keys (strict hard cap: requests_per_day per key)
+        bool hasAvailableKey = false;
+        for (size_t i = 0; i < _apiKeys.size(); i++) {
+            if (_keyUsages[i] < (uint32_t)_lastRequestsPerDay) {
+                hasAvailableKey = true;
+                break;
+            }
+        }
+        if (!hasAvailableKey) {
+            _snapshot.status = 3; // RATE_LIMITED / QUOTA_EXHAUSTED
+            return; // Absolute hard stop: do NOT perform any network calls until midnight UTC!
+        }
+
+        // If currently rate limited (429 received from server), stay locked out until midnight UTC unless forced
+        if (_snapshot.status == 3 && !forceRefresh) {
+            return;
+        }
+
+        // Failure backoff guard (anti-hammering)
+        uint32_t failureBackoffSec = 300; // 5 minutes minimum
+        if (_consecutiveFailures > 1) {
+            failureBackoffSec = std::min((uint32_t)300 * _consecutiveFailures, (uint32_t)1800); // Up to 30 min
+        }
+        uint32_t failureBackoffMs = failureBackoffSec * 1000UL;
+
+        if (!forceRefresh && _lastAttemptTime != 0) {
+            bool inFailureBackoff = false;
+            if (epochTime > 1600000000 && _lastAttemptEpoch > 1600000000) {
+                if ((uint32_t)epochTime >= _lastAttemptEpoch) {
+                    inFailureBackoff = (((uint32_t)epochTime - _lastAttemptEpoch) < failureBackoffSec);
+                }
+            } else {
+                inFailureBackoff = ((now - _lastAttemptTime) < failureBackoffMs);
+            }
+            if (inFailureBackoff && (_consecutiveFailures > 0 || !_snapshot.hasData)) {
+                return; // Waiting for failure backoff window to expire
+            }
+        }
+
+        // Normal scheduled interval check (based on requests_per_day AND cache_ttl_min)
+        bool intervalElapsed = false;
+        if (epochTime > 1600000000 && _snapshot.lastFetchEpoch > 1600000000) {
+            if ((uint32_t)epochTime >= _snapshot.lastFetchEpoch) {
+                intervalElapsed = (((uint32_t)epochTime - _snapshot.lastFetchEpoch) >= intervalSec);
+            } else {
+                intervalElapsed = true; // Clock jumped backwards
             }
         } else {
-            inFailureBackoff = ((now - _lastAttemptTime) < failureBackoffMs);
+            intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
         }
-        if (inFailureBackoff && (_consecutiveFailures > 0 || !activeSnap.hasData)) {
-            return; // Waiting for failure backoff window to expire
+
+        if (!forceRefresh && _snapshot.hasData && _snapshot.articles != nullptr && !intervalElapsed) {
+            return; // Scheduled interval not elapsed
         }
-    }
 
-    // Normal scheduled interval check (based on requests_per_day AND cache_ttl_min)
-    bool intervalElapsed = false;
-    if (epochTime > 1600000000 && activeSnap.lastFetchEpoch > 1600000000) {
-        if ((uint32_t)epochTime >= activeSnap.lastFetchEpoch) {
-            intervalElapsed = (((uint32_t)epochTime - activeSnap.lastFetchEpoch) >= intervalSec);
-        } else {
-            intervalElapsed = true; // Clock jumped backwards
+        if (WiFi.status() != WL_CONNECTED) {
+            _snapshot.status = 4; // NETWORK_ERROR
+            return;
         }
-    } else {
-        intervalElapsed = (now - activeSnap.lastFetchTime >= intervalMs);
+
+        if (!_snapshot.hasData) {
+            _snapshot.status = 5; // LOADING
+        }
+
+        // Record attempt timestamp immediately to enforce backoff if network or parsing fails
+        _lastAttemptTime = now;
+        _lastAttemptEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
     }
 
-    if (!forceRefresh && activeSnap.hasData && activeSnap.articles != nullptr && !intervalElapsed) {
-        return; // Scheduled interval not elapsed
+    if (needMidnightSave) {
+        saveToSd();
     }
-
-    if (WiFi.status() != WL_CONNECTED) {
-        setStatusLocked(4); // NETWORK_ERROR
-        return;
-    }
-
-    if (!activeSnap.hasData) {
-        setStatusLocked(5); // LOADING
-    }
-
-    // Record attempt timestamp immediately to enforce backoff if network or parsing fails
-    _lastAttemptTime = now;
-    _lastAttemptEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
 
     String reqLang = lang;
     if (reqLang.length() == 0 || reqLang == "auto" || reqLang == "system") {
@@ -582,18 +549,31 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     options.ownerId = net::OWNER_GNEWS;
     auto session = net::SecureHttpClient::session("gnews.io", 443, options);
 
-    size_t startKeyIdx = _activeKeyIdx % _apiKeys.size();
+    size_t numKeys = 0;
+    size_t startKeyIdx = 0;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        numKeys = _apiKeys.size();
+        startKeyIdx = numKeys > 0 ? (_activeKeyIdx % numKeys) : 0;
+    }
     bool querySucceeded = false;
 
-    for (size_t attempt = 0; attempt < _apiKeys.size(); attempt++) {
-        size_t curKeyIdx = (startKeyIdx + attempt) % _apiKeys.size();
-        if (_keyUsages[curKeyIdx] >= (uint32_t)_lastRequestsPerDay) {
-            LOGI("GNewsService", "Skipping key %d/%d (quota exhausted: %u/%d)",
-                 (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx], _lastRequestsPerDay);
-            continue;
+    for (size_t attempt = 0; attempt < numKeys; attempt++) {
+        size_t curKeyIdx = (startKeyIdx + attempt) % numKeys;
+        String currentKey;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_keyUsages[curKeyIdx] >= (uint32_t)_lastRequestsPerDay) {
+                LOGI("GNewsService", "Skipping key %d/%d (quota exhausted: %u/%d)",
+                     (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx], _lastRequestsPerDay);
+                continue;
+            }
+            currentKey = _apiKeys[curKeyIdx];
+            LOGI("GNewsService", "Fetching live news with key %d/%d (usage %u/%d) for '%s'",
+                 (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx] + 1, _lastRequestsPerDay, targetCat.c_str());
+            _keyUsages[curKeyIdx]++;
         }
-
-        String currentKey = _apiKeys[curKeyIdx];
+        saveToSd();
 
         String path = "/api/v4/";
         if (keywords.length() > 0) {
@@ -609,53 +589,59 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
         path += "&max=" + String(count);
         path += "&apikey=" + currentKey;
 
-        LOGI("GNewsService", "Fetching live news with key %d/%d (usage %u/%d) for '%s'",
-             (int)curKeyIdx + 1, (int)_apiKeys.size(), _keyUsages[curKeyIdx] + 1, _lastRequestsPerDay, targetCat.c_str());
-
-        // Increment key usage because the HTTP request is dispatched and counted by GNews API
-        _keyUsages[curKeyIdx]++;
-        saveToSd();
-
         auto response = session.get(path);
         int httpCode = response.statusCode();
 
         if (response.ok()) {
             String payload = response.body();
             if (parseGNewsJson(payload, targetCat.c_str())) {
-                _activeKeyIdx = curKeyIdx;
-                setStatusLocked(0); // OK
-                GNewsSnapshot& pubSnap = _snapshots[_activeIdx.load(std::memory_order_relaxed)];
-                pubSnap.lastFetchTime = millis();
-                pubSnap.lastFetchEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
-                _consecutiveFailures = 0;
+                {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    _activeKeyIdx = curKeyIdx;
+                    _snapshot.status = 0; // OK
+                    _snapshot.lastFetchTime = millis();
+                    _snapshot.lastFetchEpoch = (epochTime > 1600000000) ? (uint32_t)epochTime : 0;
+                    _consecutiveFailures = 0;
+                }
                 saveToSd();
                 querySucceeded = true;
                 break;
             } else {
+                std::lock_guard<std::mutex> lock(_mutex);
                 _consecutiveFailures++;
             }
         } else {
-            _consecutiveFailures++;
             String errBody = response.body();
             errBody.toLowerCase();
-            if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
-                LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Locking out until midnight UTC.", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
-                _keyUsages[curKeyIdx] = _lastRequestsPerDay; // Mark key as fully consumed
-                setStatusLocked(3); // RATE_LIMITED
+            bool saveRateLimit = false;
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                _consecutiveFailures++;
+                if (httpCode == 429 || (httpCode == 403 && (errBody.indexOf("consumed") >= 0 || errBody.indexOf("quota") >= 0 || errBody.indexOf("limit") >= 0 || errBody.indexOf("plan") >= 0))) {
+                    LOGW("GNewsService", "Key %d/%d rate limited / daily quota reached (HTTP %d). Locking out until midnight UTC.", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                    _keyUsages[curKeyIdx] = _lastRequestsPerDay; // Mark key as fully consumed
+                    _snapshot.status = 3; // RATE_LIMITED
+                    saveRateLimit = true;
+                } else if (httpCode == 401 || errBody.indexOf("invalid") >= 0 || errBody.indexOf("forbidden") >= 0) {
+                    LOGW("GNewsService", "Key %d/%d invalid (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
+                    _snapshot.status = 2; // INVALID_KEY
+                } else {
+                    LOGW("GNewsService", "HTTP GET failed with code: %d (error: %s)", httpCode, response.errorMessage());
+                    _snapshot.status = 4; // NETWORK_ERROR
+                }
+            }
+            if (saveRateLimit) {
                 saveToSd();
-            } else if (httpCode == 401 || errBody.indexOf("invalid") >= 0 || errBody.indexOf("forbidden") >= 0) {
-                LOGW("GNewsService", "Key %d/%d invalid (HTTP %d). Failing over...", (int)curKeyIdx + 1, (int)_apiKeys.size(), httpCode);
-                setStatusLocked(2); // INVALID_KEY
-            } else {
-                LOGW("GNewsService", "HTTP GET failed with code: %d (error: %s)", httpCode, response.errorMessage());
-                setStatusLocked(4); // NETWORK_ERROR
             }
         }
     }
     esp_task_wdt_reset();
 
     if (!querySucceeded) {
-        if (_consecutiveFailures == 0) _consecutiveFailures = 1;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_consecutiveFailures == 0) _consecutiveFailures = 1;
+        }
         saveToSd(); // Persist error state without erasing existing cached articles
     }
 }

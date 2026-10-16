@@ -461,8 +461,7 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
 }
 
 void GNewsEngine::deactivate() {
-    m_stopFetch.store(true, std::memory_order_release);
-    net::SecureHttpClient::abortSessionsOwnedBy(net::OWNER_GNEWS);
+    stopFetchTask();
 }
 
 bool GNewsEngine::shutdownForDestruction() {

@@ -59,8 +59,7 @@ public:
 
 private:
     mutable std::mutex _mutex;
-    GNewsSnapshot _snapshots[2];
-    std::atomic<uint8_t> _activeIdx{0};
+    GNewsSnapshot _snapshot;
     String _lastApiKey;
     String _lastCategory;
     String _lastKeywords;
@@ -82,11 +81,10 @@ private:
     bool parseGNewsJson(const String& payload, const char* defaultCategory);
 
     /**
-     * @brief Allocate the article storage for a snapshot slot on first use, preferring PSRAM.
-     * @return true when snap.articles is usable, false when allocation failed.
+     * @brief Allocate the article storage on first use, preferring PSRAM.
+     * @return true when _snapshot.articles is usable, false when allocation failed.
      */
-    bool ensureArticleStorage(GNewsSnapshot& snap);
-    void setStatusLocked(uint8_t status);
+    bool ensureArticleStorage();
 };
 
 extern GNewsService gnewsService;

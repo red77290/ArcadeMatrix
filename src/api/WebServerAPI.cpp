@@ -804,7 +804,6 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
-        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
         size_t stringBytes = 0;
         for (const auto& inst : snap.instances) {
             stringBytes += inst.instance_id.length() + inst.engine_id.length() + 2;
@@ -824,11 +823,7 @@ void WebServerAPI::setupRoutes() {
             obj["engine_id"] = inst.engine_id;
             JsonObject cfgObj = obj.createNestedObject("config");
             for (const auto& kv : inst.config.getDictionary()) {
-                if (redactSecrets && (kv.first == "api_key" || kv.first == "token" || kv.first == "password" || kv.first == "pass" || kv.first == "client_secret" || kv.first == "refresh_token")) {
-                    cfgObj[kv.first] = "";
-                } else {
-                    cfgObj[kv.first] = kv.second;
-                }
+                cfgObj[kv.first] = kv.second;
             }
         }
         sendJsonResponse(request, doc);
@@ -903,6 +898,12 @@ void WebServerAPI::setupRoutes() {
                             inst.config.setString(kv.key().c_str(), kv.value().as<String>());
                         }
                     }
+                    break;
+                }
+            }
+            ConfigSanitizer::sanitizeInstances(cfg);
+            for (const auto& inst : cfg.instances) {
+                if (inst.instance_id == instanceId) {
                     activeConfig = inst.config;
                     break;
                 }
@@ -911,8 +912,7 @@ void WebServerAPI::setupRoutes() {
         
         bool structuralChange = isNew || (oldEngineId != targetEngineId);
 
-        // Sanitize and save
-        ConfigSanitizer::sanitizeInstances(config);
+        // Save
         bool saved = config.saveToSD("/config.json");
         
         if (rotationManager) {
@@ -978,6 +978,7 @@ void WebServerAPI::setupRoutes() {
                         ++it;
                     }
                 }
+                ConfigSanitizer::sanitizeInstances(c);
             }
         });
         if (!removed) {
@@ -995,7 +996,6 @@ void WebServerAPI::setupRoutes() {
             }
         }
         
-        ConfigSanitizer::sanitizeInstances(config);
         bool saved = config.saveToSD("/config.json");
         
         if (rotationManager) {
@@ -1042,6 +1042,7 @@ void WebServerAPI::setupRoutes() {
                         ++it;
                     }
                 }
+                ConfigSanitizer::sanitizeInstances(c);
             }
         });
         if (!removed) {
@@ -1059,7 +1060,6 @@ void WebServerAPI::setupRoutes() {
             }
         }
         
-        ConfigSanitizer::sanitizeInstances(config);
         bool saved = config.saveToSD("/config.json");
         
         if (rotationManager) {
@@ -1565,7 +1565,6 @@ void WebServerAPI::setupRoutes() {
 
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
-        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
 
         // Matrix
         doc["brightness_limit"] = snap.matrix.powerLimitPercent;
@@ -1679,7 +1678,7 @@ void WebServerAPI::setupRoutes() {
         auto weatherInst = getInst("weather_main");
         if (weatherInst) {
             String wxApiKey = weatherInst->config.getString("api_key");
-            doc["weather_api_key"] = redactSecrets ? "" : wxApiKey;
+            doc["weather_api_key"] = wxApiKey;
             doc["weather_api_key_configured"] = wxApiKey.length() > 0;
             doc["weather_city"] = weatherInst->config.getString("city");
             doc["weather_lang"] = weatherInst->config.getString("lang");
@@ -1713,7 +1712,7 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_broker"] = snap.mqtt.broker;
         doc["mqtt_port"] = snap.mqtt.port;
         doc["mqtt_user"] = snap.mqtt.user;
-        doc["mqtt_pass"] = redactSecrets ? "" : snap.mqtt.pass;
+        doc["mqtt_pass"] = snap.mqtt.pass;
         doc["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
         doc["mqtt_device"] = snap.mqtt.deviceName;
         doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
@@ -1722,7 +1721,7 @@ void WebServerAPI::setupRoutes() {
         doc["data_mqtt_broker"] = snap.dataMqtt.broker;
         doc["data_mqtt_port"] = snap.dataMqtt.port;
         doc["data_mqtt_user"] = snap.dataMqtt.user;
-        doc["data_mqtt_pass"] = redactSecrets ? "" : snap.dataMqtt.pass;
+        doc["data_mqtt_pass"] = snap.dataMqtt.pass;
         doc["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
 
         response->setLength();
@@ -1969,10 +1968,9 @@ void WebServerAPI::setupRoutes() {
                     cfg.system.api_token = "";
                 }
             }
+            ConfigSanitizer::sanitizeInstances(cfg);
         });
 
-        // Sanitize all instances before persisting
-        ConfigSanitizer::sanitizeInstances(config);
         bool saved = config.saveToSD("/config.json");
         if (!saved) willReboot = false;   // a reboot now would discard the change
 
@@ -2184,7 +2182,6 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         ConfigSnapshotGuard guard = config.acquireSnapshot();
         const ConfigSnapshot& snap = guard.get();
-        const bool redactSecrets = snap.system.api_auth_enabled && !WebServerAPI::isRequestAuthorized(request);
 
         String section = "";
         if (request->hasParam("section")) {
@@ -2273,7 +2270,7 @@ void WebServerAPI::setupRoutes() {
             mqtt["broker"] = snap.mqtt.broker;
             mqtt["port"] = snap.mqtt.port;
             mqtt["user"] = snap.mqtt.user;
-            mqtt["pass"] = redactSecrets ? "" : snap.mqtt.pass;
+            mqtt["pass"] = snap.mqtt.pass;
             mqtt["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
             mqtt["device_name"] = snap.mqtt.deviceName;
             mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
@@ -2284,7 +2281,7 @@ void WebServerAPI::setupRoutes() {
             dmq["broker"] = snap.dataMqtt.broker;
             dmq["port"] = snap.dataMqtt.port;
             dmq["user"] = snap.dataMqtt.user;
-            dmq["pass"] = redactSecrets ? "" : snap.dataMqtt.pass;
+            dmq["pass"] = snap.dataMqtt.pass;
             dmq["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
         }
 
@@ -2545,12 +2542,15 @@ void WebServerAPI::setupRoutes() {
                 if (!dm["pass"].isNull()) cfg.dataMqtt.pass = dm["pass"].as<String>();
                 changed = true;
             }
+            if (changed) {
+                ConfigSanitizer::sanitize(cfg);
+            }
         });
 
         bool saved = true;
         if (changed) {
             CompatibilityEvaluator::notifyHardwareCapabilityChanged();
-            ConfigSanitizer::sanitize(config);
+            EngineRegistrar::refreshAvailability();
             saved = config.saveToSD("/config.json");
             if (!saved) willReboot = false;   // a reboot now would discard the change
         }
@@ -3742,8 +3742,8 @@ void WebServerAPI::setupRoutes() {
         extern ConfigLoader config;
         config.mutate([&](ConfigLoader& c) {
             c.matrix.rotation_offset = displayOrientationManager.getRotationOffset();
+            ConfigSanitizer::sanitize(c);
         });
-        ConfigSanitizer::sanitize(config);
         bool saved = config.saveToSD("/config.json");
         if (!saved) { sendConfigSaveFailed(request); return; }
         SpiRamJsonDocument doc(256);
@@ -3803,10 +3803,12 @@ void WebServerAPI::setupRoutes() {
                 displayOrientationManager.setTransitionDuration((uint32_t)c.matrix.rotation_transition_duration_ms);
                 changed = true;
             }
+            if (changed) {
+                ConfigSanitizer::sanitize(c);
+            }
         });
         bool saved = true;
         if (changed) {
-            ConfigSanitizer::sanitize(config);
             saved = config.saveToSD("/config.json");
         }
         if (!saved) { sendConfigSaveFailed(request); return; }
