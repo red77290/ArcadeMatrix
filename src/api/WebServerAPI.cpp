@@ -2885,12 +2885,24 @@ void WebServerAPI::setupRoutes() {
             dir.close();
         };
 
+        // Write <path> through <path>.tmp and swap it in, so a reset or power cut mid-write leaves the previous
+        // file intact instead of a truncated one. SdFat's rename() will not replace an existing file, hence the
+        // remove first; callers hold the SD lock, so readers never see the gap between the two.
+        static auto replaceFile = [](const String& path, const std::function<bool(FsFile&)>& body) -> bool {
+            String tmp = path + ".tmp";
+            FsFile w = sd.open(tmp.c_str(), FILE_OPEN_WRITE);
+            if (!w) return false;
+            bool ok = body(w);   // false when any write came up short (card full, I/O error)
+            w.close();
+            if (!ok || (sd.exists(path.c_str()) && !sd.remove(path.c_str()))) { sd.remove(tmp.c_str()); return false; }
+            return sd.rename(tmp.c_str(), path.c_str());
+        };
+
         // Rewrite <root>/<folder>/index.txt from the real directory contents.
         static auto writeFolderIndex = [](const String& root, const String& folder) -> int {
             std::vector<String> files; listFolderFiles(root + "/" + folder, files);
             String idxPath = root + "/" + folder + "/index.txt";
-            FsFile idx = sd.open(idxPath.c_str(), FILE_OPEN_WRITE);
-            if (idx) { for (auto& n : files) { idx.print(n); idx.print('\n'); } idx.close(); }
+            replaceFile(idxPath, [&](FsFile& idx) { for (auto& n : files) if (idx.print(n) != n.length() || idx.print('\n') != 1) return false; return true; });
             return (int)files.size();
         };
 
@@ -2914,8 +2926,7 @@ void WebServerAPI::setupRoutes() {
             }
             json += "}";
             String plPath = root + "/playlists.json";
-            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
-            if (pl) { pl.print(json); pl.close(); }
+            replaceFile(plPath, [&](FsFile& pl) { return pl.print(json) == json.length(); });
             return json;
         };
 
@@ -2944,8 +2955,7 @@ void WebServerAPI::setupRoutes() {
             std::vector<String> out;
             for (auto& l : lines) if (!contains(remove, l) && !contains(out, l)) out.push_back(l);
             for (auto& a : add) if (a.length() && !contains(out, a) && !contains(remove, a)) out.push_back(a);
-            FsFile w = sd.open(p.c_str(), FILE_OPEN_WRITE);
-            if (w) { for (auto& l : out) { w.print(l); w.print('\n'); } w.close(); }
+            replaceFile(p, [&](FsFile& w) { for (auto& l : out) if (w.print(l) != l.length() || w.print('\n') != 1) return false; return true; });
             return (int)out.size();
         };
         // playlists.json from the folders' index.txt line counts (cheap: one small read per folder, no file walks).
@@ -2967,8 +2977,7 @@ void WebServerAPI::setupRoutes() {
             }
             json += "}";
             String plPath = root + "/playlists.json";
-            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
-            if (pl) { pl.print(json); pl.close(); }
+            replaceFile(plPath, [&](FsFile& pl) { return pl.print(json) == json.length(); });
             return json;
         };
         static auto readPlaylistsJson = [](const String& root) -> String {
@@ -2999,8 +3008,7 @@ void WebServerAPI::setupRoutes() {
             else { JsonObject e = obj.containsKey(folder) ? obj[folder].as<JsonObject>() : obj.createNestedObject(folder); e["path"] = root + "/" + folder; e["count"] = count; }
             String out; serializeJson(doc, out);
             String plPath = root + "/playlists.json";
-            FsFile pl = sd.open(plPath.c_str(), FILE_OPEN_WRITE);
-            if (pl) { pl.print(out); pl.close(); }
+            replaceFile(plPath, [&](FsFile& pl) { return pl.print(out) == out.length(); });
             return out;
         };
         g_gifWriteFolderIndex = writeFolderIndex;
