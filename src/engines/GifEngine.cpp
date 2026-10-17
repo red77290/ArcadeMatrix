@@ -19,6 +19,7 @@ GifEngine::GifEngine() : gif(nullptr), m_gifAllocatedInPsram(false), png(nullptr
 
 GifEngine::~GifEngine() {
     stopPreloadTask();
+    freePreloadBuffer();   // stopPreloadTask() keeps the preload across slot switches; the dtor must free it
     freeShadows();
     stop();
     if (recentHashes && recentHashes != m_staticHashes) {
@@ -327,7 +328,11 @@ bool GifEngine::shutdownForDestruction() {
     if (m_preloadTask || !m_preloadExited.load(std::memory_order_acquire)) {
         stopPreloadTask();
     }
-    return m_preloadExited.load(std::memory_order_acquire);
+    bool exited = m_preloadExited.load(std::memory_order_acquire);
+    if (exited) {
+        freePreloadBuffer();   // the preload is kept across deactivate(); on retirement it must be released
+    }
+    return exited;
 }
 
 void GifEngine::onConfigChanged(const EngineConfig* config) {
@@ -705,6 +710,18 @@ void GifEngine::freePreloadBuffer() {
     m_preloaded.path[0] = '\0';
 }
 
+// True when the preloaded file lives inside one of the active playlist folders, so it is still a
+// valid next pick after a playlist switch. Only called from Core 1 while m_preloaded.ready is true.
+bool GifEngine::preloadMatchesPlaylists() const {
+    if (m_preloaded.path[0] == '\0') return false;
+    for (const auto& p : playlists) {
+        size_t n = p.length();
+        if (n == 0) continue;
+        if (strncmp(m_preloaded.path, p.c_str(), n) == 0 && m_preloaded.path[n] == '/') return true;
+    }
+    return false;
+}
+
 void GifEngine::startPreloadTask() {
     if (m_preloadTask || !m_preloadExited.load(std::memory_order_acquire)) {
         if (m_stopPreload.load(std::memory_order_acquire)) {
@@ -736,7 +753,11 @@ void GifEngine::stopPreloadTask() {
         }
         if (m_preloadExited.load(std::memory_order_acquire)) {
             m_preloadTask = nullptr;
-            freePreloadBuffer();
+            // The preloaded file is deliberately kept across deactivation. Loading the first GIF of a
+            // slot used to run synchronously on Core 1 and stalled the render loop for 1-4 s on every
+            // slot entry; with the buffer kept, the next activate() swaps it in instantly. Validity
+            // against the (possibly changed) playlist set is checked where it is consumed, and the
+            // destructor frees it on engine retirement.
         } else {
             LOGE("GifEngine", "CRITICAL: gif_preload task did not exit within 2500ms cooperative window! Quarantining buffer.");
             m_preloaded.buffer = nullptr;
@@ -745,13 +766,15 @@ void GifEngine::stopPreloadTask() {
             m_preloaded.path[0] = '\0';
             m_preloadTask = nullptr;
         }
-    } else {
-        freePreloadBuffer();
     }
+    // With no task running there is nothing to stop; any preloaded file is kept (see above).
 }
 
 void GifEngine::preloadTaskEntry(void* arg) {
     auto* self = static_cast<GifEngine*>(arg);
+    // AppRuntime's randomSeed() makes random() use rand(), whose state newlib keeps per task. A freshly
+    // created task starts from the default seed, so without this every preload task picks the same files.
+    srand(esp_random());
     self->preloadWorker();
     self->m_preloadExited.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
@@ -1195,18 +1218,35 @@ bool GifEngine::pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPn
                         if (totalValidEntries > 0) {
                             // Pass 2: Pick a random line and seek to it (trying up to 4 picks if recently played)
                             size_t chosenIdx = (size_t)random(totalValidEntries);
+                            bool recounted = false;
                             for (int retry = 0; retry < 4; retry++) {
                                 indexFile.seek(0);
                                 size_t currentValid = 0;
+                                bool found = false;
                                 while (indexFile.available()) {
                                     if (readCleanIndexLine(indexFile, lineBuf, sizeof(lineBuf))) {
                                         if (currentValid == chosenIdx) {
                                             strncpy(selectedFile, lineBuf, sizeof(selectedFile) - 1);
                                             selectedFile[sizeof(selectedFile) - 1] = '\0';
+                                            found = true;
                                             break;
                                         }
                                         currentValid++;
                                     }
+                                }
+                                if (!found && !recounted && currentValid > 0 && currentValid < totalValidEntries) {
+                                    // The cached count (playlists.json) is larger than this index.txt, e.g. after an
+                                    // interrupted index write. A pick past the end would otherwise leave selectedFile
+                                    // empty and fall through to the full directory scan below, which holds the SD lock
+                                    // for tens of seconds on a large folder. Re-pick within the lines that exist.
+                                    LOGW("GifEngine", "%s/index.txt has %u entries but playlists.json lists %u; using the index count.",
+                                         pPath.c_str(), (unsigned)currentValid, (unsigned)totalValidEntries);
+                                    totalValidEntries = currentValid;
+                                    if (pIndex < (int)playlistWeights.size()) playlistWeights[pIndex] = currentValid;
+                                    recounted = true;
+                                    chosenIdx = (size_t)random(totalValidEntries);
+                                    retry--;
+                                    continue;
                                 }
                                 if (totalValidEntries <= 1) break;
                                 String candidate = pPath + "/" + selectedFile;
@@ -1321,6 +1361,27 @@ void GifEngine::loadNextFileInPlaylist() {
         return;
     }
 
+    // Core 0 is picking or reading the next file (or is asked to now). Picking here as well would make
+    // Core 1 wait on the SD lock the preload task holds — and at slot entry it would run the whole
+    // pick+load synchronously inside one render call, stalling the display for seconds. So wait bounded:
+    // with a GIF on screen keep it looping; at slot entry hold the previous frame until the swap.
+    if (playlistMode && remainingGifsToPlay != 0 &&
+        !m_preloadExited.load(std::memory_order_acquire) &&
+        !m_preloaded.ready.load(std::memory_order_acquire)) {
+        if (!m_waitingForPreload) {
+            m_waitingForPreload = true;
+            m_preloadWaitStartMs = millis();
+            // Arm the preload for the first file of an activation; within a slot the trigger was
+            // already set by the previous swap, and a redundant trigger is a no-op once ready.
+            m_preloadTrigger.store(true, std::memory_order_release);
+        }
+        if (millis() - m_preloadWaitStartMs < kPreloadWaitMs) {
+            if (isPlaying && !isRaw && !isPng && gif) gif->reset();
+            return;
+        }
+    }
+    m_waitingForPreload = false;
+
     if (remainingGifsToPlay > 0) {
         remainingGifsToPlay--;
     } else if (remainingGifsToPlay == 0) {
@@ -1413,7 +1474,9 @@ void GifEngine::stop() {
     playlistMode = false;
     hasPendingPlaylists = false;
     freePsramBuffer();
-    freePreloadBuffer();
+    // The preloaded next file is deliberately kept: loadNextFileInPlaylist() calls stop() right before
+    // swapping it in, and the preload task may be writing m_preloaded while it is not ready. It is freed
+    // where Core 1 owns it (ready == true) or after the preload task has exited.
 }
 
 bool GifEngine::loop() {
@@ -1422,6 +1485,13 @@ bool GifEngine::loop() {
         stop();
         playlists = pendingPlaylists;
         playlistWeights.clear();   // re-read the folder sizes for the new set
+        // A file preloaded for a folder outside the new playlist set must not play after the switch.
+        // One from a folder still in the set is kept and swapped in instantly, so re-entering a gifs
+        // slot does not stall Core 1 on a synchronous pick+load. Core 1 owns m_preloaded once it is
+        // ready, so it can be inspected and dropped here without racing the preload task.
+        if (m_preloaded.ready.load(std::memory_order_acquire) && !preloadMatchesPlaylists()) {
+            freePreloadBuffer();
+        }
         playlistMode = true;
         hasPendingPlaylists = false;
         loadNextFileInPlaylist();

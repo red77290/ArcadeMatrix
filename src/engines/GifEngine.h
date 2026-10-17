@@ -216,12 +216,17 @@ private:
     std::atomic<bool> m_stopPreload{false};
     std::atomic<bool> m_preloadExited{true};
     std::atomic<bool> m_preloadTrigger{false};
+    // How long a finished GIF keeps looping while Core 0 prepares the next one before Core 1 picks itself.
+    static const uint32_t kPreloadWaitMs = 3000;
+    bool m_waitingForPreload = false;
+    uint32_t m_preloadWaitStartMs = 0;
 
     void startPreloadTask();
     void stopPreloadTask();
     static void preloadTaskEntry(void* arg);
     void preloadWorker();
     void freePreloadBuffer();
+    bool preloadMatchesPlaylists() const;
     bool pickNextCandidate(char* outPath, size_t outMaxLen, bool& outIsPng, bool& outIsRaw);
 
     /**
