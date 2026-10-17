@@ -316,7 +316,10 @@ void GifEngine::deactivate() {
     if (currentFile) currentFile.close();
     if (pngFile) pngFile.close();
     lastPlayedGif = String();
-    std::vector<String>().swap(m_configuredFolders);
+    // m_configuredFolders is deliberately kept: onConfigChanged() only runs on config edits and on
+    // initialize(), never on a rotation slot switch, so clearing it here makes the next activate()
+    // rebuild with an empty filter and fall back to "all folders", ignoring the instance's "folder"
+    // setting. The vector holds a handful of short paths; freeing it saves nothing meaningful.
     LOGI("GifEngine", "Deactivated GifEngine: all decoders, canvas buffers, and playlist caches freed.");
 }
 
