@@ -62,6 +62,10 @@ private:
     // Runtime state
     DisplayGeometry _geometry;
     size_t currentArticleIndex = 0;
+    uint8_t m_shuffledOrder[GNEWS_MAX_ARTICLES] = {};
+    size_t m_shufflePos = 0;
+    size_t m_shuffleCount = 0;
+    bool m_needsInitialPick = true;
     size_t currentPageIndex = 0;
     size_t totalPages = 1;
     uint32_t lastPageSwitchTime = 0;
@@ -93,6 +97,7 @@ private:
     void applyConfig(const EngineConfig* config);
     void prepareHeadlineText(const GNewsArticle& article);
     static void formatGNewsText(const char* utf8Input, char* output, size_t maxLen);
+    void pickNextRandomArticle(size_t count);
     void advanceToNextArticle(const GNewsSnapshot& snap);
     void wrapTextToLines(const char* text, int maxW);
     void distributeTextToRows(const char* text, int numRows);
