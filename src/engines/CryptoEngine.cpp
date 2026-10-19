@@ -71,6 +71,8 @@ void CryptoEngine::setActiveSymbol(const String& sym) {
 
 void CryptoEngine::activate() {
     lastItemSwitchTime = millis();
+    currentSymbolIndex = 0;
+    currentPage = DisplayPage::Info;
     symbolsShownThisCycle = 0;
     m_renderedFirstFrame = false;
     if (!symbolList.empty()) {
@@ -280,6 +282,7 @@ bool CryptoEngine::fetchCombined(const String& symbol) {
 
 void CryptoEngine::update(EngineContext* context) {
     if (symbolList.empty() || !config_enabled) return;
+    if (symbolsShownThisCycle >= symbolList.size()) return;
     
     // Invariant: Do not perform any blocking network operation before the first frame is rendered and presented!
     if (!m_renderedFirstFrame) return;
@@ -335,6 +338,7 @@ void CryptoEngine::update(EngineContext* context) {
         if (mH >= 64 || !config_show_chart) {
             currentPage = DisplayPage::Info;
             symbolsShownThisCycle++;
+            if (symbolsShownThisCycle >= symbolList.size()) return;
             currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
             setActiveSymbol(symbolList[currentSymbolIndex]);
             AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -379,6 +383,7 @@ void CryptoEngine::update(EngineContext* context) {
                 } else {
                     // No chart data: advance directly to next symbol's Info page
                     symbolsShownThisCycle++;
+                    if (symbolsShownThisCycle >= symbolList.size()) return;
                     currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                     setActiveSymbol(symbolList[currentSymbolIndex]);
                     AssetQuoteCache& nextCache = quoteCache[activeSymbol];
@@ -419,6 +424,7 @@ void CryptoEngine::update(EngineContext* context) {
             } else {
                 currentPage = DisplayPage::Info;
                 symbolsShownThisCycle++;
+                if (symbolsShownThisCycle >= symbolList.size()) return;
                 currentSymbolIndex = (currentSymbolIndex + 1) % symbolList.size();
                 setActiveSymbol(symbolList[currentSymbolIndex]);
                 AssetQuoteCache& nextCache = quoteCache[activeSymbol];
