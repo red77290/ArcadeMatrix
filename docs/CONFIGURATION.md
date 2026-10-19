@@ -407,21 +407,25 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | `keywords` | `String` | `""` | Text / Query | Custom search query or filter tags (e.g. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Article language (`auto` syncs with system language). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Country edition (`auto` uses local region). |
-| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of headlines cached and rotated in randomized non-repeating order across rotation slots. |
+| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of articles cached and rotated in randomized non-repeating order across rotation slots. |
+| `articles_per_rotation` | `int` | `2` | `1` to `15` | Self-paced rotation count: number of random articles to scroll completely (`PauseStart` -> `Scrolling` -> `PauseEnd`) before rotation advances to the next screen. |
 | `requests_per_day` | `int` | `10` | `1` to `100` | Total API requests allocated per 24 hours (Free tier limit: 100/day per API key). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Action trigger: immediately purges obsolete language cache and queries the API without resetting daily quota counters. |
 | `cache_ttl_min` | `int` | `30` | `5` to `120` | Minimum minutes between API queries when request budgeting is relaxed. |
 | `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Animation style: smooth horizontal ticker, vertical crawl, multi-line static paged, or alternating serpentine flow. |
 | `scroll_speed` | `int` | `3` | `1` to `10` | Ticker scrolling speed (1: Slow crawl to 10: Turbo speed). |
-| `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at headline start before scrolling. |
-| `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of headline before transitioning. |
-| `article_duration_sec` | `int` | `12` | `5` to `60` | Display duration per article in seconds (cached headlines are selected in random non-repeating order across rotation slots). |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at article start before scrolling. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of article before transitioning. |
+| `article_duration_sec` | `int` | `12` | `5` to `60` | Fallback display duration per article in seconds. |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Color palette scheme. |
+| `show_title` | `bool` | `false` | `true`, `false` | Include the article headline title in the scrolled text. |
+| `show_description` | `bool` | `false` | `true`, `false` | Include the article summary/lead in the scrolled text. |
+| `show_content` | `bool` | `true` | `true`, `false` | Include the article body content in the scrolled text (with automatic fallback to description/title if empty). |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Display color-coded category pill (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Display news source name badge (`BBC News`, `Reuters`, etc.). |
 | `show_time_ago` | `bool` | `true` | `true`, `false` | Display relative time badge (`5m ago`, `2h ago`). |
 | `show_beacon` | `bool` | `true` | `true`, `false` | Display pulsing live broadcast beacon dot. |
-| `show_progress_dots` | `bool` | `true` | `true`, `false` | Display headline index dots (`● ○ ○ ○ ○`). |
+| `show_progress_dots` | `bool` | `true` | `true`, `false` | Display article index dots (`● ○ ○ ○ ○`). |
 
 #### GNews Architecture & Quota Optimization
 1. **Multi-API Key Pooling & Automatic Failover:**
