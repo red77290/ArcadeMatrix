@@ -144,6 +144,26 @@ static String cleanNewsText(const char* raw) {
     return s;
 }
 
+static void stripTruncationMarker(String& s) {
+    int bracketPos = s.lastIndexOf("[+");
+    if (bracketPos > 0) {
+        s = s.substring(0, bracketPos);
+        s.trim();
+    }
+    int charsPos = s.lastIndexOf(" chars]");
+    if (charsPos > 0) {
+        int openPos = s.lastIndexOf('[', charsPos);
+        if (openPos > 0) {
+            s = s.substring(0, openPos);
+            s.trim();
+        }
+    }
+    if (s.endsWith("...")) {
+        s = s.substring(0, s.length() - 3);
+        s.trim();
+    }
+}
+
 void GNewsService::saveToSd() {
     SdLockGuard guard(pdMS_TO_TICKS(2000));
     if (!guard) return;
@@ -152,7 +172,7 @@ void GNewsService::saveToSd() {
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
     if (!f) return;
 
-    DynamicJsonDocument doc(12288);
+    DynamicJsonDocument doc(16384);
     {
         std::lock_guard<std::mutex> lock(_mutex);
         doc["last_fetch_time"] = _snapshot.lastFetchTime;
@@ -175,6 +195,7 @@ void GNewsService::saveToSd() {
             JsonObject obj = artArr.createNestedObject();
             obj["title"] = _snapshot.articles[i].title;
             obj["description"] = _snapshot.articles[i].description;
+            obj["content"] = _snapshot.articles[i].content;
             obj["source"] = _snapshot.articles[i].source;
             obj["category"] = _snapshot.articles[i].category;
             obj["published_epoch"] = _snapshot.articles[i].publishedEpoch;
@@ -196,7 +217,7 @@ void GNewsService::loadFromSd() {
     FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_READ);
     if (!f) return;
 
-    DynamicJsonDocument doc(12288);
+    DynamicJsonDocument doc(16384);
     DeserializationError error = deserializeJson(doc, f);
     f.close();
     guard.unlock();
@@ -228,10 +249,12 @@ void GNewsService::loadFromSd() {
     if (!artArr.isNull() && artArr.size() > 0 && !ensureArticleStorage()) {
         return;
     }
+    bool anyHasContent = false;
     for (JsonObject obj : artArr) {
         if (_snapshot.count >= GNEWS_MAX_ARTICLES) break;
         const char* title = obj["title"] | "";
         const char* desc = obj["description"] | "";
+        const char* content = obj["content"] | "";
         const char* source = obj["source"] | "News";
         const char* category = obj["category"] | "News";
         uint32_t pubEpoch = obj["published_epoch"] | 0;
@@ -243,6 +266,11 @@ void GNewsService::loadFromSd() {
         a.title[sizeof(a.title) - 1] = '\0';
         strncpy(a.description, desc, sizeof(a.description) - 1);
         a.description[sizeof(a.description) - 1] = '\0';
+        strncpy(a.content, content, sizeof(a.content) - 1);
+        a.content[sizeof(a.content) - 1] = '\0';
+        if (strlen(a.content) > 0) {
+            anyHasContent = true;
+        }
         strncpy(a.source, source, sizeof(a.source) - 1);
         a.source[sizeof(a.source) - 1] = '\0';
         strncpy(a.category, category, sizeof(a.category) - 1);
@@ -254,6 +282,11 @@ void GNewsService::loadFromSd() {
     if (_snapshot.count > 0) {
         _snapshot.hasData = true;
         _snapshot.fetchSuccess = true;
+        if (!anyHasContent) {
+            // Legacy cache without content field: expire fetch timestamp so next fetch populates content
+            _snapshot.lastFetchEpoch = 0;
+            _snapshot.lastFetchTime = 0;
+        }
         LOGI("GNewsService", "Restored %d articles from SD /gnews_cache.json", (int)_snapshot.count);
     }
 }
@@ -301,18 +334,21 @@ bool GNewsService::parseGNewsJson(const String& payload, const char* defaultCate
         if (cleanTitle.length() == 0) continue;
 
         GNewsArticle art;
+        memset(&art, 0, sizeof(art));
         strncpy(art.title, cleanTitle.c_str(), sizeof(art.title) - 1);
         art.title[sizeof(art.title) - 1] = '\0';
 
-        const char* rawDesc = obj["description"] | obj["content"] | "";
+        const char* rawDesc = obj["description"] | "";
         String cleanDesc = cleanNewsText(rawDesc);
-        int bracketPos = cleanDesc.lastIndexOf("[+");
-        if (bracketPos > 0) {
-            cleanDesc = cleanDesc.substring(0, bracketPos);
-            cleanDesc.trim();
-        }
+        stripTruncationMarker(cleanDesc);
         strncpy(art.description, cleanDesc.c_str(), sizeof(art.description) - 1);
         art.description[sizeof(art.description) - 1] = '\0';
+
+        const char* rawContent = obj["content"] | "";
+        String cleanContent = cleanNewsText(rawContent);
+        stripTruncationMarker(cleanContent);
+        strncpy(art.content, cleanContent.c_str(), sizeof(art.content) - 1);
+        art.content[sizeof(art.content) - 1] = '\0';
 
         const char* sourceName = obj["source"]["name"] | "News";
         String cleanSource = cleanNewsText(sourceName);
