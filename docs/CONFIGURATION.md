@@ -356,7 +356,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | `symbols` | `String` | `BTC,ETH` | Comma-separated | Crypto symbols to monitor (CoinGecko / Binance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Display historical price sparkline chart. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Timeframe for historical price series. |
-| `page_seconds` | `int` | `5` | `3` to `30` | Seconds to dwell on each page. |
+| `duration_sec` | `int` | `5` | `2` to `60` | Seconds to dwell on each page (`page_seconds` alias). Because `crypto` is self-paced in rotation (`selfPaced() == true`), it overrides the slot timer and displays all configured symbols for one complete cycle before rotation advances. |
 | `cache_ttl_min` | `int` | `1` | `1` to `60` | Minutes to cache quote price. |
 
 ### Engine: `stock`
@@ -365,7 +365,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | `symbols` | `String` | `AAPL,NVDA,TSLA` | Comma-separated | Stock ticker symbols to monitor (Yahoo Finance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Display historical price sparkline chart. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Timeframe for historical price series. |
-| `page_seconds` | `int` | `5` | `3` to `30` | Seconds to dwell on each page. |
+| `duration_sec` | `int` | `5` | `2` to `60` | Seconds to dwell on each page (`page_seconds` alias). Because `stock` is self-paced in rotation (`selfPaced() == true`), it overrides the slot timer and displays all configured symbols for one complete cycle before rotation advances. |
 | `cache_ttl_min` | `int` | `1` | `1` to `60` | Minutes to cache quote price. |
 
 ### Engine: `weather`
@@ -407,7 +407,7 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | `keywords` | `String` | `""` | Text / Query | Custom search query or filter tags (e.g. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Article language (`auto` syncs with system language). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Country edition (`auto` uses local region). |
-| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of headlines cached and rotated per cycle. |
+| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of headlines cached and rotated in randomized non-repeating order across rotation slots. |
 | `requests_per_day` | `int` | `10` | `1` to `100` | Total API requests allocated per 24 hours (Free tier limit: 100/day per API key). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Action trigger: immediately purges obsolete language cache and queries the API without resetting daily quota counters. |
 | `cache_ttl_min` | `int` | `30` | `5` to `120` | Minimum minutes between API queries when request budgeting is relaxed. |
@@ -415,7 +415,7 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | `scroll_speed` | `int` | `3` | `1` to `10` | Ticker scrolling speed (1: Slow crawl to 10: Turbo speed). |
 | `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at headline start before scrolling. |
 | `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of headline before transitioning. |
-| `article_duration_sec` | `int` | `12` | `5` to `60` | Display duration per article in seconds. |
+| `article_duration_sec` | `int` | `12` | `5` to `60` | Display duration per article in seconds (cached headlines are selected in random non-repeating order across rotation slots). |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Color palette scheme. |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Display color-coded category pill (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Display news source name badge (`BBC News`, `Reuters`, etc.). |
@@ -428,8 +428,9 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
    - You can enter multiple GNews API keys separated by commas (`api_key: "key1,key2,key3"`).
    - If an active key is invalid (`HTTP 401/403`) or exhausts its 100 requests/day quota (`HTTP 429/403`), the engine automatically fails over to the next key in the pool and immediately retries.
    - 2 accounts = 200 requests/day; 3 accounts = 300 requests/day.
-2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS):**
+2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS) & Randomized Playback:**
    - Articles and request telemetry are persisted to storage. On reboot, headlines display immediately without burning API quota or stalling for network.
+   - Across rotation slots, cached articles are drawn in randomized Fisher-Yates permutations without repetition so short rotation slots cycle evenly through the entire cache instead of always starting at headline #1.
    - If offline or when the daily quota is reached, cached articles are preserved indefinitely and continue scrolling 24/7.
 3. **Daily Quota Budgeting (Default: 10 reqs/day) & Shared-Key Protection:**
    - While GNews.io free accounts permit up to 100 requests/day per key, users frequently share their API key across other external services or home automations.

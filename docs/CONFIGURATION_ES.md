@@ -356,7 +356,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | `symbols` | `String` | `BTC,ETH` | Separados por comas | Símbolos de criptomonedas a monitorear (CoinGecko / Binance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Mostrar el gráfico sparkline histórico. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal para el historial de precios. |
-| `page_seconds` | `int` | `5` | `3` a `30` | Segundos de permanencia en cada página antes de alternar. |
+| `duration_sec` | `int` | `5` | `2` a `60` | Segundos de permanencia en cada página (alias `page_seconds`). Como `crypto` es autónomo (`selfPaced() == true`), este tiempo por página controla la duración completa de la ranura de rotación para mostrar todas las criptomonedas configuradas antes de avanzar. |
 | `cache_ttl_min` | `int` | `1` | `1` a `60` | Minutos de caché para la cotización. |
 
 ### Motor: `stock`
@@ -365,7 +365,7 @@ Cada motor anuncia sus propios campos mediante su `ConfigSchema` (descubrible en
 | `symbols` | `String` | `AAPL,NVDA,TSLA` | Separados por comas | Tickers bursátiles a monitorear (Yahoo Finance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Mostrar el gráfico sparkline histórico. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Intervalo temporal para el historial de precios. |
-| `page_seconds` | `int` | `5` | `3` a `30` | Segundos de permanencia en cada página antes de alternar. |
+| `duration_sec` | `int` | `5` | `2` a `60` | Segundos de permanencia en cada página (alias `page_seconds`). Como `stock` es autónomo (`selfPaced() == true`), este tiempo por página controla la duración completa de la ranura de rotación para mostrar todas las acciones configuradas antes de avanzar. |
 | `cache_ttl_min` | `int` | `1` | `1` a `60` | Minutos de caché para la cotización. |
 
 ### Motor: `weather`
@@ -407,7 +407,7 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 | `keywords` | `String` | `""` | Texto / Consulta | Palabras clave de búsqueda o etiquetas personalizadas (ej. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Idioma de las noticias (`auto` sincroniza con el sistema). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Edición regional por país. |
-| `max_articles` | `int` | `5` | `3` a `15` | Cantidad máxima de titulares almacenados en caché por ciclo. |
+| `max_articles` | `int` | `5` | `3` a `15` | Cantidad máxima de titulares almacenados en caché y seleccionados en orden aleatorio sin repetición entre ranuras de rotación. |
 | `requests_per_day` | `int` | `10` | `1` a `100` | Presupuesto total de solicitudes API por cada 24 horas (nivel gratuito GNews: 100 sol/día por clave). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Acción: purga inmediatamente la caché del idioma anterior y consulta la API sin reiniciar contadores de cuota diaria. |
 | `cache_ttl_min` | `int` | `30` | `5` a `120` | Intervalo mínimo de refresco de caché en minutos. |
@@ -415,7 +415,7 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
 | `scroll_speed` | `int` | `3` | `1` a `10` | Velocidad de desplazamiento (1: Lento a 10: Turbo). |
 | `scroll_pause_start_ms` | `int` | `1200` | `0` a `4000` | Tiempo de pausa inicial (ms) antes de comenzar el desplazamiento. |
 | `scroll_pause_end_ms` | `int` | `1000` | `0` a `4000` | Tiempo de pausa final (ms) al final del titular antes de cambiar. |
-| `article_duration_sec` | `int` | `12` | `5` a `60` | Duración de visualización por artículo en segundos. |
+| `article_duration_sec` | `int` | `12` | `5` a `60` | Duración de visualización por artículo en segundos (selección aleatoria sin repetición desde la caché en cada ranura de rotación). |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Esquema de colores visual. |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Muestra la píldora de categoría en color (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Muestra el nombre de la fuente de noticias (`BBC News`, `Reuters`, etc.). |
@@ -428,8 +428,9 @@ El motor `gnews` muestra un teletipo de noticias en tiempo real alimentado por l
    - Puede ingresar múltiples claves API separadas por comas (`api_key: "clave1,clave2,clave3"`).
    - Si una clave resulta inválida (`HTTP 401/403`) o agota su cuota de 100 solicitudes/día (`HTTP 429/403`), el motor conmuta instantáneamente a la siguiente clave y reintenta la solicitud.
    - 2 cuentas = 200 solicitudes/día; 3 cuentas = 300 solicitudes/día.
-2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS):**
+2. **Persistencia en Archivo (`/gnews_cache.json` en SD/SPIFFS) y Selección Aleatoria:**
    - Los artículos y la telemetría se guardan en almacenamiento local. Al reiniciar, las noticias se muestran al instante sin consumir cuota API.
+   - En cada ranura de rotación, los titulares en caché se seleccionan mediante una permutación aleatoria Fisher-Yates sin repetición para mostrar todas las noticias de forma equitativa incluso con tiempos de rotación cortos.
    - Si no hay conexión o se agota la cuota, las noticias persisten y siguen desplazándose 24/7.
 3. **Presupuesto Diario de Solicitudes (Por defecto: 10 sol/día) y Protección de Claves Compartidas:**
    - Aunque las cuentas gratuitas de GNews.io permiten hasta 100 solicitudes/día por clave, los usuarios suelen compartir su clave con otros proyectos o sistemas domóticos externos.

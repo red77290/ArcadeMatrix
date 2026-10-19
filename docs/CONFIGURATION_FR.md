@@ -356,7 +356,7 @@ Chaque moteur expose ses propres champs via son `ConfigSchema` (consultable à `
 | `symbols` | `String` | `BTC,ETH` | Séparés par virgule | Symboles cryptos à surveiller (CoinGecko / Binance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Afficher la courbe sparkline historique. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Échelle de temps pour l'historique des cours. |
-| `page_seconds` | `int` | `5` | `3` à `30` | Secondes d'affichage par page avant alternance. |
+| `duration_sec` | `int` | `5` | `2` à `60` | Secondes d'affichage par page (alias `page_seconds`). Le moteur `crypto` étant autonome (`selfPaced() == true`), ce temps par page pilote la durée complète du créneau de rotation afin de faire défiler l'intégralité des cryptos configurées avant de passer à l'écran suivant. |
 | `cache_ttl_min` | `int` | `1` | `1` à `60` | Minutes de rétention du cache de cotation. |
 
 ### Moteur : `stock`
@@ -365,7 +365,7 @@ Chaque moteur expose ses propres champs via son `ConfigSchema` (consultable à `
 | `symbols` | `String` | `AAPL,NVDA,TSLA` | Séparés par virgule | Tickers boursiers à surveiller (Yahoo Finance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Afficher la courbe sparkline historique. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Échelle de temps pour l'historique des cours. |
-| `page_seconds` | `int` | `5` | `3` à `30` | Secondes d'affichage par page avant alternance. |
+| `duration_sec` | `int` | `5` | `2` à `60` | Secondes d'affichage par page (alias `page_seconds`). Le moteur `stock` étant autonome (`selfPaced() == true`), ce temps par page pilote la durée complète du créneau de rotation afin de faire défiler l'intégralité des actions configurées avant de passer à l'écran suivant. |
 | `cache_ttl_min` | `int` | `1` | `1` à `60` | Minutes de rétention du cache de cotation. |
 
 ### Moteur : `weather`
@@ -407,7 +407,7 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 | `keywords` | `String` | `""` | Texte / Requête | Mots-clés de recherche ou tags personnalisés (ex. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Langue des articles (`auto` synchronise avec la langue système). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Édition régionale du pays. |
-| `max_articles` | `int` | `5` | `3` à `15` | Nombre maximal d'articles mis en cache et alternés par cycle. |
+| `max_articles` | `int` | `5` | `3` à `15` | Nombre maximal d'articles mis en cache et tirés aléatoirement sans répétition à travers les cycles de rotation. |
 | `requests_per_day` | `int` | `10` | `1` à `100` | Budget total de requêtes API alloué par 24 heures (offre gratuite GNews : 100 requêtes/jour/clé). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Action : purge immédiatement le cache de l'ancienne langue et interroge l'API sans réinitialiser les compteurs de quota. |
 | `cache_ttl_min` | `int` | `30` | `5` à `120` | Intervalle minimal en minutes entre requêtes quand le budget journalier est détendu. |
@@ -415,7 +415,7 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
 | `scroll_speed` | `int` | `3` | `1` à `10` | Vitesse de défilement (1 : Lent à 10 : Turbo). |
 | `scroll_pause_start_ms` | `int` | `1200` | `0` à `4000` | Temps de pause fixe (ms) au début du titre avant le défilement. |
 | `scroll_pause_end_ms` | `int` | `1000` | `0` à `4000` | Temps de pause fixe (ms) à la fin du titre avant la transition. |
-| `article_duration_sec` | `int` | `12` | `5` à `60` | Durée d'affichage par article en secondes. |
+| `article_duration_sec` | `int` | `12` | `5` à `60` | Durée d'affichage par article en secondes (sélection aléatoire sans remise depuis le cache à chaque créneau de rotation). |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Schéma de couleurs visuel. |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Affiche le badge thématique coloré (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Affiche le nom de la source d'actualités (`BBC News`, `Reuters`, etc.). |
@@ -428,8 +428,9 @@ Le moteur `gnews` affiche un bandeau d'actualités et d'alertes en temps réel a
    - Vous pouvez renseigner plusieurs clés API GNews séparées par des virgules (`api_key: "cle1,cle2,cle3"`).
    - Dès qu'une clé est invalide (`HTTP 401/403`) ou épuise son quota de 100 requêtes/jour (`HTTP 429/403`), le moteur bascule instantanément sur la clé suivante et retente la requête.
    - 2 comptes = 200 requêtes/jour ; 3 comptes = 300 requêtes/jour.
-2. **Persistance sur Fichier (`/gnews_cache.json` sur SD/SPIFFS) :**
+2. **Persistance sur Fichier (`/gnews_cache.json` sur SD/SPIFFS) & Lecture Aléatoire :**
    - Les articles et compteurs de télémétrie sont persistés sur stockage physique. Au redémarrage, les titres s'affichent immédiatement sans consommer de quota API ni bloquer l'écran.
+   - D'un créneau de rotation à l'autre, les articles en cache sont tirés selon une permutation aléatoire Fisher-Yates sans répétition afin que toutes les actualités en cache défilent équitablement même lors de créneaux de rotation courts.
    - En cas de coupure réseau ou de quota épuisé, les articles en cache sont conservés et continuent de défiler 24h/24.
 3. **Budget de Requêtes Journalier (Défaut : 10 reqs/jour) & Préservation des Clés Partagées :**
    - Bien que les comptes gratuits GNews.io autorisent jusqu'à 100 requêtes/jour par clé, les utilisateurs partagent fréquemment leur clé avec d'autres services ou outils domotiques externes.

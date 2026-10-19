@@ -4,6 +4,17 @@
 #include "../core/I18n.h"
 #include "../core/net/SecureHttpClient.h"
 #include <cmath>
+#include <cstdlib>
+
+namespace {
+uint32_t gnewsRandomU32() {
+#if defined(ESP32)
+    return esp_random();
+#else
+    return static_cast<uint32_t>(rand());
+#endif
+}
+} // namespace
 
 GNewsEngine::GNewsEngine() {
     _geometry.width = 64;
@@ -62,12 +73,46 @@ const char* GNewsEngine::getCategoryShort(const char* category) {
     return I18n::getGNewsCategoryShort(category);
 }
 
-void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
-    if (snap.count > 0) {
-        currentArticleIndex = (currentArticleIndex + 1) % snap.count;
-    } else {
-        currentArticleIndex = 0;
+void GNewsEngine::pickNextRandomArticle(size_t count) {
+    if (count > GNEWS_MAX_ARTICLES) {
+        count = GNEWS_MAX_ARTICLES;
     }
+    if (count == 0) {
+        currentArticleIndex = 0;
+        m_shuffleCount = 0;
+        m_shufflePos = 0;
+        return;
+    }
+    if (count == 1) {
+        currentArticleIndex = 0;
+        m_shuffleCount = 1;
+        m_shufflePos = 1;
+        return;
+    }
+    if (m_shuffleCount != count || m_shufflePos >= m_shuffleCount) {
+        size_t prevIdx = currentArticleIndex;
+        for (size_t i = 0; i < count; ++i) {
+            m_shuffledOrder[i] = static_cast<uint8_t>(i);
+        }
+        for (size_t i = count - 1; i > 0; --i) {
+            size_t j = gnewsRandomU32() % (i + 1);
+            uint8_t tmp = m_shuffledOrder[i];
+            m_shuffledOrder[i] = m_shuffledOrder[j];
+            m_shuffledOrder[j] = tmp;
+        }
+        if (m_shuffledOrder[0] == prevIdx && count > 1) {
+            uint8_t tmp = m_shuffledOrder[0];
+            m_shuffledOrder[0] = m_shuffledOrder[count - 1];
+            m_shuffledOrder[count - 1] = tmp;
+        }
+        m_shuffleCount = count;
+        m_shufflePos = 0;
+    }
+    currentArticleIndex = m_shuffledOrder[m_shufflePos++];
+}
+
+void GNewsEngine::advanceToNextArticle(const GNewsSnapshot& snap) {
+    pickNextRandomArticle(snap.count);
     currentPageIndex = 0;
     totalPages = 1;
     lastPageSwitchTime = millis();
@@ -432,7 +477,14 @@ void GNewsEngine::fetchWorker() {
 }
 
 void GNewsEngine::activate() {
-    currentArticleIndex = 0;
+    const GNewsSnapshot& snap = gnewsService.getSnapshot();
+    if (snap.hasData && snap.count > 0) {
+        pickNextRandomArticle(snap.count);
+        m_needsInitialPick = false;
+    } else {
+        currentArticleIndex = 0;
+        m_needsInitialPick = true;
+    }
     currentPageIndex = 0;
     totalPages = 1;
     lastPageSwitchTime = millis();
@@ -455,6 +507,9 @@ void GNewsEngine::onConfigChanged(const EngineConfig* config) {
     applyConfig(config);
     cachedArticleIndex = -1;
     if (config_force_refresh && !prevForce) {
+        m_shuffleCount = 0;
+        m_shufflePos = 0;
+        m_needsInitialPick = true;
         m_purgeRequested.store(true, std::memory_order_release);
     }
     m_fetchRequested.store(true, std::memory_order_release);
@@ -487,8 +542,9 @@ void GNewsEngine::update(EngineContext* context) {
     const GNewsSnapshot& snap = gnewsService.getSnapshot();
     if (!snap.hasData || snap.count == 0) return;
 
-    if (currentArticleIndex >= snap.count) {
-        currentArticleIndex = 0;
+    if (m_needsInitialPick || currentArticleIndex >= snap.count || m_shuffleCount != snap.count) {
+        pickNextRandomArticle(snap.count);
+        m_needsInitialPick = false;
     }
     const GNewsArticle& curArt = snap.articles[currentArticleIndex];
 
