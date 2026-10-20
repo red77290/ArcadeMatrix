@@ -1162,6 +1162,10 @@ paths:
                     type: string
                   duration_sec:
                     type: integer
+                    description: >-
+                      Slot dwell duration in seconds (or GIF count for gifs). Self-paced engines
+                      (such as crypto, stock, gnews, and gifs) govern their own cycle completion via
+                      selfPaced() and isFinished() before rotation advances.
                   overlays:
                     type: object
                     properties:

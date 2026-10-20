@@ -64,6 +64,7 @@ public:
     bool needsTlsFetch() const override;
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
+    bool selfPaced() const override { return true; }
 
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_redrawFrames > 0; }

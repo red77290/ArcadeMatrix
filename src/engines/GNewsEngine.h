@@ -27,6 +27,7 @@ public:
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     bool isFinished() const override;
+    bool selfPaced() const override { return true; }
     bool isRealtime() const override { return true; }
     bool needsClear() const override { return false; }
 
@@ -44,9 +45,13 @@ private:
     String config_lang = "auto";
     String config_country = "auto";
     int config_max_articles = 5;
+    int config_articles_per_rotation = 2;
     int config_cache_ttl_min = 30;
     int config_requests_per_day = 10;
     bool config_force_refresh = false;
+    bool config_show_title = false;
+    bool config_show_description = false;
+    bool config_show_content = true;
     String config_display_mode = "smooth_scroll";
     int config_scroll_speed = 3;
     int config_scroll_pause_start_ms = 1200;
@@ -62,6 +67,12 @@ private:
     // Runtime state
     DisplayGeometry _geometry;
     size_t currentArticleIndex = 0;
+    uint8_t m_shuffledOrder[GNEWS_MAX_ARTICLES] = {};
+    size_t m_shufflePos = 0;
+    size_t m_shuffleCount = 0;
+    bool m_needsInitialPick = true;
+    size_t m_articlesShownThisCycle = 0;
+    uint32_t m_activateTimeMs = 0;
     size_t currentPageIndex = 0;
     size_t totalPages = 1;
     uint32_t lastPageSwitchTime = 0;
@@ -86,13 +97,14 @@ private:
     int cachedMaxScroll = 0;
     int cachedArticleIndex = -1;
 
-    char formattedHeadline[640];
+    char formattedHeadline[768];
     char formattedSource[64];
 
     static const char* getCategoryShort(const char* category);
     void applyConfig(const EngineConfig* config);
     void prepareHeadlineText(const GNewsArticle& article);
     static void formatGNewsText(const char* utf8Input, char* output, size_t maxLen);
+    void pickNextRandomArticle(size_t count);
     void advanceToNextArticle(const GNewsSnapshot& snap);
     void wrapTextToLines(const char* text, int maxW);
     void distributeTextToRows(const char* text, int numRows);
