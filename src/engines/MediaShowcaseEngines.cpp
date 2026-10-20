@@ -413,22 +413,32 @@ void MediaShowcaseBase::runWorkerLoop() {
             return;
         }
         const char* status = batchDoc["status"] | "ready";
+        JsonArray warmingItems = batchDoc["items"].as<JsonArray>();
         if (strcmp(status, "warming") == 0) {
-            m_statusState.store(1, std::memory_order_release); // ServerWarming
             if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                 // Multiple engines in rotation: skip turn immediately without freezing
+                m_statusState.store(1, std::memory_order_release); // ServerWarming
                 m_skipTurnImmediately.store(true, std::memory_order_release);
                 return;
             }
-            // Single engine in rotation: show warming status while polling
-            m_warmingFallback.store(true, std::memory_order_release);
+            if (!warmingItems.isNull() && warmingItems.size() > 0) {
+                // Single engine in rotation and static/panorama assets are already built:
+                // start displaying Card + Panoramas immediately while videos finish warming!
+                m_warmingFallback.store(false, std::memory_order_release);
+                m_statusState.store(0, std::memory_order_release); // LiveReady
+                batchReady = true;
+            } else {
+                // Single engine in rotation, waiting for initial static metadata
+                m_statusState.store(1, std::memory_order_release); // ServerWarming
+                m_warmingFallback.store(true, std::memory_order_release);
 #if defined(ESP32)
-            for (int w = 0; w < 15 && m_wantActive.load(std::memory_order_acquire); ++w) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
+                for (int w = 0; w < 15 && m_wantActive.load(std::memory_order_acquire); ++w) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
 #else
-            break;
+                break;
 #endif
+            }
         } else {
             m_warmingFallback.store(false, std::memory_order_release);
             m_statusState.store(0, std::memory_order_release); // LiveReady
@@ -571,9 +581,26 @@ void MediaShowcaseBase::runWorkerLoop() {
 
         // Phase 3: Video Stream (`.rgb565.stream` `DMDS`) — skipped immediately if `has_video == false`
         bool hasVideo = item["has_video"] | false;
-        const char* vidPath = assetsObj["video_stream_rgb565"] | (item["video_stream_url"] | "");
-        if (m_wantActive.load(std::memory_order_acquire) && cfg.showVideo && hasVideo && m_hasPsram && m_frame565 && vidPath[0] != '\0') {
-            streamDmdsAsset(vidPath, Phase::VideoStream, static_cast<uint32_t>(cfg.videoMaxDurationS) * 1000U);
+        bool videoReady = item["video_ready"] | false;
+        const char* itemId = item["id"] | "";
+        String vidPathStr = String(assetsObj["video_stream_rgb565"] | (item["video_stream_url"] | ""));
+        if (m_wantActive.load(std::memory_order_acquire) && cfg.showVideo && hasVideo && !videoReady && m_hasPsram && m_frame565 && itemId[0] != '\0') {
+            auto refreshResp = net::SecureHttpClient::get(batchUrl, httpOpts);
+            if (refreshResp.ok()) {
+                DynamicJsonDocument refreshDoc(6144);
+                if (deserializeJson(refreshDoc, refreshResp.stream()) == DeserializationError::Ok) {
+                    for (JsonObject rItem : refreshDoc["items"].as<JsonArray>()) {
+                        if (strcmp(rItem["id"] | "", itemId) == 0 && (rItem["video_ready"] | false)) {
+                            vidPathStr = String(rItem["assets"]["video_stream_rgb565"] | "");
+                            videoReady = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (m_wantActive.load(std::memory_order_acquire) && cfg.showVideo && hasVideo && videoReady && m_hasPsram && m_frame565 && vidPathStr.length() > 0) {
+            streamDmdsAsset(vidPathStr.c_str(), Phase::VideoStream, static_cast<uint32_t>(cfg.videoMaxDurationS) * 1000U);
         }
 
         shown++;
