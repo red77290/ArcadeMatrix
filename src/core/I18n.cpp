@@ -782,31 +782,14 @@ const char* I18n::getGNewsCategoryShort(const char* category, Lang l) {
 }
 
 const char* I18n::getShowcaseWarmingLabel(Lang l) {
-    return (l == Lang::FR) ? "PREPARATION VIDEO..." : (l == Lang::ES) ? "PREPARANDO VIDEO..." : "WARMING VIDEO...";
+    return (l == Lang::FR) ? "PREPARATION MEDIA..." : (l == Lang::ES) ? "PREPARANDO MEDIA..." : "PREPARING MEDIA...";
 }
 
 const char* I18n::getShowcaseOfflineLabel(Lang l) {
-    return (l == Lang::FR) ? "SERVEUR HORS-LIGNE - DEMO" : (l == Lang::ES) ? "SERVIDOR OFFLINE - DEMO" : "SERVER OFFLINE - DEMO";
+    return (l == Lang::FR) ? "SERVEUR SHOWCASE HORS-LIGNE" : (l == Lang::ES) ? "SERVIDOR SHOWCASE OFFLINE" : "SHOWCASE SERVER OFFLINE";
 }
 
-const char* I18n::getShowcaseDemoSynopsis(uint8_t domainId, Lang l) {
-    switch (domainId) {
-        case 0: // Games
-            return (l == Lang::FR) ? "Classique d'arcade SNK Neo-Geo aux sprites 2D explosifs."
-                 : (l == Lang::ES) ? "Clasico arcade de SNK Neo-Geo con accion 2D explosiva."
-                 : "Iconic SNK Neo-Geo run-and-gun arcade masterpiece.";
-        case 1: // Movies
-            return (l == Lang::FR) ? "Chef-d'oeuvre cyber-noir de Ridley Scott a Los Angeles 2019."
-                 : (l == Lang::ES) ? "Obra maestra ciberpunk de Ridley Scott en Los Angeles 2019."
-                 : "Ridley Scott's neon-noir sci-fi masterpiece set in 2019 LA.";
-        case 2: // Series
-            return (l == Lang::FR) ? "Disparitions mysterieuses et experiences secretes a Hawkins."
-                 : (l == Lang::ES) ? "Misterios sobrenaturales y experimentos secretos en Hawkins."
-                 : "Supernatural mysteries and secret experiments in 1983 Hawkins.";
-        default: // Anime
-            return (l == Lang::FR) ? "Les guerriers Z defendent la Terre dans des combats epiques."
-                 : (l == Lang::ES) ? "Los guerreros Z defienden la Tierra en batallas legendarias."
-                 : "Earth's greatest heroes clash with cosmic villains in epic battles.";
-    }
+const char* I18n::getShowcaseUnconfiguredLabel(Lang l) {
+    return (l == Lang::FR) ? "CONFIGURER URL SERVEUR" : (l == Lang::ES) ? "CONFIGURAR URL SERVIDOR" : "CONFIGURE SERVER URL";
 }
 
