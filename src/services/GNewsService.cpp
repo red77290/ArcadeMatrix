@@ -169,7 +169,9 @@ void GNewsService::saveToSd() {
     if (!guard) return;
     if (!sd.exists("/")) return;
 
-    FsFile f = sd.open("/gnews_cache.json", FILE_OPEN_WRITE);
+    const char* tmpPath = "/gnews_cache.json.tmp";
+    const char* finalPath = "/gnews_cache.json";
+    FsFile f = sd.open(tmpPath, FILE_OPEN_WRITE);
     if (!f) return;
 
     DynamicJsonDocument doc(16384);
@@ -202,8 +204,19 @@ void GNewsService::saveToSd() {
         }
     }
 
-    serializeJson(doc, f);
+    size_t written = serializeJson(doc, f);
+    f.flush();
     f.close();
+    if (written > 0) {
+        if (sd.exists(finalPath)) {
+            sd.remove(finalPath);
+        }
+        if (!sd.rename(tmpPath, finalPath)) {
+            sd.remove(tmpPath);
+        }
+    } else {
+        sd.remove(tmpPath);
+    }
     guard.unlock();
     LOGI("GNewsService", "Persisted %d articles to SD /gnews_cache.json (epoch: %u)", (int)_snapshot.count, _snapshot.lastFetchEpoch);
 }
@@ -230,6 +243,9 @@ void GNewsService::loadFromSd() {
     _snapshot.lastFetchTime = millis();
     _snapshot.lastFetchEpoch = doc["last_fetch_epoch"] | doc["last_fetch_time"] | 0;
     _lastFetchDay = doc["last_fetch_day"] | -1;
+    if (_lastFetchDay == -1 && _snapshot.lastFetchEpoch > 1600000000) {
+        _lastFetchDay = (int)(_snapshot.lastFetchEpoch / 86400);
+    }
     _lastAttemptEpoch = doc["last_attempt_epoch"] | 0;
     _consecutiveFailures = doc["consecutive_failures"] | 0;
     _activeKeyIdx = doc["active_key_idx"] | 0;
@@ -420,7 +436,8 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
     uint32_t now = millis();
     time_t epochTime = 0;
     time(&epochTime);
-    int curUtcDay = (epochTime > 1600000000) ? (int)(epochTime / 86400) : (int)(now / 86400000UL);
+    const bool ntpValid = (epochTime > 1600000000);
+    int curUtcDay = ntpValid ? (int)(epochTime / 86400) : (int)(now / 86400000UL);
 
     bool needMidnightSave = false;
     {
@@ -464,18 +481,25 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
             return;
         }
 
-        if (_lastFetchDay != -1 && curUtcDay != _lastFetchDay) {
-            LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
-            for (size_t i = 0; i < _keyUsages.size(); i++) {
-                _keyUsages[i] = 0;
+        // Only evaluate UTC midnight rollover when the clock regime matches:
+        // if SD cache holds a real UTC day (>= 18000, i.e. post-2019), do not allow a pre-NTP boot
+        // (curUtcDay == 0) to falsely trigger a midnight reset and wipe persisted quota counters.
+        if (ntpValid || _lastFetchDay < 18000) {
+            if (_lastFetchDay != -1 && curUtcDay > _lastFetchDay) {
+                LOGI("GNewsService", "UTC Midnight reached (day %d -> %d). Resetting daily quota counters.", _lastFetchDay, curUtcDay);
+                for (size_t i = 0; i < _keyUsages.size(); i++) {
+                    _keyUsages[i] = 0;
+                }
+                _consecutiveFailures = 0;
+                if (_snapshot.status == 3) { // RATE_LIMITED
+                    _snapshot.status = 0; // OK
+                }
+                needMidnightSave = true;
             }
-            _consecutiveFailures = 0;
-            if (_snapshot.status == 3) { // RATE_LIMITED
-                _snapshot.status = 0; // OK
+            if (curUtcDay > _lastFetchDay || _lastFetchDay == -1) {
+                _lastFetchDay = curUtcDay;
             }
-            needMidnightSave = true;
         }
-        _lastFetchDay = curUtcDay;
 
         // Check if daily quota is reached for all keys (strict hard cap: requests_per_day per key)
         bool hasAvailableKey = false;
@@ -504,7 +528,7 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
 
         if (!forceRefresh && _lastAttemptTime != 0) {
             bool inFailureBackoff = false;
-            if (epochTime > 1600000000 && _lastAttemptEpoch > 1600000000) {
+            if (ntpValid && _lastAttemptEpoch > 1600000000) {
                 if ((uint32_t)epochTime >= _lastAttemptEpoch) {
                     inFailureBackoff = (((uint32_t)epochTime - _lastAttemptEpoch) < failureBackoffSec);
                 }
@@ -518,11 +542,11 @@ void GNewsService::fetchNews(const String& apiKey, const String& category, const
 
         // Normal scheduled interval check (based on requests_per_day AND cache_ttl_min)
         bool intervalElapsed = false;
-        if (epochTime > 1600000000 && _snapshot.lastFetchEpoch > 1600000000) {
+        if (ntpValid && _snapshot.lastFetchEpoch > 1600000000) {
             if ((uint32_t)epochTime >= _snapshot.lastFetchEpoch) {
                 intervalElapsed = (((uint32_t)epochTime - _snapshot.lastFetchEpoch) >= intervalSec);
             } else {
-                intervalElapsed = true; // Clock jumped backwards
+                intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
             }
         } else {
             intervalElapsed = (now - _snapshot.lastFetchTime >= intervalMs);
