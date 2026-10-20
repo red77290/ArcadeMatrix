@@ -70,13 +70,19 @@ protected:
 
     struct ConfigSlot {
         char serverUrl[MAX_URL_LEN] = "http://127.0.0.1:8080";
+        char primarySource[24] = "auto";
+        char scraperUser[32] = "";
+        char scraperPass[32] = "";
+        char scraperApiKey[64] = "";
         char lang[8] = "system";
         char videoMode[16] = "auto_action";
-        char systems[MAX_FILTER_LEN] = "mame,neogeo,snes,megadrive,psx";
+        char systems[MAX_FILTER_LEN] = "";
         char genres[MAX_FILTER_LEN] = "";
         char decades[MAX_FILTER_LEN] = "";
         char videoType[16] = "any";
         uint8_t itemsPerRotation = 3;
+        uint8_t imageCount = 2;
+        uint8_t snapshotPanoramaCount = 0;
         uint8_t cardDurationS = 7;
         uint8_t snapshotDurationS = 4;
         uint8_t videoMaxDurationS = 6;
@@ -84,6 +90,8 @@ protected:
         bool showPoster = true;
         bool showSynopsis = true;
         bool showSnapshot = true;
+        bool jacketPanorama = true;
+        bool marqueePanorama = false;
         bool showVideo = true;
         bool colorBoost = true;
     };
@@ -95,6 +103,9 @@ protected:
         char rating[8] = "";
         char synopsis[MAX_SYNOPSIS_LEN] = "";
         uint16_t badgeColor565 = 0xFD20;
+        uint16_t posterW = 32;
+        uint16_t posterH = 32;
+        bool hasData = false;
         bool hasPoster = false;
         bool hasVideoFrame = false;
     };
@@ -114,7 +125,7 @@ protected:
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
     std::atomic<uint32_t> m_seq{0}; // Seqlock for CardSnapshot + pixel buffers
     CardSnapshot m_liveCard;
-    uint16_t* m_poster565 = nullptr; // 32x32 RGB565 (2048 bytes)
+    uint16_t* m_poster565 = nullptr; // Up to 48x64 RGB565 (6144 bytes)
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
     size_t m_framePixels = 0;
 
@@ -124,6 +135,7 @@ protected:
     std::atomic<bool> m_warmingFallback{false};
     std::atomic<bool> m_turnDone{false};
     std::atomic<uint8_t> m_phase{static_cast<uint8_t>(Phase::Card)};
+    std::atomic<uint8_t> m_statusState{3}; // 0=LiveReady, 1=ServerWarming, 2=NetworkOffline, 3=Unconfigured
     std::atomic<uint8_t> m_rotationSlotCount{1};
 
 #if defined(ESP32)
@@ -140,7 +152,7 @@ protected:
 
     const char* domainSlug() const;
     uint16_t defaultAccent565() const;
-    void loadOfflineDemoCard(CardSnapshot& out, uint8_t langEnumVal) const;
+    static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
     bool allocateBuffers();
     void freeBuffers();
     void startWorkerTask();
@@ -149,6 +161,7 @@ protected:
     void runWorkerLoop();
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
     void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);
+    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);
 };
 
 class RetroGamesEngine : public MediaShowcaseBase {

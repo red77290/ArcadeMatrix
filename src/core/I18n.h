@@ -69,10 +69,10 @@ public:
     static const char* getGNewsCategoryShort(const char* category);
     static const char* getGNewsCategoryShort(const char* category, Lang l);
 
-    // Media Showcase Status & Offline Demo Synopses
+    // Media Showcase Status
     static const char* getShowcaseWarmingLabel(Lang l);
     static const char* getShowcaseOfflineLabel(Lang l);
-    static const char* getShowcaseDemoSynopsis(uint8_t domainId, Lang l);
+    static const char* getShowcaseUnconfiguredLabel(Lang l);
 };
 
 #endif // I18N_H
