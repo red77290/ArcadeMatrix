@@ -91,7 +91,8 @@ def test_engine_and_field_translations():
         "clock", "date", "weather", "gifs", "crypto", "stock",
         "visualizer", "decibel", "decibelmeter", "temp", "message",
         "cast", "spotify", "sysinfo", "music", "music_player",
-        "dashboard", "gnews", "marquee"
+        "dashboard", "gnews", "marquee", "retro_games",
+        "movie_showcase", "series_showcase", "anime_showcase"
     ]
 
     for eng in KNOWN_ENGINES:
