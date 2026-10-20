@@ -14,147 +14,144 @@ def extract_engine_catalog(engines_dir="src/engines"):
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
         
-        m_desc = re.search(r"EngineDescriptor\s+\w+::getDescriptor\(\)\s*const\s*\{(.*?)\n\}", content, re.DOTALL)
-        if not m_desc:
-            continue
-        
-        desc_body = m_desc.group(1)
-        m_meta = re.search(r'\.metadata\s*=\s*(?:EngineMetadata)?\s*[\{\(]\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"', desc_body)
-        if not m_meta:
-            continue
-        
-        eng_id = m_meta.group(1)
-        eng_name = m_meta.group(2)
-        eng_cat = m_meta.group(3)
-        
-        # Requirements
-        req = {
-            "needs_psram": bool(re.search(r'\.needsPsram\s*=\s*true', desc_body)),
-            "needs_audio": bool(re.search(r'\.needsAudio(?:Input)?\s*=\s*true', desc_body)),
-            "needs_temp_sensor": bool(re.search(r'\.needsTempSensor\s*=\s*true', desc_body)),
-            "needs_gyroscope": bool(re.search(r'\.needsGyroscope\s*=\s*true', desc_body)),
-            "needs_network": bool(re.search(r'\.needsNetwork\s*=\s*true', desc_body)),
-            "needs_sd": bool(re.search(r'\.needsSd\s*=\s*true', desc_body)),
-            "needs_tls": bool(re.search(r'\.needsTls\s*=\s*true', desc_body)),
-        }
-        m_fps = re.search(r'\.targetFps\s*=\s*(\d+)', desc_body)
-        req["target_fps"] = int(m_fps.group(1)) if m_fps else 30
-        
-        # Capabilities
-        cap = {
-            "supports_128x32": not bool(re.search(r'\.supports_128x32\s*=\s*false', desc_body)),
-            "supports_256x64": not bool(re.search(r'\.supports_256x64\s*=\s*false', desc_body)),
-            "realtime": bool(re.search(r'\.realtime\s*=\s*true', desc_body)),
-            "interruptible": not bool(re.search(r'\.interruptible\s*=\s*false', desc_body)),
-            "selfPaced": bool(re.search(r'\.selfPaced\s*=\s*true', desc_body))
-        }
-        
-        # Fields: parse ConfigField(...) respecting quotes and balanced parentheses
-        fields = []
-        pos = 0
-        while True:
-            cf_idx = desc_body.find("ConfigField", pos)
-            if cf_idx == -1:
-                break
-            open_paren = desc_body.find("(", cf_idx)
-            if open_paren == -1:
-                break
-            in_str = False
-            esc = False
-            paren_depth = 1
-            i = open_paren + 1
-            while i < len(desc_body) and paren_depth > 0:
-                c = desc_body[i]
-                if c == "\\" and in_str:
-                    esc = not esc
-                elif c == '"' and not esc:
-                    in_str = not in_str
-                elif not in_str:
-                    if c == "(":
-                        paren_depth += 1
-                    elif c == ")":
-                        paren_depth -= 1
-                else:
-                    esc = False
-                i += 1
-
-            if paren_depth != 0:
-                break
-
-            raw_args = desc_body[open_paren + 1 : i - 1].strip()
-            pos = i
-            args = []
-            cur = []
-            in_str = False
-            esc = False
-            for c in raw_args:
-                if c == "\\" and in_str:
-                    esc = not esc
-                    cur.append(c)
-                elif c == '"' and not esc:
-                    in_str = not in_str
-                    cur.append(c)
-                elif c == ',' and not in_str:
-                    args.append("".join(cur).strip())
-                    cur = []
-                else:
-                    esc = False
-                    cur.append(c)
-            if cur:
-                args.append("".join(cur).strip())
+        for m_desc in re.finditer(r"EngineDescriptor\s+\w+::getDescriptor\(\)\s*const\s*\{(.*?)\n\}", content, re.DOTALL):
+            desc_body = m_desc.group(1)
+            m_meta = re.search(r'\.metadata\s*=\s*(?:EngineMetadata)?\s*[\{\(]\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"', desc_body)
+            if not m_meta:
+                continue
             
-            if len(args) >= 3:
-                f_id = args[0].strip('"')
-                f_type_str = args[1].replace("ConfigType::", "").strip()
-                f_type = CONFIG_TYPES.get(f_type_str, 3)
-                f_label = args[2].strip('"')
-                f_desc = args[3].strip('"') if len(args) > 3 else ""
-                f_def = args[4].strip('"') if len(args) > 4 else ""
-                f_req = args[5].lower() == "true" if len(args) > 5 else False
-                f_min = args[6].strip('"') if len(args) > 6 else ""
-                f_max = args[7].strip('"') if len(args) > 7 else ""
-                f_step = args[8].strip('"') if len(args) > 8 else ""
-                f_opts = args[9].strip('"') if len(args) > 9 else ""
-                f_ep = args[10].strip('"') if len(args) > 10 else ""
-                f_mult = args[11].lower() == "true" if len(args) > 11 else False
-                f_vis = args[12].strip('"') if len(args) > 12 else ""
-                
-                field_obj = {
-                    "id": f_id,
-                    "field_type": f_type,
-                    "label": f_label,
-                    "description": f_desc,
-                    "default_value": f_def,
-                    "required": f_req
-                }
-                if f_min: field_obj["min_val"] = f_min
-                if f_max: field_obj["max_val"] = f_max
-                if f_step: field_obj["step"] = f_step
-                if f_opts: field_obj["options"] = f_opts
-                if f_ep: field_obj["options_endpoint"] = f_ep
-                if f_mult: field_obj["multiple"] = True
-                if f_vis: field_obj["visible_when"] = f_vis
-                fields.append(field_obj)
-                
-        ver_str = "4.0.2-dev"
-        if os.path.exists("VERSION"):
-            with open("VERSION", "r", encoding="utf-8") as vf:
-                v_clean = vf.read().strip()
-                if v_clean:
-                    ver_str = f"{v_clean}-dev" if not v_clean.endswith("-dev") else v_clean
+            eng_id = m_meta.group(1)
+            eng_name = m_meta.group(2)
+            eng_cat = m_meta.group(3)
+            
+            # Requirements
+            req = {
+                "needs_psram": bool(re.search(r'\.needsPsram\s*=\s*true', desc_body)),
+                "needs_audio": bool(re.search(r'\.needsAudio(?:Input)?\s*=\s*true', desc_body)),
+                "needs_temp_sensor": bool(re.search(r'\.needsTempSensor\s*=\s*true', desc_body)),
+                "needs_gyroscope": bool(re.search(r'\.needsGyroscope\s*=\s*true', desc_body)),
+                "needs_network": bool(re.search(r'\.needsNetwork\s*=\s*true', desc_body)),
+                "needs_sd": bool(re.search(r'\.needsSd\s*=\s*true', desc_body)),
+                "needs_tls": bool(re.search(r'\.needsTls\s*=\s*true', desc_body)),
+            }
+            m_fps = re.search(r'\.targetFps\s*=\s*(\d+)', desc_body)
+            req["target_fps"] = int(m_fps.group(1)) if m_fps else 30
+            
+            # Capabilities
+            cap = {
+                "supports_128x32": not bool(re.search(r'\.supports_128x32\s*=\s*false', desc_body)),
+                "supports_256x64": not bool(re.search(r'\.supports_256x64\s*=\s*false', desc_body)),
+                "realtime": bool(re.search(r'\.realtime\s*=\s*true', desc_body)),
+                "interruptible": not bool(re.search(r'\.interruptible\s*=\s*false', desc_body)),
+                "selfPaced": bool(re.search(r'\.selfPaced\s*=\s*true', desc_body))
+            }
+            
+            # Fields: parse ConfigField(...) respecting quotes and balanced parentheses
+            fields = []
+            pos = 0
+            while True:
+                cf_idx = desc_body.find("ConfigField", pos)
+                if cf_idx == -1:
+                    break
+                open_paren = desc_body.find("(", cf_idx)
+                if open_paren == -1:
+                    break
+                in_str = False
+                esc = False
+                paren_depth = 1
+                i = open_paren + 1
+                while i < len(desc_body) and paren_depth > 0:
+                    c = desc_body[i]
+                    if c == "\\" and in_str:
+                        esc = not esc
+                    elif c == '"' and not esc:
+                        in_str = not in_str
+                    elif not in_str:
+                        if c == "(":
+                            paren_depth += 1
+                        elif c == ")":
+                            paren_depth -= 1
+                    else:
+                        esc = False
+                    i += 1
 
-        engines.append({
-            "metadata": {
-                "id": eng_id,
-                "name": eng_name,
-                "category": eng_cat,
-                "version": ver_str
-            },
-            "capabilities": cap,
-            "requirements": req,
-            "schema_url": f"/api/engines?id={eng_id}",
-            "schema": fields
-        })
+                if paren_depth != 0:
+                    break
+
+                raw_args = desc_body[open_paren + 1 : i - 1].strip()
+                pos = i
+                args = []
+                cur = []
+                in_str = False
+                esc = False
+                for c in raw_args:
+                    if c == "\\" and in_str:
+                        esc = not esc
+                        cur.append(c)
+                    elif c == '"' and not esc:
+                        in_str = not in_str
+                        cur.append(c)
+                    elif c == ',' and not in_str:
+                        args.append("".join(cur).strip())
+                        cur = []
+                    else:
+                        esc = False
+                        cur.append(c)
+                if cur:
+                    args.append("".join(cur).strip())
+                
+                if len(args) >= 3:
+                    f_id = args[0].strip('"')
+                    f_type_str = args[1].replace("ConfigType::", "").strip()
+                    f_type = CONFIG_TYPES.get(f_type_str, 3)
+                    f_label = args[2].strip('"')
+                    f_desc = args[3].strip('"') if len(args) > 3 else ""
+                    f_def = args[4].strip('"') if len(args) > 4 else ""
+                    f_req = args[5].lower() == "true" if len(args) > 5 else False
+                    f_min = args[6].strip('"') if len(args) > 6 else ""
+                    f_max = args[7].strip('"') if len(args) > 7 else ""
+                    f_step = args[8].strip('"') if len(args) > 8 else ""
+                    f_opts = args[9].strip('"') if len(args) > 9 else ""
+                    f_ep = args[10].strip('"') if len(args) > 10 else ""
+                    f_mult = args[11].lower() == "true" if len(args) > 11 else False
+                    f_vis = args[12].strip('"') if len(args) > 12 else ""
+                    
+                    field_obj = {
+                        "id": f_id,
+                        "field_type": f_type,
+                        "label": f_label,
+                        "description": f_desc,
+                        "default_value": f_def,
+                        "required": f_req
+                    }
+                    if f_min: field_obj["min_val"] = f_min
+                    if f_max: field_obj["max_val"] = f_max
+                    if f_step: field_obj["step"] = f_step
+                    if f_opts: field_obj["options"] = f_opts
+                    if f_ep: field_obj["options_endpoint"] = f_ep
+                    if f_mult: field_obj["multiple"] = True
+                    if f_vis: field_obj["visible_when"] = f_vis
+                    fields.append(field_obj)
+                    
+            ver_str = "4.0.2-dev"
+            if os.path.exists("VERSION"):
+                with open("VERSION", "r", encoding="utf-8") as vf:
+                    v_clean = vf.read().strip()
+                    if v_clean:
+                        ver_str = f"{v_clean}-dev" if not v_clean.endswith("-dev") else v_clean
+
+            engines.append({
+                "metadata": {
+                    "id": eng_id,
+                    "name": eng_name,
+                    "category": eng_cat,
+                    "version": ver_str
+                },
+                "capabilities": cap,
+                "requirements": req,
+                "schema_url": f"/api/engines?id={eng_id}",
+                "schema": fields
+            })
         
     return engines
 
