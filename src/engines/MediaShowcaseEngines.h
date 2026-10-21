@@ -18,13 +18,17 @@ enum class ShowcaseDomainId : uint8_t {
 
 /**
  * @class MediaShowcaseBase
- * @brief Shared base implementation for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
+ * @brief Shared V3.0 base implementation for the 4 DMD Media Showcase engines on ESP32 / ESP32-S3:
  *        RetroGamesEngine, MovieShowcaseEngine, SeriesShowcaseEngine, and AnimeShowcaseEngine.
  *
- * Strictly enforces all 20 real-time architectural invariants:
+ * Strictly enforces all 20 real-time architectural invariants + V3.0 requirements:
  * - Zero dynamic allocation and zero mutex on the Core 1 hot path (update / render).
- * - Core 0 worker task performs the 2-step LAN HTTP protocol (`POST /session` + `GET /batch`)
- *   and streams binary `.rgb565` / `.rgb565.stream` (`DMDS`) frames into pre-allocated buffers.
+ * - Strict Consume-Once & Zero Media Cache on the DMD: never caches or replays items when
+ *   the server goes offline (MQTT LWT `online:false`, UDP watchdog timeout, or HTTP error).
+ * - Dedicated MQTT Broker Config (`use_showcase_broker` auto-deriving `<server_ip>:1883`,
+ *   or `mqtt_broker_source` `global` / `custom`).
+ * - Dual-transport Core 0 worker (`mqtt_udp` real-time `DMDF` UDP streaming + `http_poll` fallback).
+ * - 4 Creative Procedural Pixel-Art "Waiting for Content" Animations on Core 1.
  * - Quiescent, allocation-free deactivation (`deactivate()` / `shutdownForDestruction()`)
  *   reclaiming all transient buffers before the next engine initializes.
  */
@@ -64,32 +68,27 @@ protected:
 
     enum class Phase : uint8_t {
         Card = 0,
-        SnapshotPan = 1,
-        VideoStream = 2
+        LiveStream = 1
     };
 
     struct ConfigSlot {
         char serverUrl[MAX_URL_LEN] = "http://127.0.0.1:8080";
-        char primarySource[24] = "auto";
-        char scraperUser[32] = "";
-        char scraperPass[32] = "";
-        char scraperApiKey[64] = "";
+        char transportMode[16] = "mqtt_udp";
+        char mqttBrokerSource[12] = "global";
+        char mqttCustomUrl[MAX_URL_LEN] = "";
         char lang[8] = "system";
+        char textScrollSpeed[12] = "normal";
         char videoMode[16] = "auto_action";
         char systems[MAX_FILTER_LEN] = "";
         char genres[MAX_FILTER_LEN] = "";
         char decades[MAX_FILTER_LEN] = "";
         char videoType[16] = "any";
-        uint8_t itemsPerRotation = 3;
-        uint8_t imageCount = 2;
         uint8_t snapshotPanoramaCount = 0;
-        uint8_t cardDurationS = 7;
-        uint8_t snapshotDurationS = 4;
-        uint8_t videoMaxDurationS = 6;
+        uint8_t videoMaxDurationS = 8;
         uint8_t videoFps = 15;
+        bool useShowcaseBroker = true;
         bool showPoster = true;
         bool showSynopsis = true;
-        bool showSnapshot = true;
         bool jacketPanorama = true;
         bool marqueePanorama = false;
         bool showVideo = true;
@@ -151,17 +150,24 @@ protected:
     bool m_dirty = true;
 
     const char* domainSlug() const;
+    const char* domainBadgeLabel() const;
     uint16_t defaultAccent565() const;
+    static uint32_t synopsisPxPerSec(const char* speedStr);
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
+    static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
     bool allocateBuffers();
     void freeBuffers();
+    void clearLiveCardState();
     void startWorkerTask();
     void stopWorkerTaskBounded(uint32_t timeoutMs);
     static void workerTaskEntry(void* arg);
     void runWorkerLoop();
+    bool runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
+    void runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
+    void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
     void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);
-    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);
+    void drawSinglePassSynopsis(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs, uint32_t speedPxPerSec);
 };
 
 class RetroGamesEngine : public MediaShowcaseBase {
@@ -203,4 +209,3 @@ class AnimeShowcaseEngineDescriptorHandler : public IEngineDescriptorHandler {
 public:
     EngineDescriptor getDescriptor() const override;
 };
-
