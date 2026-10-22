@@ -44,6 +44,65 @@ void copySafeStr(char* dst, size_t cap, const char* src) {
     dst[cap - 1] = '\0';
 }
 
+void appendCsvAsJsonArray(String& out, const char* csv) {
+    out += "[";
+    if (csv && csv[0] != '\0') {
+        bool first = true;
+        const char* p = csv;
+        while (*p != '\0') {
+            while (*p == ' ' || *p == ',') ++p;
+            if (*p == '\0') break;
+            const char* start = p;
+            while (*p != '\0' && *p != ',') ++p;
+            const char* end = p;
+            while (end > start && *(end - 1) == ' ') --end;
+            if (end > start) {
+                size_t len = static_cast<size_t>(end - start);
+                if (!(len == 3 && strncasecmp(start, "all", 3) == 0)) {
+                    if (!first) out += ",";
+                    out += "\"";
+                    for (size_t i = 0; i < len; ++i) {
+                        char c = start[i];
+                        if (c != '"' && c != '\\') out += c;
+                    }
+                    out += "\"";
+                    first = false;
+                }
+            }
+        }
+    }
+    out += "]";
+}
+
+bool decodeBase64Fixed(const char* b64, uint8_t* dst, size_t expectedBytes) {
+    if (!b64 || !dst || expectedBytes == 0) return false;
+    size_t outIdx = 0;
+    uint32_t buf = 0;
+    uint8_t bits = 0;
+    for (const char* p = b64; *p != '\0'; ++p) {
+        char c = *p;
+        if (c == '=') break;
+        uint8_t val = 0;
+        if (c >= 'A' && c <= 'Z') val = static_cast<uint8_t>(c - 'A');
+        else if (c >= 'a' && c <= 'z') val = static_cast<uint8_t>(c - 'a' + 26);
+        else if (c >= '0' && c <= '9') val = static_cast<uint8_t>(c - '0' + 52);
+        else if (c == '+' || c == '-') val = 62;
+        else if (c == '/' || c == '_') val = 63;
+        else if (c == ' ' || c == '\r' || c == '\n' || c == '\t') continue;
+        else return false;
+
+        buf = (buf << 6) | val;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (outIdx < expectedBytes) {
+                dst[outIdx++] = static_cast<uint8_t>((buf >> bits) & 0xFF);
+            }
+        }
+    }
+    return (outIdx == expectedBytes);
+}
+
 bool parseHostAndPort(const char* rawUrl, uint16_t defaultPort, char* outHost, size_t hostCap, uint16_t& outPort) {
     if (!rawUrl || !outHost || hostCap == 0) return false;
     while (*rawUrl == ' ') rawUrl++;
@@ -217,10 +276,18 @@ uint16_t MediaShowcaseBase::defaultAccent565() const {
 }
 
 uint32_t MediaShowcaseBase::synopsisPxPerSec(const char* speedStr) {
-    if (!speedStr) return 24U;
-    if (strcasecmp(speedStr, "slow") == 0) return 16U;
-    if (strcasecmp(speedStr, "fast") == 0) return 36U;
-    return 24U;
+    if (!speedStr || speedStr[0] == '\0') return 32U;
+    if (strcmp(speedStr, "1") == 0) return 14U;
+    if (strcmp(speedStr, "2") == 0 || strcasecmp(speedStr, "slow") == 0) return 18U;
+    if (strcmp(speedStr, "3") == 0) return 24U;
+    if (strcmp(speedStr, "4") == 0 || strcasecmp(speedStr, "normal") == 0) return 32U;
+    if (strcmp(speedStr, "5") == 0) return 42U;
+    if (strcmp(speedStr, "6") == 0 || strcasecmp(speedStr, "fast") == 0) return 56U;
+    if (strcmp(speedStr, "7") == 0) return 75U;
+    if (strcmp(speedStr, "8") == 0) return 100U;
+    if (strcmp(speedStr, "9") == 0) return 130U;
+    if (strcmp(speedStr, "10") == 0) return 160U;
+    return 32U;
 }
 
 void MediaShowcaseBase::computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH) {
@@ -359,7 +426,7 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     copySafeStr(slot.mqttBrokerSource, sizeof(slot.mqttBrokerSource), config->getString("mqtt_broker_source", "global").c_str());
     copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), config->getString("mqtt_custom_url", "").c_str());
     copySafeStr(slot.lang, sizeof(slot.lang), config->getString("lang", "system").c_str());
-    copySafeStr(slot.textScrollSpeed, sizeof(slot.textScrollSpeed), config->getString("text_scroll_speed", "normal").c_str());
+    copySafeStr(slot.textScrollSpeed, sizeof(slot.textScrollSpeed), config->getString("text_scroll_speed", "4").c_str());
     copySafeStr(slot.videoMode, sizeof(slot.videoMode), config->getString("video_mode", "auto_action").c_str());
     copySafeStr(slot.systems, sizeof(slot.systems), config->getString("systems", "").c_str());
     copySafeStr(slot.genres, sizeof(slot.genres), config->getString("genres", "").c_str());
@@ -560,10 +627,15 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     sendMqttSubscribePacket(mqttCli, 2, readyTopic);
     sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
 
+    String localIp = WiFi.localIP().toString();
     String cfgPayload;
-    cfgPayload.reserve(384);
+    cfgPayload.reserve(640);
     cfgPayload += "{\"dmd_id\":\"";
     cfgPayload += m_sessionId;
+    cfgPayload += "\",\"client_ip\":\"";
+    cfgPayload += localIp;
+    cfgPayload += "\",\"udp_ip\":\"";
+    cfgPayload += localIp;
     cfgPayload += "\",\"width\":";
     cfgPayload += String(m_width);
     cfgPayload += ",\"height\":";
@@ -574,7 +646,21 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     cfgPayload += reqLang;
     cfgPayload += "\",\"domains\":{\"";
     cfgPayload += domain;
-    cfgPayload += "\":{\"jacket_panorama\":";
+    cfgPayload += "\":{\"systems\":";
+    appendCsvAsJsonArray(cfgPayload, cfg.systems);
+    cfgPayload += ",\"genres\":";
+    appendCsvAsJsonArray(cfgPayload, cfg.genres);
+    cfgPayload += ",\"decades\":";
+    appendCsvAsJsonArray(cfgPayload, cfg.decades);
+    cfgPayload += ",\"video_type\":\"";
+    cfgPayload += cfg.videoType;
+    cfgPayload += "\",\"show_poster\":";
+    cfgPayload += (cfg.showPoster ? "true" : "false");
+    cfgPayload += ",\"show_synopsis\":";
+    cfgPayload += (cfg.showSynopsis ? "true" : "false");
+    cfgPayload += ",\"text_scroll_speed\":\"";
+    cfgPayload += cfg.textScrollSpeed;
+    cfgPayload += "\",\"jacket_panorama\":";
     cfgPayload += (cfg.jacketPanorama ? "true" : "false");
     cfgPayload += ",\"marquee_panorama\":";
     cfgPayload += (cfg.marqueePanorama ? "true" : "false");
@@ -672,22 +758,34 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 
                                     itemIdStr = String(doc["item_id"] | (cardObj["id"] | ""));
                                     itemHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
-                                    float totDur = cardObj["total_stream_duration_s"] | 8.0f;
+                                    float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
                                     streamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
 
+                                    const char* posterB64 = cardObj["poster_rgb565_b64"] | "";
                                     const char* posterPath = cardObj["poster_rgb565_url"] | "";
                                     size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
-                                    if (cfg.showPoster && m_poster565 && posterPath[0] != '\0' && expectedPosterBytes <= (48U * 64U * 2U)) {
-                                        net::SecureHttpOptions httpOpts;
-                                        httpOpts.ownerId = net::OWNER_SHOWCASE;
-                                        httpOpts.requestTimeoutMs = 2500;
-                                        httpOpts.keepAlive = false;
-                                        String posterUrl = (strncmp(posterPath, "http", 4) == 0)
-                                            ? String(posterPath)
-                                            : (String(cfg.serverUrl) + posterPath);
-                                        auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
-                                        if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
+                                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
+                                        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes) >= expectedPosterBytes) {
                                             nextCard.hasPoster = true;
+                                        } else {
+                                            net::SecureHttpOptions httpOpts;
+                                            httpOpts.ownerId = net::OWNER_SHOWCASE;
+                                            httpOpts.requestTimeoutMs = 2500;
+                                            httpOpts.keepAlive = false;
+                                            String posterUrl;
+                                            if (posterPath[0] != '\0') {
+                                                posterUrl = (strncmp(posterPath, "http", 4) == 0)
+                                                    ? String(posterPath)
+                                                    : (String(cfg.serverUrl) + posterPath);
+                                            } else if (itemIdStr.length() > 0) {
+                                                posterUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/poster/" + itemIdStr + ".rgb565";
+                                            }
+                                            if (posterUrl.length() > 0) {
+                                                auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
+                                                if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
+                                                    nextCard.hasPoster = true;
+                                                }
+                                            }
                                         }
                                     }
 
@@ -716,7 +814,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     }
 
     // Consume-Once: immediately notify server that Card display started (`start_card`)
-    String startCardEv = String("{\"action\":\"start_card\",\"item_id\":\"") + itemIdStr + "\"}";
+    String startCardEv = String("{\"action\":\"start_card\",\"item_id\":\"") + itemIdStr + "\",\"client_ip\":\"" + localIp + "\",\"udp_ip\":\"" + localIp + "\"}";
     sendMqttPublishPacket(mqttCli, eventsTopic, startCardEv.c_str(), false);
 
     // Phase 1: Wait for organic full-synopsis scroll on the Card
@@ -736,7 +834,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     // Phase 2 & 3: Request real-time `ffmpeg -re` UDP stream (`start_stream`) and reassemble `DMDF` chunks
     if (m_wantActive.load(std::memory_order_acquire) && itemHasStream && m_frame565) {
         m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-        String startStreamEv = String("{\"action\":\"start_stream\",\"item_id\":\"") + itemIdStr + "\",\"udp_port\":" + String(localUdpPort) + "}";
+        String startStreamEv = String("{\"action\":\"start_stream\",\"item_id\":\"") + itemIdStr + "\",\"udp_port\":" + String(localUdpPort) + ",\"client_ip\":\"" + localIp + "\",\"udp_ip\":\"" + localIp + "\"}";
         sendMqttPublishPacket(mqttCli, eventsTopic, startStreamEv.c_str(), false);
 
         uint32_t streamT0 = millis();
@@ -813,7 +911,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     // 1. Register client config (`POST /api/v1/{domain}/config`)
     String cfgUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/config";
     String postBody;
-    postBody.reserve(420);
+    postBody.reserve(640);
     postBody += "{\"client_id\":\"";
     postBody += m_sessionId;
     postBody += "\",\"width\":";
@@ -824,7 +922,21 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     postBody += String(pw);
     postBody += ",\"poster_height\":";
     postBody += String(ph);
-    postBody += ",\"jacket_panorama\":";
+    postBody += ",\"systems\":";
+    appendCsvAsJsonArray(postBody, cfg.systems);
+    postBody += ",\"genres\":";
+    appendCsvAsJsonArray(postBody, cfg.genres);
+    postBody += ",\"decades\":";
+    appendCsvAsJsonArray(postBody, cfg.decades);
+    postBody += ",\"video_type\":\"";
+    postBody += cfg.videoType;
+    postBody += "\",\"include_poster\":";
+    postBody += (cfg.showPoster ? "true" : "false");
+    postBody += ",\"include_synopsis\":";
+    postBody += (cfg.showSynopsis ? "true" : "false");
+    postBody += ",\"text_scroll_speed\":\"";
+    postBody += cfg.textScrollSpeed;
+    postBody += "\",\"jacket_panorama\":";
     postBody += (cfg.jacketPanorama ? "true" : "false");
     postBody += ",\"marquee_panorama\":";
     postBody += (cfg.marqueePanorama ? "true" : "false");
@@ -903,15 +1015,20 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     nextCard.hasVideoFrame = false;
 
     JsonObject assetsObj = item["assets"].as<JsonObject>();
+    const char* posterB64 = item["poster_rgb565_b64"] | "";
     const char* posterPath = assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | "");
     size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-    if (cfg.showPoster && m_poster565 && posterPath[0] != '\0' && expectedPosterBytes <= (48U * 64U * 2U)) {
-        String posterUrl = (strncmp(posterPath, "http", 4) == 0)
-            ? String(posterPath)
-            : (String(cfg.serverUrl) + posterPath);
-        auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
-        if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
+    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
+        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes) >= expectedPosterBytes) {
             nextCard.hasPoster = true;
+        } else if (posterPath[0] != '\0') {
+            String posterUrl = (strncmp(posterPath, "http", 4) == 0)
+                ? String(posterPath)
+                : (String(cfg.serverUrl) + posterPath);
+            auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
+            if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
+                nextCard.hasPoster = true;
+            }
         }
     }
 
@@ -1455,7 +1572,7 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
         ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed", "Reading speed for the organic full-synopsis scroll on the Info Card", "normal", false, "", "", "", "slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width cover/jacket from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Marquee / Banner Panorama", "Scroll the arcade marquee or title banner from top to bottom after the jacket", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional gameplay snapshots to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
@@ -1466,10 +1583,10 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("systems", ConfigType::STRING, "Arcade & Console Systems", "Optional system filter across 28 systems (mame,neogeo,cps1,cps2,cps3,fbneo,naomi,atomiswave,model2,model3,snes,nes,megadrive,mastersystem,dreamcast,saturn,pcengine,psx,psp,n64,nds,gb,gbc,gba,atari2600,atari7800,lynx,amiga)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("genres", ConfigType::STRING, "Game Genres", "Optional genre filter across 16 categories (action,platformer,fighting,beat-em-up,shoot-em-up,run-and-gun,rpg,jrpg,adventure,racing,sports,puzzle,strategy,simulation,horror,pinball)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("decades", ConfigType::STRING, "Decades", "Optional decade filter (1970s,1980s,1990s,2000s)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept)
+        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("systems", ConfigType::LIST, "Arcade & Console Systems", "Select one or more systems dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
+        ConfigField("genres", ConfigType::LIST, "Game Genres", "Select one or more genres dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
+        ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new RetroGamesEngine()); };
     return desc;
@@ -1500,7 +1617,7 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed", "Reading speed for the organic full-synopsis scroll on the Info Card", "normal", false, "", "", "", "slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width movie poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the movie backdrop banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional movie stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
@@ -1511,9 +1628,9 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("genres", ConfigType::STRING, "Movie Genres", "Optional genre filter across 23 categories (action,adventure,animation,biography,comedy,crime,cyberpunk,documentary,drama,family,fantasy,film-noir,history,horror,martial-arts,musical,mystery,post-apocalyptic,romance,sci-fi,sport,thriller,war,western)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("decades", ConfigType::STRING, "Decades", "Optional decade filter (1970s,1980s,1990s,2000s,2010s,2020s)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("genres", ConfigType::LIST, "Movie Genres", "Select one or more movie genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
+        ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (trailer,scene,any)", "any", false, "", "", "", "any,trailer,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new MovieShowcaseEngine()); };
@@ -1545,7 +1662,7 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed", "Reading speed for the organic full-synopsis scroll on the Info Card", "normal", false, "", "", "", "slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width series poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the series banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional episode stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
@@ -1556,9 +1673,9 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("genres", ConfigType::STRING, "Series Genres", "Optional genre filter across 24 categories (action,adventure,animation,anime,comedy,crime,cyberpunk,documentary,drama,espionage,family,fantasy,history,horror,legal,medical,mystery,political,romance,sci-fi,sitcom,supernatural,thriller,war,western)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("decades", ConfigType::STRING, "Decades", "Optional decade filter (1980s,1990s,2000s,2010s,2020s)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("genres", ConfigType::LIST, "Series Genres", "Select one or more series genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
+        ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,trailer,any)", "any", false, "", "", "", "any,opening,trailer", "", false, "", ValidationPolicy::FallbackDefault)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new SeriesShowcaseEngine()); };
@@ -1590,7 +1707,7 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed", "Reading speed for the organic full-synopsis scroll on the Info Card", "normal", false, "", "", "", "slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width anime key visual from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the anime banner from top to bottom after the key visual", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional anime stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
@@ -1601,9 +1718,9 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("genres", ConfigType::STRING, "Anime Genres", "Optional genre filter across 31 categories (action,adventure,comedy,drama,fantasy,sci-fi,mystery,romance,supernatural,suspense,horror,Sports,award-winning,gourmet,slice-of-life,mecha,cyberpunk,isekai,mahou-shoujo,martial-arts,military,music,mythology,parody,psychological,racing,samurai,school,space,super-power,vampire,shonen,shojo,seinen,josei)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("decades", ConfigType::STRING, "Decades", "Optional decade filter (1970s,1980s,1990s,2000s,2010s,2020s)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
+        ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("genres", ConfigType::LIST, "Anime Genres", "Select one or more anime genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
+        ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
         ConfigField("video_type", ConfigType::ENUM, "Clip Type", "Preferred clip type (opening,ending,scene,any)", "opening", false, "", "", "", "any,opening,ending,scene", "", false, "", ValidationPolicy::FallbackDefault)
     };
     desc.factory = []() { return std::unique_ptr<IEngine>(new AnimeShowcaseEngine()); };

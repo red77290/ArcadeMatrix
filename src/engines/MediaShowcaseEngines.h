@@ -59,7 +59,7 @@ public:
 
 protected:
     static constexpr size_t MAX_URL_LEN = 96;
-    static constexpr size_t MAX_FILTER_LEN = 64;
+    static constexpr size_t MAX_FILTER_LEN = 128;
     static constexpr size_t MAX_TITLE_LEN = 64;
     static constexpr size_t MAX_BADGE_LEN = 12;
     static constexpr size_t MAX_META_LEN = 16;
@@ -77,7 +77,7 @@ protected:
         char mqttBrokerSource[12] = "global";
         char mqttCustomUrl[MAX_URL_LEN] = "";
         char lang[8] = "system";
-        char textScrollSpeed[12] = "normal";
+        char textScrollSpeed[12] = "4";
         char videoMode[16] = "auto_action";
         char systems[MAX_FILTER_LEN] = "";
         char genres[MAX_FILTER_LEN] = "";
