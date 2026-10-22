@@ -185,6 +185,7 @@ protected:
     void runWorkerLoop();
     bool runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
     void runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
+    bool streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath);
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
     void drawCardPhase(IDrawingSurface* s, const CardSnapshot& card, uint32_t elapsedMs);
     void drawScrollingLine(IDrawingSurface* s, const char* text, int minX, int maxX, int y, uint16_t color, uint32_t elapsedMs);

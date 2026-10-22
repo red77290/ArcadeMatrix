@@ -926,6 +926,11 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                     size_t payloadBytes = static_cast<size_t>(rLen - 10);
 
                     if (seq != curFrameSeq) {
+                        if (chunkMask != 0) {
+                            m_seq.fetch_add(1, std::memory_order_acq_rel);
+                            m_liveCard.hasVideoFrame = true;
+                            m_seq.fetch_add(1, std::memory_order_release);
+                        }
                         curFrameSeq = seq;
                         chunkMask = 0;
                     }
@@ -947,15 +952,19 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 if (lastUdpPktMs > 0 && (nowMs - lastUdpPktMs) > 1500U) {
                     break; // Stream completed or server stopped
                 }
-                if (lastUdpPktMs == 0 && (nowMs - streamT0) > 3500U) {
-                    break; // Initial UDP grace timeout
+                if (lastUdpPktMs == 0 && (nowMs - streamT0) > 850U) {
+                    // Docker Desktop / Rancher Desktop VM NAT blocked container-to-LAN UDP:
+                    // seamlessly fall back to streaming the unified `.rgb565.stream` (`DMDS`) over HTTP TCP!
+                    String fallbackPath = String("/api/v1/") + domain + "/stream/" + itemIdStr + ".rgb565.stream?purge=false";
+                    streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath.c_str());
+                    break;
                 }
                 vTaskDelay(pdMS_TO_TICKS(2));
             }
         }
     }
 
-    if (!m_wantActive.load(std::memory_order_acquire) && itemIdStr.length() > 0) {
+    if (itemIdStr.length() > 0) {
         String stopEv = String("{\"action\":\"stop_stream\",\"item_id\":\"") + itemIdStr + "\"}";
         sendMqttPublishPacket(mqttCli, eventsTopic, stopEv.c_str(), false);
     }
@@ -1135,49 +1144,67 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
     const char* unifiedStreamPath = assetsObj["unified_stream_rgb565"] | "";
     if (m_wantActive.load(std::memory_order_acquire) && m_frame565 && unifiedStreamPath[0] != '\0') {
-        String fullUrl = (strncmp(unifiedStreamPath, "http", 4) == 0)
-            ? String(unifiedStreamPath)
-            : (String(cfg.serverUrl) + unifiedStreamPath);
-        auto sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
-        if (sResp.ok()) {
-            Stream& st = sResp.stream();
-            uint8_t hdr[16];
-            if (readExactFromStream(st, hdr, sizeof(hdr), m_wantActive) && memcmp(hdr, "DMDS", 4) == 0) {
-                uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
-                uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
-                uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
-                uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
-                uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
-                uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
-                size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
-                size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
-                if (frameBytes > 0 && frameBytes <= maxBufBytes && totalFrames > 0) {
-                    m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-                    for (uint16_t f = 0; f < totalFrames; ++f) {
-                        if (!m_wantActive.load(std::memory_order_acquire)) break;
-                        uint32_t fStart = millis();
-                        if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
-                            break;
-                        }
-                        m_seq.fetch_add(1, std::memory_order_acq_rel);
-                        m_liveCard.hasVideoFrame = true;
-                        m_seq.fetch_add(1, std::memory_order_release);
-#if defined(ESP32)
-                        uint32_t took = millis() - fStart;
-                        if (took < frameDelayMs) {
-                            vTaskDelay(pdMS_TO_TICKS(frameDelayMs - took));
-                        } else {
-                            vTaskDelay(pdMS_TO_TICKS(1));
-                        }
-#endif
-                    }
-                }
-            }
-        }
+        streamUnifiedRgb565Http(cfg.serverUrl, unifiedStreamPath);
     }
 
     clearLiveCardState();
     m_turnDone.store(true, std::memory_order_release);
+}
+
+bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
+    if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565) {
+        return false;
+    }
+    net::SecureHttpOptions httpOpts;
+    httpOpts.ownerId = net::OWNER_SHOWCASE;
+    httpOpts.requestTimeoutMs = 4500;
+    httpOpts.keepAlive = false;
+
+    String fullUrl = (strncmp(streamPath, "http", 4) == 0)
+        ? String(streamPath)
+        : (String(serverUrl) + streamPath);
+    auto sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
+    if (!sResp.ok()) {
+        return false;
+    }
+
+    Stream& st = sResp.stream();
+    uint8_t hdr[16];
+    if (!readExactFromStream(st, hdr, sizeof(hdr), m_wantActive) || memcmp(hdr, "DMDS", 4) != 0) {
+        return false;
+    }
+    uint8_t fps = hdr[5] > 0 ? hdr[5] : 15;
+    uint16_t w = static_cast<uint16_t>(hdr[6] | (hdr[7] << 8));
+    uint16_t h = static_cast<uint16_t>(hdr[8] | (hdr[9] << 8));
+    uint16_t totalFrames = static_cast<uint16_t>(hdr[10] | (hdr[11] << 8));
+    uint16_t delayMs = static_cast<uint16_t>(hdr[12] | (hdr[13] << 8));
+    uint32_t frameDelayMs = (delayMs > 0) ? delayMs : (1000U / fps);
+    size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2U;
+    size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
+    if (frameBytes == 0 || frameBytes > maxBufBytes || totalFrames == 0) {
+        return false;
+    }
+
+    m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
+    for (uint16_t f = 0; f < totalFrames; ++f) {
+        if (!m_wantActive.load(std::memory_order_acquire)) break;
+        uint32_t fStart = millis();
+        if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
+            break;
+        }
+        m_seq.fetch_add(1, std::memory_order_acq_rel);
+        m_liveCard.hasVideoFrame = true;
+        m_seq.fetch_add(1, std::memory_order_release);
+#if defined(ESP32)
+        uint32_t took = millis() - fStart;
+        if (took < frameDelayMs) {
+            vTaskDelay(pdMS_TO_TICKS(frameDelayMs - took));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+#endif
+    }
+    return true;
 }
 
 void MediaShowcaseBase::update(EngineContext* context) {
