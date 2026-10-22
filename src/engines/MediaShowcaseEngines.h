@@ -57,6 +57,27 @@ public:
     bool selfPaced() const override { return true; }
     bool isFinished() const override;
 
+    /**
+     * @brief Zero-copy in-place parser for an MQTT `ready` JSON payload (`dmd_showcase/clients/{id}/{domain}/ready`).
+     *        Exposed for deterministic native/embedded unit testing of large base64 poster payloads
+     *        and duplicate/aliased stream metadata keys (`stream_fps`/`fps`, `stream_duration_s`/`total_stream_duration_s`).
+     * @param jsonBuf Mutable null-terminated JSON buffer (modified in-place by ArduinoJson zero-copy mode).
+     * @param showPoster Whether inline `poster_rgb565_b64` should be decoded into `m_poster565`.
+     * @param outItemId Receives the parsed `item_id` (or `card.id`).
+     * @param outHasStream Receives true if `has_panoramas` or `has_video` is set.
+     * @param outStreamMaxMs Receives the computed stream watchdog timeout in milliseconds.
+     * @param outExplicitWarming Receives true if the payload is a valid `{"ready": false}` message.
+     * @return true if a valid `{"ready": true, "card": {...}}` item was parsed into `m_liveCard`.
+     */
+    bool parseReadyPayloadInPlace(
+        char* jsonBuf,
+        bool showPoster,
+        String& outItemId,
+        bool& outHasStream,
+        uint32_t& outStreamMaxMs,
+        bool& outExplicitWarming
+    );
+
 protected:
     static constexpr size_t MAX_URL_LEN = 96;
     static constexpr size_t MAX_FILTER_LEN = 128;
