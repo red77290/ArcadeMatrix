@@ -167,6 +167,19 @@ bool readExactFromStream(Stream& st, uint8_t* dst, size_t len, const std::atomic
     return true;
 }
 
+bool drainFromStream(Stream& st, size_t len, const std::atomic<bool>& wantActive, uint32_t timeoutMs = 1500) {
+    uint8_t sink[64];
+    size_t rem = len;
+    while (rem > 0) {
+        size_t chunk = (rem < sizeof(sink)) ? rem : sizeof(sink);
+        if (!readExactFromStream(st, sink, chunk, wantActive, timeoutMs)) {
+            return false;
+        }
+        rem -= chunk;
+    }
+    return true;
+}
+
 #if defined(ESP32) && !defined(UNIT_TEST)
 size_t encodeMqttRemainingLength(uint8_t* out, size_t remLen) {
     size_t idx = 0;
@@ -571,6 +584,74 @@ void MediaShowcaseBase::runWorkerLoop() {
     }
 }
 
+bool MediaShowcaseBase::parseReadyPayloadInPlace(
+    char* jsonBuf,
+    bool showPoster,
+    String& outItemId,
+    bool& outHasStream,
+    uint32_t& outStreamMaxMs,
+    bool& outExplicitWarming
+) {
+    outExplicitWarming = false;
+    if (!jsonBuf || jsonBuf[0] == '\0') return false;
+
+    // ArduinoJson v6 zero-copy mode: passing mutable `char*` avoids duplicating
+    // large strings (`poster_rgb565_b64`, `synopsis`) inside the JsonDocument pool.
+    DynamicJsonDocument doc(2048);
+    if (deserializeJson(doc, jsonBuf) != DeserializationError::Ok) {
+        return false;
+    }
+
+    bool rdy = doc["ready"] | false;
+    if (!rdy) {
+        outExplicitWarming = true;
+        return false;
+    }
+
+    JsonObject cardObj = doc["card"].as<JsonObject>();
+    if (cardObj.isNull()) {
+        outExplicitWarming = true;
+        return false;
+    }
+
+    const char* domain = domainSlug();
+    CardSnapshot nextCard;
+    copySafeStr(nextCard.title, sizeof(nextCard.title), cardObj["title"] | "UNKNOWN");
+    copySafeStr(nextCard.year, sizeof(nextCard.year), cardObj["year"] | "");
+    const char* badge = cardObj["badge"] | domain;
+    copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
+    copySafeStr(nextCard.rating, sizeof(nextCard.rating), cardObj["rating"] | "");
+    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
+    nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
+    computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
+    nextCard.hasData = true;
+    nextCard.hasPoster = false;
+    nextCard.hasVideoFrame = false;
+
+    const char* rawItemId = doc["item_id"] | (cardObj["item_id"] | (cardObj["id"] | ""));
+    outItemId = String(rawItemId);
+    outHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
+    float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
+    if (totDur < 2.0f) totDur = 2.0f;
+    outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+
+    const char* posterB64 = cardObj["poster_rgb565_b64"] | "";
+    size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
+    if (showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
+        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+            nextCard.hasPoster = true;
+        }
+    }
+
+    m_seq.fetch_add(1, std::memory_order_acq_rel);
+    m_liveCard = nextCard;
+    m_seq.fetch_add(1, std::memory_order_release);
+    m_statusState.store(0, std::memory_order_release);
+    m_phaseStartedAtMs = millis();
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+    return true;
+}
+
 bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
 #if defined(ESP32) && !defined(UNIT_TEST)
     char mqttHost[64] = "";
@@ -623,10 +704,6 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     snprintf(eventsTopic, sizeof(eventsTopic), "dmd_showcase/clients/%s/%s/events", m_sessionId, domain);
     snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
 
-    sendMqttSubscribePacket(mqttCli, 1, statusTopic);
-    sendMqttSubscribePacket(mqttCli, 2, readyTopic);
-    sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
-
     String localIp = WiFi.localIP().toString();
     String cfgPayload;
     cfgPayload.reserve(640);
@@ -677,130 +754,116 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     cfgPayload += "\",\"color_boost\":";
     cfgPayload += (cfg.colorBoost ? "true" : "false");
     cfgPayload += "}}}";
+
+    // Publish retained client config FIRST so the Showcase orchestrator can clean up
+    // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
     sendMqttPublishPacket(mqttCli, configTopic, cfgPayload.c_str(), true);
+    sendMqttSubscribePacket(mqttCli, 1, statusTopic);
+    sendMqttSubscribePacket(mqttCli, 2, readyTopic);
+    sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
 
     // Wait up to 1800ms for retained `ready` message
     uint32_t waitReadyStart = millis();
     bool gotReadyItem = false;
+    bool sawReadyFalse = false;
+    uint32_t readyFalseAtMs = 0;
     String itemIdStr;
     bool itemHasStream = false;
     uint32_t streamMaxMs = static_cast<uint32_t>(cfg.videoMaxDurationS + 10) * 1000U;
 
     while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < 1800U && !gotReadyItem) {
+        if (sawReadyFalse && (millis() - readyFalseAtMs) >= 600U) {
+            // Allow 600ms after an initial `ready: false` in case the server is re-publishing
+            // `ready: true` in response to our `config` message after a mid-broadcast reboot.
+            break;
+        }
         if (mqttCli.available() >= 2) {
             uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
             uint32_t remLen = 0;
             uint32_t mult = 1;
             for (int i = 0; i < 4; ++i) {
-                while (!mqttCli.available() && m_wantActive.load(std::memory_order_acquire)) {
-                    vTaskDelay(pdMS_TO_TICKS(1));
-                }
-                int b = mqttCli.read();
-                if (b < 0) break;
+                uint8_t b = 0;
+                if (!readExactFromStream(mqttCli, &b, 1, m_wantActive, 1000)) break;
                 remLen += static_cast<uint32_t>(b & 0x7F) * mult;
                 mult *= 128;
                 if ((b & 0x80) == 0) break;
             }
-            if ((fixedHdr & 0xF0) == 0x30 && remLen >= 2 && remLen < 4096) {
-                uint8_t tLenBe[2];
-                if (readExactFromStream(mqttCli, tLenBe, 2, m_wantActive, 1000)) {
-                    uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
-                    char topicBuf[128] = "";
-                    size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
-                    if (toReadT > 0) readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
-                    topicBuf[toReadT] = '\0';
-                    size_t payloadLen = remLen - 2 - toReadT;
-                    String jsonStr;
-                    jsonStr.reserve(payloadLen + 1);
-                    for (size_t k = 0; k < payloadLen; ++k) {
-                        int c = mqttCli.read();
-                        if (c >= 0) jsonStr += static_cast<char>(c);
-                    }
-                    DynamicJsonDocument doc(3072);
-                    if (deserializeJson(doc, jsonStr) == DeserializationError::Ok) {
-                        if (strcmp(topicBuf, statusTopic) == 0) {
-                            bool online = doc["online"] | false;
-                            if (!online) {
-                                m_statusState.store(2, std::memory_order_release);
-                                clearLiveCardState();
-                                if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                                    m_skipTurnImmediately.store(true, std::memory_order_release);
-                                }
-                                udp.stop();
-                                mqttCli.stop();
-                                return true;
-                            }
-                        } else if (strcmp(topicBuf, readyTopic) == 0) {
-                            bool rdy = doc["ready"] | false;
-                            if (!rdy) {
-                                m_statusState.store(1, std::memory_order_release);
-                                if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-                                    m_skipTurnImmediately.store(true, std::memory_order_release);
-                                    udp.stop();
-                                    mqttCli.stop();
-                                    return true;
-                                }
-                            } else {
-                                JsonObject cardObj = doc["card"].as<JsonObject>();
-                                if (!cardObj.isNull()) {
-                                    CardSnapshot nextCard;
-                                    copySafeStr(nextCard.title, sizeof(nextCard.title), cardObj["title"] | "UNKNOWN");
-                                    copySafeStr(nextCard.year, sizeof(nextCard.year), cardObj["year"] | "");
-                                    const char* badge = cardObj["badge"] | domain;
-                                    copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
-                                    copySafeStr(nextCard.rating, sizeof(nextCard.rating), cardObj["rating"] | "");
-                                    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
-                                    nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
-                                    computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
-                                    nextCard.hasData = true;
-                                    nextCard.hasPoster = false;
-                                    nextCard.hasVideoFrame = false;
+            // Non-PUBLISH packets (e.g. SUBACK 0x90, PINGRESP 0xD0) or oversized packets
+            // MUST drain their `remLen` payload bytes to preserve MQTT TCP stream framing!
+            if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= 14336) {
+                if (remLen > 0) {
+                    drainFromStream(mqttCli, remLen, m_wantActive, 1500);
+                }
+                continue;
+            }
 
-                                    itemIdStr = String(doc["item_id"] | (cardObj["id"] | ""));
-                                    itemHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
-                                    float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
-                                    streamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+            uint8_t tLenBe[2];
+            if (!readExactFromStream(mqttCli, tLenBe, 2, m_wantActive, 1000)) {
+                break;
+            }
+            uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
+            if (static_cast<uint32_t>(tLen) + 2U > remLen) {
+                drainFromStream(mqttCli, remLen - 2U, m_wantActive, 1000);
+                continue;
+            }
+            char topicBuf[128] = "";
+            size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
+            if (toReadT > 0) {
+                readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
+            }
+            topicBuf[toReadT] = '\0';
+            if (tLen > toReadT) {
+                drainFromStream(mqttCli, tLen - toReadT, m_wantActive, 1000);
+            }
+            size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
+            char* payloadBuf = nullptr;
+            if (m_hasPsram) {
+                payloadBuf = static_cast<char*>(heap_caps_malloc(payloadLen + 1U, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            }
+            if (!payloadBuf) {
+                payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
+            }
+            if (!payloadBuf) {
+                drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
+                continue;
+            }
+            if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
+                free(payloadBuf);
+                break;
+            }
+            payloadBuf[payloadLen] = '\0';
 
-                                    const char* posterB64 = cardObj["poster_rgb565_b64"] | "";
-                                    const char* posterPath = cardObj["poster_rgb565_url"] | "";
-                                    size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
-                                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
-                                        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes) >= expectedPosterBytes) {
-                                            nextCard.hasPoster = true;
-                                        } else {
-                                            net::SecureHttpOptions httpOpts;
-                                            httpOpts.ownerId = net::OWNER_SHOWCASE;
-                                            httpOpts.requestTimeoutMs = 2500;
-                                            httpOpts.keepAlive = false;
-                                            String posterUrl;
-                                            if (posterPath[0] != '\0') {
-                                                posterUrl = (strncmp(posterPath, "http", 4) == 0)
-                                                    ? String(posterPath)
-                                                    : (String(cfg.serverUrl) + posterPath);
-                                            } else if (itemIdStr.length() > 0) {
-                                                posterUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/poster/" + itemIdStr + ".rgb565";
-                                            }
-                                            if (posterUrl.length() > 0) {
-                                                auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
-                                                if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
-                                                    nextCard.hasPoster = true;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    m_seq.fetch_add(1, std::memory_order_acq_rel);
-                                    m_liveCard = nextCard;
-                                    m_seq.fetch_add(1, std::memory_order_release);
-                                    m_statusState.store(0, std::memory_order_release);
-                                    m_phaseStartedAtMs = millis();
-                                    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
-                                    gotReadyItem = true;
-                                }
-                            }
+            if (strcmp(topicBuf, statusTopic) == 0) {
+                DynamicJsonDocument doc(256);
+                if (deserializeJson(doc, payloadBuf) == DeserializationError::Ok) {
+                    bool online = doc["online"] | false;
+                    if (!online) {
+                        free(payloadBuf);
+                        m_statusState.store(2, std::memory_order_release);
+                        clearLiveCardState();
+                        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                            m_skipTurnImmediately.store(true, std::memory_order_release);
                         }
+                        udp.stop();
+                        mqttCli.stop();
+                        return true;
                     }
                 }
+                free(payloadBuf);
+            } else if (strcmp(topicBuf, readyTopic) == 0) {
+                bool explicitWarming = false;
+                if (parseReadyPayloadInPlace(payloadBuf, cfg.showPoster, itemIdStr, itemHasStream, streamMaxMs, explicitWarming)) {
+                    gotReadyItem = true;
+                } else if (explicitWarming) {
+                    m_statusState.store(1, std::memory_order_release);
+                    if (!sawReadyFalse) {
+                        sawReadyFalse = true;
+                        readyFalseAtMs = millis();
+                    }
+                }
+                free(payloadBuf);
+            } else {
+                free(payloadBuf);
             }
         } else {
             vTaskDelay(pdMS_TO_TICKS(15));
@@ -810,6 +873,13 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     if (!gotReadyItem) {
         udp.stop();
         mqttCli.stop();
+        if (sawReadyFalse) {
+            m_statusState.store(1, std::memory_order_release);
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+            return true;
+        }
         return false;
     }
 
@@ -883,6 +953,11 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 vTaskDelay(pdMS_TO_TICKS(2));
             }
         }
+    }
+
+    if (!m_wantActive.load(std::memory_order_acquire) && itemIdStr.length() > 0) {
+        String stopEv = String("{\"action\":\"stop_stream\",\"item_id\":\"") + itemIdStr + "\"}";
+        sendMqttPublishPacket(mqttCli, eventsTopic, stopEv.c_str(), false);
     }
 
     udp.stop();
@@ -982,7 +1057,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         return;
     }
 
-    DynamicJsonDocument nextDoc(4096);
+    DynamicJsonDocument nextDoc(m_hasPsram ? 14336 : 6144);
     if (deserializeJson(nextDoc, nextResp.stream()) != DeserializationError::Ok) {
         m_statusState.store(2, std::memory_order_release);
         clearLiveCardState();
@@ -1019,7 +1094,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     const char* posterPath = assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | "");
     size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
     if (cfg.showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
-        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes) >= expectedPosterBytes) {
+        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
             nextCard.hasPoster = true;
         } else if (posterPath[0] != '\0') {
             String posterUrl = (strncmp(posterPath, "http", 4) == 0)
