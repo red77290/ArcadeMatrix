@@ -4,6 +4,7 @@
 #include "engines/VisualizerEngine.h"
 #include "engines/TempEngine.h"
 #include "engines/MessageEngine.h"
+#include "engines/MediaShowcaseEngines.h"
 #include "engines/clocks/ClockFaceFont.h"
 #include "core/I18n.h"
 
@@ -186,6 +187,35 @@ void test_date_line_follows_the_language() {
     TEST_ASSERT_EQUAL_STRING("LUN 28 SEP", line);
 }
 
+/**
+ * @brief Verifies zero-copy MQTT `ready` payload parsing for MediaShowcaseBase (including
+ *        both `stream_duration_s`/`total_stream_duration_s` and `stream_fps`/`fps` keys).
+ */
+void test_media_showcase_ready_payload_zero_copy_parsing() {
+    RetroGamesEngine engine;
+    String itemId;
+    bool hasStream = false;
+    uint32_t streamMaxMs = 0;
+    bool explicitWarming = false;
+
+    char warmingBuf[] = "{\"ready\":false,\"item_id\":\"pkg_1\"}";
+    TEST_ASSERT_FALSE(engine.parseReadyPayloadInPlace(warmingBuf, false, itemId, hasStream, streamMaxMs, explicitWarming));
+    TEST_ASSERT_TRUE(explicitWarming);
+
+    char readyBuf[] =
+        "{\"ready\":true,\"item_id\":\"pkg_games_defender\",\"domain\":\"games\",\"card\":{"
+        "\"id\":\"pkg_games_defender\",\"item_id\":\"pkg_games_defender\",\"title\":\"Defender of the Crown\","
+        "\"year\":\"1987\",\"badge\":\"NES\",\"badge_color\":\"#D32F2F\",\"subtitle\":\"Plateforme\","
+        "\"rating\":\"8.7\",\"synopsis\":\"Defender of the Crown synopsis...\","
+        "\"has_panoramas\":true,\"has_video\":true,\"stream_fps\":28,\"fps\":28,"
+        "\"stream_duration_s\":20.5,\"total_stream_duration_s\":20.5}}";
+    TEST_ASSERT_TRUE(engine.parseReadyPayloadInPlace(readyBuf, false, itemId, hasStream, streamMaxMs, explicitWarming));
+    TEST_ASSERT_FALSE(explicitWarming);
+    TEST_ASSERT_EQUAL_STRING("pkg_games_defender", itemId.c_str());
+    TEST_ASSERT_TRUE(hasStream);
+    TEST_ASSERT_EQUAL_UINT32(24500U, streamMaxMs);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -196,6 +226,7 @@ void setup() {
     RUN_TEST(test_glow_modes_resolve_colours);
     RUN_TEST(test_spoken_time_reads_as_words);
     RUN_TEST(test_date_line_follows_the_language);
+    RUN_TEST(test_media_showcase_ready_payload_zero_copy_parsing);
     UNITY_END();
 }
 
