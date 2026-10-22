@@ -5969,6 +5969,182 @@ function buildMultiSelectGroup(opts, targetFieldId, instId, initVal) {
   return container;
 }
 
+const _showcaseReferentialCache = new Map();
+
+async function fetchShowcaseReferential(serverUrl, endpointPath, lang, forceRefresh = false) {
+  let base = String(serverUrl || 'http://127.0.0.1:8080').trim().replace(/\/+$/, '');
+  if (!base.startsWith('http://') && !base.startsWith('https://')) {
+    base = 'http://' + base;
+  }
+  const cleanLang = (!lang || lang === 'system') ? (localStorage.getItem('lang') || 'en') : lang;
+  const fullUrl = `${base}${endpointPath}?lang=${encodeURIComponent(cleanLang)}`;
+  if (!forceRefresh && _showcaseReferentialCache.has(fullUrl)) {
+    return _showcaseReferentialCache.get(fullUrl);
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(fullUrl, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _showcaseReferentialCache.set(fullUrl, data);
+    return data;
+  } catch (err) {
+    console.warn(`[Showcase] Could not fetch referential from ${fullUrl}:`, err);
+    return null;
+  }
+}
+
+function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
+  const instId = instance.instance_id;
+  const targetFieldId = field.id;
+  const container = document.createElement('div');
+  container.className = 'showcase-referential-widget';
+  container.style = 'margin-top: 0.25rem; width: 100%;';
+
+  const hiddenInput = document.createElement('input');
+  hiddenInput.type = 'hidden';
+  hiddenInput.id = `cfg-dyn-${instId}-${targetFieldId}`;
+  const cleanInit = (initVal && String(initVal).toLowerCase() !== 'all') ? String(initVal).trim() : '';
+  hiddenInput.value = cleanInit;
+  container.appendChild(hiddenInput);
+
+  const headerRow = document.createElement('div');
+  headerRow.style = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; gap: 0.5rem; flex-wrap: wrap;';
+
+  const statusSpan = document.createElement('span');
+  statusSpan.style = 'font-size: 0.75rem; color: var(--text-muted, #94a3b8);';
+  statusSpan.innerText = '⏳ Loading Showcase referential...';
+  headerRow.appendChild(statusSpan);
+
+  const btnGroup = document.createElement('div');
+  btnGroup.style = 'display: flex; gap: 0.35rem;';
+
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'btn btn-secondary btn-sm';
+  clearBtn.style = 'font-size: 0.7rem; padding: 0.15rem 0.45rem;';
+  clearBtn.innerText = 'All (No filter)';
+
+  const syncBtn = document.createElement('button');
+  syncBtn.type = 'button';
+  syncBtn.className = 'btn btn-secondary btn-sm';
+  syncBtn.style = 'font-size: 0.7rem; padding: 0.15rem 0.45rem;';
+  syncBtn.innerText = '🔄 Sync';
+
+  btnGroup.appendChild(clearBtn);
+  btnGroup.appendChild(syncBtn);
+  headerRow.appendChild(btnGroup);
+  container.appendChild(headerRow);
+
+  const tagContainer = document.createElement('div');
+  tagContainer.className = 'rotation-toggles';
+  tagContainer.style = 'display: flex; gap: 0.35rem; flex-wrap: wrap; max-height: 190px; overflow-y: auto; padding: 0.35rem; background: rgba(0,0,0,0.2); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);';
+  container.appendChild(tagContainer);
+
+  function getServerUrlAndLang() {
+    const srvEl = formGrid.querySelector(`#cfg-dyn-${instId}-server_url`);
+    const langEl = formGrid.querySelector(`#cfg-dyn-${instId}-lang`);
+    const srv = srvEl ? srvEl.value : ((instance.config && instance.config.server_url) || 'http://127.0.0.1:8080');
+    const lg = langEl ? langEl.value : ((instance.config && instance.config.lang) || 'system');
+    return { srv, lg };
+  }
+
+  function getSelectedSystems() {
+    if (targetFieldId === 'systems') return [];
+    const sysInput = formGrid.querySelector(`#cfg-dyn-${instId}-systems`);
+    if (!sysInput || !sysInput.value || sysInput.value === 'all') return [];
+    return sysInput.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
+
+  function syncHiddenFromCheckboxes() {
+    const checked = Array.from(tagContainer.querySelectorAll(`input.multi-cb-${instId}-${targetFieldId}:checked`)).map(cb => cb.value);
+    hiddenInput.value = checked.join(',');
+    hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+    if (targetFieldId === 'systems') {
+      formGrid.dispatchEvent(new CustomEvent('showcase-systems-changed'));
+    }
+  }
+
+  clearBtn.onclick = () => {
+    tagContainer.querySelectorAll(`input.multi-cb-${instId}-${targetFieldId}`).forEach(cb => { cb.checked = false; });
+    syncHiddenFromCheckboxes();
+  };
+
+  async function renderTags(forceRefresh = false) {
+    const { srv, lg } = getServerUrlAndLang();
+    statusSpan.innerText = '⏳ Syncing with Showcase server...';
+    const data = await fetchShowcaseReferential(srv, field.options_endpoint, lg, forceRefresh);
+    tagContainer.innerHTML = '';
+
+    if (!data) {
+      statusSpan.innerText = '⚠️ Server unreachable — check Showcase Server URL and click Sync';
+      return;
+    }
+
+    let items = Array.isArray(data[targetFieldId]) ? data[targetFieldId] : [];
+    const selectedSystems = getSelectedSystems();
+    if (selectedSystems.length > 0 && Array.isArray(data.systems) && (targetFieldId === 'genres' || targetFieldId === 'decades')) {
+      const allowedSet = new Set();
+      data.systems.forEach(sysObj => {
+        if (selectedSystems.includes(String(sysObj.id).toLowerCase())) {
+          const relList = targetFieldId === 'genres' ? sysObj.supported_genres : sysObj.supported_decades;
+          if (Array.isArray(relList)) {
+            relList.forEach(id => allowedSet.add(String(id).toLowerCase()));
+          }
+        }
+      });
+      if (allowedSet.size > 0) {
+        items = items.filter(it => allowedSet.has(String(it.id).toLowerCase()));
+      }
+    }
+
+    const currentTokens = hiddenInput.value
+      ? hiddenInput.value.split(',').map(s => s.trim().toLowerCase()).filter(s => s && s !== 'all')
+      : [];
+
+    items.forEach(item => {
+      const itemId = String(item.id || item.value || '').trim();
+      if (!itemId) return;
+      const itemLabel = item.label || itemId;
+      const isChecked = currentTokens.includes(itemId.toLowerCase());
+      const lbl = document.createElement('label');
+      lbl.className = 'toggle-btn';
+      lbl.title = item.category ? `${itemLabel} (${item.category})` : itemLabel;
+      lbl.innerHTML = `<input type="checkbox" value="${itemId}" class="multi-cb-${instId}-${targetFieldId}" style="display:none;" ${isChecked ? 'checked' : ''}> <span class="toggle-label">${itemLabel}</span>`;
+      lbl.querySelector('input[type="checkbox"]').addEventListener('change', syncHiddenFromCheckboxes);
+      tagContainer.appendChild(lbl);
+    });
+
+    const validIds = new Set(items.map(i => String(i.id || i.value || '').toLowerCase()));
+    const pruned = currentTokens.filter(t => validIds.has(t));
+    if (pruned.length !== currentTokens.length) {
+      hiddenInput.value = pruned.join(',');
+    }
+
+    statusSpan.innerText = items.length > 0
+      ? `✅ ${items.length} available (${selectedSystems.length > 0 ? 'filtered by system' : 'all systems'})`
+      : 'ℹ️ No options available';
+  }
+
+  syncBtn.onclick = () => renderTags(true);
+
+  if (targetFieldId === 'genres' || targetFieldId === 'decades') {
+    formGrid.addEventListener('showcase-systems-changed', () => renderTags(false));
+  }
+
+  setTimeout(() => {
+    const srvEl = formGrid.querySelector(`#cfg-dyn-${instId}-server_url`);
+    const langEl = formGrid.querySelector(`#cfg-dyn-${instId}-lang`);
+    if (srvEl) srvEl.addEventListener('change', () => renderTags(true));
+    if (langEl) langEl.addEventListener('change', () => renderTags(true));
+    renderTags(false);
+  }, 30);
+
+  return container;
+}
+
 // Helper: Build Generic Asset Upload Widget for ConfigType::FILE_ASSET fields
 function buildFileAssetWidget(field, instId, initVal) {
   const container = document.createElement('div');
@@ -6474,6 +6650,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
                   if (String(opt.value) === String(currentVal)) option.selected = true;
                   input.appendChild(option);
               });
+          } else if (field.options_endpoint && field.options_endpoint.startsWith('/api/v1/')) {
+             input = buildShowcaseReferentialWidget(field, instance, formGrid, currentVal);
           } else if (field.options_endpoint) {
              const data = await fetchCachedEndpoint(field.options_endpoint);
              const normalizedOpts = parseOptions(data);
@@ -6639,6 +6817,8 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
                     if (checkboxes.length > 0) {
                         const vals = Array.from(checkboxes).map(cb => cb.value);
                         payload.config[field.id] = vals.join(',');
+                    } else if (field.options_endpoint && field.options_endpoint.startsWith('/api/v1/')) {
+                        payload.config[field.id] = '';
                     } else {
                         payload.config[field.id] = 'all';
                     }

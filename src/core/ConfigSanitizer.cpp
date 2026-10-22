@@ -278,26 +278,46 @@ void ConfigSanitizer::sanitizeField(DictionaryEngineConfig& conf, const ConfigFi
 
             // 2. Validate against field.options if provided
             if (strlen(field.options) > 0) {
-                bool found = false;
-                String optsStr(field.options);
-                int start = 0;
-                while (start < optsStr.length()) {
-                    int comma = optsStr.indexOf(',', start);
-                    String item = (comma == -1) ? optsStr.substring(start) : optsStr.substring(start, comma);
-                    item.trim();
-                    if (!item.isEmpty()) {
-                        String optVal = item;
-                        if (!item.startsWith("%") && item.indexOf(':') != -1) {
-                            optVal = item.substring(0, item.indexOf(':'));
-                            optVal.trim();
+                auto isAllowedToken = [&](const String& tok) -> bool {
+                    String optsStr(field.options);
+                    int start = 0;
+                    while (start < optsStr.length()) {
+                        int comma = optsStr.indexOf(',', start);
+                        String item = (comma == -1) ? optsStr.substring(start) : optsStr.substring(start, comma);
+                        item.trim();
+                        if (!item.isEmpty()) {
+                            String optVal = item;
+                            if (!item.startsWith("%") && item.indexOf(':') != -1) {
+                                optVal = item.substring(0, item.indexOf(':'));
+                                optVal.trim();
+                            }
+                            if (tok.equalsIgnoreCase(optVal)) {
+                                return true;
+                            }
                         }
-                        if (val_str.equalsIgnoreCase(optVal)) {
-                            found = true;
+                        if (comma == -1) break;
+                        start = comma + 1;
+                    }
+                    return false;
+                };
+
+                bool found = false;
+                if (field.multiple) {
+                    found = true;
+                    int tStart = 0;
+                    while (tStart < val_str.length()) {
+                        int tComma = val_str.indexOf(',', tStart);
+                        String tok = (tComma == -1) ? val_str.substring(tStart) : val_str.substring(tStart, tComma);
+                        tok.trim();
+                        if (!tok.isEmpty() && !isAllowedToken(tok)) {
+                            found = false;
                             break;
                         }
+                        if (tComma == -1) break;
+                        tStart = tComma + 1;
                     }
-                    if (comma == -1) break;
-                    start = comma + 1;
+                } else {
+                    found = isAllowedToken(val_str);
                 }
                 if (!found && (field.validation_policy == ValidationPolicy::FallbackDefault ||
                                field.validation_policy == ValidationPolicy::Reject)) {
