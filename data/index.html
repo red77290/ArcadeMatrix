@@ -5211,6 +5211,10 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
     }
 
     const defaultId = generateSuggestedId(engId, initialVariant);
+    const isShowcaseModal = ['retro_games', 'movie_showcase', 'series_showcase', 'anime_showcase'].includes(engId);
+    const isGifModal = (engId === 'gifs' || engId === 'gif');
+    const defaultModalDur = isShowcaseModal ? 1 : (isGifModal ? 3 : 30);
+    const modalDurUnit = isShowcaseModal ? t('unit_items', 'Media') : (isGifModal ? 'GIFs' : 'sec');
 
     overlay.innerHTML = `
       <div class="modal-box glass">
@@ -5256,8 +5260,8 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
             <div id="modal-rotation-options" style="margin-top: 0.75rem; display: ${defaultAddToRotation ? 'flex' : 'none'}; gap: 1rem; align-items: center; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 0.5rem;">
                 <span style="font-size: 0.85rem; color: var(--text-secondary);" data-i18n="modal_duration_label">${t('modal_duration_label', 'Display Duration (seconds / count):')}</span>
-                <input type="number" id="modal-input-duration" class="input" style="width: 70px; padding: 0.35rem 0.5rem; text-align: center;" value="30" min="1">
-                <span style="font-size: 0.85rem; color: var(--text-muted);">${(engId === 'gifs' || engId === 'gif') ? 'GIFs' : 'sec'}</span>
+                <input type="number" id="modal-input-duration" class="input" style="width: 70px; padding: 0.35rem 0.5rem; text-align: center;" value="${defaultModalDur}" min="1">
+                <span style="font-size: 0.85rem; color: var(--text-muted);">${modalDurUnit}</span>
               </div>
               ${(currentDesc.capabilities && currentDesc.capabilities.allows_overlay !== false) ? `
                 <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; cursor: pointer;">
@@ -5435,7 +5439,10 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
         if (rotCheck.checked) {
           const curRot = await API.get('/api/rotation').catch(() => []);
           const newRot = Array.isArray(curRot) ? curRot.slice() : [];
-          const dur = parseInt(overlay.querySelector('#modal-input-duration')?.value) || 30;
+          const fallbackDur = ['retro_games', 'movie_showcase', 'series_showcase', 'anime_showcase'].includes(currentEngineId)
+            ? 1
+            : ((currentEngineId === 'gifs' || currentEngineId === 'gif') ? 3 : 30);
+          const dur = parseInt(overlay.querySelector('#modal-input-duration')?.value) || fallbackDur;
           const fighter = overlay.querySelector('#modal-check-fighter')?.checked ?? false;
           
           newRot.push({
@@ -5465,7 +5472,7 @@ function showAddScreenModal(selectedEngineId, descriptors, instancesList, defaul
 }
 
 // Helper to live-update rotation state on instance cards
-function updateInstanceRotationState(instanceId, isInRotation, durationSec = 30) {
+function updateInstanceRotationState(instanceId, isInRotation, durationSec = 30, unitSuffix = 's') {
   const cleanId = instanceId.replace(/[^a-zA-Z0-9]/g, '-');
   const card = document.getElementById(`tab-dyn-${cleanId}`);
   if (!card) return;
@@ -5479,7 +5486,7 @@ function updateInstanceRotationState(instanceId, isInRotation, durationSec = 30)
   if (badgeEl) {
     if (isInRotation) {
       badgeEl.style = "background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;";
-      badgeEl.innerText = `🟢 ${(dict.in_rotation_badge || 'In Rotation')} (${durationSec}s)`;
+      badgeEl.innerText = `🟢 ${(dict.in_rotation_badge || 'In Rotation')} (${durationSec}${unitSuffix})`;
     } else {
       badgeEl.style = "background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;";
       badgeEl.innerText = `⚪ ${(dict.not_in_rotation_badge || 'Off Loop (Standby)')}`;
@@ -5792,9 +5799,14 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
     if (val.startsWith('inst:')) {
       const instId = val.replace('inst:', '');
       const allowOverlay = allowsOverlay(instId);
+      const instObj = instancesList.find(i => i.instance_id === instId);
+      const instEngId = instObj ? instObj.engine_id : '';
+      const isShowcaseInst = ['retro_games', 'movie_showcase', 'series_showcase', 'anime_showcase'].includes(instEngId);
+      const defaultLoopDur = isShowcaseInst ? 1 : (instEngId === 'gifs' ? 3 : 30);
+      const unitSuffix = isCountBased(instId) ? (' ' + getCountUnit(instId)) : 's';
       entries.push({
         instance_id: instId,
-        duration_sec: 30,
+        duration_sec: defaultLoopDur,
         overlays: { fighter: false },
         fighter_overlay: false
       });
@@ -5804,7 +5816,7 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
       // SD/heap churn (see ConfigLoader heap-fragmentation fix). Changes now stay
       // in memory until the Save button is pressed, matching what it actually says.
       renderRows();
-      updateInstanceRotationState(instId, true, 30);
+      updateInstanceRotationState(instId, true, defaultLoopDur, unitSuffix);
       markDirty();
       window.showToast(`'${nameFor(instId)}' added — click Save to apply.`, 'info');
     } else if (val.startsWith('new:')) {
@@ -7130,8 +7142,12 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
       const cardHeader = document.createElement('div');
       cardHeader.style = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--glass-border);";
       
+      const isShowcaseCard = ['retro_games', 'movie_showcase', 'series_showcase', 'anime_showcase'].includes(instance.engine_id);
+      const isGifCard = instance.engine_id === 'gifs';
+      const cardRotUnit = isShowcaseCard ? (' ' + t('unit_items', 'Media')) : (isGifCard ? ' GIFs' : 's');
+      const defaultCardRotDur = isShowcaseCard ? 1 : (isGifCard ? 3 : 30);
       const statusBadgeHtml = rotEntry ? 
-        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}s)</span>` : 
+        `<span class="badge" style="background: rgba(16,185,129,0.2); color:#34d399; font-weight:600; font-size:0.82rem;">🟢 ${t('in_rotation_badge', 'In Rotation')} (${rotEntry.duration_sec}${cardRotUnit})</span>` : 
         `<span class="badge" style="background: rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.82rem;">⚪ ${t('not_in_rotation_badge', 'Off Loop (Standby)')}</span>`;
 
       cardHeader.innerHTML = `
@@ -7165,7 +7181,7 @@ async function renderDynamicDisplay(targetActiveInstanceId = null) {
           } else {
             newRot.push({
               instance_id: instance.instance_id,
-              duration_sec: 30,
+              duration_sec: defaultCardRotDur,
               overlays: { fighter: false },
               fighter_overlay: false
             });

@@ -55,7 +55,15 @@ public:
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_dirty; }
     bool selfPaced() const override { return true; }
-    void setRotationBudget(uint32_t budget) override { m_rotationBudget.store(budget > 0 ? budget : 1, std::memory_order_relaxed); }
+    void setRotationBudget(uint32_t budget) override {
+        uint32_t clamped = budget > 0 ? budget : 1;
+        m_rotationBudget.store(clamped, std::memory_order_relaxed);
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 &&
+            m_itemsPlayedInTurn.load(std::memory_order_acquire) >= clamped) {
+            m_turnDone.store(true, std::memory_order_release);
+        }
+    }
+    uint32_t computeTurnSafetyTimeoutMs() const;
     bool isFinished() const override;
 
     /**
@@ -179,6 +187,7 @@ protected:
     const char* domainBadgeLabel() const;
     uint16_t defaultAccent565() const;
     static uint32_t synopsisPxPerSec(const char* speedStr);
+    static uint32_t configuredMaxStreamMs(const ConfigSlot& cfg);
     static void computeCardPosterDims(uint16_t panelW, uint16_t panelH, uint16_t& outW, uint16_t& outH);
     static bool resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort);
     bool allocateBuffers();
