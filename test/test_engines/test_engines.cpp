@@ -221,6 +221,44 @@ void test_media_showcase_ready_payload_zero_copy_parsing() {
     TEST_ASSERT_EQUAL_UINT32(57000U, movieEng.computeTurnSafetyTimeoutMs());
     movieEng.setRotationBudget(3);
     TEST_ASSERT_EQUAL_UINT32(171000U, movieEng.computeTurnSafetyTimeoutMs());
+
+    // Verify 256x64 geometry update (`48x64` Base64 poster = 8,192 B64 chars + synopsis > 9 KB)
+    // and live TATE rotation (`256x64` -> `64x256`) bumping `configGeneration()` cleanly.
+    uint32_t gen0 = movieEng.configGeneration();
+    DisplayGeometry geom256;
+    geom256.width = 256;
+    geom256.height = 64;
+    movieEng.onDisplayGeometryChanged(geom256);
+    TEST_ASSERT_EQUAL_UINT16(256, movieEng.currentWidth());
+    TEST_ASSERT_EQUAL_UINT16(64, movieEng.currentHeight());
+    TEST_ASSERT_TRUE(movieEng.configGeneration() > gen0);
+
+    String b64Poster48x64;
+    b64Poster48x64.reserve(8192);
+    for (int i = 0; i < 8192; ++i) {
+        b64Poster48x64 += 'A'; // 8,192 'A's decode to 6,144 zero bytes (`48 * 64 * 2`)
+    }
+    String xlReadyJson =
+        String("{\"ready\":true,\"item_id\":\"pkg_movie_256x64\",\"domain\":\"movies\",\"card\":{") +
+        "\"id\":\"pkg_movie_256x64\",\"title\":\"Blade Runner 2049\",\"year\":\"2017\"," +
+        "\"badge\":\"SCIFI\",\"badge_color\":\"#00E5FF\",\"rating\":\"8.0\"," +
+        "\"poster_width\":48,\"poster_height\":64,\"poster_rgb565_b64\":\"" + b64Poster48x64 + "\"," +
+        "\"synopsis\":\"Long 256x64 synopsis payload verifying zero-copy parsing above 9 KB...\"," +
+        "\"has_panoramas\":true,\"has_video\":true,\"stream_fps\":24,\"stream_duration_s\":14.0}}";
+    std::vector<char> mutableXl(xlReadyJson.begin(), xlReadyJson.end());
+    mutableXl.push_back('\0');
+    TEST_ASSERT_TRUE(movieEng.parseReadyPayloadInPlace(mutableXl.data(), false, itemId, hasStream, streamMaxMs, explicitWarming));
+    TEST_ASSERT_EQUAL_STRING("pkg_movie_256x64", itemId.c_str());
+    TEST_ASSERT_TRUE(hasStream);
+
+    uint32_t gen1 = movieEng.configGeneration();
+    DisplayGeometry geomTate;
+    geomTate.width = 64;
+    geomTate.height = 256;
+    movieEng.onDisplayGeometryChanged(geomTate);
+    TEST_ASSERT_EQUAL_UINT16(64, movieEng.currentWidth());
+    TEST_ASSERT_EQUAL_UINT16(256, movieEng.currentHeight());
+    TEST_ASSERT_TRUE(movieEng.configGeneration() > gen1);
 }
 
 void setup() {
