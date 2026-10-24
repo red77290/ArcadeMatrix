@@ -941,7 +941,10 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
             }
             // Non-PUBLISH packets (e.g. SUBACK 0x90, PINGRESP 0xD0) or oversized packets
             // MUST drain their `remLen` payload bytes to preserve MQTT TCP stream framing!
-            if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= 14336) {
+            // Allow up to 32 KB when PSRAM is available so 256x64 cards (`48x64` Base64 poster
+            // = 8,192 chars + full localized synopsis) never get dropped.
+            const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 16384U;
+            if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= maxMqttPacketBytes) {
                 if (remLen > 0) {
                     drainFromStream(mqttCli, remLen, m_wantActive, 1500);
                 }
@@ -1238,7 +1241,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         return;
     }
 
-    DynamicJsonDocument nextDoc(m_hasPsram ? 14336 : 6144);
+    DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 8192);
     if (deserializeJson(nextDoc, nextResp.stream()) != DeserializationError::Ok) {
         m_statusState.store(2, std::memory_order_release);
         clearLiveCardState();
@@ -1307,8 +1310,9 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
         if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
     }
+    uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint32_t t0 = millis();
-    while (m_wantActive.load(std::memory_order_acquire) && (millis() - t0) < cardWaitMs) {
+    while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - t0) < cardWaitMs) {
 #if defined(ESP32)
         vTaskDelay(pdMS_TO_TICKS(40));
 #else
@@ -1318,7 +1322,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 
     // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
     const char* unifiedStreamPath = assetsObj["unified_stream_rgb565"] | "";
-    if (m_wantActive.load(std::memory_order_acquire) && m_frame565 && unifiedStreamPath[0] != '\0') {
+    if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && m_frame565 && unifiedStreamPath[0] != '\0') {
         streamUnifiedRgb565Http(cfg.serverUrl, unifiedStreamPath);
     }
 

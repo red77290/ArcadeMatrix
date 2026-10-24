@@ -46,10 +46,21 @@ public:
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
-        m_width = geometry.width > 0 ? geometry.width : 128;
-        m_height = geometry.height > 0 ? geometry.height : 32;
+        uint16_t newW = geometry.width > 0 ? geometry.width : 128;
+        uint16_t newH = geometry.height > 0 ? geometry.height : 32;
+        if (newW != m_width || newH != m_height) {
+            m_width = newW;
+            m_height = newH;
+            m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+            clearLiveCardState();
+            m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
+        }
         m_dirty = true;
     }
+
+    uint16_t currentWidth() const { return m_width; }
+    uint16_t currentHeight() const { return m_height; }
+    uint32_t configGeneration() const { return m_cfgGen.load(std::memory_order_acquire); }
 
     bool isRealtime() const override { return true; }
     bool needsClear() const override { return false; }
