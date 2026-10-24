@@ -167,7 +167,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [system, matrix, mqtt, wifi, hardware]
+            enum: [system, matrix, mqtt, wifi, hardware, showcase]
           description: Optional filter to retrieve only a specific configuration block
       responses:
         '200':
@@ -239,6 +239,16 @@ paths:
                     properties:
                       ssid: { type: string, example: "HomeWiFi" }
                       hostname: { type: string, example: "ArcadeMatrix" }
+                  showcase:
+                    type: object
+                    description: Unified network and MQTT broker configuration for DMD Media Showcase engines (Games, Movies, Series, Anime)
+                    properties:
+                      enabled: { type: boolean, example: false }
+                      server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
+                      transport_mode: { type: string, example: "mqtt_udp", enum: [mqtt_udp, http_poll] }
+                      use_showcase_broker: { type: boolean, example: true }
+                      mqtt_broker_source: { type: string, example: "global", enum: [global, custom] }
+                      mqtt_custom_url: { type: string, example: "mqtt://192.168.1.200:1883" }
     post:
       tags:
         - Configuration
@@ -1815,6 +1825,42 @@ paths:
           description: Missing download_url or invalid URL scheme.
         '409':
           description: OTA update already in progress.
+
+  /api/showcase/status:
+    get:
+      tags:
+        - Configuration
+      summary: Probe DMD Media Showcase server connectivity and resolve mDNS hostname
+      description: Resolves `.local` mDNS hostnames (default `http://dmdmediashowcase.local:8890`) and verifies connectivity to the companion `dmd_media_showcase` service when enabled or forced.
+      parameters:
+        - in: query
+          name: url
+          schema:
+            type: string
+          description: Optional override URL to probe
+        - in: query
+          name: enabled
+          schema:
+            type: boolean
+          description: Optional override for Showcase enabled state
+        - in: query
+          name: force
+          schema:
+            type: boolean
+          description: Force connectivity probe even when Showcase is currently disabled
+      responses:
+        '200':
+          description: Live Showcase connection status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean, example: true }
+                  online: { type: boolean, example: true }
+                  server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
+                  resolved_url: { type: string, example: "http://192.168.1.42:8890" }
+                  version: { type: string, example: "3.0.0" }
 
 components:
   securitySchemes:

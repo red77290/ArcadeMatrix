@@ -97,6 +97,7 @@ void ConfigLoader::publishSnapshot_locked() {
     snap.wifi = wifi;
     snap.mqtt = mqtt;
     snap.dataMqtt = dataMqtt;
+    snap.showcase = showcase;
     snap.system = system;
     snap.rotation = rotation;
     snap.instances.clear();
@@ -171,6 +172,7 @@ void ConfigLoader::setDefaults() {
     mqtt.allow_overlay = false;
 
     dataMqtt = DataMqttConfig();
+    showcase = ShowcaseConfig();
 
     system.timezone = "CET-1CEST,M3.5.0,M10.5.0/3";
     system.format24h = true;
@@ -181,7 +183,7 @@ void ConfigLoader::setDefaults() {
     system.turn_off_at = "22:00";
     system.wake_up_at = "08:00";
     system.night_brightness = 10;
-    system.idle_fighter_enabled = true;
+    system.idle_fighter_enabled = false;
     system.idle_fighter_interval = 60;
     system.idle_fighter_speed = 100;
     system.api_auth_enabled = false;
@@ -327,6 +329,21 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         dataMqtt.pass = d["pass"] | dataMqtt.pass;
     }
 
+    if (doc.containsKey("showcase")) {
+        JsonObjectConst sc = doc["showcase"];
+        if (sc.containsKey("enabled")) showcase.enabled = sc["enabled"].as<bool>();
+        showcase.server_url = sc["server_url"] | showcase.server_url;
+        if (showcase.server_url == "http://192.168.1.50:8000" ||
+            showcase.server_url == "http://127.0.0.1:8080" ||
+            showcase.server_url == "http://dmdmediashowcase.local:8080") {
+            showcase.server_url = "http://dmdmediashowcase.local:8890";
+        }
+        showcase.transport_mode = sc["transport_mode"] | showcase.transport_mode;
+        if (sc.containsKey("use_showcase_broker")) showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
+        showcase.mqtt_broker_source = sc["mqtt_broker_source"] | showcase.mqtt_broker_source;
+        showcase.mqtt_custom_url = sc["mqtt_custom_url"] | showcase.mqtt_custom_url;
+    }
+
     if (doc.containsKey("rotation")) {
         rotation.clear();
         JsonArrayConst rotArr = doc["rotation"].as<JsonArrayConst>();
@@ -391,6 +408,25 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
                 }
             }
             instances.push_back(inst);
+        }
+    }
+
+    // Auto-migrate legacy per-engine showcase network settings if system showcase settings are not yet set
+    if (!doc.containsKey("showcase")) {
+        for (const auto& inst : instances) {
+            if (inst.engine_id == "retro_games" || inst.engine_id == "movie_showcase" ||
+                inst.engine_id == "series_showcase" || inst.engine_id == "anime_showcase") {
+                String sUrl = inst.config.getString("server_url", "");
+                if (!sUrl.isEmpty() && sUrl != "http://192.168.1.50:8000" && sUrl != "http://127.0.0.1:8080") {
+                    showcase.enabled = true;
+                    showcase.server_url = sUrl;
+                    showcase.transport_mode = inst.config.getString("transport_mode", "mqtt_udp");
+                    showcase.use_showcase_broker = inst.config.getBool("use_showcase_broker", true);
+                    showcase.mqtt_broker_source = inst.config.getString("mqtt_broker_source", "showcase_builtin");
+                    showcase.mqtt_custom_url = inst.config.getString("mqtt_custom_url", "");
+                    break;
+                }
+            }
         }
     }
 
@@ -478,6 +514,14 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     dObj["port"] = dataMqtt.port;
     dObj["user"] = dataMqtt.user;
     dObj["pass"] = dataMqtt.pass;
+
+    JsonObject scObj = doc.createNestedObject("showcase");
+    scObj["enabled"] = showcase.enabled;
+    scObj["server_url"] = showcase.server_url;
+    scObj["transport_mode"] = showcase.transport_mode;
+    scObj["use_showcase_broker"] = showcase.use_showcase_broker;
+    scObj["mqtt_broker_source"] = showcase.mqtt_broker_source;
+    scObj["mqtt_custom_url"] = showcase.mqtt_custom_url;
 
     JsonArray rotArr = doc.createNestedArray("rotation");
     for (const auto& rot : rotation) {

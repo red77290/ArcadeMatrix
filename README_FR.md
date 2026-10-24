@@ -55,6 +55,10 @@ Chaque moteur d'ArcadeMatrix est conçu avec **zéro allocation dynamique et zé
 | **Lecteur GIF Animés**<br>`gifs` | <img src="docs/assets/engines/engine_gif.png" width="240" alt="Moteur GIF"> | Lecture fluide à 60 FPS d'animations rétro et de playlists sur carte SD avec accélération DMA canvas zéro-copie. |
 | **Bandeau Défilant Marquee**<br>`message` | <img src="docs/assets/engines/engine_message.png" width="240" alt="Moteur Message"> | Enseignes matricielles personnalisables avec typographie ambrée lumineuse, multiples directions de défilement et déclencheurs API REST. |
 | **Marquee Borne d'Arcade**<br>`marquee` | <img src="docs/assets/engines/engine_marquee.png" width="240" alt="Moteur Marquee"> | Affichage des marquees de jeux d'arcade officiels via intégration Pixelcade pour configurations Batocera, Recalbox et RetroPie. |
+| **Retro Games Showcase**<br>`retro_games` | <img src="docs/assets/engines/engine_retrogames.png" width="240" alt="Moteur Retro Games Showcase"> | Diffuse les jaquettes d'arcade et consoles rétro, badges métadonnées, synopsis traduits et vidéos de gameplay RGB565 à 30 FPS.<br>⚠️ **Fonctionne uniquement avec [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installé sur une autre machine du même réseau local. |
+| **Movie Showcase**<br>`movie_showcase` | <img src="docs/assets/engines/engine_movieshowcase.png" width="240" alt="Moteur Movie Showcase"> | Vitrine cinéma diffusant les affiches de films TMDB/TVDB, notes, synopsis traduits et bandes-annonces vidéo RGB565 à 30 FPS.<br>⚠️ **Fonctionne uniquement avec [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installé sur une autre machine du même réseau local. |
+| **Series Showcase**<br>`series_showcase` | <img src="docs/assets/engines/engine_seriesshowcase.png" width="240" alt="Moteur Series Showcase"> | Vitrine séries TV affichant les posters, année de sortie, notes, synopsis traduits et bandes-annonces vidéo RGB565 à 30 FPS.<br>⚠️ **Fonctionne uniquement avec [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installé sur une autre machine du même réseau local. |
+| **Anime Showcase**<br>`anime_showcase` | <img src="docs/assets/engines/engine_animeshowcase.png" width="240" alt="Moteur Anime Showcase"> | Vitrine animes & mangas propulsée par AniList/Jikan/Kitsu avec affiches, synopsis traduits et extraits vidéo RGB565 à 30 FPS.<br>⚠️ **Fonctionne uniquement avec [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** installé sur une autre machine du même réseau local. |
 | **Calendrier & Date**<br>`date` | <img src="docs/assets/engines/engine_date.png" width="240" alt="Moteur Date"> | Grande date au style arcade avec ombres portées 3D Capcom/Nintendo, support multilingue (FR, EN, ES) et synchronisation NTP/RTC DS3231. |
 
 > [!NOTE]
@@ -117,7 +121,7 @@ ArcadeMatrix intègre une collection exclusive d'horloges rétro arcade et conso
 
 ## 🚀 Compatibilité Universelle des Moteurs : Auto Depth & Auto Buffer
 
-ArcadeMatrix intègre un pipeline d'exécution ultra-optimisé avec gestion intelligente de la mémoire vive, permettant aux 18 moteurs (y compris les plus gourmands comme `AnimatedGIF`, `Stock`, `Crypto` et `MUGEN`) de tourner sans compromis sur **ESP32 classique (sans PSRAM)** comme sur **ESP32-S3 (16 Mo de PSRAM)** :
+ArcadeMatrix intègre un pipeline d'exécution ultra-optimisé avec gestion intelligente de la mémoire vive, permettant aux 22 moteurs (y compris les plus gourmands comme `AnimatedGIF`, `Stock`, `Crypto`, `MUGEN` et les 4 moteurs `Media Showcase` de streaming vidéo) de tourner sans compromis sur **ESP32 classique (sans PSRAM)** comme sur **ESP32-S3 (16 Mo de PSRAM)** :
 
 - **🎨 Auto Color Depth (`dynamic_color_depth`)** :
   - **Couleurs 8 Bits Riches par Défaut** : Horloges, combats MUGEN, visualiseurs, messages et marquees s'affichent avec la qualité maximale en 8 bits (jusqu'à 256 niveaux de luminosité par composante RVB).
@@ -204,6 +208,12 @@ L'Horloge, la Date et le message défilant peuvent utiliser des polices bitmap p
 
 Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 
+## 🎬 Intégration du Serveur Media Showcase ([dmd_media_showcase](https://github.com/red77290/dmd_media_showcase))
+Les 4 moteurs Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) **fonctionnent exclusivement avec l'application compagnon [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) installée sur une autre machine du même réseau local** (Raspberry Pi, NAS, serveur Docker ou PC) afin de diffuser les affiches pré-rendues en RGB565, panoramas, métadonnées multilingues (synchronisées automatiquement sur la langue du DMD : `fr`, `en`, `es`, `de`, `it`) et bandes-annonces/vidéos de gameplay RGB565 :
+1. Installez et démarrez **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** sur une machine de votre réseau local (elle s'annonce automatiquement sur le réseau sous le nom `http://dmdmediashowcase.local:8890`).
+2. Dans l'onglet **Settings** de la Web UI d'ArcadeMatrix (`MQTT & API` -> **🎬 DMD Media Showcase**), l'URL du serveur est **déjà pré-remplie** avec `http://dmdmediashowcase.local:8890` et **Désactivée par défaut** (`showcase.enabled = false`) pour éviter tout accès réseau inutile tant que l'application n'est pas installée. Il suffit de passer **Activer DMD Media Showcase** sur **Activé**, d'enregistrer, et de vérifier que le témoin lumineux affiche **`🟢 Communication OK (v3.0.0)`**.
+3. Ajoutez `retro_games`, `movie_showcase`, `series_showcase` ou `anime_showcase` dans votre rotation. Chaque moteur Showcase est auto-cadencé (`selfPaced = true`), exécutant sa séquence complète (Poster + Synopsis + Panorama + Clip Vidéo) avant de passer au créneau suivant.
+
 ## ⚡ Compatibilité Matérielle & Moteurs
 
 | Moteur / Fonctionnalité | Catégorie | ESP32-S3 (Carte Waveshare) | ESP32 Classique (DevKit / `esp32dev`) | Prérequis Matériel / Réseau |
@@ -220,6 +230,10 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 | **Défilement de Texte (`message`)** | `text` | 🟢 60 FPS | 🟢 60 FPS | Scroller textuel sous-pixel à 60 FPS |
 | **Télémétrie Système (`system_info`)** | `system` | 🟢 10 FPS | 🟢 10 FPS | Jauges temps réel CPU, RAM, Temp & Uptime |
 | **Marquee Rétro Gameroom (`marquee`)** | `arcade` | 🟢 60 FPS | 🟢 60 FPS | MQTT / Batocera / Recalbox / RetroPie |
+| **Retro Games Showcase (`retro_games`)** | `arcade` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requiert **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** sur le réseau local |
+| **Movie Showcase (`movie_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requiert **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** sur le réseau local |
+| **Series Showcase (`series_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requiert **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** sur le réseau local |
+| **Anime Showcase (`anime_showcase`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi + Requiert **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** sur le réseau local |
 | **Spotify Now Playing (`spotify`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, HTTPS/TLS, API Web Spotify |
 | **Affichage Google Cast (`google_cast`)** | `media` | 🟢 30 FPS | 🟢 30 FPS | Wi-Fi, découverte locale mDNS |
 | **WebRadio Autonome (`music_player`)** | `media` | 🟢 30 FPS (DAC I2S) | ❌ Incompatible | DAC ES8311 & PSRAM requis |
@@ -245,17 +259,17 @@ Pour tous les détails, consultez `tools/bdf_to_amfont/README_FR.md`.
 
 ## Compilation
 Pour compiler le firmware vous-même, vous devez utiliser **PlatformIO**.
-- Pour 128x32 : un ESP32 WROOM standard suffit.
-- Pour 256x64 : un **ESP32-S3 avec PSRAM** est fortement recommandé pour éviter les crashs par manque de mémoire avec le double buffering.
+- Pour 128x32 : un ESP32 WROOM standard suffit (`pio run -e esp32dev`).
+- Pour 256x64 : un **ESP32-S3 avec PSRAM** est requis (`pio run -e esp32s3_waveshare`).
 
 Exécutez la commande suivante pour compiler :
 ```bash
-pio run -e esp32dev
+pio run -e esp32s3_waveshare
 ```
 
 ## 📚 Documentation complémentaire
 - [Premiers pas (installation de PlatformIO, compilation, flash, logs)](docs/GETTING_STARTED_FR.md)
-- [Web Installer (flash depuis votre navigateur, sans CLI)](webinstaller/README_FR.md) - *sera mis en ligne une fois ce dépôt public (GitHub Pages nécessite un dépôt public avec l'offre gratuite) ; en attendant, utilisez le firmware précompilé ci-dessus.*
+- [Web Installer (flash depuis votre navigateur, sans CLI)](https://red77290.github.io/ArcadeMatrix/) ([guide hors-ligne](webinstaller/README_FR.md))
 - [Guide matériel](docs/HARDWARE_FR.md)
 - [Guide de câblage](docs/WIRING_FR.md)
 - [Guide de configuration](docs/CONFIGURATION_FR.md)

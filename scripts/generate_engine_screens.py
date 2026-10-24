@@ -130,6 +130,9 @@ FONT_3X5 = {
     '▼': ["...", "...", "###", ".#.", "..."],
     '•': ["...", ".#.", ".#.", "...", "..."],
     '➔': ["...", ".#.", "###", ".#.", "..."],
+    '&': [".#.", "#.#", ".#.", "#.#", ".##"],
+    '★': [".#.", "###", ".#.", "#.#", "..."],
+    '▶': ["#..", "##.", "###", "##.", "#.."],
 }
 
 def draw_text(canvas, text, x, y, col=(255, 255, 255, 255), font="5x7", scale=1):
@@ -713,6 +716,141 @@ def render_clock():
     draw_text(img, "10+ RETRO CLOCK THEMES BELOW ➔", 4, 48, col=(80, 200, 255, 255), font="3x5")
     return img
 
+# 19. RETRO GAMES SHOWCASE ENGINE (retro_games - MediaShowcaseRunner)
+def render_retrogames():
+    img, draw = create_base_canvas()
+    # Left Poster Card (44x56 at x=2, y=4) - Neo Geo Metal Slug Cover Art
+    draw.rectangle([2, 4, 45, 59], fill=(22, 18, 12, 255), outline=(255, 140, 0, 255))
+    # Desert sunset sky & SV-001 tank pixel art
+    for py in range(5, 32):
+        r = min(255, 140 + (py - 5) * 4)
+        g = max(30, 110 - (py - 5) * 3)
+        draw.line([3, py, 44, py], fill=(r, g, 25, 255))
+    draw.ellipse([28, 8, 40, 20], fill=(255, 220, 60, 255))
+    # Tank silhouette & turret
+    draw.rectangle([10, 32, 36, 46], fill=(110, 125, 95, 255), outline=(60, 70, 50, 255))
+    draw.rectangle([16, 25, 30, 33], fill=(130, 145, 110, 255))
+    draw.line([30, 28, 43, 25], fill=(200, 210, 190, 255), width=2)
+    # Tank treads
+    draw.rectangle([8, 45, 38, 52], fill=(45, 48, 52, 255))
+    for wx in range(11, 36, 6):
+        draw.ellipse([wx, 46, wx + 4, 50], fill=(160, 165, 170, 255))
+
+    # Right Metadata Column (x=50..125)
+    # Console Badge Pill [NEOGEO] + Year + Star Rating
+    draw.rectangle([50, 4, 79, 11], fill=(255, 109, 0, 255))
+    draw_text(img, "NEOGEO", 53, 5, col=(10, 10, 14, 255), font="3x5")
+    draw_text(img, "1996", 83, 5, col=(170, 185, 205, 255), font="3x5")
+    draw_text(img, "★9.2", 104, 5, col=(255, 215, 0, 255), font="3x5")
+
+    # Game Title & Subtitle
+    draw_text(img, "METAL SLUG", 50, 15, col=(255, 255, 255, 255), font="5x7")
+    draw_text(img, "RUN & GUN • SNK", 50, 25, col=(255, 180, 60, 255), font="3x5")
+    draw.line([50, 32, 125, 32], fill=(35, 45, 60, 255))
+
+    # Scrolling Synopsis Preview + Stream Status
+    draw_text(img, "MARCO & TARMA LEAD", 50, 36, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "THE SV-001 TANK", 50, 44, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "▶ RGB565 STREAM", 50, 54, col=(80, 240, 130, 255), font="3x5")
+    return img
+
+# 20. MOVIE SHOWCASE ENGINE (movie_showcase - MediaShowcaseRunner)
+def render_movieshowcase():
+    img, draw = create_base_canvas()
+    # Left Poster Card (44x56 at x=2, y=4) - Blade Runner Neon Cyberpunk Poster
+    draw.rectangle([2, 4, 45, 59], fill=(10, 14, 28, 255), outline=(0, 210, 255, 255))
+    for py in range(5, 58):
+        b = min(255, 40 + py * 3)
+        r = min(255, max(10, (py - 20) * 5))
+        draw.line([3, py, 44, py], fill=(r // 2, 20, b // 2, 255))
+    # Cyberpunk skyscrapers & neon rain
+    draw.rectangle([6, 22, 16, 58], fill=(14, 18, 32, 255))
+    draw.rectangle([19, 14, 31, 58], fill=(18, 22, 38, 255))
+    draw.rectangle([33, 26, 42, 58], fill=(12, 16, 28, 255))
+    for wy in range(18, 55, 4):
+        draw.point((22, wy), fill=(0, 230, 255, 255))
+        draw.point((26, wy), fill=(255, 60, 160, 255))
+        if wy > 26:
+            draw.point((10, wy), fill=(255, 200, 50, 255))
+            draw.point((37, wy), fill=(0, 230, 255, 255))
+    draw.ellipse([16, 7, 32, 19], fill=(255, 90, 40, 255))
+
+    # Right Metadata Column
+    draw.rectangle([50, 4, 79, 11], fill=(0, 190, 255, 255))
+    draw_text(img, "SCI-FI", 53, 5, col=(8, 12, 20, 255), font="3x5")
+    draw_text(img, "1982", 83, 5, col=(170, 185, 205, 255), font="3x5")
+    draw_text(img, "★8.1", 104, 5, col=(255, 215, 0, 255), font="3x5")
+
+    draw_text(img, "BLADE RUNNER", 50, 15, col=(255, 255, 255, 255), font="5x7")
+    draw_text(img, "RIDLEY SCOTT • TMDB", 50, 25, col=(0, 210, 255, 255), font="3x5")
+    draw.line([50, 32, 125, 32], fill=(35, 45, 60, 255))
+
+    draw_text(img, "DECKARD HUNTS FOUR", 50, 36, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "NEXUS-6 REPLICANTS", 50, 44, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "▶ TRAILER STREAM", 50, 54, col=(0, 230, 255, 255), font="3x5")
+    return img
+
+# 21. SERIES SHOWCASE ENGINE (series_showcase - MediaShowcaseRunner)
+def render_seriesshowcase():
+    img, draw = create_base_canvas()
+    # Left Poster Card (44x56 at x=2, y=4) - Breaking Bad Periodic Table / Desert Poster
+    draw.rectangle([2, 4, 45, 59], fill=(12, 26, 16, 255), outline=(60, 220, 100, 255))
+    for py in range(5, 58):
+        g = min(220, 35 + py * 2)
+        draw.line([3, py, 44, py], fill=(12, g // 2, 18, 255))
+    # Periodic chemical tiles [Br] [Ba]
+    draw.rectangle([7, 10, 24, 27], fill=(20, 95, 45, 255), outline=(100, 240, 130, 255))
+    draw_text(img, "BR", 10, 15, col=(255, 255, 255, 255), font="5x7")
+    draw.rectangle([23, 28, 40, 45], fill=(20, 95, 45, 255), outline=(100, 240, 130, 255))
+    draw_text(img, "BA", 26, 33, col=(255, 255, 255, 255), font="5x7")
+    draw_text(img, "5 SEASONS", 7, 50, col=(180, 240, 190, 255), font="3x5")
+
+    # Right Metadata Column
+    draw.rectangle([50, 4, 79, 11], fill=(50, 205, 95, 255))
+    draw_text(img, "DRAMA", 55, 5, col=(8, 16, 10, 255), font="3x5")
+    draw_text(img, "2008", 83, 5, col=(170, 185, 205, 255), font="3x5")
+    draw_text(img, "★9.5", 104, 5, col=(255, 215, 0, 255), font="3x5")
+
+    draw_text(img, "BREAKING BAD", 50, 15, col=(255, 255, 255, 255), font="5x7")
+    draw_text(img, "CRIME • 5 SEASONS", 50, 25, col=(80, 235, 125, 255), font="3x5")
+    draw.line([50, 32, 125, 32], fill=(35, 45, 60, 255))
+
+    draw_text(img, "CHEMISTRY TEACHER", 50, 36, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "BUILDS AN EMPIRE", 50, 44, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "▶ SERIES STREAM", 50, 54, col=(80, 240, 130, 255), font="3x5")
+    return img
+
+# 22. ANIME SHOWCASE ENGINE (anime_showcase - MediaShowcaseRunner)
+def render_animeshowcase():
+    img, draw = create_base_canvas()
+    # Left Poster Card (44x56 at x=2, y=4) - Neo-Tokyo Akira Red Bike Poster
+    draw.rectangle([2, 4, 45, 59], fill=(28, 10, 18, 255), outline=(255, 45, 95, 255))
+    for py in range(5, 58):
+        r = min(220, 45 + py * 2)
+        draw.line([3, py, 44, py], fill=(r // 2, 12, 30, 255))
+    # Neo-Tokyo beam & red cyber-bike tail trail
+    draw.ellipse([12, 8, 36, 30], fill=(255, 40, 80, 255))
+    draw.line([24, 18, 10, 52], fill=(255, 220, 70, 255), width=2)
+    draw.line([24, 18, 36, 52], fill=(0, 220, 255, 255), width=1)
+    draw.rectangle([14, 42, 34, 52], fill=(240, 25, 50, 255))
+    draw.ellipse([11, 46, 18, 54], fill=(40, 45, 55, 255), outline=(200, 200, 220, 255))
+    draw.ellipse([30, 46, 37, 54], fill=(40, 45, 55, 255), outline=(200, 200, 220, 255))
+
+    # Right Metadata Column
+    draw.rectangle([50, 4, 79, 11], fill=(255, 45, 105, 255))
+    draw_text(img, "ANIME", 55, 5, col=(255, 255, 255, 255), font="3x5")
+    draw_text(img, "1988", 83, 5, col=(170, 185, 205, 255), font="3x5")
+    draw_text(img, "★8.8", 104, 5, col=(255, 215, 0, 255), font="3x5")
+
+    draw_text(img, "AKIRA", 50, 15, col=(255, 255, 255, 255), font="5x7")
+    draw_text(img, "SCI-FI • ANILIST", 50, 25, col=(255, 110, 155, 255), font="3x5")
+    draw.line([50, 32, 125, 32], fill=(35, 45, 60, 255))
+
+    draw_text(img, "NEO-TOKYO 2019", 50, 36, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "PSYCHIC AWAKENING", 50, 44, col=(200, 210, 225, 255), font="3x5")
+    draw_text(img, "▶ ANIME STREAM", 50, 54, col=(255, 90, 145, 255), font="3x5")
+    return img
+
 # ----------------------------------------------------------------------------
 # Master Engine Generator Mapping
 # ----------------------------------------------------------------------------
@@ -735,6 +873,10 @@ ENGINE_GENERATORS = [
     ("marquee", "PIXELCADE ARCADE MARQUEE", "BATOCERA RETRO", render_marquee),
     ("date", "CALENDAR & DATE ENGINE", "NTP RTC SYNC", render_date),
     ("clock", "RETRO GAME & ARCADE CLOCK", "NTP RTC SYNC", render_clock),
+    ("retrogames", "RETRO GAMES SHOWCASE", "DMD STREAM", render_retrogames),
+    ("movieshowcase", "CINEMA MOVIE SHOWCASE", "DMD STREAM", render_movieshowcase),
+    ("seriesshowcase", "TV SERIES SHOWCASE", "DMD STREAM", render_seriesshowcase),
+    ("animeshowcase", "ANIME & MANGA SHOWCASE", "DMD STREAM", render_animeshowcase),
 ]
 
 def generate_all():

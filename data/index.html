@@ -1466,7 +1466,7 @@ select.input option {
                 <label><span data-i18n="gen_idle_fighter_enable">Enable Idle Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_gen_fighter">?</span></label>
                 <div style="display: flex; align-items: center; height: 100%;">
                   <label class="switch">
-                    <input type="checkbox" id="sys-idle-fighter-enabled" checked>
+                    <input type="checkbox" id="sys-idle-fighter-enabled">
                     <span class="slider"></span>
                   </label>
                 </div>
@@ -1778,130 +1778,204 @@ select.input option {
 
         <!-- MQTT & API -->
         <div id="sys-tab-mqtt" class="tab-pane">
-          <div class="card glass shadow" style="margin-bottom: 2rem;">
-            <h3 data-i18n="mqtt_title">MQTT Integration</h3>
-            <div class="form-grid">
-              <div class="form-group">
-                <label><span data-i18n="mqtt_enable">Enable MQTT</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_enable">?</span></label>
-                <select id="hw-mqtt-enable" class="input">
-                  <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
-                  <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label><span data-i18n="mqtt_overlay">Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_overlay">?</span></label>
-                <select id="hw-mqtt-overlay" class="input">
-                  <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
-                  <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-grid">
-              <div class="form-group">
-                <label><span data-i18n="mqtt_broker">Broker IP</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_broker">?</span></label>
-                <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
-              </div>
-              <div class="form-group">
-                <label><span data-i18n="mqtt_port">Port</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_port">?</span></label>
-                <input type="number" id="hw-mqtt-port" class="input" value="1883">
-              </div>
-            </div>
-            <div class="form-grid" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label><span data-i18n="mqtt_user">Username</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_user">?</span></label>
-                <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
-              </div>
-              <div class="form-group">
-                <label><span data-i18n="mqtt_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_pass">?</span></label>
-                <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
-              </div>
-            </div>
-            <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="mqtt_save_btn">Save MQTT Settings</button>
-            
-            <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
-            
-            <h4 style="margin-top: 1.5rem;" data-i18n="recalbox_title">Recalbox / Batocera / RetroPie Sync</h4>
-            <p class="text-muted" style="font-size: 0.9em;" data-i18n="recalbox_desc">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
-            <div class="form-group" style="margin-top: 1rem;">
-              <label style="display:block; margin-bottom:0.35rem;"><span data-i18n="recalbox_target_os">Target Gaming OS</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_target_os">?</span></label>
-              <select id="hw-mqtt-target-os" class="input" style="font-weight: 600;">
-                <option value="auto">Auto-Detect (Remote Scan)</option>
-                <option value="recalbox">Recalbox (/recalbox/share)</option>
-                <option value="batocera">Batocera (/userdata/system)</option>
-                <option value="retropie">RetroPie (/opt/retropie)</option>
-              </select>
-            </div>
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="toggle-btn" style="display:inline-flex; align-items:center; cursor:pointer;">
-                <input type="checkbox" id="hw-mqtt-custom-auth" style="margin-right:0.5rem; accent-color:var(--primary);">
-                <span data-i18n="recalbox_custom_auth">Use custom SSH credentials</span>
-              </label>
-            </div>
-            <div id="mqtt-custom-auth-fields" class="form-grid" style="display: none; margin-top: 0.5rem; margin-bottom: 1rem;">
-              <div class="form-group">
-                <label data-i18n="recalbox_ssh_user">SSH Username</label>
-                <input type="text" id="hw-mqtt-ssh-user" class="input" placeholder="root" value="root">
-              </div>
-              <div class="form-group">
-                <label data-i18n="recalbox_ssh_pass">SSH Password</label>
-                <input type="password" id="hw-mqtt-ssh-pass" class="input" placeholder="recalboxroot">
-              </div>
-            </div>
-            <div class="form-grid" style="align-items: end;">
-              <div class="form-group">
-                <label><span data-i18n="recalbox_console_ip">Console IP Address</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_ip">?</span></label>
-                <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
-              </div>
-              <div class="form-group" style="display: flex; gap: 0.5rem;">
-                <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;" data-i18n="recalbox_install_btn">Install via SSH</button>
-                <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;" data-i18n="recalbox_logs_btn">Check Logs</button>
-              </div>
-            </div>
-            <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
-          </div>
-          
-          <div class="card glass shadow" style="margin-bottom: 2rem;">
-            <h3 data-i18n="dmqtt_title">MQTT Data</h3>
-            <p class="text-muted" style="font-size: 0.9em;" data-i18n="dmqtt_desc">Broker the MQTT Data screen connects to while it is on display (see docs/MQTT_DATA_CONTRACT.md). Separate from the arcade MQTT above; nothing runs in the background.</p>
-            <div class="form-grid">
-              <div class="form-group">
-                <label data-i18n="mqtt_broker">Broker IP</label>
-                <input type="text" id="hw-dmqtt-broker" class="input" placeholder="192.168.1.10">
-              </div>
-              <div class="form-group">
-                <label data-i18n="mqtt_port">Port</label>
-                <input type="number" id="hw-dmqtt-port" class="input" value="1883">
-              </div>
-            </div>
-            <div class="form-grid" style="margin-top: 1rem;">
-              <div class="form-group">
-                <label data-i18n="mqtt_user">Username</label>
-                <input type="text" id="hw-dmqtt-user" class="input" placeholder="Optional">
-              </div>
-              <div class="form-group">
-                <label data-i18n="mqtt_pass">Password</label>
-                <input type="password" id="hw-dmqtt-pass" class="input" placeholder="Optional">
-              </div>
-            </div>
-            <button id="btn-save-dmqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="dmqtt_save_btn">Save Data MQTT Settings</button>
+          <div class="tabs mqtt-subtabs" style="margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+            <button type="button" class="tab-btn active" onclick="switchMqttSubTab('frontend')"><span data-i18n="mqtt_subtab_frontend">🎮 FrontendSync (Recalbox)</span></button>
+            <button type="button" class="tab-btn" onclick="switchMqttSubTab('data')"><span data-i18n="mqtt_subtab_data">🏠 MQTT Data (Domotique)</span></button>
+            <button type="button" class="tab-btn" onclick="switchMqttSubTab('auth')"><span data-i18n="mqtt_subtab_auth">🔒 API Authentication</span></button>
+            <button type="button" class="tab-btn" onclick="switchMqttSubTab('showcase')"><span data-i18n="mqtt_subtab_showcase">🎬 DMD Media Showcase</span></button>
           </div>
 
-          <div class="card glass shadow">
-            <h3 data-i18n="api_auth_title">API Authentication</h3>
-            <div class="form-grid">
-              <div class="form-group">
-                <label><span data-i18n="api_auth_enable">Require Auth for API</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_auth">?</span></label>
-                <select id="hw-api-auth" class="input">
-                  <option value="false" data-i18n="mqtt_opt_disabled">Disabled</option>
-                  <option value="true" data-i18n="mqtt_opt_enabled">Enabled</option>
+          <!-- Sub-pane 1: FrontendSync (Recalbox / Batocera / RetroPie) -->
+          <div id="mqtt-subtab-frontend" class="mqtt-subtab-pane active">
+            <div class="card glass shadow" style="margin-bottom: 2rem;">
+              <h3 data-i18n="mqtt_title">FrontendSync Integration</h3>
+              <p class="text-muted" style="font-size: 0.9em; margin-bottom: 1rem;" data-i18n="mqtt_desc">Real-time gaming event synchronization for Recalbox, Batocera, and RetroPie consoles.</p>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_enable">Enable MQTT</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_enable">?</span></label>
+                  <select id="hw-mqtt-enable" class="input">
+                    <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_overlay">Fighter Overlay</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_overlay">?</span></label>
+                  <select id="hw-mqtt-overlay" class="input">
+                    <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_broker">Broker IP</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_broker">?</span></label>
+                  <input type="text" id="hw-mqtt-broker" class="input" placeholder="127.0.0.1">
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_port">Port</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_port">?</span></label>
+                  <input type="number" id="hw-mqtt-port" class="input" value="1883">
+                </div>
+              </div>
+              <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_user">Username</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_user">?</span></label>
+                  <input type="text" id="hw-mqtt-user" class="input" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="mqtt_pass">Password</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_pass">?</span></label>
+                  <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
+                </div>
+              </div>
+              <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="mqtt_save_btn">Save MQTT Settings</button>
+              
+              <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
+              
+              <h4 style="margin-top: 1.5rem;" data-i18n="recalbox_title">Recalbox / Batocera / RetroPie Sync</h4>
+              <p class="text-muted" style="font-size: 0.9em;" data-i18n="recalbox_desc">Automatically install the MQTT sync scripts onto your retro-gaming console via SSH.</p>
+              <div class="form-group" style="margin-top: 1rem;">
+                <label style="display:block; margin-bottom:0.35rem;"><span data-i18n="recalbox_target_os">Target Gaming OS</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_target_os">?</span></label>
+                <select id="hw-mqtt-target-os" class="input" style="font-weight: 600;">
+                  <option value="auto">Auto-Detect (Remote Scan)</option>
+                  <option value="recalbox">Recalbox (/recalbox/share)</option>
+                  <option value="batocera">Batocera (/userdata/system)</option>
+                  <option value="retropie">RetroPie (/opt/retropie)</option>
                 </select>
               </div>
-              <div class="form-group">
-                <label><span data-i18n="api_token">API Token</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_token">?</span></label>
-                <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
+              <div class="form-group" style="margin-top: 1rem;">
+                <label class="toggle-btn" style="display:inline-flex; align-items:center; cursor:pointer;">
+                  <input type="checkbox" id="hw-mqtt-custom-auth" style="margin-right:0.5rem; accent-color:var(--primary);">
+                  <span data-i18n="recalbox_custom_auth">Use custom SSH credentials</span>
+                </label>
               </div>
+              <div id="mqtt-custom-auth-fields" class="form-grid" style="display: none; margin-top: 0.5rem; margin-bottom: 1rem;">
+                <div class="form-group">
+                  <label data-i18n="recalbox_ssh_user">SSH Username</label>
+                  <input type="text" id="hw-mqtt-ssh-user" class="input" placeholder="root" value="root">
+                </div>
+                <div class="form-group">
+                  <label data-i18n="recalbox_ssh_pass">SSH Password</label>
+                  <input type="password" id="hw-mqtt-ssh-pass" class="input" placeholder="recalboxroot">
+                </div>
+              </div>
+              <div class="form-grid" style="align-items: end;">
+                <div class="form-group">
+                  <label><span data-i18n="recalbox_console_ip">Console IP Address</span> <span class="tooltip-icon" data-i18n-tooltip="tt_mqtt_ip">?</span></label>
+                  <input type="text" id="hw-mqtt-ip" class="input" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group" style="display: flex; gap: 0.5rem;">
+                  <button id="btn-install-mqtt" class="btn btn-warning" style="flex: 1;" data-i18n="recalbox_install_btn">Install via SSH</button>
+                  <button id="btn-check-logs" class="btn btn-primary" style="flex: 1;" data-i18n="recalbox_logs_btn">Check Logs</button>
+                </div>
+              </div>
+              <pre id="ssh-log-output" class="input" style="display: none; max-height: 200px; overflow-y: auto; font-size: 12px; background: rgba(0,0,0,0.2); margin-top: 1rem; color: #fff; white-space: pre-wrap;"></pre>
             </div>
-            <button id="btn-save-api" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="api_save_btn">Save API Auth</button>
+          </div>
+          
+          <!-- Sub-pane 2: MQTT Data (Domotique) -->
+          <div id="mqtt-subtab-data" class="mqtt-subtab-pane" style="display: none;">
+            <div class="card glass shadow" style="margin-bottom: 2rem;">
+              <h3 data-i18n="dmqtt_title">MQTT Data</h3>
+              <p class="text-muted" style="font-size: 0.9em;" data-i18n="dmqtt_desc">Broker the MQTT Data screen connects to while it is on display (see docs/MQTT_DATA_CONTRACT.md). Separate from the arcade MQTT above; nothing runs in the background.</p>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label data-i18n="mqtt_broker">Broker IP</label>
+                  <input type="text" id="hw-dmqtt-broker" class="input" placeholder="192.168.1.10">
+                </div>
+                <div class="form-group">
+                  <label data-i18n="mqtt_port">Port</label>
+                  <input type="number" id="hw-dmqtt-port" class="input" value="1883">
+                </div>
+              </div>
+              <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                  <label data-i18n="mqtt_user">Username</label>
+                  <input type="text" id="hw-dmqtt-user" class="input" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                  <label data-i18n="mqtt_pass">Password</label>
+                  <input type="password" id="hw-dmqtt-pass" class="input" placeholder="Optional">
+                </div>
+              </div>
+              <button id="btn-save-dmqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="dmqtt_save_btn">Save Data MQTT Settings</button>
+            </div>
+          </div>
+
+          <!-- Sub-pane 3: API Authentication -->
+          <div id="mqtt-subtab-auth" class="mqtt-subtab-pane" style="display: none;">
+            <div class="card glass shadow">
+              <h3 data-i18n="api_auth_title">API Authentication</h3>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label><span data-i18n="api_auth_enable">Require Auth for API</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_auth">?</span></label>
+                  <select id="hw-api-auth" class="input">
+                    <option value="false" data-i18n="mqtt_opt_disabled">Disabled</option>
+                    <option value="true" data-i18n="mqtt_opt_enabled">Enabled</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="api_token">API Token</span> <span class="tooltip-icon" data-i18n-tooltip="tt_api_token">?</span></label>
+                  <input type="text" id="hw-api-token" class="input" placeholder="Token for clients">
+                </div>
+              </div>
+              <button id="btn-save-api" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="api_save_btn">Save API Auth</button>
+            </div>
+          </div>
+
+          <!-- Sub-pane 4: DMD Media Showcase -->
+          <div id="mqtt-subtab-showcase" class="mqtt-subtab-pane" style="display: none;">
+            <div class="card glass shadow">
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.5rem;">
+                <h3 data-i18n="showcase_title" style="margin: 0;">DMD Media Showcase</h3>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <span id="showcase-comm-badge" class="badge" style="font-size: 0.85rem; padding: 0.35rem 0.75rem; border-radius: 999px; background: rgba(255,255,255,0.08); color: #b0bec5; border: 1px solid rgba(255,255,255,0.15);" data-i18n="showcase_status_disabled">⚪ Disabled</span>
+                  <button type="button" id="btn-test-showcase-conn" class="btn btn-sm" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;" data-i18n="showcase_test_btn">🔄 Test</button>
+                </div>
+              </div>
+              <p class="text-muted" style="font-size: 0.9em; margin-bottom: 1rem;" data-i18n="showcase_desc">Central network and broker configuration for the 4 DMD Media Showcase engines (Games, Movies, Series, Anime).</p>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label><span data-i18n="showcase_enable">Enable DMD Media Showcase</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_enable">?</span></label>
+                  <select id="hw-showcase-enabled" class="input">
+                    <option value="0" data-i18n="mqtt_opt_disabled" selected>Disabled</option>
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="showcase_server_url">Showcase Server URL (mDNS Auto-Discovery)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_server_url">?</span></label>
+                  <input type="text" id="hw-showcase-server-url" class="input" value="http://dmdmediashowcase.local:8890" placeholder="http://dmdmediashowcase.local:8890">
+                </div>
+              </div>
+              <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                  <label><span data-i18n="showcase_transport_mode">Transport Protocol</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_transport_mode">?</span></label>
+                  <select id="hw-showcase-transport-mode" class="input">
+                    <option value="mqtt_udp" data-i18n="showcase_opt_mqtt_udp">MQTT + UDP Real-Time (Recommended)</option>
+                    <option value="http_poll" data-i18n="showcase_opt_http_poll">HTTP Polling Fallback</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="showcase_use_broker">Use Showcase Embedded MQTT Broker</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_use_broker">?</span></label>
+                  <select id="hw-showcase-use-broker" class="input">
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                    <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group" id="group-showcase-broker-source" style="display: none;">
+                  <label><span data-i18n="showcase_broker_source">External MQTT Broker Source</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_broker_source">?</span></label>
+                  <select id="hw-showcase-broker-source" class="input">
+                    <option value="global" data-i18n="showcase_opt_global_broker">Global ArcadeMatrix MQTT Broker</option>
+                    <option value="custom" data-i18n="showcase_opt_custom_broker">Custom Broker URL</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group" id="group-showcase-custom-url" style="display: none; margin-top: 1rem;">
+                <label><span data-i18n="showcase_custom_url">Custom MQTT Broker URL</span> <span class="tooltip-icon" data-i18n-tooltip="tt_showcase_custom_url">?</span></label>
+                <input type="text" id="hw-showcase-custom-url" class="input" placeholder="mqtt://192.168.1.200:1883">
+              </div>
+              <button id="btn-save-showcase" class="btn btn-primary" style="margin-top: 1.5rem; width: 100%;" data-i18n="showcase_save_btn">Save Showcase Settings</button>
+            </div>
           </div>
         </div>
 
@@ -2497,6 +2571,41 @@ const translations = {
     api_token: "API Token",
     api_auth_prompt: "API Token required or invalid. Enter your API Token:",
     api_save_btn: "Save API Auth",
+    mqtt_subtab_frontend: "🎮 FrontendSync (Recalbox)",
+    mqtt_subtab_data: "🏠 MQTT Data (Home Automation)",
+    mqtt_subtab_auth: "🔒 API Authentication",
+    mqtt_subtab_showcase: "🎬 DMD Media Showcase",
+    mqtt_desc: "Real-time gaming event synchronization for Recalbox, Batocera, and RetroPie consoles.",
+    showcase_title: "DMD Media Showcase",
+    showcase_desc: "Central network and broker configuration for the 4 DMD Media Showcase engines (Games, Movies, Series, Anime).",
+    showcase_enable: "Enable DMD Media Showcase",
+    showcase_server_url: "Showcase Server URL (mDNS Auto-Discovery)",
+    showcase_status_disabled: "⚪ Disabled",
+    showcase_status_checking: "⏳ Checking...",
+    showcase_status_ok: "🟢 Communication OK",
+    showcase_status_offline: "🔴 Unreachable",
+    showcase_test_btn: "🔄 Test",
+    showcase_transport_mode: "Transport Protocol",
+    showcase_opt_mqtt_udp: "MQTT + UDP Real-Time (Recommended)",
+    showcase_opt_http_poll: "HTTP Polling Fallback",
+    showcase_use_broker: "Use Showcase Embedded MQTT Broker",
+    showcase_broker_source: "External MQTT Broker Source",
+    showcase_opt_global_broker: "Global ArcadeMatrix MQTT Broker",
+    showcase_opt_custom_broker: "Custom Broker URL",
+    showcase_custom_url: "Custom MQTT Broker URL",
+    showcase_save_btn: "Save Showcase Settings",
+    showcase_saved: "Showcase settings saved successfully!",
+    showcase_save_failed: "Failed to save Showcase settings",
+    unit_items: "Media",
+    dur_tooltip_items: "Number of cards/videos to play before rotating",
+    lbl_count: "Count:",
+    lbl_duration: "Duration:",
+    tt_showcase_enable: "Disabled by default so no network requests are made if dmd_media_showcase is not installed on your LAN.",
+    tt_showcase_server_url: "HTTP URL of the DMD Media Showcase server (auto-discovered via http://dmdmediashowcase.local:8890).",
+    tt_showcase_transport_mode: "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback.",
+    tt_showcase_use_broker: "Automatically connect to the Showcase server's internal MQTT broker (<server_ip>:1883).",
+    tt_showcase_broker_source: "When Embedded Broker is disabled, select ArcadeMatrix Global MQTT or a Custom Broker URL.",
+    tt_showcase_custom_url: "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883).",
     ota_online_title: "🌐 Online Update (GitHub Releases)",
     ota_online_desc: "Check GitHub Releases for new updates matching your device architecture and update automatically.",
     ota_cur_ver: "Current Version:",
@@ -3120,6 +3229,41 @@ const translations = {
     api_token: "Jeton API (Token)",
     api_auth_prompt: "Jeton API requis ou invalide. Entrez votre jeton API :",
     api_save_btn: "Enregistrer l'authentification API",
+    mqtt_subtab_frontend: "🎮 FrontendSync (Recalbox)",
+    mqtt_subtab_data: "🏠 MQTT Data (Domotique)",
+    mqtt_subtab_auth: "🔒 Authentification API",
+    mqtt_subtab_showcase: "🎬 DMD Media Showcase",
+    mqtt_desc: "Synchronisation des événements de jeu en temps réel pour consoles Recalbox, Batocera et RetroPie.",
+    showcase_title: "DMD Media Showcase",
+    showcase_desc: "Configuration réseau et broker centralisée pour les 4 moteurs DMD Media Showcase (Jeux, Films, Séries, Animés).",
+    showcase_enable: "Activer DMD Media Showcase",
+    showcase_server_url: "URL Serveur Showcase (Auto-découverte mDNS)",
+    showcase_status_disabled: "⚪ Désactivé",
+    showcase_status_checking: "⏳ Vérification...",
+    showcase_status_ok: "🟢 Communication OK",
+    showcase_status_offline: "🔴 Injoignable",
+    showcase_test_btn: "🔄 Tester",
+    showcase_transport_mode: "Protocole de Transport",
+    showcase_opt_mqtt_udp: "MQTT + UDP Temps Réel (Recommandé)",
+    showcase_opt_http_poll: "Fallback HTTP Polling",
+    showcase_use_broker: "Utiliser le Broker MQTT Showcase Intégré",
+    showcase_broker_source: "Source Broker MQTT Externe",
+    showcase_opt_global_broker: "Broker MQTT Global ArcadeMatrix",
+    showcase_opt_custom_broker: "URL Broker MQTT Personnalisé",
+    showcase_custom_url: "URL Broker MQTT Personnalisé",
+    showcase_save_btn: "Enregistrer les paramètres Showcase",
+    showcase_saved: "Paramètres Showcase enregistrés avec succès !",
+    showcase_save_failed: "Échec de l'enregistrement des paramètres Showcase",
+    unit_items: "Médias",
+    dur_tooltip_items: "Nombre de cartes/vidéos à diffuser avant rotation",
+    lbl_count: "Quantité :",
+    lbl_duration: "Durée :",
+    tt_showcase_enable: "Désactivé par défaut afin d'éviter tout appel réseau inutile si dmd_media_showcase n'est pas installé.",
+    tt_showcase_server_url: "URL HTTP du serveur DMD Media Showcase (découverte automatique via http://dmdmediashowcase.local:8890).",
+    tt_showcase_transport_mode: "MQTT + UDP Temps Réel (ffmpeg -re) ou fallback HTTP Polling.",
+    tt_showcase_use_broker: "Se connecter automatiquement au broker MQTT intégré du serveur Showcase (<ip_serveur>:1883).",
+    tt_showcase_broker_source: "Lorsque le broker intégré est désactivé, choisir le MQTT Global ArcadeMatrix ou une URL personnalisée.",
+    tt_showcase_custom_url: "Utilisé si la source du broker externe est Personnalisée (ex: mqtt://192.168.1.200:1883).",
     ota_online_title: "🌐 Mise à jour en ligne (GitHub Releases)",
     ota_online_desc: "Vérifie les mises à jour sur GitHub Releases selon votre matériel et met à jour automatiquement.",
     ota_cur_ver: "Version actuelle :",
@@ -3743,6 +3887,41 @@ const translations = {
     api_token: "Token de API",
     api_auth_prompt: "Token API requerido o inválido. Ingrese su token API:",
     api_save_btn: "Guardar autenticación API",
+    mqtt_subtab_frontend: "🎮 FrontendSync (Recalbox)",
+    mqtt_subtab_data: "🏠 Datos MQTT (Domótica)",
+    mqtt_subtab_auth: "🔒 Autenticación API",
+    mqtt_subtab_showcase: "🎬 DMD Media Showcase",
+    mqtt_desc: "Sincronización de eventos de juego en tiempo real para consolas Recalbox, Batocera y RetroPie.",
+    showcase_title: "DMD Media Showcase",
+    showcase_desc: "Configuración centralizada de red y broker para los 4 motores DMD Media Showcase (Juegos, Películas, Series, Anime).",
+    showcase_enable: "Activar DMD Media Showcase",
+    showcase_server_url: "URL Servidor Showcase (Autodescubrimiento mDNS)",
+    showcase_status_disabled: "⚪ Desactivado",
+    showcase_status_checking: "⏳ Comprobando...",
+    showcase_status_ok: "🟢 Comunicación OK",
+    showcase_status_offline: "🔴 Inalcanzable",
+    showcase_test_btn: "🔄 Probar",
+    showcase_transport_mode: "Protocolo de Transporte",
+    showcase_opt_mqtt_udp: "MQTT + UDP Tiempo Real (Recomendado)",
+    showcase_opt_http_poll: "Alternativa HTTP Polling",
+    showcase_use_broker: "Usar Broker MQTT Showcase Integrado",
+    showcase_broker_source: "Fuente Broker MQTT Externo",
+    showcase_opt_global_broker: "Broker MQTT Global ArcadeMatrix",
+    showcase_opt_custom_broker: "URL Broker MQTT Personalizado",
+    showcase_custom_url: "URL Broker MQTT Personalizado",
+    showcase_save_btn: "Guardar ajustes Showcase",
+    showcase_saved: "¡Ajustes de Showcase guardados con éxito!",
+    showcase_save_failed: "Error al guardar ajustes de Showcase",
+    unit_items: "Medios",
+    dur_tooltip_items: "Número de tarjetas/vídeos a reproducir antes de rotar",
+    lbl_count: "Cantidad:",
+    lbl_duration: "Duración:",
+    tt_showcase_enable: "Desactivado por defecto para evitar peticiones de red innecesarias si dmd_media_showcase no está instalado.",
+    tt_showcase_server_url: "URL HTTP del servidor DMD Media Showcase (autodescubierto vía http://dmdmediashowcase.local:8890).",
+    tt_showcase_transport_mode: "MQTT + UDP Tiempo Real (ffmpeg -re) o alternativa HTTP Polling.",
+    tt_showcase_use_broker: "Conectar automáticamente al broker MQTT integrado del servidor Showcase (<ip_servidor>:1883).",
+    tt_showcase_broker_source: "Si el broker integrado está desactivado, elegir MQTT Global ArcadeMatrix o URL personalizada.",
+    tt_showcase_custom_url: "Utilizado si la fuente es Personalizada (ej: mqtt://192.168.1.200:1883).",
     ota_online_title: "🌐 Actualización en línea (GitHub Releases)",
     ota_online_desc: "Comprueba si hay actualizaciones en GitHub Releases y actualiza automáticamente.",
     ota_cur_ver: "Versión actual:",
@@ -5308,7 +5487,17 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
   const isCountBased = (instId) => {
     const inst = instancesList.find(i => i.instance_id === instId);
     const eng = inst ? enginesMap[inst.engine_id] : null;
-    return Boolean((eng && eng.capabilities && eng.capabilities.selfPaced) || (inst && inst.engine_id === 'gifs'));
+    return Boolean((eng && eng.capabilities && eng.capabilities.selfPaced) || (inst && (inst.engine_id === 'gifs' || inst.engine_id === 'retro_games' || inst.engine_id === 'movie_showcase' || inst.engine_id === 'series_showcase' || inst.engine_id === 'anime_showcase')));
+  };
+
+  const getCountUnit = (instId) => {
+    const inst = instancesList.find(i => i.instance_id === instId);
+    if (!inst) return 'sec';
+    if (['retro_games', 'movie_showcase', 'series_showcase', 'anime_showcase'].includes(inst.engine_id)) {
+      return t('unit_items', 'Media');
+    }
+    if (inst.engine_id === 'gifs') return 'GIFs';
+    return t('unit_items', 'Media');
   };
 
   const allowsOverlay = (instId) => {
@@ -5366,11 +5555,11 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
 
       const durGroup = document.createElement('div');
       durGroup.className = 'rotation-dur-group';
-      durGroup.title = countBased ? t('dur_tooltip_gifs', 'Number of GIFs to play before rotating') : t('dur_tooltip_sec', 'Duration in seconds');
+      durGroup.title = countBased ? t('dur_tooltip_items', 'Number of cards/videos to play before rotating') : t('dur_tooltip_sec', 'Duration in seconds');
 
       const durLbl = document.createElement('span');
       durLbl.style = "font-size: 0.8rem; color: var(--text-secondary);";
-      durLbl.innerText = countBased ? 'Count:' : 'Duration:';
+      durLbl.innerText = countBased ? t('lbl_count', 'Count:') : t('lbl_duration', 'Duration:');
       durGroup.appendChild(durLbl);
 
       const dur = document.createElement('input');
@@ -5383,7 +5572,7 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
 
       const unit = document.createElement('span');
       unit.style = "font-size: 0.8rem; color: var(--text-muted);";
-      unit.innerText = countBased ? 'GIFs' : 'sec';
+      unit.innerText = countBased ? getCountUnit(entry.instance_id) : 'sec';
       durGroup.appendChild(unit);
       settingsBar.appendChild(durGroup);
 
@@ -5972,7 +6161,12 @@ function buildMultiSelectGroup(opts, targetFieldId, instId, initVal) {
 const _showcaseReferentialCache = new Map();
 
 async function fetchShowcaseReferential(serverUrl, endpointPath, lang, forceRefresh = false) {
-  let base = String(serverUrl || 'http://127.0.0.1:8080').trim().replace(/\/+$/, '');
+  const sysShowcase = (window.__sysConfig && window.__sysConfig.showcase) ? window.__sysConfig.showcase : null;
+  if (!forceRefresh && sysShowcase && sysShowcase.enabled === false) {
+    return null;
+  }
+  const preferredUrl = window.__showcaseResolvedUrl || serverUrl || (sysShowcase && sysShowcase.server_url) || 'http://dmdmediashowcase.local:8890';
+  let base = String(preferredUrl).trim().replace(/\/+$/, '');
   if (!base.startsWith('http://') && !base.startsWith('https://')) {
     base = 'http://' + base;
   }
@@ -6046,7 +6240,7 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
   function getServerUrlAndLang() {
     const srvEl = formGrid.querySelector(`#cfg-dyn-${instId}-server_url`);
     const langEl = formGrid.querySelector(`#cfg-dyn-${instId}-lang`);
-    const srv = srvEl ? srvEl.value : ((instance.config && instance.config.server_url) || 'http://127.0.0.1:8080');
+    const srv = srvEl ? srvEl.value : ((instance.config && instance.config.server_url) || (window.__sysConfig?.showcase?.server_url) || 'http://dmdmediashowcase.local:8890');
     const lg = langEl ? langEl.value : ((instance.config && instance.config.lang) || 'system');
     return { srv, lg };
   }
@@ -7078,7 +7272,7 @@ window.switchDisplayTab = window.switchTab;
 window.switchSystemTab = function(tabId) {
   // Update buttons
   if (window.event && window.event.currentTarget) {
-    document.querySelectorAll('#page-system .tab-btn').forEach(btn => {
+    document.querySelectorAll('#page-system > .tabs > .tab-btn').forEach(btn => {
       btn.classList.remove('active');
     });
     window.event.currentTarget.classList.add('active');
@@ -7095,6 +7289,23 @@ window.switchSystemTab = function(tabId) {
   }
   if (tabId === 'hardware') {
     initHardwareCapabilities();
+  }
+};
+
+window.switchMqttSubTab = function(subTabId) {
+  document.querySelectorAll('#sys-tab-mqtt .mqtt-subtabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+  if (window.event && window.event.currentTarget) {
+    window.event.currentTarget.classList.add('active');
+  }
+  document.querySelectorAll('#sys-tab-mqtt .mqtt-subtab-pane').forEach(p => {
+    p.classList.remove('active');
+    p.style.display = 'none';
+  });
+  const pane = document.getElementById('mqtt-subtab-' + subTabId);
+  if (pane) {
+    pane.classList.add('active');
+    pane.style.display = 'block';
+    applyTooltips(pane);
   }
 };
 
@@ -8430,6 +8641,90 @@ function initNetworkSettings() {
       }
     });
   }
+
+  const checkShowcaseStatus = async (forceProbe = false) => {
+    const badge = document.getElementById('showcase-comm-badge');
+    const enEl = document.getElementById('hw-showcase-enabled');
+    const urlEl = document.getElementById('hw-showcase-server-url');
+    if (!badge) return;
+    const enabled = enEl ? enEl.value === '1' : !!(window.__sysConfig?.showcase?.enabled);
+    const url = (urlEl ? urlEl.value : (window.__sysConfig?.showcase?.server_url || 'http://dmdmediashowcase.local:8890')).trim() || 'http://dmdmediashowcase.local:8890';
+    if (!enabled && !forceProbe) {
+      badge.textContent = t('showcase_status_disabled', '⚪ Disabled');
+      badge.style.background = 'rgba(255,255,255,0.08)';
+      badge.style.color = '#b0bec5';
+      badge.style.borderColor = 'rgba(255,255,255,0.15)';
+      return;
+    }
+    badge.textContent = t('showcase_status_checking', '⏳ Checking...');
+    badge.style.background = 'rgba(255, 193, 7, 0.15)';
+    badge.style.color = '#ffd54f';
+    badge.style.borderColor = 'rgba(255, 193, 7, 0.35)';
+    try {
+      const qs = `?url=${encodeURIComponent(url)}&enabled=${enabled ? '1' : '0'}${forceProbe ? '&force=1' : ''}`;
+      const res = await API.get(`/api/showcase/status${qs}`);
+      if (res && res.online) {
+        if (res.resolved_url) {
+          window.__showcaseResolvedUrl = res.resolved_url;
+        }
+        const ver = res.version ? ` (v${res.version})` : '';
+        badge.textContent = `${t('showcase_status_ok', '🟢 Communication OK')}${ver}`;
+        badge.style.background = 'rgba(0, 230, 118, 0.15)';
+        badge.style.color = '#00e676';
+        badge.style.borderColor = 'rgba(0, 230, 118, 0.4)';
+      } else {
+        badge.textContent = t('showcase_status_offline', '🔴 Unreachable');
+        badge.style.background = 'rgba(255, 82, 82, 0.15)';
+        badge.style.color = '#ff5252';
+        badge.style.borderColor = 'rgba(255, 82, 82, 0.4)';
+      }
+    } catch (_) {
+      badge.textContent = t('showcase_status_offline', '🔴 Unreachable');
+      badge.style.background = 'rgba(255, 82, 82, 0.15)';
+      badge.style.color = '#ff5252';
+      badge.style.borderColor = 'rgba(255, 82, 82, 0.4)';
+    }
+  };
+  window.checkShowcaseStatus = checkShowcaseStatus;
+
+  const selShowcaseEnabled = document.getElementById('hw-showcase-enabled');
+  if (selShowcaseEnabled && !selShowcaseEnabled._boundChange) {
+    selShowcaseEnabled._boundChange = true;
+    selShowcaseEnabled.addEventListener('change', () => {
+      checkShowcaseStatus(selShowcaseEnabled.value === '1');
+    });
+  }
+  const btnTestShowcase = document.getElementById('btn-test-showcase-conn');
+  if (btnTestShowcase && !btnTestShowcase._boundClick) {
+    btnTestShowcase._boundClick = true;
+    btnTestShowcase.addEventListener('click', () => checkShowcaseStatus(true));
+  }
+
+  const btnSaveShowcase = document.getElementById('btn-save-showcase');
+  if (btnSaveShowcase && !btnSaveShowcase._boundClick && btnSaveShowcase.dataset.bound !== '1') {
+    btnSaveShowcase._boundClick = true;
+    btnSaveShowcase.dataset.bound = '1';
+    btnSaveShowcase.addEventListener('click', async () => {
+      const enabled = document.getElementById('hw-showcase-enabled')?.value === '1';
+      const server_url = document.getElementById('hw-showcase-server-url').value.trim() || 'http://dmdmediashowcase.local:8890';
+      const showcase = {
+        enabled,
+        server_url,
+        transport_mode: document.getElementById('hw-showcase-transport-mode').value,
+        use_showcase_broker: document.getElementById('hw-showcase-use-broker').value === '1',
+        mqtt_broker_source: document.getElementById('hw-showcase-broker-source').value,
+        mqtt_custom_url: document.getElementById('hw-showcase-custom-url').value.trim(),
+      };
+      try {
+        await API.post('/api/system', { showcase });
+        if (window.__sysConfig) window.__sysConfig.showcase = showcase;
+        window.showToast(t('showcase_saved', 'Showcase settings saved successfully!'), 'success');
+        await checkShowcaseStatus(false);
+      } catch (e) {
+        window.showToast(t('showcase_save_failed', 'Failed to save Showcase settings'), 'error');
+      }
+    });
+  }
 }
 
 // Always queries /api/hardware, which is the single source of truth for runtime detection flags.
@@ -8766,6 +9061,38 @@ async function initSettings() {
         tokenInput.value = '';
         tokenInput.placeholder = authConfigured ? '••••••••' : '';
       }
+    }
+
+    // Showcase server & MQTT (nested showcase.*)
+    const sc = cfg.showcase || {};
+    setVal('hw-showcase-enabled', sc.enabled ? '1' : '0');
+    setVal('hw-showcase-server-url', sc.server_url || 'http://dmdmediashowcase.local:8890');
+    setVal('hw-showcase-transport-mode', sc.transport_mode || 'mqtt_udp');
+    setVal('hw-showcase-use-broker', sc.use_showcase_broker !== false ? '1' : '0');
+    setVal('hw-showcase-broker-source', sc.mqtt_broker_source || 'global');
+    setVal('hw-showcase-custom-url', sc.mqtt_custom_url || '');
+    if (typeof window.checkShowcaseStatus === 'function') {
+      window.checkShowcaseStatus(false);
+    }
+
+    const updateShowcaseBrokerUI = () => {
+      const useBroker = document.getElementById('hw-showcase-use-broker')?.value === '1';
+      const brokerSrc = document.getElementById('hw-showcase-broker-source')?.value || 'global';
+      const groupSrc = document.getElementById('group-showcase-broker-source');
+      const groupCustom = document.getElementById('group-showcase-custom-url');
+      if (groupSrc) groupSrc.style.display = useBroker ? 'none' : 'block';
+      if (groupCustom) groupCustom.style.display = (!useBroker && brokerSrc === 'custom') ? 'block' : 'none';
+    };
+    updateShowcaseBrokerUI();
+    const useBrokerEl = document.getElementById('hw-showcase-use-broker');
+    if (useBrokerEl && !useBrokerEl._boundChange) {
+      useBrokerEl._boundChange = true;
+      useBrokerEl.addEventListener('change', updateShowcaseBrokerUI);
+    }
+    const brokerSrcEl = document.getElementById('hw-showcase-broker-source');
+    if (brokerSrcEl && !brokerSrcEl._boundChange) {
+      brokerSrcEl._boundChange = true;
+      brokerSrcEl.addEventListener('change', updateShowcaseBrokerUI);
     }
   } catch (e) {
     console.error('Failed to load settings', e);
