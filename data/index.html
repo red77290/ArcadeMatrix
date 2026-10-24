@@ -2794,11 +2794,18 @@ const translations = {
     field_snapshot_panorama_count: "Snapshot Panoramas",
     field_video_max_duration_s: "Video Max Duration (s)",
     field_video_fps: "Video FPS",
-    field_video_mode: "Video Crop Mode",
+    field_video_mode: "Video Framing Mode",
     field_show_poster: "Show Poster",
     field_show_synopsis: "Show Synopsis",
     field_show_video: "Show Video Clip",
     field_color_boost: "LED Color Boost",
+    opt_video_mode_auto_action: "Auto (Let Me Handle It AI)",
+    opt_video_mode_panorama: "Panorama (Top-Bottom Scan)",
+    opt_video_mode_center_crop: "Static Center Crop",
+    opt_color_boost_auto: "Auto (Let Me Handle It AI)",
+    opt_color_boost_pixel_art: "Pixel Art (Crisp Retro)",
+    opt_color_boost_anime: "Anime (Vibrant Cel-Shaded)",
+    opt_color_boost_cinema: "Cinema (Balanced Contrast & Shadows)",
     field_systems: "Arcade & Console Systems",
     field_genres: "Genres Filter",
     field_decades: "Decades Filter",
@@ -3452,11 +3459,18 @@ const translations = {
     field_snapshot_panorama_count: "Panoramas Captures d'Écran",
     field_video_max_duration_s: "Durée Max Vidéo (s)",
     field_video_fps: "FPS Vidéo",
-    field_video_mode: "Cadrage Vidéo",
+    field_video_mode: "Mode de Cadrage Vidéo",
     field_show_poster: "Afficher l'Affiche",
     field_show_synopsis: "Afficher le Synopsis",
     field_show_video: "Afficher l'Extrait Vidéo",
-    field_color_boost: "Boost Couleurs LED",
+    field_color_boost: "Boost Colorimétrie LED",
+    opt_video_mode_auto_action: "Auto (IA Let Me Handle It)",
+    opt_video_mode_panorama: "Panorama (Balayage Haut-Bas)",
+    opt_video_mode_center_crop: "Recadrage Centré Fixe",
+    opt_color_boost_auto: "Auto (IA Let Me Handle It)",
+    opt_color_boost_pixel_art: "Pixel Art (Rétro Net)",
+    opt_color_boost_anime: "Anime (Cel-Shading Vibrant)",
+    opt_color_boost_cinema: "Cinéma (Contraste & Ombres)",
     field_systems: "Systèmes Arcade & Consoles",
     field_genres: "Filtre Genres",
     field_decades: "Filtre Décennies",
@@ -4110,11 +4124,18 @@ const translations = {
     field_snapshot_panorama_count: "Panoramas de Capturas",
     field_video_max_duration_s: "Duración Máx Video (s)",
     field_video_fps: "FPS de Video",
-    field_video_mode: "Modo de Encuadre",
+    field_video_mode: "Modo de Encuadre de Vídeo",
     field_show_poster: "Mostrar Póster",
     field_show_synopsis: "Mostrar Sinopsis",
     field_show_video: "Mostrar Clip de Video",
     field_color_boost: "Realce de Color LED",
+    opt_video_mode_auto_action: "Auto (IA Let Me Handle It)",
+    opt_video_mode_panorama: "Panorama (Barrido Vertical)",
+    opt_video_mode_center_crop: "Recorte Central Fijo",
+    opt_color_boost_auto: "Auto (IA Let Me Handle It)",
+    opt_color_boost_pixel_art: "Pixel Art (Retro Nítido)",
+    opt_color_boost_anime: "Anime (Cel-Shading Vibrante)",
+    opt_color_boost_cinema: "Cine (Contraste y Sombras)",
     field_systems: "Sistemas Arcade y Consolas",
     field_genres: "Filtro de Géneros",
     field_decades: "Filtro de Décadas",
@@ -4917,6 +4938,14 @@ function formatOptLabel(fieldId, val, raw) {
   if (fieldId === 'display_mode') {
     const dmKey = `opt_display_mode_${lower}`;
     if (dict[dmKey]) return dict[dmKey];
+  }
+  if (fieldId === 'video_mode') {
+    const vmKey = `opt_video_mode_${lower}`;
+    if (dict[vmKey]) return dict[vmKey];
+  }
+  if (fieldId === 'color_boost') {
+    const cbKey = `opt_color_boost_${lower}`;
+    if (dict[cbKey]) return dict[cbKey];
   }
   return raw || val;
 }

@@ -487,7 +487,18 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
 
     copySafeStr(slot.lang, sizeof(slot.lang), config->getString("lang", "system").c_str());
     copySafeStr(slot.textScrollSpeed, sizeof(slot.textScrollSpeed), config->getString("text_scroll_speed", "4").c_str());
-    copySafeStr(slot.videoMode, sizeof(slot.videoMode), config->getString("video_mode", "auto_action").c_str());
+    {
+        String rawVm = config->getString("video_mode", "auto_action");
+        rawVm.trim();
+        rawVm.toLowerCase();
+        const char* normVm = "auto_action";
+        if (rawVm == "panorama") {
+            normVm = "panorama";
+        } else if (rawVm == "center_crop") {
+            normVm = "center_crop";
+        }
+        copySafeStr(slot.videoMode, sizeof(slot.videoMode), normVm);
+    }
     copySafeStr(slot.systems, sizeof(slot.systems), config->getString("systems", "").c_str());
     copySafeStr(slot.genres, sizeof(slot.genres), config->getString("genres", "").c_str());
     copySafeStr(slot.decades, sizeof(slot.decades), config->getString("decades", "").c_str());
@@ -502,7 +513,20 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     slot.jacketPanorama = config->getBool("jacket_panorama", true);
     slot.marqueePanorama = config->getBool("marquee_panorama", false);
     slot.showVideo = config->getBool("show_video", true);
-    slot.colorBoost = config->getBool("color_boost", true);
+    {
+        String rawCb = config->getString("color_boost", "auto");
+        rawCb.trim();
+        rawCb.toLowerCase();
+        const char* normCb = "auto";
+        if (rawCb == "pixel_art") {
+            normCb = "pixel_art";
+        } else if (rawCb == "anime") {
+            normCb = "anime";
+        } else if (rawCb == "cinema" || rawCb == "false" || rawCb == "0" || rawCb == "off") {
+            normCb = "cinema";
+        }
+        copySafeStr(slot.colorBoost, sizeof(slot.colorBoost), normCb);
+    }
 
     uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
     m_fallbackCycleMs = std::max<uint32_t>(30000U, static_cast<uint32_t>(slot.videoMaxDurationS + 25) * budget * 1000U);
@@ -839,9 +863,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     cfgPayload += String(cfg.videoFps);
     cfgPayload += ",\"video_mode\":\"";
     cfgPayload += cfg.videoMode;
-    cfgPayload += "\",\"color_boost\":";
-    cfgPayload += (cfg.colorBoost ? "true" : "false");
-    cfgPayload += "}}}";
+    cfgPayload += "\",\"color_boost\":\"";
+    cfgPayload += cfg.colorBoost;
+    cfgPayload += "\"}}}";
 
     // Publish retained client config FIRST so the Showcase orchestrator can clean up
     // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
@@ -1127,9 +1151,9 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     postBody += String(cfg.videoMaxDurationS);
     postBody += ",\"video_mode\":\"";
     postBody += cfg.videoMode;
-    postBody += "\",\"color_boost\":";
-    postBody += (cfg.colorBoost ? "true" : "false");
-    postBody += ",\"lang\":\"";
+    postBody += "\",\"color_boost\":\"";
+    postBody += cfg.colorBoost;
+    postBody += "\",\"lang\":\"";
     postBody += reqLang;
     postBody += "\"}";
 
@@ -1773,11 +1797,11 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional gameplay snapshots to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "pixel_art", false, "", "", "", "auto_action,pixel_art,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("systems", ConfigType::LIST, "Arcade & Console Systems", "Select one or more systems dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
         ConfigField("genres", ConfigType::LIST, "Game Genres", "Select one or more genres dynamically filtered by your chosen systems (leave empty for all)", "", false, "", "", "", "", "/api/v1/games/filters", true, "", ValidationPolicy::Accept),
@@ -1813,11 +1837,11 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional movie stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "auto_action", false, "", "", "", "auto_action,cinema,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("genres", ConfigType::LIST, "Movie Genres", "Select one or more movie genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/movies/filters", true, "", ValidationPolicy::Accept),
@@ -1853,11 +1877,11 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional episode stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "auto_action", false, "", "", "", "auto_action,cinema,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("genres", ConfigType::LIST, "Series Genres", "Select one or more series genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/series/filters", true, "", ValidationPolicy::Accept),
@@ -1893,11 +1917,11 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional anime stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "anime", false, "", "", "", "auto_action,anime,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("video_mode", ConfigType::ENUM, "Video Framing Mode", "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop)", "auto_action", false, "", "", "", "auto_action,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_video", ConfigType::BOOLEAN, "Show Video Clip", "Stream the RGB565 video clip if available (skipped if unavailable)", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("color_boost", ConfigType::BOOLEAN, "LED Color Boost", "Boost contrast and saturation for HUB75 LED panels", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
+        ConfigField("color_boost", ConfigType::ENUM, "LED Color Boost", "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset)", "auto", false, "", "", "", "auto,pixel_art,anime,cinema", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("lang", ConfigType::ENUM, "Metadata Language", "Language for titles and synopses", "system", false, "", "", "", "system,en,fr,es,de,it", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("genres", ConfigType::LIST, "Anime Genres", "Select one or more anime genres dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),
         ConfigField("decades", ConfigType::LIST, "Decades", "Select one or more decades dynamically retrieved from the Showcase server referential (leave empty for all)", "", false, "", "", "", "", "/api/v1/anime/filters", true, "", ValidationPolicy::Accept),

@@ -115,7 +115,7 @@ protected:
         bool jacketPanorama = true;
         bool marqueePanorama = false;
         bool showVideo = true;
-        bool colorBoost = true;
+        char colorBoost[16] = "auto";
     };
 
     struct CardSnapshot {
