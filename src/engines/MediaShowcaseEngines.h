@@ -55,6 +55,7 @@ public:
     bool needsClear() const override { return false; }
     bool hasNewFrame() const override { return m_dirty; }
     bool selfPaced() const override { return true; }
+    void setRotationBudget(uint32_t budget) override { m_rotationBudget.store(budget > 0 ? budget : 1, std::memory_order_relaxed); }
     bool isFinished() const override;
 
     /**
@@ -93,7 +94,7 @@ protected:
     };
 
     struct ConfigSlot {
-        char serverUrl[MAX_URL_LEN] = "http://127.0.0.1:8080";
+        char serverUrl[MAX_URL_LEN] = "http://dmdmediashowcase.local:8890";
         char transportMode[16] = "mqtt_udp";
         char mqttBrokerSource[12] = "global";
         char mqttCustomUrl[MAX_URL_LEN] = "";
@@ -107,6 +108,7 @@ protected:
         uint8_t snapshotPanoramaCount = 0;
         uint8_t videoMaxDurationS = 8;
         uint8_t videoFps = 15;
+        bool enabled = true;
         bool useShowcaseBroker = true;
         bool showPoster = true;
         bool showSynopsis = true;
@@ -157,6 +159,8 @@ protected:
     std::atomic<uint8_t> m_phase{static_cast<uint8_t>(Phase::Card)};
     std::atomic<uint8_t> m_statusState{3}; // 0=LiveReady, 1=ServerWarming, 2=NetworkOffline, 3=Unconfigured
     std::atomic<uint8_t> m_rotationSlotCount{1};
+    std::atomic<uint32_t> m_rotationBudget{1};
+    std::atomic<uint32_t> m_itemsPlayedInTurn{0};
 
 #if defined(ESP32)
     TaskHandle_t m_task = nullptr;

@@ -8,8 +8,16 @@ import gzip
 import hashlib
 import json
 
-input_file = "data/index.html"
-output_file = "src/api/WebUI.h"
+try:
+    script_path = __file__
+except NameError:
+    # Running inside SCons / PlatformIO
+    script_path = os.path.abspath("scripts/build_webui.py")
+
+script_dir = os.path.dirname(os.path.abspath(script_path))
+repo_dir = os.path.dirname(script_dir)
+input_file = os.path.join(repo_dir, "data", "index.html")
+output_file = os.path.join(repo_dir, "src", "api", "WebUI.h")
 
 if not os.path.exists(input_file):
     print(f"Error: {input_file} not found.")
@@ -148,7 +156,7 @@ if ref_name.startswith("v") and re.match(r"^v\d+\.\d+", ref_name):
 # 2. Dynamic Git Tag detection via git describe
 if not firmware_version:
     try:
-        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always']).decode('ascii').strip()
+        tag_desc = subprocess.check_output(['git', 'describe', '--tags', '--always'], cwd=repo_dir).decode('ascii').strip()
         m = re.match(r"^v?(\d+\.\d+\.\d+)", tag_desc)
         if m:
             firmware_version = m.group(1)
@@ -161,7 +169,7 @@ if not firmware_version:
 
 # 3. Read base version from VERSION file if present
 if not firmware_version:
-    version_file = "VERSION"
+    version_file = os.path.join(repo_dir, "VERSION")
     if os.path.exists(version_file):
         with open(version_file, "r") as vf:
             firmware_version = vf.read().strip().lstrip("v")
@@ -172,7 +180,7 @@ if not firmware_version:
 
 # Generate Git commit hash
 try:
-    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+    git_commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo_dir).decode('ascii').strip()
 except Exception:
     git_commit = "unknown"
 
@@ -181,6 +189,7 @@ build_timestamp = ""
 try:
     build_timestamp = subprocess.check_output(
         ['git', 'log', '-1', '--format=%cd', '--date=format:%Y-%m-%d %H:%M:%S UTC'],
+        cwd=repo_dir,
         stderr=subprocess.DEVNULL
     ).decode('ascii').strip()
 except Exception:
@@ -194,7 +203,7 @@ build_info_content = (f'#pragma once\n'
                       f'#ifndef BUILD_GIT_COMMIT\n#define BUILD_GIT_COMMIT "{git_commit}"\n#endif\n'
                       f'#ifndef BUILD_TIMESTAMP\n#define BUILD_TIMESTAMP "{build_timestamp}"\n#endif\n')
 
-build_info_file = "src/core/BuildInfo.h"
+build_info_file = os.path.join(repo_dir, "src", "core", "BuildInfo.h")
 if not os.path.exists(build_info_file) or open(build_info_file, "r", encoding="utf-8").read() != build_info_content:
     with open(build_info_file, "w", encoding="utf-8") as f:
         f.write(build_info_content)
