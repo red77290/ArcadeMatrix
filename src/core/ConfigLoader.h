@@ -23,7 +23,7 @@ enum class FighterOverride : uint8_t {
 struct OverlayConfig {
     FighterOverride fighter;
 
-    OverlayConfig() : fighter(FighterOverride::Unspecified) {}
+    OverlayConfig() : fighter(FighterOverride::Disabled) {}
     explicit OverlayConfig(FighterOverride f) : fighter(f) {}
     explicit OverlayConfig(bool f) : fighter(f ? FighterOverride::Enabled : FighterOverride::Disabled) {}
 };
@@ -87,6 +87,15 @@ struct DataMqttConfig {
     String pass = "";
 };
 
+struct ShowcaseConfig {
+    bool enabled = false;
+    String server_url = "http://dmdmediashowcase.local:8890";
+    String transport_mode = "mqtt_udp";
+    bool use_showcase_broker = true;
+    String mqtt_broker_source = "global";
+    String mqtt_custom_url = "";
+};
+
 struct SystemConfig {
     String timezone;
     bool format24h;
@@ -97,7 +106,7 @@ struct SystemConfig {
     String turn_off_at;
     String wake_up_at;
     int night_brightness;
-    bool idle_fighter_enabled = true;
+    bool idle_fighter_enabled = false;
     int idle_fighter_interval = 60;
     int idle_fighter_speed = 100;
     bool api_auth_enabled = false;
@@ -123,6 +132,7 @@ struct ConfigSnapshot {
     WifiConfig wifi;
     MqttConfig mqtt;
     DataMqttConfig dataMqtt;
+    ShowcaseConfig showcase;
     SystemConfig system;
     std::vector<RotationEntry> rotation;
     std::vector<EngineInstanceSnapshot> instances;
@@ -223,6 +233,7 @@ public:
     WifiConfig wifi;
     MqttConfig mqtt;
     DataMqttConfig dataMqtt;
+    ShowcaseConfig showcase;
     SystemConfig system;
     uint32_t schema_version = ConfigSnapshot::CURRENT_CONFIG_SCHEMA_VERSION;
 

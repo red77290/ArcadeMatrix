@@ -13,6 +13,7 @@
 #if !defined(UNIT_TEST)
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <ESPmDNS.h>
 #endif
 #endif
 
@@ -320,17 +321,40 @@ void MediaShowcaseBase::computeCardPosterDims(uint16_t panelW, uint16_t panelH, 
     }
 }
 
+void resolveShowcaseHostInPlace(char* hostBuf, size_t hostCap) {
+#if defined(ESP32) && !defined(UNIT_TEST)
+    if (!hostBuf || hostCap == 0) return;
+    size_t len = strlen(hostBuf);
+    if (len > 6 && strcasecmp(hostBuf + len - 6, ".local") == 0) {
+        char mdnsName[64];
+        size_t baseLen = len - 6;
+        if (baseLen >= sizeof(mdnsName)) baseLen = sizeof(mdnsName) - 1;
+        memcpy(mdnsName, hostBuf, baseLen);
+        mdnsName[baseLen] = '\0';
+        IPAddress ip = MDNS.queryHost(mdnsName, 600);
+        if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
+            snprintf(hostBuf, hostCap, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+        }
+    }
+#else
+    (void)hostBuf;
+    (void)hostCap;
+#endif
+}
+
 bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort) {
     if (cfg.useShowcaseBroker) {
-        uint16_t dummyPort = 8080;
-        if (!parseHostAndPort(cfg.serverUrl, 8080, outHost, hostCap, dummyPort)) {
+        uint16_t dummyPort = 8890;
+        if (!parseHostAndPort(cfg.serverUrl, 8890, outHost, hostCap, dummyPort)) {
             return false;
         }
+        resolveShowcaseHostInPlace(outHost, hostCap);
         outPort = 1883;
         return true;
     }
     if (strcasecmp(cfg.mqttBrokerSource, "custom") == 0 && cfg.mqttCustomUrl[0] != '\0') {
         if (parseHostAndPort(cfg.mqttCustomUrl, 1883, outHost, hostCap, outPort)) {
+            resolveShowcaseHostInPlace(outHost, hostCap);
             return true;
         }
     }
@@ -339,14 +363,16 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
         const auto& snap = guard.get();
         if (snap.mqtt.broker.length() > 0) {
             copySafeStr(outHost, hostCap, snap.mqtt.broker.c_str());
+            resolveShowcaseHostInPlace(outHost, hostCap);
             outPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
                 ? static_cast<uint16_t>(snap.mqtt.port)
                 : 1883;
             return true;
         }
     }
-    uint16_t dummyPort = 8080;
-    if (parseHostAndPort(cfg.serverUrl, 8080, outHost, hostCap, dummyPort)) {
+    uint16_t dummyPort = 8890;
+    if (parseHostAndPort(cfg.serverUrl, 8890, outHost, hostCap, dummyPort)) {
+        resolveShowcaseHostInPlace(outHost, hostCap);
         outPort = 1883;
         return true;
     }
@@ -429,15 +455,36 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     uint8_t next = (cur + 1) & 1;
     ConfigSlot& slot = m_cfg[next];
 
-    String srv = config->getString("server_url", "http://127.0.0.1:8080");
-    srv.trim();
-    if (srv.endsWith("/")) srv.remove(srv.length() - 1);
-    copySafeStr(slot.serverUrl, sizeof(slot.serverUrl), srv.c_str());
+    // Read unified system showcase configuration via zero-copy snapshot guard
+    {
+        ConfigSnapshotGuard guard = ::config.acquireSnapshot();
+        const auto& snap = guard.get();
+        const auto& sc = snap.showcase;
 
-    copySafeStr(slot.transportMode, sizeof(slot.transportMode), config->getString("transport_mode", "mqtt_udp").c_str());
-    slot.useShowcaseBroker = config->getBool("use_showcase_broker", true);
-    copySafeStr(slot.mqttBrokerSource, sizeof(slot.mqttBrokerSource), config->getString("mqtt_broker_source", "global").c_str());
-    copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), config->getString("mqtt_custom_url", "").c_str());
+        slot.enabled = sc.enabled;
+        String srv = sc.server_url;
+        srv.trim();
+        if (srv.endsWith("/")) srv.remove(srv.length() - 1);
+        if (srv.isEmpty()) {
+            // Backward-compatible fallback to per-instance config if system showcase not set
+            srv = config->getString("server_url", "http://dmdmediashowcase.local:8890");
+            srv.trim();
+            if (srv.endsWith("/")) srv.remove(srv.length() - 1);
+        }
+        copySafeStr(slot.serverUrl, sizeof(slot.serverUrl), srv.c_str());
+
+        String tMode = sc.transport_mode.isEmpty() ? config->getString("transport_mode", "mqtt_udp") : sc.transport_mode;
+        copySafeStr(slot.transportMode, sizeof(slot.transportMode), tMode.c_str());
+
+        slot.useShowcaseBroker = sc.server_url.isEmpty() ? config->getBool("use_showcase_broker", true) : sc.use_showcase_broker;
+
+        String bSource = sc.mqtt_broker_source.isEmpty() ? config->getString("mqtt_broker_source", "global") : sc.mqtt_broker_source;
+        copySafeStr(slot.mqttBrokerSource, sizeof(slot.mqttBrokerSource), bSource.c_str());
+
+        String cUrl = sc.mqtt_custom_url.isEmpty() ? config->getString("mqtt_custom_url", "") : sc.mqtt_custom_url;
+        copySafeStr(slot.mqttCustomUrl, sizeof(slot.mqttCustomUrl), cUrl.c_str());
+    }
+
     copySafeStr(slot.lang, sizeof(slot.lang), config->getString("lang", "system").c_str());
     copySafeStr(slot.textScrollSpeed, sizeof(slot.textScrollSpeed), config->getString("text_scroll_speed", "4").c_str());
     copySafeStr(slot.videoMode, sizeof(slot.videoMode), config->getString("video_mode", "auto_action").c_str());
@@ -447,8 +494,8 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     copySafeStr(slot.videoType, sizeof(slot.videoType), config->getString("video_type", "any").c_str());
 
     slot.snapshotPanoramaCount = static_cast<uint8_t>(std::max(0, std::min(5, config->getInt("snapshot_panorama_count", 0))));
-    slot.videoMaxDurationS = static_cast<uint8_t>(std::max(2, std::min(30, config->getInt("video_max_duration_s", 8))));
-    slot.videoFps = static_cast<uint8_t>(std::max(8, std::min(30, config->getInt("video_fps", 15))));
+    slot.videoMaxDurationS = static_cast<uint8_t>(std::max(2, std::min(120, config->getInt("video_max_duration_s", 8))));
+    slot.videoFps = static_cast<uint8_t>(std::max(8, std::min(60, config->getInt("video_fps", 15))));
 
     slot.showPoster = config->getBool("show_poster", true);
     slot.showSynopsis = config->getBool("show_synopsis", true);
@@ -457,7 +504,8 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     slot.showVideo = config->getBool("show_video", true);
     slot.colorBoost = config->getBool("color_boost", true);
 
-    m_fallbackCycleMs = std::max<uint32_t>(22000U, static_cast<uint32_t>(slot.videoMaxDurationS + 24) * 1000U);
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    m_fallbackCycleMs = std::max<uint32_t>(30000U, static_cast<uint32_t>(slot.videoMaxDurationS + 25) * budget * 1000U);
 
     m_cfgIdx.store(next, std::memory_order_release);
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
@@ -475,6 +523,7 @@ void MediaShowcaseBase::activate() {
     m_activatedAtMs = millis();
     m_phaseStartedAtMs = m_activatedAtMs;
     m_lastScrollStepMs = m_activatedAtMs;
+    m_itemsPlayedInTurn.store(0, std::memory_order_release);
     m_skipTurnImmediately.store(false, std::memory_order_release);
     m_warmingFallback.store(false, std::memory_order_release);
     m_turnDone.store(false, std::memory_order_release);
@@ -513,10 +562,25 @@ bool MediaShowcaseBase::isFinished() const {
     if (m_turnDone.load(std::memory_order_acquire)) {
         return true;
     }
-    return (millis() - m_activatedAtMs) >= m_fallbackCycleMs;
+    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+    if (!cfg.enabled && m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+        return true;
+    }
+    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+        return (millis() - m_activatedAtMs) >= m_fallbackCycleMs;
+    }
+    return false;
 }
 
 void MediaShowcaseBase::startWorkerTask() {
+    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+    if (!cfg.enabled) {
+        m_statusState.store(3, std::memory_order_release);
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
+        return;
+    }
     m_wantActive.store(true, std::memory_order_release);
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return;
@@ -566,8 +630,8 @@ void MediaShowcaseBase::runWorkerLoop() {
         const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
         const char* domain = domainSlug();
 
-        if (strlen(cfg.serverUrl) < 8 || strncmp(cfg.serverUrl, "http", 4) != 0) {
-            m_statusState.store(3, std::memory_order_release); // Unconfigured
+        if (!cfg.enabled || strlen(cfg.serverUrl) < 8 || strncmp(cfg.serverUrl, "http", 4) != 0) {
+            m_statusState.store(3, std::memory_order_release); // Unconfigured / Disabled
             clearLiveCardState();
             if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                 m_skipTurnImmediately.store(true, std::memory_order_release);
@@ -595,6 +659,13 @@ void MediaShowcaseBase::runWorkerLoop() {
             m_skipTurnImmediately.store(false, std::memory_order_release);
             m_turnDone.store(false, std::memory_order_release);
             clearLiveCardState();
+            continue;
+        }
+        if (!m_turnDone.load(std::memory_order_acquire) && m_wantActive.load(std::memory_order_acquire)) {
+            // More items to play in this turn (or continuous solo mode)
+#if defined(ESP32)
+            vTaskDelay(pdMS_TO_TICKS(10));
+#endif
             continue;
         }
         break;
@@ -990,7 +1061,11 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     udp.stop();
     mqttCli.stop();
     clearLiveCardState();
-    m_turnDone.store(true, std::memory_order_release);
+    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
+        m_turnDone.store(true, std::memory_order_release);
+    }
     return true;
 #else
     (void)cfg;
@@ -1166,7 +1241,11 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     }
 
     clearLiveCardState();
-    m_turnDone.store(true, std::memory_order_release);
+    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
+        m_turnDone.store(true, std::memory_order_release);
+    }
 }
 
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
@@ -1680,7 +1759,7 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false;
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
-    desc.requirements.targetFps = 30;
+    desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
     desc.requirements.internalPersistentBytes = 8000;
@@ -1688,17 +1767,12 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
-        ConfigField("server_url", ConfigType::STRING, "Showcase Server URL", "HTTP base URL of the DMD Media Showcase server", "http://127.0.0.1:8080", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("transport_mode", ConfigType::ENUM, "Transport Protocol", "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback", "mqtt_udp", false, "", "", "", "mqtt_udp,http_poll", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width cover/jacket from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Marquee / Banner Panorama", "Scroll the arcade marquee or title banner from top to bottom after the jacket", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional gameplay snapshots to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "pixel_art", false, "", "", "", "auto_action,pixel_art,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1725,7 +1799,7 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false;
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
-    desc.requirements.targetFps = 30;
+    desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
     desc.requirements.internalPersistentBytes = 8000;
@@ -1733,17 +1807,12 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
-        ConfigField("server_url", ConfigType::STRING, "Showcase Server URL", "HTTP base URL of the DMD Media Showcase server", "http://127.0.0.1:8080", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("transport_mode", ConfigType::ENUM, "Transport Protocol", "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback", "mqtt_udp", false, "", "", "", "mqtt_udp,http_poll", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width movie poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the movie backdrop banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional movie stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "auto_action", false, "", "", "", "auto_action,cinema,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1770,7 +1839,7 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false;
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
-    desc.requirements.targetFps = 30;
+    desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
     desc.requirements.internalPersistentBytes = 8000;
@@ -1778,17 +1847,12 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
-        ConfigField("server_url", ConfigType::STRING, "Showcase Server URL", "HTTP base URL of the DMD Media Showcase server", "http://127.0.0.1:8080", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("transport_mode", ConfigType::ENUM, "Transport Protocol", "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback", "mqtt_udp", false, "", "", "", "mqtt_udp,http_poll", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width series poster from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the series banner from top to bottom after the poster", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional episode stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "auto_action", false, "", "", "", "auto_action,cinema,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
@@ -1815,7 +1879,7 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.needsPsram = false;
     desc.requirements.needsNetwork = true;
     desc.requirements.needsTls = false;
-    desc.requirements.targetFps = 30;
+    desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
     desc.requirements.internalPersistentBytes = 8000;
@@ -1823,17 +1887,12 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
-        ConfigField("server_url", ConfigType::STRING, "Showcase Server URL", "HTTP base URL of the DMD Media Showcase server", "http://127.0.0.1:8080", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
-        ConfigField("transport_mode", ConfigType::ENUM, "Transport Protocol", "Real-Time MQTT + UDP (ffmpeg -re) or HTTP Polling fallback", "mqtt_udp", false, "", "", "", "mqtt_udp,http_poll", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("use_showcase_broker", ConfigType::BOOLEAN, "Use Showcase Embedded MQTT Broker", "Automatically connect to the Showcase server's MQTT broker (<server_ip>:1883) without extra setup", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_broker_source", ConfigType::ENUM, "External MQTT Broker Source", "When Embedded Broker is disabled, choose ArcadeMatrix Global MQTT or a Custom Broker URL", "global", false, "", "", "", "global,custom", "", false, "", ValidationPolicy::FallbackDefault),
-        ConfigField("mqtt_custom_url", ConfigType::STRING, "Custom MQTT Broker URL", "Used when External MQTT Broker Source is set to Custom (e.g. mqtt://192.168.1.200:1883)", "", false, "", "", "", "", "", false, "", ValidationPolicy::Accept),
         ConfigField("text_scroll_speed", ConfigType::ENUM, "Synopsis Scroll Speed (1-10)", "Reading speed for the organic full-synopsis scroll on the Info Card (1=Slow .. 10=Turbo)", "4", false, "", "", "", "1,2,3,4,5,6,7,8,9,10,slow,normal,fast", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("jacket_panorama", ConfigType::BOOLEAN, "Jacket Panorama Scroll", "Scroll the full-width anime key visual from top to bottom right after the info card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("marquee_panorama", ConfigType::BOOLEAN, "Banner / Backdrop Panorama", "Scroll the anime banner from top to bottom after the key visual", "false", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("snapshot_panorama_count", ConfigType::INTEGER, "Snapshot Panoramas", "Additional anime stills to scroll from top to bottom (0..5)", "0", false, "0", "5", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
-        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "30", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_max_duration_s", ConfigType::INTEGER, "Video Max Duration (s)", "Maximum seconds for the RGB565 action video clip", "8", false, "2", "120", "1", "", "", false, "", ValidationPolicy::Clamp),
+        ConfigField("video_fps", ConfigType::INTEGER, "Video FPS", "Target frame rate for streamed RGB565 video clips", "15", false, "8", "60", "1", "", "", false, "", ValidationPolicy::Clamp),
         ConfigField("video_mode", ConfigType::ENUM, "Video Crop Mode", "Smart framing mode powered by dmd_gif_converter", "anime", false, "", "", "", "auto_action,anime,panorama,center_crop", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_poster", ConfigType::BOOLEAN, "Show Poster", "Display the fitted mini-jacket artwork on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
         ConfigField("show_synopsis", ConfigType::BOOLEAN, "Show Synopsis", "Scroll the complete localized plot summary on the card", "true", false, "", "", "", "", "", false, "", ValidationPolicy::FallbackDefault),
