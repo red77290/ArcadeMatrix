@@ -589,11 +589,11 @@ Ejemplo de instancia: `{"instance_id":"home_data","engine_id":"mqttdata","config
 | `snapshot_panorama_count` | `int` | `0` | `0` a `5` | Capturas adicionales para desplazar de arriba a abajo (`0`..`5`). |
 | `video_max_duration_s` | `int` | `8` | `2` a `120` | Segundos máximos para el clip de vídeo RGB565. |
 | `video_fps` | `int` | `15` | `8` a `60` | Velocidad de fotogramas objetivo para los clips de vídeo RGB565 transmitidos. |
-| `video_mode` | `Options` | `pixel_art` / `auto_action` / `anime` | `auto_action`, `pixel_art`, `cinema`, `anime`, `panorama`, `center_crop` | Modo de encuadre inteligente impulsado por `dmd_gif_converter`. |
+| `video_mode` | `Options` | `auto_action` | `auto_action`, `panorama`, `center_crop` | Estrategia de encuadre de vídeo impulsada por `dmd_gif_converter` (`auto_action` IA Let Me Handle It, `panorama` barrido vertical de arriba a abajo, o `center_crop` recorte central fijo). |
 | `show_poster` | `bool` | `true` | `true`, `false` | Muestra la miniatura ajustada en la tarjeta. |
 | `show_synopsis` | `bool` | `true` | `true`, `false` | Desplaza el resumen del argumento traducido en la tarjeta. |
 | `show_video` | `bool` | `true` | `true`, `false` | Transmite el clip de vídeo RGB565 si está disponible. |
-| `color_boost` | `bool` | `true` | `true`, `false` | Aumenta el contraste y la saturación para paneles LED HUB75. |
+| `color_boost` | `Options` | `auto` | `auto`, `pixel_art`, `anime`, `cinema` | Perfil de colorimetría para paneles LED HUB75 (`auto` IA Smart Color Boost Let Me Handle It, o ajuste fijo `pixel_art`, `anime`, `cinema`). |
 | `lang` | `Options` | `system` | `system,en,fr,es,de,it` | Idioma de títulos y sinopsis (`system` sincroniza con el idioma configurado en el DMD). |
 | `systems` | `List` | `""` | Dinámico (`/api/v1/games/filters`) | (`retro_games` únicamente) Filtrar por sistemas arcade/consola (dejar vacío para todos). |
 | `genres` | `List` | `""` | Dinámico (`/api/v1/{domain}/filters`) | Filtrar por géneros obtenidos dinámicamente del servidor Showcase. |
