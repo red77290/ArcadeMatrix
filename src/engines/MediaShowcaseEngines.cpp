@@ -243,6 +243,14 @@ bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId) {
     cli.write(reinterpret_cast<const uint8_t*>(clientId), cidLen);
     return true;
 }
+
+void sendMqttDisconnectAndStop(WiFiClient& cli) {
+    if (cli.connected()) {
+        const uint8_t discPkt[2] = {0xE0, 0x00};
+        cli.write(discPkt, 2);
+    }
+    cli.stop();
+}
 #endif
 
 } // namespace
@@ -533,6 +541,7 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
 
     m_cfgIdx.store(next, std::memory_order_release);
     m_cfgGen.fetch_add(1, std::memory_order_acq_rel);
+    m_consecutiveWarmSkips.store(0, std::memory_order_release);
     if (m_wantActive.load(std::memory_order_acquire)) {
         m_skipTurnImmediately.store(false, std::memory_order_release);
         m_turnDone.store(false, std::memory_order_release);
@@ -874,7 +883,13 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     sendMqttSubscribePacket(mqttCli, 2, readyTopic);
     sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
 
-    // Wait up to 1800ms for retained `ready` message
+    // Wait for retained or live `ready` message:
+    // - Pass 1 (`m_consecutiveWarmSkips == 0`): 600ms settle so all Showcase slots register quickly.
+    // - Subsequent warm passes (`m_consecutiveWarmSkips >= 1`): stay calmly subscribed for 2500ms
+    //   so live `ready: true` is caught immediately without rapid TCP reconnect churn.
+    uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
+    uint32_t warmSettleMs = (prevSkips == 0U) ? 600U : 2500U;
+    uint32_t maxWaitMs = (prevSkips == 0U) ? 1800U : 2800U;
     uint32_t waitReadyStart = millis();
     bool gotReadyItem = false;
     bool sawReadyFalse = false;
@@ -883,10 +898,8 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     bool itemHasStream = false;
     uint32_t streamMaxMs = static_cast<uint32_t>(cfg.videoMaxDurationS + 10) * 1000U;
 
-    while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < 1800U && !gotReadyItem) {
-        if (sawReadyFalse && (millis() - readyFalseAtMs) >= 600U) {
-            // Allow 600ms after an initial `ready: false` in case the server is re-publishing
-            // `ready: true` in response to our `config` message after a mid-broadcast reboot.
+    while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < maxWaitMs && !gotReadyItem) {
+        if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
             break;
         }
         if (mqttCli.available() >= 2) {
@@ -957,7 +970,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                             m_skipTurnImmediately.store(true, std::memory_order_release);
                         }
                         udp.stop();
-                        mqttCli.stop();
+                        sendMqttDisconnectAndStop(mqttCli);
                         return true;
                     }
                 }
@@ -984,9 +997,12 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 
     if (!gotReadyItem) {
         udp.stop();
-        mqttCli.stop();
+        sendMqttDisconnectAndStop(mqttCli);
         if (sawReadyFalse) {
             m_statusState.store(1, std::memory_order_release);
+            if (prevSkips < 10U) {
+                m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
+            }
             if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                 m_skipTurnImmediately.store(true, std::memory_order_release);
             }
@@ -994,6 +1010,8 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         }
         return false;
     }
+
+    m_consecutiveWarmSkips.store(0, std::memory_order_release);
 
     // Consume-Once: immediately notify server that Card display started (`start_card`)
     String startCardEv = String("{\"action\":\"start_card\",\"item_id\":\"") + itemIdStr + "\",\"client_ip\":\"" + localIp + "\",\"udp_ip\":\"" + localIp + "\"}";
@@ -1083,7 +1101,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     }
 
     udp.stop();
-    mqttCli.stop();
+    sendMqttDisconnectAndStop(mqttCli);
     clearLiveCardState();
     uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
     uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
