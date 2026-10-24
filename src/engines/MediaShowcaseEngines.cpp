@@ -588,6 +588,24 @@ bool MediaShowcaseBase::shutdownForDestruction() {
     return !m_taskAlive.load(std::memory_order_acquire);
 }
 
+uint32_t MediaShowcaseBase::configuredMaxStreamMs(const ConfigSlot& cfg) {
+    uint32_t videoSec = cfg.showVideo
+        ? std::max<uint32_t>(2U, std::min<uint32_t>(120U, static_cast<uint32_t>(cfg.videoMaxDurationS)))
+        : 0U;
+    uint32_t panCount = (cfg.jacketPanorama ? 1U : 0U)
+        + (cfg.marqueePanorama ? 1U : 0U)
+        + std::min<uint32_t>(5U, static_cast<uint32_t>(cfg.snapshotPanoramaCount));
+    uint32_t totalSec = std::max<uint32_t>(2U, panCount * 4U + videoSec);
+    return totalSec * 1000U;
+}
+
+uint32_t MediaShowcaseBase::computeTurnSafetyTimeoutMs() const {
+    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    uint32_t perItemMs = configuredMaxStreamMs(cfg) + 45000U;
+    return std::max<uint32_t>(45000U, perItemMs * budget);
+}
+
 bool MediaShowcaseBase::isFinished() const {
     if (m_skipTurnImmediately.load(std::memory_order_acquire)) {
         return true;
@@ -600,7 +618,7 @@ bool MediaShowcaseBase::isFinished() const {
         return true;
     }
     if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-        return (millis() - m_activatedAtMs) >= m_fallbackCycleMs;
+        return (millis() - m_activatedAtMs) >= computeTurnSafetyTimeoutMs();
     }
     return false;
 }
@@ -694,7 +712,9 @@ void MediaShowcaseBase::runWorkerLoop() {
             clearLiveCardState();
             continue;
         }
-        if (!m_turnDone.load(std::memory_order_acquire) && m_wantActive.load(std::memory_order_acquire)) {
+        if (!m_turnDone.load(std::memory_order_acquire) &&
+            !m_skipTurnImmediately.load(std::memory_order_acquire) &&
+            m_wantActive.load(std::memory_order_acquire)) {
             // More items to play in this turn (or continuous solo mode)
 #if defined(ESP32)
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -883,20 +903,26 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     sendMqttSubscribePacket(mqttCli, 2, readyTopic);
     sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
 
-    // Wait for retained or live `ready` message:
-    // - Pass 1 (`m_consecutiveWarmSkips == 0`): 600ms settle so all Showcase slots register quickly.
-    // - Subsequent warm passes (`m_consecutiveWarmSkips >= 1`): stay calmly subscribed for 2500ms
-    //   so live `ready: true` is caught immediately without rapid TCP reconnect churn.
+    // Immediate turn-passing rule when rotating (`!soloSlot`):
+    // - On Pass 1 (`prevSkips == 0`) or mid-turn (`playedSoFar > 0`), yield IMMEDIATELY (`warmSettleMs = 0`)
+    //   as soon as `ready: false` arrives so rotation never stalls waiting on unready Showcase domains.
+    // - Only if ALL rotation slots skipped consecutively at cold boot (`prevSkips >= 1 && playedSoFar == 0`),
+    //   dwell a brief 350ms so the user sees the "WAITING FOR ..." indicator without TCP reconnect churn.
     uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
-    uint32_t warmSettleMs = (prevSkips == 0U) ? 600U : 2500U;
-    uint32_t maxWaitMs = (prevSkips == 0U) ? 1800U : 2800U;
+    uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
+    bool soloSlot = (m_rotationSlotCount.load(std::memory_order_relaxed) <= 1U);
+    uint32_t warmSettleMs = soloSlot
+        ? 2500U
+        : ((prevSkips >= 1U && playedSoFar == 0U) ? 350U : 0U);
+    uint32_t maxWaitMs = soloSlot ? 2800U : 900U;
     uint32_t waitReadyStart = millis();
     bool gotReadyItem = false;
     bool sawReadyFalse = false;
     uint32_t readyFalseAtMs = 0;
     String itemIdStr;
     bool itemHasStream = false;
-    uint32_t streamMaxMs = static_cast<uint32_t>(cfg.videoMaxDurationS + 10) * 1000U;
+    uint32_t maxCfgStreamMs = configuredMaxStreamMs(cfg);
+    uint32_t streamMaxMs = maxCfgStreamMs + 1500U;
 
     while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < maxWaitMs && !gotReadyItem) {
         if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
@@ -1000,8 +1026,10 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         sendMqttDisconnectAndStop(mqttCli);
         if (sawReadyFalse) {
             m_statusState.store(1, std::memory_order_release);
-            if (prevSkips < 10U) {
+            if (playedSoFar == 0U && prevSkips < 10U) {
                 m_consecutiveWarmSkips.store(static_cast<uint8_t>(prevSkips + 1U), std::memory_order_release);
+            } else if (playedSoFar > 0U) {
+                m_consecutiveWarmSkips.store(0, std::memory_order_release);
             }
             if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                 m_skipTurnImmediately.store(true, std::memory_order_release);
@@ -1011,6 +1039,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         return false;
     }
 
+    if (streamMaxMs > maxCfgStreamMs + 1500U) {
+        streamMaxMs = maxCfgStreamMs + 1500U;
+    }
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
 
     // Consume-Once: immediately notify server that Card display started (`start_card`)
@@ -1039,6 +1070,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         sendMqttPublishPacket(mqttCli, eventsTopic, startStreamEv.c_str(), false);
 
         uint32_t streamT0 = millis();
+        uint32_t firstUdpPktMs = 0;
         uint32_t lastUdpPktMs = 0;
         uint16_t curFrameSeq = 0xFFFF;
         uint64_t chunkMask = 0;
@@ -1046,6 +1078,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         uint8_t udpPkt[1040];
 
         while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
+            if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
+                break; // Strictly enforce configured max stream duration
+            }
             int pktSize = udp.parsePacket();
             if (pktSize > 10 && pktSize <= static_cast<int>(sizeof(udpPkt))) {
                 int rLen = udp.read(udpPkt, sizeof(udpPkt));
@@ -1075,7 +1110,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                             m_liveCard.hasVideoFrame = true;
                             m_seq.fetch_add(1, std::memory_order_release);
                         }
-                        lastUdpPktMs = millis();
+                        uint32_t pktNow = millis();
+                        if (firstUdpPktMs == 0U) firstUdpPktMs = pktNow;
+                        lastUdpPktMs = pktNow;
                     }
                 }
             } else {
@@ -1205,6 +1242,9 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     if (deserializeJson(nextDoc, nextResp.stream()) != DeserializationError::Ok) {
         m_statusState.store(2, std::memory_order_release);
         clearLiveCardState();
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
         return;
     }
 
@@ -1324,11 +1364,14 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         return false;
     }
 
+    const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
+    uint32_t maxAllowedMs = configuredMaxStreamMs(cfg);
+    uint32_t streamStartMs = millis();
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
     for (uint16_t f = 0; f < totalFrames; ++f) {
         if (!m_wantActive.load(std::memory_order_acquire) || m_cfgGen.load(std::memory_order_acquire) != startGen) break;
-        uint32_t fStart = millis();
+        if ((millis() - streamStartMs) >= maxAllowedMs) break;
         if (!readExactFromStream(st, reinterpret_cast<uint8_t*>(m_frame565), frameBytes, m_wantActive)) {
             break;
         }
@@ -1336,11 +1379,20 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
         m_liveCard.hasVideoFrame = true;
         m_seq.fetch_add(1, std::memory_order_release);
 #if defined(ESP32)
-        uint32_t took = millis() - fStart;
-        if (took < frameDelayMs) {
-            vTaskDelay(pdMS_TO_TICKS(frameDelayMs - took));
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(1));
+        // Monotonic wall-clock pacing from `streamStartMs` prevents cumulative TCP/RTOS tick drift
+        // (e.g., keeping 30 FPS at exact 60.0s instead of drifting to 90–120s).
+        uint32_t targetElapsedMs = (fps > 0U)
+            ? ((static_cast<uint32_t>(f + 1U) * 1000U) / static_cast<uint32_t>(fps))
+            : (static_cast<uint32_t>(f + 1U) * frameDelayMs);
+        uint32_t elapsedMs = millis() - streamStartMs;
+        if (elapsedMs >= maxAllowedMs) break;
+        if (elapsedMs < targetElapsedMs) {
+            uint32_t waitMs = std::min<uint32_t>(targetElapsedMs - elapsedMs, maxAllowedMs - elapsedMs);
+            if (waitMs > 0U) {
+                vTaskDelay(pdMS_TO_TICKS(waitMs));
+            }
+        } else if ((f & 0x07U) == 0U) {
+            vTaskDelay(1);
         }
 #endif
     }

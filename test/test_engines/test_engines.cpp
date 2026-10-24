@@ -214,6 +214,13 @@ void test_media_showcase_ready_payload_zero_copy_parsing() {
     TEST_ASSERT_EQUAL_STRING("pkg_games_defender", itemId.c_str());
     TEST_ASSERT_TRUE(hasStream);
     TEST_ASSERT_EQUAL_UINT32(24500U, streamMaxMs);
+
+    // Verify dynamic turn safety ceiling adapts live to `setRotationBudget` without requiring `onConfigChanged`
+    MovieShowcaseEngine movieEng;
+    // Default ConfigSlot: videoMaxDurationS=8, jacketPanorama=true (4s) -> 12s stream + 45s card/net = 57s per item
+    TEST_ASSERT_EQUAL_UINT32(57000U, movieEng.computeTurnSafetyTimeoutMs());
+    movieEng.setRotationBudget(3);
+    TEST_ASSERT_EQUAL_UINT32(171000U, movieEng.computeTurnSafetyTimeoutMs());
 }
 
 void setup() {
