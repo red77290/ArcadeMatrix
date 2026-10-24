@@ -356,7 +356,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | `symbols` | `String` | `BTC,ETH` | Comma-separated | Crypto symbols to monitor (CoinGecko / Binance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Display historical price sparkline chart. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Timeframe for historical price series. |
-| `page_seconds` | `int` | `5` | `3` to `30` | Seconds to dwell on each page. |
+| `duration_sec` | `int` | `5` | `2` to `60` | Seconds to dwell on each page (`page_seconds` alias). Because `crypto` is self-paced in rotation (`selfPaced() == true`), it overrides the slot timer and displays all configured symbols for one complete cycle before rotation advances. |
 | `cache_ttl_min` | `int` | `1` | `1` to `60` | Minutes to cache quote price. |
 
 ### Engine: `stock`
@@ -365,7 +365,7 @@ Each engine advertises its own fields through its `ConfigSchema` (discoverable a
 | `symbols` | `String` | `AAPL,NVDA,TSLA` | Comma-separated | Stock ticker symbols to monitor (Yahoo Finance). |
 | `show_chart` | `bool` | `true` | `true`, `false` | Display historical price sparkline chart. |
 | `chart_timeframe` | `Options` | `daily` | `hourly`, `daily`, `weekly`, `monthly` | Timeframe for historical price series. |
-| `page_seconds` | `int` | `5` | `3` to `30` | Seconds to dwell on each page. |
+| `duration_sec` | `int` | `5` | `2` to `60` | Seconds to dwell on each page (`page_seconds` alias). Because `stock` is self-paced in rotation (`selfPaced() == true`), it overrides the slot timer and displays all configured symbols for one complete cycle before rotation advances. |
 | `cache_ttl_min` | `int` | `1` | `1` to `60` | Minutes to cache quote price. |
 
 ### Engine: `weather`
@@ -407,29 +407,34 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 | `keywords` | `String` | `""` | Text / Query | Custom search query or filter tags (e.g. `ai OR arcade`). |
 | `lang` | `Options` | `auto` | `auto`, `en`, `fr`, `es`, `de`, `it`, `pt`, `nl`, `ru`, `zh`, `ja` | Article language (`auto` syncs with system language). |
 | `country` | `Options` | `auto` | `auto`, `us`, `fr`, `gb`, `es`, `de`, `ca`, `it`, `jp`, `au`, `br`, `in` | Country edition (`auto` uses local region). |
-| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of headlines cached and rotated per cycle. |
+| `max_articles` | `int` | `5` | `3` to `15` | Maximum number of articles cached and rotated in randomized non-repeating order across rotation slots. |
+| `articles_per_rotation` | `int` | `2` | `1` to `15` | Self-paced rotation count: number of random articles to scroll completely (`PauseStart` -> `Scrolling` -> `PauseEnd`) before rotation advances to the next screen. |
 | `requests_per_day` | `int` | `10` | `1` to `100` | Total API requests allocated per 24 hours (Free tier limit: 100/day per API key). |
 | `force_refresh` | `bool` | `false` | `true`, `false` | Action trigger: immediately purges obsolete language cache and queries the API without resetting daily quota counters. |
 | `cache_ttl_min` | `int` | `30` | `5` to `120` | Minimum minutes between API queries when request budgeting is relaxed. |
 | `display_mode` | `Options` | `smooth_scroll` | `smooth_scroll`, `vertical_crawl`, `static_paged`, `serpentine` | Animation style: smooth horizontal ticker, vertical crawl, multi-line static paged, or alternating serpentine flow. |
 | `scroll_speed` | `int` | `3` | `1` to `10` | Ticker scrolling speed (1: Slow crawl to 10: Turbo speed). |
-| `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at headline start before scrolling. |
-| `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of headline before transitioning. |
-| `article_duration_sec` | `int` | `12` | `5` to `60` | Display duration per article in seconds. |
+| `scroll_pause_start_ms` | `int` | `1200` | `0` to `4000` | Initial pause dwell time (ms) at article start before scrolling. |
+| `scroll_pause_end_ms` | `int` | `1000` | `0` to `4000` | Pause dwell time (ms) at end of article before transitioning. |
+| `article_duration_sec` | `int` | `12` | `5` to `60` | Fallback display duration per article in seconds. |
 | `theme` | `Options` | `category_dynamic` | `category_dynamic`, `breaking_crimson`, `cyberpunk`, `monochrome_paper` | Color palette scheme. |
+| `show_title` | `bool` | `false` | `true`, `false` | Include the article headline title in the scrolled text. |
+| `show_description` | `bool` | `false` | `true`, `false` | Include the article summary/lead in the scrolled text. |
+| `show_content` | `bool` | `true` | `true`, `false` | Include the article body content in the scrolled text (with automatic fallback to description/title if empty). |
 | `show_category_badge` | `bool` | `true` | `true`, `false` | Display color-coded category pill (`[TECH]`, `[WORLD]`, etc.). |
 | `show_source` | `bool` | `true` | `true`, `false` | Display news source name badge (`BBC News`, `Reuters`, etc.). |
 | `show_time_ago` | `bool` | `true` | `true`, `false` | Display relative time badge (`5m ago`, `2h ago`). |
 | `show_beacon` | `bool` | `true` | `true`, `false` | Display pulsing live broadcast beacon dot. |
-| `show_progress_dots` | `bool` | `true` | `true`, `false` | Display headline index dots (`● ○ ○ ○ ○`). |
+| `show_progress_dots` | `bool` | `true` | `true`, `false` | Display article index dots (`● ○ ○ ○ ○`). |
 
 #### GNews Architecture & Quota Optimization
 1. **Multi-API Key Pooling & Automatic Failover:**
    - You can enter multiple GNews API keys separated by commas (`api_key: "key1,key2,key3"`).
    - If an active key is invalid (`HTTP 401/403`) or exhausts its 100 requests/day quota (`HTTP 429/403`), the engine automatically fails over to the next key in the pool and immediately retries.
    - 2 accounts = 200 requests/day; 3 accounts = 300 requests/day.
-2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS):**
+2. **Persistent File Caching (`/gnews_cache.json` on SD/SPIFFS) & Randomized Playback:**
    - Articles and request telemetry are persisted to storage. On reboot, headlines display immediately without burning API quota or stalling for network.
+   - Across rotation slots, cached articles are drawn in randomized Fisher-Yates permutations without repetition so short rotation slots cycle evenly through the entire cache instead of always starting at headline #1.
    - If offline or when the daily quota is reached, cached articles are preserved indefinitely and continue scrolling 24/7.
 3. **Daily Quota Budgeting (Default: 10 reqs/day) & Shared-Key Protection:**
    - While GNews.io free accounts permit up to 100 requests/day per key, users frequently share their API key across other external services or home automations.
@@ -562,6 +567,38 @@ The `gnews` engine provides a real-time live news ticker and breaking news bulle
 Shows pages published over MQTT by any publisher: a `value`, a `table` of up to 4 values, a `graph` or a `weather` page, chosen by each payload's `type`. Only the topics are configured here; everything else (time per page, titles, colours) comes from the payloads, which must be published **retained**. The screen connects only while it is on screen and sets its own time on screen (one cycle of its pages), so its rotation duration is ignored. Protocol, payload formats, limits and notices: [MQTT_DATA_CONTRACT.md](MQTT_DATA_CONTRACT.md). Home Assistant blueprints: [HOME_ASSISTANT.md](HOME_ASSISTANT.md).
 
 Instance example: `{"instance_id":"home_data","engine_id":"mqttdata","config":{"topics":"arcadematrix/weather/local,arcadematrix/graph/inside,arcadematrix/value/outside"}}`.
+
+### Engines: `retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase` (DMD Media Showcase)
+> [!IMPORTANT]
+> These 4 Showcase engines **only work with the companion [dmd_media_showcase](https://github.com/red77290/dmd_media_showcase) application installed on another machine on the same local network** (Raspberry Pi, NAS, Docker host, or PC). The server connection is configured once globally in the `showcase` root block of `config.json` (or via the unified **Showcase Server** card in the Web UI Settings tab).
+
+| Root `showcase` Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `showcase.enabled` | `bool` | `false` | Master activation toggle (disabled by default so zero network requests are made if `dmd_media_showcase` is not installed). |
+| `showcase.server_url` | `String` | `"http://dmdmediashowcase.local:8890"` | Pre-filled mDNS auto-discovery URL of your **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** server on the local network (verified by the live **`🟢 Communication OK`** indicator in the Web UI). |
+| `showcase.transport_mode` | `Options` | `mqtt_udp` | Transport protocol (`mqtt_udp` for MQTT push + UDP streaming, or `http_poll` for direct HTTP polling). |
+| `showcase.use_showcase_broker` | `bool` | `true` | Automatically connect to the MQTT broker running on the Showcase server host (`<server_ip>:1883`). |
+| `showcase.mqtt_broker_source` | `Options` | `global` | Fallback MQTT broker source when `use_showcase_broker` is `false` (`global` uses `mqtt.server`, `custom` uses `mqtt_custom_url`). |
+| `showcase.mqtt_custom_url` | `String` | `""` | Custom MQTT broker URL (e.g. `mqtt://192.168.1.200:1883`) when `mqtt_broker_source` is `custom`. |
+
+| Instance Field (`retro_games`, `movie_showcase`, `series_showcase`, `anime_showcase`) | Type | Default | Options | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `text_scroll_speed` | `Options` | `4` | `1` to `10` (`slow`, `normal`, `fast`) | Reading speed for the organic full-synopsis scroll on the Info Card (`1` = Slow .. `10` = Turbo). |
+| `jacket_panorama` | `bool` | `true` | `true`, `false` | Scroll the full-width cover/poster from top to bottom right after the info card. |
+| `marquee_panorama` | `bool` | `false` | `true`, `false` | Scroll the arcade marquee or backdrop banner from top to bottom after the poster. |
+| `snapshot_panorama_count` | `int` | `0` | `0` to `5` | Additional gameplay snapshots or stills to scroll from top to bottom (`0`..`5`). |
+| `video_max_duration_s` | `int` | `8` | `2` to `120` | Maximum seconds for the streamed RGB565 video clip. |
+| `video_fps` | `int` | `15` | `8` to `60` | Target frame rate for streamed RGB565 video clips. |
+| `video_mode` | `Options` | `pixel_art` / `auto_action` / `anime` | `auto_action`, `pixel_art`, `cinema`, `anime`, `panorama`, `center_crop` | Smart framing mode powered by `dmd_gif_converter`. |
+| `show_poster` | `bool` | `true` | `true`, `false` | Display the fitted mini-jacket artwork on the card. |
+| `show_synopsis` | `bool` | `true` | `true`, `false` | Scroll the complete localized plot summary on the card. |
+| `show_video` | `bool` | `true` | `true`, `false` | Stream the RGB565 video clip if available (skipped if unavailable). |
+| `color_boost` | `bool` | `true` | `true`, `false` | Boost contrast and saturation for HUB75 LED panels. |
+| `lang` | `Options` | `system` | `system,en,fr,es,de,it` | Metadata language for titles and synopses (`system` syncs with the DMD's configured UI language). |
+| `systems` | `List` | `""` | Dynamic (`/api/v1/games/filters`) | (`retro_games` only) Filter by arcade/console systems (leave empty for all). |
+| `genres` | `List` | `""` | Dynamic (`/api/v1/{domain}/filters`) | Filter by genres dynamically retrieved from the Showcase server referential. |
+| `decades` | `List` | `""` | Dynamic (`/api/v1/{domain}/filters`) | Filter by release decades dynamically retrieved from the Showcase server referential. |
+| `video_type` | `Options` | `any` / `opening` | `any`, `trailer`, `scene`, `opening`, `ending` | (`movie_showcase`, `series_showcase`, `anime_showcase`) Preferred video clip type. |
 
 ---
 

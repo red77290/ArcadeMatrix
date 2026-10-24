@@ -79,7 +79,8 @@ enum HttpOwnerId : uint16_t {
     OWNER_CRYPTO = 400,
     OWNER_STOCK = 500,
     OWNER_GNEWS = 600,
-    OWNER_ARTWORK = 700
+    OWNER_ARTWORK = 700,
+    OWNER_SHOWCASE = 800
 };
 
 /**

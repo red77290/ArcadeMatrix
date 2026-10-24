@@ -781,3 +781,15 @@ const char* I18n::getGNewsCategoryShort(const char* category, Lang l) {
     return "NEWS";
 }
 
+const char* I18n::getShowcaseWarmingLabel(Lang l) {
+    return (l == Lang::FR) ? "PREPARATION MEDIA..." : (l == Lang::ES) ? "PREPARANDO MEDIA..." : "PREPARING MEDIA...";
+}
+
+const char* I18n::getShowcaseOfflineLabel(Lang l) {
+    return (l == Lang::FR) ? "SERVEUR SHOWCASE HORS-LIGNE" : (l == Lang::ES) ? "SERVIDOR SHOWCASE OFFLINE" : "SHOWCASE SERVER OFFLINE";
+}
+
+const char* I18n::getShowcaseUnconfiguredLabel(Lang l) {
+    return (l == Lang::FR) ? "CONFIGURER URL SERVEUR" : (l == Lang::ES) ? "CONFIGURAR URL SERVIDOR" : "CONFIGURE SERVER URL";
+}
+

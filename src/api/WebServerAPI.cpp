@@ -13,6 +13,7 @@
 #include <esp_ota_ops.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
 #include "../core/MatrixEngine.h"
 #include "../engines/GifEngine.h"
 #include "../core/RotationManager.h"
@@ -1724,6 +1725,14 @@ void WebServerAPI::setupRoutes() {
         doc["data_mqtt_pass"] = snap.dataMqtt.pass;
         doc["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
 
+        // DMD Media Showcase server & MQTT
+        doc["showcase_enabled"] = snap.showcase.enabled;
+        doc["showcase_server_url"] = snap.showcase.server_url;
+        doc["showcase_transport_mode"] = snap.showcase.transport_mode;
+        doc["showcase_use_broker"] = snap.showcase.use_showcase_broker;
+        doc["showcase_broker_source"] = snap.showcase.mqtt_broker_source;
+        doc["showcase_custom_url"] = snap.showcase.mqtt_custom_url;
+
         response->setLength();
         request->send(response);
     });
@@ -1959,6 +1968,13 @@ void WebServerAPI::setupRoutes() {
             if (!doc["data_mqtt_port"].isNull()) cfg.dataMqtt.port = (int)doc["data_mqtt_port"];
             if (!doc["data_mqtt_user"].isNull()) cfg.dataMqtt.user = (const char*)doc["data_mqtt_user"];
             if (!doc["data_mqtt_pass"].isNull()) cfg.dataMqtt.pass = (const char*)doc["data_mqtt_pass"];
+            // Showcase server & MQTT
+            if (!doc["showcase_enabled"].isNull()) cfg.showcase.enabled = (bool)doc["showcase_enabled"];
+            if (!doc["showcase_server_url"].isNull()) cfg.showcase.server_url = (const char*)doc["showcase_server_url"];
+            if (!doc["showcase_transport_mode"].isNull()) cfg.showcase.transport_mode = (const char*)doc["showcase_transport_mode"];
+            if (!doc["showcase_use_broker"].isNull()) cfg.showcase.use_showcase_broker = (bool)doc["showcase_use_broker"];
+            if (!doc["showcase_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = (const char*)doc["showcase_broker_source"];
+            if (!doc["showcase_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = (const char*)doc["showcase_custom_url"];
             if (!doc["api_auth_enabled"].isNull()) cfg.system.api_auth_enabled = doc["api_auth_enabled"].as<bool>();
             if (!doc["api_token"].isNull()) {
                 String newTok = doc["api_token"].as<String>();
@@ -2285,6 +2301,16 @@ void WebServerAPI::setupRoutes() {
             dmq["data_mqtt_pass_configured"] = snap.dataMqtt.pass.length() > 0;
         }
 
+        if (section.isEmpty() || section == "showcase") {
+            JsonObject sc = section.isEmpty() ? doc.createNestedObject("showcase") : doc.to<JsonObject>();
+            sc["enabled"] = snap.showcase.enabled;
+            sc["server_url"] = snap.showcase.server_url;
+            sc["transport_mode"] = snap.showcase.transport_mode;
+            sc["use_showcase_broker"] = snap.showcase.use_showcase_broker;
+            sc["mqtt_broker_source"] = snap.showcase.mqtt_broker_source;
+            sc["mqtt_custom_url"] = snap.showcase.mqtt_custom_url;
+        }
+
         if (section.isEmpty() || section == "wifi") {
             JsonObject wifi = section.isEmpty() ? doc.createNestedObject("wifi") : doc.to<JsonObject>();
             wifi["ssid"] = snap.wifi.ssid;
@@ -2542,6 +2568,18 @@ void WebServerAPI::setupRoutes() {
                 if (!dm["pass"].isNull()) cfg.dataMqtt.pass = dm["pass"].as<String>();
                 changed = true;
             }
+
+            // DMD Media Showcase server & MQTT
+            if (doc.containsKey("showcase")) {
+                JsonObject sc = doc["showcase"].as<JsonObject>();
+                if (!sc["enabled"].isNull()) cfg.showcase.enabled = sc["enabled"].as<bool>();
+                if (!sc["server_url"].isNull()) cfg.showcase.server_url = sc["server_url"].as<String>();
+                if (!sc["transport_mode"].isNull()) cfg.showcase.transport_mode = sc["transport_mode"].as<String>();
+                if (!sc["use_showcase_broker"].isNull()) cfg.showcase.use_showcase_broker = sc["use_showcase_broker"].as<bool>();
+                if (!sc["mqtt_broker_source"].isNull()) cfg.showcase.mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
+                if (!sc["mqtt_custom_url"].isNull()) cfg.showcase.mqtt_custom_url = sc["mqtt_custom_url"].as<String>();
+                changed = true;
+            }
             if (changed) {
                 ConfigSanitizer::sanitize(cfg);
             }
@@ -2578,6 +2616,86 @@ void WebServerAPI::setupRoutes() {
         return request->url() == "/api/system";
     });
     server.addHandler(sysHandler);
+
+    // API: DMD Media Showcase Live Connection Status & mDNS Resolver (GET /api/showcase/status)
+    server.on("/api/showcase/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
+        extern ConfigLoader config;
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        const auto& snap = guard.get();
+
+        bool enabled = snap.showcase.enabled;
+        if (request->hasParam("enabled")) {
+            String enVal = request->getParam("enabled")->value();
+            enabled = (enVal == "true" || enVal == "1");
+        }
+        bool forceProbe = false;
+        if (request->hasParam("force")) {
+            String fVal = request->getParam("force")->value();
+            forceProbe = (fVal == "true" || fVal == "1");
+        }
+        String rawUrl = snap.showcase.server_url;
+        if (request->hasParam("url")) {
+            String qUrl = request->getParam("url")->value();
+            qUrl.trim();
+            if (qUrl.length() > 0) rawUrl = qUrl;
+        }
+        rawUrl.trim();
+        while (rawUrl.endsWith("/")) rawUrl.remove(rawUrl.length() - 1);
+
+        SpiRamJsonDocument doc(512);
+        doc["enabled"] = enabled;
+        doc["server_url"] = rawUrl;
+
+        if ((!enabled && !forceProbe) || rawUrl.length() < 8) {
+            doc["online"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
+        }
+
+        // Parse host & port from rawUrl
+        String work = rawUrl;
+        String scheme = "http://";
+        if (work.startsWith("https://")) {
+            scheme = "https://";
+            work = work.substring(8);
+        } else if (work.startsWith("http://")) {
+            work = work.substring(7);
+        }
+        int slashIdx = work.indexOf('/');
+        if (slashIdx >= 0) work = work.substring(0, slashIdx);
+        String host = work;
+        uint16_t port = 8890;
+        int colonIdx = work.lastIndexOf(':');
+        if (colonIdx > 0) {
+            host = work.substring(0, colonIdx);
+            int p = work.substring(colonIdx + 1).toInt();
+            if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+        }
+
+        String resolvedHost = host;
+        if (host.endsWith(".local")) {
+            String mdnsName = host.substring(0, host.length() - 6);
+            IPAddress ip = MDNS.queryHost(mdnsName.c_str(), 450);
+            if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
+                resolvedHost = ip.toString();
+            }
+        }
+        String resolvedUrl = scheme + resolvedHost + ":" + String(port);
+        doc["resolved_url"] = resolvedUrl;
+
+        bool online = false;
+        WiFiClient probeCli;
+        if (probeCli.connect(resolvedHost.c_str(), port, 450)) {
+            online = true;
+            probeCli.stop();
+        }
+        doc["online"] = online;
+        doc["version"] = online ? "3.0.0" : "";
+        sendJsonResponse(request, doc);
+    });
     
     // API: System commands (Reboot / Shutdown / Restart)
     server.on("/api/system/shutdown", HTTP_POST, [](AsyncWebServerRequest *request){
