@@ -159,6 +159,7 @@ protected:
     std::atomic<uint8_t> m_phase{static_cast<uint8_t>(Phase::Card)};
     std::atomic<uint8_t> m_statusState{3}; // 0=LiveReady, 1=ServerWarming, 2=NetworkOffline, 3=Unconfigured
     std::atomic<uint8_t> m_rotationSlotCount{1};
+    std::atomic<uint8_t> m_consecutiveWarmSkips{0};
     std::atomic<uint32_t> m_rotationBudget{1};
     std::atomic<uint32_t> m_itemsPlayedInTurn{0};
 
