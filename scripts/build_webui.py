@@ -94,8 +94,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals
 sys.path.insert(0, script_dir)
 from extract_engine_catalog import extract_engine_catalog, extract_themes, extract_engine_meta_map
 
-engine_catalog = extract_engine_catalog("src/engines")
-themes = extract_themes("src/api/WebServerAPI.cpp")
+engine_catalog = extract_engine_catalog(os.path.join(repo_dir, "src", "engines"))
+themes = extract_themes(os.path.join(repo_dir, "src", "api", "WebServerAPI.cpp"))
 engine_meta_map = extract_engine_meta_map(engine_catalog)
 
 catalog_json = json.dumps(engine_catalog, separators=(',', ':'))

@@ -2810,6 +2810,53 @@ const translations = {
     field_genres: "Genres Filter",
     field_decades: "Decades Filter",
     field_video_type: "Clip Type",
+    engine_desc_retro_games: "Localized retro & arcade game cards, scrolling synopses, jacket/marquee panoramas, and gameplay video snaps streamed live from DMD Media Showcase.",
+    engine_desc_movie_showcase: "Localized movie posters, ratings, scrolling synopses, backdrop panoramas, and trailer highlights streamed live from DMD Media Showcase.",
+    engine_desc_series_showcase: "Localized TV series covers, network badges, scrolling synopses, banner panoramas, and opening/trailer clips streamed live from DMD Media Showcase.",
+    engine_desc_anime_showcase: "Localized anime key visuals, demographic badges, scrolling synopses, panoramas, and creditless OP/ED/PV clips streamed live from DMD Media Showcase.",
+    field_desc_text_scroll_speed: "Reading speed for the full synopsis scroll on the Info Card (1 = Very Slow to 10 = Turbo).",
+    field_desc_jacket_panorama: "Scroll the full-width cover or poster from top to bottom right after the info card.",
+    field_desc_marquee_panorama: "Scroll the marquee, wheel, or wide banner in top-to-bottom panorama mode.",
+    field_desc_snapshot_panorama_count: "Number of gameplay screenshots or scene stills to scroll from top to bottom (0 to 5).",
+    field_desc_video_max_duration_s: "Maximum playback duration per RGB565 video clip in seconds.",
+    field_desc_video_fps: "Target frame rate for streamed RGB565 video clips.",
+    field_desc_video_mode: "Video framing strategy powered by dmd_gif_converter (Auto AI, Panorama, or Center Crop).",
+    field_desc_show_poster: "Display the adaptive mini-jacket artwork on the metadata card.",
+    field_desc_show_synopsis: "Scroll the complete localized plot summary on the metadata card before advancing.",
+    field_desc_show_video: "Stream the RGB565 video clip when available (automatically skipped if unavailable).",
+    field_desc_color_boost: "Colorimetry profile for HUB75 LED panels (Auto AI or fixed domain preset).",
+    field_desc_lang: "Language for localized titles, posters, and synopses (or System Default).",
+    field_desc_systems: "Select one or more arcade/console systems dynamically fetched from the Showcase server referential (leave empty for all).",
+    field_desc_genres: "Select one or more genres dynamically fetched from the Showcase server referential (leave empty for all).",
+    field_desc_decades: "Select one or more release decades dynamically fetched from the Showcase server referential (leave empty for all).",
+    field_desc_video_type: "Preferred video clip category (Opening, Ending, Trailer, Scene, or Any).",
+    opt_scroll_speed_1: "1 - Very Slow (14 px/s)",
+    opt_scroll_speed_2: "2 - Slow (18 px/s)",
+    opt_scroll_speed_3: "3 - Relaxed (24 px/s)",
+    opt_scroll_speed_4: "4 - Normal (32 px/s)",
+    opt_scroll_speed_5: "5 - Medium-Fast (42 px/s)",
+    opt_scroll_speed_6: "6 - Fast (56 px/s)",
+    opt_scroll_speed_7: "7 - Very Fast (75 px/s)",
+    opt_scroll_speed_8: "8 - Ultra Fast (100 px/s)",
+    opt_scroll_speed_9: "9 - Hyper (130 px/s)",
+    opt_scroll_speed_10: "10 - Turbo (160 px/s)",
+    opt_scroll_speed_slow: "Slow (18 px/s)",
+    opt_scroll_speed_normal: "Normal (32 px/s)",
+    opt_scroll_speed_fast: "Fast (56 px/s)",
+    opt_video_type_any: "Any (All Clip Types)",
+    opt_video_type_trailer: "Trailer",
+    opt_video_type_scene: "Action / Scene Clip",
+    opt_video_type_opening: "Opening (OP)",
+    opt_video_type_ending: "Ending (ED)",
+    opt_video_type_pv: "Promotional Trailer (PV)",
+    showcase_ref_loading: "⏳ Loading Showcase referential...",
+    showcase_ref_all: "All (No filter)",
+    showcase_ref_sync: "🔄 Sync",
+    showcase_ref_syncing: "⏳ Syncing with Showcase server...",
+    showcase_ref_unreachable: "⚠️ Server unreachable — check Showcase Server URL and click Sync",
+    showcase_ref_available_filtered: "✅ {n} available (filtered by system)",
+    showcase_ref_available_all: "✅ {n} available (all systems)",
+    showcase_ref_empty: "ℹ️ No options available",
 
     // Field Labels
     field_theme: "Theme / Variant",
@@ -3475,6 +3522,53 @@ const translations = {
     field_genres: "Filtre Genres",
     field_decades: "Filtre Décennies",
     field_video_type: "Type d'Extrait",
+    engine_desc_retro_games: "Fiches de jeux rétro & arcade localisées, synopsis complet défilant, panoramas jaquette/marquee et extraits gameplay diffusés en direct depuis DMD Media Showcase.",
+    engine_desc_movie_showcase: "Affiches de films localisées, notes, synopsis complet défilant, panoramas bannières et bandes-annonces diffusés en direct depuis DMD Media Showcase.",
+    engine_desc_series_showcase: "Affiches de séries TV localisées, badges réseau, synopsis complet défilant, panoramas et génériques/trailers diffusés en direct depuis DMD Media Showcase.",
+    engine_desc_anime_showcase: "Visuels d'animes localisés, badges démographiques, synopsis complet défilant, panoramas et génériques OP/ED/PV diffusés en direct depuis DMD Media Showcase.",
+    field_desc_text_scroll_speed: "Vitesse de lecture du défilement intégral du synopsis sur la fiche info (1 = Très lent à 10 = Turbo).",
+    field_desc_jacket_panorama: "Fait défiler la jaquette ou l'affiche pleine largeur de haut en bas juste après la fiche info.",
+    field_desc_marquee_panorama: "Fait défiler le marquee, logo wheel ou bannière large en mode panorama vertical.",
+    field_desc_snapshot_panorama_count: "Nombre de captures d'écran de gameplay ou de scènes à faire défiler de haut en bas (0 à 5).",
+    field_desc_video_max_duration_s: "Durée maximale de lecture par extrait vidéo RGB565 en secondes.",
+    field_desc_video_fps: "Fréquence d'images cible pour les extraits vidéo RGB565 diffusés.",
+    field_desc_video_mode: "Stratégie de cadrage vidéo propulsée par dmd_gif_converter (Auto IA, Panorama ou Recadrage Centré).",
+    field_desc_show_poster: "Affiche la mini-jaquette adaptée sur la fiche de métadonnées.",
+    field_desc_show_synopsis: "Fait défiler l'intégralité du synopsis localisé sur la fiche avant de passer à la suite.",
+    field_desc_show_video: "Diffuse l'extrait vidéo RGB565 lorsqu'il est disponible (ignoré automatiquement sinon).",
+    field_desc_color_boost: "Profil colorimétrique pour dalles LED HUB75 (Auto IA ou préréglage par domaine).",
+    field_desc_lang: "Langue des titres, affiches et synopsis localisés (ou Défaut Système).",
+    field_desc_systems: "Sélectionnez un ou plusieurs systèmes arcade/consoles récupérés dynamiquement depuis le référentiel Showcase (laisser vide pour tous).",
+    field_desc_genres: "Sélectionnez un ou plusieurs genres récupérés dynamiquement depuis le référentiel Showcase (laisser vide pour tous).",
+    field_desc_decades: "Sélectionnez une ou plusieurs décennies récupérées dynamiquement depuis le référentiel Showcase (laisser vide pour toutes).",
+    field_desc_video_type: "Catégorie d'extrait vidéo préférée (Opening, Ending, Bande-annonce, Scène ou Tous).",
+    opt_scroll_speed_1: "1 - Très lent (14 px/s)",
+    opt_scroll_speed_2: "2 - Lent (18 px/s)",
+    opt_scroll_speed_3: "3 - Détendu (24 px/s)",
+    opt_scroll_speed_4: "4 - Normal (32 px/s)",
+    opt_scroll_speed_5: "5 - Moyen-Rapide (42 px/s)",
+    opt_scroll_speed_6: "6 - Rapide (56 px/s)",
+    opt_scroll_speed_7: "7 - Très rapide (75 px/s)",
+    opt_scroll_speed_8: "8 - Ultra rapide (100 px/s)",
+    opt_scroll_speed_9: "9 - Hyper (130 px/s)",
+    opt_scroll_speed_10: "10 - Turbo (160 px/s)",
+    opt_scroll_speed_slow: "Lent (18 px/s)",
+    opt_scroll_speed_normal: "Normal (32 px/s)",
+    opt_scroll_speed_fast: "Rapide (56 px/s)",
+    opt_video_type_any: "Tous (Tous types d'extraits)",
+    opt_video_type_trailer: "Bande-annonce (Trailer)",
+    opt_video_type_scene: "Extrait / Scène d'action",
+    opt_video_type_opening: "Générique d'ouverture (OP)",
+    opt_video_type_ending: "Générique de fin (ED)",
+    opt_video_type_pv: "Bande-annonce promo (PV)",
+    showcase_ref_loading: "⏳ Chargement du référentiel Showcase...",
+    showcase_ref_all: "Tous (Sans filtre)",
+    showcase_ref_sync: "🔄 Sync",
+    showcase_ref_syncing: "⏳ Synchronisation avec le serveur Showcase...",
+    showcase_ref_unreachable: "⚠️ Serveur injoignable — vérifiez l'URL du serveur Showcase puis cliquez sur Sync",
+    showcase_ref_available_filtered: "✅ {n} disponible(s) (filtré par système)",
+    showcase_ref_available_all: "✅ {n} disponible(s) (tous systèmes)",
+    showcase_ref_empty: "ℹ️ Aucune option disponible",
 
     // Field Labels
     field_theme: "Thème / Variante",
@@ -4140,6 +4234,53 @@ const translations = {
     field_genres: "Filtro de Géneros",
     field_decades: "Filtro de Décadas",
     field_video_type: "Tipo de Clip",
+    engine_desc_retro_games: "Fichas de juegos retro y arcade localizadas, sinopsis completa desplazable, panoramas de carátula/marquesina y vídeos de gameplay en directo desde DMD Media Showcase.",
+    engine_desc_movie_showcase: "Pósteres de películas localizados, valoraciones, sinopsis desplazable, panoramas y tráileres en directo desde DMD Media Showcase.",
+    engine_desc_series_showcase: "Carátulas de series TV localizadas, insignias de cadena, sinopsis desplazable, panoramas y clips opening/tráiler en directo desde DMD Media Showcase.",
+    engine_desc_anime_showcase: "Visuales de anime localizados, insignias demográficas, sinopsis desplazable, panoramas y clips OP/ED/PV sin créditos en directo desde DMD Media Showcase.",
+    field_desc_text_scroll_speed: "Velocidad de lectura del desplazamiento completo de la sinopsis en la tarjeta (1 = Muy lento a 10 = Turbo).",
+    field_desc_jacket_panorama: "Desplaza la carátula o póster completo de arriba abajo justo después de la tarjeta informativa.",
+    field_desc_marquee_panorama: "Desplaza la marquesina, logotipo wheel o banner ancho en modo panorama vertical.",
+    field_desc_snapshot_panorama_count: "Número de capturas de gameplay o escenas a desplazar de arriba abajo (0 a 5).",
+    field_desc_video_max_duration_s: "Duración máxima de reproducción por clip de vídeo RGB565 en segundos.",
+    field_desc_video_fps: "Tasa de fotogramas objetivo para los clips de vídeo RGB565 transmitidos.",
+    field_desc_video_mode: "Estrategia de encuadre de vídeo impulsada por dmd_gif_converter (Auto IA, Panorama o Recorte Central).",
+    field_desc_show_poster: "Muestra la minicarátula adaptativa en la tarjeta de metadatos.",
+    field_desc_show_synopsis: "Desplaza el resumen completo localizado en la tarjeta antes de avanzar.",
+    field_desc_show_video: "Transmite el clip de vídeo RGB565 cuando esté disponible (se omite automáticamente si no existe).",
+    field_desc_color_boost: "Perfil colorimétrico para paneles LED HUB75 (Auto IA o preajuste por dominio).",
+    field_desc_lang: "Idioma para títulos, pósteres y sinopsis localizados (o Predeterminado del Sistema).",
+    field_desc_systems: "Selecciona uno o más sistemas arcade/consola obtenidos dinámicamente del referencial Showcase (vacío para todos).",
+    field_desc_genres: "Selecciona uno o más géneros obtenidos dinámicamente del referencial Showcase (vacío para todos).",
+    field_desc_decades: "Selecciona una o más décadas obtenidas dinámicamente del referencial Showcase (vacío para todas).",
+    field_desc_video_type: "Categoría de clip de vídeo preferida (Opening, Ending, Tráiler, Escena o Todos).",
+    opt_scroll_speed_1: "1 - Muy lento (14 px/s)",
+    opt_scroll_speed_2: "2 - Lento (18 px/s)",
+    opt_scroll_speed_3: "3 - Relajado (24 px/s)",
+    opt_scroll_speed_4: "4 - Normal (32 px/s)",
+    opt_scroll_speed_5: "5 - Medio-Rápido (42 px/s)",
+    opt_scroll_speed_6: "6 - Rápido (56 px/s)",
+    opt_scroll_speed_7: "7 - Muy rápido (75 px/s)",
+    opt_scroll_speed_8: "8 - Ultra rápido (100 px/s)",
+    opt_scroll_speed_9: "9 - Hiper (130 px/s)",
+    opt_scroll_speed_10: "10 - Turbo (160 px/s)",
+    opt_scroll_speed_slow: "Lento (18 px/s)",
+    opt_scroll_speed_normal: "Normal (32 px/s)",
+    opt_scroll_speed_fast: "Rápido (56 px/s)",
+    opt_video_type_any: "Todos (Cualquier tipo de clip)",
+    opt_video_type_trailer: "Tráiler",
+    opt_video_type_scene: "Clip / Escena de acción",
+    opt_video_type_opening: "Opening (OP)",
+    opt_video_type_ending: "Ending (ED)",
+    opt_video_type_pv: "Tráiler promocional (PV)",
+    showcase_ref_loading: "⏳ Cargando referencial Showcase...",
+    showcase_ref_all: "Todos (Sin filtro)",
+    showcase_ref_sync: "🔄 Sync",
+    showcase_ref_syncing: "⏳ Sincronizando con el servidor Showcase...",
+    showcase_ref_unreachable: "⚠️ Servidor inalcanzable — verifica la URL del servidor Showcase y pulsa Sync",
+    showcase_ref_available_filtered: "✅ {n} disponible(s) (filtrado por sistema)",
+    showcase_ref_available_all: "✅ {n} disponible(s) (todos los sistemas)",
+    showcase_ref_empty: "ℹ️ No hay opciones disponibles",
 
     // Field Labels
     field_theme: "Tema / Variante",
@@ -4375,7 +4516,7 @@ function getCompatReasonLabel(comp, desc, hwData = window.__hwData) {
 window.getCompatReasonLabel = getCompatReasonLabel;
 
 function applyTooltips(root = document) {
-  const currentLang = localStorage.getItem('lang') || 'fr';
+  const currentLang = localStorage.getItem('lang') || 'en';
   const dict = translations[currentLang] || translations.en;
   if (!dict) return;
   root.querySelectorAll('[data-i18n-tooltip]').forEach(el => {
@@ -4580,7 +4721,11 @@ function getEngineMeta(descOrMeta) {
     else if (id.includes('cast') || id.includes('music') || cat.includes('audio')) icon = '🎵';
     else if (id.includes('marquee')) icon = '📜';
     else if (id.includes('msg') || id.includes('message') || cat.includes('text')) icon = '💬';
-    else if (cat.includes('game') || cat.includes('retro')) icon = '🕹️';
+    else if (id === 'retro_games') icon = '🕹️';
+    else if (id === 'movie_showcase') icon = '🎬';
+    else if (id === 'series_showcase') icon = '📺';
+    else if (id === 'anime_showcase') icon = '⛩️';
+    else if (cat.includes('game') || cat.includes('retro') || cat.includes('arcade')) icon = '🕹️';
     else if (cat.includes('sensor')) icon = '🌡️';
     else icon = '🧩';
   }
@@ -4946,6 +5091,14 @@ function formatOptLabel(fieldId, val, raw) {
   if (fieldId === 'color_boost') {
     const cbKey = `opt_color_boost_${lower}`;
     if (dict[cbKey]) return dict[cbKey];
+  }
+  if (fieldId === 'text_scroll_speed') {
+    const ssKey = `opt_scroll_speed_${lower}`;
+    if (dict[ssKey]) return dict[ssKey];
+  }
+  if (fieldId === 'video_type') {
+    const vtKey = `opt_video_type_${lower}`;
+    if (dict[vtKey]) return dict[vtKey];
   }
   return raw || val;
 }
@@ -5748,8 +5901,9 @@ function renderRotationPanel(container, insertionPoint, rotationList, instancesL
     descriptors.forEach(d => {
       if (!d || !d.metadata || !d.metadata.id) return;
       const isCompat = isEngineCompatible(d);
-      const icon = (d.metadata && d.metadata.icon) ? d.metadata.icon : '🧩';
-      const name = (d.metadata && d.metadata.name) ? d.metadata.name : d.metadata.id;
+      const dMeta = getEngineMeta(d);
+      const icon = dMeta.icon || '🧩';
+      const name = dMeta.name || d.metadata.id;
       const opt = document.createElement('option');
       opt.value = `new:${d.metadata.id}`;
       if (!isCompat) {
@@ -6250,7 +6404,7 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
 
   const statusSpan = document.createElement('span');
   statusSpan.style = 'font-size: 0.75rem; color: var(--text-muted, #94a3b8);';
-  statusSpan.innerText = '⏳ Loading Showcase referential...';
+  statusSpan.innerText = t('showcase_ref_loading', '⏳ Loading Showcase referential...');
   headerRow.appendChild(statusSpan);
 
   const btnGroup = document.createElement('div');
@@ -6260,13 +6414,13 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
   clearBtn.type = 'button';
   clearBtn.className = 'btn btn-secondary btn-sm';
   clearBtn.style = 'font-size: 0.7rem; padding: 0.15rem 0.45rem;';
-  clearBtn.innerText = 'All (No filter)';
+  clearBtn.innerText = t('showcase_ref_all', 'All (No filter)');
 
   const syncBtn = document.createElement('button');
   syncBtn.type = 'button';
   syncBtn.className = 'btn btn-secondary btn-sm';
   syncBtn.style = 'font-size: 0.7rem; padding: 0.15rem 0.45rem;';
-  syncBtn.innerText = '🔄 Sync';
+  syncBtn.innerText = t('showcase_ref_sync', '🔄 Sync');
 
   btnGroup.appendChild(clearBtn);
   btnGroup.appendChild(syncBtn);
@@ -6309,12 +6463,12 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
 
   async function renderTags(forceRefresh = false) {
     const { srv, lg } = getServerUrlAndLang();
-    statusSpan.innerText = '⏳ Syncing with Showcase server...';
+    statusSpan.innerText = t('showcase_ref_syncing', '⏳ Syncing with Showcase server...');
     const data = await fetchShowcaseReferential(srv, field.options_endpoint, lg, forceRefresh);
     tagContainer.innerHTML = '';
 
     if (!data) {
-      statusSpan.innerText = '⚠️ Server unreachable — check Showcase Server URL and click Sync';
+      statusSpan.innerText = t('showcase_ref_unreachable', '⚠️ Server unreachable — check Showcase Server URL and click Sync');
       return;
     }
 
@@ -6358,9 +6512,14 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
       hiddenInput.value = pruned.join(',');
     }
 
-    statusSpan.innerText = items.length > 0
-      ? `✅ ${items.length} available (${selectedSystems.length > 0 ? 'filtered by system' : 'all systems'})`
-      : 'ℹ️ No options available';
+    if (items.length > 0) {
+      const statusTpl = selectedSystems.length > 0
+        ? t('showcase_ref_available_filtered', '✅ {n} available (filtered by system)')
+        : t('showcase_ref_available_all', '✅ {n} available (all systems)');
+      statusSpan.innerText = statusTpl.replace('{n}', String(items.length));
+    } else {
+      statusSpan.innerText = t('showcase_ref_empty', 'ℹ️ No options available');
+    }
   }
 
   syncBtn.onclick = () => renderTags(true);
@@ -7435,7 +7594,7 @@ function initNavigation() {
 
     const savedLang = localStorage.getItem('lang');
     const defaultLang = navigator.language.split('-')[0];
-    const initialLang = savedLang || (SUPPORTED_LANGUAGES.some(l => l.code === defaultLang) ? defaultLang : 'fr');
+    const initialLang = savedLang || (SUPPORTED_LANGUAGES.some(l => l.code === defaultLang) ? defaultLang : 'en');
     langSelect.value = initialLang;
     setLanguage(initialLang);
 
