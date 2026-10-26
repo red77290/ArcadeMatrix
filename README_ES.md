@@ -213,6 +213,41 @@ Los 4 motores Showcase (`retro_games`, `movie_showcase`, `series_showcase`, `ani
 2. En la pestaña **Settings** de la Web UI de ArcadeMatrix (`MQTT & API` -> **🎬 DMD Media Showcase**), la URL del servidor **ya viene pre-rellenada** con `http://dmdmediashowcase.local:8890` y **Desactivada por defecto** (`showcase.enabled = false`) para evitar accesos de red innecesarios si la aplicación no está instalada. Simplemente activa **Activar DMD Media Showcase**, guarda los ajustes y comprueba que el indicador muestre **`🟢 Comunicación OK (v3.0.0)`**.
 3. Añade `retro_games`, `movie_showcase`, `series_showcase` o `anime_showcase` en tu rotación. Cada motor Showcase es auto-acompasado (`selfPaced = true`), completando su secuencia entera (Póster + Sinopsis + Panorama + Clip de Vídeo) antes de pasar al siguiente turno.
 
+## 🕹️ Sincronización con Recalbox, Batocera y RetroPie + Showcase en Juego (Marquesinas, Fichas y Vídeos Gameplay)
+
+ArcadeMatrix se sincroniza en tiempo real con **Recalbox**, **Batocera** (`v33+` para navegación por menús) y **RetroPie** para dar vida a tu recreativa o sala de juegos:
+
+### ✨ Cómo Funciona en la Práctica
+1. **Navegación por Menús (`0 ms` — Marquesina Instantánea)**: Al desplazarte por sistemas y juegos en la consola, ArcadeMatrix muestra al instante la marquesina Pixelcade local correspondiente sin esperas de red.
+2. **Al Iniciar un Juego (Showcase en Juego Fluido)**:
+   - En cuanto lanzas una partida, la **marquesina clásica aparece de inmediato** (sin pantalla negra ni mensajes de espera).
+   - Si **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** está activo en tu red local y **Showcase en Juego** está habilitado, Showcase prepara en segundo plano la presentación completa del juego (**Ficha Informativa Animada** + **Panoramas de Carátula/Marquee/Capturas** + **Vídeo de Gameplay**) y toma el relevo suavemente en cuanto el primer fotograma está listo.
+   - Elige el ciclo de reproducción durante la partida:
+     - **Reproducir una vez y mantener Marquesina**: muestra la secuencia Showcase una vez y vuelve a dejar fija la marquesina del juego.
+     - **Alternar Marquesina y Showcase**: alterna entre la presentación Showcase y una pausa configurable en la marquesina clásica (ej. `45s`).
+     - **Bucle continuo de Showcase**: repite la presentación Showcase mientras dure la partida.
+3. **Al Salir del Juego**: Volver al menú de la consola cancela al instante el vídeo en curso y recupera las marquesinas del menú (o la rotación habitual).
+4. **Broker MQTT Compartido Automático (Cero Reinstalación y Más RAM Libre)**:
+   - Los scripts de consola guardan **únicamente la IP de tu DMD** (`DMD_HOST`) y consultan dinámicamente al DMD qué broker MQTT usar.
+   - Cuando **Usar Broker MQTT de Showcase si está activo** está habilitado y Showcase está encendido, el ESP32 usa automáticamente el broker MQTT de Showcase y apaga su broker interno para liberar RAM — volviendo solo a su broker local si Showcase se apaga. **¡Nunca tendrás que reinstalar los scripts en Recalbox o Batocera!**
+5. **Caché Persistente Instantánea y Vaciado en 1 Clic**:
+   - Activando la **Caché Persistente de Conversiones On-Demand** en Showcase, los juegos ya convertidos se guardan por `(Sistema + Juego + Resolución + Estilo de Tarjeta)` para que las siguientes partidas arranquen **al instante** sin volver a buscar ni convertir.
+   - ¿Cambiaste el diseño de tus tarjetas? Pulsa **🗑️ Vaciar Caché de Showcase** directamente desde ArcadeMatrix (`Sistema -> MQTT & API -> 🎮 FrontendSync`) para limpiar las conversiones en un clic.
+
+### 🚀 Tutorial de Activación Paso a Paso
+1. **Instalar el script en la consola (una sola vez)**:
+   - Desde tu PC/Mac, ejecuta `tools/recalbox_daemon/install.sh` (Linux/macOS) o `tools/recalbox_daemon/install.ps1` (Windows) — o por SSH con `tools/rpi_emulationstation_base_os_setup.sh` — indicando **solo la IP de tu ArcadeMatrix** (ver [`tools/recalbox_daemon/README_ES.md`](tools/recalbox_daemon/README_ES.md)).
+2. **Activar FrontendSync en ArcadeMatrix**:
+   - Abre la Web UI de ArcadeMatrix -> **Sistema** -> **MQTT & API** -> **🎮 FrontendSync**.
+   - Pon **Activar MQTT** en **Activado** (deja `127.0.0.1` para usar el broker integrado en modo autónomo).
+3. **Activar Showcase en Juego (Opcional — Requiere DMD Media Showcase)**:
+   - En **🎬 DMD Media Showcase**, activa el servidor Showcase y comprueba el indicador **`🟢 Comunicación OK`**.
+   - Vuelve a **🎮 FrontendSync** y activa **Usar Broker MQTT de Showcase si está activo (libera RAM)** y **Showcase en Juego (Tarjeta + Vídeo Gameplay)**.
+4. **Personalizar el Ciclo y el Diseño de la Tarjeta**:
+   - Elige el **Ciclo en Juego** (`Una vez`, `Alternar Marquesina y Showcase` + segundos de pausa, o `Bucle continuo`).
+   - En **Estilo de Tarjeta**, selecciona **Heredar perfil DMD desde Showcase Studio** o **Personalizado en el DMD** para elegir diseño (`Classic Split`, `Badge Header`, `Full Art`, `Minimal`), tema (`Tinted`, `Neon Border`, `Poster Wash`), velocidad de sinopsis, panoramas, duración/FPS/encuadre de vídeo y realce de color directamente desde el DMD.
+   - Pulsa **Guardar ajustes MQTT**, ¡lanza un juego en tu consola y disfruta!
+
 ## ⚡ Compatibilidad de Hardware y Motores
 
 | Motor / Funcionalidad | Categoría | ESP32-S3 (Placa Waveshare) | ESP32 Clásico (DevKit / `esp32dev`) | Requisito de Hardware / Red |
