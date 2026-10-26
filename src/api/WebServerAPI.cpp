@@ -16,6 +16,7 @@
 #include <ESPmDNS.h>
 #include "../core/MatrixEngine.h"
 #include "../engines/GifEngine.h"
+#include "../engines/FrontendSyncEngine.h"
 #include "../core/RotationManager.h"
 #include "WebUI.h"
 #include "../core/Globals.h"
@@ -1555,7 +1556,7 @@ void WebServerAPI::setupRoutes() {
     
     server.on("/api/settings", HTTP_GET, [](AsyncWebServerRequest *request){
         extern ConfigLoader config;
-        AsyncJsonResponse * response = new AsyncJsonResponse(false, 4096);
+        AsyncJsonResponse * response = new AsyncJsonResponse(false, 6144);
         JsonObject doc = response->getRoot().as<JsonObject>();
         
         if (doc.isNull()) {
@@ -1717,6 +1718,25 @@ void WebServerAPI::setupRoutes() {
         doc["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
         doc["mqtt_device"] = snap.mqtt.deviceName;
         doc["mqtt_allow_overlay"] = snap.mqtt.allow_overlay;
+        doc["mqtt_use_showcase_broker"] = snap.mqtt.use_showcase_broker;
+        doc["mqtt_ingame_showcase_enabled"] = snap.mqtt.ingame_showcase_enabled;
+        doc["mqtt_ingame_cycle_mode"] = snap.mqtt.ingame_cycle_mode;
+        doc["mqtt_ingame_marquee_interval_sec"] = snap.mqtt.ingame_marquee_interval_sec;
+        doc["mqtt_card_style_source"] = snap.mqtt.card_style_source;
+        doc["mqtt_include_card_intro"] = snap.mqtt.include_card_intro;
+        doc["mqtt_card_layout"] = snap.mqtt.card_layout;
+        doc["mqtt_card_theme"] = snap.mqtt.card_theme;
+        doc["mqtt_show_poster"] = snap.mqtt.show_poster;
+        doc["mqtt_show_synopsis"] = snap.mqtt.show_synopsis;
+        doc["mqtt_text_scroll_speed"] = snap.mqtt.text_scroll_speed;
+        doc["mqtt_jacket_panorama"] = snap.mqtt.jacket_panorama;
+        doc["mqtt_marquee_panorama"] = snap.mqtt.marquee_panorama;
+        doc["mqtt_snapshot_panorama_count"] = snap.mqtt.snapshot_panorama_count;
+        doc["mqtt_show_video"] = snap.mqtt.show_video;
+        doc["mqtt_video_max_duration_s"] = snap.mqtt.video_max_duration_s;
+        doc["mqtt_video_fps"] = snap.mqtt.video_fps;
+        doc["mqtt_video_mode"] = snap.mqtt.video_mode;
+        doc["mqtt_color_boost"] = snap.mqtt.color_boost;
 
         // MQTT Data broker (used only while the mqttdata engine is on screen)
         doc["data_mqtt_broker"] = snap.dataMqtt.broker;
@@ -1963,6 +1983,26 @@ void WebServerAPI::setupRoutes() {
             if (!doc["mqtt_pass"].isNull()) cfg.mqtt.pass = (const char*)doc["mqtt_pass"];
             if (!doc["mqtt_device"].isNull()) cfg.mqtt.deviceName = (const char*)doc["mqtt_device"];
             if (!doc["mqtt_allow_overlay"].isNull()) cfg.mqtt.allow_overlay = (bool)doc["mqtt_allow_overlay"];
+            if (!doc["mqtt_use_showcase_broker"].isNull()) cfg.mqtt.use_showcase_broker = (bool)doc["mqtt_use_showcase_broker"];
+            if (!doc["mqtt_ingame_showcase_enabled"].isNull()) cfg.mqtt.ingame_showcase_enabled = (bool)doc["mqtt_ingame_showcase_enabled"];
+            if (!doc["mqtt_ingame_cycle_mode"].isNull()) cfg.mqtt.ingame_cycle_mode = doc["mqtt_ingame_cycle_mode"].as<String>();
+            if (!doc["mqtt_ingame_marquee_interval_sec"].isNull()) cfg.mqtt.ingame_marquee_interval_sec = doc["mqtt_ingame_marquee_interval_sec"].as<int>();
+            if (!doc["mqtt_card_style_source"].isNull()) cfg.mqtt.card_style_source = doc["mqtt_card_style_source"].as<String>();
+            if (!doc["mqtt_include_card_intro"].isNull()) cfg.mqtt.include_card_intro = doc["mqtt_include_card_intro"].as<bool>();
+            if (!doc["mqtt_card_layout"].isNull()) cfg.mqtt.card_layout = doc["mqtt_card_layout"].as<String>();
+            if (!doc["mqtt_card_theme"].isNull()) cfg.mqtt.card_theme = doc["mqtt_card_theme"].as<String>();
+            if (!doc["mqtt_show_poster"].isNull()) cfg.mqtt.show_poster = doc["mqtt_show_poster"].as<bool>();
+            if (!doc["mqtt_show_synopsis"].isNull()) cfg.mqtt.show_synopsis = doc["mqtt_show_synopsis"].as<bool>();
+            if (!doc["mqtt_text_scroll_speed"].isNull()) cfg.mqtt.text_scroll_speed = doc["mqtt_text_scroll_speed"].as<String>();
+            if (!doc["mqtt_jacket_panorama"].isNull()) cfg.mqtt.jacket_panorama = doc["mqtt_jacket_panorama"].as<bool>();
+            if (!doc["mqtt_marquee_panorama"].isNull()) cfg.mqtt.marquee_panorama = doc["mqtt_marquee_panorama"].as<bool>();
+            if (!doc["mqtt_snapshot_panorama_count"].isNull()) cfg.mqtt.snapshot_panorama_count = doc["mqtt_snapshot_panorama_count"].as<int>();
+            if (!doc["mqtt_show_video"].isNull()) cfg.mqtt.show_video = doc["mqtt_show_video"].as<bool>();
+            if (!doc["mqtt_video_max_duration_s"].isNull()) cfg.mqtt.video_max_duration_s = doc["mqtt_video_max_duration_s"].as<int>();
+            if (!doc["mqtt_video_fps"].isNull()) cfg.mqtt.video_fps = doc["mqtt_video_fps"].as<int>();
+            if (!doc["mqtt_video_mode"].isNull()) cfg.mqtt.video_mode = doc["mqtt_video_mode"].as<String>();
+            if (!doc["mqtt_color_boost"].isNull()) cfg.mqtt.color_boost = doc["mqtt_color_boost"].as<String>();
+            ConfigSanitizer::sanitize(cfg);
             // Read when the mqttdata engine next connects: no reboot.
             if (!doc["data_mqtt_broker"].isNull()) cfg.dataMqtt.broker = (const char*)doc["data_mqtt_broker"];
             if (!doc["data_mqtt_port"].isNull()) cfg.dataMqtt.port = (int)doc["data_mqtt_port"];
@@ -2205,7 +2245,7 @@ void WebServerAPI::setupRoutes() {
             section.toLowerCase();
         }
 
-        size_t docCap = section.isEmpty() ? 4096 : 1024;
+        size_t docCap = section.isEmpty() ? 6144 : 2048;
         SpiRamJsonDocument doc(docCap);
 
         if (section.isEmpty() || section == "system") {
@@ -2290,6 +2330,25 @@ void WebServerAPI::setupRoutes() {
             mqtt["mqtt_pass_configured"] = snap.mqtt.pass.length() > 0;
             mqtt["device_name"] = snap.mqtt.deviceName;
             mqtt["allow_overlay"] = snap.mqtt.allow_overlay;
+            mqtt["use_showcase_broker"] = snap.mqtt.use_showcase_broker;
+            mqtt["ingame_showcase_enabled"] = snap.mqtt.ingame_showcase_enabled;
+            mqtt["ingame_cycle_mode"] = snap.mqtt.ingame_cycle_mode;
+            mqtt["ingame_marquee_interval_sec"] = snap.mqtt.ingame_marquee_interval_sec;
+            mqtt["card_style_source"] = snap.mqtt.card_style_source;
+            mqtt["include_card_intro"] = snap.mqtt.include_card_intro;
+            mqtt["card_layout"] = snap.mqtt.card_layout;
+            mqtt["card_theme"] = snap.mqtt.card_theme;
+            mqtt["show_poster"] = snap.mqtt.show_poster;
+            mqtt["show_synopsis"] = snap.mqtt.show_synopsis;
+            mqtt["text_scroll_speed"] = snap.mqtt.text_scroll_speed;
+            mqtt["jacket_panorama"] = snap.mqtt.jacket_panorama;
+            mqtt["marquee_panorama"] = snap.mqtt.marquee_panorama;
+            mqtt["snapshot_panorama_count"] = snap.mqtt.snapshot_panorama_count;
+            mqtt["show_video"] = snap.mqtt.show_video;
+            mqtt["video_max_duration_s"] = snap.mqtt.video_max_duration_s;
+            mqtt["video_fps"] = snap.mqtt.video_fps;
+            mqtt["video_mode"] = snap.mqtt.video_mode;
+            mqtt["color_boost"] = snap.mqtt.color_boost;
         }
 
         if (section.isEmpty() || section == "data_mqtt") {
@@ -2553,6 +2612,28 @@ void WebServerAPI::setupRoutes() {
                 if (!mq["pass"].isNull()) cfg.mqtt.pass = mq["pass"].as<String>();
                 if (!mq["device_name"].isNull()) cfg.mqtt.deviceName = mq["device_name"].as<String>();
                 if (!mq["allow_overlay"].isNull()) cfg.mqtt.allow_overlay = mq["allow_overlay"].as<bool>();
+                if (!mq["use_showcase_broker"].isNull()) cfg.mqtt.use_showcase_broker = mq["use_showcase_broker"].as<bool>();
+                if (!mq["ingame_showcase_enabled"].isNull()) cfg.mqtt.ingame_showcase_enabled = mq["ingame_showcase_enabled"].as<bool>();
+                if (!mq["ingame_cycle_mode"].isNull()) cfg.mqtt.ingame_cycle_mode = mq["ingame_cycle_mode"].as<String>();
+                if (!mq["ingame_marquee_interval_sec"].isNull()) cfg.mqtt.ingame_marquee_interval_sec = mq["ingame_marquee_interval_sec"].as<int>();
+                if (!mq["card_style_source"].isNull()) cfg.mqtt.card_style_source = mq["card_style_source"].as<String>();
+                if (!mq["include_card_intro"].isNull()) cfg.mqtt.include_card_intro = mq["include_card_intro"].as<bool>();
+                if (!mq["card_layout"].isNull()) cfg.mqtt.card_layout = mq["card_layout"].as<String>();
+                if (!mq["card_theme"].isNull()) cfg.mqtt.card_theme = mq["card_theme"].as<String>();
+                if (!mq["show_poster"].isNull()) cfg.mqtt.show_poster = mq["show_poster"].as<bool>();
+                else if (!mq["include_poster"].isNull()) cfg.mqtt.show_poster = mq["include_poster"].as<bool>();
+                if (!mq["show_synopsis"].isNull()) cfg.mqtt.show_synopsis = mq["show_synopsis"].as<bool>();
+                else if (!mq["include_synopsis"].isNull()) cfg.mqtt.show_synopsis = mq["include_synopsis"].as<bool>();
+                if (!mq["text_scroll_speed"].isNull()) cfg.mqtt.text_scroll_speed = mq["text_scroll_speed"].as<String>();
+                if (!mq["jacket_panorama"].isNull()) cfg.mqtt.jacket_panorama = mq["jacket_panorama"].as<bool>();
+                if (!mq["marquee_panorama"].isNull()) cfg.mqtt.marquee_panorama = mq["marquee_panorama"].as<bool>();
+                if (!mq["snapshot_panorama_count"].isNull()) cfg.mqtt.snapshot_panorama_count = mq["snapshot_panorama_count"].as<int>();
+                if (!mq["show_video"].isNull()) cfg.mqtt.show_video = mq["show_video"].as<bool>();
+                else if (!mq["include_video"].isNull()) cfg.mqtt.show_video = mq["include_video"].as<bool>();
+                if (!mq["video_max_duration_s"].isNull()) cfg.mqtt.video_max_duration_s = mq["video_max_duration_s"].as<int>();
+                if (!mq["video_fps"].isNull()) cfg.mqtt.video_fps = mq["video_fps"].as<int>();
+                if (!mq["video_mode"].isNull()) cfg.mqtt.video_mode = mq["video_mode"].as<String>();
+                if (!mq["color_boost"].isNull()) cfg.mqtt.color_boost = mq["color_boost"].as<String>();
                 changed = true;
                 if (prevMqtt != cfg.mqtt.enabled || prevBroker != cfg.mqtt.broker || prevPort != cfg.mqtt.port) {
                     willReboot = true;
@@ -2695,6 +2776,111 @@ void WebServerAPI::setupRoutes() {
         doc["online"] = online;
         doc["version"] = online ? "3.0.0" : "";
         sendJsonResponse(request, doc);
+    });
+
+    // API: Dynamic MQTT Broker Target Discovery for Recalbox/Batocera/RetroPie daemons (GET /api/mqtt/broker-target)
+    // Intentionally unauthenticated (zero secrets exposed) so remote console daemons can always resolve the active broker IP/port.
+    server.on("/api/mqtt/broker-target", HTTP_GET, [](AsyncWebServerRequest *request) {
+        extern ConfigLoader config;
+        String brokerHost;
+        uint16_t brokerPort = 1883;
+        String source;
+        bool showcaseActive = false;
+        FrontendSyncEngine::getResolvedBrokerTarget(brokerHost, brokerPort, source, showcaseActive);
+
+        if (brokerHost.length() == 0) {
+            IPAddress localIp = (request->client() != nullptr) ? request->client()->localIP() : IPAddress(0, 0, 0, 0);
+            if (localIp == IPAddress(0, 0, 0, 0) || localIp == INADDR_NONE) {
+                localIp = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP() : WiFi.softAPIP();
+            }
+            brokerHost = localIp.toString();
+        }
+
+        ConfigSnapshotGuard guard = config.acquireSnapshot();
+        bool mqttEnabled = guard.get().mqtt.enabled;
+
+        StaticJsonDocument<256> doc;
+        doc["host"] = brokerHost;
+        doc["port"] = brokerPort;
+        doc["source"] = source;
+        doc["mqtt_enabled"] = mqttEnabled;
+        doc["showcase_broker_active"] = showcaseActive;
+        sendJsonResponse(request, doc);
+    });
+
+    // API: Evict Persistent On-Demand Conversion Cache on DMD Media Showcase (POST /api/showcase/cache/evict)
+    server.on("/api/showcase/cache/evict", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        if (!checkAuth(request)) return;
+        extern ConfigLoader config;
+        String rawUrl;
+        {
+            ConfigSnapshotGuard guard = config.acquireSnapshot();
+            rawUrl = guard.get().showcase.server_url;
+        }
+        rawUrl.trim();
+        while (rawUrl.endsWith("/")) rawUrl.remove(rawUrl.length() - 1);
+        if (rawUrl.length() < 8) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server URL is empty\"}");
+            return;
+        }
+
+        String work = rawUrl;
+        if (work.startsWith("https://")) work = work.substring(8);
+        else if (work.startsWith("http://")) work = work.substring(7);
+        int slashIdx = work.indexOf('/');
+        if (slashIdx >= 0) work = work.substring(0, slashIdx);
+
+        String host = work;
+        uint16_t port = 8890;
+        int colonIdx = work.lastIndexOf(':');
+        if (colonIdx > 0) {
+            host = work.substring(0, colonIdx);
+            int p = work.substring(colonIdx + 1).toInt();
+            if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+        }
+
+        String resolvedHost = host;
+        if (host.endsWith(".local")) {
+            String mdnsName = host.substring(0, host.length() - 6);
+            IPAddress ip = MDNS.queryHost(mdnsName.c_str(), 450);
+            if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
+                resolvedHost = ip.toString();
+            }
+        }
+
+        WiFiClient cli;
+        if (!cli.connect(resolvedHost.c_str(), port, 1200)) {
+            request->send(502, "application/json", "{\"status\":\"error\",\"message\":\"Showcase server unreachable\"}");
+            return;
+        }
+        cli.setTimeout(1500);
+        cli.printf(
+            "POST /api/v1/cache/on-demand/evict HTTP/1.1\r\nHost: %s:%u\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            resolvedHost.c_str(),
+            port
+        );
+
+        String statusLine = cli.readStringUntil('\n');
+        statusLine.trim();
+        bool httpOk = (statusLine.indexOf(" 200") != -1 || statusLine.indexOf(" 202") != -1);
+        while (cli.connected() || cli.available()) {
+            String hdrLine = cli.readStringUntil('\n');
+            if (hdrLine == "\r" || hdrLine.length() == 0) break;
+        }
+        String respBody = cli.readString();
+        cli.stop();
+        respBody.trim();
+        int braceStart = respBody.indexOf('{');
+        int braceEnd = respBody.lastIndexOf('}');
+        if (braceStart >= 0 && braceEnd >= braceStart) {
+            respBody = respBody.substring(braceStart, braceEnd + 1);
+        }
+
+        if (!httpOk) {
+            request->send(502, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"error\",\"message\":\"Showcase evict failed\"}");
+            return;
+        }
+        request->send(200, "application/json", respBody.length() > 0 ? respBody : "{\"status\":\"evicted\",\"removed_entries\":0,\"freed_bytes\":0}");
     });
     
     // API: System commands (Reboot / Shutdown / Restart)

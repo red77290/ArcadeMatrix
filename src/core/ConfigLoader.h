@@ -69,13 +69,32 @@ struct WifiConfig {
 };
 
 struct MqttConfig {
-    bool enabled;
-    String broker;
-    int port;
-    String user;
-    String pass;
-    String deviceName;
+    bool enabled = false;
+    String broker = "";
+    int port = 1883;
+    String user = "";
+    String pass = "";
+    String deviceName = "ArcadeMatrix";
     bool allow_overlay = false;
+    bool use_showcase_broker = true;
+    bool ingame_showcase_enabled = true;
+    String ingame_cycle_mode = "once";
+    int ingame_marquee_interval_sec = 45;
+    String card_style_source = "showcase_profile";
+    bool include_card_intro = true;
+    String card_layout = "classic_split";
+    String card_theme = "tinted";
+    bool show_poster = true;
+    bool show_synopsis = true;
+    String text_scroll_speed = "4";
+    bool jacket_panorama = true;
+    bool marquee_panorama = false;
+    int snapshot_panorama_count = 0;
+    bool show_video = true;
+    int video_max_duration_s = 12;
+    int video_fps = 15;
+    String video_mode = "auto_action";
+    String color_boost = "auto";
 };
 
 /// Broker the MQTT Data engine connects to while it is on screen (credentials only: nothing runs

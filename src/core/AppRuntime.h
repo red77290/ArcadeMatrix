@@ -42,6 +42,7 @@ private:
 
     MessageEngine* m_messageEngine = nullptr;
     MarqueeEngine* m_marqueeEngine = nullptr;
+    InGameShowcaseEngine* m_inGameShowcaseEngine = nullptr;
     WebServerAPI* m_webServer = nullptr;
     FrontendSyncEngine* m_frontendListener = nullptr;
 
@@ -68,6 +69,7 @@ private:
     ProducerSyncState m_syncMarquee;
     ProducerSyncState m_syncGif;
     ProducerSyncState m_syncVis;
+    ProducerSyncState m_syncInGameShowcase;
 
     bool handleNightMode(const ConfigSnapshot& snapshot);
     void syncMqtt(const ConfigSnapshot& snapshot);

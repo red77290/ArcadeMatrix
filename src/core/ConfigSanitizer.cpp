@@ -344,6 +344,62 @@ void ConfigSanitizer::sanitizeMqtt(MqttConfig& mqtt, SanitizeResult& result) {
         result.defaults_injected++;
         result.modified = true;
     }
+    if (mqtt.ingame_cycle_mode != "once" && mqtt.ingame_cycle_mode != "loop" && mqtt.ingame_cycle_mode != "alternating") {
+        mqtt.ingame_cycle_mode = "once";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.ingame_marquee_interval_sec < 5 || mqtt.ingame_marquee_interval_sec > 600) {
+        mqtt.ingame_marquee_interval_sec = constrain(mqtt.ingame_marquee_interval_sec, 5, 600);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.card_style_source != "showcase_profile" && mqtt.card_style_source != "custom") {
+        mqtt.card_style_source = "showcase_profile";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.card_layout != "classic_split" && mqtt.card_layout != "full_bleed" &&
+        mqtt.card_layout != "minimal_banner" && mqtt.card_layout != "arcade_cabinet") {
+        mqtt.card_layout = "classic_split";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.card_theme != "tinted" && mqtt.card_theme != "dark_oled" && mqtt.card_theme != "neon_border") {
+        mqtt.card_theme = "tinted";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.text_scroll_speed.length() == 0) {
+        mqtt.text_scroll_speed = "4";
+        result.defaults_injected++;
+        result.modified = true;
+    }
+    if (mqtt.snapshot_panorama_count < 0 || mqtt.snapshot_panorama_count > 5) {
+        mqtt.snapshot_panorama_count = constrain(mqtt.snapshot_panorama_count, 0, 5);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_max_duration_s < 2 || mqtt.video_max_duration_s > 120) {
+        mqtt.video_max_duration_s = constrain(mqtt.video_max_duration_s, 2, 120);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_fps < 8 || mqtt.video_fps > 60) {
+        mqtt.video_fps = constrain(mqtt.video_fps, 8, 60);
+        result.values_clamped++;
+        result.modified = true;
+    }
+    if (mqtt.video_mode != "auto_action" && mqtt.video_mode != "panorama" && mqtt.video_mode != "center_crop") {
+        mqtt.video_mode = "auto_action";
+        result.values_fallback++;
+        result.modified = true;
+    }
+    if (mqtt.color_boost != "auto" && mqtt.color_boost != "pixel_art" && mqtt.color_boost != "anime" && mqtt.color_boost != "cinema") {
+        mqtt.color_boost = "auto";
+        result.values_fallback++;
+        result.modified = true;
+    }
 }
 
 void ConfigSanitizer::sanitizeDataMqtt(DataMqttConfig& dm, SanitizeResult& result) {

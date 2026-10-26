@@ -1826,6 +1826,160 @@ select.input option {
                   <input type="password" id="hw-mqtt-pass" class="input" placeholder="Optional">
                 </div>
               </div>
+              <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                  <label><span data-i18n="fsync_use_showcase_broker">Share Showcase MQTT Broker (Free Local RAM)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_fsync_use_showcase_broker">?</span></label>
+                  <select id="hw-mqtt-use-showcase-broker" class="input">
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                    <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><span data-i18n="fsync_ingame_showcase">In-Game Showcase (Card + Gameplay Video)</span> <span class="tooltip-icon" data-i18n-tooltip="tt_fsync_ingame_showcase">?</span></label>
+                  <select id="hw-mqtt-ingame-showcase" class="input">
+                    <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                    <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                  </select>
+                </div>
+              </div>
+
+              <div id="mqtt-ingame-showcase-panel" style="margin-top: 1.25rem; padding: 1rem; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.85rem;">
+                  <h4 style="margin: 0; font-size: 0.95rem;" data-i18n="fsync_pres_title">🎬 In-Game Showcase & Card Presentation</h4>
+                  <button type="button" id="btn-evict-showcase-cache" class="btn btn-sm" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" data-i18n="fsync_evict_cache_btn">🗑️ Evict Showcase Cache</button>
+                </div>
+                <div id="mqtt-ingame-showcase-fields">
+                  <div class="form-grid">
+                    <div class="form-group">
+                      <label data-i18n="fsync_cycle_mode">In-Game Playback Cycle</label>
+                      <select id="hw-mqtt-cycle-mode" class="input">
+                        <option value="alternating" data-i18n="fsync_cycle_alternating">Alternate Marquee & Showcase</option>
+                        <option value="loop" data-i18n="fsync_cycle_loop">Loop Showcase Continuously</option>
+                        <option value="once" data-i18n="fsync_cycle_once">Play Once then Keep Marquee</option>
+                      </select>
+                    </div>
+                    <div class="form-group" id="group-mqtt-marquee-interval">
+                      <label data-i18n="fsync_marquee_interval">Marquee Pause Interval (sec)</label>
+                      <input type="number" id="hw-mqtt-marquee-interval" class="input" min="5" max="600" value="45">
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin-top: 0.85rem;">
+                    <label data-i18n="fsync_card_source">Card & Video Style Source</label>
+                    <select id="hw-mqtt-card-style-source" class="input">
+                      <option value="showcase_profile" data-i18n="fsync_card_source_profile">Inherit DMD Profile from Showcase Studio</option>
+                      <option value="custom" data-i18n="fsync_card_source_custom">Custom Presentation Override on DMD</option>
+                    </select>
+                  </div>
+                  <div id="mqtt-custom-card-fields" style="display: none; margin-top: 0.9rem; padding-top: 0.9rem; border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <div class="form-grid">
+                      <div class="form-group">
+                        <label data-i18n="fsync_card_intro">Show Game Info Card</label>
+                        <select id="hw-mqtt-card-intro" class="input">
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_card_layout">Card Layout</label>
+                        <select id="hw-mqtt-card-layout" class="input">
+                          <option value="classic_split" data-i18n="fsync_layout_classic_split">Classic Split</option>
+                          <option value="full_bleed" data-i18n="fsync_layout_full_bleed">Full Bleed</option>
+                          <option value="minimal_banner" data-i18n="fsync_layout_minimal_banner">Minimal Banner</option>
+                          <option value="arcade_cabinet" data-i18n="fsync_layout_arcade_cabinet">Arcade Cabinet</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_card_theme">Card Visual Theme</label>
+                        <select id="hw-mqtt-card-theme" class="input">
+                          <option value="tinted" data-i18n="fsync_theme_tinted">Tinted</option>
+                          <option value="dark_oled" data-i18n="fsync_theme_dark_oled">Dark OLED</option>
+                          <option value="neon_border" data-i18n="fsync_theme_neon_border">Neon Border</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_scroll_speed">Synopsis Scroll Speed</label>
+                        <input type="number" id="hw-mqtt-scroll-speed" class="input" min="1" max="10" value="4">
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_include_poster">Mini-Jacket Poster</label>
+                        <select id="hw-mqtt-show-poster" class="input">
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_include_synopsis">Scrolling Synopsis</label>
+                        <select id="hw-mqtt-show-synopsis" class="input">
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_jacket_pano">Jacket Panorama</label>
+                        <select id="hw-mqtt-jacket-pano" class="input">
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_marquee_pano">Marquee Panorama</label>
+                        <select id="hw-mqtt-marquee-pano" class="input">
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_snap_pano">Snapshot Panoramas (0-5)</label>
+                        <input type="number" id="hw-mqtt-snap-pano-count" class="input" min="0" max="5" value="2">
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_include_video">Gameplay Video</label>
+                        <select id="hw-mqtt-show-video" class="input">
+                          <option value="1" data-i18n="mqtt_opt_enabled">Enabled</option>
+                          <option value="0" data-i18n="mqtt_opt_disabled">Disabled</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_video_duration">Max Video Duration (s)</label>
+                        <input type="number" id="hw-mqtt-video-duration" class="input" min="2" max="120" value="15">
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_video_fps">Video FPS</label>
+                        <input type="number" id="hw-mqtt-video-fps" class="input" min="8" max="60" value="20">
+                      </div>
+                    </div>
+                    <div class="form-grid" style="margin-top: 0.75rem;">
+                      <div class="form-group">
+                        <label data-i18n="fsync_video_mode">Video Framing Mode</label>
+                        <select id="hw-mqtt-video-mode" class="input">
+                          <option value="auto_action" data-i18n="opt_video_mode_auto_action">Auto Action</option>
+                          <option value="panorama" data-i18n="opt_video_mode_panorama">Panorama</option>
+                          <option value="center_crop" data-i18n="opt_video_mode_center_crop">Center Crop</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label data-i18n="fsync_color_boost">DMD Color Boost</label>
+                        <select id="hw-mqtt-color-boost" class="input">
+                          <option value="auto" data-i18n="opt_color_boost_auto">Auto</option>
+                          <option value="pixel_art" data-i18n="opt_color_boost_pixel_art">Pixel Art</option>
+                          <option value="anime" data-i18n="opt_color_boost_anime">Anime</option>
+                          <option value="cinema" data-i18n="opt_color_boost_cinema">Cinema</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <button id="btn-save-mqtt" class="btn btn-primary" style="margin-top: 1rem; width: 100%;" data-i18n="mqtt_save_btn">Save MQTT Settings</button>
               
               <hr style="margin: 2rem 0; border-color: rgba(255,255,255,0.1);">
@@ -1929,6 +2083,7 @@ select.input option {
                 <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                   <span id="showcase-comm-badge" class="badge" style="font-size: 0.85rem; padding: 0.35rem 0.75rem; border-radius: 999px; background: rgba(255,255,255,0.08); color: #b0bec5; border: 1px solid rgba(255,255,255,0.15);" data-i18n="showcase_status_disabled">⚪ Disabled</span>
                   <button type="button" id="btn-test-showcase-conn" class="btn btn-sm" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;" data-i18n="showcase_test_btn">🔄 Test</button>
+                  <button type="button" id="btn-evict-showcase-cache-srv" class="btn btn-sm" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;" data-i18n="fsync_evict_cache_btn">🗑️ Evict Showcase Cache</button>
                 </div>
               </div>
               <p class="text-muted" style="font-size: 0.9em; margin-bottom: 1rem;" data-i18n="showcase_desc">Central network and broker configuration for the 4 DMD Media Showcase engines (Games, Movies, Series, Anime).</p>
@@ -3012,6 +3167,43 @@ const translations = {
     radio_station_name_ph: "Station name",
     radio_test_sent: "Test tone sent to speaker! 🔊",
     radio_test_error: "Audio test error: ",
+    fsync_use_showcase_broker: "Share Showcase MQTT Broker (Free Local RAM)",
+    tt_fsync_use_showcase_broker: "When DMD Media Showcase is enabled and reachable, connect FrontendSync and console scripts to Showcase's MQTT broker and stop the local ESP32 broker to free internal SRAM.",
+    fsync_ingame_showcase: "In-Game Showcase (Card + Gameplay Video)",
+    tt_fsync_ingame_showcase: "Immediately displays the local Pixelcade marquee on game launch, prepares the game's Info Card + Panoramas + Gameplay Video asynchronously on Showcase, and preempts smoothly once ready.",
+    fsync_pres_title: "🎬 In-Game Showcase & Card Presentation",
+    fsync_evict_cache_btn: "🗑️ Evict Showcase Cache",
+    fsync_cache_evicted: "Showcase conversion cache evicted",
+    fsync_cache_evict_failed: "Failed to evict Showcase cache (verify Showcase is reachable)",
+    fsync_cycle_mode: "In-Game Playback Cycle",
+    fsync_cycle_alternating: "Alternate Marquee & Showcase",
+    fsync_cycle_loop: "Loop Showcase Continuously",
+    fsync_cycle_once: "Play Once then Keep Marquee",
+    fsync_marquee_interval: "Marquee Pause Interval (sec)",
+    fsync_card_source: "Card & Video Style Source",
+    fsync_card_source_profile: "Inherit DMD Profile from Showcase Studio",
+    fsync_card_source_custom: "Custom Presentation Override on DMD",
+    fsync_card_intro: "Show Game Info Card",
+    fsync_card_layout: "Card Layout",
+    fsync_layout_classic_split: "Classic Split",
+    fsync_layout_full_bleed: "Full Bleed",
+    fsync_layout_minimal_banner: "Minimal Banner",
+    fsync_layout_arcade_cabinet: "Arcade Cabinet",
+    fsync_card_theme: "Card Visual Theme",
+    fsync_theme_tinted: "Tinted",
+    fsync_theme_dark_oled: "Dark OLED",
+    fsync_theme_neon_border: "Neon Border",
+    fsync_scroll_speed: "Synopsis Scroll Speed",
+    fsync_include_poster: "Mini-Jacket Poster",
+    fsync_include_synopsis: "Scrolling Synopsis",
+    fsync_jacket_pano: "Jacket Panorama",
+    fsync_marquee_pano: "Marquee Panorama",
+    fsync_snap_pano: "Snapshot Panoramas (0-5)",
+    fsync_include_video: "Gameplay Video",
+    fsync_video_duration: "Max Video Duration (s)",
+    fsync_video_fps: "Video FPS",
+    fsync_video_mode: "Video Framing Mode",
+    fsync_color_boost: "DMD Color Boost",
   },
   fr: {
     gifs_queued: "{n} fichier(s) en file pour {k} playlist(s) : {list}. Cliquez sur Envoyer.",
@@ -3724,6 +3916,43 @@ const translations = {
     radio_station_name_ph: "Nom de la station",
     radio_test_sent: "Bip de test envoyé au haut-parleur ! 🔊",
     radio_test_error: "Erreur test audio : ",
+    fsync_use_showcase_broker: "Utiliser le Broker MQTT Showcase si actif (libère la RAM)",
+    tt_fsync_use_showcase_broker: "Lorsque DMD Media Showcase est actif et joignable, utilise le broker MQTT de Showcase pour FrontendSync et les scripts consoles, et arrête le broker local ESP32 pour libérer la SRAM interne.",
+    fsync_ingame_showcase: "Showcase en Jeu (Carte + Vidéo Gameplay)",
+    tt_fsync_ingame_showcase: "Affiche instantanément le marquee Pixelcade au lancement d'un jeu, prépare en arrière-plan la Carte d'infos + Panoramas + Vidéo sur Showcase, et prend le relais uniquement lorsque la séquence est prête.",
+    fsync_pres_title: "🎬 Présentation Showcase & Carte en Jeu",
+    fsync_evict_cache_btn: "🗑️ Vider le Cache Showcase",
+    fsync_cache_evicted: "Cache de conversion Showcase vidé",
+    fsync_cache_evict_failed: "Échec du vidage du cache Showcase (vérifiez la connexion)",
+    fsync_cycle_mode: "Cycle de Lecture en Jeu",
+    fsync_cycle_alternating: "Alterner Marquee & Showcase",
+    fsync_cycle_loop: "Boucler le Showcase en continu",
+    fsync_cycle_once: "Jouer une fois puis garder le Marquee",
+    fsync_marquee_interval: "Pause sur le Marquee (sec)",
+    fsync_card_source: "Style de Carte & Vidéo",
+    fsync_card_source_profile: "Hériter du profil DMD dans Showcase Studio",
+    fsync_card_source_custom: "Personnaliser la carte directement sur ce DMD",
+    fsync_card_intro: "Afficher la Carte d'Infos",
+    fsync_card_layout: "Disposition de la Carte",
+    fsync_layout_classic_split: "Classique Divisé",
+    fsync_layout_full_bleed: "Plein Écran",
+    fsync_layout_minimal_banner: "Bannière Minimale",
+    fsync_layout_arcade_cabinet: "Borne d'Arcade",
+    fsync_card_theme: "Thème Visuel de la Carte",
+    fsync_theme_tinted: "Teinté",
+    fsync_theme_dark_oled: "OLED Sombre",
+    fsync_theme_neon_border: "Bordure Néon",
+    fsync_scroll_speed: "Vitesse du Synopsis",
+    fsync_include_poster: "Mini-Jaquette (Poster)",
+    fsync_include_synopsis: "Synopsis Défilant",
+    fsync_jacket_pano: "Panorama Jaquette",
+    fsync_marquee_pano: "Panorama Marquee",
+    fsync_snap_pano: "Panoramas Captures (0-5)",
+    fsync_include_video: "Vidéo de Gameplay",
+    fsync_video_duration: "Durée Max Vidéo (s)",
+    fsync_video_fps: "FPS Vidéo",
+    fsync_video_mode: "Mode de Cadrage Vidéo",
+    fsync_color_boost: "Boost Couleurs DMD",
   },
   es: {
     gifs_queued: "{n} archivo(s) en cola para {k} playlist(s): {list}. Pulsa Subir para enviar.",
@@ -4436,6 +4665,43 @@ const translations = {
     radio_station_name_ph: "Nombre de la emisora",
     radio_test_sent: "¡Tono de prueba enviado al altavoz! 🔊",
     radio_test_error: "Error de prueba de audio: ",
+    fsync_use_showcase_broker: "Usar Broker MQTT de Showcase si está activo (libera RAM)",
+    tt_fsync_use_showcase_broker: "Cuando DMD Media Showcase está activo y accesible, conecta FrontendSync y los scripts de consola al broker MQTT de Showcase y detiene el broker local del ESP32 para liberar SRAM interna.",
+    fsync_ingame_showcase: "Showcase en Juego (Tarjeta + Vídeo Gameplay)",
+    tt_fsync_ingame_showcase: "Muestra al instante la marquesina local Pixelcade al iniciar un juego, prepara en segundo plano la Tarjeta + Panoramas + Vídeo en Showcase y conmuta suavemente cuando está listo.",
+    fsync_pres_title: "🎬 Presentación de Showcase y Tarjeta en Juego",
+    fsync_evict_cache_btn: "🗑️ Vaciar Caché de Showcase",
+    fsync_cache_evicted: "Caché de conversión de Showcase vaciada",
+    fsync_cache_evict_failed: "Error al vaciar la caché de Showcase",
+    fsync_cycle_mode: "Ciclo de Reproducción en Juego",
+    fsync_cycle_alternating: "Alternar Marquesina y Showcase",
+    fsync_cycle_loop: "Repetir Showcase en bucle",
+    fsync_cycle_once: "Reproducir una vez y mantener Marquesina",
+    fsync_marquee_interval: "Pausa en Marquesina (seg)",
+    fsync_card_source: "Origen de Estilo de Tarjeta y Vídeo",
+    fsync_card_source_profile: "Heredar perfil DMD desde Showcase Studio",
+    fsync_card_source_custom: "Personalizar presentación en este DMD",
+    fsync_card_intro: "Mostrar Tarjeta de Información",
+    fsync_card_layout: "Diseño de Tarjeta",
+    fsync_layout_classic_split: "División Clásica",
+    fsync_layout_full_bleed: "Pantalla Completa",
+    fsync_layout_minimal_banner: "Banner Minimalista",
+    fsync_layout_arcade_cabinet: "Cabina Arcade",
+    fsync_card_theme: "Tema Visual de Tarjeta",
+    fsync_theme_tinted: "Tintado",
+    fsync_theme_dark_oled: "OLED Oscuro",
+    fsync_theme_neon_border: "Borde Neón",
+    fsync_scroll_speed: "Velocidad del Sinopsis",
+    fsync_include_poster: "Mini-Carátula (Póster)",
+    fsync_include_synopsis: "Sinopsis Deslizante",
+    fsync_jacket_pano: "Panorama de Carátula",
+    fsync_marquee_pano: "Panorama de Marquesina",
+    fsync_snap_pano: "Panoramas de Capturas (0-5)",
+    fsync_include_video: "Vídeo de Gameplay",
+    fsync_video_duration: "Duración Máx. Vídeo (s)",
+    fsync_video_fps: "FPS de Vídeo",
+    fsync_video_mode: "Modo de Encuadre de Vídeo",
+    fsync_color_boost: "Realce de Color DMD",
   }
 };
 
@@ -8776,6 +9042,11 @@ function initNetworkSettings() {
     btnSaveMqtt.dataset.bound = '1';
     btnSaveMqtt.addEventListener('click', async () => {
       const base = (window.__sysConfig && window.__sysConfig.mqtt) ? { ...window.__sysConfig.mqtt } : {};
+      const clampInt = (val, defVal, minVal, maxVal) => {
+        const parsed = parseInt(val, 10);
+        if (Number.isNaN(parsed)) return defVal;
+        return Math.min(maxVal, Math.max(minVal, parsed));
+      };
       const mqtt = {
         ...base,
         enabled: document.getElementById('hw-mqtt-enable').value === '1',
@@ -8784,6 +9055,25 @@ function initNetworkSettings() {
         port: parseInt(document.getElementById('hw-mqtt-port').value, 10) || 1883,
         user: document.getElementById('hw-mqtt-user').value,
         pass: document.getElementById('hw-mqtt-pass').value,
+        use_showcase_broker: document.getElementById('hw-mqtt-use-showcase-broker')?.value !== '0',
+        ingame_showcase_enabled: document.getElementById('hw-mqtt-ingame-showcase')?.value !== '0',
+        ingame_cycle_mode: document.getElementById('hw-mqtt-cycle-mode')?.value || 'alternating',
+        ingame_marquee_interval_sec: clampInt(document.getElementById('hw-mqtt-marquee-interval')?.value, 45, 5, 600),
+        card_style_source: document.getElementById('hw-mqtt-card-style-source')?.value || 'showcase_profile',
+        include_card_intro: document.getElementById('hw-mqtt-card-intro')?.value !== '0',
+        card_layout: document.getElementById('hw-mqtt-card-layout')?.value || 'classic_split',
+        card_theme: document.getElementById('hw-mqtt-card-theme')?.value || 'tinted',
+        show_poster: document.getElementById('hw-mqtt-show-poster')?.value !== '0',
+        show_synopsis: document.getElementById('hw-mqtt-show-synopsis')?.value !== '0',
+        text_scroll_speed: clampInt(document.getElementById('hw-mqtt-scroll-speed')?.value, 4, 1, 10),
+        jacket_panorama: document.getElementById('hw-mqtt-jacket-pano')?.value === '1',
+        marquee_panorama: document.getElementById('hw-mqtt-marquee-pano')?.value !== '0',
+        snapshot_panorama_count: clampInt(document.getElementById('hw-mqtt-snap-pano-count')?.value, 2, 0, 5),
+        show_video: document.getElementById('hw-mqtt-show-video')?.value !== '0',
+        video_max_duration_s: clampInt(document.getElementById('hw-mqtt-video-duration')?.value, 15, 2, 120),
+        video_fps: clampInt(document.getElementById('hw-mqtt-video-fps')?.value, 20, 8, 60),
+        video_mode: document.getElementById('hw-mqtt-video-mode')?.value || 'auto_action',
+        color_boost: document.getElementById('hw-mqtt-color-boost')?.value || 'auto',
       };
       try {
         const res = await API.post('/api/system', { mqtt });
@@ -8798,6 +9088,28 @@ function initNetworkSettings() {
       }
     });
   }
+
+  const bindEvictShowcaseBtn = (btnId) => {
+    const btn = document.getElementById(btnId);
+    if (btn && !btn._boundClick && btn.dataset.bound !== '1') {
+      btn._boundClick = true;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await API.post('/api/showcase/cache/evict', {});
+          const evicted = res && typeof res.evicted_entries === 'number' ? ` (${res.evicted_entries})` : '';
+          window.showToast(`${t('fsync_cache_evicted')}${evicted}`, 'success');
+        } catch (_) {
+          window.showToast(t('fsync_cache_evict_failed'), 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+  };
+  bindEvictShowcaseBtn('btn-evict-showcase-cache');
+  bindEvictShowcaseBtn('btn-evict-showcase-cache-srv');
 
   const btnSaveDmqtt = document.getElementById('btn-save-dmqtt');
   if (btnSaveDmqtt && btnSaveDmqtt.dataset.bound !== '1') {
@@ -9244,6 +9556,45 @@ async function initSettings() {
     setVal('hw-mqtt-port', mqtt.port);
     setVal('hw-mqtt-user', mqtt.user || '');
     setVal('hw-mqtt-pass', mqtt.pass || '');
+    setVal('hw-mqtt-use-showcase-broker', mqtt.use_showcase_broker !== false ? '1' : '0');
+    setVal('hw-mqtt-ingame-showcase', mqtt.ingame_showcase_enabled !== false ? '1' : '0');
+    setVal('hw-mqtt-cycle-mode', mqtt.ingame_cycle_mode || 'alternating');
+    setVal('hw-mqtt-marquee-interval', mqtt.ingame_marquee_interval_sec ?? 45);
+    setVal('hw-mqtt-card-style-source', mqtt.card_style_source || 'showcase_profile');
+    setVal('hw-mqtt-card-intro', mqtt.include_card_intro !== false ? '1' : '0');
+    setVal('hw-mqtt-card-layout', mqtt.card_layout || 'classic_split');
+    setVal('hw-mqtt-card-theme', mqtt.card_theme || 'tinted');
+    setVal('hw-mqtt-show-poster', mqtt.show_poster !== false ? '1' : '0');
+    setVal('hw-mqtt-show-synopsis', mqtt.show_synopsis !== false ? '1' : '0');
+    setVal('hw-mqtt-scroll-speed', mqtt.text_scroll_speed ?? 4);
+    setVal('hw-mqtt-jacket-pano', mqtt.jacket_panorama ? '1' : '0');
+    setVal('hw-mqtt-marquee-pano', mqtt.marquee_panorama !== false ? '1' : '0');
+    setVal('hw-mqtt-snap-pano-count', mqtt.snapshot_panorama_count ?? 2);
+    setVal('hw-mqtt-show-video', mqtt.show_video !== false ? '1' : '0');
+    setVal('hw-mqtt-video-duration', mqtt.video_max_duration_s ?? 15);
+    setVal('hw-mqtt-video-fps', mqtt.video_fps ?? 20);
+    setVal('hw-mqtt-video-mode', mqtt.video_mode || 'auto_action');
+    setVal('hw-mqtt-color-boost', mqtt.color_boost || 'auto');
+
+    const updateFrontendSyncShowcaseUI = () => {
+      const ingameEn = document.getElementById('hw-mqtt-ingame-showcase')?.value !== '0';
+      const cycleMode = document.getElementById('hw-mqtt-cycle-mode')?.value || 'alternating';
+      const cardSrc = document.getElementById('hw-mqtt-card-style-source')?.value || 'showcase_profile';
+      const fieldsBox = document.getElementById('mqtt-ingame-showcase-fields');
+      const intervalGrp = document.getElementById('group-mqtt-marquee-interval');
+      const customBox = document.getElementById('mqtt-custom-card-fields');
+      if (fieldsBox) fieldsBox.style.display = ingameEn ? 'block' : 'none';
+      if (intervalGrp) intervalGrp.style.display = (cycleMode === 'alternating') ? 'block' : 'none';
+      if (customBox) customBox.style.display = (cardSrc === 'custom') ? 'block' : 'none';
+    };
+    updateFrontendSyncShowcaseUI();
+    for (const selId of ['hw-mqtt-ingame-showcase', 'hw-mqtt-cycle-mode', 'hw-mqtt-card-style-source']) {
+      const selEl = document.getElementById(selId);
+      if (selEl && !selEl._boundChange) {
+        selEl._boundChange = true;
+        selEl.addEventListener('change', updateFrontendSyncShowcaseUI);
+      }
+    }
 
     // MQTT Data (nested data_mqtt.*): the broker of the MQTT Data screen
     const dmqtt = cfg.data_mqtt || {};
