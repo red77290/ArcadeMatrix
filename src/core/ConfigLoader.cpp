@@ -163,13 +163,7 @@ void ConfigLoader::setDefaults() {
     wifi.password = "";
     wifi.hostname = "arcadematrix";
 
-    mqtt.enabled = false;
-    mqtt.broker = "";
-    mqtt.port = 1883;
-    mqtt.user = "";
-    mqtt.pass = "";
-    mqtt.deviceName = "ArcadeMatrix";
-    mqtt.allow_overlay = false;
+    mqtt = MqttConfig();
 
     dataMqtt = DataMqttConfig();
     showcase = ShowcaseConfig();
@@ -317,6 +311,28 @@ bool ConfigLoader::parseFromJsonDoc(const JsonDocument& doc) {
         if (m.containsKey("device_name")) mqtt.deviceName = m["device_name"].as<String>();
         else if (m.containsKey("deviceName")) mqtt.deviceName = m["deviceName"].as<String>();
         if (m.containsKey("allow_overlay")) mqtt.allow_overlay = m["allow_overlay"].as<bool>();
+        if (m.containsKey("use_showcase_broker")) mqtt.use_showcase_broker = m["use_showcase_broker"].as<bool>();
+        if (m.containsKey("ingame_showcase_enabled")) mqtt.ingame_showcase_enabled = m["ingame_showcase_enabled"].as<bool>();
+        if (m.containsKey("ingame_cycle_mode")) mqtt.ingame_cycle_mode = m["ingame_cycle_mode"].as<String>();
+        if (m.containsKey("ingame_marquee_interval_sec")) mqtt.ingame_marquee_interval_sec = m["ingame_marquee_interval_sec"].as<int>();
+        if (m.containsKey("card_style_source")) mqtt.card_style_source = m["card_style_source"].as<String>();
+        if (m.containsKey("include_card_intro")) mqtt.include_card_intro = m["include_card_intro"].as<bool>();
+        if (m.containsKey("card_layout")) mqtt.card_layout = m["card_layout"].as<String>();
+        if (m.containsKey("card_theme")) mqtt.card_theme = m["card_theme"].as<String>();
+        if (m.containsKey("show_poster")) mqtt.show_poster = m["show_poster"].as<bool>();
+        else if (m.containsKey("include_poster")) mqtt.show_poster = m["include_poster"].as<bool>();
+        if (m.containsKey("show_synopsis")) mqtt.show_synopsis = m["show_synopsis"].as<bool>();
+        else if (m.containsKey("include_synopsis")) mqtt.show_synopsis = m["include_synopsis"].as<bool>();
+        if (m.containsKey("text_scroll_speed")) mqtt.text_scroll_speed = m["text_scroll_speed"].as<String>();
+        if (m.containsKey("jacket_panorama")) mqtt.jacket_panorama = m["jacket_panorama"].as<bool>();
+        if (m.containsKey("marquee_panorama")) mqtt.marquee_panorama = m["marquee_panorama"].as<bool>();
+        if (m.containsKey("snapshot_panorama_count")) mqtt.snapshot_panorama_count = m["snapshot_panorama_count"].as<int>();
+        if (m.containsKey("show_video")) mqtt.show_video = m["show_video"].as<bool>();
+        else if (m.containsKey("include_video")) mqtt.show_video = m["include_video"].as<bool>();
+        if (m.containsKey("video_max_duration_s")) mqtt.video_max_duration_s = m["video_max_duration_s"].as<int>();
+        if (m.containsKey("video_fps")) mqtt.video_fps = m["video_fps"].as<int>();
+        if (m.containsKey("video_mode")) mqtt.video_mode = m["video_mode"].as<String>();
+        if (m.containsKey("color_boost")) mqtt.color_boost = m["color_boost"].as<String>();
     }
 
     // Older builds also stored "enabled" and "topic_prefix" here; they are no longer used and are
@@ -508,6 +524,25 @@ void ConfigLoader::buildJsonScratch(SpiRamJsonDocument& doc) const {
     mObj["pass"] = mqtt.pass;
     mObj["deviceName"] = mqtt.deviceName;
     mObj["allow_overlay"] = mqtt.allow_overlay;
+    mObj["use_showcase_broker"] = mqtt.use_showcase_broker;
+    mObj["ingame_showcase_enabled"] = mqtt.ingame_showcase_enabled;
+    mObj["ingame_cycle_mode"] = mqtt.ingame_cycle_mode;
+    mObj["ingame_marquee_interval_sec"] = mqtt.ingame_marquee_interval_sec;
+    mObj["card_style_source"] = mqtt.card_style_source;
+    mObj["include_card_intro"] = mqtt.include_card_intro;
+    mObj["card_layout"] = mqtt.card_layout;
+    mObj["card_theme"] = mqtt.card_theme;
+    mObj["show_poster"] = mqtt.show_poster;
+    mObj["show_synopsis"] = mqtt.show_synopsis;
+    mObj["text_scroll_speed"] = mqtt.text_scroll_speed;
+    mObj["jacket_panorama"] = mqtt.jacket_panorama;
+    mObj["marquee_panorama"] = mqtt.marquee_panorama;
+    mObj["snapshot_panorama_count"] = mqtt.snapshot_panorama_count;
+    mObj["show_video"] = mqtt.show_video;
+    mObj["video_max_duration_s"] = mqtt.video_max_duration_s;
+    mObj["video_fps"] = mqtt.video_fps;
+    mObj["video_mode"] = mqtt.video_mode;
+    mObj["color_boost"] = mqtt.color_boost;
 
     JsonObject dObj = doc.createNestedObject("data_mqtt");
     dObj["broker"] = dataMqtt.broker;

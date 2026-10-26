@@ -66,7 +66,7 @@ bool ModularConfigManager::loadAll(ConfigLoader& config) {
     // Load domain files
     bool hwOk = loadHardware(config.matrix);
     bool sysOk = loadSystem(config.system);
-    bool netOk = loadNetwork(config.wifi, config.mqtt, config.dataMqtt);
+    bool netOk = loadNetwork(config.wifi, config.mqtt, config.dataMqtt, &config.showcase);
     bool rotOk = loadPlaylist(config.rotation);
 
     if (!hwOk || !sysOk || !netOk || !rotOk) {
@@ -109,7 +109,7 @@ bool ModularConfigManager::saveAll(const ConfigLoader& config) {
 
     bool hwOk = saveHardware(config.matrix);
     bool sysOk = saveSystem(config.system);
-    bool netOk = saveNetwork(config.wifi, config.mqtt, config.dataMqtt);
+    bool netOk = saveNetwork(config.wifi, config.mqtt, config.dataMqtt, &config.showcase);
     bool rotOk = savePlaylist(config.rotation);
 
     // Persist all instances
@@ -301,12 +301,12 @@ bool ModularConfigManager::saveSystem(const SystemConfig& system) {
     return _storage.writeStringAtomic("/config/system.json", out);
 }
 
-bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt) {
+bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt, DataMqttConfig& outDataMqtt, ShowcaseConfig* outShowcase) {
     String content;
     if (!_storage.readString("/config/network.json", content)) {
         return false;
     }
-    StaticJsonDocument<1024> doc;
+    SpiRamJsonDocument doc(2048);
     if (deserializeJson(doc, content)) return false;
 
     if (doc.containsKey("wifi")) {
@@ -326,6 +326,28 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
         else if (m.containsKey("deviceName")) outMqtt.deviceName = m["deviceName"].as<String>();
         if (m.containsKey("allow_overlay")) outMqtt.allow_overlay = m["allow_overlay"].as<bool>();
         else if (m.containsKey("allowOverlay")) outMqtt.allow_overlay = m["allowOverlay"].as<bool>();
+        if (m.containsKey("use_showcase_broker")) outMqtt.use_showcase_broker = m["use_showcase_broker"].as<bool>();
+        if (m.containsKey("ingame_showcase_enabled")) outMqtt.ingame_showcase_enabled = m["ingame_showcase_enabled"].as<bool>();
+        if (m.containsKey("ingame_cycle_mode")) outMqtt.ingame_cycle_mode = m["ingame_cycle_mode"].as<String>();
+        if (m.containsKey("ingame_marquee_interval_sec")) outMqtt.ingame_marquee_interval_sec = m["ingame_marquee_interval_sec"].as<int>();
+        if (m.containsKey("card_style_source")) outMqtt.card_style_source = m["card_style_source"].as<String>();
+        if (m.containsKey("include_card_intro")) outMqtt.include_card_intro = m["include_card_intro"].as<bool>();
+        if (m.containsKey("card_layout")) outMqtt.card_layout = m["card_layout"].as<String>();
+        if (m.containsKey("card_theme")) outMqtt.card_theme = m["card_theme"].as<String>();
+        if (m.containsKey("show_poster")) outMqtt.show_poster = m["show_poster"].as<bool>();
+        else if (m.containsKey("include_poster")) outMqtt.show_poster = m["include_poster"].as<bool>();
+        if (m.containsKey("show_synopsis")) outMqtt.show_synopsis = m["show_synopsis"].as<bool>();
+        else if (m.containsKey("include_synopsis")) outMqtt.show_synopsis = m["include_synopsis"].as<bool>();
+        if (m.containsKey("text_scroll_speed")) outMqtt.text_scroll_speed = m["text_scroll_speed"].as<String>();
+        if (m.containsKey("jacket_panorama")) outMqtt.jacket_panorama = m["jacket_panorama"].as<bool>();
+        if (m.containsKey("marquee_panorama")) outMqtt.marquee_panorama = m["marquee_panorama"].as<bool>();
+        if (m.containsKey("snapshot_panorama_count")) outMqtt.snapshot_panorama_count = m["snapshot_panorama_count"].as<int>();
+        if (m.containsKey("show_video")) outMqtt.show_video = m["show_video"].as<bool>();
+        else if (m.containsKey("include_video")) outMqtt.show_video = m["include_video"].as<bool>();
+        if (m.containsKey("video_max_duration_s")) outMqtt.video_max_duration_s = m["video_max_duration_s"].as<int>();
+        if (m.containsKey("video_fps")) outMqtt.video_fps = m["video_fps"].as<int>();
+        if (m.containsKey("video_mode")) outMqtt.video_mode = m["video_mode"].as<String>();
+        if (m.containsKey("color_boost")) outMqtt.color_boost = m["color_boost"].as<String>();
     }
     // Data MQTT (MQTT Data engine broker), same "data_mqtt" object as the legacy /config.json.
     if (doc.containsKey("data_mqtt")) {
@@ -335,11 +357,20 @@ bool ModularConfigManager::loadNetwork(WifiConfig& outWifi, MqttConfig& outMqtt,
         if (d.containsKey("user")) outDataMqtt.user = d["user"].as<String>();
         if (d.containsKey("pass")) outDataMqtt.pass = d["pass"].as<String>();
     }
+    if (outShowcase && doc.containsKey("showcase")) {
+        JsonObjectConst sc = doc["showcase"];
+        if (sc.containsKey("enabled")) outShowcase->enabled = sc["enabled"].as<bool>();
+        if (sc.containsKey("server_url")) outShowcase->server_url = sc["server_url"].as<String>();
+        if (sc.containsKey("transport_mode")) outShowcase->transport_mode = sc["transport_mode"].as<String>();
+        if (sc.containsKey("use_showcase_broker")) outShowcase->use_showcase_broker = sc["use_showcase_broker"].as<bool>();
+        if (sc.containsKey("mqtt_broker_source")) outShowcase->mqtt_broker_source = sc["mqtt_broker_source"].as<String>();
+        if (sc.containsKey("mqtt_custom_url")) outShowcase->mqtt_custom_url = sc["mqtt_custom_url"].as<String>();
+    }
     return true;
 }
 
-bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt) {
-    StaticJsonDocument<1024> doc;
+bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig& mqtt, const DataMqttConfig& dataMqtt, const ShowcaseConfig* showcase) {
+    SpiRamJsonDocument doc(2048);
     JsonObject w = doc.createNestedObject("wifi");
     w["ssid"] = wifi.ssid;
     w["password"] = wifi.password;
@@ -353,12 +384,41 @@ bool ModularConfigManager::saveNetwork(const WifiConfig& wifi, const MqttConfig&
     m["pass"] = mqtt.pass;
     m["deviceName"] = mqtt.deviceName;
     m["allow_overlay"] = mqtt.allow_overlay;
+    m["use_showcase_broker"] = mqtt.use_showcase_broker;
+    m["ingame_showcase_enabled"] = mqtt.ingame_showcase_enabled;
+    m["ingame_cycle_mode"] = mqtt.ingame_cycle_mode;
+    m["ingame_marquee_interval_sec"] = mqtt.ingame_marquee_interval_sec;
+    m["card_style_source"] = mqtt.card_style_source;
+    m["include_card_intro"] = mqtt.include_card_intro;
+    m["card_layout"] = mqtt.card_layout;
+    m["card_theme"] = mqtt.card_theme;
+    m["show_poster"] = mqtt.show_poster;
+    m["show_synopsis"] = mqtt.show_synopsis;
+    m["text_scroll_speed"] = mqtt.text_scroll_speed;
+    m["jacket_panorama"] = mqtt.jacket_panorama;
+    m["marquee_panorama"] = mqtt.marquee_panorama;
+    m["snapshot_panorama_count"] = mqtt.snapshot_panorama_count;
+    m["show_video"] = mqtt.show_video;
+    m["video_max_duration_s"] = mqtt.video_max_duration_s;
+    m["video_fps"] = mqtt.video_fps;
+    m["video_mode"] = mqtt.video_mode;
+    m["color_boost"] = mqtt.color_boost;
 
     JsonObject d = doc.createNestedObject("data_mqtt");
     d["broker"] = dataMqtt.broker;
     d["port"] = dataMqtt.port;
     d["user"] = dataMqtt.user;
     d["pass"] = dataMqtt.pass;
+
+    if (showcase) {
+        JsonObject sc = doc.createNestedObject("showcase");
+        sc["enabled"] = showcase->enabled;
+        sc["server_url"] = showcase->server_url;
+        sc["transport_mode"] = showcase->transport_mode;
+        sc["use_showcase_broker"] = showcase->use_showcase_broker;
+        sc["mqtt_broker_source"] = showcase->mqtt_broker_source;
+        sc["mqtt_custom_url"] = showcase->mqtt_custom_url;
+    }
 
     String out;
     serializeJsonPretty(doc, out);

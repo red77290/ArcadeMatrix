@@ -225,6 +225,25 @@ paths:
                       pass_configured: { type: boolean, example: false }
                       device_name: { type: string, example: "ArcadeMatrix" }
                       allow_overlay: { type: boolean, example: false }
+                      use_showcase_broker: { type: boolean, example: true }
+                      ingame_showcase_enabled: { type: boolean, example: true }
+                      ingame_cycle_mode: { type: string, example: "once", enum: [once, loop, alternating] }
+                      ingame_marquee_interval_sec: { type: integer, example: 45 }
+                      card_style_source: { type: string, example: "showcase_profile", enum: [showcase_profile, custom] }
+                      include_card_intro: { type: boolean, example: true }
+                      card_layout: { type: string, example: "classic_split", enum: [classic_split, full_bleed, minimal_banner, arcade_cabinet] }
+                      card_theme: { type: string, example: "tinted", enum: [tinted, dark_oled, neon_border] }
+                      show_poster: { type: boolean, example: true }
+                      show_synopsis: { type: boolean, example: true }
+                      text_scroll_speed: { type: string, example: "4" }
+                      jacket_panorama: { type: boolean, example: true }
+                      marquee_panorama: { type: boolean, example: false }
+                      snapshot_panorama_count: { type: integer, example: 0 }
+                      show_video: { type: boolean, example: true }
+                      video_max_duration_s: { type: integer, example: 12 }
+                      video_fps: { type: integer, example: 15 }
+                      video_mode: { type: string, example: "auto_action", enum: [auto_action, panorama, center_crop] }
+                      color_boost: { type: string, example: "auto", enum: [auto, pixel_art, anime, cinema] }
                   data_mqtt:
                     type: object
                     description: Broker the mqttdata engine connects to while it is on screen (credentials only; nothing runs in the background). Applied on its next connection, no reboot.
@@ -1861,6 +1880,48 @@ paths:
                   server_url: { type: string, example: "http://dmdmediashowcase.local:8890" }
                   resolved_url: { type: string, example: "http://192.168.1.42:8890" }
                   version: { type: string, example: "3.0.0" }
+
+  /api/mqtt/broker-target:
+    get:
+      tags:
+        - Configuration
+      summary: Resolve active MQTT broker endpoint for Recalbox, Batocera, and RetroPie daemons
+      description: Returns the dynamically resolved MQTT broker IP and port (Showcase broker when active and use_showcase_broker is enabled, external broker if configured, or the DMD's own LAN IP for the embedded PicoMQTT broker).
+      responses:
+        '200':
+          description: Active MQTT broker target
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  host: { type: string, example: "192.168.1.42" }
+                  port: { type: integer, example: 1883 }
+                  source: { type: string, example: "showcase", enum: [showcase, external, local] }
+                  mqtt_enabled: { type: boolean, example: true }
+                  showcase_broker_active: { type: boolean, example: true }
+
+  /api/showcase/cache/evict:
+    post:
+      tags:
+        - Configuration
+      summary: Evict persistent on-demand conversion cache on DMD Media Showcase
+      description: Proxies an eviction request to `POST /api/v1/cache/on-demand/evict` on the configured DMD Media Showcase server so updated Card or video presentation preferences regenerate cleanly.
+      responses:
+        '200':
+          description: Cache evicted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "evicted" }
+                  removed_entries: { type: integer, example: 12 }
+                  freed_bytes: { type: integer, example: 8421376 }
+        '400':
+          description: Showcase server URL is empty
+        '502':
+          description: Showcase server unreachable or returned an error
 
 components:
   securitySchemes:

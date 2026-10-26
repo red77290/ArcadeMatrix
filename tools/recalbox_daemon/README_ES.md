@@ -13,8 +13,7 @@ firmware ESP32 no dispone de esa interfaz en el host frontend, así que esto es 
 
 1. Se conecta por SSH a tu dispositivo Recalbox/Batocera/RetroPie.
 2. Selecciona o detecta automáticamente el sistema operativo objetivo (mediante inspección de directorios remotos).
-3. Sube el script daemon / hook correspondiente, con **la dirección IP de tu dispositivo ArcadeMatrix** integrada
-   (para que sepa dónde publicar los eventos MQTT).
+3. Sube el script daemon / hook correspondiente, con **la dirección IP de tu DMD ArcadeMatrix** (`{{DMD_HOST}}`) integrada. En tiempo de ejecución, el daemon consulta dinámicamente `http://<DMD_HOST>/api/mqtt/broker-target` (con caché TTL de 15 s y respaldo automático a `<DMD_HOST>:1883`) para poder alternar entre el broker local del DMD y el broker compartido de **DMD Media Showcase** sin reinstalar scripts en la consola.
 4. Reinicia el dispositivo para que el daemon se inicie automáticamente a partir de entonces.
 
 Una vez instalado, cada vez que lanzas / navegas / detienes un juego, el dispositivo publica un pequeño mensaje
@@ -65,14 +64,14 @@ Si prefieres no ejecutar un script de terceros contra tu dispositivo, aquí tien
 
 **Recalbox:**
 1. `ssh root@<recalbox-ip>` (contraseña: `recalboxroot`)
-2. Edita `tools/recalbox_daemon/arcadematrix_daemon.py` localmente, sustituyendo `{{BROKER}}` por la dirección IP de tu dispositivo ArcadeMatrix.
+2. Edita `tools/recalbox_daemon/arcadematrix_daemon.py` localmente, sustituyendo `{{DMD_HOST}}` (y `{{BROKER}}`) por la dirección IP de tu DMD ArcadeMatrix.
 3. Cópialo al dispositivo: `scp arcadematrix_daemon.py root@<recalbox-ip>:/recalbox/share/arcadematrix_daemon.py`
 4. Copia el launcher: `scp "arcadematrix_launcher(permanent).sh" root@<recalbox-ip>:/recalbox/share/userscripts/`
 5. `ssh root@<recalbox-ip> "chmod +x '/recalbox/share/userscripts/arcadematrix_launcher(permanent).sh' && reboot"`
 
 **Batocera:**
 1. `ssh root@<batocera-ip>` (contraseña: `linux`)
-2. Edita `arcadematrix_mqtt_batocera.sh` localmente, sustituyendo `{{BROKER}}` por la dirección IP de tu dispositivo ArcadeMatrix.
+2. Edita `arcadematrix_mqtt_batocera.sh` localmente, sustituyendo `{{DMD_HOST}}` (y `{{BROKER}}`) por la dirección IP de tu DMD ArcadeMatrix.
 3. `scp arcadematrix_mqtt_batocera.sh root@<batocera-ip>:/userdata/system/scripts/arcadematrix_mqtt.sh`
 4. `ssh root@<batocera-ip> "chmod +x /userdata/system/scripts/arcadematrix_mqtt.sh && reboot"`
 

@@ -11,6 +11,7 @@ enum class DisplaySourceId : uint16_t {
     GIF = 20,
     MARQUEE = 30,
     MQTT = 40,
+    INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
     ALERT = 100
 };
@@ -20,6 +21,7 @@ enum class DisplayPriority : uint8_t {
     GIF = 20,
     MARQUEE = 30,
     MQTT = 40,
+    INGAME_SHOWCASE = 45,
     VISUALIZER = 50,
     ALERT = 100
 };

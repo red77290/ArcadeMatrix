@@ -121,6 +121,7 @@ AppRuntime::~AppRuntime() {
     delete gifEngine;
     delete m_webServer;
     delete m_frontendListener;
+    delete m_inGameShowcaseEngine;
     if (m_preallocatedCanvasBuffer) {
         free(m_preallocatedCanvasBuffer);
         m_preallocatedCanvasBuffer = nullptr;
@@ -547,6 +548,14 @@ void AppRuntime::initialize() {
     }
     MemTrace::mark("after marquee engine");
 
+    m_inGameShowcaseEngine = new InGameShowcaseEngine();
+    m_inGameShowcaseEngine->initialize(m_appCtx, nullptr);
+    m_displayRuntime.registerSourceEngine(
+        DisplaySourceId::INGAME_SHOWCASE,
+        m_inGameShowcaseEngine,
+        EngineHandle("ingame_showcase", "ingame_showcase_main")
+    );
+
     m_webServer->setMessageEngine(m_messageEngine);
     m_webServer->setVisualizerEngine(visualizerEngine);
     m_webServer->setMarqueeEngine(m_marqueeEngine);
@@ -557,7 +566,7 @@ void AppRuntime::initialize() {
     m_lastMqttUser = snapshot.mqtt.user;
     m_lastMqttPass = snapshot.mqtt.pass;
     if (snapshot.mqtt.enabled) {
-        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+        m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
         m_frontendListener->begin();
         if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
     }
@@ -669,7 +678,7 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 delete m_frontendListener;
                 m_frontendListener = nullptr;
             }
-            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine);
+            m_frontendListener = new FrontendSyncEngine(snapshot.mqtt, gifEngine, m_messageEngine, m_inGameShowcaseEngine);
             m_frontendListener->begin();
             if (m_appCtx) m_appCtx->setEventBus(m_frontendListener);
         } else {
@@ -685,6 +694,10 @@ void AppRuntime::syncMqtt(const ConfigSnapshot& snapshot) {
                 gifEngine->stop();
             }
         }
+    } else if (m_frontendListener && snapshot.mqtt.enabled) {
+        uint16_t curW = m_drawingSurface ? static_cast<uint16_t>(m_drawingSurface->width()) : 128;
+        uint16_t curH = m_drawingSurface ? static_cast<uint16_t>(m_drawingSurface->height()) : 32;
+        m_frontendListener->updateRuntimeConfig(snapshot.mqtt, snapshot.showcase, snapshot.system.lang, curW, curH);
     }
 
     if (m_frontendListener) {
@@ -793,6 +806,29 @@ void AppRuntime::evaluateDisplayRequests(const ConfigSnapshot& snapshot) {
                 m_syncGif.handle = EngineHandle();
                 m_syncGif.priority = DisplayPriority::GIF;
                 m_displayArbiter.cancelRequest(DisplaySourceId::GIF);
+            }
+        }
+    }
+
+    if (m_inGameShowcaseEngine) {
+        bool inGameActive = (m_frontendListener != nullptr) && m_frontendListener->wantsInGameShowcaseDisplay();
+        EngineHandle handle("ingame_showcase", "ingame_showcase_main");
+        if (inGameActive) {
+            if (!m_syncInGameShowcase.active || m_syncInGameShowcase.handle != handle) {
+                m_syncInGameShowcase.active = true;
+                m_syncInGameShowcase.handle = handle;
+                DisplayRequest req{DisplaySourceId::INGAME_SHOWCASE, DisplayPriority::INGAME_SHOWCASE, RequestLifecycle::UNTIL_CANCELLED, true};
+                req.engineHandle = handle;
+                req.allowsOverlay = snapshot.mqtt.allow_overlay;
+                req.needsClear = false;
+                req.isRealtime = true;
+                m_displayArbiter.submitRequest(req);
+            }
+        } else {
+            if (m_syncInGameShowcase.active) {
+                m_syncInGameShowcase.active = false;
+                m_syncInGameShowcase.handle = EngineHandle();
+                m_displayArbiter.cancelRequest(DisplaySourceId::INGAME_SHOWCASE);
             }
         }
     }
