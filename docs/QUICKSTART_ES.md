@@ -41,3 +41,12 @@ pio run -e esp32s3_waveshare -t upload
    - **Contraseña**: `matrix123`
 2. Abra su navegador en `http://192.168.4.1` (o `http://ArcadeMatrix.local` una vez conectado a su red local).
 3. ¡Configure sus motores, temas y rotación!
+
+---
+
+## 5. Opcional: Conectar Recalbox / Batocera / RetroPie y Showcase en Juego
+1. **Instalar el script en la consola (una sola vez)**: Ejecute `tools/recalbox_daemon/install.sh` (macOS/Linux) o `tools/recalbox_daemon/install.ps1` (Windows) indicando **únicamente la IP de su ArcadeMatrix** (la consola consulta dinámicamente al DMD qué broker MQTT usar, sin necesidad de reinstalar nunca).
+2. **Activar Marquesinas**: En la WebUI, abra **Sistema → MQTT & API → 🎮 FrontendSync** y active **MQTT**. Al navegar por los menús de la consola se mostrarán las marquesinas Pixelcade al instante (`0 ms`).
+3. **Añadir Fichas y Vídeos de Gameplay en Juego** (con **[dmd_media_showcase](https://github.com/red77290/dmd_media_showcase)** en su red local):
+   - En **🎬 DMD Media Showcase**, active el servidor Showcase (`🟢 Comunicación OK`).
+   - En **🎮 FrontendSync**, active **Usar Broker MQTT de Showcase si está activo** (libera RAM del ESP32 automáticamente) y **Showcase en Juego (Tarjeta + Vídeo Gameplay)**, elija su **Ciclo** (`Una vez`, `Alternar Marquesina y Showcase` o `Bucle`) y el **Estilo de Tarjeta** (`Heredar de Showcase Studio` o `Personalizado en el DMD`), y guarde los ajustes.

@@ -116,20 +116,41 @@ You can also push new Wi-Fi credentials at runtime via `POST /api/wifi { "ssid":
 
 ---
 
-## 5. The `"mqtt"` Block (Recalbox / Batocera Marquees)
+## 5. The `"mqtt"` Block (Recalbox / Batocera / RetroPie Marquees & In-Game Showcase)
 
-| Key | Type | Description |
-| :--- | :--- | :--- |
-| `enabled` | `bool` | Enable the MQTT listener for Pixelcade-style marquees. |
-| `broker` | `String` | Broker IP/host (usually the Pi itself). |
-| `port` | `int` | Broker port (default `1883`). |
-| `user` | `String` | Broker username (optional). |
-| `pass` | `String` | Broker password (optional). |
-| `device_name` | `String` | Identifier published by this device. |
-| `allow_overlay` | `bool` | Allow decorative overlays (e.g. Fighter Engine) on top of MQTT/marquee screens (default `false`). |
-| *(auto-subscription)* | `system/playing/#` | Subscribes automatically to all supported retro gaming systems: `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `enabled` | `bool` | `false` | Enable the MQTT listener (`FrontendSync`) for Pixelcade-style marquees and console events. |
+| `broker` | `String` | `"127.0.0.1"` | Fallback/local MQTT broker IP or host (`127.0.0.1` uses the built-in ESP32 MQTT broker when standalone). |
+| `port` | `int` | `1883` | Broker port. |
+| `user` | `String` | `""` | Broker username (optional). |
+| `pass` | `String` | `""` | Broker password (optional). |
+| `device_name` | `String` | `"ArcadeMatrix"` | Identifier published by this device. |
+| `allow_overlay` | `bool` | `false` | Allow decorative overlays (e.g. Fighter Engine) on top of MQTT/marquee screens. |
+| `use_showcase_broker` | `bool` | `true` | When `showcase.enabled` is `true` and Showcase is reachable, automatically share Showcase's MQTT broker and shut down the built-in ESP32 broker to free internal RAM (falls back to the local broker automatically if Showcase goes offline). |
+| `ingame_showcase_enabled` | `bool` | `true` | When a game is launched (`playing`) and Showcase is active, display the classic marquee immediately (`0 ms`), prepare the game's Info Card + Panoramas + Gameplay Video in the background, and smoothly switch once ready. |
+| `ingame_cycle_mode` | `String` | `"once"` | Playback behavior while the game stays running: `"once"` (play Showcase once then keep marquee), `"alternating"` (alternate Showcase and marquee pause), or `"loop"` (repeat Showcase continuously). |
+| `ingame_marquee_interval_sec` | `int` | `45` | Seconds to keep the static marquee on screen between Showcase cycles when `ingame_cycle_mode` is `"alternating"` (`5`–`600`). |
+| `card_style_source` | `String` | `"showcase_profile"` | `"showcase_profile"` inherits the DMD's visual profile configured in Showcase Studio; `"custom"` applies the custom Card & Video fields below directly from the DMD. |
+| `include_card_intro` | `bool` | `true` | (`custom` mode) Include the animated Info Card intro before panoramas and gameplay video. |
+| `card_layout` | `String` | `"classic_split"` | (`custom` mode) Card layout: `"classic_split"`, `"badge_header"`, `"full_art"`, or `"minimal"`. |
+| `card_theme` | `String` | `"tinted"` | (`custom` mode) Card visual theme: `"tinted"`, `"neon_border"`, or `"poster_wash"`. |
+| `show_poster` | `bool` | `true` | (`custom` mode) Display the mini boxart/poster on the Info Card. |
+| `show_synopsis` | `bool` | `true` | (`custom` mode) Scroll the localized game synopsis on the Info Card. |
+| `text_scroll_speed` | `String` | `"4"` | (`custom` mode) Synopsis scroll speed (`"1"` Slow to `"10"` Turbo, or `"slow"` / `"normal"` / `"fast"`). |
+| `jacket_panorama` | `bool` | `true` | (`custom` mode) Vertical top-to-bottom boxart panorama after the Info Card. |
+| `marquee_panorama` | `bool` | `false` | (`custom` mode) Vertical arcade marquee banner panorama. |
+| `snapshot_panorama_count` | `int` | `0` | (`custom` mode) Number of in-game screenshot panoramas (`0`–`5`). |
+| `show_video` | `bool` | `true` | (`custom` mode) Stream the gameplay video clip after the card/panoramas. |
+| `video_max_duration_s` | `int` | `12` | (`custom` mode) Maximum gameplay video duration in seconds (`2`–`120`). |
+| `video_fps` | `int` | `15` | (`custom` mode) Target video stream frame rate (`8`–`60`). |
+| `video_mode` | `String` | `"auto_action"` | (`custom` mode) Video framing mode: `"auto_action"`, `"panorama"`, or `"center_crop"`. |
+| `color_boost` | `String` | `"auto"` | (`custom` mode) HUB75 LED color profile: `"auto"`, `"pixel_art"`, `"anime"`, or `"cinema"`. |
+| *(auto-subscription)* | `system/playing/#` | — | Subscribes automatically to all supported retro gaming systems: `system/playing/recalbox`, `system/playing/batocera`, `system/playing/retropie`. |
 
-The sync daemon can be installed on the console (Recalbox, Batocera, RetroPie) over SSH from the Web UI (`POST /api/mqtt/install`) with target OS selection or auto-detection, and its logs fetched with `POST /api/mqtt/logs`.
+### Dynamic Broker Discovery & 1-Click Cache Eviction
+- **Zero Script Re-installation (`GET /api/mqtt/broker-target`)**: Console scripts installed via `tools/recalbox_daemon/` store only your DMD's IP (`DMD_HOST`) and query `GET /api/mqtt/broker-target` dynamically ( falling back to `<DMD_HOST>:1883` if needed). Turning Showcase ON or OFF never requires reinstalling scripts on Recalbox, Batocera, or RetroPie.
+- **1-Click Showcase Cache Eviction (`POST /api/showcase/cache/evict`)**: In **System → MQTT & API → 🎮 FrontendSync** (and **🎬 DMD Media Showcase**), the **🗑️ Evict Showcase Cache** button clears Showcase's persistent On-Demand conversion cache immediately whenever you change card styles or want fresh conversions.
 
 > [!NOTE]
 > For Batocera, version **v33 or newer** is required for dynamic marquee browsing (`game-selected` and `system-selected` hooks). Batocera v32 and earlier only trigger game launch/stop events. Recalbox is supported on all versions.
