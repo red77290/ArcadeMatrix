@@ -5,6 +5,7 @@
 #include "core/TimingSafe.h"
 #include "core/ConfigLoader.h"
 #include "core/drawing/Hub75DmaLayout.h"
+#include "core/net/ShowcaseDiscovery.h"
 #include "services/IconService.h"
 #include "../../include/core/EngineContract.h"
 #include "engines/mqttdata/GraphPayload.h"
@@ -1991,6 +1992,83 @@ void test_transition_prefetch_contract(void) {
     TEST_ASSERT_FALSE(freshNeedsTeardown);
 }
 
+void test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission() {
+    // 1. Hardware-scoped unique client/topic IDs (zero collision across same-geometry boards)
+    char gamesId[48] = "";
+    char syncId[48] = "";
+    net::ShowcaseDiscovery::formatClientId("games", 128, 32, false, gamesId, sizeof(gamesId));
+    net::ShowcaseDiscovery::formatClientId("games", 128, 32, true, syncId, sizeof(syncId));
+    TEST_ASSERT_EQUAL_STRING("esp32_ut0001_games_128x32", gamesId);
+    TEST_ASSERT_EQUAL_STRING("esp32_ut0001_games_128x32_sync", syncId);
+
+    // 2. Endpoint parsing & `.local` auto-discovery host classification
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("dmdmediashowcase.local"));
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::isAutoDiscoverableHost("auto"));
+    TEST_ASSERT_FALSE(net::ShowcaseDiscovery::isAutoDiscoverableHost("192.168.1.22"));
+
+    char scheme[12] = "";
+    char host[64] = "";
+    uint16_t port = 0;
+    TEST_ASSERT_TRUE(net::ShowcaseDiscovery::parseEndpoint(
+        "http://dmdmediashowcase.local:8890/api/v1", 8890, scheme, sizeof(scheme), host, sizeof(host), port
+    ));
+    TEST_ASSERT_EQUAL_STRING("http", scheme);
+    TEST_ASSERT_EQUAL_STRING("dmdmediashowcase.local", host);
+    TEST_ASSERT_EQUAL_UINT16(8890, port);
+
+    // 3. Showcase memory budget (`internalPersistentBytes = 24000`, `internalContiguousBytes = 12000`)
+    //    must keep static ReferenceCapability 100% Compatible while deterministically selecting
+    //    4-bit HUB75 DMA (`16,384 B`) on non-PSRAM `esp32dev` at BOTH cold boot and rotation!
+    EngineDescriptor showcaseDesc;
+    showcaseDesc.metadata = {"retro_games", "Retro Games Showcase", "arcade", FIRMWARE_VERSION};
+    showcaseDesc.requirements.needsPsram = false;
+    showcaseDesc.requirements.needsNetwork = true;
+    showcaseDesc.requirements.needsTls = false;
+    showcaseDesc.requirements.targetFps = 60;
+    showcaseDesc.requirements.prefersDoubleBuffer = true;
+    showcaseDesc.requirements.supportsSingleBuffer = true;
+    showcaseDesc.requirements.internalPersistentBytes = 24000;
+    showcaseDesc.requirements.internalContiguousBytes = 12000;
+
+    CompatibilityContext refCtx;
+    refCtx.mode = EvaluationMode::ReferenceCapability;
+    refCtx.hardware.profile = HwProfile::ESP32_STD;
+    refCtx.hardware.hasPsram = false;
+    refCtx.hardware.hasNetwork = true;
+    refCtx.isConnectedWifi = true;
+    ReferenceMemoryProfile refMem = CompatibilityEvaluator::getReferenceMemoryProfile(HwProfile::ESP32_STD);
+    refCtx.memory.freeInternalHeap = refMem.freeInternalHeap;
+    refCtx.memory.largestInternalBlock = refMem.largestInternalBlock;
+    refCtx.memory.freePsram = refMem.freePsram;
+    refCtx.width = 128;
+    refCtx.height = 32;
+    refCtx.colorDepth = 0;
+    refCtx.requestedPipeline = "auto";
+    CompatibilityVerdict verdict = CompatibilityEvaluator::evaluate(showcaseDesc, refCtx);
+    TEST_ASSERT_TRUE(verdict.compatible());
+
+    // Cold boot into solo `retro_games` (`panelReleased == false`, `currentDepth = 8`, `freeHeap = 29708`)
+    uint8_t coldBootDepth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseDesc.requirements,
+        8, 24564, 29708, 24000, false, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, coldBootDepth);
+
+    // Rotation transition with DMA panel released (`panelReleased == true`, `freeHeap = 56316`)
+    uint8_t rotatedDepth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, false, showcaseDesc.requirements,
+        0, 24564, 56316, 48000, false, true, /*panelReleased=*/true
+    );
+    TEST_ASSERT_EQUAL_UINT8(4, rotatedDepth);
+
+    // ESP32-S3 with PSRAM (`hasPsram == true`) keeps full 8-bit Double DMA
+    uint8_t s3Depth = PipelineSelectionPolicy::resolveTargetDepth(
+        0, true, 128, 32, true, showcaseDesc.requirements,
+        8, 110000, 220000, 80000, true, true, /*panelReleased=*/false
+    );
+    TEST_ASSERT_EQUAL_UINT8(8, s3Depth);
+}
+
 // =========================================================================
 // Main Runner (Unity Execution)
 // =========================================================================
@@ -2075,6 +2153,7 @@ int main(int argc, char** argv) {
 
     // Transition Prefetch Contracts (Hardware Gating)
     RUN_TEST(test_transition_prefetch_contract);
+    RUN_TEST(test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission);
 
     return UNITY_END();
 }

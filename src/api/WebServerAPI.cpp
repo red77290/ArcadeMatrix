@@ -35,6 +35,7 @@
 #include <atomic>
 #include "../core/SdLockGuard.h"
 #include "../core/NetworkBudget.h"
+#include "../core/net/ShowcaseDiscovery.h"
 
 extern ConfigLoader config;
 
@@ -557,6 +558,14 @@ static bool checkAuth(AsyncWebServerRequest* request) {
     if (!WebServerAPI::isRequestAuthorized(request)) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized: missing or invalid API token\"}");
         return false;
+    }
+    if (request && request->client()) {
+        IPAddress peerIp = request->client()->remoteIP();
+        if (peerIp != IPAddress(0, 0, 0, 0) && peerIp != INADDR_NONE) {
+            char peerStr[20];
+            snprintf(peerStr, sizeof(peerStr), "%u.%u.%u.%u", peerIp[0], peerIp[1], peerIp[2], peerIp[3]);
+            net::ShowcaseDiscovery::recordCandidateIpStr(peerStr);
+        }
     }
     return true;
 }
@@ -2736,45 +2745,41 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        // Parse host & port from rawUrl
-        String work = rawUrl;
-        String scheme = "http://";
-        if (work.startsWith("https://")) {
-            scheme = "https://";
-            work = work.substring(8);
-        } else if (work.startsWith("http://")) {
-            work = work.substring(7);
-        }
-        int slashIdx = work.indexOf('/');
-        if (slashIdx >= 0) work = work.substring(0, slashIdx);
-        String host = work;
+        char origScheme[12] = "http";
+        char origHost[64] = "";
         uint16_t port = 8890;
-        int colonIdx = work.lastIndexOf(':');
-        if (colonIdx > 0) {
-            host = work.substring(0, colonIdx);
-            int p = work.substring(colonIdx + 1).toInt();
-            if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+        if (!net::ShowcaseDiscovery::parseEndpoint(rawUrl.c_str(), 8890, origScheme, sizeof(origScheme), origHost, sizeof(origHost), port)) {
+            doc["online"] = false;
+            doc["resolved_url"] = "";
+            doc["version"] = "";
+            sendJsonResponse(request, doc);
+            return;
         }
 
-        String resolvedHost = host;
-        if (host.endsWith(".local")) {
-            String mdnsName = host.substring(0, host.length() - 6);
-            IPAddress ip = MDNS.queryHost(mdnsName.c_str(), 450);
-            if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
-                resolvedHost = ip.toString();
-            }
-        }
-        String resolvedUrl = scheme + resolvedHost + ":" + String(port);
-        doc["resolved_url"] = resolvedUrl;
-
+        char resolvedUrlBuf[112] = "";
+        char resolvedHostBuf[64] = "";
+        char verBuf[24] = "";
         bool online = false;
-        WiFiClient probeCli;
-        if (probeCli.connect(resolvedHost.c_str(), port, 450)) {
-            online = true;
-            probeCli.stop();
+        net::ShowcaseDiscovery::resolveUrl(
+            rawUrl.c_str(),
+            resolvedUrlBuf,
+            sizeof(resolvedUrlBuf),
+            resolvedHostBuf,
+            sizeof(resolvedHostBuf),
+            port,
+            online,
+            verBuf,
+            sizeof(verBuf),
+            false, // Never block AsyncWebServer on a /24 subnet sweep
+            forceProbe
+        );
+        if (!online && net::ShowcaseDiscovery::isAutoDiscoverableHost(origHost)) {
+            net::ShowcaseDiscovery::triggerBackgroundScan(port);
         }
+
+        doc["resolved_url"] = resolvedUrlBuf;
         doc["online"] = online;
-        doc["version"] = online ? "3.0.0" : "";
+        doc["version"] = online ? (verBuf[0] != '\0' ? verBuf : "1.1.4") : "";
         sendJsonResponse(request, doc);
     });
 
@@ -2824,29 +2829,26 @@ void WebServerAPI::setupRoutes() {
             return;
         }
 
-        String work = rawUrl;
-        if (work.startsWith("https://")) work = work.substring(8);
-        else if (work.startsWith("http://")) work = work.substring(7);
-        int slashIdx = work.indexOf('/');
-        if (slashIdx >= 0) work = work.substring(0, slashIdx);
-
-        String host = work;
+        char resolvedUrlBuf[112] = "";
+        char resolvedHostBuf[64] = "";
         uint16_t port = 8890;
-        int colonIdx = work.lastIndexOf(':');
-        if (colonIdx > 0) {
-            host = work.substring(0, colonIdx);
-            int p = work.substring(colonIdx + 1).toInt();
-            if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+        bool online = false;
+        if (!net::ShowcaseDiscovery::resolveUrl(
+                rawUrl.c_str(),
+                resolvedUrlBuf,
+                sizeof(resolvedUrlBuf),
+                resolvedHostBuf,
+                sizeof(resolvedHostBuf),
+                port,
+                online,
+                nullptr,
+                0,
+                false,
+                false)) {
+            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Showcase server URL\"}");
+            return;
         }
-
-        String resolvedHost = host;
-        if (host.endsWith(".local")) {
-            String mdnsName = host.substring(0, host.length() - 6);
-            IPAddress ip = MDNS.queryHost(mdnsName.c_str(), 450);
-            if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
-                resolvedHost = ip.toString();
-            }
-        }
+        String resolvedHost(resolvedHostBuf);
 
         WiFiClient cli;
         if (!cli.connect(resolvedHost.c_str(), port, 1200)) {

@@ -4,16 +4,18 @@
 #include "../core/I18n.h"
 #include "../core/Logger.h"
 #include "../core/net/SecureHttpClient.h"
+#include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
 #include <ArduinoJson.h>
 #include <cstring>
 #include <cstdlib>
+#include <memory>
+#include <new>
 #if defined(ESP32)
 #include <esp_heap_caps.h>
 #if !defined(UNIT_TEST)
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <ESPmDNS.h>
 #endif
 #endif
 
@@ -257,7 +259,7 @@ void sendMqttDisconnectAndStop(WiFiClient& cli) {
 
 MediaShowcaseBase::MediaShowcaseBase(ShowcaseDomainId domain) : m_domain(domain) {
     const char* slug = domainSlug();
-    snprintf(m_sessionId, sizeof(m_sessionId), "esp32_%s", slug);
+    net::ShowcaseDiscovery::formatClientId(slug, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
     m_liveCard.badgeColor565 = defaultAccent565();
     m_liveCard.hasData = false;
     m_renderCard = m_liveCard;
@@ -329,40 +331,23 @@ void MediaShowcaseBase::computeCardPosterDims(uint16_t panelW, uint16_t panelH, 
     }
 }
 
-void resolveShowcaseHostInPlace(char* hostBuf, size_t hostCap) {
-#if defined(ESP32) && !defined(UNIT_TEST)
-    if (!hostBuf || hostCap == 0) return;
-    size_t len = strlen(hostBuf);
-    if (len > 6 && strcasecmp(hostBuf + len - 6, ".local") == 0) {
-        char mdnsName[64];
-        size_t baseLen = len - 6;
-        if (baseLen >= sizeof(mdnsName)) baseLen = sizeof(mdnsName) - 1;
-        memcpy(mdnsName, hostBuf, baseLen);
-        mdnsName[baseLen] = '\0';
-        IPAddress ip = MDNS.queryHost(mdnsName, 600);
-        if (ip != IPAddress(0, 0, 0, 0) && ip != INADDR_NONE) {
-            snprintf(hostBuf, hostCap, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-        }
-    }
-#else
-    (void)hostBuf;
-    (void)hostCap;
-#endif
-}
-
 bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, size_t hostCap, uint16_t& outPort) {
+    uint16_t showcasePort = 8890;
+    char showcaseHost[64] = "";
+    bool hasServerUrl = parseHostAndPort(cfg.serverUrl, 8890, showcaseHost, sizeof(showcaseHost), showcasePort);
+
     if (cfg.useShowcaseBroker) {
-        uint16_t dummyPort = 8890;
-        if (!parseHostAndPort(cfg.serverUrl, 8890, outHost, hostCap, dummyPort)) {
+        if (!hasServerUrl) {
             return false;
         }
-        resolveShowcaseHostInPlace(outHost, hostCap);
+        copySafeStr(outHost, hostCap, showcaseHost);
+        net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
         outPort = 1883;
         return true;
     }
     if (strcasecmp(cfg.mqttBrokerSource, "custom") == 0 && cfg.mqttCustomUrl[0] != '\0') {
         if (parseHostAndPort(cfg.mqttCustomUrl, 1883, outHost, hostCap, outPort)) {
-            resolveShowcaseHostInPlace(outHost, hostCap);
+            net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
             return true;
         }
     }
@@ -371,16 +356,16 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
         const auto& snap = guard.get();
         if (snap.mqtt.broker.length() > 0) {
             copySafeStr(outHost, hostCap, snap.mqtt.broker.c_str());
-            resolveShowcaseHostInPlace(outHost, hostCap);
+            net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
             outPort = (snap.mqtt.port > 0 && snap.mqtt.port <= 65535)
                 ? static_cast<uint16_t>(snap.mqtt.port)
                 : 1883;
             return true;
         }
     }
-    uint16_t dummyPort = 8890;
-    if (parseHostAndPort(cfg.serverUrl, 8890, outHost, hostCap, dummyPort)) {
-        resolveShowcaseHostInPlace(outHost, hostCap);
+    if (hasServerUrl) {
+        copySafeStr(outHost, hostCap, showcaseHost);
+        net::ShowcaseDiscovery::resolveHostInPlace(outHost, hostCap, showcasePort, true);
         outPort = 1883;
         return true;
     }
@@ -389,7 +374,12 @@ bool MediaShowcaseBase::resolveMqttBroker(const ConfigSlot& cfg, char* outHost, 
 
 bool MediaShowcaseBase::allocateBuffers() {
     freeBuffers();
-    size_t posterBytes = 48 * 64 * sizeof(uint16_t);
+    uint16_t posterW = 32;
+    uint16_t posterH = 32;
+    computeCardPosterDims(m_width, m_height, posterW, posterH);
+    size_t posterBytes = static_cast<size_t>(posterW) * static_cast<size_t>(posterH) * sizeof(uint16_t);
+    if (posterBytes == 0) posterBytes = 32U * 32U * sizeof(uint16_t);
+
     m_framePixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
     size_t frameBytes = m_framePixels * sizeof(uint16_t);
 
@@ -402,8 +392,16 @@ bool MediaShowcaseBase::allocateBuffers() {
     if (!m_poster565) {
         m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     }
-    if (!m_frame565 && m_hasPsram) {
-        m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+    if (!m_frame565) {
+        if (m_hasPsram) {
+            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+        } else if (frameBytes > 0 && frameBytes <= 8192U &&
+                   ESP.getFreeHeap() >= (frameBytes + 20480U) &&
+                   ESP.getMaxAllocHeap() >= frameBytes) {
+            // Classic ESP32 (`128x32` @ 4-bit HUB75 DMA): safely admit the 8 KB RGB565 stream buffer
+            // when >= 20 KB internal SRAM remains free for LwIP, MQTT, and AsyncWebServer.
+            m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+        }
     }
 #else
     m_hasPsram = true;
@@ -411,8 +409,15 @@ bool MediaShowcaseBase::allocateBuffers() {
     m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
 #endif
 
-    if (m_poster565) memset(m_poster565, 0, posterBytes);
-    if (m_frame565) memset(m_frame565, 0, frameBytes);
+    if (m_poster565) {
+        m_posterCapBytes = posterBytes;
+        memset(m_poster565, 0, posterBytes);
+    } else {
+        m_posterCapBytes = 0;
+    }
+    if (m_frame565) {
+        memset(m_frame565, 0, frameBytes);
+    }
     return (m_poster565 != nullptr);
 }
 
@@ -425,6 +430,7 @@ void MediaShowcaseBase::freeBuffers() {
         free(m_frame565);
         m_frame565 = nullptr;
     }
+    m_posterCapBytes = 0;
     m_framePixels = 0;
 }
 
@@ -447,13 +453,13 @@ EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineCo
     DisplayGeometry geom = context->getGeometry();
     m_width = geom.width > 0 ? geom.width : 128;
     m_height = geom.height > 0 ? geom.height : 32;
+    net::ShowcaseDiscovery::formatClientId(domainSlug(), m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
     if (config) {
         onConfigChanged(config);
     }
-    if (!allocateBuffers()) {
-        return EngineError::MissingResource;
-    }
+    // Defer transient pixel buffer allocation to activate() so HUB75 DMA pipeline depth
+    // reconfiguration (8-bit -> 4-bit on ESP32_STD) runs first on an unfragmented heap.
     return EngineError::OK;
 }
 
@@ -596,8 +602,10 @@ void MediaShowcaseBase::activate() {
     // Strict Consume-Once & Zero-Cache: start every turn with a clean slate
     clearLiveCardState();
     m_dirty = true;
+    m_renderedNewFrame = false;
 
-    if (!m_poster565) {
+    size_t wantPixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
+    if (!m_poster565 || m_framePixels != wantPixels) {
         allocateBuffers();
     }
     startWorkerTask();
@@ -609,6 +617,8 @@ void MediaShowcaseBase::deactivate() {
     stopWorkerTaskBounded(1500);
     clearLiveCardState();
     freeBuffers();
+    m_dirty = false;
+    m_renderedNewFrame = false;
 }
 
 bool MediaShowcaseBase::shutdownForDestruction() {
@@ -617,6 +627,8 @@ bool MediaShowcaseBase::shutdownForDestruction() {
     stopWorkerTaskBounded(2000);
     clearLiveCardState();
     freeBuffers();
+    m_dirty = false;
+    m_renderedNewFrame = false;
     return !m_taskAlive.load(std::memory_order_acquire);
 }
 
@@ -671,7 +683,7 @@ void MediaShowcaseBase::startWorkerTask() {
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
-        8192,
+        6144,
         this,
         1,
         &m_task,
@@ -729,7 +741,7 @@ void MediaShowcaseBase::runWorkerLoop() {
             if (reqLang.length() == 0) reqLang = "en";
         }
 
-        snprintf(m_sessionId, sizeof(m_sessionId), "esp32_%s_%ux%u", domain, m_width, m_height);
+        net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
         bool handled = false;
         if (strcasecmp(cfg.transportMode, "mqtt_udp") == 0) {
@@ -810,7 +822,10 @@ bool MediaShowcaseBase::parseReadyPayloadInPlace(
 
     const char* posterB64 = cardObj["poster_rgb565_b64"] | "";
     size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
-    if (showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
+    if (showPoster && !m_poster565 && posterB64[0] != '\0') {
+        allocateBuffers();
+    }
+    if (showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes) {
         if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
             nextCard.hasPoster = true;
         }
@@ -839,7 +854,9 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         return false;
     }
 
-    if (!sendMqttConnectPacket(mqttCli, m_sessionId)) {
+    char mqttConnectId[64];
+    snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", m_sessionId, (++m_mqttConnSeq) % 1000U);
+    if (!sendMqttConnectPacket(mqttCli, mqttConnectId)) {
         mqttCli.stop();
         return false;
     }
@@ -1110,16 +1127,17 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         uint16_t curFrameSeq = 0xFFFF;
         uint64_t chunkMask = 0;
         size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
-        uint8_t udpPkt[1040];
+        constexpr size_t kUdpPktCap = 1040U;
+        std::unique_ptr<uint8_t[]> udpPkt(new (std::nothrow) uint8_t[kUdpPktCap]);
 
-        while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
+        while (udpPkt && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
             if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
                 break; // Strictly enforce configured max stream duration
             }
             int pktSize = udp.parsePacket();
-            if (pktSize > 10 && pktSize <= static_cast<int>(sizeof(udpPkt))) {
-                int rLen = udp.read(udpPkt, sizeof(udpPkt));
-                if (rLen > 10 && memcmp(udpPkt, "DMDF", 4) == 0) {
+            if (pktSize > 10 && pktSize <= static_cast<int>(kUdpPktCap)) {
+                int rLen = udp.read(udpPkt.get(), kUdpPktCap);
+                if (rLen > 10 && memcmp(udpPkt.get(), "DMDF", 4) == 0) {
                     uint16_t seq = static_cast<uint16_t>(udpPkt[4] | (udpPkt[5] << 8));
                     uint8_t chunkIdx = udpPkt[6];
                     uint8_t totalChunks = udpPkt[7] > 0 ? udpPkt[7] : 1;
@@ -1136,7 +1154,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                         chunkMask = 0;
                     }
                     if (chunkIdx < totalChunks && totalChunks <= 64 && (static_cast<size_t>(byteOff) + payloadBytes) <= maxBufBytes) {
-                        memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpPkt + 10, payloadBytes);
+                        memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpPkt.get() + 10, payloadBytes);
                         chunkMask |= (1ULL << chunkIdx);
                         uint64_t expectedMask = (totalChunks == 64) ? ~0ULL : ((1ULL << totalChunks) - 1ULL);
                         if (chunkMask == expectedMask) {
@@ -1190,6 +1208,30 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 }
 
 void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
+    char baseServerUrl[112] = "";
+    char resolvedHost[64] = "";
+    uint16_t resolvedPort = 8890;
+    bool resolvedOnline = false;
+    if (!net::ShowcaseDiscovery::resolveUrl(
+            cfg.serverUrl,
+            baseServerUrl,
+            sizeof(baseServerUrl),
+            resolvedHost,
+            sizeof(resolvedHost),
+            resolvedPort,
+            resolvedOnline,
+            nullptr,
+            0,
+            true,
+            false)) {
+        m_statusState.store(2, std::memory_order_release);
+        clearLiveCardState();
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
+        return;
+    }
+
     net::SecureHttpOptions httpOpts;
     httpOpts.ownerId = net::OWNER_SHOWCASE;
     httpOpts.requestTimeoutMs = 3500;
@@ -1200,7 +1242,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     computeCardPosterDims(m_width, m_height, pw, ph);
 
     // 1. Register client config (`POST /api/v1/{domain}/config`)
-    String cfgUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/config";
+    String cfgUrl = String(baseServerUrl) + "/api/v1/" + domain + "/config";
     String postBody;
     postBody.reserve(1024);
     postBody += "{\"client_id\":\"";
@@ -1262,7 +1304,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     if (!m_wantActive.load(std::memory_order_acquire)) return;
 
     // 2. Poll single Consume-Once item (`GET /api/v1/{domain}/next?client_id=...`)
-    String nextUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/next?client_id=" + m_sessionId;
+    String nextUrl = String(baseServerUrl) + "/api/v1/" + domain + "/next?client_id=" + m_sessionId;
     auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
     if (!nextResp.ok()) {
         m_statusState.store(2, std::memory_order_release);
@@ -1312,13 +1354,13 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     const char* posterB64 = item["poster_rgb565_b64"] | "";
     const char* posterPath = assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | "");
     size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= (48U * 64U * 2U)) {
+    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes) {
         if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
             nextCard.hasPoster = true;
         } else if (posterPath[0] != '\0') {
             String posterUrl = (strncmp(posterPath, "http", 4) == 0)
                 ? String(posterPath)
-                : (String(cfg.serverUrl) + posterPath);
+                : (String(baseServerUrl) + posterPath);
             auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
             if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
                 nextCard.hasPoster = true;
@@ -1355,7 +1397,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
     const char* unifiedStreamPath = assetsObj["unified_stream_rgb565"] | "";
     if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && m_frame565 && unifiedStreamPath[0] != '\0') {
-        streamUnifiedRgb565Http(cfg.serverUrl, unifiedStreamPath);
+        streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
     }
 
     clearLiveCardState();
@@ -1370,6 +1412,25 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565) {
         return false;
     }
+    char baseServerUrl[112] = "";
+    char resolvedHost[64] = "";
+    uint16_t resolvedPort = 8890;
+    bool resolvedOnline = false;
+    if (!net::ShowcaseDiscovery::resolveUrl(
+            serverUrl,
+            baseServerUrl,
+            sizeof(baseServerUrl),
+            resolvedHost,
+            sizeof(resolvedHost),
+            resolvedPort,
+            resolvedOnline,
+            nullptr,
+            0,
+            true,
+            false)) {
+        copySafeStr(baseServerUrl, sizeof(baseServerUrl), serverUrl);
+    }
+
     net::SecureHttpOptions httpOpts;
     httpOpts.ownerId = net::OWNER_SHOWCASE;
     httpOpts.requestTimeoutMs = 4500;
@@ -1377,7 +1438,7 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
 
     String fullUrl = (strncmp(streamPath, "http", 4) == 0)
         ? String(streamPath)
-        : (String(serverUrl) + streamPath);
+        : (String(baseServerUrl) + streamPath);
     auto sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
     if (!sResp.ok()) {
         return false;
@@ -1528,12 +1589,12 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
     switch (m_domain) {
         case ShowcaseDomainId::Games: {
             // 1. Arcade Attract-Mode: Parallax Starfield + Walking 11x8 Space Invader + Pellets
-            uint16_t starBright = s->color565(90, 125, 190);
-            uint16_t starDim = s->color565(45, 65, 110);
-            for (int i = 0; i < 12; ++i) {
-                int sx = static_cast<int>((i * 23U + elapsedMs / (20U + (i % 3) * 10U)) % std::max(1, mW));
-                int sy = 10 + ((i * 11) % std::max(1, mH - 12));
-                s->drawPixel(sx, sy, (i & 1) ? starBright : starDim);
+            uint16_t starBright = s->color565(90, 120, 180);
+            uint16_t starDim = s->color565(50, 70, 110);
+            for (int i = 0; i < 14; ++i) {
+                int sx = static_cast<int>((i * 23U + elapsedMs / (18U + (i % 3) * 10U)) % std::max(1, mW));
+                int sy = std::min(mH - 3, std::max(2, 4 + ((i * 11) % std::max(1, mH - 8))));
+                s->drawPixel(sx, sy, (i % 2 == 0) ? starBright : starDim);
             }
             static const uint16_t kInvaderF0[8] = {
                 0b00100000100, 0b00010001000, 0b00111111100, 0b01101110110,
@@ -1544,8 +1605,8 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
                 0b11111111111, 0b01111111110, 0b00100000100, 0b01000000010
             };
             const uint16_t* sprite = ((frameStep & 1U) == 0U) ? kInvaderF0 : kInvaderF1;
-            int invY = (mH >= 64) ? (mH / 2 - 10) : 11;
-            int invX = 3 + static_cast<int>((elapsedMs / 40U) % std::max(8, mW - 18));
+            int invY = (mH >= 64) ? (mH / 2 - 12) : 10;
+            int invX = 2 + static_cast<int>((elapsedMs / 35U) % std::max(8, mW - 16));
             uint16_t invCol = s->color565(0, 255, 128);
             for (int ry = 0; ry < 8; ++ry) {
                 uint16_t bits = sprite[ry];
@@ -1555,17 +1616,18 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
                     }
                 }
             }
+            uint16_t pelletCol = s->color565(255, 215, 0);
             for (int p = 1; p <= 3; ++p) {
                 int px = (invX + 14 + p * 8) % std::max(4, mW - 2);
-                s->fillRect(px, invY + 3, 2, 2, 0xFFE0);
+                s->fillRect(px, invY + 3, 2, 2, pelletCol);
             }
             break;
         }
         case ShowcaseDomainId::Movies: {
-            // 2. 35mm Cinema Projector: Perforated film strips + 2 spinning reels + light beam
+            // 2. 35mm Cinema Projector: Perforated film strips + 2 spinning reels + body + volumetric light beam
             int holeOff = static_cast<int>((elapsedMs / 60U) % 6U);
-            uint16_t stripCol = s->color565(70, 75, 95);
-            uint16_t goldCol = s->color565(225, 190, 90);
+            uint16_t stripCol = s->color565(70, 70, 90);
+            uint16_t goldCol = s->color565(220, 190, 110);
             s->drawFastHLine(0, 0, mW, stripCol);
             s->drawFastHLine(0, 3, mW, stripCol);
             s->drawFastHLine(0, mH - 4, mW, stripCol);
@@ -1578,37 +1640,48 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
             int rRad = (mH >= 64) ? 6 : 4;
             int r1X = 8;
             int r2X = 8 + rRad * 2 + 2;
-            s->drawCircle(r1X, cy - 1, rRad, accent);
-            s->drawCircle(r2X, cy - 1, rRad, accent);
+            uint16_t reelCol = s->color565(0, 229, 255);
+            s->drawCircle(r1X, cy - 2, rRad, reelCol);
+            s->drawCircle(r2X, cy - 2, rRad, reelCol);
             int spoke = static_cast<int>(frameStep % 4U);
             int dx = (spoke == 0) ? (rRad - 1) : (spoke == 2) ? 0 : (spoke == 1 ? (rRad - 2) : -(rRad - 2));
-            int dy = (spoke == 0) ? 0 : (rRad - 2);
-            s->drawLine(r1X - dx, cy - 1 - dy, r1X + dx, cy - 1 + dy, 0xFFFF);
-            s->drawLine(r2X - dx, cy - 1 - dy, r2X + dx, cy - 1 + dy, 0xFFFF);
+            int dy = (spoke == 0) ? 0 : (spoke == 2 ? (rRad - 1) : (rRad - 2));
+            s->drawLine(r1X - dx, cy - 2 - dy, r1X + dx, cy - 2 + dy, 0xFFFF);
+            s->drawLine(r2X - dx, cy - 2 - dy, r2X + dx, cy - 2 + dy, 0xFFFF);
             int lensX = r2X + rRad + 2;
-            uint16_t beamCol = ((elapsedMs / 90U) % 3U == 0U) ? s->color565(190, 165, 55) : s->color565(255, 215, 80);
-            s->drawLine(lensX, cy, mW - 4, 6, beamCol);
-            s->drawLine(lensX, cy, mW - 4, mH - 6, beamCol);
+            s->fillRect(r1X - 2, cy + 1, rRad * 2 + 6, 4, s->color565(120, 140, 165));
+            uint8_t flicker = ((elapsedMs / 90U) % 3U == 0U) ? 210 : 255;
+            uint16_t beamCol = s->color565(flicker, 200, 70);
+            s->drawLine(lensX, cy + 2, mW - 4, 5, beamCol);
+            s->drawLine(lensX, cy + 2, mW - 4, mH - 6, beamCol);
             break;
         }
         case ShowcaseDomainId::Series: {
-            // 3. Retro CRT Television + Rabbit-Ear Antennae + Concentric RF Waves + Scanline
-            int tvW = (mW >= 128) ? 20 : 14;
-            int tvH = (mH >= 64) ? 14 : 11;
+            // 3. Retro CRT Television + Rabbit-Ear Antennae + Concentric RF Waves + 6-bar SMPTE + Scanline
+            int tvW = (mW >= 128) ? 22 : 16;
+            int tvH = (mH >= 64) ? 16 : 12;
             int tvX = 5;
-            int tvY = (mH / 2) - (tvH / 2) + 3;
-            s->drawRoundRect(tvX, tvY, tvW, tvH, 2, accent);
+            int tvY = (mH / 2) - (tvH / 2) + 2;
+            s->drawRoundRect(tvX, tvY, tvW, tvH, 2, s->color565(229, 57, 53));
             int antCx = tvX + tvW / 2;
-            s->drawLine(antCx, tvY, antCx - 4, tvY - 4, 0xCE79);
-            s->drawLine(antCx, tvY, antCx + 4, tvY - 4, 0xCE79);
-            int waveR = 2 + static_cast<int>((elapsedMs / 140U) % 5U);
-            s->drawCircle(antCx, tvY - 4, waveR, 0x07FF);
-            int innerW = std::max(4, tvW - 4);
-            int innerH = std::max(3, tvH - 4);
-            static const uint16_t kBars[4] = {0xFFE0, 0x07FF, 0x07E0, 0xF81F};
-            for (int b = 0; b < 4; ++b) {
-                int bx0 = tvX + 2 + (b * innerW) / 4;
-                int bx1 = tvX + 2 + ((b + 1) * innerW) / 4;
+            uint16_t antCol = s->color565(200, 210, 230);
+            s->drawLine(antCx, tvY, antCx - 5, tvY - 5, antCol);
+            s->drawLine(antCx, tvY, antCx + 5, tvY - 5, antCol);
+            int waveR = 2 + static_cast<int>((elapsedMs / 140U) % 6U);
+            s->drawCircle(antCx, tvY - 5, waveR, s->color565(0, 229, 255));
+            int innerW = std::max(6, tvW - 4);
+            int innerH = std::max(4, tvH - 4);
+            const uint16_t kBars[6] = {
+                s->color565(235, 235, 235),
+                s->color565(240, 220, 0),
+                s->color565(0, 220, 220),
+                s->color565(0, 210, 80),
+                s->color565(220, 0, 220),
+                s->color565(220, 30, 30)
+            };
+            for (int b = 0; b < 6; ++b) {
+                int bx0 = tvX + 2 + (b * innerW) / 6;
+                int bx1 = tvX + 2 + ((b + 1) * innerW) / 6;
                 s->fillRect(bx0, tvY + 2, std::max(1, bx1 - bx0), innerH, kBars[b]);
             }
             int scanY = tvY + 2 + static_cast<int>((elapsedMs / 70U) % innerH);
@@ -1618,39 +1691,41 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
         case ShowcaseDomainId::Anime:
         default: {
             // 4. Anime Shuriken / Mecha Energy Core + Speed-Lines + Floating Sakura Petals
-            uint16_t lineCol = s->color565(75, 30, 95);
-            for (int i = 0; i < 6; ++i) {
-                int ly = 9 + (i * std::max(6, mH - 12)) / 6;
-                int len = 8 + (i * 5) % 12;
-                int lx = std::max(0, mW - static_cast<int>((elapsedMs / 14U + i * 19U) % (mW + len)) - len);
+            uint16_t lineCol = s->color565(70, 30, 90);
+            for (int i = 0; i < 8; ++i) {
+                int ly = 5 + (i * std::max(8, mH - 10)) / 8;
+                int len = 8 + (i * 5) % 14;
+                int lx = std::max(0, mW - static_cast<int>((elapsedMs / 12U + i * 19U) % (mW + len)) - len);
                 s->drawFastHLine(lx, ly, std::min(len, mW - lx), lineCol);
             }
-            int sx = 12;
-            int sy = (mH / 2) + 2;
-            int arm = (mH >= 64) ? 6 : 4;
+            int sx = 14;
+            int sy = mH / 2;
+            int arm = (mH >= 64) ? 7 : 5;
+            uint16_t cyanCol = s->color565(0, 229, 255);
+            uint16_t pinkCol = s->color565(255, 64, 129);
             if ((frameStep & 1U) == 0U) {
-                s->drawFastHLine(sx - arm, sy, arm * 2 + 1, 0x07FF);
-                s->drawFastVLine(sx, sy - arm, arm * 2 + 1, 0x07FF);
-                s->drawLine(sx - 2, sy - 2, sx + 2, sy + 2, accent);
-                s->drawLine(sx - 2, sy + 2, sx + 2, sy - 2, accent);
+                s->drawFastHLine(sx - arm, sy, arm * 2 + 1, cyanCol);
+                s->drawFastVLine(sx, sy - arm, arm * 2 + 1, cyanCol);
+                s->drawLine(sx - 3, sy - 3, sx + 3, sy + 3, pinkCol);
+                s->drawLine(sx - 3, sy + 3, sx + 3, sy - 3, pinkCol);
             } else {
-                s->drawLine(sx - arm, sy - arm, sx + arm, sy + arm, 0x07FF);
-                s->drawLine(sx - arm, sy + arm, sx + arm, sy - arm, 0x07FF);
-                s->drawFastHLine(sx - 2, sy, 5, accent);
-                s->drawFastVLine(sx, sy - 2, 5, accent);
+                s->drawLine(sx - arm, sy - arm, sx + arm, sy + arm, cyanCol);
+                s->drawLine(sx - arm, sy + arm, sx + arm, sy - arm, cyanCol);
+                s->drawFastHLine(sx - 3, sy, 7, pinkCol);
+                s->drawFastVLine(sx, sy - 3, 7, pinkCol);
             }
-            s->drawPixel(sx, sy, 0xFFFF);
+            s->fillCircle(sx, sy, 1, 0xFFFF);
             uint16_t sakuraCol = s->color565(255, 130, 190);
-            for (int p = 0; p < 4; ++p) {
-                int px = static_cast<int>((26U + p * 19U + elapsedMs / 45U) % std::max(1, mW));
-                int py = 10 + static_cast<int>((p * 7U + elapsedMs / 85U) % std::max(1, mH - 12));
+            for (int p = 0; p < 6; ++p) {
+                int px = static_cast<int>((28U + p * 17U + elapsedMs / 40U) % std::max(1, mW));
+                int py = 4 + static_cast<int>((p * 9U + elapsedMs / 80U) % std::max(1, mH - 6));
                 s->fillRect(px, py, 2, 2, sakuraCol);
             }
             break;
         }
     }
 
-    // Header badge + localized waiting message
+    // Header badge pill + localized waiting message (matching ArcadeMatrix_RPi waiting screen layout)
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     Lang sysLang = I18n::parseLang(guard.get().system.lang.c_str());
     uint8_t st = m_statusState.load(std::memory_order_relaxed);
@@ -1660,14 +1735,28 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
             ? I18n::getShowcaseWarmingLabel(sysLang)
             : I18n::getShowcaseOfflineLabel(sysLang);
 
+    const char* badge = domainBadgeLabel();
+    int badgeW = static_cast<int>(strlen(badge)) * 6 + 4;
+    int minContentX = 30;
+    int bx = std::max(minContentX, minContentX + ((mW - minContentX - badgeW) / 2));
+    s->fillRoundRect(bx, 1, badgeW, 9, 2, s->color565(18, 22, 34));
+    s->drawRoundRect(bx, 1, badgeW, 9, 2, accent);
     s->setTextSize(1);
     s->setTextColor(accent);
-    s->setCursor(28, 1);
-    s->print(domainBadgeLabel());
+    s->setCursor(bx + 2, 2);
+    s->print(badge);
 
     if (blinkOn) {
-        int textY = std::max(12, (mH / 2) + 1);
-        drawScrollingLine(s, statusText, 28, mW - 2, textY, 0xFFFF, elapsedMs);
+        int textY = (mH >= 64) ? (mH - 12) : (mH - 9);
+        drawScrollingLine(s, statusText, minContentX, mW - 2, textY, 0xFFFF, elapsedMs);
+    } else {
+        // Subtle 3-dot animated progress pulse during blink off-phase so panel never feels frozen
+        int dotBaseX = minContentX + ((mW - minContentX) / 2) - 6;
+        int dotY = (mH >= 64) ? (mH - 9) : (mH - 6);
+        int activeDot = static_cast<int>((elapsedMs / 250U) % 3U);
+        for (int d = 0; d < 3; ++d) {
+            s->fillRect(dotBaseX + d * 5, dotY, 2, 2, (d == activeDot) ? accent : s->color565(60, 75, 95));
+        }
     }
 }
 
@@ -1857,8 +1946,15 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
 }
 
 void MediaShowcaseBase::render(EngineContext* context) {
+    if (!m_dirty) {
+        m_renderedNewFrame = false;
+        return;
+    }
     IDrawingSurface* s = (context && context->getSurface()) ? context->getSurface() : m_surface;
-    if (!s) return;
+    if (!s) {
+        m_renderedNewFrame = false;
+        return;
+    }
 
     s->clear(0);
     uint32_t elapsedMs = millis() - m_activatedAtMs;
@@ -1875,6 +1971,7 @@ void MediaShowcaseBase::render(EngineContext* context) {
     }
 
     m_dirty = false;
+    m_renderedNewFrame = true;
 }
 
 EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
@@ -1892,7 +1989,7 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalPersistentBytes = 24000;
     desc.requirements.internalContiguousBytes = 12000;
     desc.requirements.psramBytes = 0;
 
@@ -1932,7 +2029,7 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalPersistentBytes = 24000;
     desc.requirements.internalContiguousBytes = 12000;
     desc.requirements.psramBytes = 0;
 
@@ -1972,7 +2069,7 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalPersistentBytes = 24000;
     desc.requirements.internalContiguousBytes = 12000;
     desc.requirements.psramBytes = 0;
 
@@ -2012,7 +2109,7 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 8000;
+    desc.requirements.internalPersistentBytes = 24000;
     desc.requirements.internalContiguousBytes = 12000;
     desc.requirements.psramBytes = 0;
 

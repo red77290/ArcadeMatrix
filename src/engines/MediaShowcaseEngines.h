@@ -42,7 +42,7 @@ public:
     void update(EngineContext* context) override;
     void render(EngineContext* context) override;
     void deactivate() override;
-    void resume() override { m_dirty = true; }
+    void resume() override { m_dirty = true; m_renderedNewFrame = false; }
     bool shutdownForDestruction() override;
     void onConfigChanged(const EngineConfig* config) override;
     void onDisplayGeometryChanged(const DisplayGeometry& geometry) override {
@@ -61,10 +61,11 @@ public:
     uint16_t currentWidth() const { return m_width; }
     uint16_t currentHeight() const { return m_height; }
     uint32_t configGeneration() const { return m_cfgGen.load(std::memory_order_acquire); }
+    const char* sessionId() const { return m_sessionId; }
 
     bool isRealtime() const override { return true; }
     bool needsClear() const override { return false; }
-    bool hasNewFrame() const override { return m_dirty; }
+    bool hasNewFrame() const override { return m_renderedNewFrame; }
     bool selfPaced() const override { return true; }
     void setRotationBudget(uint32_t budget) override {
         uint32_t clamped = budget > 0 ? budget : 1;
@@ -114,7 +115,7 @@ protected:
     static constexpr size_t MAX_BADGE_LEN = 12;
     static constexpr size_t MAX_META_LEN = 16;
     static constexpr size_t MAX_SYNOPSIS_LEN = 192;
-    static constexpr size_t MAX_SESSION_ID_LEN = 40;
+    static constexpr size_t MAX_SESSION_ID_LEN = 48;
 
     enum class Phase : uint8_t {
         Card = 0,
@@ -175,9 +176,11 @@ protected:
     char m_sessionId[MAX_SESSION_ID_LEN] = "";
     std::atomic<uint32_t> m_seq{0}; // Seqlock for CardSnapshot + pixel buffers
     CardSnapshot m_liveCard;
-    uint16_t* m_poster565 = nullptr; // Up to 48x64 RGB565 (6144 bytes)
+    uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
+    size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
+    uint32_t m_mqttConnSeq = 0;
 
     std::atomic<bool> m_wantActive{false};
     std::atomic<bool> m_taskAlive{false};
@@ -202,6 +205,7 @@ protected:
     uint32_t m_lastScrollStepMs = 0;
     uint32_t m_fallbackCycleMs = 24000;
     bool m_dirty = true;
+    bool m_renderedNewFrame = false;
 
     const char* domainSlug() const;
     const char* domainBadgeLabel() const;
