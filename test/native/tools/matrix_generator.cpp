@@ -301,8 +301,8 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 24000;
-        d.requirements.internalContiguousBytes = 12000;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
         engines.push_back(d);
     }
     // 20. Movie Showcase
@@ -313,8 +313,8 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 24000;
-        d.requirements.internalContiguousBytes = 12000;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
         engines.push_back(d);
     }
     // 21. Series Showcase
@@ -325,8 +325,8 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 24000;
-        d.requirements.internalContiguousBytes = 12000;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
         engines.push_back(d);
     }
     // 22. Anime Showcase
@@ -337,8 +337,8 @@ static std::vector<EngineDescriptor> getCanonicalEngineDescriptors() {
         d.requirements.targetFps = 60;
         d.requirements.prefersDoubleBuffer = true;
         d.requirements.supportsSingleBuffer = true;
-        d.requirements.internalPersistentBytes = 24000;
-        d.requirements.internalContiguousBytes = 12000;
+        d.requirements.internalPersistentBytes = 16000;
+        d.requirements.internalContiguousBytes = 8192;
         engines.push_back(d);
     }
 

@@ -90,6 +90,16 @@ public:
      * @param outExplicitWarming Receives true if the payload is a valid `{"ready": false}` message.
      * @return true if a valid `{"ready": true, "card": {...}}` item was parsed into `m_liveCard`.
      */
+    bool parseReadyPayloadInPlaceBuf(
+        char* jsonBuf,
+        bool showPoster,
+        char* outItemId,
+        size_t itemIdCap,
+        bool& outHasStream,
+        uint32_t& outStreamMaxMs,
+        bool& outExplicitWarming
+    );
+
     bool parseReadyPayloadInPlace(
         char* jsonBuf,
         bool showPoster,
@@ -98,6 +108,11 @@ public:
         uint32_t& outStreamMaxMs,
         bool& outExplicitWarming
     );
+
+    /**
+     * @brief Counts rendered UTF-8 glyphs (folding NFD combining accents and expanding `œ`/`Œ` ligatures to 2 columns).
+     */
+    static size_t countUtf8Glyphs(const char* utf8);
 
     /**
      * @brief Copies a comma-separated filter token list into a bounded buffer without ever
@@ -111,11 +126,14 @@ public:
 
 protected:
     static constexpr size_t MAX_URL_LEN = 96;
-    static constexpr size_t MAX_TITLE_LEN = 64;
+    static constexpr size_t MAX_TITLE_LEN = 80;
     static constexpr size_t MAX_BADGE_LEN = 12;
     static constexpr size_t MAX_META_LEN = 16;
-    static constexpr size_t MAX_SYNOPSIS_LEN = 192;
+    static constexpr size_t MAX_SYNOPSIS_LEN = 256;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
+    static constexpr size_t MAX_ITEM_ID_LEN = 64;
+    static constexpr size_t IO_SCRATCH_BYTES = 1280;
+    static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
     enum class Phase : uint8_t {
         Card = 0,
@@ -178,6 +196,8 @@ protected:
     CardSnapshot m_liveCard;
     uint16_t* m_poster565 = nullptr; // 32x32 (2048 B) on 128x32 or up to 48x64 (6144 B) on larger panels
     uint16_t* m_frame565 = nullptr;  // WxH RGB565 (8192 bytes for 128x32)
+    char* m_ioScratch = nullptr;     // Preallocated 1280 B SRAM scratch for MQTT TX/RX & UDP DMDF chunks
+    char* m_psramMqttRx = nullptr;   // Preallocated 32 KB SPIRAM buffer on ESP32-S3 for XL Base64 posters
     size_t m_posterCapBytes = 0;
     size_t m_framePixels = 0;
     uint32_t m_mqttConnSeq = 0;

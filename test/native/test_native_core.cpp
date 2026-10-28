@@ -1992,7 +1992,7 @@ void test_transition_prefetch_contract(void) {
     TEST_ASSERT_FALSE(freshNeedsTeardown);
 }
 
-void test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission() {
+void test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission() {
     // 1. Hardware-scoped unique client/topic IDs (zero collision across same-geometry boards)
     char gamesId[48] = "";
     char syncId[48] = "";
@@ -2016,9 +2016,9 @@ void test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission() {
     TEST_ASSERT_EQUAL_STRING("dmdmediashowcase.local", host);
     TEST_ASSERT_EQUAL_UINT16(8890, port);
 
-    // 3. Showcase memory budget (`internalPersistentBytes = 24000`, `internalContiguousBytes = 12000`)
-    //    must keep static ReferenceCapability 100% Compatible while deterministically selecting
-    //    4-bit HUB75 DMA (`16,384 B`) on non-PSRAM `esp32dev` at BOTH cold boot and rotation!
+    // 3. Showcase zero-TLS memory budget (`internalPersistentBytes = 16000`, `internalContiguousBytes = 8192`)
+    //    must keep static ReferenceCapability 100% Compatible AND preserve full 8-bit HUB75 DMA
+    //    on non-PSRAM `esp32dev` (`128x32`) at BOTH cold boot and rotation, as well as on PSRAM `esp32s3_waveshare`!
     EngineDescriptor showcaseDesc;
     showcaseDesc.metadata = {"retro_games", "Retro Games Showcase", "arcade", FIRMWARE_VERSION};
     showcaseDesc.requirements.needsPsram = false;
@@ -2027,8 +2027,8 @@ void test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission() {
     showcaseDesc.requirements.targetFps = 60;
     showcaseDesc.requirements.prefersDoubleBuffer = true;
     showcaseDesc.requirements.supportsSingleBuffer = true;
-    showcaseDesc.requirements.internalPersistentBytes = 24000;
-    showcaseDesc.requirements.internalContiguousBytes = 12000;
+    showcaseDesc.requirements.internalPersistentBytes = 16000;
+    showcaseDesc.requirements.internalContiguousBytes = 8192;
 
     CompatibilityContext refCtx;
     refCtx.mode = EvaluationMode::ReferenceCapability;
@@ -2047,19 +2047,22 @@ void test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission() {
     CompatibilityVerdict verdict = CompatibilityEvaluator::evaluate(showcaseDesc, refCtx);
     TEST_ASSERT_TRUE(verdict.compatible());
 
-    // Cold boot into solo `retro_games` (`panelReleased == false`, `currentDepth = 8`, `freeHeap = 29708`)
+    // Cold boot / 8-bit rotation into `retro_games` (`panelReleased == false`, `currentDepth = 8`, `freeHeap = 29708`)
     uint8_t coldBootDepth = PipelineSelectionPolicy::resolveTargetDepth(
         0, true, 128, 32, false, showcaseDesc.requirements,
         8, 24564, 29708, 24000, false, true, /*panelReleased=*/false
     );
-    TEST_ASSERT_EQUAL_UINT8(4, coldBootDepth);
+    TEST_ASSERT_EQUAL_UINT8(8, coldBootDepth);
+    bool coldBootNeedsTeardown = (coldBootDepth != 8) || (showcaseDesc.requirements.needsTls && !false);
+    TEST_ASSERT_FALSE(coldBootNeedsTeardown);
 
-    // Rotation transition with DMA panel released (`panelReleased == true`, `freeHeap = 56316`)
+    // Post-TLS 4-bit -> 8-bit recovery with DMA panel released (`panelReleased == true`,
+    // `freeHeap = 62500` since Showcase `m_frame565` + `m_poster565` defer allocation to `activate()`)
     uint8_t rotatedDepth = PipelineSelectionPolicy::resolveTargetDepth(
         0, true, 128, 32, false, showcaseDesc.requirements,
-        0, 24564, 56316, 48000, false, true, /*panelReleased=*/true
+        0, 24564, 62500, 48000, false, true, /*panelReleased=*/true
     );
-    TEST_ASSERT_EQUAL_UINT8(4, rotatedDepth);
+    TEST_ASSERT_EQUAL_UINT8(8, rotatedDepth);
 
     // ESP32-S3 with PSRAM (`hasPsram == true`) keeps full 8-bit Double DMA
     uint8_t s3Depth = PipelineSelectionPolicy::resolveTargetDepth(
@@ -2153,7 +2156,7 @@ int main(int argc, char** argv) {
 
     // Transition Prefetch Contracts (Hardware Gating)
     RUN_TEST(test_transition_prefetch_contract);
-    RUN_TEST(test_showcase_discovery_identity_and_esp32dev_4bit_dma_admission);
+    RUN_TEST(test_showcase_discovery_identity_and_esp32dev_8bit_dma_admission);
 
     return UNITY_END();
 }

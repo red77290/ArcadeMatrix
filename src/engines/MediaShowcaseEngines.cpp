@@ -1,4 +1,5 @@
 #include "MediaShowcaseEngines.h"
+#include "fonts/ArcadeFonts.h"
 #include "../core/drawing/IDrawingSurface.h"
 #include "../core/ConfigLoader.h"
 #include "../core/I18n.h"
@@ -7,6 +8,8 @@
 #include "../core/net/ShowcaseDiscovery.h"
 #include "../hal/HardwareHAL.h"
 #include <ArduinoJson.h>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <memory>
@@ -15,7 +18,9 @@
 #include <esp_heap_caps.h>
 #if !defined(UNIT_TEST)
 #include <WiFi.h>
-#include <WiFiUdp.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <lwip/sockets.h>
 #endif
 #endif
 
@@ -47,8 +52,43 @@ void copySafeStr(char* dst, size_t cap, const char* src) {
     dst[cap - 1] = '\0';
 }
 
-void appendCsvAsJsonArray(String& out, const char* csv) {
-    out += "[";
+void appendRawToBuf(char* dst, size_t cap, size_t& pos, const char* str) {
+    if (!dst || cap == 0 || !str || pos >= cap - 1) return;
+    while (*str != '\0' && pos < cap - 1) {
+        dst[pos++] = *str++;
+    }
+    dst[pos] = '\0';
+}
+
+void appendCharToBuf(char* dst, size_t cap, size_t& pos, char c) {
+    if (!dst || cap == 0 || pos >= cap - 1) return;
+    dst[pos++] = c;
+    dst[pos] = '\0';
+}
+
+void appendJsonEscapedToBuf(char* dst, size_t cap, size_t& pos, const char* str) {
+    if (!dst || cap == 0 || !str) return;
+    while (*str != '\0' && pos < cap - 1) {
+        char c = *str++;
+        if (c == '"' || c == '\\') {
+            if (pos + 2 >= cap) break;
+            dst[pos++] = '\\';
+            dst[pos++] = c;
+        } else if (static_cast<uint8_t>(c) >= 0x20) {
+            dst[pos++] = c;
+        }
+    }
+    dst[pos] = '\0';
+}
+
+void appendUintToBuf(char* dst, size_t cap, size_t& pos, uint32_t val) {
+    char num[16];
+    snprintf(num, sizeof(num), "%u", static_cast<unsigned>(val));
+    appendRawToBuf(dst, cap, pos, num);
+}
+
+void appendCsvAsJsonArrayToBuf(char* dst, size_t cap, size_t& pos, const char* csv) {
+    appendCharToBuf(dst, cap, pos, '[');
     if (csv && csv[0] != '\0') {
         bool first = true;
         const char* p = csv;
@@ -62,19 +102,497 @@ void appendCsvAsJsonArray(String& out, const char* csv) {
             if (end > start) {
                 size_t len = static_cast<size_t>(end - start);
                 if (!(len == 3 && strncasecmp(start, "all", 3) == 0)) {
-                    if (!first) out += ",";
-                    out += "\"";
-                    for (size_t i = 0; i < len; ++i) {
+                    if (!first) appendCharToBuf(dst, cap, pos, ',');
+                    appendCharToBuf(dst, cap, pos, '"');
+                    for (size_t i = 0; i < len && pos < cap - 2; ++i) {
                         char c = start[i];
-                        if (c != '"' && c != '\\') out += c;
+                        if (c != '"' && c != '\\') {
+                            dst[pos++] = c;
+                        }
                     }
-                    out += "\"";
+                    dst[pos] = '\0';
+                    appendCharToBuf(dst, cap, pos, '"');
                     first = false;
                 }
             }
         }
     }
-    out += "]";
+    appendCharToBuf(dst, cap, pos, ']');
+}
+
+// ============================================================================
+// Flash-Resident UTF-8 Decoder + Clipped 5x7 & 3x5 Pixel Font Renderers
+// (Zero heap allocation, strict [clipMinX, clipMaxX) per-column clipping)
+// ============================================================================
+
+struct CustomGlyph5x7 {
+    uint16_t codepoint;
+    uint8_t cols[5];
+};
+
+// Uppercase accented Latin glyphs & typographic symbols absent from CP437
+constexpr CustomGlyph5x7 kCustomGlyphs5x7[] = {
+    {0x00C0, {0x78, 0x25, 0x26, 0x24, 0x78}}, // A-grave (À)
+    {0x00C1, {0x78, 0x24, 0x26, 0x25, 0x78}}, // A-acute (Á)
+    {0x00C2, {0x78, 0x26, 0x25, 0x26, 0x78}}, // A-circumflex (Â)
+    {0x00C3, {0x78, 0x26, 0x25, 0x26, 0x78}}, // A-tilde (Ã)
+    {0x00C8, {0x7C, 0x55, 0x56, 0x44, 0x00}}, // E-grave (È)
+    {0x00CA, {0x7C, 0x56, 0x55, 0x46, 0x00}}, // E-circumflex (Ê)
+    {0x00CB, {0x7C, 0x55, 0x54, 0x45, 0x00}}, // E-diaeresis (Ë)
+    {0x00CC, {0x00, 0x45, 0x7E, 0x44, 0x00}}, // I-grave (Ì)
+    {0x00CD, {0x00, 0x44, 0x7E, 0x45, 0x00}}, // I-acute (Í)
+    {0x00CE, {0x00, 0x46, 0x7D, 0x46, 0x00}}, // I-circumflex (Î)
+    {0x00CF, {0x00, 0x45, 0x7C, 0x45, 0x00}}, // I-diaeresis (Ï)
+    {0x00D2, {0x38, 0x45, 0x46, 0x44, 0x38}}, // O-grave (Ò)
+    {0x00D3, {0x38, 0x44, 0x46, 0x45, 0x38}}, // O-acute (Ó)
+    {0x00D4, {0x38, 0x46, 0x45, 0x46, 0x38}}, // O-circumflex (Ô)
+    {0x00D5, {0x38, 0x46, 0x45, 0x46, 0x38}}, // O-tilde (Õ)
+    {0x00D9, {0x3C, 0x41, 0x42, 0x40, 0x3C}}, // U-grave (Ù)
+    {0x00DA, {0x3C, 0x40, 0x42, 0x41, 0x3C}}, // U-acute (Ú)
+    {0x00DB, {0x3C, 0x42, 0x41, 0x42, 0x3C}}, // U-circumflex (Û)
+    {0x0178, {0x0C, 0x11, 0x60, 0x11, 0x0C}}, // Y-diaeresis (Ÿ)
+    {0x2026, {0x40, 0x00, 0x40, 0x00, 0x40}}, // Ellipsis (…)
+    {0x20AC, {0x14, 0x3E, 0x55, 0x55, 0x22}}, // Euro (€)
+};
+
+uint32_t foldCombiningAccent(uint32_t base, uint32_t comb) {
+    switch (comb) {
+        case 0x0300: // Grave
+            if (base == 'a') return 0x00E0;
+            if (base == 'e') return 0x00E8;
+            if (base == 'i') return 0x00EC;
+            if (base == 'o') return 0x00F2;
+            if (base == 'u') return 0x00F9;
+            if (base == 'A') return 0x00C0;
+            if (base == 'E') return 0x00C8;
+            if (base == 'I') return 0x00CC;
+            if (base == 'O') return 0x00D2;
+            if (base == 'U') return 0x00D9;
+            break;
+        case 0x0301: // Acute
+            if (base == 'a') return 0x00E1;
+            if (base == 'e') return 0x00E9;
+            if (base == 'i') return 0x00ED;
+            if (base == 'o') return 0x00F3;
+            if (base == 'u') return 0x00FA;
+            if (base == 'A') return 0x00C1;
+            if (base == 'E') return 0x00C9;
+            if (base == 'I') return 0x00CD;
+            if (base == 'O') return 0x00D3;
+            if (base == 'U') return 0x00DA;
+            break;
+        case 0x0302: // Circumflex
+            if (base == 'a') return 0x00E2;
+            if (base == 'e') return 0x00EA;
+            if (base == 'i') return 0x00EE;
+            if (base == 'o') return 0x00F4;
+            if (base == 'u') return 0x00FB;
+            if (base == 'A') return 0x00C2;
+            if (base == 'E') return 0x00CA;
+            if (base == 'I') return 0x00CE;
+            if (base == 'O') return 0x00D4;
+            if (base == 'U') return 0x00DB;
+            break;
+        case 0x0303: // Tilde
+            if (base == 'n') return 0x00F1;
+            if (base == 'N') return 0x00D1;
+            if (base == 'a') return 0x00E3;
+            if (base == 'o') return 0x00F5;
+            if (base == 'A') return 0x00C3;
+            if (base == 'O') return 0x00D5;
+            break;
+        case 0x0308: // Diaeresis
+            if (base == 'a') return 0x00E4;
+            if (base == 'e') return 0x00EB;
+            if (base == 'i') return 0x00EF;
+            if (base == 'o') return 0x00F6;
+            if (base == 'u') return 0x00FC;
+            if (base == 'y') return 0x00FF;
+            if (base == 'A') return 0x00C4;
+            if (base == 'E') return 0x00CB;
+            if (base == 'I') return 0x00CF;
+            if (base == 'O') return 0x00D6;
+            if (base == 'U') return 0x00DC;
+            if (base == 'Y') return 0x0178;
+            break;
+        case 0x0327: // Cedilla
+            if (base == 'c') return 0x00E7;
+            if (base == 'C') return 0x00C7;
+            break;
+        default:
+            break;
+    }
+    return base;
+}
+
+uint32_t decodeRawUtf8Unit(const char*& p) {
+    const uint8_t b0 = static_cast<uint8_t>(*p);
+    if (b0 == 0) return 0;
+    ++p;
+    if (b0 < 0x80) {
+        return b0;
+    }
+    if ((b0 & 0xE0) == 0xC0) {
+        const uint8_t b1 = static_cast<uint8_t>(*p);
+        if ((b1 & 0xC0) != 0x80) return '?';
+        ++p;
+        return (static_cast<uint32_t>(b0 & 0x1F) << 6) | static_cast<uint32_t>(b1 & 0x3F);
+    }
+    if ((b0 & 0xF0) == 0xE0) {
+        const uint8_t b1 = static_cast<uint8_t>(*p);
+        if ((b1 & 0xC0) != 0x80) return '?';
+        const uint8_t b2 = static_cast<uint8_t>(*(p + 1));
+        if ((b2 & 0xC0) != 0x80) {
+            ++p;
+            return '?';
+        }
+        p += 2;
+        return (static_cast<uint32_t>(b0 & 0x0F) << 12) |
+               (static_cast<uint32_t>(b1 & 0x3F) << 6) |
+               static_cast<uint32_t>(b2 & 0x3F);
+    }
+    if ((b0 & 0xF8) == 0xF0) {
+        const uint8_t b1 = static_cast<uint8_t>(*p);
+        if ((b1 & 0xC0) != 0x80) return '?';
+        const uint8_t b2 = static_cast<uint8_t>(*(p + 1));
+        if ((b2 & 0xC0) != 0x80) {
+            ++p;
+            return '?';
+        }
+        const uint8_t b3 = static_cast<uint8_t>(*(p + 2));
+        if ((b3 & 0xC0) != 0x80) {
+            p += 2;
+            return '?';
+        }
+        p += 3;
+        return (static_cast<uint32_t>(b0 & 0x07) << 18) |
+               (static_cast<uint32_t>(b1 & 0x3F) << 12) |
+               (static_cast<uint32_t>(b2 & 0x3F) << 6) |
+               static_cast<uint32_t>(b3 & 0x3F);
+    }
+    return '?';
+}
+
+uint32_t nextUtf8Codepoint(const char*& p) {
+    while (*p != '\0') {
+        uint32_t cp = decodeRawUtf8Unit(p);
+        if (cp >= 0x0300 && cp <= 0x036F) {
+            continue; // Orphan combining mark
+        }
+        // Fold NFD combining diacritics (e.g. 'e' + U+0301 -> 'é')
+        while (*p != '\0') {
+            const char* peek = p;
+            uint32_t nextCp = decodeRawUtf8Unit(peek);
+            if (nextCp >= 0x0300 && nextCp <= 0x036F) {
+                cp = foldCombiningAccent(cp, nextCp);
+                p = peek;
+            } else {
+                break;
+            }
+        }
+        return cp;
+    }
+    return 0;
+}
+
+bool mapUnicodeToCp437(uint32_t cp, uint8_t& outIdx) {
+    if (cp >= 0x20 && cp <= 0x7E) {
+        outIdx = static_cast<uint8_t>(cp);
+        return true;
+    }
+    switch (cp) {
+        case 0x00A0: case 0x2009: case 0x202F: outIdx = ' '; return true;
+        case 0x2018: case 0x2019: case 0x02BC: case 0x00B4: outIdx = '\''; return true;
+        case 0x201C: case 0x201D: case 0x201E: outIdx = '"'; return true;
+        case 0x2013: case 0x2014: case 0x2212: outIdx = '-'; return true;
+        case 0x00C7: outIdx = 0x80; return true; // Ç
+        case 0x00FC: outIdx = 0x81; return true; // ü
+        case 0x00E9: outIdx = 0x82; return true; // é
+        case 0x00E2: outIdx = 0x83; return true; // â
+        case 0x00E4: outIdx = 0x84; return true; // ä
+        case 0x00E0: outIdx = 0x85; return true; // à
+        case 0x00E3: outIdx = 0x83; return true; // ã -> â-style fallback
+        case 0x00E5: outIdx = 0x86; return true; // å
+        case 0x00E7: outIdx = 0x87; return true; // ç
+        case 0x00EA: outIdx = 0x88; return true; // ê
+        case 0x00EB: outIdx = 0x89; return true; // ë
+        case 0x00E8: outIdx = 0x8A; return true; // è
+        case 0x00EF: outIdx = 0x8B; return true; // ï
+        case 0x00EE: outIdx = 0x8C; return true; // î
+        case 0x00EC: outIdx = 0x8D; return true; // ì
+        case 0x00C4: outIdx = 0x8E; return true; // Ä
+        case 0x00C5: outIdx = 0x8F; return true; // Å
+        case 0x00C9: outIdx = 0x90; return true; // É
+        case 0x00E6: outIdx = 0x91; return true; // æ
+        case 0x00C6: outIdx = 0x92; return true; // Æ
+        case 0x00F4: outIdx = 0x93; return true; // ô
+        case 0x00F6: outIdx = 0x94; return true; // ö
+        case 0x00F2: outIdx = 0x95; return true; // ò
+        case 0x00F5: outIdx = 0x93; return true; // õ
+        case 0x00FB: outIdx = 0x96; return true; // û
+        case 0x00F9: outIdx = 0x97; return true; // ù
+        case 0x00FF: outIdx = 0x98; return true; // ÿ
+        case 0x00D6: outIdx = 0x99; return true; // Ö
+        case 0x00DC: outIdx = 0x9A; return true; // Ü
+        case 0x00A3: outIdx = 0x9C; return true; // £
+        case 0x00A5: outIdx = 0x9D; return true; // ¥
+        case 0x00E1: outIdx = 0xA0; return true; // á
+        case 0x00ED: outIdx = 0xA1; return true; // í
+        case 0x00F3: outIdx = 0xA2; return true; // ó
+        case 0x00FA: outIdx = 0xA3; return true; // ú
+        case 0x00F1: outIdx = 0xA4; return true; // ñ
+        case 0x00D1: outIdx = 0xA5; return true; // Ñ
+        case 0x00BF: outIdx = 0xA8; return true; // ¿
+        case 0x00A1: outIdx = 0xAD; return true; // ¡
+        case 0x00AB: outIdx = 0xAE; return true; // «
+        case 0x00BB: outIdx = 0xAF; return true; // »
+        case 0x00DF: outIdx = 0xE1; return true; // ß
+        case 0x00B0: outIdx = 0xF8; return true; // °
+        case 0x2022: case 0x00B7: outIdx = 0xF9; return true; // • / ·
+        case 0x00FD: outIdx = 'y'; return true;
+        case 0x00DD: outIdx = 'Y'; return true;
+        default: return false;
+    }
+}
+
+void getGlyph5x7Columns(uint32_t cp, uint8_t outCols[5]) {
+    for (const auto& g : kCustomGlyphs5x7) {
+        if (g.codepoint == cp) {
+            memcpy(outCols, g.cols, 5);
+            return;
+        }
+    }
+    uint8_t idx = '?';
+    if (!mapUnicodeToCp437(cp, idx)) {
+        idx = '?';
+    }
+    const unsigned char* base = g_glcdFont5x7 + (static_cast<size_t>(idx) * 5U);
+    for (int col = 0; col < 5; ++col) {
+        outCols[col] = pgm_read_byte(base + col);
+    }
+}
+
+void drawSingleGlyph5x7Clipped(
+    IDrawingSurface* s,
+    const uint8_t cols[5],
+    int gx,
+    int gy,
+    int clipMinX,
+    int clipMaxX,
+    uint16_t color
+) {
+    if (gx + 5 <= clipMinX || gx >= clipMaxX) return;
+    int mH = s->height();
+    for (int col = 0; col < 5; ++col) {
+        int px = gx + col;
+        if (px < clipMinX || px >= clipMaxX) continue;
+        uint8_t bits = cols[col];
+        if (bits == 0) continue;
+        for (int row = 0; row < 8; ++row) {
+            if ((bits >> row) & 1U) {
+                int py = gy + row;
+                if (py >= 0 && py < mH) {
+                    s->drawPixel(px, py, color);
+                }
+            }
+        }
+    }
+}
+
+void drawClippedText5x7(
+    IDrawingSurface* s,
+    const char* utf8,
+    int x,
+    int y,
+    int clipMinX,
+    int clipMaxX,
+    uint16_t color
+) {
+    if (!s || !utf8 || clipMinX >= clipMaxX) return;
+    int curX = x;
+    const char* p = utf8;
+    uint8_t cols[5];
+    while (*p != '\0') {
+        if (curX >= clipMaxX) break;
+        uint32_t cp = nextUtf8Codepoint(p);
+        if (cp == 0) break;
+        if (cp == '\r' || cp == '\n' || cp == '\t') {
+            cp = ' ';
+        }
+        if (cp == 0x0153) { // œ -> oe
+            getGlyph5x7Columns('o', cols);
+            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+            curX += 6;
+            getGlyph5x7Columns('e', cols);
+            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+            curX += 6;
+            continue;
+        }
+        if (cp == 0x0152) { // Œ -> OE
+            getGlyph5x7Columns('O', cols);
+            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+            curX += 6;
+            getGlyph5x7Columns('E', cols);
+            drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+            curX += 6;
+            continue;
+        }
+        getGlyph5x7Columns(cp, cols);
+        drawSingleGlyph5x7Clipped(s, cols, curX, y, clipMinX, clipMaxX, color);
+        curX += 6;
+    }
+}
+
+constexpr uint16_t pack3x5(uint8_t r0, uint8_t r1, uint8_t r2, uint8_t r3, uint8_t r4) {
+    return static_cast<uint16_t>((r0 << 12) | (r1 << 9) | (r2 << 6) | (r3 << 3) | r4);
+}
+
+// Compact 3x5 uppercase bitmap font (15 bits per glyph: row0 bits 14..12 .. row4 bits 2..0)
+uint16_t getGlyph3x5Bitmap(char ch) {
+    if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    switch (ch) {
+        case '0': return pack3x5(7, 5, 5, 5, 7);
+        case '1': return pack3x5(2, 6, 2, 2, 7);
+        case '2': return pack3x5(7, 1, 7, 4, 7);
+        case '3': return pack3x5(7, 1, 7, 1, 7);
+        case '4': return pack3x5(5, 5, 7, 1, 1);
+        case '5': return pack3x5(7, 4, 7, 1, 7);
+        case '6': return pack3x5(7, 4, 7, 5, 7);
+        case '7': return pack3x5(7, 1, 1, 2, 2);
+        case '8': return pack3x5(7, 5, 7, 5, 7);
+        case '9': return pack3x5(7, 5, 7, 1, 7);
+        case 'A': return pack3x5(2, 5, 7, 5, 5);
+        case 'B': return pack3x5(6, 5, 6, 5, 6);
+        case 'C': return pack3x5(3, 4, 4, 4, 3);
+        case 'D': return pack3x5(6, 5, 5, 5, 6);
+        case 'E': return pack3x5(7, 4, 6, 4, 7);
+        case 'F': return pack3x5(7, 4, 6, 4, 4);
+        case 'G': return pack3x5(3, 4, 5, 5, 3);
+        case 'H': return pack3x5(5, 5, 7, 5, 5);
+        case 'I': return pack3x5(7, 2, 2, 2, 7);
+        case 'J': return pack3x5(1, 1, 1, 5, 2);
+        case 'K': return pack3x5(5, 5, 6, 5, 5);
+        case 'L': return pack3x5(4, 4, 4, 4, 7);
+        case 'M': return pack3x5(5, 7, 5, 5, 5);
+        case 'N': return pack3x5(6, 5, 5, 5, 5);
+        case 'O': return pack3x5(2, 5, 5, 5, 2);
+        case 'P': return pack3x5(6, 5, 6, 4, 4);
+        case 'Q': return pack3x5(2, 5, 5, 3, 1);
+        case 'R': return pack3x5(6, 5, 6, 5, 5);
+        case 'S': return pack3x5(3, 4, 2, 1, 6);
+        case 'T': return pack3x5(7, 2, 2, 2, 2);
+        case 'U': return pack3x5(5, 5, 5, 5, 7);
+        case 'V': return pack3x5(5, 5, 5, 5, 2);
+        case 'W': return pack3x5(5, 5, 5, 7, 5);
+        case 'X': return pack3x5(5, 5, 2, 5, 5);
+        case 'Y': return pack3x5(5, 5, 2, 2, 2);
+        case 'Z': return pack3x5(7, 1, 2, 4, 7);
+        case '.': return pack3x5(0, 0, 0, 0, 2);
+        case ':': return pack3x5(0, 2, 0, 2, 0);
+        case '-': return pack3x5(0, 0, 7, 0, 0);
+        case '_': return pack3x5(0, 0, 0, 0, 7);
+        case '/': return pack3x5(1, 1, 2, 4, 4);
+        case '+': return pack3x5(0, 2, 7, 2, 0);
+        case '!': return pack3x5(2, 2, 2, 0, 2);
+        case '?': return pack3x5(6, 1, 2, 0, 2);
+        case '\'': return pack3x5(2, 2, 0, 0, 0);
+        case '(': return pack3x5(1, 2, 2, 2, 1);
+        case ')': return pack3x5(4, 2, 2, 2, 4);
+        case '%': return pack3x5(5, 1, 2, 4, 5);
+        case '*': return pack3x5(5, 2, 7, 2, 5);
+        default:  return 0;
+    }
+}
+
+char foldCodepointToAscii3x5(uint32_t cp) {
+    if (cp >= 0x20 && cp <= 0x7E) return static_cast<char>(cp);
+    switch (cp) {
+        case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
+        case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
+            return 'A';
+        case 0x00C7: case 0x00E7:
+            return 'C';
+        case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+        case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+            return 'E';
+        case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+        case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+            return 'I';
+        case 0x00D1: case 0x00F1:
+            return 'N';
+        case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6:
+        case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6:
+            return 'O';
+        case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+        case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+            return 'U';
+        case 0x00DD: case 0x00FD: case 0x00FF: case 0x0178:
+            return 'Y';
+        case 0x2013: case 0x2014: case 0x2212:
+            return '-';
+        case 0x2018: case 0x2019:
+            return '\'';
+        default:
+            return ' ';
+    }
+}
+
+void drawClippedText3x5(
+    IDrawingSurface* s,
+    const char* utf8,
+    int x,
+    int y,
+    int clipMinX,
+    int clipMaxX,
+    uint16_t color
+) {
+    if (!s || !utf8 || clipMinX >= clipMaxX) return;
+    int mH = s->height();
+    int curX = x;
+    const char* p = utf8;
+    while (*p != '\0') {
+        if (curX >= clipMaxX) break;
+        uint32_t cp = nextUtf8Codepoint(p);
+        if (cp == 0) break;
+        char ch = foldCodepointToAscii3x5(cp);
+        uint16_t bmp = getGlyph3x5Bitmap(ch);
+        if (bmp != 0 && curX + 3 > clipMinX) {
+            for (int row = 0; row < 5; ++row) {
+                int py = y + row;
+                if (py < 0 || py >= mH) continue;
+                uint8_t rowBits = static_cast<uint8_t>((bmp >> ((4 - row) * 3)) & 0x07U);
+                if (rowBits == 0) continue;
+                for (int col = 0; col < 3; ++col) {
+                    if ((rowBits >> (2 - col)) & 1U) {
+                        int px = curX + col;
+                        if (px >= clipMinX && px < clipMaxX) {
+                            s->drawPixel(px, py, color);
+                        }
+                    }
+                }
+            }
+        }
+        curX += 4;
+    }
+}
+
+int computeCardTextViewportWidth(uint16_t panelW, uint16_t panelH, bool showPoster) {
+    int mW = static_cast<int>(panelW);
+    int mH = static_cast<int>(panelH);
+    if (mH > mW || mW == mH) {
+        return std::max(16, mW - 4);
+    }
+    if (mH >= 64) {
+        uint16_t pw = 48, ph = 64;
+        if (showPoster) {
+            pw = 48;
+            (void)ph;
+        }
+        int textX = showPoster ? (static_cast<int>(pw) + 4) : 3;
+        return std::max(16, (mW - 2) - textX);
+    }
+    int textX = showPoster ? 35 : 3;
+    return std::max(16, (mW - 2) - textX);
 }
 
 bool decodeBase64Fixed(const char* b64, uint8_t* dst, size_t expectedBytes) {
@@ -238,12 +756,20 @@ bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId) {
     hdr[0] = 0x10;
     size_t rlBytes = encodeMqttRemainingLength(hdr + 1, remLen);
     cli.write(hdr, 1 + rlBytes);
-    const uint8_t varHdr[10] = {0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x1E};
+    // Keepalive = 60 seconds (0x00, 0x3C) paired with active 10s PINGREQ heartbeats
+    const uint8_t varHdr[10] = {0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C};
     cli.write(varHdr, 10);
     uint8_t cidBe[2] = {static_cast<uint8_t>((cidLen >> 8) & 0xFF), static_cast<uint8_t>(cidLen & 0xFF)};
     cli.write(cidBe, 2);
     cli.write(reinterpret_cast<const uint8_t*>(clientId), cidLen);
     return true;
+}
+
+void sendMqttPingReq(WiFiClient& cli) {
+    if (cli.connected()) {
+        const uint8_t pingPkt[2] = {0xC0, 0x00};
+        cli.write(pingPkt, 2);
+    }
 }
 
 void sendMqttDisconnectAndStop(WiFiClient& cli) {
@@ -253,9 +779,127 @@ void sendMqttDisconnectAndStop(WiFiClient& cli) {
     }
     cli.stop();
 }
+
+int openNonBlockingUdpSocket(uint16_t localPort, bool hasPsram) {
+    int fd = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) return -1;
+
+    int reuse = 1;
+    lwip_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_RCVBUF
+    int rcvBuf = hasPsram ? 65536 : 16384;
+    lwip_setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvBuf, sizeof(rcvBuf));
+#else
+    (void)hasPsram;
+#endif
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(localPort);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (lwip_bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        lwip_close(fd);
+        return -1;
+    }
+
+    int flags = lwip_fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        lwip_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    return fd;
+}
+
+void closeUdpSocket(int& fd) {
+    if (fd >= 0) {
+        lwip_close(fd);
+        fd = -1;
+    }
+}
+
+// Non-blocking drain of MQTT control/event packets during Card dwell & UDP stream.
+// Sets `outServerOffline = true` if LWT `online:false` arrives, or `outStreamEof = true`
+// if `{"event":"stream_eof"}` arrives. Zero heap allocation.
+void pollMqttControlNonBlocking(
+    WiFiClient& mqttCli,
+    const char* statusTopic,
+    const std::atomic<bool>& wantActive,
+    bool& outServerOffline,
+    bool& outStreamEof
+) {
+    while (mqttCli.connected() && mqttCli.available() >= 2) {
+        uint8_t fixedHdr = static_cast<uint8_t>(mqttCli.read());
+        uint32_t remLen = 0;
+        uint32_t mult = 1;
+        for (int i = 0; i < 4; ++i) {
+            uint8_t b = 0;
+            if (!readExactFromStream(mqttCli, &b, 1, wantActive, 300)) return;
+            remLen += static_cast<uint32_t>(b & 0x7F) * mult;
+            mult *= 128;
+            if ((b & 0x80) == 0) break;
+        }
+        if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen > 384U) {
+            if (remLen > 0) {
+                drainFromStream(mqttCli, remLen, wantActive, 500);
+            }
+            continue;
+        }
+        uint8_t tLenBe[2];
+        if (!readExactFromStream(mqttCli, tLenBe, 2, wantActive, 300)) return;
+        uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
+        if (static_cast<uint32_t>(tLen) + 2U > remLen) {
+            drainFromStream(mqttCli, remLen - 2U, wantActive, 300);
+            continue;
+        }
+        char topicBuf[96] = "";
+        size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
+        if (toReadT > 0) {
+            readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, wantActive, 300);
+        }
+        topicBuf[toReadT] = '\0';
+        if (tLen > toReadT) {
+            drainFromStream(mqttCli, tLen - toReadT, wantActive, 300);
+        }
+        size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
+        char msgBuf[256] = "";
+        size_t toReadP = (payloadLen < sizeof(msgBuf) - 1) ? payloadLen : (sizeof(msgBuf) - 1);
+        if (toReadP > 0) {
+            readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(msgBuf), toReadP, wantActive, 300);
+        }
+        msgBuf[toReadP] = '\0';
+        if (payloadLen > toReadP) {
+            drainFromStream(mqttCli, payloadLen - toReadP, wantActive, 300);
+        }
+        if (statusTopic && strcmp(topicBuf, statusTopic) == 0) {
+            if (strstr(msgBuf, "\"online\":false") || strstr(msgBuf, "\"online\": false")) {
+                outServerOffline = true;
+                return;
+            }
+        } else if (strstr(msgBuf, "\"stream_eof\"") != nullptr) {
+            outStreamEof = true;
+            return;
+        }
+    }
+}
 #endif
 
 } // namespace
+
+size_t MediaShowcaseBase::countUtf8Glyphs(const char* utf8) {
+    if (!utf8 || utf8[0] == '\0') return 0;
+    size_t count = 0;
+    const char* p = utf8;
+    while (*p != '\0') {
+        uint32_t cp = nextUtf8Codepoint(p);
+        if (cp == 0) break;
+        if (cp == 0x0152 || cp == 0x0153) {
+            count += 2; // Œ / œ ligatures expand to 2 glyphs
+        } else {
+            count += 1;
+        }
+    }
+    return count;
+}
 
 MediaShowcaseBase::MediaShowcaseBase(ShowcaseDomainId domain) : m_domain(domain) {
     const char* slug = domainSlug();
@@ -386,27 +1030,34 @@ bool MediaShowcaseBase::allocateBuffers() {
 #if defined(ESP32)
     m_hasPsram = hardwareHAL.capabilities().hasPsram;
     if (m_hasPsram) {
+        // ESP32-S3 with PSRAM: place large poster, HD RGB565 frame (up to 256x64 = 32 KB),
+        // and 32 KB MQTT/HTTP receive buffer in SPIRAM while keeping 1,280 B I/O scratch in fast SRAM.
         m_poster565 = static_cast<uint16_t*>(heap_caps_malloc(posterBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         m_frame565 = static_cast<uint16_t*>(heap_caps_malloc(frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        m_psramMqttRx = static_cast<char*>(heap_caps_malloc(PSRAM_MQTT_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     }
     if (!m_poster565) {
         m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
     }
+    m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     if (!m_frame565) {
         if (m_hasPsram) {
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         } else if (frameBytes > 0 && frameBytes <= 8192U &&
-                   ESP.getFreeHeap() >= (frameBytes + 20480U) &&
+                   ESP.getFreeHeap() >= (frameBytes + 12288U) &&
                    ESP.getMaxAllocHeap() >= frameBytes) {
-            // Classic ESP32 (`128x32` @ 4-bit HUB75 DMA): safely admit the 8 KB RGB565 stream buffer
-            // when >= 20 KB internal SRAM remains free for LwIP, MQTT, and AsyncWebServer.
+            // Classic ESP32 (`128x32` @ full 8-bit HUB75 DMA): Showcase uses zero TLS (plain LAN
+            // MQTT/UDP/HTTP) and preallocates all buffers once at activate(), so >= 12 KB post-frame
+            // free SRAM safely sustains LwIP, MQTT, UDP DMDF streaming, and AsyncWebServer.
             m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
         }
     }
 #else
     m_hasPsram = true;
     m_poster565 = static_cast<uint16_t*>(malloc(posterBytes));
+    m_ioScratch = static_cast<char*>(malloc(IO_SCRATCH_BYTES));
     m_frame565 = static_cast<uint16_t*>(malloc(frameBytes));
+    m_psramMqttRx = static_cast<char*>(malloc(PSRAM_MQTT_RX_BYTES));
 #endif
 
     if (m_poster565) {
@@ -415,20 +1066,35 @@ bool MediaShowcaseBase::allocateBuffers() {
     } else {
         m_posterCapBytes = 0;
     }
+    if (m_ioScratch) {
+        m_ioScratch[0] = '\0';
+    }
     if (m_frame565) {
         memset(m_frame565, 0, frameBytes);
+    }
+    if (m_psramMqttRx) {
+        m_psramMqttRx[0] = '\0';
     }
     return (m_poster565 != nullptr);
 }
 
 void MediaShowcaseBase::freeBuffers() {
-    if (m_poster565) {
-        free(m_poster565);
-        m_poster565 = nullptr;
+    // Free in LIFO order so adjacent internal heap blocks coalesce cleanly on ESP32_STD
+    if (m_psramMqttRx) {
+        free(m_psramMqttRx);
+        m_psramMqttRx = nullptr;
     }
     if (m_frame565) {
         free(m_frame565);
         m_frame565 = nullptr;
+    }
+    if (m_ioScratch) {
+        free(m_ioScratch);
+        m_ioScratch = nullptr;
+    }
+    if (m_poster565) {
+        free(m_poster565);
+        m_poster565 = nullptr;
     }
     m_posterCapBytes = 0;
     m_framePixels = 0;
@@ -458,8 +1124,7 @@ EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineCo
     if (config) {
         onConfigChanged(config);
     }
-    // Defer transient pixel buffer allocation to activate() so HUB75 DMA pipeline depth
-    // reconfiguration (8-bit -> 4-bit on ESP32_STD) runs first on an unfragmented heap.
+    // Defer transient buffer allocation to activate() after any pipeline transition completes.
     return EngineError::OK;
 }
 
@@ -605,7 +1270,7 @@ void MediaShowcaseBase::activate() {
     m_renderedNewFrame = false;
 
     size_t wantPixels = static_cast<size_t>(m_width) * static_cast<size_t>(m_height);
-    if (!m_poster565 || m_framePixels != wantPixels) {
+    if (!m_poster565 || !m_ioScratch || m_framePixels != wantPixels) {
         allocateBuffers();
     }
     startWorkerTask();
@@ -680,10 +1345,11 @@ void MediaShowcaseBase::startWorkerTask() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return;
     m_taskAlive.store(true, std::memory_order_release);
+    uint32_t stackBytes = m_hasPsram ? 6144U : 5120U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
-        6144,
+        stackBytes,
         this,
         1,
         &m_task,
@@ -734,21 +1400,25 @@ void MediaShowcaseBase::runWorkerLoop() {
             return;
         }
 
-        String reqLang = String(cfg.lang);
-        if (reqLang == "system" || reqLang.length() == 0) {
+        char reqLangBuf[12] = "en";
+        if (cfg.lang[0] != '\0' && strcasecmp(cfg.lang, "system") != 0) {
+            copySafeStr(reqLangBuf, sizeof(reqLangBuf), cfg.lang);
+        } else {
             ConfigSnapshotGuard guard = config.acquireSnapshot();
-            reqLang = guard.get().system.lang;
-            if (reqLang.length() == 0) reqLang = "en";
+            const String& sysLang = guard.get().system.lang;
+            if (sysLang.length() > 0) {
+                copySafeStr(reqLangBuf, sizeof(reqLangBuf), sysLang.c_str());
+            }
         }
 
         net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
         bool handled = false;
         if (strcasecmp(cfg.transportMode, "mqtt_udp") == 0) {
-            handled = runMqttUdpTurn(cfg, domain, reqLang.c_str());
+            handled = runMqttUdpTurn(cfg, domain, reqLangBuf);
         }
         if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
-            runHttpPollTurn(cfg, domain, reqLang.c_str());
+            runHttpPollTurn(cfg, domain, reqLangBuf);
         }
         if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
             m_skipTurnImmediately.store(false, std::memory_order_release);
@@ -769,20 +1439,23 @@ void MediaShowcaseBase::runWorkerLoop() {
     }
 }
 
-bool MediaShowcaseBase::parseReadyPayloadInPlace(
+bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
     char* jsonBuf,
     bool showPoster,
-    String& outItemId,
+    char* outItemId,
+    size_t itemIdCap,
     bool& outHasStream,
     uint32_t& outStreamMaxMs,
     bool& outExplicitWarming
 ) {
     outExplicitWarming = false;
+    if (outItemId && itemIdCap > 0) outItemId[0] = '\0';
     if (!jsonBuf || jsonBuf[0] == '\0') return false;
 
-    // ArduinoJson v6 zero-copy mode: passing mutable `char*` avoids duplicating
-    // large strings (`poster_rgb565_b64`, `synopsis`) inside the JsonDocument pool.
-    DynamicJsonDocument doc(2048);
+    // ArduinoJson v6 zero-copy mode: passing mutable `char*` modifies strings in-place
+    // inside `jsonBuf` without duplicating `poster_rgb565_b64` or `synopsis`, so a
+    // stack-allocated 1536 B StaticJsonDocument parses ~32 keys with zero heap allocation.
+    StaticJsonDocument<1536> doc;
     if (deserializeJson(doc, jsonBuf) != DeserializationError::Ok) {
         return false;
     }
@@ -809,12 +1482,20 @@ bool MediaShowcaseBase::parseReadyPayloadInPlace(
     copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
     nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
     computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
+    uint16_t srvPw = cardObj["poster_width"] | 0;
+    uint16_t srvPh = cardObj["poster_height"] | 0;
+    if (srvPw > 0 && srvPh > 0 && (static_cast<size_t>(srvPw) * static_cast<size_t>(srvPh) * 2U) <= m_posterCapBytes) {
+        nextCard.posterW = srvPw;
+        nextCard.posterH = srvPh;
+    }
     nextCard.hasData = true;
     nextCard.hasPoster = false;
     nextCard.hasVideoFrame = false;
 
     const char* rawItemId = doc["item_id"] | (cardObj["item_id"] | (cardObj["id"] | ""));
-    outItemId = String(rawItemId);
+    if (outItemId && itemIdCap > 0) {
+        copySafeStr(outItemId, itemIdCap, rawItemId);
+    }
     outHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
     float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
     if (totDur < 2.0f) totDur = 2.0f;
@@ -840,8 +1521,34 @@ bool MediaShowcaseBase::parseReadyPayloadInPlace(
     return true;
 }
 
+bool MediaShowcaseBase::parseReadyPayloadInPlace(
+    char* jsonBuf,
+    bool showPoster,
+    String& outItemId,
+    bool& outHasStream,
+    uint32_t& outStreamMaxMs,
+    bool& outExplicitWarming
+) {
+    char itemBuf[MAX_ITEM_ID_LEN] = "";
+    bool ok = parseReadyPayloadInPlaceBuf(
+        jsonBuf,
+        showPoster,
+        itemBuf,
+        sizeof(itemBuf),
+        outHasStream,
+        outStreamMaxMs,
+        outExplicitWarming
+    );
+    outItemId = itemBuf;
+    return ok;
+}
+
 bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
 #if defined(ESP32) && !defined(UNIT_TEST)
+    if (!m_ioScratch) {
+        return false;
+    }
+
     char mqttHost[64] = "";
     uint16_t mqttPort = 1883;
     if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
@@ -883,80 +1590,88 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     }
 
     uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
-    WiFiUDP udp;
-    udp.begin(localUdpPort);
+    int udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
+    if (udpFd < 0) {
+        sendMqttDisconnectAndStop(mqttCli);
+        return false;
+    }
 
-    char statusTopic[48] = "dmd_showcase/server/status";
+    const char* statusTopic = "dmd_showcase/server/status";
     char readyTopic[96];
     char eventsTopic[96];
-    char configTopic[96];
+    char streamStateTopic[96];
+    char configTopic[80];
     snprintf(readyTopic, sizeof(readyTopic), "dmd_showcase/clients/%s/%s/ready", m_sessionId, domain);
     snprintf(eventsTopic, sizeof(eventsTopic), "dmd_showcase/clients/%s/%s/events", m_sessionId, domain);
+    snprintf(streamStateTopic, sizeof(streamStateTopic), "dmd_showcase/clients/%s/stream_state", m_sessionId);
     snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
 
-    String localIp = WiFi.localIP().toString();
-    String cfgPayload;
-    cfgPayload.reserve(1024);
-    cfgPayload += "{\"dmd_id\":\"";
-    cfgPayload += m_sessionId;
-    cfgPayload += "\",\"client_ip\":\"";
-    cfgPayload += localIp;
-    cfgPayload += "\",\"udp_ip\":\"";
-    cfgPayload += localIp;
-    cfgPayload += "\",\"width\":";
-    cfgPayload += String(m_width);
-    cfgPayload += ",\"height\":";
-    cfgPayload += String(m_height);
-    cfgPayload += ",\"udp_port\":";
-    cfgPayload += String(localUdpPort);
-    cfgPayload += ",\"lang\":\"";
-    cfgPayload += reqLang;
-    cfgPayload += "\",\"domains\":{\"";
-    cfgPayload += domain;
-    cfgPayload += "\":{\"systems\":";
-    appendCsvAsJsonArray(cfgPayload, cfg.systems);
-    cfgPayload += ",\"genres\":";
-    appendCsvAsJsonArray(cfgPayload, cfg.genres);
-    cfgPayload += ",\"decades\":";
-    appendCsvAsJsonArray(cfgPayload, cfg.decades);
-    cfgPayload += ",\"video_type\":\"";
-    cfgPayload += cfg.videoType;
-    cfgPayload += "\",\"show_poster\":";
-    cfgPayload += (cfg.showPoster ? "true" : "false");
-    cfgPayload += ",\"show_synopsis\":";
-    cfgPayload += (cfg.showSynopsis ? "true" : "false");
-    cfgPayload += ",\"text_scroll_speed\":\"";
-    cfgPayload += cfg.textScrollSpeed;
-    cfgPayload += "\",\"jacket_panorama\":";
-    cfgPayload += (cfg.jacketPanorama ? "true" : "false");
-    cfgPayload += ",\"marquee_panorama\":";
-    cfgPayload += (cfg.marqueePanorama ? "true" : "false");
-    cfgPayload += ",\"snapshot_panorama_count\":";
-    cfgPayload += String(cfg.snapshotPanoramaCount);
-    cfgPayload += ",\"show_video\":";
-    cfgPayload += (cfg.showVideo ? "true" : "false");
-    cfgPayload += ",\"video_max_duration_s\":";
-    cfgPayload += String(cfg.videoMaxDurationS);
-    cfgPayload += ",\"video_fps\":";
-    cfgPayload += String(cfg.videoFps);
-    cfgPayload += ",\"video_mode\":\"";
-    cfgPayload += cfg.videoMode;
-    cfgPayload += "\",\"color_boost\":\"";
-    cfgPayload += cfg.colorBoost;
-    cfgPayload += "\"}}}";
+    IPAddress ipAddr = WiFi.localIP();
+    char localIpBuf[20];
+    snprintf(localIpBuf, sizeof(localIpBuf), "%u.%u.%u.%u", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
+
+    // Build retained client config JSON in preallocated `m_ioScratch` (zero heap allocation)
+    size_t pos = 0;
+    m_ioScratch[0] = '\0';
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
+
+    // Ensure Phase::Card is active before reusing `m_frame565` as the zero-malloc MQTT RX buffer on ESP32_STD
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
     // Publish retained client config FIRST so the Showcase orchestrator can clean up
     // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
-    sendMqttPublishPacket(mqttCli, configTopic, cfgPayload.c_str(), true);
+    sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true);
     sendMqttSubscribePacket(mqttCli, 1, statusTopic);
     sendMqttSubscribePacket(mqttCli, 2, readyTopic);
     sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
+    sendMqttSubscribePacket(mqttCli, 4, streamStateTopic);
 
-    // Immediate turn-passing rule when rotating (`!soloSlot`):
-    // - On Pass 1 (`prevSkips == 0`) or mid-turn (`playedSoFar > 0`), yield IMMEDIATELY (`warmSettleMs = 0`)
-    //   as soon as `ready: false` arrives so rotation never stalls waiting on unready Showcase domains.
-    // - Only if ALL rotation slots skipped consecutively at cold boot (`prevSkips >= 1 && playedSoFar == 0`),
-    //   dwell a brief 350ms so the user sees the "WAITING FOR ..." indicator without TCP reconnect churn.
     uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
     uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
     bool soloSlot = (m_rotationSlotCount.load(std::memory_order_relaxed) <= 1U);
@@ -968,10 +1683,20 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     bool gotReadyItem = false;
     bool sawReadyFalse = false;
     uint32_t readyFalseAtMs = 0;
-    String itemIdStr;
+    char itemIdBuf[MAX_ITEM_ID_LEN] = "";
     bool itemHasStream = false;
     uint32_t maxCfgStreamMs = configuredMaxStreamMs(cfg);
     uint32_t streamMaxMs = maxCfgStreamMs + 1500U;
+
+    // Dual-profile zero-malloc MQTT RX target:
+    // - On ESP32-S3 (PSRAM): `m_psramMqttRx` (32 KB SPIRAM) accommodates 256x64 48x64 Base64 posters + full synopsis.
+    // - On ESP32_STD (no PSRAM): `m_frame565` (8,192 B SRAM) is idle during `Phase::Card` and holds 128x32 `ready` JSON (~3.8 KB) with 0 mallocs.
+    char* primaryRxBuf = m_psramMqttRx
+        ? m_psramMqttRx
+        : reinterpret_cast<char*>(m_frame565);
+    size_t primaryRxCap = m_psramMqttRx
+        ? PSRAM_MQTT_RX_BYTES
+        : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
 
     while (m_wantActive.load(std::memory_order_acquire) && (millis() - waitReadyStart) < maxWaitMs && !gotReadyItem) {
         if (sawReadyFalse && (millis() - readyFalseAtMs) >= warmSettleMs) {
@@ -988,11 +1713,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 mult *= 128;
                 if ((b & 0x80) == 0) break;
             }
-            // Non-PUBLISH packets (e.g. SUBACK 0x90, PINGRESP 0xD0) or oversized packets
-            // MUST drain their `remLen` payload bytes to preserve MQTT TCP stream framing!
-            // Allow up to 32 KB when PSRAM is available so 256x64 cards (`48x64` Base64 poster
-            // = 8,192 chars + full localized synopsis) never get dropped.
-            const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 16384U;
+            const uint32_t maxMqttPacketBytes = m_hasPsram ? 32768U : 14336U;
             if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen >= maxMqttPacketBytes) {
                 if (remLen > 0) {
                     drainFromStream(mqttCli, remLen, m_wantActive, 1500);
@@ -1009,7 +1730,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 drainFromStream(mqttCli, remLen - 2U, m_wantActive, 1000);
                 continue;
             }
-            char topicBuf[128] = "";
+            char topicBuf[112] = "";
             size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
             if (toReadT > 0) {
                 readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, m_wantActive, 1000);
@@ -1019,43 +1740,49 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 drainFromStream(mqttCli, tLen - toReadT, m_wantActive, 1000);
             }
             size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
+
             char* payloadBuf = nullptr;
-            if (m_hasPsram) {
-                payloadBuf = static_cast<char*>(heap_caps_malloc(payloadLen + 1U, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            }
-            if (!payloadBuf) {
+            bool freePayloadAfter = false;
+            if (payloadLen + 1U <= IO_SCRATCH_BYTES) {
+                payloadBuf = m_ioScratch;
+            } else if (primaryRxBuf && (payloadLen + 1U) <= primaryRxCap) {
+                payloadBuf = primaryRxBuf;
+            } else if (ESP.getMaxAllocHeap() >= (payloadLen + 2048U)) {
                 payloadBuf = static_cast<char*>(malloc(payloadLen + 1U));
+                freePayloadAfter = (payloadBuf != nullptr);
             }
             if (!payloadBuf) {
                 drainFromStream(mqttCli, payloadLen, m_wantActive, 1500);
                 continue;
             }
             if (!readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(payloadBuf), payloadLen, m_wantActive, 2000)) {
-                free(payloadBuf);
+                if (freePayloadAfter) free(payloadBuf);
                 break;
             }
             payloadBuf[payloadLen] = '\0';
 
             if (strcmp(topicBuf, statusTopic) == 0) {
-                DynamicJsonDocument doc(256);
-                if (deserializeJson(doc, payloadBuf) == DeserializationError::Ok) {
-                    bool online = doc["online"] | false;
+                StaticJsonDocument<192> sDoc;
+                if (deserializeJson(sDoc, payloadBuf) == DeserializationError::Ok) {
+                    bool online = sDoc["online"] | false;
                     if (!online) {
-                        free(payloadBuf);
+                        if (freePayloadAfter) free(payloadBuf);
+                        if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+                            memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+                        }
                         m_statusState.store(2, std::memory_order_release);
                         clearLiveCardState();
                         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                             m_skipTurnImmediately.store(true, std::memory_order_release);
                         }
-                        udp.stop();
+                        closeUdpSocket(udpFd);
                         sendMqttDisconnectAndStop(mqttCli);
                         return true;
                     }
                 }
-                free(payloadBuf);
             } else if (strcmp(topicBuf, readyTopic) == 0) {
                 bool explicitWarming = false;
-                if (parseReadyPayloadInPlace(payloadBuf, cfg.showPoster, itemIdStr, itemHasStream, streamMaxMs, explicitWarming)) {
+                if (parseReadyPayloadInPlaceBuf(payloadBuf, cfg.showPoster, itemIdBuf, sizeof(itemIdBuf), itemHasStream, streamMaxMs, explicitWarming)) {
                     gotReadyItem = true;
                 } else if (explicitWarming) {
                     m_statusState.store(1, std::memory_order_release);
@@ -1064,17 +1791,20 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                         readyFalseAtMs = millis();
                     }
                 }
-                free(payloadBuf);
-            } else {
+            }
+            if (payloadBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+            }
+            if (freePayloadAfter) {
                 free(payloadBuf);
             }
         } else {
-            vTaskDelay(pdMS_TO_TICKS(15));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 
     if (!gotReadyItem) {
-        udp.stop();
+        closeUdpSocket(udpFd);
         sendMqttDisconnectAndStop(mqttCli);
         if (sawReadyFalse) {
             m_statusState.store(1, std::memory_order_release);
@@ -1091,35 +1821,78 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         return false;
     }
 
-    if (streamMaxMs > maxCfgStreamMs + 1500U) {
-        streamMaxMs = maxCfgStreamMs + 1500U;
+    if (streamMaxMs > maxCfgStreamMs + 2500U) {
+        streamMaxMs = maxCfgStreamMs + 2500U;
     }
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
+    uint32_t lastMqttPingMs = millis();
 
     // Consume-Once: immediately notify server that Card display started (`start_card`)
-    String startCardEv = String("{\"action\":\"start_card\",\"item_id\":\"") + itemIdStr + "\",\"client_ip\":\"" + localIp + "\",\"udp_ip\":\"" + localIp + "\"}";
-    sendMqttPublishPacket(mqttCli, eventsTopic, startCardEv.c_str(), false);
+    snprintf(
+        m_ioScratch,
+        IO_SCRATCH_BYTES,
+        "{\"action\":\"start_card\",\"item_id\":\"%s\",\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+        itemIdBuf,
+        localIpBuf,
+        localIpBuf
+    );
+    sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
 
-    // Phase 1: Wait for organic full-synopsis scroll on the Card
-    uint32_t synChars = static_cast<uint32_t>(strlen(m_liveCard.synopsis));
+    // Phase 1: Wait for organic full-synopsis scroll on the Card (counted in true UTF-8 glyphs)
+    uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(m_liveCard.synopsis));
     uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
     uint32_t cardWaitMs = 4500U;
-    if (cfg.showSynopsis && synChars > 0) {
-        uint32_t scrollDistPx = synChars * 6U + 64U;
-        uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
-        if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+    if (cfg.showSynopsis && synGlyphs > 0) {
+        uint32_t textW = synGlyphs * 6U;
+        uint32_t availW = static_cast<uint32_t>(computeCardTextViewportWidth(m_width, m_height, cfg.showPoster));
+        if (textW > availW) {
+            uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
+            uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
+            if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+        }
     }
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint32_t cardT0 = millis();
+    bool serverWentOffline = false;
+    bool gotStreamEof = false;
     while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - cardT0) < cardWaitMs) {
+        uint32_t nowMs = millis();
+        if (nowMs - lastMqttPingMs >= 10000U) {
+            sendMqttPingReq(mqttCli);
+            lastMqttPingMs = nowMs;
+        }
+        pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
+        if (serverWentOffline) {
+            m_statusState.store(2, std::memory_order_release);
+            clearLiveCardState();
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+            closeUdpSocket(udpFd);
+            sendMqttDisconnectAndStop(mqttCli);
+            return true;
+        }
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 
     // Phase 2 & 3: Request real-time `ffmpeg -re` UDP stream (`start_stream`) and reassemble `DMDF` chunks
+    // via zero-allocation non-blocking LwIP socket (`lwip_select` + `lwip_recvfrom` into `m_ioScratch`).
     if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && itemHasStream && m_frame565) {
+        memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+        // Drain any stale UDP datagram before starting the new item stream
+        while (lwip_recvfrom(udpFd, m_ioScratch, 1040, MSG_DONTWAIT, nullptr, nullptr) > 0) {}
+
         m_phase.store(static_cast<uint8_t>(Phase::LiveStream), std::memory_order_release);
-        String startStreamEv = String("{\"action\":\"start_stream\",\"item_id\":\"") + itemIdStr + "\",\"udp_port\":" + String(localUdpPort) + ",\"client_ip\":\"" + localIp + "\",\"udp_ip\":\"" + localIp + "\"}";
-        sendMqttPublishPacket(mqttCli, eventsTopic, startStreamEv.c_str(), false);
+        snprintf(
+            m_ioScratch,
+            IO_SCRATCH_BYTES,
+            "{\"action\":\"start_stream\",\"item_id\":\"%s\",\"udp_port\":%u,\"client_ip\":\"%s\",\"udp_ip\":\"%s\"}",
+            itemIdBuf,
+            static_cast<unsigned>(localUdpPort),
+            localIpBuf,
+            localIpBuf
+        );
+        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
 
         uint32_t streamT0 = millis();
         uint32_t firstUdpPktMs = 0;
@@ -1128,70 +1901,99 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         uint64_t chunkMask = 0;
         size_t maxBufBytes = m_framePixels * sizeof(uint16_t);
         constexpr size_t kUdpPktCap = 1040U;
-        std::unique_ptr<uint8_t[]> udpPkt(new (std::nothrow) uint8_t[kUdpPktCap]);
+        constexpr uint32_t kUdpInitialGraceMs = 2200U;
+        uint8_t* udpBuf = reinterpret_cast<uint8_t*>(m_ioScratch);
+        gotStreamEof = false;
 
-        while (udpPkt && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
+        while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - streamT0) < streamMaxMs) {
             if (firstUdpPktMs > 0U && (millis() - firstUdpPktMs) >= maxCfgStreamMs) {
                 break; // Strictly enforce configured max stream duration
             }
-            int pktSize = udp.parsePacket();
-            if (pktSize > 10 && pktSize <= static_cast<int>(kUdpPktCap)) {
-                int rLen = udp.read(udpPkt.get(), kUdpPktCap);
-                if (rLen > 10 && memcmp(udpPkt.get(), "DMDF", 4) == 0) {
-                    uint16_t seq = static_cast<uint16_t>(udpPkt[4] | (udpPkt[5] << 8));
-                    uint8_t chunkIdx = udpPkt[6];
-                    uint8_t totalChunks = udpPkt[7] > 0 ? udpPkt[7] : 1;
-                    uint16_t byteOff = static_cast<uint16_t>(udpPkt[8] | (udpPkt[9] << 8));
-                    size_t payloadBytes = static_cast<size_t>(rLen - 10);
 
-                    if (seq != curFrameSeq) {
-                        if (chunkMask != 0) {
-                            m_seq.fetch_add(1, std::memory_order_acq_rel);
-                            m_liveCard.hasVideoFrame = true;
-                            m_seq.fetch_add(1, std::memory_order_release);
-                        }
-                        curFrameSeq = seq;
-                        chunkMask = 0;
-                    }
-                    if (chunkIdx < totalChunks && totalChunks <= 64 && (static_cast<size_t>(byteOff) + payloadBytes) <= maxBufBytes) {
-                        memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpPkt.get() + 10, payloadBytes);
-                        chunkMask |= (1ULL << chunkIdx);
-                        uint64_t expectedMask = (totalChunks == 64) ? ~0ULL : ((1ULL << totalChunks) - 1ULL);
-                        if (chunkMask == expectedMask) {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(udpFd, &rfds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 20000; // 20ms max idle wait; instant microsecond wakeup on packet arrival
+
+            int sel = lwip_select(udpFd + 1, &rfds, nullptr, nullptr, &tv);
+            if (sel > 0 && FD_ISSET(udpFd, &rfds)) {
+                // Drain all queued DMDF chunks immediately so ESP32's LwIP UDP mailbox never overflows
+                while (m_wantActive.load(std::memory_order_acquire)) {
+                    int rLen = lwip_recvfrom(udpFd, udpBuf, kUdpPktCap, MSG_DONTWAIT, nullptr, nullptr);
+                    if (rLen <= 0) break;
+                    if (rLen > 10 && memcmp(udpBuf, "DMDF", 4) == 0) {
+                        uint16_t seq = static_cast<uint16_t>(udpBuf[4] | (udpBuf[5] << 8));
+                        uint8_t chunkIdx = udpBuf[6];
+                        uint8_t totalChunks = udpBuf[7] > 0 ? udpBuf[7] : 1;
+                        uint16_t byteOff = static_cast<uint16_t>(udpBuf[8] | (udpBuf[9] << 8));
+                        size_t payloadBytes = static_cast<size_t>(rLen - 10);
+
+                        if (seq != curFrameSeq) {
+                            if (chunkMask != 0) {
+                                m_seq.fetch_add(1, std::memory_order_acq_rel);
+                                m_liveCard.hasVideoFrame = true;
+                                m_seq.fetch_add(1, std::memory_order_release);
+                            }
+                            curFrameSeq = seq;
                             chunkMask = 0;
-                            m_seq.fetch_add(1, std::memory_order_acq_rel);
-                            m_liveCard.hasVideoFrame = true;
-                            m_seq.fetch_add(1, std::memory_order_release);
                         }
-                        uint32_t pktNow = millis();
-                        if (firstUdpPktMs == 0U) firstUdpPktMs = pktNow;
-                        lastUdpPktMs = pktNow;
+                        if (chunkIdx < totalChunks && totalChunks <= 64 && (static_cast<size_t>(byteOff) + payloadBytes) <= maxBufBytes) {
+                            memcpy(reinterpret_cast<uint8_t*>(m_frame565) + byteOff, udpBuf + 10, payloadBytes);
+                            chunkMask |= (1ULL << chunkIdx);
+                            uint64_t expectedMask = (totalChunks == 64) ? ~0ULL : ((1ULL << totalChunks) - 1ULL);
+                            if (chunkMask == expectedMask) {
+                                chunkMask = 0;
+                                m_seq.fetch_add(1, std::memory_order_acq_rel);
+                                m_liveCard.hasVideoFrame = true;
+                                m_seq.fetch_add(1, std::memory_order_release);
+                            }
+                            uint32_t pktNow = millis();
+                            if (firstUdpPktMs == 0U) firstUdpPktMs = pktNow;
+                            lastUdpPktMs = pktNow;
+                        }
                     }
                 }
-            } else {
-                uint32_t nowMs = millis();
-                if (lastUdpPktMs > 0 && (nowMs - lastUdpPktMs) > 1500U) {
-                    break; // Stream completed or server stopped
-                }
-                if (lastUdpPktMs == 0 && (nowMs - streamT0) > 850U) {
-                    // Docker Desktop / Rancher Desktop VM NAT blocked container-to-LAN UDP:
-                    // seamlessly fall back to streaming the unified `.rgb565.stream` (`DMDS`) over HTTP TCP!
-                    String fallbackPath = String("/api/v1/") + domain + "/stream/" + itemIdStr + ".rgb565.stream?purge=false";
-                    streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath.c_str());
-                    break;
-                }
-                vTaskDelay(pdMS_TO_TICKS(2));
+            }
+
+            uint32_t nowMs = millis();
+            if (nowMs - lastMqttPingMs >= 10000U) {
+                sendMqttPingReq(mqttCli);
+                lastMqttPingMs = nowMs;
+            }
+            pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
+            if (serverWentOffline || gotStreamEof) {
+                break;
+            }
+            if (lastUdpPktMs > 0U && (nowMs - lastUdpPktMs) > 1500U) {
+                break; // Stream completed or server stopped
+            }
+            if (lastUdpPktMs == 0U && (nowMs - streamT0) > kUdpInitialGraceMs) {
+                // Container-to-LAN UDP blocked by VM NAT: close UDP socket and fall back
+                // cleanly to plain-HTTP TCP `.rgb565.stream` (`DMDS`) without TLS admission.
+                closeUdpSocket(udpFd);
+                char fallbackPath[144];
+                snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=false", domain, itemIdBuf);
+                streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
+                break;
             }
         }
     }
 
-    if (itemIdStr.length() > 0) {
-        String stopEv = String("{\"action\":\"stop_stream\",\"item_id\":\"") + itemIdStr + "\"}";
-        sendMqttPublishPacket(mqttCli, eventsTopic, stopEv.c_str(), false);
+    if (itemIdBuf[0] != '\0' && !serverWentOffline) {
+        snprintf(m_ioScratch, IO_SCRATCH_BYTES, "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
+        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
     }
 
-    udp.stop();
+    closeUdpSocket(udpFd);
     sendMqttDisconnectAndStop(mqttCli);
+    if (serverWentOffline) {
+        m_statusState.store(2, std::memory_order_release);
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
+    }
     clearLiveCardState();
     uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
     uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
@@ -1208,6 +2010,8 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 }
 
 void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
+    if (!m_ioScratch) return;
+
     char baseServerUrl[112] = "";
     char resolvedHost[64] = "";
     uint16_t resolvedPort = 8890;
@@ -1241,56 +2045,58 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     uint16_t ph = 32;
     computeCardPosterDims(m_width, m_height, pw, ph);
 
-    // 1. Register client config (`POST /api/v1/{domain}/config`)
-    String cfgUrl = String(baseServerUrl) + "/api/v1/" + domain + "/config";
-    String postBody;
-    postBody.reserve(1024);
-    postBody += "{\"client_id\":\"";
-    postBody += m_sessionId;
-    postBody += "\",\"width\":";
-    postBody += String(m_width);
-    postBody += ",\"height\":";
-    postBody += String(m_height);
-    postBody += ",\"poster_width\":";
-    postBody += String(pw);
-    postBody += ",\"poster_height\":";
-    postBody += String(ph);
-    postBody += ",\"systems\":";
-    appendCsvAsJsonArray(postBody, cfg.systems);
-    postBody += ",\"genres\":";
-    appendCsvAsJsonArray(postBody, cfg.genres);
-    postBody += ",\"decades\":";
-    appendCsvAsJsonArray(postBody, cfg.decades);
-    postBody += ",\"video_type\":\"";
-    postBody += cfg.videoType;
-    postBody += "\",\"include_poster\":";
-    postBody += (cfg.showPoster ? "true" : "false");
-    postBody += ",\"include_synopsis\":";
-    postBody += (cfg.showSynopsis ? "true" : "false");
-    postBody += ",\"text_scroll_speed\":\"";
-    postBody += cfg.textScrollSpeed;
-    postBody += "\",\"jacket_panorama\":";
-    postBody += (cfg.jacketPanorama ? "true" : "false");
-    postBody += ",\"marquee_panorama\":";
-    postBody += (cfg.marqueePanorama ? "true" : "false");
-    postBody += ",\"snapshot_panorama_count\":";
-    postBody += String(cfg.snapshotPanoramaCount);
-    postBody += ",\"show_video\":";
-    postBody += (cfg.showVideo ? "true" : "false");
-    postBody += ",\"video_fps\":";
-    postBody += String(cfg.videoFps);
-    postBody += ",\"video_max_duration_s\":";
-    postBody += String(cfg.videoMaxDurationS);
-    postBody += ",\"video_mode\":\"";
-    postBody += cfg.videoMode;
-    postBody += "\",\"color_boost\":\"";
-    postBody += cfg.colorBoost;
-    postBody += "\",\"lang\":\"";
-    postBody += reqLang;
-    postBody += "\"}";
+    // 1. Register client config (`POST /api/v1/{domain}/config`) using `m_ioScratch`
+    char cfgUrl[160];
+    snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", baseServerUrl, domain);
+
+    size_t pos = 0;
+    m_ioScratch[0] = '\0';
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"client_id\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_width\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, pw);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"poster_height\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ph);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"systems\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
+    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"include_poster\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"include_synopsis\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
+    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"lang\":\"");
+    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
+    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}");
 
     {
-        auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", postBody, httpOpts);
+        auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", m_ioScratch, httpOpts);
         if (!cfgResp.ok()) {
             m_statusState.store(2, std::memory_order_release); // NetworkOffline
             clearLiveCardState();
@@ -1303,8 +2109,11 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
 
     if (!m_wantActive.load(std::memory_order_acquire)) return;
 
+    m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
+
     // 2. Poll single Consume-Once item (`GET /api/v1/{domain}/next?client_id=...`)
-    String nextUrl = String(baseServerUrl) + "/api/v1/" + domain + "/next?client_id=" + m_sessionId;
+    char nextUrl[192];
+    snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
     auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
     if (!nextResp.ok()) {
         m_statusState.store(2, std::memory_order_release);
@@ -1315,56 +2124,103 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         return;
     }
 
-    DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 8192);
-    if (deserializeJson(nextDoc, nextResp.stream()) != DeserializationError::Ok) {
-        m_statusState.store(2, std::memory_order_release);
-        clearLiveCardState();
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
-        }
-        return;
-    }
-
-    const char* status = nextDoc["status"] | "warming";
-    JsonObject item = nextDoc["item"].as<JsonObject>();
-    if (strcmp(status, "ready") != 0 || item.isNull()) {
-        m_statusState.store(1, std::memory_order_release); // ServerWarming
-        clearLiveCardState();
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
-        }
-        return;
-    }
-
+    // Zero-copy in-place parse when Content-Length fits in `m_psramMqttRx` (S3) or `m_frame565` (ESP32_STD)
+    char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
+    size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
+    size_t respBytes = nextResp.contentLength();
+    char unifiedStreamPath[144] = "";
+    char posterPathBuf[144] = "";
     CardSnapshot nextCard;
-    copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-    copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-    const char* badge = item["badge"] | domain;
-    copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
-    copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-    nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-    nextCard.posterW = pw;
-    nextCard.posterH = ph;
-    nextCard.hasData = true;
-    nextCard.hasPoster = false;
-    nextCard.hasVideoFrame = false;
+    bool parsedReady = false;
+    bool serverWarming = false;
 
-    JsonObject assetsObj = item["assets"].as<JsonObject>();
-    const char* posterB64 = item["poster_rgb565_b64"] | "";
-    const char* posterPath = assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | "");
-    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes) {
-        if (posterB64[0] != '\0' && decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-            nextCard.hasPoster = true;
-        } else if (posterPath[0] != '\0') {
-            String posterUrl = (strncmp(posterPath, "http", 4) == 0)
-                ? String(posterPath)
-                : (String(baseServerUrl) + posterPath);
-            auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
-            if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
-                nextCard.hasPoster = true;
+    if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap &&
+        readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive)) {
+        rxBuf[respBytes] = '\0';
+        StaticJsonDocument<1536> nextDoc;
+        if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
+            const char* status = nextDoc["status"] | "warming";
+            JsonObject item = nextDoc["item"].as<JsonObject>();
+            if (strcmp(status, "ready") == 0 && !item.isNull()) {
+                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
+                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
+                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
+                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
+                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
+                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
+                nextCard.posterW = pw;
+                nextCard.posterH = ph;
+                nextCard.hasData = true;
+                JsonObject assetsObj = item["assets"].as<JsonObject>();
+                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
+                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                const char* posterB64 = item["poster_rgb565_b64"] | "";
+                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
+                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+                        nextCard.hasPoster = true;
+                    }
+                }
+                parsedReady = true;
+            } else {
+                serverWarming = true;
             }
+        }
+        if (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+            memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+        }
+    } else {
+        DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
+        if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
+            const char* status = nextDoc["status"] | "warming";
+            JsonObject item = nextDoc["item"].as<JsonObject>();
+            if (strcmp(status, "ready") == 0 && !item.isNull()) {
+                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
+                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
+                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
+                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
+                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
+                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
+                nextCard.posterW = pw;
+                nextCard.posterH = ph;
+                nextCard.hasData = true;
+                JsonObject assetsObj = item["assets"].as<JsonObject>();
+                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
+                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                const char* posterB64 = item["poster_rgb565_b64"] | "";
+                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
+                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+                        nextCard.hasPoster = true;
+                    }
+                }
+                parsedReady = true;
+            } else {
+                serverWarming = true;
+            }
+        }
+    }
+
+    if (!parsedReady) {
+        m_statusState.store(serverWarming ? 1 : 2, std::memory_order_release);
+        clearLiveCardState();
+        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+            m_skipTurnImmediately.store(true, std::memory_order_release);
+        }
+        return;
+    }
+
+    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+    if (cfg.showPoster && !nextCard.hasPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterPathBuf[0] != '\0') {
+        char posterUrl[224];
+        if (strncmp(posterPathBuf, "http", 4) == 0) {
+            copySafeStr(posterUrl, sizeof(posterUrl), posterPathBuf);
+        } else {
+            snprintf(posterUrl, sizeof(posterUrl), "%s%s", baseServerUrl, posterPathBuf);
+        }
+        auto pResp = net::SecureHttpClient::get(posterUrl, httpOpts);
+        if (pResp.ok() && readExactFromStream(pResp.stream(), reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes, m_wantActive)) {
+            nextCard.hasPoster = true;
         }
     }
 
@@ -1376,13 +2232,17 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
     // Phase 1: Organic Rich Card dwell
-    uint32_t synChars = static_cast<uint32_t>(strlen(nextCard.synopsis));
+    uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(nextCard.synopsis));
     uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
     uint32_t cardWaitMs = 4500U;
-    if (cfg.showSynopsis && synChars > 0) {
-        uint32_t scrollDistPx = synChars * 6U + 64U;
-        uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
-        if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+    if (cfg.showSynopsis && synGlyphs > 0) {
+        uint32_t textW = synGlyphs * 6U;
+        uint32_t availW = static_cast<uint32_t>(computeCardTextViewportWidth(m_width, m_height, cfg.showPoster));
+        if (textW > availW) {
+            uint32_t scrollDistPx = (textW - availW) + (availW / 2U);
+            uint32_t synScrollMs = 900U + (scrollDistPx * 1000U) / speedPx + 700U;
+            if (synScrollMs > cardWaitMs) cardWaitMs = synScrollMs;
+        }
     }
     uint32_t startGen = m_cfgGen.load(std::memory_order_acquire);
     uint32_t t0 = millis();
@@ -1395,7 +2255,6 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     }
 
     // Phase 2 & 3: Stream unified `.rgb565.stream` (`DMDS`) into `m_frame565`
-    const char* unifiedStreamPath = assetsObj["unified_stream_rgb565"] | "";
     if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && m_frame565 && unifiedStreamPath[0] != '\0') {
         streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
     }
@@ -1436,9 +2295,12 @@ bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const cha
     httpOpts.requestTimeoutMs = 4500;
     httpOpts.keepAlive = false;
 
-    String fullUrl = (strncmp(streamPath, "http", 4) == 0)
-        ? String(streamPath)
-        : (String(baseServerUrl) + streamPath);
+    char fullUrl[256];
+    if (strncmp(streamPath, "http", 4) == 0) {
+        copySafeStr(fullUrl, sizeof(fullUrl), streamPath);
+    } else {
+        snprintf(fullUrl, sizeof(fullUrl), "%s%s", baseServerUrl, streamPath);
+    }
     auto sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
     if (!sResp.ok()) {
         return false;
@@ -1530,25 +2392,20 @@ void MediaShowcaseBase::drawScrollingLine(
     uint16_t color,
     uint32_t elapsedMs
 ) {
-    if (!s || !text || text[0] == '\0') return;
+    if (!s || !text || text[0] == '\0' || minX >= maxX) return;
     int availW = maxX - minX;
-    int textW = static_cast<int>(strlen(text)) * 6;
-
-    s->setTextSize(1);
-    s->setTextWrap(false);
-    s->setTextColor(color);
+    int textW = static_cast<int>(countUtf8Glyphs(text)) * 6;
 
     if (textW <= availW) {
-        s->setCursor(minX, y);
-        s->print(text);
+        drawClippedText5x7(s, text, minX, y, minX, maxX, color);
         return;
     }
 
-    int totalScroll = textW - availW + 18;
-    int step = static_cast<int>((elapsedMs / 45U) % static_cast<uint32_t>(totalScroll + 20));
-    int offset = std::max(0, step - 10);
-    s->setCursor(minX - offset, y);
-    s->print(text);
+    int totalScroll = textW - availW + 12;
+    int cycleSteps = totalScroll + 28; // 14 steps (~630ms) start hold + scroll + 14 steps end hold
+    int step = static_cast<int>((elapsedMs / 45U) % static_cast<uint32_t>(cycleSteps));
+    int offset = std::min(totalScroll, std::max(0, step - 14));
+    drawClippedText5x7(s, text, minX - offset, y, minX, maxX, color);
 }
 
 void MediaShowcaseBase::drawSinglePassSynopsis(
@@ -1561,52 +2418,64 @@ void MediaShowcaseBase::drawSinglePassSynopsis(
     uint32_t elapsedMs,
     uint32_t speedPxPerSec
 ) {
-    if (!s || !text || text[0] == '\0') return;
+    if (!s || !text || text[0] == '\0' || minX >= maxX) return;
     int availW = maxX - minX;
-    int textW = static_cast<int>(strlen(text)) * 6;
-
-    s->setTextSize(1);
-    s->setTextWrap(false);
-    s->setTextColor(color);
+    int textW = static_cast<int>(countUtf8Glyphs(text)) * 6;
 
     if (textW <= availW) {
-        s->setCursor(minX, y);
-        s->print(text);
+        drawClippedText5x7(s, text, minX, y, minX, maxX, color);
         return;
     }
 
     uint32_t activeScrollMs = (elapsedMs > 900U) ? (elapsedMs - 900U) : 0U;
-    int scrollPx = static_cast<int>((activeScrollMs * speedPxPerSec) / 1000U);
-    s->setCursor((minX + 6) - scrollPx, y);
-    s->print(text);
+    int maxScrollPx = (textW - availW) + (availW / 2);
+    int scrollPx = std::min(maxScrollPx, static_cast<int>((activeScrollMs * speedPxPerSec) / 1000U));
+    drawClippedText5x7(s, text, minX - scrollPx, y, minX, maxX, color);
 }
 
 void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs) {
     uint32_t frameStep = elapsedMs / 180U;
-    bool blinkOn = ((elapsedMs / 450U) % 2U) == 0U;
     uint16_t accent = defaultAccent565();
+
+    // Symmetrical 3-band layout:
+    // - Top band:    Centered domain pill (y = 1..7)
+    // - Middle band: Centered domain Pixel-Art animation (y = midTop..midBot)
+    // - Bottom band: Centered steady 3x5 localized status + gentle 3-dot progress (y = textY..textY+4)
+    int textY = (mH >= 64) ? (mH - 9) : (mH - 6);
+    int midTop = (mH >= 64) ? 12 : 9;
+    int midBot = std::max(midTop + 8, textY - 2);
+    int midH = std::max(8, midBot - midTop);
+    int midCy = midTop + (midH / 2);
+    int cx = mW / 2;
 
     switch (m_domain) {
         case ShowcaseDomainId::Games: {
-            // 1. Arcade Attract-Mode: Parallax Starfield + Walking 11x8 Space Invader + Pellets
+            // 1. Centered Arcade Attract-Mode: Parallax Starfield + Symmetric Space Invader Patrol + Pellets
             uint16_t starBright = s->color565(90, 120, 180);
-            uint16_t starDim = s->color565(50, 70, 110);
-            for (int i = 0; i < 14; ++i) {
-                int sx = static_cast<int>((i * 23U + elapsedMs / (18U + (i % 3) * 10U)) % std::max(1, mW));
-                int sy = std::min(mH - 3, std::max(2, 4 + ((i * 11) % std::max(1, mH - 8))));
+            uint16_t starDim = s->color565(45, 65, 105);
+            int fieldMargin = std::min(12, mW / 8);
+            int fieldW = std::max(8, mW - fieldMargin * 2);
+            for (int i = 0; i < 12; ++i) {
+                int sx = fieldMargin + static_cast<int>((i * 19U + elapsedMs / (22U + (i % 3) * 10U)) % static_cast<uint32_t>(fieldW));
+                int sy = midTop + 1 + ((i * 7) % std::max(1, midH - 2));
                 s->drawPixel(sx, sy, (i % 2 == 0) ? starBright : starDim);
             }
             static const uint16_t kInvaderF0[8] = {
-                0b00100000100, 0b00010001000, 0b00111111100, 0b01101110110,
-                0b11111111111, 0b10111111101, 0b10100000101, 0b00011011000
+                0x0104, 0x0088, 0x01FC, 0x0376,
+                0x07FF, 0x05FD, 0x0505, 0x00D8
             };
             static const uint16_t kInvaderF1[8] = {
-                0b00100000100, 0b10010001001, 0b10111111101, 0b11101110111,
-                0b11111111111, 0b01111111110, 0b00100000100, 0b01000000010
+                0x0104, 0x0489, 0x05FD, 0x0777,
+                0x07FF, 0x03FE, 0x0104, 0x0202
             };
             const uint16_t* sprite = ((frameStep & 1U) == 0U) ? kInvaderF0 : kInvaderF1;
-            int invY = (mH >= 64) ? (mH / 2 - 12) : 10;
-            int invX = 2 + static_cast<int>((elapsedMs / 35U) % std::max(8, mW - 16));
+            int invY = midCy - 4;
+            int patrolSpan = std::max(12, std::min(56, mW - 36));
+            uint32_t pingPong = (elapsedMs / 40U) % static_cast<uint32_t>(patrolSpan * 2);
+            int patrolOff = (pingPong <= static_cast<uint32_t>(patrolSpan))
+                ? static_cast<int>(pingPong)
+                : (patrolSpan * 2 - static_cast<int>(pingPong));
+            int invX = cx - (patrolSpan / 2) - 5 + patrolOff;
             uint16_t invCol = s->color565(0, 255, 128);
             for (int ry = 0; ry < 8; ++ry) {
                 uint16_t bits = sprite[ry];
@@ -1617,58 +2486,62 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
                 }
             }
             uint16_t pelletCol = s->color565(255, 215, 0);
+            bool movingRight = (pingPong <= static_cast<uint32_t>(patrolSpan));
             for (int p = 1; p <= 3; ++p) {
-                int px = (invX + 14 + p * 8) % std::max(4, mW - 2);
-                s->fillRect(px, invY + 3, 2, 2, pelletCol);
+                int px = movingRight ? (invX + 12 + p * 6) : (invX - 2 - p * 6);
+                if (px >= fieldMargin && px + 1 < mW - fieldMargin) {
+                    s->fillRect(px, invY + 3, 2, 2, pelletCol);
+                }
             }
             break;
         }
         case ShowcaseDomainId::Movies: {
-            // 2. 35mm Cinema Projector: Perforated film strips + 2 spinning reels + body + volumetric light beam
-            int holeOff = static_cast<int>((elapsedMs / 60U) % 6U);
-            uint16_t stripCol = s->color565(70, 70, 90);
-            uint16_t goldCol = s->color565(220, 190, 110);
-            s->drawFastHLine(0, 0, mW, stripCol);
-            s->drawFastHLine(0, 3, mW, stripCol);
-            s->drawFastHLine(0, mH - 4, mW, stripCol);
-            s->drawFastHLine(0, mH - 1, mW, stripCol);
-            for (int hx = -holeOff; hx < mW; hx += 6) {
-                s->fillRect(hx, 1, 3, 2, goldCol);
-                s->fillRect(hx, mH - 3, 3, 2, goldCol);
-            }
-            int cy = mH / 2;
-            int rRad = (mH >= 64) ? 6 : 4;
-            int r1X = 8;
-            int r2X = 8 + rRad * 2 + 2;
+            // 2. Centered 35mm Cinema Projector: Dual Spinning Reels + Flickering Beam + Silver Screen
+            int sceneHalf = std::min(26, std::max(14, (mW - 20) / 2));
+            int rRad = (mH >= 64) ? 5 : 3;
+            int r1X = cx - sceneHalf + rRad + 2;
+            int r2X = r1X + rRad * 2 + 2;
+            int reelY = midCy - 2;
             uint16_t reelCol = s->color565(0, 229, 255);
-            s->drawCircle(r1X, cy - 2, rRad, reelCol);
-            s->drawCircle(r2X, cy - 2, rRad, reelCol);
+            s->drawCircle(r1X, reelY, rRad, reelCol);
+            s->drawCircle(r2X, reelY, rRad, reelCol);
             int spoke = static_cast<int>(frameStep % 4U);
-            int dx = (spoke == 0) ? (rRad - 1) : (spoke == 2) ? 0 : (spoke == 1 ? (rRad - 2) : -(rRad - 2));
-            int dy = (spoke == 0) ? 0 : (spoke == 2 ? (rRad - 1) : (rRad - 2));
-            s->drawLine(r1X - dx, cy - 2 - dy, r1X + dx, cy - 2 + dy, 0xFFFF);
-            s->drawLine(r2X - dx, cy - 2 - dy, r2X + dx, cy - 2 + dy, 0xFFFF);
-            int lensX = r2X + rRad + 2;
-            s->fillRect(r1X - 2, cy + 1, rRad * 2 + 6, 4, s->color565(120, 140, 165));
-            uint8_t flicker = ((elapsedMs / 90U) % 3U == 0U) ? 210 : 255;
-            uint16_t beamCol = s->color565(flicker, 200, 70);
-            s->drawLine(lensX, cy + 2, mW - 4, 5, beamCol);
-            s->drawLine(lensX, cy + 2, mW - 4, mH - 6, beamCol);
+            int dx = (spoke == 0) ? (rRad - 1) : (spoke == 2 ? 0 : (spoke == 1 ? (rRad - 1) : -(rRad - 1)));
+            int dy = (spoke == 0) ? 0 : (spoke == 2 ? (rRad - 1) : (rRad - 1));
+            s->drawLine(r1X - dx, reelY - dy, r1X + dx, reelY + dy, 0xFFFF);
+            s->drawLine(r2X - dx, reelY - dy, r2X + dx, reelY + dy, 0xFFFF);
+
+            int bodyW = rRad * 2 + 4;
+            s->fillRect(r1X - 1, midCy + 1, bodyW, 4, s->color565(120, 140, 165));
+            int lensX = r1X - 1 + bodyW;
+            int screenX = cx + sceneHalf;
+            int beamHalfH = std::min(6, midH / 2 - 1);
+            uint8_t flicker = ((elapsedMs / 110U) % 3U == 0U) ? 215 : 255;
+            uint16_t beamCol = s->color565(flicker, 200, 75);
+            s->drawLine(lensX, midCy + 2, screenX - 1, midCy - beamHalfH, beamCol);
+            s->drawLine(lensX, midCy + 2, screenX - 1, midCy + beamHalfH, beamCol);
+            s->drawFastVLine(screenX, midCy - beamHalfH, beamHalfH * 2 + 1, 0xFFFF);
             break;
         }
         case ShowcaseDomainId::Series: {
-            // 3. Retro CRT Television + Rabbit-Ear Antennae + Concentric RF Waves + 6-bar SMPTE + Scanline
+            // 3. Centered Retro CRT Television + Rabbit-Ear Antennae + Symmetric RF Waves + SMPTE Bars
             int tvW = (mW >= 128) ? 22 : 16;
-            int tvH = (mH >= 64) ? 16 : 12;
-            int tvX = 5;
-            int tvY = (mH / 2) - (tvH / 2) + 2;
+            int tvH = (mH >= 64) ? 16 : 10;
+            int tvX = cx - (tvW / 2);
+            int tvY = midCy - (tvH / 2) + 2;
             s->drawRoundRect(tvX, tvY, tvW, tvH, 2, s->color565(229, 57, 53));
-            int antCx = tvX + tvW / 2;
             uint16_t antCol = s->color565(200, 210, 230);
-            s->drawLine(antCx, tvY, antCx - 5, tvY - 5, antCol);
-            s->drawLine(antCx, tvY, antCx + 5, tvY - 5, antCol);
-            int waveR = 2 + static_cast<int>((elapsedMs / 140U) % 6U);
-            s->drawCircle(antCx, tvY - 5, waveR, s->color565(0, 229, 255));
+            s->drawLine(cx, tvY, cx - 4, tvY - 3, antCol);
+            s->drawLine(cx, tvY, cx + 4, tvY - 3, antCol);
+
+            int wavePhase = static_cast<int>((elapsedMs / 200U) % 3U);
+            uint16_t waveCol = s->color565(0, 229, 255);
+            for (int w = 0; w <= wavePhase; ++w) {
+                int wx = 7 + w * 4;
+                s->drawFastVLine(cx - wx, tvY - 2 - w, 3 + w, waveCol);
+                s->drawFastVLine(cx + wx, tvY - 2 - w, 3 + w, waveCol);
+            }
+
             int innerW = std::max(6, tvW - 4);
             int innerH = std::max(4, tvH - 4);
             const uint16_t kBars[6] = {
@@ -1684,48 +2557,57 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
                 int bx1 = tvX + 2 + ((b + 1) * innerW) / 6;
                 s->fillRect(bx0, tvY + 2, std::max(1, bx1 - bx0), innerH, kBars[b]);
             }
-            int scanY = tvY + 2 + static_cast<int>((elapsedMs / 70U) % innerH);
+            int scanY = tvY + 2 + static_cast<int>((elapsedMs / 80U) % innerH);
             s->drawFastHLine(tvX + 2, scanY, innerW, 0xFFFF);
             break;
         }
         case ShowcaseDomainId::Anime:
         default: {
-            // 4. Anime Shuriken / Mecha Energy Core + Speed-Lines + Floating Sakura Petals
-            uint16_t lineCol = s->color565(70, 30, 90);
-            for (int i = 0; i < 8; ++i) {
-                int ly = 5 + (i * std::max(8, mH - 10)) / 8;
-                int len = 8 + (i * 5) % 14;
-                int lx = std::max(0, mW - static_cast<int>((elapsedMs / 12U + i * 19U) % (mW + len)) - len);
-                s->drawFastHLine(lx, ly, std::min(len, mW - lx), lineCol);
+            // 4. Centered Anime Shuriken / Energy Core + Middle-Band Speed-Lines + Sakura Petals
+            uint16_t lineCol = s->color565(65, 28, 85);
+            for (int i = 0; i < 6; ++i) {
+                int ly = midTop + 1 + (i * std::max(4, midH - 2)) / 6;
+                int len = 8 + (i * 5) % 12;
+                int lx = std::max(4, mW - 4 - static_cast<int>((elapsedMs / 14U + i * 21U) % static_cast<uint32_t>(std::max(8, mW - 8))) - len);
+                if (lx + len > mW - 4) len = (mW - 4) - lx;
+                if (len > 0) s->drawFastHLine(lx, ly, len, lineCol);
             }
-            int sx = 14;
-            int sy = mH / 2;
             int arm = (mH >= 64) ? 7 : 5;
             uint16_t cyanCol = s->color565(0, 229, 255);
             uint16_t pinkCol = s->color565(255, 64, 129);
             if ((frameStep & 1U) == 0U) {
-                s->drawFastHLine(sx - arm, sy, arm * 2 + 1, cyanCol);
-                s->drawFastVLine(sx, sy - arm, arm * 2 + 1, cyanCol);
-                s->drawLine(sx - 3, sy - 3, sx + 3, sy + 3, pinkCol);
-                s->drawLine(sx - 3, sy + 3, sx + 3, sy - 3, pinkCol);
+                s->drawFastHLine(cx - arm, midCy, arm * 2 + 1, cyanCol);
+                s->drawFastVLine(cx, midCy - arm, arm * 2 + 1, cyanCol);
+                s->drawLine(cx - 3, midCy - 3, cx + 3, midCy + 3, pinkCol);
+                s->drawLine(cx - 3, midCy + 3, cx + 3, midCy - 3, pinkCol);
             } else {
-                s->drawLine(sx - arm, sy - arm, sx + arm, sy + arm, cyanCol);
-                s->drawLine(sx - arm, sy + arm, sx + arm, sy - arm, cyanCol);
-                s->drawFastHLine(sx - 3, sy, 7, pinkCol);
-                s->drawFastVLine(sx, sy - 3, 7, pinkCol);
+                s->drawLine(cx - arm, midCy - arm, cx + arm, midCy + arm, cyanCol);
+                s->drawLine(cx - arm, midCy + arm, cx + arm, midCy - arm, cyanCol);
+                s->drawFastHLine(cx - 3, midCy, 7, pinkCol);
+                s->drawFastVLine(cx, midCy - 3, 7, pinkCol);
             }
-            s->fillCircle(sx, sy, 1, 0xFFFF);
+            s->fillCircle(cx, midCy, 1, 0xFFFF);
             uint16_t sakuraCol = s->color565(255, 130, 190);
-            for (int p = 0; p < 6; ++p) {
-                int px = static_cast<int>((28U + p * 17U + elapsedMs / 40U) % std::max(1, mW));
-                int py = 4 + static_cast<int>((p * 9U + elapsedMs / 80U) % std::max(1, mH - 6));
+            for (int p = 0; p < 5; ++p) {
+                int px = 8 + static_cast<int>((p * 23U + elapsedMs / 45U) % static_cast<uint32_t>(std::max(8, mW - 16)));
+                int py = midTop + 1 + static_cast<int>((p * 5U + elapsedMs / 95U) % static_cast<uint32_t>(std::max(3, midH - 3)));
                 s->fillRect(px, py, 2, 2, sakuraCol);
             }
             break;
         }
     }
 
-    // Header badge pill + localized waiting message (matching ArcadeMatrix_RPi waiting screen layout)
+    // Top centered header pill (3x5 font)
+    const char* badge = domainBadgeLabel();
+    int badgeGlyphs = static_cast<int>(countUtf8Glyphs(badge));
+    int badgeTextW = std::max(0, badgeGlyphs * 4 - 1);
+    int pillW = badgeTextW + 6;
+    int pillX = std::max(1, (mW - pillW) / 2);
+    s->fillRoundRect(pillX, 1, pillW, 7, 2, s->color565(18, 22, 34));
+    s->drawRoundRect(pillX, 1, pillW, 7, 2, accent);
+    drawClippedText3x5(s, badge, pillX + 3, 2, 0, mW, accent);
+
+    // Bottom steady centered status label (zero blink, zero unnecessary scroll)
     ConfigSnapshotGuard guard = config.acquireSnapshot();
     Lang sysLang = I18n::parseLang(guard.get().system.lang.c_str());
     uint8_t st = m_statusState.load(std::memory_order_relaxed);
@@ -1735,28 +2617,42 @@ void MediaShowcaseBase::drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, 
             ? I18n::getShowcaseWarmingLabel(sysLang)
             : I18n::getShowcaseOfflineLabel(sysLang);
 
-    const char* badge = domainBadgeLabel();
-    int badgeW = static_cast<int>(strlen(badge)) * 6 + 4;
-    int minContentX = 30;
-    int bx = std::max(minContentX, minContentX + ((mW - minContentX - badgeW) / 2));
-    s->fillRoundRect(bx, 1, badgeW, 9, 2, s->color565(18, 22, 34));
-    s->drawRoundRect(bx, 1, badgeW, 9, 2, accent);
-    s->setTextSize(1);
-    s->setTextColor(accent);
-    s->setCursor(bx + 2, 2);
-    s->print(badge);
+    char stemBuf[48];
+    copySafeStr(stemBuf, sizeof(stemBuf), statusText);
+    size_t rawLen = strlen(stemBuf);
+    bool hasEllipsis = false;
+    while (rawLen > 0 && stemBuf[rawLen - 1] == '.') {
+        stemBuf[--rawLen] = '\0';
+        hasEllipsis = true;
+    }
 
-    if (blinkOn) {
-        int textY = (mH >= 64) ? (mH - 12) : (mH - 9);
-        drawScrollingLine(s, statusText, minContentX, mW - 2, textY, 0xFFFF, elapsedMs);
-    } else {
-        // Subtle 3-dot animated progress pulse during blink off-phase so panel never feels frozen
-        int dotBaseX = minContentX + ((mW - minContentX) / 2) - 6;
-        int dotY = (mH >= 64) ? (mH - 9) : (mH - 6);
-        int activeDot = static_cast<int>((elapsedMs / 250U) % 3U);
-        for (int d = 0; d < 3; ++d) {
-            s->fillRect(dotBaseX + d * 5, dotY, 2, 2, (d == activeDot) ? accent : s->color565(60, 75, 95));
+    int stemGlyphs = static_cast<int>(countUtf8Glyphs(stemBuf));
+    int totalSlots = stemGlyphs + (hasEllipsis ? 3 : 0);
+    int totalTextW = std::max(0, totalSlots * 4 - 1);
+    uint16_t steadyLabelCol = s->color565(225, 232, 242);
+
+    if (totalTextW <= mW - 4) {
+        int tx = (mW - totalTextW) / 2;
+        drawClippedText3x5(s, stemBuf, tx, textY, 2, mW - 2, steadyLabelCol);
+        if (hasEllipsis) {
+            int dotBaseX = tx + stemGlyphs * 4;
+            int litDots = 1 + static_cast<int>((elapsedMs / 400U) % 3U);
+            uint16_t dimDotCol = s->color565(55, 65, 85);
+            for (int d = 0; d < 3; ++d) {
+                int dx = dotBaseX + d * 4 + 1;
+                if (dx >= 2 && dx < mW - 2) {
+                    s->drawPixel(dx, textY + 4, (d < litDots) ? accent : dimDotCol);
+                }
+            }
         }
+    } else {
+        // Fallback smooth non-blinking 3x5 scroll only on ultra-narrow (< 112 px) panels
+        int availW = std::max(8, mW - 4);
+        int fullW = static_cast<int>(countUtf8Glyphs(statusText)) * 4;
+        int scrollRange = std::max(1, fullW - availW + 8);
+        int step = static_cast<int>((elapsedMs / 55U) % static_cast<uint32_t>(scrollRange + 20));
+        int off = std::min(scrollRange, std::max(0, step - 10));
+        drawClippedText3x5(s, statusText, 2 - off, textY, 2, mW - 2, steadyLabelCol);
     }
 }
 
@@ -1773,26 +2669,23 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
 
     uint32_t cardElapsedMs = (millis() >= m_phaseStartedAtMs) ? (millis() - m_phaseStartedAtMs) : elapsedMs;
     uint32_t speedPx = synopsisPxPerSec(cfg.textScrollSpeed);
+    uint16_t sepCol = s->color565(28, 36, 52);
+    uint16_t yearCol = s->color565(165, 180, 200);
+    uint16_t synCol = s->color565(205, 214, 226);
 
     // 1. Vertical TATE Mode (e.g. 64x128, 64x256, 32x128)
     if (mH > mW) {
-        s->fillRect(0, 0, mW, 9, 0x0000);
-        s->setTextSize(1);
-        s->setTextColor(card.badgeColor565);
-        s->setCursor(2, 1);
-        s->print(card.badge);
+        drawClippedText3x5(s, card.badge, 2, 2, 2, mW - 2, card.badgeColor565);
         if (card.rating[0] != '\0') {
-            int rw = static_cast<int>(strlen(card.rating)) * 6;
-            s->setTextColor(0xFFE0);
-            s->setCursor(std::max(2, mW - rw - 2), 1);
-            s->print(card.rating);
+            int rw = static_cast<int>(countUtf8Glyphs(card.rating)) * 4;
+            drawClippedText3x5(s, card.rating, std::max(2, mW - rw - 2), 2, 2, mW - 2, 0xFFE0);
         }
-        int posterBottom = 11;
+        int posterBottom = 10;
         if (cfg.showPoster) {
             int pw = static_cast<int>(card.posterW);
             int ph = static_cast<int>(card.posterH);
             int px = std::max(0, (mW - pw) / 2);
-            int py = 11;
+            int py = 10;
             if (card.hasPoster && m_poster565) {
                 s->blit565(m_poster565, px, py, pw, ph);
             } else {
@@ -1803,9 +2696,9 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
         drawScrollingLine(s, card.title, 2, mW - 2, posterBottom, 0xFFFF, cardElapsedMs);
         int sepY = posterBottom + 10;
         if (sepY < mH - 10) {
-            s->drawFastHLine(2, sepY, mW - 4, s->color565(35, 45, 65));
+            s->drawFastHLine(2, sepY, mW - 4, sepCol);
             if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-                drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, sepY + 3, 0xAD75, cardElapsedMs, speedPx);
+                drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, sepY + 3, synCol, cardElapsedMs, speedPx);
             }
         }
         return;
@@ -1813,135 +2706,135 @@ void MediaShowcaseBase::drawCardPhase(IDrawingSurface* s, const CardSnapshot& ca
 
     // 2. Square Panel (e.g. 64x64)
     if (mW == mH) {
-        int rightX = cfg.showPoster ? 34 : 2;
+        int rightX = cfg.showPoster ? 35 : 2;
         if (cfg.showPoster) {
             if (card.hasPoster && m_poster565) {
                 s->blit565(m_poster565, 0, 0, 32, 32);
             } else {
                 s->drawRect(0, 0, 32, 32, card.badgeColor565);
             }
+            s->drawFastVLine(33, 1, 30, sepCol);
         }
-        s->setTextSize(1);
-        s->setTextColor(card.badgeColor565);
-        s->setCursor(rightX, 2);
-        s->print(card.badge);
+        drawClippedText3x5(s, card.badge, rightX, 3, rightX, mW - 2, card.badgeColor565);
         if (card.year[0] != '\0') {
-            s->setTextColor(s->color565(160, 175, 195));
-            s->setCursor(rightX, 12);
-            s->print(card.year);
+            drawClippedText3x5(s, card.year, rightX, 13, rightX, mW - 2, yearCol);
         }
         if (card.rating[0] != '\0') {
-            s->setTextColor(0xFFE0);
-            s->setCursor(rightX, 22);
-            s->print(card.rating);
+            drawClippedText3x5(s, card.rating, rightX, 23, rightX, mW - 2, 0xFFE0);
         }
         drawScrollingLine(s, card.title, 2, mW - 2, 35, 0xFFFF, cardElapsedMs);
-        s->drawFastHLine(2, 45, mW - 4, s->color565(35, 45, 65));
+        s->drawFastHLine(2, 45, mW - 4, sepCol);
         if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-            drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, 49, 0xAD75, cardElapsedMs, speedPx);
+            drawSinglePassSynopsis(s, card.synopsis, 2, mW - 2, 49, synCol, cardElapsedMs, speedPx);
         }
         return;
     }
 
-    // 3. Tall / XL Landscape (e.g. 128x64, 256x64) -> 48x64 mini-jacket + spacious metadata
+    // 3. Tall / XL Landscape (e.g. 128x64, 256x64 on ESP32-S3 PSRAM) -> 48x64 mini-jacket + spacious metadata
     if (mH >= 64) {
-        int textX = cfg.showPoster ? (static_cast<int>(card.posterW) + 3) : 3;
-        drawScrollingLine(s, card.title, textX, mW - 2, 13, 0xFFFF, cardElapsedMs);
-        s->drawFastHLine(textX, 34, mW - textX - 2, s->color565(35, 45, 65));
-        if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-            drawSinglePassSynopsis(s, card.synopsis, textX, mW - 2, 42, 0xAD75, cardElapsedMs, speedPx);
-        }
+        int pw = static_cast<int>(card.posterW);
+        int ph = static_cast<int>(card.posterH);
+        int textX = cfg.showPoster ? (pw + 4) : 3;
+        int maxX = mW - 2;
+
         if (cfg.showPoster) {
-            s->fillRect(0, 0, static_cast<int>(card.posterW) + 2, mH, 0x0000);
             if (card.hasPoster && m_poster565) {
-                s->blit565(m_poster565, 0, 0, card.posterW, card.posterH);
+                s->blit565(m_poster565, 0, 0, pw, ph);
             } else {
-                s->drawRect(0, 0, card.posterW, card.posterH, card.badgeColor565);
+                s->fillRoundRect(0, 0, pw, ph, 3, s->color565(16, 20, 32));
+                s->drawRoundRect(0, 0, pw, ph, 3, card.badgeColor565);
             }
+            s->drawFastVLine(pw + 1, 2, mH - 4, sepCol);
         }
-        s->fillRect(textX, 0, mW - textX, 11, 0x0000);
+
         int curX = textX;
         if (card.badge[0] != '\0') {
-            int bw = static_cast<int>(strlen(card.badge)) * 6 + 4;
-            s->fillRoundRect(curX, 1, bw, 9, 2, s->color565(20, 24, 36));
-            s->drawRoundRect(curX, 1, bw, 9, 2, card.badgeColor565);
-            s->setTextSize(1);
-            s->setTextColor(card.badgeColor565);
-            s->setCursor(curX + 2, 2);
-            s->print(card.badge);
-            curX += bw + 4;
-        }
-        if (card.year[0] != '\0') {
-            s->setTextColor(s->color565(160, 175, 195));
-            s->setCursor(textX, 24);
-            s->print(card.year);
+            int bw = static_cast<int>(countUtf8Glyphs(card.badge)) * 6 + 4;
+            int drawBw = std::min(bw, std::max(8, maxX - curX));
+            s->fillRoundRect(curX, 1, drawBw, 9, 2, s->color565(20, 24, 36));
+            s->drawRoundRect(curX, 1, drawBw, 9, 2, card.badgeColor565);
+            drawClippedText5x7(s, card.badge, curX + 2, 2, curX + 2, curX + drawBw - 1, card.badgeColor565);
+            curX += drawBw + 4;
         }
         if (card.rating[0] != '\0') {
-            int rw = static_cast<int>(strlen(card.rating)) * 6;
-            s->setTextColor(0xFFE0);
-            s->setCursor(std::max(curX, mW - rw - 2), 2);
-            s->print(card.rating);
+            int rw = static_cast<int>(countUtf8Glyphs(card.rating)) * 6;
+            int rx = std::max(curX, maxX - rw);
+            if (rx < maxX) {
+                drawClippedText5x7(s, card.rating, rx, 2, curX, maxX, 0xFFE0);
+            }
+        }
+        drawScrollingLine(s, card.title, textX, maxX, 14, 0xFFFF, cardElapsedMs);
+        if (card.year[0] != '\0') {
+            drawClippedText5x7(s, card.year, textX, 25, textX, maxX, yearCol);
+        }
+        s->drawFastHLine(textX, 36, std::max(1, maxX - textX), sepCol);
+        if (cfg.showSynopsis && card.synopsis[0] != '\0') {
+            drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 43, synCol, cardElapsedMs, speedPx);
         }
         return;
     }
 
-    // 4. Standard Landscape (128x32)
-    int textX = cfg.showPoster ? 34 : 3;
+    // 4. Standard Landscape (128x32):
+    // - Left 32x32 poster (`x = 0..31`), 1px gutter (`x = 32`), divider (`x = 33`), 1px gutter (`x = 34`)
+    // - Strict per-column clipping inside `[textX, maxX)` (`[35, 126)`) guarantees text NEVER touches the poster!
+    int textX = cfg.showPoster ? 35 : 3;
+    int maxX = mW - 2;
 
-    // Middle Line: Title
-    drawScrollingLine(s, card.title, textX, mW - 2, 11, 0xFFFF, cardElapsedMs);
-
-    // Bottom Line: Complete single-pass synopsis
-    if (cfg.showSynopsis && card.synopsis[0] != '\0') {
-        drawSinglePassSynopsis(s, card.synopsis, textX, mW - 2, 22, 0xAD75, cardElapsedMs, speedPx);
-    }
-
-    // Occlude left poster region so scrolling text never bleeds into the 32x32 artwork
     if (cfg.showPoster) {
-        s->fillRect(0, 0, 33, 32, 0x0000);
         if (card.hasPoster && m_poster565) {
             s->blit565(m_poster565, 0, 0, 32, 32);
         } else {
-            s->fillRoundRect(0, 0, 31, 31, 3, s->color565(16, 20, 32));
-            s->drawRoundRect(0, 0, 31, 31, 3, card.badgeColor565);
-            s->setTextSize(1);
-            s->setTextColor(card.badgeColor565);
-            s->setCursor(4, 12);
-            char shortBadge[5];
+            s->fillRoundRect(0, 0, 32, 32, 3, s->color565(16, 20, 32));
+            s->drawRoundRect(0, 0, 32, 32, 3, card.badgeColor565);
+            char shortBadge[7];
             copySafeStr(shortBadge, sizeof(shortBadge), card.badge);
-            s->print(shortBadge);
+            int sbW = std::max(0, static_cast<int>(countUtf8Glyphs(shortBadge)) * 4 - 1);
+            int sbX = std::max(2, (32 - sbW) / 2);
+            drawClippedText3x5(s, shortBadge, sbX, 13, 2, 30, card.badgeColor565);
         }
+        s->drawFastVLine(33, 1, 30, sepCol);
     }
 
-    // Top Header Bar (Badge + Year + Rating)
-    s->fillRect(textX, 0, mW - textX, 10, 0x0000);
+    // Top Header Bar (y = 1..7): Crisp 3x5 Badge Pill + Year + Right-Aligned Rating
     int curX = textX;
     if (card.badge[0] != '\0') {
-        int bw = static_cast<int>(strlen(card.badge)) * 6 + 4;
-        s->fillRoundRect(curX, 0, bw, 9, 2, s->color565(20, 24, 36));
-        s->drawRoundRect(curX, 0, bw, 9, 2, card.badgeColor565);
-        s->setTextSize(1);
-        s->setTextColor(card.badgeColor565);
-        s->setCursor(curX + 2, 1);
-        s->print(card.badge);
-        curX += bw + 3;
+        int bGlyphs = static_cast<int>(countUtf8Glyphs(card.badge));
+        int bTextW = std::max(0, bGlyphs * 4 - 1);
+        int pillW = std::min(bTextW + 6, std::max(8, maxX - curX));
+        s->fillRoundRect(curX, 1, pillW, 7, 2, s->color565(20, 24, 36));
+        s->drawRoundRect(curX, 1, pillW, 7, 2, card.badgeColor565);
+        drawClippedText3x5(s, card.badge, curX + 3, 2, curX + 2, curX + pillW - 1, card.badgeColor565);
+        curX += pillW + 4;
     }
 
-    if (card.year[0] != '\0' && curX + 24 <= mW) {
-        s->setTextColor(s->color565(160, 175, 195));
-        s->setCursor(curX, 1);
-        s->print(card.year);
-        curX += static_cast<int>(strlen(card.year)) * 6 + 3;
-    }
-
+    int ratingStartX = maxX;
     if (card.rating[0] != '\0') {
-        int rw = static_cast<int>(strlen(card.rating)) * 6;
-        int rx = mW - rw - 2;
+        int rGlyphs = static_cast<int>(countUtf8Glyphs(card.rating));
+        int rw = std::max(0, rGlyphs * 4 - 1);
+        int rx = maxX - rw;
         if (rx >= curX) {
-            s->setTextColor(0xFFE0);
-            s->setCursor(rx, 1);
-            s->print(card.rating);
+            drawClippedText3x5(s, card.rating, rx, 2, curX, maxX, 0xFFE0);
+            ratingStartX = rx - 3;
         }
+    }
+
+    if (card.year[0] != '\0') {
+        int yGlyphs = static_cast<int>(countUtf8Glyphs(card.year));
+        int yw = std::max(0, yGlyphs * 4 - 1);
+        if (curX + yw <= ratingStartX) {
+            drawClippedText3x5(s, card.year, curX, 2, curX, ratingStartX, yearCol);
+        }
+    }
+
+    // Middle Row (y = 10..17): Full 5x7 UTF-8 Accented Title strictly clipped to [textX, maxX)
+    drawScrollingLine(s, card.title, textX, maxX, 10, 0xFFFF, cardElapsedMs);
+
+    // Subtle Horizontal Divider (y = 19)
+    s->drawFastHLine(textX, 19, std::max(1, maxX - textX), sepCol);
+
+    // Bottom Row (y = 22..29): Full 5x7 UTF-8 Accented Synopsis strictly clipped to [textX, maxX)
+    if (cfg.showSynopsis && card.synopsis[0] != '\0') {
+        drawSinglePassSynopsis(s, card.synopsis, textX, maxX, 22, synCol, cardElapsedMs, speedPx);
     }
 }
 
@@ -1989,8 +2882,8 @@ EngineDescriptor RetroGamesEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 24000;
-    desc.requirements.internalContiguousBytes = 12000;
+    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
@@ -2029,8 +2922,8 @@ EngineDescriptor MovieShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 24000;
-    desc.requirements.internalContiguousBytes = 12000;
+    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
@@ -2069,8 +2962,8 @@ EngineDescriptor SeriesShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 24000;
-    desc.requirements.internalContiguousBytes = 12000;
+    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
@@ -2109,8 +3002,8 @@ EngineDescriptor AnimeShowcaseEngineDescriptorHandler::getDescriptor() const {
     desc.requirements.targetFps = 60;
     desc.requirements.prefersDoubleBuffer = true;
     desc.requirements.supportsSingleBuffer = true;
-    desc.requirements.internalPersistentBytes = 24000;
-    desc.requirements.internalContiguousBytes = 12000;
+    desc.requirements.internalPersistentBytes = 16000;
+    desc.requirements.internalContiguousBytes = 8192;
     desc.requirements.psramBytes = 0;
 
     desc.schema.fields = {
