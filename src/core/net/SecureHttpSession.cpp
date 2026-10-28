@@ -110,7 +110,7 @@ public:
     }
 
     Stream* getStream() override {
-        return _http.getStreamPtr();
+        return _http.connected() ? _http.getStreamPtr() : nullptr;
     }
 
     int getSize() override {
@@ -346,7 +346,9 @@ SecureHttpResponse SecureHttpSession::get(const String& path,
     _state = SessionState::ResponseActive;
     _hasActiveResponse = true;
 
-    Stream* streamPtr = _transport->getStream();
+    Stream* streamPtr = (err == TransportError::None || _transport->connected())
+                        ? _transport->getStream()
+                        : nullptr;
     size_t len = (size_t)max(0, _transport->getSize());
 
     // Invariant N3: NO intermediate response-body buffer.
@@ -409,7 +411,9 @@ SecureHttpResponse SecureHttpSession::post(const String& path, const String& con
     _state = SessionState::ResponseActive;
     _hasActiveResponse = true;
 
-    Stream* streamPtr = _transport->getStream();
+    Stream* streamPtr = (err == TransportError::None || _transport->connected())
+                        ? _transport->getStream()
+                        : nullptr;
     size_t len = (size_t)max(0, _transport->getSize());
 
     return SecureHttpResponse(this, statusCode, streamPtr, len, durationMs, err);
@@ -436,8 +440,8 @@ void SecureHttpSession::finalizeCurrentResponse() {
     }
 
     // Drain remaining unread stream bytes to keep TCP pipe clean for keepalive
-    Stream* streamPtr = _transport->getStream();
-    if (streamPtr && _transport->connected()) {
+    Stream* streamPtr = _transport->connected() ? _transport->getStream() : nullptr;
+    if (streamPtr) {
         while (streamPtr->available() > 0 && !_aborted.load(std::memory_order_acquire)) {
             streamPtr->read();
         }

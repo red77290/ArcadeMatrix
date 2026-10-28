@@ -713,7 +713,45 @@ size_t encodeMqttRemainingLength(uint8_t* out, size_t remLen) {
     return idx;
 }
 
-bool sendMqttPublishPacket(WiFiClient& cli, const char* topic, const char* payload, bool retain) {
+// Writes all `len` bytes to `cli`, retrying cleanly across transient LwIP `EAGAIN` (`errno: 11`)
+// TCP send-buffer backpressure instead of dropping control packets silently.
+bool writeAllToClient(
+    WiFiClient& cli,
+    const uint8_t* data,
+    size_t len,
+    const std::atomic<bool>& wantActive,
+    uint32_t timeoutMs = 1200
+) {
+    if (!data || len == 0) return true;
+    size_t sent = 0;
+    uint32_t lastProgress = millis();
+    while (sent < len) {
+        if (!wantActive.load(std::memory_order_acquire) || !cli.connected()) {
+            return false;
+        }
+        size_t n = cli.write(data + sent, len - sent);
+        if (n > 0) {
+            sent += n;
+            lastProgress = millis();
+        } else {
+            if ((millis() - lastProgress) >= timeoutMs) {
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+    return true;
+}
+
+bool sendMqttPublishPacket(
+    WiFiClient& cli,
+    const char* topic,
+    const char* payload,
+    bool retain,
+    const std::atomic<bool>& wantActive,
+    char* ioScratch = nullptr,
+    size_t scratchCap = 0
+) {
     if (!cli.connected() || !topic || !payload) return false;
     uint16_t tLen = static_cast<uint16_t>(strlen(topic));
     size_t pLen = strlen(payload);
@@ -721,61 +759,108 @@ bool sendMqttPublishPacket(WiFiClient& cli, const char* topic, const char* paylo
     uint8_t hdr[8];
     hdr[0] = static_cast<uint8_t>(0x30 | (retain ? 0x01 : 0x00));
     size_t rlBytes = encodeMqttRemainingLength(hdr + 1, remLen);
-    cli.write(hdr, 1 + rlBytes);
-    uint8_t tLenBe[2] = {static_cast<uint8_t>((tLen >> 8) & 0xFF), static_cast<uint8_t>(tLen & 0xFF)};
-    cli.write(tLenBe, 2);
-    cli.write(reinterpret_cast<const uint8_t*>(topic), tLen);
-    if (pLen > 0) {
-        cli.write(reinterpret_cast<const uint8_t*>(payload), pLen);
+    size_t hdrTotal = 1 + rlBytes + 2 + tLen;
+    size_t totalLen = hdrTotal + pLen;
+
+    // Coalesce MQTT fixed header + topic + payload into a single TCP segment (1 LwIP pbuf)
+    if (ioScratch != nullptr && totalLen <= scratchCap) {
+        if (pLen > 0) {
+            memmove(ioScratch + hdrTotal, payload, pLen);
+        }
+        memcpy(ioScratch, hdr, 1 + rlBytes);
+        ioScratch[1 + rlBytes] = static_cast<uint8_t>((tLen >> 8) & 0xFF);
+        ioScratch[1 + rlBytes + 1] = static_cast<uint8_t>(tLen & 0xFF);
+        memcpy(ioScratch + 1 + rlBytes + 2, topic, tLen);
+        return writeAllToClient(cli, reinterpret_cast<const uint8_t*>(ioScratch), totalLen, wantActive);
     }
-    return true;
+
+    uint8_t hdrBuf[136];
+    if (hdrTotal <= sizeof(hdrBuf)) {
+        memcpy(hdrBuf, hdr, 1 + rlBytes);
+        hdrBuf[1 + rlBytes] = static_cast<uint8_t>((tLen >> 8) & 0xFF);
+        hdrBuf[1 + rlBytes + 1] = static_cast<uint8_t>(tLen & 0xFF);
+        memcpy(hdrBuf + 1 + rlBytes + 2, topic, tLen);
+        if (!writeAllToClient(cli, hdrBuf, hdrTotal, wantActive)) return false;
+    } else {
+        uint8_t tLenBe[2] = {static_cast<uint8_t>((tLen >> 8) & 0xFF), static_cast<uint8_t>(tLen & 0xFF)};
+        if (!writeAllToClient(cli, hdr, 1 + rlBytes, wantActive)) return false;
+        if (!writeAllToClient(cli, tLenBe, 2, wantActive)) return false;
+        if (!writeAllToClient(cli, reinterpret_cast<const uint8_t*>(topic), tLen, wantActive)) return false;
+    }
+    return (pLen == 0) || writeAllToClient(cli, reinterpret_cast<const uint8_t*>(payload), pLen, wantActive);
 }
 
-bool sendMqttSubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic) {
+bool sendMqttSubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
     if (!cli.connected() || !topic) return false;
     uint16_t tLen = static_cast<uint16_t>(strlen(topic));
     size_t remLen = 2 + 2 + tLen + 1;
-    uint8_t hdr[8];
-    hdr[0] = 0x82;
-    size_t rlBytes = encodeMqttRemainingLength(hdr + 1, remLen);
-    cli.write(hdr, 1 + rlBytes);
-    uint8_t pidBe[2] = {static_cast<uint8_t>((pktId >> 8) & 0xFF), static_cast<uint8_t>(pktId & 0xFF)};
-    cli.write(pidBe, 2);
-    uint8_t tLenBe[2] = {static_cast<uint8_t>((tLen >> 8) & 0xFF), static_cast<uint8_t>(tLen & 0xFF)};
-    cli.write(tLenBe, 2);
-    cli.write(reinterpret_cast<const uint8_t*>(topic), tLen);
-    uint8_t qos = 0;
-    cli.write(&qos, 1);
-    return true;
+    uint8_t pkt[144];
+    pkt[0] = 0x82;
+    size_t rlBytes = encodeMqttRemainingLength(pkt + 1, remLen);
+    size_t totalLen = 1 + rlBytes + remLen;
+    if (totalLen > sizeof(pkt)) return false;
+    size_t off = 1 + rlBytes;
+    pkt[off++] = static_cast<uint8_t>((pktId >> 8) & 0xFF);
+    pkt[off++] = static_cast<uint8_t>(pktId & 0xFF);
+    pkt[off++] = static_cast<uint8_t>((tLen >> 8) & 0xFF);
+    pkt[off++] = static_cast<uint8_t>(tLen & 0xFF);
+    memcpy(pkt + off, topic, tLen);
+    off += tLen;
+    pkt[off++] = 0; // QoS 0
+    return writeAllToClient(cli, pkt, off, wantActive);
 }
 
-bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId) {
+bool sendMqttUnsubscribePacket(WiFiClient& cli, uint16_t pktId, const char* topic, const std::atomic<bool>& wantActive) {
+    if (!cli.connected() || !topic) return false;
+    uint16_t tLen = static_cast<uint16_t>(strlen(topic));
+    size_t remLen = 2 + 2 + tLen;
+    uint8_t pkt[144];
+    pkt[0] = 0xA2; // MQTT 3.1.1 §3.10 UNSUBSCRIBE (reserved flags 0010 mandatory)
+    size_t rlBytes = encodeMqttRemainingLength(pkt + 1, remLen);
+    size_t totalLen = 1 + rlBytes + remLen;
+    if (totalLen > sizeof(pkt)) return false;
+    size_t off = 1 + rlBytes;
+    pkt[off++] = static_cast<uint8_t>((pktId >> 8) & 0xFF);
+    pkt[off++] = static_cast<uint8_t>(pktId & 0xFF);
+    pkt[off++] = static_cast<uint8_t>((tLen >> 8) & 0xFF);
+    pkt[off++] = static_cast<uint8_t>(tLen & 0xFF);
+    memcpy(pkt + off, topic, tLen);
+    off += tLen;
+    return writeAllToClient(cli, pkt, off, wantActive);
+}
+
+bool sendMqttConnectPacket(WiFiClient& cli, const char* clientId, const std::atomic<bool>& wantActive) {
+    if (!clientId) return false;
     uint16_t cidLen = static_cast<uint16_t>(strlen(clientId));
     size_t remLen = 10 + 2 + cidLen;
-    uint8_t hdr[8];
-    hdr[0] = 0x10;
-    size_t rlBytes = encodeMqttRemainingLength(hdr + 1, remLen);
-    cli.write(hdr, 1 + rlBytes);
+    uint8_t pkt[128];
+    pkt[0] = 0x10;
+    size_t rlBytes = encodeMqttRemainingLength(pkt + 1, remLen);
+    size_t totalLen = 1 + rlBytes + remLen;
+    if (totalLen > sizeof(pkt)) return false;
     // Keepalive = 60 seconds (0x00, 0x3C) paired with active 10s PINGREQ heartbeats
     const uint8_t varHdr[10] = {0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C};
-    cli.write(varHdr, 10);
-    uint8_t cidBe[2] = {static_cast<uint8_t>((cidLen >> 8) & 0xFF), static_cast<uint8_t>(cidLen & 0xFF)};
-    cli.write(cidBe, 2);
-    cli.write(reinterpret_cast<const uint8_t*>(clientId), cidLen);
-    return true;
+    size_t off = 1 + rlBytes;
+    memcpy(pkt + off, varHdr, sizeof(varHdr));
+    off += sizeof(varHdr);
+    pkt[off++] = static_cast<uint8_t>((cidLen >> 8) & 0xFF);
+    pkt[off++] = static_cast<uint8_t>(cidLen & 0xFF);
+    memcpy(pkt + off, clientId, cidLen);
+    off += cidLen;
+    return writeAllToClient(cli, pkt, off, wantActive);
 }
 
-void sendMqttPingReq(WiFiClient& cli) {
+void sendMqttPingReq(WiFiClient& cli, const std::atomic<bool>& wantActive) {
     if (cli.connected()) {
         const uint8_t pingPkt[2] = {0xC0, 0x00};
-        cli.write(pingPkt, 2);
+        writeAllToClient(cli, pingPkt, sizeof(pingPkt), wantActive, 400);
     }
 }
 
-void sendMqttDisconnectAndStop(WiFiClient& cli) {
+void sendMqttDisconnectAndStop(WiFiClient& cli, const std::atomic<bool>& wantActive) {
     if (cli.connected()) {
         const uint8_t discPkt[2] = {0xE0, 0x00};
-        cli.write(discPkt, 2);
+        writeAllToClient(cli, discPkt, sizeof(discPkt), wantActive, 300);
     }
     cli.stop();
 }
@@ -787,7 +872,7 @@ int openNonBlockingUdpSocket(uint16_t localPort, bool hasPsram) {
     int reuse = 1;
     lwip_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_RCVBUF
-    int rcvBuf = hasPsram ? 65536 : 16384;
+    int rcvBuf = hasPsram ? 65536 : 12288;
     lwip_setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvBuf, sizeof(rcvBuf));
 #else
     (void)hasPsram;
@@ -833,42 +918,56 @@ void pollMqttControlNonBlocking(
         uint32_t mult = 1;
         for (int i = 0; i < 4; ++i) {
             uint8_t b = 0;
-            if (!readExactFromStream(mqttCli, &b, 1, wantActive, 300)) return;
+            if (!readExactFromStream(mqttCli, &b, 1, wantActive, 500)) {
+                mqttCli.stop();
+                return;
+            }
             remLen += static_cast<uint32_t>(b & 0x7F) * mult;
             mult *= 128;
             if ((b & 0x80) == 0) break;
         }
         if ((fixedHdr & 0xF0) != 0x30 || remLen < 2 || remLen > 384U) {
-            if (remLen > 0) {
-                drainFromStream(mqttCli, remLen, wantActive, 500);
+            if (remLen > 0 && !drainFromStream(mqttCli, remLen, wantActive, 1500)) {
+                mqttCli.stop();
+                return;
             }
             continue;
         }
         uint8_t tLenBe[2];
-        if (!readExactFromStream(mqttCli, tLenBe, 2, wantActive, 300)) return;
+        if (!readExactFromStream(mqttCli, tLenBe, 2, wantActive, 500)) {
+            mqttCli.stop();
+            return;
+        }
         uint16_t tLen = static_cast<uint16_t>((tLenBe[0] << 8) | tLenBe[1]);
         if (static_cast<uint32_t>(tLen) + 2U > remLen) {
-            drainFromStream(mqttCli, remLen - 2U, wantActive, 300);
+            if (!drainFromStream(mqttCli, remLen - 2U, wantActive, 1000)) {
+                mqttCli.stop();
+                return;
+            }
             continue;
         }
         char topicBuf[96] = "";
         size_t toReadT = (tLen < sizeof(topicBuf) - 1) ? tLen : (sizeof(topicBuf) - 1);
-        if (toReadT > 0) {
-            readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, wantActive, 300);
+        if (toReadT > 0 && !readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(topicBuf), toReadT, wantActive, 500)) {
+            mqttCli.stop();
+            return;
         }
         topicBuf[toReadT] = '\0';
-        if (tLen > toReadT) {
-            drainFromStream(mqttCli, tLen - toReadT, wantActive, 300);
+        if (tLen > toReadT && !drainFromStream(mqttCli, tLen - toReadT, wantActive, 500)) {
+            mqttCli.stop();
+            return;
         }
         size_t payloadLen = remLen - 2U - static_cast<size_t>(tLen);
         char msgBuf[256] = "";
         size_t toReadP = (payloadLen < sizeof(msgBuf) - 1) ? payloadLen : (sizeof(msgBuf) - 1);
-        if (toReadP > 0) {
-            readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(msgBuf), toReadP, wantActive, 300);
+        if (toReadP > 0 && !readExactFromStream(mqttCli, reinterpret_cast<uint8_t*>(msgBuf), toReadP, wantActive, 500)) {
+            mqttCli.stop();
+            return;
         }
         msgBuf[toReadP] = '\0';
-        if (payloadLen > toReadP) {
-            drainFromStream(mqttCli, payloadLen - toReadP, wantActive, 300);
+        if (payloadLen > toReadP && !drainFromStream(mqttCli, payloadLen - toReadP, wantActive, 1000)) {
+            mqttCli.stop();
+            return;
         }
         if (statusTopic && strcmp(topicBuf, statusTopic) == 0) {
             if (strstr(msgBuf, "\"online\":false") || strstr(msgBuf, "\"online\": false")) {
@@ -1332,6 +1431,15 @@ bool MediaShowcaseBase::isFinished() const {
     return false;
 }
 
+void MediaShowcaseBase::finishTurnItem() {
+    clearLiveCardState();
+    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
+    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
+        m_turnDone.store(true, std::memory_order_release);
+    }
+}
+
 void MediaShowcaseBase::startWorkerTask() {
     const ConfigSlot& cfg = m_cfg[m_cfgIdx.load(std::memory_order_acquire)];
     if (!cfg.enabled) {
@@ -1345,7 +1453,7 @@ void MediaShowcaseBase::startWorkerTask() {
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (m_taskAlive.load(std::memory_order_acquire)) return;
     m_taskAlive.store(true, std::memory_order_release);
-    uint32_t stackBytes = m_hasPsram ? 6144U : 5120U;
+    uint32_t stackBytes = m_hasPsram ? 8192U : 6656U;
     BaseType_t ok = xTaskCreatePinnedToCore(
         workerTaskEntry,
         "ShowcaseWkr",
@@ -1414,10 +1522,20 @@ void MediaShowcaseBase::runWorkerLoop() {
         net::ShowcaseDiscovery::formatClientId(domain, m_width, m_height, false, m_sessionId, sizeof(m_sessionId));
 
         bool handled = false;
+        char httpFallbackItemId[MAX_ITEM_ID_LEN] = "";
         if (strcasecmp(cfg.transportMode, "mqtt_udp") == 0) {
-            handled = runMqttUdpTurn(cfg, domain, reqLangBuf);
+            handled = runMqttUdpTurn(cfg, domain, reqLangBuf, httpFallbackItemId, sizeof(httpFallbackItemId));
         }
-        if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+        if (handled && httpFallbackItemId[0] != '\0') {
+            // Flat-stack HTTP DMDS fallback executed AFTER `runMqttUdpTurn()` freed its stack frame,
+            // MQTT TCP socket, and UDP socket. Uses `?purge=true` to uphold Consume-Once semantics.
+            if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
+                char fallbackPath[144];
+                snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=true", domain, httpFallbackItemId);
+                streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
+            }
+            finishTurnItem();
+        } else if (!handled && m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen) {
             runHttpPollTurn(cfg, domain, reqLangBuf);
         }
         if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) != startGen) {
@@ -1452,56 +1570,63 @@ bool MediaShowcaseBase::parseReadyPayloadInPlaceBuf(
     if (outItemId && itemIdCap > 0) outItemId[0] = '\0';
     if (!jsonBuf || jsonBuf[0] == '\0') return false;
 
-    // ArduinoJson v6 zero-copy mode: passing mutable `char*` modifies strings in-place
-    // inside `jsonBuf` without duplicating `poster_rgb565_b64` or `synopsis`, so a
-    // stack-allocated 1536 B StaticJsonDocument parses ~32 keys with zero heap allocation.
-    StaticJsonDocument<1536> doc;
-    if (deserializeJson(doc, jsonBuf) != DeserializationError::Ok) {
-        return false;
-    }
-
-    bool rdy = doc["ready"] | false;
-    if (!rdy) {
-        outExplicitWarming = true;
-        return false;
-    }
-
-    JsonObject cardObj = doc["card"].as<JsonObject>();
-    if (cardObj.isNull()) {
-        outExplicitWarming = true;
-        return false;
-    }
-
     const char* domain = domainSlug();
     CardSnapshot nextCard;
-    copySafeStr(nextCard.title, sizeof(nextCard.title), cardObj["title"] | "UNKNOWN");
-    copySafeStr(nextCard.year, sizeof(nextCard.year), cardObj["year"] | "");
-    const char* badge = cardObj["badge"] | domain;
-    copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
-    copySafeStr(nextCard.rating, sizeof(nextCard.rating), cardObj["rating"] | "");
-    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
-    nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
-    computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
-    uint16_t srvPw = cardObj["poster_width"] | 0;
-    uint16_t srvPh = cardObj["poster_height"] | 0;
-    if (srvPw > 0 && srvPh > 0 && (static_cast<size_t>(srvPw) * static_cast<size_t>(srvPh) * 2U) <= m_posterCapBytes) {
-        nextCard.posterW = srvPw;
-        nextCard.posterH = srvPh;
-    }
-    nextCard.hasData = true;
-    nextCard.hasPoster = false;
-    nextCard.hasVideoFrame = false;
+    const char* posterB64 = "";
 
-    const char* rawItemId = doc["item_id"] | (cardObj["item_id"] | (cardObj["id"] | ""));
-    if (outItemId && itemIdCap > 0) {
-        copySafeStr(outItemId, itemIdCap, rawItemId);
-    }
-    outHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
-    float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
-    if (totDur < 2.0f) totDur = 2.0f;
-    outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+    {
+        // ArduinoJson v6 zero-copy mode: passing mutable `char*` modifies strings in-place
+        // inside `jsonBuf` without duplicating `poster_rgb565_b64` or `synopsis`.
+        // `JSON_OBJECT_SIZE(44)` adapts automatically to 32-bit ESP32 (704 B stack) and
+        // 64-bit native tests (1408 B) while holding 44 slots (> 31 Showcase keys).
+        StaticJsonDocument<JSON_OBJECT_SIZE(44)> doc;
+        if (deserializeJson(doc, jsonBuf) != DeserializationError::Ok) {
+            return false;
+        }
 
-    const char* posterB64 = cardObj["poster_rgb565_b64"] | "";
+        bool rdy = doc["ready"] | false;
+        if (!rdy) {
+            outExplicitWarming = true;
+            return false;
+        }
+
+        JsonObject cardObj = doc["card"].as<JsonObject>();
+        if (cardObj.isNull()) {
+            outExplicitWarming = true;
+            return false;
+        }
+
+        copySafeStr(nextCard.title, sizeof(nextCard.title), cardObj["title"] | "UNKNOWN");
+        copySafeStr(nextCard.year, sizeof(nextCard.year), cardObj["year"] | "");
+        const char* badge = cardObj["badge"] | domain;
+        copySafeStr(nextCard.badge, sizeof(nextCard.badge), badge);
+        copySafeStr(nextCard.rating, sizeof(nextCard.rating), cardObj["rating"] | "");
+        copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), cardObj["synopsis"] | "");
+        nextCard.badgeColor565 = parseHexColor565(cardObj["badge_color"] | nullptr, defaultAccent565());
+        computeCardPosterDims(m_width, m_height, nextCard.posterW, nextCard.posterH);
+        uint16_t srvPw = cardObj["poster_width"] | 0;
+        uint16_t srvPh = cardObj["poster_height"] | 0;
+        if (srvPw > 0 && srvPh > 0 && (static_cast<size_t>(srvPw) * static_cast<size_t>(srvPh) * 2U) <= m_posterCapBytes) {
+            nextCard.posterW = srvPw;
+            nextCard.posterH = srvPh;
+        }
+        nextCard.hasData = true;
+        nextCard.hasPoster = false;
+        nextCard.hasVideoFrame = false;
+
+        const char* rawItemId = doc["item_id"] | (cardObj["item_id"] | (cardObj["id"] | ""));
+        if (outItemId && itemIdCap > 0) {
+            copySafeStr(outItemId, itemIdCap, rawItemId);
+        }
+        outHasStream = (cardObj["has_panoramas"] | false) || (cardObj["has_video"] | false);
+        float totDur = cardObj["stream_duration_s"] | (cardObj["total_stream_duration_s"] | 8.0f);
+        if (totDur < 2.0f) totDur = 2.0f;
+        outStreamMaxMs = static_cast<uint32_t>((totDur + 4.0f) * 1000.0f);
+
+        // Zero-copy string pointer resides directly inside `jsonBuf` and remains valid after `doc` scope ends
+        posterB64 = cardObj["poster_rgb565_b64"] | "";
+    }
+
     size_t expectedPosterBytes = static_cast<size_t>(nextCard.posterW) * static_cast<size_t>(nextCard.posterH) * 2U;
     if (showPoster && !m_poster565 && posterB64[0] != '\0') {
         allocateBuffers();
@@ -1543,29 +1668,41 @@ bool MediaShowcaseBase::parseReadyPayloadInPlace(
     return ok;
 }
 
-bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang) {
+bool MediaShowcaseBase::runMqttUdpTurn(
+    const ConfigSlot& cfg,
+    const char* domain,
+    const char* reqLang,
+    char* outHttpFallbackItemId,
+    size_t fallbackItemCap
+) {
+    if (outHttpFallbackItemId && fallbackItemCap > 0) {
+        outHttpFallbackItemId[0] = '\0';
+    }
 #if defined(ESP32) && !defined(UNIT_TEST)
     if (!m_ioScratch) {
         return false;
     }
 
-    char mqttHost[64] = "";
-    uint16_t mqttPort = 1883;
-    if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
-        return false;
-    }
-
     WiFiClient mqttCli;
     mqttCli.setTimeout(2);
-    if (!mqttCli.connect(mqttHost, mqttPort, 1500)) {
-        return false;
+    {
+        char mqttHost[64] = "";
+        uint16_t mqttPort = 1883;
+        if (!resolveMqttBroker(cfg, mqttHost, sizeof(mqttHost), mqttPort)) {
+            return false;
+        }
+        if (!mqttCli.connect(mqttHost, mqttPort, 1500)) {
+            return false;
+        }
     }
 
-    char mqttConnectId[64];
-    snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", m_sessionId, (++m_mqttConnSeq) % 1000U);
-    if (!sendMqttConnectPacket(mqttCli, mqttConnectId)) {
-        mqttCli.stop();
-        return false;
+    {
+        char mqttConnectId[64];
+        snprintf(mqttConnectId, sizeof(mqttConnectId), "%s_%u", m_sessionId, (++m_mqttConnSeq) % 1000U);
+        if (!sendMqttConnectPacket(mqttCli, mqttConnectId, m_wantActive)) {
+            mqttCli.stop();
+            return false;
+        }
     }
 
     // Wait briefly for CONNACK (0x20)
@@ -1590,87 +1727,87 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     }
 
     uint16_t localUdpPort = static_cast<uint16_t>(5568U + static_cast<uint16_t>(m_domain));
-    int udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
-    if (udpFd < 0) {
-        sendMqttDisconnectAndStop(mqttCli);
-        return false;
-    }
+    int udpFd = -1; // Deferred until Phase 2 (`start_stream`) to conserve LwIP socket resources
 
     const char* statusTopic = "dmd_showcase/server/status";
     char readyTopic[96];
     char eventsTopic[96];
     char streamStateTopic[96];
-    char configTopic[80];
     snprintf(readyTopic, sizeof(readyTopic), "dmd_showcase/clients/%s/%s/ready", m_sessionId, domain);
     snprintf(eventsTopic, sizeof(eventsTopic), "dmd_showcase/clients/%s/%s/events", m_sessionId, domain);
     snprintf(streamStateTopic, sizeof(streamStateTopic), "dmd_showcase/clients/%s/stream_state", m_sessionId);
-    snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
 
     IPAddress ipAddr = WiFi.localIP();
     char localIpBuf[20];
     snprintf(localIpBuf, sizeof(localIpBuf), "%u.%u.%u.%u", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
 
-    // Build retained client config JSON in preallocated `m_ioScratch` (zero heap allocation)
-    size_t pos = 0;
-    m_ioScratch[0] = '\0';
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
-    appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
-    appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
-    appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
-    appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
-
     // Ensure Phase::Card is active before reusing `m_frame565` as the zero-malloc MQTT RX buffer on ESP32_STD
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
-    // Publish retained client config FIRST so the Showcase orchestrator can clean up
-    // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
-    sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true);
-    sendMqttSubscribePacket(mqttCli, 1, statusTopic);
-    sendMqttSubscribePacket(mqttCli, 2, readyTopic);
-    sendMqttSubscribePacket(mqttCli, 3, eventsTopic);
-    sendMqttSubscribePacket(mqttCli, 4, streamStateTopic);
+    {
+        char configTopic[80];
+        snprintf(configTopic, sizeof(configTopic), "dmd_showcase/clients/%s/config", m_sessionId);
+
+        // Build retained client config JSON in preallocated `m_ioScratch` (zero heap allocation)
+        size_t pos = 0;
+        m_ioScratch[0] = '\0';
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"dmd_id\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_sessionId);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"client_ip\":\"");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"udp_ip\":\"");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localIpBuf);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"width\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_width);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"height\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, m_height);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"udp_port\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, localUdpPort);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"lang\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, reqLang);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"domains\":{\"");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, domain);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\":{\"systems\":");
+        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.systems);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"genres\":");
+        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.genres);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"decades\":");
+        appendCsvAsJsonArrayToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.decades);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_type\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoType);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"show_poster\":");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showPoster ? "true" : "false");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_synopsis\":");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showSynopsis ? "true" : "false");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"text_scroll_speed\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.textScrollSpeed);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"jacket_panorama\":");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.jacketPanorama ? "true" : "false");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"marquee_panorama\":");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.marqueePanorama ? "true" : "false");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"snapshot_panorama_count\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.snapshotPanoramaCount);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"show_video\":");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.showVideo ? "true" : "false");
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_max_duration_s\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMaxDurationS);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_fps\":");
+        appendUintToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoFps);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, ",\"video_mode\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.videoMode);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\",\"color_boost\":\"");
+        appendJsonEscapedToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, cfg.colorBoost);
+        appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}}}");
+
+        // Publish retained client config FIRST so the Showcase orchestrator can clean up
+        // any mid-broadcast pre-reboot slot and re-publish `ready: true` immediately.
+        sendMqttPublishPacket(mqttCli, configTopic, m_ioScratch, true, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
+    }
+
+    sendMqttSubscribePacket(mqttCli, 1, statusTopic, m_wantActive);
+    sendMqttSubscribePacket(mqttCli, 2, readyTopic, m_wantActive);
+    sendMqttSubscribePacket(mqttCli, 3, eventsTopic, m_wantActive);
+    sendMqttSubscribePacket(mqttCli, 4, streamStateTopic, m_wantActive);
 
     uint8_t prevSkips = m_consecutiveWarmSkips.load(std::memory_order_acquire);
     uint32_t playedSoFar = m_itemsPlayedInTurn.load(std::memory_order_acquire);
@@ -1775,8 +1912,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                             m_skipTurnImmediately.store(true, std::memory_order_release);
                         }
-                        closeUdpSocket(udpFd);
-                        sendMqttDisconnectAndStop(mqttCli);
+                        sendMqttDisconnectAndStop(mqttCli, m_wantActive);
                         return true;
                     }
                 }
@@ -1804,8 +1940,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     }
 
     if (!gotReadyItem) {
-        closeUdpSocket(udpFd);
-        sendMqttDisconnectAndStop(mqttCli);
+        sendMqttDisconnectAndStop(mqttCli, m_wantActive);
         if (sawReadyFalse) {
             m_statusState.store(1, std::memory_order_release);
             if (playedSoFar == 0U && prevSkips < 10U) {
@@ -1827,6 +1962,11 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     m_consecutiveWarmSkips.store(0, std::memory_order_release);
     uint32_t lastMqttPingMs = millis();
 
+    // Unsubscribe from `readyTopic` BEFORE publishing `start_card` on the same ordered TCP socket:
+    // when Showcase processes `start_card` and promotes the N+1 standby item (`4-10 KB` retained JSON),
+    // the broker keeps it retained on the server instead of flooding `mqttCli`'s LwIP TCP RX window!
+    sendMqttUnsubscribePacket(mqttCli, 5, readyTopic, m_wantActive);
+
     // Consume-Once: immediately notify server that Card display started (`start_card`)
     snprintf(
         m_ioScratch,
@@ -1836,7 +1976,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
         localIpBuf,
         localIpBuf
     );
-    sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
+    sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
 
     // Phase 1: Wait for organic full-synopsis scroll on the Card (counted in true UTF-8 glyphs)
     uint32_t synGlyphs = static_cast<uint32_t>(countUtf8Glyphs(m_liveCard.synopsis));
@@ -1858,7 +1998,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     while (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && (millis() - cardT0) < cardWaitMs) {
         uint32_t nowMs = millis();
         if (nowMs - lastMqttPingMs >= 10000U) {
-            sendMqttPingReq(mqttCli);
+            sendMqttPingReq(mqttCli, m_wantActive);
             lastMqttPingMs = nowMs;
         }
         pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
@@ -1868,8 +2008,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
             if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
                 m_skipTurnImmediately.store(true, std::memory_order_release);
             }
-            closeUdpSocket(udpFd);
-            sendMqttDisconnectAndStop(mqttCli);
+            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
             return true;
         }
         vTaskDelay(pdMS_TO_TICKS(30));
@@ -1878,6 +2017,16 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
     // Phase 2 & 3: Request real-time `ffmpeg -re` UDP stream (`start_stream`) and reassemble `DMDF` chunks
     // via zero-allocation non-blocking LwIP socket (`lwip_select` + `lwip_recvfrom` into `m_ioScratch`).
     if (m_wantActive.load(std::memory_order_acquire) && m_cfgGen.load(std::memory_order_acquire) == startGen && itemHasStream && m_frame565) {
+        udpFd = openNonBlockingUdpSocket(localUdpPort, m_hasPsram);
+        if (udpFd < 0) {
+            // Socket table full: close MQTT first and hand off item to flat-stack HTTP fallback (`?purge=true`)
+            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+            if (outHttpFallbackItemId && fallbackItemCap > 0) {
+                copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+            }
+            return true;
+        }
+
         memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
         // Drain any stale UDP datagram before starting the new item stream
         while (lwip_recvfrom(udpFd, m_ioScratch, 1040, MSG_DONTWAIT, nullptr, nullptr) > 0) {}
@@ -1892,7 +2041,14 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
             localIpBuf,
             localIpBuf
         );
-        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
+        if (!sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES)) {
+            closeUdpSocket(udpFd);
+            sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+            if (outHttpFallbackItemId && fallbackItemCap > 0) {
+                copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+            }
+            return true;
+        }
 
         uint32_t streamT0 = millis();
         uint32_t firstUdpPktMs = 0;
@@ -1959,7 +2115,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 
             uint32_t nowMs = millis();
             if (nowMs - lastMqttPingMs >= 10000U) {
-                sendMqttPingReq(mqttCli);
+                sendMqttPingReq(mqttCli, m_wantActive);
                 lastMqttPingMs = nowMs;
             }
             pollMqttControlNonBlocking(mqttCli, statusTopic, m_wantActive, serverWentOffline, gotStreamEof);
@@ -1970,41 +2126,39 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
                 break; // Stream completed or server stopped
             }
             if (lastUdpPktMs == 0U && (nowMs - streamT0) > kUdpInitialGraceMs) {
-                // Container-to-LAN UDP blocked by VM NAT: close UDP socket and fall back
-                // cleanly to plain-HTTP TCP `.rgb565.stream` (`DMDS`) without TLS admission.
+                // Container-to-LAN UDP blocked by VM NAT: close UDP + MQTT sockets and return to
+                // `runWorkerLoop()` so plain-HTTP `.rgb565.stream?purge=true` runs on a flat stack!
                 closeUdpSocket(udpFd);
-                char fallbackPath[144];
-                snprintf(fallbackPath, sizeof(fallbackPath), "/api/v1/%s/stream/%s.rgb565.stream?purge=false", domain, itemIdBuf);
-                streamUnifiedRgb565Http(cfg.serverUrl, fallbackPath);
-                break;
+                sendMqttDisconnectAndStop(mqttCli, m_wantActive);
+                if (outHttpFallbackItemId && fallbackItemCap > 0) {
+                    copySafeStr(outHttpFallbackItemId, fallbackItemCap, itemIdBuf);
+                }
+                return true;
             }
         }
     }
 
-    if (itemIdBuf[0] != '\0' && !serverWentOffline) {
+    if (itemIdBuf[0] != '\0' && !serverWentOffline && !gotStreamEof) {
         snprintf(m_ioScratch, IO_SCRATCH_BYTES, "{\"action\":\"stop_stream\",\"item_id\":\"%s\"}", itemIdBuf);
-        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false);
+        sendMqttPublishPacket(mqttCli, eventsTopic, m_ioScratch, false, m_wantActive, m_ioScratch, IO_SCRATCH_BYTES);
     }
 
     closeUdpSocket(udpFd);
-    sendMqttDisconnectAndStop(mqttCli);
+    sendMqttDisconnectAndStop(mqttCli, m_wantActive);
     if (serverWentOffline) {
         m_statusState.store(2, std::memory_order_release);
         if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
             m_skipTurnImmediately.store(true, std::memory_order_release);
         }
     }
-    clearLiveCardState();
-    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
-    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
-        m_turnDone.store(true, std::memory_order_release);
-    }
+    finishTurnItem();
     return true;
 #else
     (void)cfg;
     (void)domain;
     (void)reqLang;
+    (void)outHttpFallbackItemId;
+    (void)fallbackItemCap;
     return false;
 #endif
 }
@@ -2013,27 +2167,29 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     if (!m_ioScratch) return;
 
     char baseServerUrl[112] = "";
-    char resolvedHost[64] = "";
-    uint16_t resolvedPort = 8890;
-    bool resolvedOnline = false;
-    if (!net::ShowcaseDiscovery::resolveUrl(
-            cfg.serverUrl,
-            baseServerUrl,
-            sizeof(baseServerUrl),
-            resolvedHost,
-            sizeof(resolvedHost),
-            resolvedPort,
-            resolvedOnline,
-            nullptr,
-            0,
-            true,
-            false)) {
-        m_statusState.store(2, std::memory_order_release);
-        clearLiveCardState();
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
+    {
+        char resolvedHost[64] = "";
+        uint16_t resolvedPort = 8890;
+        bool resolvedOnline = false;
+        if (!net::ShowcaseDiscovery::resolveUrl(
+                cfg.serverUrl,
+                baseServerUrl,
+                sizeof(baseServerUrl),
+                resolvedHost,
+                sizeof(resolvedHost),
+                resolvedPort,
+                resolvedOnline,
+                nullptr,
+                0,
+                true,
+                false)) {
+            m_statusState.store(2, std::memory_order_release);
+            clearLiveCardState();
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
+            }
+            return;
         }
-        return;
     }
 
     net::SecureHttpOptions httpOpts;
@@ -2046,9 +2202,6 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     computeCardPosterDims(m_width, m_height, pw, ph);
 
     // 1. Register client config (`POST /api/v1/{domain}/config`) using `m_ioScratch`
-    char cfgUrl[160];
-    snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", baseServerUrl, domain);
-
     size_t pos = 0;
     m_ioScratch[0] = '\0';
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "{\"client_id\":\"");
@@ -2096,6 +2249,8 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     appendRawToBuf(m_ioScratch, IO_SCRATCH_BYTES, pos, "\"}");
 
     {
+        char cfgUrl[160];
+        snprintf(cfgUrl, sizeof(cfgUrl), "%s/api/v1/%s/config", baseServerUrl, domain);
         auto cfgResp = net::SecureHttpClient::post(cfgUrl, "application/json", m_ioScratch, httpOpts);
         if (!cfgResp.ok()) {
             m_statusState.store(2, std::memory_order_release); // NetworkOffline
@@ -2112,91 +2267,94 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     m_phase.store(static_cast<uint8_t>(Phase::Card), std::memory_order_release);
 
     // 2. Poll single Consume-Once item (`GET /api/v1/{domain}/next?client_id=...`)
-    char nextUrl[192];
-    snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
-    auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
-    if (!nextResp.ok()) {
-        m_statusState.store(2, std::memory_order_release);
-        clearLiveCardState();
-        if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
-            m_skipTurnImmediately.store(true, std::memory_order_release);
-        }
-        return;
-    }
-
-    // Zero-copy in-place parse when Content-Length fits in `m_psramMqttRx` (S3) or `m_frame565` (ESP32_STD)
-    char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
-    size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
-    size_t respBytes = nextResp.contentLength();
+    // Scoped so `nextResp` closes its TCP socket and frees its stack frame before poster/stream steps.
     char unifiedStreamPath[144] = "";
     char posterPathBuf[144] = "";
     CardSnapshot nextCard;
     bool parsedReady = false;
     bool serverWarming = false;
-
-    if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap &&
-        readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive)) {
-        rxBuf[respBytes] = '\0';
-        StaticJsonDocument<1536> nextDoc;
-        if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
-            const char* status = nextDoc["status"] | "warming";
-            JsonObject item = nextDoc["item"].as<JsonObject>();
-            if (strcmp(status, "ready") == 0 && !item.isNull()) {
-                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
-                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-                nextCard.posterW = pw;
-                nextCard.posterH = ph;
-                nextCard.hasData = true;
-                JsonObject assetsObj = item["assets"].as<JsonObject>();
-                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
-                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
-                const char* posterB64 = item["poster_rgb565_b64"] | "";
-                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
-                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-                        nextCard.hasPoster = true;
-                    }
-                }
-                parsedReady = true;
-            } else {
-                serverWarming = true;
+    {
+        char nextUrl[192];
+        snprintf(nextUrl, sizeof(nextUrl), "%s/api/v1/%s/next?client_id=%s", baseServerUrl, domain, m_sessionId);
+        auto nextResp = net::SecureHttpClient::get(nextUrl, httpOpts);
+        if (!nextResp.ok()) {
+            m_statusState.store(2, std::memory_order_release);
+            clearLiveCardState();
+            if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1) {
+                m_skipTurnImmediately.store(true, std::memory_order_release);
             }
+            return;
         }
-        if (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
-            memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
-        }
-    } else {
-        DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
-        if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
-            const char* status = nextDoc["status"] | "warming";
-            JsonObject item = nextDoc["item"].as<JsonObject>();
-            if (strcmp(status, "ready") == 0 && !item.isNull()) {
-                copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
-                copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
-                copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
-                copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
-                copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
-                nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
-                nextCard.posterW = pw;
-                nextCard.posterH = ph;
-                nextCard.hasData = true;
-                JsonObject assetsObj = item["assets"].as<JsonObject>();
-                copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
-                copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
-                const char* posterB64 = item["poster_rgb565_b64"] | "";
-                size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
-                if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
-                    if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
-                        nextCard.hasPoster = true;
+
+        // Zero-copy in-place parse when Content-Length fits in `m_psramMqttRx` (S3) or `m_frame565` (ESP32_STD)
+        char* rxBuf = m_psramMqttRx ? m_psramMqttRx : reinterpret_cast<char*>(m_frame565);
+        size_t rxCap = m_psramMqttRx ? PSRAM_MQTT_RX_BYTES : (m_frame565 ? (m_framePixels * sizeof(uint16_t)) : 0U);
+        size_t respBytes = nextResp.contentLength();
+
+        if (rxBuf && respBytes > 0 && (respBytes + 1U) <= rxCap &&
+            readExactFromStream(nextResp.stream(), reinterpret_cast<uint8_t*>(rxBuf), respBytes, m_wantActive)) {
+            rxBuf[respBytes] = '\0';
+            StaticJsonDocument<JSON_OBJECT_SIZE(44)> nextDoc;
+            if (deserializeJson(nextDoc, rxBuf) == DeserializationError::Ok) {
+                const char* status = nextDoc["status"] | "warming";
+                JsonObject item = nextDoc["item"].as<JsonObject>();
+                if (strcmp(status, "ready") == 0 && !item.isNull()) {
+                    copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
+                    copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
+                    copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
+                    copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
+                    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
+                    nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
+                    nextCard.posterW = pw;
+                    nextCard.posterH = ph;
+                    nextCard.hasData = true;
+                    JsonObject assetsObj = item["assets"].as<JsonObject>();
+                    copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
+                    copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                    const char* posterB64 = item["poster_rgb565_b64"] | "";
+                    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
+                        if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+                            nextCard.hasPoster = true;
+                        }
                     }
+                    parsedReady = true;
+                } else {
+                    serverWarming = true;
                 }
-                parsedReady = true;
-            } else {
-                serverWarming = true;
+            }
+            if (rxBuf == reinterpret_cast<char*>(m_frame565) && m_frame565) {
+                memset(m_frame565, 0, m_framePixels * sizeof(uint16_t));
+            }
+        } else {
+            DynamicJsonDocument nextDoc(m_hasPsram ? 24576 : 6144);
+            if (deserializeJson(nextDoc, nextResp.stream()) == DeserializationError::Ok) {
+                const char* status = nextDoc["status"] | "warming";
+                JsonObject item = nextDoc["item"].as<JsonObject>();
+                if (strcmp(status, "ready") == 0 && !item.isNull()) {
+                    copySafeStr(nextCard.title, sizeof(nextCard.title), item["title"] | "UNKNOWN");
+                    copySafeStr(nextCard.year, sizeof(nextCard.year), item["year"] | "");
+                    copySafeStr(nextCard.badge, sizeof(nextCard.badge), item["badge"] | domain);
+                    copySafeStr(nextCard.rating, sizeof(nextCard.rating), item["rating"] | "");
+                    copySafeStr(nextCard.synopsis, sizeof(nextCard.synopsis), item["synopsis"] | "");
+                    nextCard.badgeColor565 = parseHexColor565(item["badge_color"] | nullptr, defaultAccent565());
+                    nextCard.posterW = pw;
+                    nextCard.posterH = ph;
+                    nextCard.hasData = true;
+                    JsonObject assetsObj = item["assets"].as<JsonObject>();
+                    copySafeStr(unifiedStreamPath, sizeof(unifiedStreamPath), assetsObj["unified_stream_rgb565"] | "");
+                    copySafeStr(posterPathBuf, sizeof(posterPathBuf), assetsObj["poster_rgb565"] | (item["poster_rgb565_url"] | ""));
+                    const char* posterB64 = item["poster_rgb565_b64"] | "";
+                    size_t expectedPosterBytes = static_cast<size_t>(pw) * static_cast<size_t>(ph) * 2U;
+                    if (cfg.showPoster && m_poster565 && expectedPosterBytes <= m_posterCapBytes && posterB64[0] != '\0') {
+                        if (decodeBase64Fixed(posterB64, reinterpret_cast<uint8_t*>(m_poster565), expectedPosterBytes)) {
+                            nextCard.hasPoster = true;
+                        }
+                    }
+                    parsedReady = true;
+                } else {
+                    serverWarming = true;
+                }
             }
         }
     }
@@ -2259,49 +2417,47 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
         streamUnifiedRgb565Http(baseServerUrl, unifiedStreamPath);
     }
 
-    clearLiveCardState();
-    uint32_t played = m_itemsPlayedInTurn.fetch_add(1, std::memory_order_acq_rel) + 1;
-    uint32_t budget = std::max<uint32_t>(1U, m_rotationBudget.load(std::memory_order_relaxed));
-    if (m_rotationSlotCount.load(std::memory_order_relaxed) > 1 && played >= budget) {
-        m_turnDone.store(true, std::memory_order_release);
-    }
+    finishTurnItem();
 }
 
 bool MediaShowcaseBase::streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath) {
     if (!serverUrl || !streamPath || streamPath[0] == '\0' || !m_frame565) {
         return false;
     }
-    char baseServerUrl[112] = "";
-    char resolvedHost[64] = "";
-    uint16_t resolvedPort = 8890;
-    bool resolvedOnline = false;
-    if (!net::ShowcaseDiscovery::resolveUrl(
-            serverUrl,
-            baseServerUrl,
-            sizeof(baseServerUrl),
-            resolvedHost,
-            sizeof(resolvedHost),
-            resolvedPort,
-            resolvedOnline,
-            nullptr,
-            0,
-            true,
-            false)) {
-        copySafeStr(baseServerUrl, sizeof(baseServerUrl), serverUrl);
-    }
 
-    net::SecureHttpOptions httpOpts;
-    httpOpts.ownerId = net::OWNER_SHOWCASE;
-    httpOpts.requestTimeoutMs = 4500;
-    httpOpts.keepAlive = false;
+    net::SecureHttpResponse sResp;
+    {
+        char fullUrl[256];
+        if (strncmp(streamPath, "http", 4) == 0) {
+            copySafeStr(fullUrl, sizeof(fullUrl), streamPath);
+        } else {
+            char baseServerUrl[112] = "";
+            char resolvedHost[64] = "";
+            uint16_t resolvedPort = 8890;
+            bool resolvedOnline = false;
+            if (!net::ShowcaseDiscovery::resolveUrl(
+                    serverUrl,
+                    baseServerUrl,
+                    sizeof(baseServerUrl),
+                    resolvedHost,
+                    sizeof(resolvedHost),
+                    resolvedPort,
+                    resolvedOnline,
+                    nullptr,
+                    0,
+                    true,
+                    false)) {
+                copySafeStr(baseServerUrl, sizeof(baseServerUrl), serverUrl);
+            }
+            snprintf(fullUrl, sizeof(fullUrl), "%s%s", baseServerUrl, streamPath);
+        }
 
-    char fullUrl[256];
-    if (strncmp(streamPath, "http", 4) == 0) {
-        copySafeStr(fullUrl, sizeof(fullUrl), streamPath);
-    } else {
-        snprintf(fullUrl, sizeof(fullUrl), "%s%s", baseServerUrl, streamPath);
+        net::SecureHttpOptions httpOpts;
+        httpOpts.ownerId = net::OWNER_SHOWCASE;
+        httpOpts.requestTimeoutMs = 4500;
+        httpOpts.keepAlive = false;
+        sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
     }
-    auto sResp = net::SecureHttpClient::get(fullUrl, httpOpts);
     if (!sResp.ok()) {
         return false;
     }

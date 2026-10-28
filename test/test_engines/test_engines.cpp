@@ -244,11 +244,16 @@ void test_media_showcase_ready_payload_zero_copy_parsing() {
     }
     String xlReadyJson =
         String("{\"ready\":true,\"item_id\":\"pkg_movie_256x64\",\"domain\":\"movies\",\"card\":{") +
-        "\"id\":\"pkg_movie_256x64\",\"title\":\"Blade Runner 2049\",\"year\":\"2017\"," +
-        "\"badge\":\"SCIFI\",\"badge_color\":\"#00E5FF\",\"rating\":\"8.0\"," +
+        "\"id\":\"pkg_movie_256x64\",\"item_id\":\"pkg_movie_256x64\",\"domain\":\"movies\"," +
+        "\"title\":\"Blade Runner 2049\",\"year\":\"2017\",\"badge\":\"SCIFI\",\"badge_color\":\"#00E5FF\"," +
+        "\"subtitle\":\"Neo-Noir\",\"rating\":\"8.0\",\"lang\":\"fr\",\"source_used\":\"tmdb\"," +
         "\"poster_width\":48,\"poster_height\":64,\"poster_rgb565_b64\":\"" + b64Poster48x64 + "\"," +
-        "\"synopsis\":\"Long 256x64 synopsis payload verifying zero-copy parsing above 9 KB...\"," +
-        "\"has_panoramas\":true,\"has_video\":true,\"stream_fps\":24,\"stream_duration_s\":14.0}}";
+        "\"poster_rgb565_url\":\"/api/v1/movies/poster/pkg_movie_256x64.rgb565\",\"text_scroll_speed\":\"4\"," +
+        "\"synopsis\":\"Long 256x64 synopsis payload verifying zero-copy parsing above 9 KB across all 31 Showcase keys...\"," +
+        "\"has_panoramas\":true,\"has_video\":true,\"stream_frames\":336,\"stream_fps\":24,\"fps\":24," +
+        "\"stream_duration_s\":14.0,\"total_stream_duration_s\":14.0," +
+        "\"assets\":{\"poster_rgb565\":\"/api/v1/movies/poster/pkg_movie_256x64.rgb565\"," +
+        "\"unified_stream_rgb565\":\"/api/v1/movies/stream/pkg_movie_256x64.rgb565.stream\"}}}";
     std::vector<char> mutableXl(xlReadyJson.begin(), xlReadyJson.end());
     mutableXl.push_back('\0');
     TEST_ASSERT_TRUE(movieEng.parseReadyPayloadInPlace(mutableXl.data(), false, itemId, hasStream, streamMaxMs, explicitWarming));
