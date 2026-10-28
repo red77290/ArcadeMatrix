@@ -653,6 +653,12 @@ bool ShowcaseDiscovery::resolveUrl(
                 if (outVersion && verCap > 0) copySafe(outVersion, verCap, verBuf);
                 return true;
             }
+            if (outVersion == nullptr) {
+                // Fast runtime URL formatting path for an explicit IP/host: skip opening a
+                // redundant 450ms health-check TCP socket right before the caller's real request.
+                outOnline = true;
+                return true;
+            }
         }
         if (verifyShowcaseHealthHttp(outHost, outPort, 450, verBuf, sizeof(verBuf))) {
             outOnline = true;

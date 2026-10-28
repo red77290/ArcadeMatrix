@@ -132,7 +132,7 @@ protected:
     static constexpr size_t MAX_SYNOPSIS_LEN = 256;
     static constexpr size_t MAX_SESSION_ID_LEN = 48;
     static constexpr size_t MAX_ITEM_ID_LEN = 64;
-    static constexpr size_t IO_SCRATCH_BYTES = 1280;
+    static constexpr size_t IO_SCRATCH_BYTES = 1408;
     static constexpr size_t PSRAM_MQTT_RX_BYTES = 32768;
 
     enum class Phase : uint8_t {
@@ -237,11 +237,18 @@ protected:
     bool allocateBuffers();
     void freeBuffers();
     void clearLiveCardState();
+    void finishTurnItem();
     void startWorkerTask();
     void stopWorkerTaskBounded(uint32_t timeoutMs);
     static void workerTaskEntry(void* arg);
     void runWorkerLoop();
-    bool runMqttUdpTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
+    bool runMqttUdpTurn(
+        const ConfigSlot& cfg,
+        const char* domain,
+        const char* reqLang,
+        char* outHttpFallbackItemId,
+        size_t fallbackItemCap
+    );
     void runHttpPollTurn(const ConfigSlot& cfg, const char* domain, const char* reqLang);
     bool streamUnifiedRgb565Http(const char* serverUrl, const char* streamPath);
     void drawWaitingPixelArt(IDrawingSurface* s, int mW, int mH, uint32_t elapsedMs);
