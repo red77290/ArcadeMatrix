@@ -6744,7 +6744,9 @@ function buildShowcaseReferentialWidget(field, instance, formGrid, initVal) {
       const allowedSet = new Set();
       data.systems.forEach(sysObj => {
         if (selectedSystems.includes(String(sysObj.id).toLowerCase())) {
-          const relList = targetFieldId === 'genres' ? sysObj.supported_genres : sysObj.supported_decades;
+          const relList = targetFieldId === 'genres'
+            ? (sysObj.supported_genres || sysObj.genres)
+            : (sysObj.supported_decades || sysObj.decades);
           if (Array.isArray(relList)) {
             relList.forEach(id => allowedSet.add(String(id).toLowerCase()));
           }
