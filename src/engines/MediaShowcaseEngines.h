@@ -98,9 +98,18 @@ public:
         bool& outExplicitWarming
     );
 
+    /**
+     * @brief Copies a comma-separated filter token list into a bounded buffer without ever
+     *        truncating mid-token. If `src` exceeds `cap - 1`, truncates cleanly at the last
+     *        complete comma boundary so partial system/genre IDs are never sent to Showcase.
+     */
+    static void copySafeCsvTokens(char* dst, size_t cap, const char* src);
+
+    static constexpr size_t MAX_SYSTEMS_FILTER_LEN = 560;
+    static constexpr size_t MAX_FILTER_LEN = 192;
+
 protected:
     static constexpr size_t MAX_URL_LEN = 96;
-    static constexpr size_t MAX_FILTER_LEN = 128;
     static constexpr size_t MAX_TITLE_LEN = 64;
     static constexpr size_t MAX_BADGE_LEN = 12;
     static constexpr size_t MAX_META_LEN = 16;
@@ -120,7 +129,7 @@ protected:
         char lang[8] = "system";
         char textScrollSpeed[12] = "4";
         char videoMode[16] = "auto_action";
-        char systems[MAX_FILTER_LEN] = "";
+        char systems[MAX_SYSTEMS_FILTER_LEN] = "";
         char genres[MAX_FILTER_LEN] = "";
         char decades[MAX_FILTER_LEN] = "";
         char videoType[16] = "any";

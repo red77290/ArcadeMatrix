@@ -457,6 +457,38 @@ EngineError MediaShowcaseBase::initialize(EngineContext* context, const EngineCo
     return EngineError::OK;
 }
 
+void MediaShowcaseBase::copySafeCsvTokens(char* dst, size_t cap, const char* src) {
+    if (!dst || cap == 0) return;
+    if (!src || src[0] == '\0') {
+        dst[0] = '\0';
+        return;
+    }
+    size_t len = strlen(src);
+    if (len < cap) {
+        memcpy(dst, src, len + 1);
+        return;
+    }
+    size_t maxCopy = cap - 1;
+    size_t cutPos = 0;
+    bool foundComma = false;
+    for (size_t i = 0; i < maxCopy; ++i) {
+        if (src[i] == ',') {
+            cutPos = i;
+            foundComma = true;
+        }
+    }
+    if (foundComma) {
+        while (cutPos > 0 && (src[cutPos - 1] == ' ' || src[cutPos - 1] == ',')) {
+            --cutPos;
+        }
+        memcpy(dst, src, cutPos);
+        dst[cutPos] = '\0';
+    } else {
+        memcpy(dst, src, maxCopy);
+        dst[maxCopy] = '\0';
+    }
+}
+
 void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
     if (!config) return;
     uint8_t cur = m_cfgIdx.load(std::memory_order_relaxed);
@@ -507,9 +539,9 @@ void MediaShowcaseBase::onConfigChanged(const EngineConfig* config) {
         }
         copySafeStr(slot.videoMode, sizeof(slot.videoMode), normVm);
     }
-    copySafeStr(slot.systems, sizeof(slot.systems), config->getString("systems", "").c_str());
-    copySafeStr(slot.genres, sizeof(slot.genres), config->getString("genres", "").c_str());
-    copySafeStr(slot.decades, sizeof(slot.decades), config->getString("decades", "").c_str());
+    copySafeCsvTokens(slot.systems, sizeof(slot.systems), config->getString("systems", "").c_str());
+    copySafeCsvTokens(slot.genres, sizeof(slot.genres), config->getString("genres", "").c_str());
+    copySafeCsvTokens(slot.decades, sizeof(slot.decades), config->getString("decades", "").c_str());
     copySafeStr(slot.videoType, sizeof(slot.videoType), config->getString("video_type", "any").c_str());
 
     slot.snapshotPanoramaCount = static_cast<uint8_t>(std::max(0, std::min(5, config->getInt("snapshot_panorama_count", 0))));
@@ -847,7 +879,7 @@ bool MediaShowcaseBase::runMqttUdpTurn(const ConfigSlot& cfg, const char* domain
 
     String localIp = WiFi.localIP().toString();
     String cfgPayload;
-    cfgPayload.reserve(640);
+    cfgPayload.reserve(1024);
     cfgPayload += "{\"dmd_id\":\"";
     cfgPayload += m_sessionId;
     cfgPayload += "\",\"client_ip\":\"";
@@ -1170,7 +1202,7 @@ void MediaShowcaseBase::runHttpPollTurn(const ConfigSlot& cfg, const char* domai
     // 1. Register client config (`POST /api/v1/{domain}/config`)
     String cfgUrl = String(cfg.serverUrl) + "/api/v1/" + domain + "/config";
     String postBody;
-    postBody.reserve(640);
+    postBody.reserve(1024);
     postBody += "{\"client_id\":\"";
     postBody += m_sessionId;
     postBody += "\",\"width\":";

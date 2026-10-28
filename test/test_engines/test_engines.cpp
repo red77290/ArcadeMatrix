@@ -261,6 +261,30 @@ void test_media_showcase_ready_payload_zero_copy_parsing() {
     TEST_ASSERT_TRUE(movieEng.configGeneration() > gen1);
 }
 
+/**
+ * @brief Verifies that `MediaShowcaseBase::copySafeCsvTokens` preserves the full 66-system
+ *        canonical catalog (`MAX_SYSTEMS_FILTER_LEN = 560`) and truncates cleanly at the
+ *        last complete comma boundary if an input string exceeds buffer capacity.
+ */
+void test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation() {
+    const char* all66SystemsCsv =
+        "mame,cps1,cps2,cps3,neogeo,neogeocd,pgm,atomiswave,naomi,model2,model3,hikaru,"
+        "zn1,system16,system32,stv,namcos11,namcos22,irem_m72,irem_m92,konami_arcade,"
+        "taito_f3,cave,toaplan,daphne,atari2600,atari5200,atari7800,intellivision,"
+        "colecovision,vectrex,nes,fds,snes,n64,gamecube,mastersystem,megadrive,sega32x,"
+        "segacd,sg1000,saturn,dreamcast,pcengine,pcenginecd,supergrafx,pcfx,psx,ps2,3do,"
+        "jaguar,cdi,gb,gbc,gba,nds,virtualboy,gamegear,lynx,ngp,ngpc,wonderswan,"
+        "wonderswancolor,c64,amiga,msx,msx2,amstradcpc,zxspectrum,atari800,atarist,x68000,dos,scummvm";
+    char sysBuf[MediaShowcaseBase::MAX_SYSTEMS_FILTER_LEN];
+    MediaShowcaseBase::copySafeCsvTokens(sysBuf, sizeof(sysBuf), all66SystemsCsv);
+    TEST_ASSERT_EQUAL_STRING(all66SystemsCsv, sysBuf);
+
+    // Overflow truncation must cut cleanly at the last complete comma, never mid-token
+    char smallBuf[24];
+    MediaShowcaseBase::copySafeCsvTokens(smallBuf, sizeof(smallBuf), "cps2,neogeo,megadrive,wonderswancolor");
+    TEST_ASSERT_EQUAL_STRING("cps2,neogeo,megadrive", smallBuf);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(100);
@@ -272,6 +296,7 @@ void setup() {
     RUN_TEST(test_spoken_time_reads_as_words);
     RUN_TEST(test_date_line_follows_the_language);
     RUN_TEST(test_media_showcase_ready_payload_zero_copy_parsing);
+    RUN_TEST(test_media_showcase_66_systems_csv_filter_capacity_and_boundary_truncation);
     UNITY_END();
 }
 
